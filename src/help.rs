@@ -924,7 +924,7 @@ impl HelpSystem {
             syntax: "map(list, function)".to_string(),
             parameters: vec![
                 "list: List[T] - The list to transform".to_string(),
-                "function: T -> U - Function to apply to each element".to_string(),
+                "function: T  // U - Function to apply to each element".to_string(),
             ],
             return_type: "List[U]".to_string(),
             examples: vec![
@@ -974,7 +974,7 @@ impl HelpSystem {
             syntax: "par_filter(list, predicate)".to_string(),
             parameters: vec![
                 "list: List[T] - The list to filter".to_string(),
-                "predicate: T -> Bool - Keep elements where this returns true".to_string(),
+                "predicate: T  // Bool - Keep elements where this returns true".to_string(),
             ],
             return_type: "List[T]".to_string(),
             examples: vec!["par_filter(1..100, (x) => is_expensive_check(x))".to_string()],
@@ -1008,7 +1008,7 @@ impl HelpSystem {
             parameters: vec![
                 "list: List[T] - The list to reduce".to_string(),
                 "initial: U - Initial accumulator value".to_string(),
-                "function: (U, T) -> U - Binary function for reduction".to_string(),
+                "function: (U, T)  // U - Binary function for reduction".to_string(),
             ],
             return_type: "U".to_string(),
             examples: vec![
@@ -1026,7 +1026,7 @@ impl HelpSystem {
             parameters: vec![
                 "list: List[T] - The list to fold".to_string(),
                 "initial: U - Initial accumulator value".to_string(),
-                "function: (U, T) -> U - Binary function for folding".to_string(),
+                "function: (U, T)  // U - Binary function for folding".to_string(),
             ],
             return_type: "U".to_string(),
             examples: vec!["fold([1, 2, 3], 0, (acc, x) => acc + x)  // 6".to_string()],
@@ -1508,13 +1508,28 @@ impl HelpSystem {
         category: &str,
         description: &str,
     ) {
+        self.doc_ex(name, syntax, return_type, category, description, &[]);
+    }
+
+    /// The compact form with examples — every entry should carry at
+    /// least one; `tests/help_examples_test.rs` enforces both that they
+    /// exist and that each parses as real olang.
+    fn doc_ex(
+        &mut self,
+        name: &str,
+        syntax: &str,
+        return_type: &str,
+        category: &str,
+        description: &str,
+        examples: &[&str],
+    ) {
         self.add_function(FunctionDoc {
             name: name.to_string(),
             description: description.to_string(),
             syntax: syntax.to_string(),
             parameters: Vec::new(),
             return_type: return_type.to_string(),
-            examples: Vec::new(),
+            examples: examples.iter().map(|e| e.to_string()).collect(),
             category: category.to_string(),
             see_also: Vec::new(),
         });
@@ -4029,7 +4044,7 @@ impl HelpSystem {
             syntax: "str.to_upper(s)".to_string(),
             parameters: vec![],
             return_type: "String".to_string(),
-            examples: vec!["str.to_upper(\"hi\") -> \"HI\"".to_string()],
+            examples: vec!["str.to_upper(\"hi\")  // \"HI\"".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4039,7 +4054,7 @@ impl HelpSystem {
             syntax: "str.to_lower(s)".to_string(),
             parameters: vec![],
             return_type: "String".to_string(),
-            examples: vec!["str.to_lower(\"HI\") -> \"hi\"".to_string()],
+            examples: vec!["str.to_lower(\"HI\")  // \"hi\"".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4049,7 +4064,7 @@ impl HelpSystem {
             syntax: "str.trim(s)".to_string(),
             parameters: vec![],
             return_type: "String".to_string(),
-            examples: vec!["str.trim(\"  x  \") -> \"x\"".to_string()],
+            examples: vec!["str.trim(\"  x  \")  // \"x\"".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4059,7 +4074,7 @@ impl HelpSystem {
             syntax: "str.trim_start(s)".to_string(),
             parameters: vec![],
             return_type: "String".to_string(),
-            examples: vec!["str.trim_start(\"  x\") -> \"x\"".to_string()],
+            examples: vec!["str.trim_start(\"  x\")  // \"x\"".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4069,7 +4084,7 @@ impl HelpSystem {
             syntax: "str.trim_end(s)".to_string(),
             parameters: vec![],
             return_type: "String".to_string(),
-            examples: vec!["str.trim_end(\"x  \") -> \"x\"".to_string()],
+            examples: vec!["str.trim_end(\"x  \")  // \"x\"".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4079,7 +4094,7 @@ impl HelpSystem {
             syntax: "str.replace(s, from, to)".to_string(),
             parameters: vec![],
             return_type: "String".to_string(),
-            examples: vec!["str.replace(\"a-b-c\", \"-\", \"+\") -> \"a+b+c\"".to_string()],
+            examples: vec!["str.replace(\"a-b-c\", \"-\", \"+\")  // \"a+b+c\"".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4089,7 +4104,7 @@ impl HelpSystem {
             syntax: "str.replace_first(s, from, to)".to_string(),
             parameters: vec![],
             return_type: "String".to_string(),
-            examples: vec!["str.replace_first(\"a-b\", \"-\", \"+\") -> \"a+b\"".to_string()],
+            examples: vec!["str.replace_first(\"a-b\", \"-\", \"+\")  // \"a+b\"".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4099,7 +4114,7 @@ impl HelpSystem {
             syntax: "str.split(s, sep)".to_string(),
             parameters: vec![],
             return_type: "List".to_string(),
-            examples: vec!["str.split(\"a,b,c\", \",\") -> [\"a\",\"b\",\"c\"]".to_string()],
+            examples: vec!["str.split(\"a,b,c\", \",\")  // [\"a\",\"b\",\"c\"]".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4109,7 +4124,7 @@ impl HelpSystem {
             syntax: "str.join(list, sep)".to_string(),
             parameters: vec![],
             return_type: "String".to_string(),
-            examples: vec!["str.join([\"a\",\"b\"], \"-\") -> \"a-b\"".to_string()],
+            examples: vec!["str.join([\"a\",\"b\"], \"-\")  // \"a-b\"".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4119,7 +4134,7 @@ impl HelpSystem {
             syntax: "str.substring(s, start, end)".to_string(),
             parameters: vec![],
             return_type: "String".to_string(),
-            examples: vec!["str.substring(\"hello\", 0, 3) -> \"hel\"".to_string()],
+            examples: vec!["str.substring(\"hello\", 0, 3)  // \"hel\"".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4132,8 +4147,8 @@ impl HelpSystem {
             parameters: vec![],
             return_type: "Int | ()".to_string(),
             examples: vec![
-                "str.index_of(\"hello\", \"llo\") -> 2".to_string(),
-                "str.index_of(\"hello\", \"z\") -> ()".to_string(),
+                "str.index_of(\"hello\", \"llo\")  // 2".to_string(),
+                "str.index_of(\"hello\", \"z\")  // ()".to_string(),
             ],
             category: "String".to_string(),
             see_also: vec![],
@@ -4146,7 +4161,7 @@ impl HelpSystem {
             syntax: "str.last_index_of(s, sub)".to_string(),
             parameters: vec![],
             return_type: "Int | ()".to_string(),
-            examples: vec!["str.last_index_of(\"a-a\", \"a\") -> 2".to_string()],
+            examples: vec!["str.last_index_of(\"a-a\", \"a\")  // 2".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4156,7 +4171,7 @@ impl HelpSystem {
             syntax: "str.contains(s, sub)".to_string(),
             parameters: vec![],
             return_type: "Bool".to_string(),
-            examples: vec!["str.contains(\"hello\", \"ell\") -> true".to_string()],
+            examples: vec!["str.contains(\"hello\", \"ell\")  // true".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4166,7 +4181,7 @@ impl HelpSystem {
             syntax: "str.starts_with(s, prefix)".to_string(),
             parameters: vec![],
             return_type: "Bool".to_string(),
-            examples: vec!["str.starts_with(\"hello\", \"he\") -> true".to_string()],
+            examples: vec!["str.starts_with(\"hello\", \"he\")  // true".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4176,7 +4191,7 @@ impl HelpSystem {
             syntax: "str.ends_with(s, suffix)".to_string(),
             parameters: vec![],
             return_type: "Bool".to_string(),
-            examples: vec!["str.ends_with(\"hello\", \"lo\") -> true".to_string()],
+            examples: vec!["str.ends_with(\"hello\", \"lo\")  // true".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4186,7 +4201,7 @@ impl HelpSystem {
             syntax: "str.repeat(s, n)".to_string(),
             parameters: vec![],
             return_type: "String".to_string(),
-            examples: vec!["str.repeat(\"ab\", 3) -> \"ababab\"".to_string()],
+            examples: vec!["str.repeat(\"ab\", 3)  // \"ababab\"".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4196,7 +4211,7 @@ impl HelpSystem {
             syntax: "str.count(s, sub)".to_string(),
             parameters: vec![],
             return_type: "Int".to_string(),
-            examples: vec!["str.count(\"banana\", \"a\") -> 3".to_string()],
+            examples: vec!["str.count(\"banana\", \"a\")  // 3".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4206,7 +4221,7 @@ impl HelpSystem {
             syntax: "str.char_at(s, i)".to_string(),
             parameters: vec![],
             return_type: "String".to_string(),
-            examples: vec!["str.char_at(\"hello\", 1) -> \"e\"".to_string()],
+            examples: vec!["str.char_at(\"hello\", 1)  // \"e\"".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4216,7 +4231,7 @@ impl HelpSystem {
             syntax: "str.reverse(s)".to_string(),
             parameters: vec![],
             return_type: "String".to_string(),
-            examples: vec!["str.reverse(\"abc\") -> \"cba\"".to_string()],
+            examples: vec!["str.reverse(\"abc\")  // \"cba\"".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4226,7 +4241,7 @@ impl HelpSystem {
             syntax: "str.capitalize(s)".to_string(),
             parameters: vec![],
             return_type: "String".to_string(),
-            examples: vec!["str.capitalize(\"hi\") -> \"Hi\"".to_string()],
+            examples: vec!["str.capitalize(\"hi\")  // \"Hi\"".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4236,7 +4251,7 @@ impl HelpSystem {
             syntax: "str.chars(s)".to_string(),
             parameters: vec![],
             return_type: "List".to_string(),
-            examples: vec!["str.chars(\"ab\") -> [\"a\",\"b\"]".to_string()],
+            examples: vec!["str.chars(\"ab\")  // [\"a\",\"b\"]".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4256,7 +4271,7 @@ impl HelpSystem {
             syntax: "str.words(s)".to_string(),
             parameters: vec![],
             return_type: "List".to_string(),
-            examples: vec!["str.words(\"  a b \") -> [\"a\",\"b\"]".to_string()],
+            examples: vec!["str.words(\"  a b \")  // [\"a\",\"b\"]".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4266,7 +4281,7 @@ impl HelpSystem {
             syntax: "str.pad_start(s, len, pad)".to_string(),
             parameters: vec![],
             return_type: "String".to_string(),
-            examples: vec!["str.pad_start(\"7\", 3, \"0\") -> \"007\"".to_string()],
+            examples: vec!["str.pad_start(\"7\", 3, \"0\")  // \"007\"".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4276,7 +4291,7 @@ impl HelpSystem {
             syntax: "str.pad_end(s, len, pad)".to_string(),
             parameters: vec![],
             return_type: "String".to_string(),
-            examples: vec!["str.pad_end(\"7\", 3, \"0\") -> \"700\"".to_string()],
+            examples: vec!["str.pad_end(\"7\", 3, \"0\")  // \"700\"".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4286,7 +4301,7 @@ impl HelpSystem {
             syntax: "str.is_empty(s)".to_string(),
             parameters: vec![],
             return_type: "Bool".to_string(),
-            examples: vec!["str.is_empty(\"\") -> true".to_string()],
+            examples: vec!["str.is_empty(\"\")  // true".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4296,7 +4311,7 @@ impl HelpSystem {
             syntax: "str.length(s)".to_string(),
             parameters: vec![],
             return_type: "Int".to_string(),
-            examples: vec!["str.length(\"hello\") -> 5".to_string()],
+            examples: vec!["str.length(\"hello\")  // 5".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4306,7 +4321,7 @@ impl HelpSystem {
             syntax: "str.parse_int(s)".to_string(),
             parameters: vec![],
             return_type: "Result".to_string(),
-            examples: vec!["unwrap(str.parse_int(\"42\")) -> 42".to_string()],
+            examples: vec!["unwrap(str.parse_int(\"42\"))  // 42".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4316,7 +4331,7 @@ impl HelpSystem {
             syntax: "str.parse_float(s)".to_string(),
             parameters: vec![],
             return_type: "Result".to_string(),
-            examples: vec!["unwrap(str.parse_float(\"3.5\")) -> 3.5".to_string()],
+            examples: vec!["unwrap(str.parse_float(\"3.5\"))  // 3.5".to_string()],
             category: "String".to_string(),
             see_also: vec![],
         });
@@ -4329,7 +4344,7 @@ impl HelpSystem {
             syntax: "re.is_valid(pattern)".to_string(),
             parameters: vec![],
             return_type: "Bool".to_string(),
-            examples: vec!["re.is_valid(\"[a-z]+\") -> true".to_string()],
+            examples: vec!["re.is_valid(\"[a-z]+\")  // true".to_string()],
             category: "Regex".to_string(),
             see_also: vec![],
         });
@@ -4563,7 +4578,7 @@ impl HelpSystem {
             syntax: "col.last(list)".to_string(),
             parameters: vec![],
             return_type: "Any".to_string(),
-            examples: vec!["col.last([7,8,9]) -> 9".to_string()],
+            examples: vec!["col.last([7,8,9])  // 9".to_string()],
             category: "Collections".to_string(),
             see_also: vec![],
         });
@@ -4630,7 +4645,7 @@ impl HelpSystem {
             return_type: "Result<String, Error>".to_string(),
             examples: vec![
                 "fs.read_file(\"config.txt\")  // Ok(\"file contents\")".to_string(),
-                "match fs.read_file(\"data.json\") { Ok(content) => println(content); Err(e) => println(\"Error: \" + e) }".to_string(),
+                "match fs.read_file(\"data.json\") { Ok(content) => println(content), Err(e) => println(\"Error: \" + e) }".to_string(),
             ],
             category: "Filesystem".to_string(),
             see_also: vec!["fs.write_file".to_string(), "fs.append_file".to_string()],
@@ -4697,7 +4712,7 @@ impl HelpSystem {
             return_type: "Bool".to_string(),
             examples: vec![
                 "fs.exists(\"/home/user/file.txt\")  // true or false".to_string(),
-                "if fs.exists(\"config.json\") { println(\"Config found\") }".to_string(),
+                "if fs.exists(\"config.json\") => println(\"config found\") else => ()".to_string(),
             ],
             category: "Filesystem".to_string(),
             see_also: vec!["fs.is_file".to_string(), "fs.is_dir".to_string()],
@@ -4740,7 +4755,7 @@ impl HelpSystem {
             return_type: "Result<List<String>, Error>".to_string(),
             examples: vec![
                 "fs.list_dir(\".\")  // Ok([\"file1.txt\", \"dir1\", \"file2.py\"])".to_string(),
-                "match fs.list_dir(\"/tmp\") { Ok(files) => map(files, println); Err(e) => println(\"Error: \" + e) }".to_string(),
+                "match fs.list_dir(\"/tmp\") { Ok(files) => map(files, println), Err(e) => println(\"Error: \" + e) }".to_string(),
             ],
             category: "Filesystem".to_string(),
             see_also: vec!["fs.is_dir".to_string(), "fs.create_dir".to_string()],
@@ -4861,7 +4876,7 @@ impl HelpSystem {
             return_type: "Result<Int, Error>".to_string(),
             examples: vec![
                 "fs.file_size(\"document.pdf\")  // Ok(1048576) for 1MB file".to_string(),
-                "match fs.file_size(\"data.txt\") { Ok(size) => println(\"Size: \" + to_string(size) + \" bytes\"); Err(e) => println(\"Error: \" + e) }".to_string(),
+                "match fs.file_size(\"data.txt\") { Ok(size) => println(\"Size: \" + to_string(size) + \" bytes\"), Err(e) => println(\"Error: \" + e) }".to_string(),
             ],
             category: "Filesystem".to_string(),
             see_also: vec!["fs.file_info".to_string(), "fs.exists".to_string()],
@@ -4875,7 +4890,7 @@ impl HelpSystem {
             return_type: "Result<FileInfo, Error>".to_string(),
             examples: vec![
                 "fs.file_info(\"script.py\")  // Ok(FileInfo { size: 1024, is_file: true, is_dir: false, readonly: false })".to_string(),
-                "match fs.file_info(\".\") { Ok(info) => println(\"Directory size: \" + to_string(info.size)); Err(e) => println(\"Error: \" + e) }".to_string(),
+                "match fs.file_info(\".\") { Ok(info) => println(\"Directory size: \" + to_string(info.size)), Err(e) => println(\"Error: \" + e) }".to_string(),
             ],
             category: "Filesystem".to_string(),
             see_also: vec!["fs.file_size".to_string(), "fs.is_file".to_string(), "fs.is_dir".to_string()],
@@ -4893,7 +4908,7 @@ impl HelpSystem {
             return_type: "Result<HttpResponse, Error>".to_string(),
             examples: vec![
                 "http.get(\"https://api.github.com/users/octocat\")  // Ok(HttpResponse { status: 200, body: \"...\", success: true })".to_string(),
-                "match http.get(\"https://httpbin.org/get\") { Ok(response) => println(response.body); Err(e) => println(\"Error: \" + e) }".to_string(),
+                "match http.get(\"https://httpbin.org/get\") { Ok(response) => println(response.body), Err(e) => println(\"Error: \" + e) }".to_string(),
             ],
             category: "HTTP".to_string(),
             see_also: vec!["http.post".to_string(), "http.request".to_string()],
@@ -4977,12 +4992,12 @@ impl HelpSystem {
             syntax: "http.serve(port, handler)".to_string(),
             parameters: vec![
                 "port: Int - The port number to listen on".to_string(),
-                "handler: Function - Request handler function (request) -> response".to_string(),
+                "handler: Function - Request handler function (request)  // response".to_string(),
             ],
             return_type: "Result<Unit, Error>".to_string(),
             examples: vec![
                 "http.serve(8080, (req) => http.response(200, \"Hello World!\"))".to_string(),
-                "let handler = (request) => http.response(200, \"Welcome to Olang server!\")\\nhttp.serve(3000, handler)".to_string(),
+                "http.serve(3000, (request) => http.response(200, \"hello from olang\"))".to_string(),
             ],
             category: "HTTP".to_string(),
             see_also: vec!["http.response".to_string(), "http.response_with_headers".to_string()],
@@ -5020,8 +5035,8 @@ impl HelpSystem {
             ],
             return_type: "HttpResponse".to_string(),
             examples: vec![
-                "let headers = { \"Content-Type\": \"application/json\", \"Cache-Control\": \"no-cache\" }\\nhttp.response_with_headers(200, json_data, headers)".to_string(),
-                "http.response_with_headers(201, \"Created\", { \"Location\": \"/users/123\" })".to_string(),
+                "http.response_with_headers(200, body, #{ \"Content-Type\": \"application/json\" })".to_string(),
+                "http.response_with_headers(201, \"Created\", #{ \"Location\": \"/users/123\" })".to_string(),
             ],
             category: "HTTP".to_string(),
             see_also: vec!["http.response".to_string(), "http.serve".to_string()],
@@ -5036,7 +5051,7 @@ impl HelpSystem {
             return_type: "Result<UrlInfo, Error>".to_string(),
             examples: vec![
                 "http.parse_url(\"https://example.com:8080/path?query=value#fragment\")".to_string(),
-                "match http.parse_url(url) { Ok(info) => println(\"Host: \" + info.host); Err(e) => println(\"Invalid URL\") }".to_string(),
+                "match http.parse_url(url) { Ok(info) => println(\"Host: \" + info.host), Err(e) => println(\"Invalid URL\") }".to_string(),
             ],
             category: "HTTP".to_string(),
             see_also: vec!["http.encode_query".to_string(), "http.decode_query".to_string()],
@@ -5049,8 +5064,8 @@ impl HelpSystem {
             parameters: vec!["params: Struct - Key-value pairs to encode as query parameters".to_string()],
             return_type: "Result<String, Error>".to_string(),
             examples: vec![
-                "let params = { \"name\": \"John Doe\", \"age\": \"30\", \"city\": \"New York\" }\\nhttp.encode_query(params)  // Ok(\"name=John%20Doe&age=30&city=New%20York\")".to_string(),
-                "http.encode_query({ \"q\": \"hello world\", \"limit\": \"10\" })".to_string(),
+                "http.encode_query(Q { q: \"hello world\", limit: \"10\" })  // Ok(\"q=hello%20world&limit=10\")".to_string(),
+                "type Q = struct { q: String, limit: String }  // encode_query takes a struct".to_string(),
             ],
             category: "HTTP".to_string(),
             see_also: vec!["http.decode_query".to_string(), "http.parse_url".to_string()],
@@ -5064,7 +5079,7 @@ impl HelpSystem {
             return_type: "Map".to_string(),
             examples: vec![
                 "http.decode_query(\"name=John%20Doe&age=30&city=New%20York\")".to_string(),
-                "match http.decode_query(request.query) { Ok(params) => println(params.name); Err(e) => println(\"Invalid query\") }".to_string(),
+                "match http.decode_query(request.query) { Ok(params) => println(params.name), Err(e) => println(\"Invalid query\") }".to_string(),
             ],
             category: "HTTP".to_string(),
             see_also: vec!["http.encode_query".to_string(), "http.parse_url".to_string()],
@@ -5202,7 +5217,7 @@ impl HelpSystem {
             syntax: "heap.is_empty(h)".to_string(),
             parameters: vec!["h: Heap handle".to_string()],
             return_type: "Bool".to_string(),
-            examples: vec!["while !heap.is_empty(h) { ... }".to_string()],
+            examples: vec!["while !heap.is_empty(h) { h = heap.pop(h) }".to_string()],
             category: "Collections".to_string(),
             see_also: vec!["collections.heap.size".to_string()],
         });
@@ -5312,7 +5327,7 @@ impl HelpSystem {
             syntax: "deque.is_empty(q)".to_string(),
             parameters: vec!["q: Deque handle".to_string()],
             return_type: "Bool".to_string(),
-            examples: vec!["while !deque.is_empty(q) { ... }".to_string()],
+            examples: vec!["while !deque.is_empty(q) { q = deque.pop_front(q) }".to_string()],
             category: "Collections".to_string(),
             see_also: vec!["collections.deque.size".to_string()],
         });
@@ -6206,7 +6221,7 @@ impl HelpSystem {
             examples: vec![
                 "random.random()  // Returns 0.123456...".to_string(),
                 "let prob = random.random()  // Use for probability".to_string(),
-                "if random.random() < 0.5 => \"heads\" else \"tails\"".to_string(),
+                "if random.random() < 0.5 => \"heads\" else => \"tails\"".to_string(),
             ],
             category: "Random".to_string(),
             see_also: vec!["random.uniform".to_string(), "random.randbool".to_string()],
@@ -6256,7 +6271,7 @@ impl HelpSystem {
             return_type: "Boolean".to_string(),
             examples: vec![
                 "random.randbool()  // Returns true or false".to_string(),
-                "if random.randbool() => \"yes\" else \"no\"".to_string(),
+                "if random.randbool() => \"yes\" else => \"no\"".to_string(),
                 "let flip = random.randbool()  // Coin flip".to_string(),
             ],
             category: "Random".to_string(),
@@ -6998,7 +7013,7 @@ impl HelpSystem {
             examples: vec![
                 ":type 42                // Int".to_string(),
                 ":type [1, 2, 3]         // List[Int]".to_string(),
-                ":type (x) => x * 2      // Function: (Int) -> Int".to_string(),
+                ":type (x) => x * 2      // Function: (Int)  // Int".to_string(),
                 ":type Person { name: \"Alice\", age: 30 }  // Person".to_string(),
             ],
             category: "REPL".to_string(),
@@ -7150,7 +7165,7 @@ impl HelpSystem {
             examples: vec![
                 ":search list            // Find all list-related functions".to_string(),
                 ":search \"transform\"      // Find functions that transform data".to_string(),
-                ":search \"List[T] -> Int\" // Find functions with specific signature".to_string(),
+                ":search \"List[T]  // Int\" // Find functions with specific signature".to_string(),
             ],
             category: "REPL".to_string(),
             see_also: vec![":examples".to_string(), ":help list".to_string()],
@@ -7616,8 +7631,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             parameters: vec!["csv_string: String - CSV string with header row".to_string()],
             return_type: "Result<List<Object>, Error>".to_string(),
             examples: vec![
-                "csv.parse_with_headers(\"name,age\\nAlice,30\\nBob,25\")".to_string(),
-                "// Ok([{name: \"Alice\", age: \"30\"}, {name: \"Bob\", age: \"25\"}])".to_string(),
+                "csv.parse_with_headers(\"name,age\\nAlice,30\\nBob,25\")  // Ok([{name: \"Alice\", age: \"30\"}, {name: \"Bob\", age: \"25\"}])".to_string(),
             ],
             category: "CSV".to_string(),
             see_also: vec![
@@ -7650,9 +7664,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             ],
             return_type: "Result<String, Error>".to_string(),
             examples: vec![
-                "csv.stringify_with_headers([{name: \"Alice\", age: 30}], [\"name\", \"age\"])"
-                    .to_string(),
-                "// Ok(\"name,age\\nAlice,30\\n\")".to_string(),
+                "csv.stringify_with_headers([#{ \"name\": \"Alice\", \"age\": 30 }], [\"name\", \"age\"])  // Ok(\"name,age\\nAlice,30\\n\")".to_string(),
             ],
             category: "CSV".to_string(),
             see_also: vec![
@@ -7794,8 +7806,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             parameters: vec!["json_string: String - JSON string to format".to_string()],
             return_type: "Result<String, Error>".to_string(),
             examples: vec![
-                "json.prettify(\"{\\\"name\\\":\\\"John\\\",\\\"age\\\":30}\")".to_string(),
-                "// Returns formatted JSON with indentation".to_string(),
+                "json.prettify(\"{\\\"name\\\":\\\"John\\\",\\\"age\\\":30}\")  // Returns formatted JSON with indentation".to_string(),
             ],
             category: "JSON".to_string(),
             see_also: vec!["json.minify".to_string(), "json.stringify".to_string()],
@@ -7808,9 +7819,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             parameters: vec!["json_string: String - JSON string to minify".to_string()],
             return_type: "Result<String, Error>".to_string(),
             examples: vec![
-                "json.minify(\"{\\n  \\\"name\\\": \\\"John\\\",\\n  \\\"age\\\": 30\\n}\")"
-                    .to_string(),
-                "// Returns: \"{\\\"name\\\":\\\"John\\\",\\\"age\\\":30}\"".to_string(),
+                "json.minify(pretty_text)  // strips whitespace: {\\\"name\\\":\\\"John\\\"}".to_string(),
             ],
             category: "JSON".to_string(),
             see_also: vec!["json.prettify".to_string(), "json.validate".to_string()],
@@ -7924,8 +7933,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             ],
             return_type: "Result<String, Error>".to_string(),
             examples: vec![
-                "json.set(\"{\\\"name\\\": \\\"John\\\"}\", \"age\", 30)".to_string(),
-                "// Returns: \"{\\\"name\\\":\\\"John\\\",\\\"age\\\":30}\"".to_string(),
+                "json.set(\"{\\\"name\\\": \\\"John\\\"}\", \"age\", 30)  // Returns: \"{\\\"name\\\":\\\"John\\\",\\\"age\\\":30}\"".to_string(),
             ],
             category: "JSON".to_string(),
             see_also: vec!["json.get".to_string(), "json.remove".to_string()],
@@ -7941,9 +7949,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             ],
             return_type: "Result<String, Error>".to_string(),
             examples: vec![
-                "json.remove(\"{\\\"name\\\": \\\"John\\\", \\\"age\\\": 30}\", \"age\")"
-                    .to_string(),
-                "// Returns: \"{\\\"name\\\":\\\"John\\\"}\"".to_string(),
+                "json.remove(text, \"age\")  // the document without its age key".to_string(),
             ],
             category: "JSON".to_string(),
             see_also: vec!["json.set".to_string(), "json.has_key".to_string()],
@@ -8018,9 +8024,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             ],
             return_type: "Result<String, Error>".to_string(),
             examples: vec![
-                "json.merge(\"{\\\"a\\\": 1, \\\"b\\\": 2}\", \"{\\\"b\\\": 3, \\\"c\\\": 4}\")"
-                    .to_string(),
-                "// Returns: \"{\\\"a\\\":1,\\\"b\\\":3,\\\"c\\\":4}\"".to_string(),
+                "json.merge(base_text, overlay_text)  // overlay keys win: b becomes 3".to_string(),
             ],
             category: "JSON".to_string(),
             see_also: vec!["json.set".to_string(), "json.deep_clone".to_string()],
@@ -8033,8 +8037,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             parameters: vec!["json_string: String - JSON string to clone".to_string()],
             return_type: "Result<String, Error>".to_string(),
             examples: vec![
-                "json.deep_clone(\"{\\\"nested\\\": {\\\"value\\\": 42}}\")".to_string(),
-                "// Returns identical JSON string".to_string(),
+                "json.deep_clone(\"{\\\"nested\\\": {\\\"value\\\": 42}}\")  // Returns identical JSON string".to_string(),
             ],
             category: "JSON".to_string(),
             see_also: vec!["json.parse".to_string(), "json.stringify".to_string()],
@@ -8156,7 +8159,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             return_type: "Error".to_string(),
             examples: vec![
                 "testing.fail(\"This should never happen\")  // Err(\"Test failed: This should never happen\")".to_string(),
-                "if some_unexpected_condition { testing.fail(\"Unexpected condition occurred\") }".to_string(),
+                "if len(results) == 0 => testing.fail(\"no results produced\") else => ()".to_string(),
             ],
             category: "Testing".to_string(),
             see_also: vec!["testing.run_test".to_string()],
@@ -8172,7 +8175,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             ],
             return_type: "Result<String, Error>".to_string(),
             examples: vec![
-                "let my_test = () => { testing.assert_eq(2 + 2, 4) }\\ntesting.run_test(\"addition_test\", my_test)  // Ok(\"Test 'addition_test' passed\")".to_string(),
+                "testing.run_test(\"addition\", () => testing.assert_eq(2 + 2, 4))".to_string(),
                 "testing.run_test(\"failing_test\", () => testing.fail(\"oops\"))  // Err(\"Test failed: oops\")".to_string(),
             ],
             category: "Testing".to_string(),
@@ -8274,7 +8277,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             examples: vec![
                 "os.list_env()  // Ok({ PATH: \"/usr/bin\", HOME: \"/home/user\", ... })"
                     .to_string(),
-                "match os.list_env() { Ok(env) => println(env.HOME); Err(e) => println(e) }"
+                "match os.list_env() { Ok(env) => println(env.HOME), Err(e) => println(e) }"
                     .to_string(),
             ],
             category: "OS".to_string(),
@@ -8304,7 +8307,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             return_type: "Result<String, Error>".to_string(),
             examples: vec![
                 "os.hostname()  // Ok(\"my-computer.local\")".to_string(),
-                "match os.hostname() { Ok(name) => println(\"Running on \" + name); Err(e) => println(e) }".to_string(),
+                "match os.hostname() { Ok(name) => println(\"Running on \" + name), Err(e) => println(e) }".to_string(),
             ],
             category: "OS".to_string(),
             see_also: vec!["os.username".to_string(), "os.os_type".to_string()],
@@ -8332,7 +8335,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             return_type: "String".to_string(),
             examples: vec![
                 "os.os_type()  // Ok(\"linux\") or Ok(\"macos\") or Ok(\"windows\")".to_string(),
-                "if os.os_type() == Ok(\"windows\") { println(\"Running on Windows\") }"
+                "if os.os_type() == \"macos\" => \"mac\" else => \"other\"  // \"linux\", \"windows\", ..."
                     .to_string(),
             ],
             category: "OS".to_string(),
@@ -8361,7 +8364,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             return_type: "String".to_string(),
             examples: vec![
                 "os.family()  // Ok(\"unix\") or Ok(\"windows\")".to_string(),
-                "if os.family() == Ok(\"unix\") { println(\"Unix-like system\") }".to_string(),
+                "if os.family() == \"unix\" => \"/tmp\" else => \"C:/Temp\"".to_string(),
             ],
             category: "OS".to_string(),
             see_also: vec!["os.os_type".to_string(), "os.arch".to_string()],
@@ -8390,7 +8393,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             return_type: "[String]".to_string(),
             examples: vec![
                 "os.args()  // Ok([\"program\", \"arg1\", \"arg2\"])".to_string(),
-                "match os.args() { Ok(args) => map(args, println); Err(e) => println(e) }"
+                "match os.args() { Ok(args) => map(args, println), Err(e) => println(e) }"
                     .to_string(),
             ],
             category: "OS".to_string(),
@@ -8497,7 +8500,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             examples: vec![
                 "os.exit(0)  // Exit successfully".to_string(),
                 "os.exit(1)  // Exit with error code 1".to_string(),
-                "if error_occurred { os.exit(1) }".to_string(),
+                "if len(os.args()) < 2 => os.exit(1) else => ()".to_string(),
             ],
             category: "OS".to_string(),
             see_also: vec!["testing.fail".to_string()],
@@ -8630,7 +8633,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             return_type: "Result<Bool, Error>".to_string(),
             examples: vec![
                 "crypto.verify_password(\"mypassword\", \"$2b$12$...\")  // Ok(true) or Ok(false)".to_string(),
-                "if crypto.verify_password(input_password, stored_hash) == Ok(true) { println(\"Login successful\") }".to_string(),
+                "if crypto.verify_password(entered, stored_hash) == Ok(true) => println(\"welcome\") else => println(\"denied\")".to_string(),
             ],
             category: "Crypto".to_string(),
             see_also: vec!["crypto.hash_password".to_string(), "crypto.secure_compare".to_string()],
@@ -8913,9 +8916,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             ],
             return_type: "Result<String, Error>".to_string(),
             examples: vec![
-                "crypto.create_certificate_signing_request(\"example.com\", private_key)"
-                    .to_string(),
-                "// Returns PEM-formatted CSR".to_string(),
+                "crypto.create_certificate_signing_request(\"example.com\", private_key)  // Ok of a PEM-formatted CSR".to_string(),
             ],
             category: "Crypto".to_string(),
             see_also: vec!["crypto.generate_key_pair".to_string()],
@@ -9122,7 +9123,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             syntax: "unwrap_or_else(result, function)".to_string(),
             parameters: vec![
                 "result: Result<T, E> - The Result value to unwrap".to_string(),
-                "function: (E) -> T - Function to call with the error to compute default".to_string(),
+                "function: (E)  // T - Function to call with the error to compute default".to_string(),
             ],
             return_type: "T".to_string(),
             examples: vec![
@@ -9173,7 +9174,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             syntax: "result_map(result, function)".to_string(),
             parameters: vec![
                 "result: Result<T, E> - The Result value to transform".to_string(),
-                "function: (T) -> U - Function to apply to the Ok value".to_string(),
+                "function: (T)  // U - Function to apply to the Ok value".to_string(),
             ],
             return_type: "Result<U, E>".to_string(),
             examples: vec![
@@ -9192,7 +9193,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             syntax: "result_map_err(result, function)".to_string(),
             parameters: vec![
                 "result: Result<T, E> - The Result value to transform".to_string(),
-                "function: (E) -> F - Function to apply to the Err value".to_string(),
+                "function: (E)  // F - Function to apply to the Err value".to_string(),
             ],
             return_type: "Result<T, F>".to_string(),
             examples: vec![
@@ -9211,7 +9212,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             syntax: "result_and_then(result, function)".to_string(),
             parameters: vec![
                 "result: Result<T, E> - The Result value to process".to_string(),
-                "function: (T) -> Result<U, E> - Function that returns another Result".to_string(),
+                "function: (T)  // Result<U, E> - Function that returns another Result".to_string(),
             ],
             return_type: "Result<U, E>".to_string(),
             examples: vec![
@@ -9231,7 +9232,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             syntax: "result_or_else(result, function)".to_string(),
             parameters: vec![
                 "result: Result<T, E> - The Result value to process".to_string(),
-                "function: (E) -> Result<T, F> - Function to handle errors".to_string(),
+                "function: (E)  // Result<T, F> - Function to handle errors".to_string(),
             ],
             return_type: "Result<T, F>".to_string(),
             examples: vec![
@@ -9249,32 +9250,30 @@ For function-specific syntax, use: {}:help <function_name>{}",
         // Syntax Errors
         self.add_function(FunctionDoc {
             name: "error.syntax".to_string(),
-            description: "Help with common syntax errors and fixes".to_string(),
+            description: "The parse errors most new users hit, with the fix for each. Unclosed brackets and quotes: every (, [, {, and \" needs its closing pair — the error points at where the parser gave up, which is usually right after the real problem. Functions always take `=`: `fn name(params) = expression`, or `fn name(params) = { ... }` when the body is a block. Comparison is ==; a single = appears only in `let` and assignment. Conditionals always pair `=>` with each branch: `if c => a else => b`".to_string(),
             syntax: "help error.syntax".to_string(),
-            parameters: vec!["No parameters - displays syntax error help".to_string()],
+            parameters: vec![],
             return_type: "Help Display".to_string(),
             examples: vec![
-                "Unclosed brackets: Check that all (, [, { have matching closing brackets".to_string(),
-                "Unclosed strings: Make sure all \" quotes are properly closed".to_string(),
-                "Invalid function syntax: Use fn name(params) = expression or fn name(params) { block }".to_string(),
-                "Missing operators: Use == for comparison, = only in let declarations".to_string(),
+                r#"fn double(x) = x * 2  // expression body"#.to_string(),
+                r#"fn classify(n) = { if n > 0 => "pos" else => "non-pos" }  // block body"#.to_string(),
+                r#"let same = 1 == 1  // == compares; = only binds"#.to_string(),
             ],
             category: "Errors".to_string(),
-            see_also: vec!["error.types".to_string(), "error.runtime".to_string()],
+            see_also: vec!["error.types".to_string(), "error.runtime".to_string(), ":help syntax".to_string()],
         });
 
         // Type Errors
         self.add_function(FunctionDoc {
             name: "error.types".to_string(),
-            description: "Help with type errors and type conversion".to_string(),
+            description: "Type errors and how to fix them. olang never converts types silently between strings and numbers: `to_string(7) + \"!\"` works, `7 + \"!\"` is a type error — convert explicitly with to_int, to_float, or to_string. Int and Float mix in arithmetic (3 + 0.5 is 3.5). A failed conversion is an error at the call, so validate text first (str.is_numeric) or match on functions that return Result. Division by zero is a runtime error — guard the denominator".to_string(),
             syntax: "help error.types".to_string(),
-            parameters: vec!["No parameters - displays type error help".to_string()],
+            parameters: vec![],
             return_type: "Help Display".to_string(),
             examples: vec![
-                "Type mismatch: Use to_int(), to_float(), to_string() for conversion".to_string(),
-                "Division by zero: Check denominators before division operations".to_string(),
-                "Invalid operations: Ensure operands are compatible types (number + number, string + string)".to_string(),
-                "Pattern matching: Use Ok(value) and Err(error) for Result types".to_string(),
+                r#"to_string(7) + " wonders"  // "7 wonders""#.to_string(),
+                r#"to_int("42") + 1  // 43 — to_int("x") would be a type error"#.to_string(),
+                r#"if n != 0 => total / n else => 0  // guard the denominator"#.to_string(),
             ],
             category: "Errors".to_string(),
             see_also: vec!["to_int".to_string(), "to_float".to_string(), "to_string".to_string()],
@@ -9283,79 +9282,61 @@ For function-specific syntax, use: {}:help <function_name>{}",
         // Runtime Errors
         self.add_function(FunctionDoc {
             name: "error.runtime".to_string(),
-            description: "Help with runtime errors and debugging".to_string(),
+            description: "Errors that surface while the program runs. Undefined variable: the name was never bound in this scope — `:env` lists what is. Pattern match failed: none of the match arms accepted the value; add a catch-all arm (`_ => ...`) or cover the missing case. Arity mismatch: the call passed the wrong number of arguments — `:help <fn>` shows the signature. break and continue only mean something inside a for or while loop".to_string(),
             syntax: "help error.runtime".to_string(),
-            parameters: vec!["No parameters - displays runtime error help".to_string()],
+            parameters: vec![],
             return_type: "Help Display".to_string(),
             examples: vec![
-                "Undefined variable: Use :env to see available variables".to_string(),
-                "Break/continue outside loop: These can only be used inside for/while loops"
-                    .to_string(),
-                "Pattern match failed: Ensure patterns match the value structure".to_string(),
-                "Function arity mismatch: Check function signature and argument count".to_string(),
+                r#"match to_int("7") { n => n }  // a catch-all arm always matches"#.to_string(),
+                r#"for x in [1, 2, 3] { if x == 2 => continue else => println(x) }"#.to_string(),
             ],
             category: "Errors".to_string(),
-            see_also: vec![
-                ":env".to_string(),
-                ":debug".to_string(),
-                ":type".to_string(),
-            ],
+            see_also: vec![":env".to_string(), ":debug".to_string(), ":type".to_string()],
         });
 
         // Common Fixes
         self.add_function(FunctionDoc {
             name: "error.fixes".to_string(),
-            description: "Common error fixes and best practices".to_string(),
+            description: "The debugging moves that resolve most errors. Read the error's line and column first — the caret usually sits just after the real mistake. `:type <expr>` shows what type an expression actually has when a type error surprises you. `:inspect <variable>` prints a value's structure. `:debug on` adds detail to error reports. And the REPL itself is the best probe: paste the smallest piece of the failing expression and grow it until the error appears".to_string(),
             syntax: "help error.fixes".to_string(),
-            parameters: vec!["No parameters - displays common fixes".to_string()],
+            parameters: vec![],
             return_type: "Help Display".to_string(),
             examples: vec![
-                "Bracket matching: Use an editor with syntax highlighting".to_string(),
-                "Type checking: Use :type <expression> to check types".to_string(),
-                "Variable inspection: Use :inspect <variable> to examine values".to_string(),
-                "Debug mode: Use :debug on to get more detailed error information".to_string(),
+                r#"len([1, 2, 3]) == 3  // probe small pieces in the REPL"#.to_string(),
+                r#"typeof(3.5)  // "Float" — when a type error surprises you"#.to_string(),
             ],
             category: "Errors".to_string(),
-            see_also: vec![
-                ":type".to_string(),
-                ":inspect".to_string(),
-                ":debug".to_string(),
-            ],
+            see_also: vec![":type".to_string(), ":inspect".to_string(), ":debug".to_string()],
         });
 
         // Language Differences
         self.add_function(FunctionDoc {
             name: "error.differences".to_string(),
-            description: "Common mistakes when coming from other languages".to_string(),
+            description: "Habits from other languages that trip people up here. From JavaScript/Python: printing is println(), string concatenation needs explicit to_string() for numbers, and blocks use braces, never colons or significant whitespace. From C/Java: no semicolons between statements (newlines separate them), and = never compares. From Rust: same fn body split — `= expr` for expressions, `{ }` for blocks — but no ownership to manage; values are immutable unless declared `let mut`".to_string(),
             syntax: "help error.differences".to_string(),
-            parameters: vec!["No parameters - displays language difference help".to_string()],
+            parameters: vec![],
             return_type: "Help Display".to_string(),
             examples: vec![
-                "JavaScript: Use println() instead of console.log()".to_string(),
-                "Python: Use println() instead of print(), no colons for blocks".to_string(),
-                "C/Java: No semicolons needed, use = only in let declarations".to_string(),
-                "Rust: Functions use = for expression bodies, {} for block bodies".to_string(),
+                r#"println("total: " + to_string(42))  // explicit conversion, not coercion"#.to_string(),
+                r#"let mut count = 0  // mutation is opt-in"#.to_string(),
             ],
             category: "Errors".to_string(),
-            see_also: vec!["println".to_string(), "error.syntax".to_string()],
+            see_also: vec!["error.syntax".to_string(), ":help syntax".to_string()],
         });
 
         // Variable Scope
         self.add_function(FunctionDoc {
             name: "error.scope".to_string(),
-            description: "Help with variable scope and binding errors".to_string(),
+            description: "Where names live. A variable exists from its `let` to the end of the enclosing block; using it earlier or outside is \"Variable not in scope\". Inner blocks may shadow an outer name with a fresh `let` — the outer binding is untouched and returns when the block ends. Function parameters are visible only inside the function body. Pattern variables (in match arms and destructuring lets) are new bindings scoped to their arm or statement".to_string(),
             syntax: "help error.scope".to_string(),
-            parameters: vec!["No parameters - displays scope help".to_string()],
+            parameters: vec![],
             return_type: "Help Display".to_string(),
             examples: vec![
-                "Variable not in scope: Define variables with let before using them".to_string(),
-                "Shadowing: Inner scopes can redefine variables from outer scopes".to_string(),
-                "Function scope: Parameters are only available inside the function body"
-                    .to_string(),
-                "Pattern matching scope: Variables in patterns create new bindings".to_string(),
+                r#"let x = 1; { let x = 10; println(x) }  // 10 inside, x is 1 again after"#.to_string(),
+                r#"match Ok(5) { Ok(n) => n * 2, Err(e) => 0 }  // n and e live only in their arms"#.to_string(),
             ],
             category: "Errors".to_string(),
-            see_also: vec!["let".to_string(), ":env".to_string()],
+            see_also: vec!["error.runtime".to_string(), ":env".to_string()],
         });
     }
 
