@@ -463,6 +463,33 @@ their own tier and JIT.
 `tests/jit_test.rs` holds the parity suite: every guard edge runs tiered
 and interpreted and must agree byte-for-byte.
 
+## Compile-time knowledge
+
+Two things the compiler knows for the whole run, exploited by default.
+
+**Capabilities.** Under a static manifest (`--deny`, or a
+`[capabilities]` block), the grant is fixed and attenuates by each
+function's provenance — which every compiled function carries. So
+`caps.allowed("net")` with a literal name compiles to a Boolean
+constant, the branch it guards folds to a plain jump, and an
+unreachable-code sweep retires the side that can never run. The
+practical consequence inverts the usual sandbox trade: the degradation
+branch a program writes for the denied case vanishes from the compiled
+function, so its calls stop counting against JIT qualification of the
+code that does run — sandboxed code gets faster, not slower. Gated
+builtin calls the manifest provably grants also skip the runtime
+gate's per-call table walk; denied calls keep the full gate, whose
+error message is the point, and `--trace-caps` recording is untouched.
+
+**Warm start.** A finished file run records which named functions ran
+native, on which scalar kinds, and how often, keyed by a hash of the
+source (`~/.olang/warm/`). The next run of byte-identical source
+compiles and specializes those functions at declaration time instead
+of at first call. Profiles are hints: the tier's qualification and
+specialization run exactly as they would have, just earlier, so a
+stale or corrupted profile can cost a wasted attempt and nothing else.
+`OLANG_WARM=0` disables it for measurement.
+
 ## Builtins
 
 The VM mostly does not reimplement builtins — it calls the interpreter's

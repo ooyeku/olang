@@ -21,7 +21,8 @@ pub mod jit; // Baseline JIT: pure-integer hot functions to native code
 #[cfg(feature = "native")]
 pub mod osr; // On-stack replacement: hot loop regions to native, mid-frame
 pub mod tier; // Hot-function promotion to the bytecode tier
-pub mod value; // Reference-counted runtime values
+pub mod value;
+pub mod warm; // Warm start: cross-run tier profiles // Reference-counted runtime values
 
 pub use value::OvmValue;
 

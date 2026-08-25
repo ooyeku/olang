@@ -349,6 +349,9 @@ enum Slot {
 pub struct JitCache {
     module: Option<JITModule>,
     table: Vec<Option<Slot>>,
+    /// Native calls per function id — the warm-start profile's evidence
+    /// that a specialization is worth replaying next run.
+    per_fn_calls: Vec<u64>,
     /// Builtin names shadowed by a user definition. Compiled code that
     /// baked one of these natives is demoted the moment the shadow
     /// appears (see note_shadow); specialization refuses them up front.
@@ -1157,6 +1160,7 @@ impl JitCache {
             scratch: ScratchCtx::default(),
             compiled: 0,
             native_calls: 0,
+            per_fn_calls: Vec::new(),
         }
     }
 
@@ -1416,6 +1420,43 @@ impl JitCache {
         }
     }
 
+    /// The warm-start view of one compiled function: its specialization's
+    /// parameter kinds when Ready, and how many native calls it served.
+    pub fn warm_view(&self, func_id: FunctionId) -> Option<(Vec<Kind>, u64)> {
+        let idx = func_id.index();
+        match self.table.get(idx)?.as_ref()? {
+            Slot::Ready(j) => Some((
+                j.param_kinds.clone(),
+                self.per_fn_calls.get(idx).copied().unwrap_or(0),
+            )),
+            _ => None,
+        }
+    }
+
+    /// Specialize `func_id` now on the given kinds — the warm-start
+    /// replay of what a previous run's first call did lazily. Refusals
+    /// are cached exactly as a live call's would be; a wrong hint costs
+    /// one attempt and changes nothing.
+    pub fn warm_specialize(
+        &mut self,
+        func_id: FunctionId,
+        bytecode: &Arc<CompiledBytecode>,
+        kinds: &[Kind],
+        lookup: &BytecodeLookup,
+    ) {
+        let idx = func_id.index();
+        if !matches!(self.table.get(idx), Some(Some(Slot::Pending))) {
+            return;
+        }
+        let shapes = HashMap::new();
+        if self
+            .specialize_group(func_id, bytecode, kinds, lookup, &shapes)
+            .is_none()
+        {
+            self.table[idx] = Some(Slot::Refused);
+        }
+    }
+
     pub fn is_pending(&self, func_id: FunctionId) -> bool {
         matches!(self.table.get(func_id.index()), Some(Some(Slot::Pending)))
     }
@@ -1558,6 +1599,10 @@ impl JitCache {
         ctx.clear();
         if result.is_some() {
             self.native_calls += 1;
+            if self.per_fn_calls.len() <= idx {
+                self.per_fn_calls.resize(idx + 1, 0);
+            }
+            self.per_fn_calls[idx] += 1;
         }
         result
     }

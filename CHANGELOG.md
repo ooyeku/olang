@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Warm start, on by default.** A finished file run records what its
+  tier learned — which named functions ran native, on which scalar
+  argument kinds, how often — into a small profile keyed by a hash of
+  the program's source (`~/.olang/warm/`). The next run of
+  byte-identical source replays it: proven-hot functions compile and
+  specialize at declaration time instead of at first call. Profiles
+  are hints, never authority — a stale, wrong, or corrupted profile
+  costs at most one refused compile attempt and cannot change a
+  result, and any source edit changes the key. The current effect is
+  honest single-digit milliseconds of first-call latency (Cranelift is
+  fast on modern hardware); the per-function native-call counts the
+  profile now carries are the foundation for future cross-run
+  decisions. `OLANG_WARM=0` disables both sides for A/B;
+  `OLANG_WARM_DIR` relocates the store.
+
 - **Capability-specialized compilation, on by default.** Under a static
   manifest (`--deny`, or an `[capabilities]` block), the bytecode
   compiler knows the whole run's grant and each function's provenance —

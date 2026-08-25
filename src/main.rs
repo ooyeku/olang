@@ -2240,6 +2240,13 @@ fn execute_program(
     if !no_ovm {
         let threshold = ovm_tier.unwrap_or(1);
         interpreter.enable_bytecode_tier(threshold, verbose);
+        // Warm start: replay what a previous run of this exact source
+        // learned — proven-hot functions compile and specialize at
+        // declaration instead of at first call. Hints only; the tier's
+        // own qualification runs unchanged.
+        if let Some(profile) = olang::ovm::warm::load(source) {
+            interpreter.set_warm_profile(profile);
+        }
     }
 
     if let Some(depth) = max_depth {
@@ -2362,6 +2369,8 @@ fn execute_program(
                 logger.info("main", &format!("Result: {:?}", result));
             }
             report_caps(&mut interpreter);
+            // Leave the warm profile for the next run of this source.
+            olang::ovm::warm::save(source, &interpreter.collect_warm_profile());
             if ovm_stats {
                 match interpreter.bytecode_tier_stats() {
                     Some(tier) => println!(

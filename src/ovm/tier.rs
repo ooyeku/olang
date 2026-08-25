@@ -112,6 +112,12 @@ pub struct TierStats {
 pub struct BytecodeTier {
     vm: BytecodeVm,
     threshold: u32,
+    /// Warm-start hints from a previous run of this source: function
+    /// name → the scalar kind names its specialization served (empty =
+    /// compile eagerly, specialize on first call as usual). Kept as
+    /// strings so the tier builds without the native JIT; parsed at
+    /// apply time. Applied once per name, when the declaration is noted.
+    warm_hints: HashMap<String, Vec<String>>,
     /// The trace of the most recent Ran(Err(..)) outcome: the innermost
     /// located statement's span, the VM call frames (innermost-first),
     /// and a parameter-check frame that survived without a span. The
@@ -167,6 +173,7 @@ impl BytecodeTier {
             last_error_trace: (None, Vec::new(), None),
             vm: BytecodeVm::new(),
             threshold,
+            warm_hints: HashMap::new(),
             call_counts: HashMap::new(),
             compiled: HashMap::new(),
             rejected: HashSet::new(),
@@ -267,6 +274,66 @@ impl BytecodeTier {
     }
 
     /// Record a user function declaration so calls to it can be compiled.
+    /// Install a previous run's warm profile. Only entries whose native
+    /// call count proved the work pays are kept, and kinds survive only
+    /// when every one is a process-independent scalar.
+    pub fn set_warm_profile(&mut self, profile: &crate::ovm::warm::WarmProfile) {
+        for f in &profile.functions {
+            if f.native_calls < crate::ovm::warm::WARM_MIN_CALLS {
+                continue;
+            }
+            let all_scalar = !f.kinds.is_empty()
+                && f.kinds
+                    .iter()
+                    .all(|k| matches!(k.as_str(), "Int" | "Float" | "Bool"));
+            self.warm_hints.insert(
+                f.name.clone(),
+                if all_scalar {
+                    f.kinds.clone()
+                } else {
+                    Vec::new()
+                },
+            );
+        }
+    }
+
+    /// What this run learned, for the next one: every name-compiled
+    /// function that served native calls, with its specialization kinds.
+    pub fn collect_warm_profile(&self) -> crate::ovm::warm::WarmProfile {
+        #[cfg(not(feature = "native"))]
+        {
+            crate::ovm::warm::WarmProfile::default()
+        }
+        #[cfg(feature = "native")]
+        {
+            use crate::ovm::jit::Kind;
+            let mut functions = Vec::new();
+            for (name, (func_id, _)) in &self.compiled {
+                let Some((kinds, native_calls)) = self.vm.jit_warm_view(*func_id) else {
+                    continue;
+                };
+                if native_calls == 0 {
+                    continue;
+                }
+                let kind_names: Vec<String> = kinds
+                    .iter()
+                    .map(|k| match k {
+                        Kind::Int => "Int".to_string(),
+                        Kind::Float => "Float".to_string(),
+                        Kind::Bool => "Bool".to_string(),
+                        other => format!("{:?}", other),
+                    })
+                    .collect();
+                functions.push(crate::ovm::warm::WarmFn {
+                    name: name.clone(),
+                    kinds: kind_names,
+                    native_calls,
+                });
+            }
+            crate::ovm::warm::WarmProfile { functions }
+        }
+    }
+
     pub fn note_function(&mut self, name: String, func: Function) {
         // Already known to be ambiguous: a second module's same-named function
         // stays off the tier for the rest of the run.
@@ -297,6 +364,36 @@ impl BytecodeTier {
         // A user definition shadows any builtin of the same name
         self.vm.shadow_builtin(&name);
         self.vm.note_function_value(name.clone(), func.clone());
+
+        // Warm start: a previous run of this exact source proved this
+        // function hot, so do at declaration time what that run did at
+        // first call — compile it, and when the recorded kinds are
+        // scalars, specialize the native code too. A hint that no
+        // longer compiles costs one refused attempt, nothing more.
+        if let Some(kind_names) = self.warm_hints.remove(&name)
+            && !self.compiled.contains_key(&name)
+            && let Some(func_id) = self.compile(&name, &func)
+            && !kind_names.is_empty()
+        {
+            #[cfg(feature = "native")]
+            {
+                let kinds: Vec<crate::ovm::jit::Kind> = kind_names
+                    .iter()
+                    .filter_map(|k| match k.as_str() {
+                        "Int" => Some(crate::ovm::jit::Kind::Int),
+                        "Float" => Some(crate::ovm::jit::Kind::Float),
+                        "Bool" => Some(crate::ovm::jit::Kind::Bool),
+                        _ => None,
+                    })
+                    .collect();
+                if kinds.len() == kind_names.len() {
+                    self.vm.warm_specialize(func_id, &kinds);
+                }
+            }
+            #[cfg(not(feature = "native"))]
+            let _ = func_id;
+        }
+
         self.known_functions.insert(name, func);
     }
 

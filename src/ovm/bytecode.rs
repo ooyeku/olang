@@ -1433,6 +1433,40 @@ impl BytecodeVm {
         self.call_depth = base;
     }
 
+    /// Warm start: the JIT view the tier persists (see ovm::warm).
+    #[cfg(feature = "native")]
+    pub(crate) fn jit_warm_view(
+        &self,
+        func_id: FunctionId,
+    ) -> Option<(Vec<crate::ovm::jit::Kind>, u64)> {
+        self.jit.warm_view(func_id)
+    }
+
+    #[cfg(not(feature = "native"))]
+    pub(crate) fn jit_warm_view(&self, _func_id: FunctionId) -> Option<(Vec<()>, u64)> {
+        None
+    }
+
+    /// Warm start: specialize a just-compiled function on the kinds a
+    /// previous run recorded, ahead of its first call.
+    #[cfg(feature = "native")]
+    pub(crate) fn warm_specialize(&mut self, func_id: FunctionId, kinds: &[crate::ovm::jit::Kind]) {
+        let Some(bytecode) = self.get_bytecode(func_id).ok() else {
+            return;
+        };
+        let hot = &self.bytecode_hot;
+        let cache = &self.bytecode_cache;
+        let lookup = |id: FunctionId| -> Option<Arc<CompiledBytecode>> {
+            hot.get(id.index())
+                .and_then(|s| s.clone())
+                .or_else(|| cache.read().ok().and_then(|c| c.get(&id).cloned()))
+        };
+        self.jit.warm_specialize(func_id, &bytecode, kinds, &lookup);
+    }
+
+    #[cfg(not(feature = "native"))]
+    pub(crate) fn warm_specialize(&mut self, _func_id: FunctionId, _kinds: &[()]) {}
+
     pub fn set_capabilities(&mut self, caps: Option<Arc<crate::caps::CapTable>>) {
         self.caps = caps.clone();
         // The compiler folds capability queries and pre-grants gated
@@ -9428,7 +9462,7 @@ mod tests {
         ))));
         // sanity: the delegation path still works for a representable result
         assert!(
-            vm.execute_builtin_call("to_string", &[OvmValue::new_integer(7)])
+            vm.execute_builtin_call("to_string", &[OvmValue::new_integer(7)], false)
                 .is_ok()
         );
     }

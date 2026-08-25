@@ -255,6 +255,8 @@ pub struct Interpreter {
     /// One-shot pre-grant from the bytecode compiler (see
     /// `set_cap_pregranted`); consumed by the next `capability_denial`.
     cap_pregranted: bool,
+    /// A previous run's warm profile, held until a tier exists to take it.
+    warm_profile: Option<crate::ovm::warm::WarmProfile>,
 
     /// Declared struct types: name -> field names. Construction of a
     /// declared struct validates its field set; an undeclared struct-literal
@@ -327,6 +329,7 @@ impl Interpreter {
             caps_trace: None,
             caps_path_cache: HashMap::new(),
             cap_pregranted: false,
+            warm_profile: None,
             timeline: None,
             struct_defs: HashMap::new(),
             struct_field_checks: HashMap::new(),
@@ -1771,6 +1774,28 @@ impl Interpreter {
             tier.set_caps_trace(trace);
         }
         self.bytecode_tier = Some(Box::new(tier));
+        if let Some(profile) = self.warm_profile.clone()
+            && let Some(t) = self.bytecode_tier.as_mut()
+        {
+            t.set_warm_profile(&profile);
+        }
+    }
+
+    /// Install a previous run's warm profile (see `ovm::warm`); applied
+    /// to the tier now if it exists, or when one is enabled.
+    pub fn set_warm_profile(&mut self, profile: crate::ovm::warm::WarmProfile) {
+        if let Some(t) = self.bytecode_tier.as_mut() {
+            t.set_warm_profile(&profile);
+        }
+        self.warm_profile = Some(profile);
+    }
+
+    /// What this run's tier learned, for the next run of this source.
+    pub fn collect_warm_profile(&self) -> crate::ovm::warm::WarmProfile {
+        self.bytecode_tier
+            .as_ref()
+            .map(|t| t.collect_warm_profile())
+            .unwrap_or_default()
     }
 
     pub fn bytecode_tier_stats(&self) -> Option<crate::ovm::tier::TierStats> {
@@ -2615,6 +2640,7 @@ impl Interpreter {
             caps_trace: self.caps_trace.clone(),
             caps_path_cache: HashMap::new(),
             cap_pregranted: false,
+            warm_profile: None,
             // The timeline does not span worker threads (v1 records a
             // single thread of effects); workers run live. That silently
             // breaks the "clean replay is proof" property, so crossing a
