@@ -1436,6 +1436,14 @@ impl BytecodeVm {
         self.call_depth = base;
     }
 
+    /// Every name the VM can call by id — both compilation channels:
+    /// tier promotion and a lambda's dependency resolution. The tier's
+    /// own `compiled` map sees only the first, so the tier report reads
+    /// this registry instead.
+    pub(crate) fn registered_functions(&self) -> impl Iterator<Item = (&String, &FunctionId)> {
+        self.function_registry.iter()
+    }
+
     /// Warm start: the JIT view the tier persists (see ovm::warm).
     #[cfg(feature = "native")]
     pub(crate) fn jit_warm_view(

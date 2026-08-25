@@ -490,6 +490,19 @@ specialization run exactly as they would have, just earlier, so a
 stale or corrupted profile can cost a wasted attempt and nothing else.
 `OLANG_WARM=0` disables it for measurement.
 
+**Tier counters.** `OLANG_TIER_STATS=1` prints the run's tier counters
+to stderr after a successful `olang run`: one aggregate line
+(`tier-stats: promoted=… rejected=… bytecode_calls=… instructions=…
+native_calls=…`) and one `tier-fn:` line per VM-callable function with
+the native calls its JIT entry served and its specialization kinds.
+The counters are deterministic — call counts, not samples — which is
+what makes them assertable: `tests/tier_floor_test.rs` runs
+representative hot shapes under this flag and fails if they stop
+reaching the compiled tiers, so a regression in tier *engagement*
+turns a test red instead of surfacing later as unexplained slowness. A
+function listed with `native_calls=0` is the interesting row: compiled,
+but every call declined to native.
+
 ## Builtins
 
 The VM mostly does not reimplement builtins — it calls the interpreter's

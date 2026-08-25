@@ -1802,6 +1802,15 @@ impl Interpreter {
         self.bytecode_tier.as_ref().map(|t| t.stats())
     }
 
+    /// The per-function tier report (`OLANG_TIER_STATS=1`): every
+    /// VM-callable name with its native call count and kinds.
+    pub fn tier_report(&self) -> Vec<(String, u64, Vec<String>)> {
+        self.bytecode_tier
+            .as_ref()
+            .map(|t| t.tier_report())
+            .unwrap_or_default()
+    }
+
     /// Seed the declaration-level state a *bridge* interpreter needs to run
     /// user code faithfully. The bytecode VM bridges builtins it cannot run
     /// natively (e.g. `fold`) back to a throwaway interpreter; when such a

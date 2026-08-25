@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Tier engagement is now a tested fact.** The differential suites pin
+  that every tier computes the same answer; nothing pinned that the
+  fast tiers *engage* — which is how tail-call elimination kept every
+  self-tail-recursive function off native for weeks with no test red.
+  `OLANG_TIER_STATS=1` now prints deterministic tier counters to
+  stderr after a run: one aggregate line (promoted, rejected, bytecode
+  calls, VM instructions, native calls) and one line per VM-callable
+  function with the native calls its JIT entry served and its
+  specialization kinds — both compilation channels, so a function with
+  `native_calls=0` names exactly what the JIT declined.
+  `tests/tier_floor_test.rs` runs four representative hot shapes under
+  the flag and asserts floors on those counters: direct tail recursion
+  (plain and nested-branch), a lambda calling a named recursive
+  function through `map`, a map·filter·fold pipeline, and a
+  once-called million-iteration loop. Reintroducing the TCE bug turns
+  two of them red with the count that names the failure; the suite
+  runs from cold (warm start disabled) in under a second.
+
 ### Changed
 
 - **`meta.eval` at runtime is real evaluation.** The expansion-time

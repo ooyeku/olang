@@ -338,6 +338,42 @@ impl BytecodeTier {
         }
     }
 
+    /// The per-function tier report behind `OLANG_TIER_STATS=1`: every
+    /// name the VM can call, with the native calls its JIT entry served
+    /// and its specialization kinds. Unlike the warm profile this is
+    /// unfiltered — a compiled function with zero native calls is the
+    /// interesting row, because it names exactly what the JIT declined.
+    /// Sorted by name so runs of the same program diff cleanly.
+    pub fn tier_report(&self) -> Vec<(String, u64, Vec<String>)> {
+        #[cfg(not(feature = "native"))]
+        {
+            Vec::new()
+        }
+        #[cfg(feature = "native")]
+        {
+            use crate::ovm::jit::Kind;
+            let mut rows: Vec<(String, u64, Vec<String>)> = self
+                .vm
+                .registered_functions()
+                .map(|(name, func_id)| {
+                    let (kinds, native_calls) = self.vm.jit_warm_view(*func_id).unwrap_or_default();
+                    let kind_names = kinds
+                        .iter()
+                        .map(|k| match k {
+                            Kind::Int => "Int".to_string(),
+                            Kind::Float => "Float".to_string(),
+                            Kind::Bool => "Bool".to_string(),
+                            other => format!("{:?}", other),
+                        })
+                        .collect();
+                    (name.clone(), native_calls, kind_names)
+                })
+                .collect();
+            rows.sort();
+            rows
+        }
+    }
+
     pub fn note_function(&mut self, name: String, func: Function) {
         // Already known to be ambiguous: a second module's same-named function
         // stays off the tier for the rest of the run.

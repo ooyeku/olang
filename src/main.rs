@@ -2371,6 +2371,31 @@ fn execute_program(
             report_caps(&mut interpreter);
             // Leave the warm profile for the next run of this source.
             olang::ovm::warm::save(source, &interpreter.collect_warm_profile());
+            // `OLANG_TIER_STATS=1`: machine-readable tier counters on
+            // stderr, one aggregate line and one line per VM-callable
+            // function. Deterministic (counters, not samples) — the
+            // tier-floor regression suite parses these to assert that
+            // hot shapes actually reach the compiled tiers.
+            if matches!(std::env::var("OLANG_TIER_STATS").as_deref(), Ok("1")) {
+                if let Some(tier) = interpreter.bytecode_tier_stats() {
+                    eprintln!(
+                        "tier-stats: promoted={} rejected={} bytecode_calls={} instructions={} native_calls={}",
+                        tier.promoted,
+                        tier.rejected,
+                        tier.bytecode_calls,
+                        tier.instructions_executed,
+                        tier.jit_native_calls
+                    );
+                    for (name, native_calls, kinds) in interpreter.tier_report() {
+                        eprintln!(
+                            "tier-fn: {} native_calls={} kinds={}",
+                            name,
+                            native_calls,
+                            kinds.join(",")
+                        );
+                    }
+                }
+            }
             if ovm_stats {
                 match interpreter.bytecode_tier_stats() {
                     Some(tier) => println!(
