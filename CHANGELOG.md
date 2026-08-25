@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.72.0] - 2026-08-24
+
 ### Changed
 
 - **`map`, `filter`, and `fold` run their whole loop on the compiled
@@ -5686,7 +5688,8 @@ opt-in bytecode tier (`--ovm-tier`) is now honest, tested, and fast.
 - `crypto.decrypt_aes` accepts the output of `crypto.encrypt_aes` directly
   (the embedded nonce is parsed rather than requiring manual hex slicing).
 
-[Unreleased]: https://github.com/ooyeku/olang/compare/v0.71.0...HEAD
+[Unreleased]: https://github.com/ooyeku/olang/compare/v0.72.0...HEAD
+[0.72.0]: https://github.com/ooyeku/olang/compare/v0.71.0...v0.72.0
 [0.71.0]: https://github.com/ooyeku/olang/compare/v0.70.0...v0.71.0
 [0.70.0]: https://github.com/ooyeku/olang/compare/v0.67.0...v0.70.0
 [0.67.0]: https://github.com/ooyeku/olang/compare/v0.66.0...v0.67.0
