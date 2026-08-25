@@ -23,6 +23,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The projects chapter, rewritten for the local-first workflow.**
+  [Packages and dependencies](docs/packages.md) now leads with the
+  seven-verb `otc` surface, the shelf, and the bench harness; the
+  registry section is explicitly marked dormant surface until
+  distribution matters. otc appears in the README and the tooling
+  chapter's overview for the first time. Reliability got the same
+  treatment: an end-to-end CLI test drives every verb (all three
+  scaffolds parse-checked, the shelf round trip, add by name and by
+  path with auto-init, refusals with their messages, the frozen
+  install gate, and a program actually importing a shelved library),
+  and the bench harness's spec parsing, growth classification, and
+  output conventions are pinned by unit tests.
+
 - **The library shelf: local dependencies by name.** `otc lib add
   ~/code/my-lib` registers a library once, per user; from then on any
   project says `otc add my-lib` — no paths, no registry. The manifest

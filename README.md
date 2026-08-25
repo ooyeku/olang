@@ -65,6 +65,17 @@ olang check                # report provable type-annotation violations
 olang --watch script.ol    # re-run on every save
 ```
 
+Projects are the companion tool `otc` (installed by the same command):
+
+```bash
+otc new myapp              # scaffold a project (--lib, --web)
+otc lib add ~/code/my-lib  # register a local library once...
+otc add my-lib             # ...then depend on it by name, from any project
+otc bench                  # run bench/ with scaling curves and baselines
+```
+
+See [Packages and dependencies](docs/packages.md).
+
 The language also runs in the browser: the website's playground compiles the
 interpreter, bytecode tier, and data stack to WebAssembly and runs them
 sandboxed in the page (`cd website && bun run dev`, then open `/playground`).

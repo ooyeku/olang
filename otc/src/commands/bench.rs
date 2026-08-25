@@ -549,3 +549,61 @@ pub fn execute(args: BenchArgs) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spec_directives_parse_and_default() {
+        let spec = parse_spec(
+            "// a comment first\n// bench: sizes = 1_000, 4000 , 16000\n// bench: setup = gen.ol\nlet x = 1\n",
+        );
+        assert_eq!(spec.sizes, vec![1000, 4000, 16000]);
+        assert_eq!(spec.setup.as_deref(), Some("gen.ol"));
+        let none = parse_spec("let x = 1\n");
+        assert!(none.sizes.is_empty());
+        assert!(none.setup.is_none());
+    }
+
+    #[test]
+    fn output_conventions_extract() {
+        let out = "noise\nTIME 12.5\nCHECKSUM abc\nTIME 14\nCHECKSUM def\n";
+        assert_eq!(extract_time_ms(out), Some(14.0));
+        assert_eq!(extract_checksum(out), Some("def".to_string()));
+        assert_eq!(extract_time_ms("plain"), None);
+    }
+
+    #[test]
+    fn growth_names_the_classes() {
+        // Perfect linear: t doubles when n doubles.
+        let (e, label, bad) = growth_verdict(&[(1000, 10.0), (2000, 20.0), (4000, 40.0)]).unwrap();
+        assert!((e - 1.0).abs() < 0.05, "{e}");
+        assert_eq!(label, "~O(n)");
+        assert!(!bad);
+        // Quadratic: t quadruples.
+        let (e, label, bad) = growth_verdict(&[(1000, 10.0), (2000, 40.0), (4000, 160.0)]).unwrap();
+        assert!((e - 2.0).abs() < 0.05, "{e}");
+        assert!(label.contains("O(n²)"), "{label}");
+        assert!(bad, "quadratic must warn");
+        // Constant.
+        let (_, label, bad) = growth_verdict(&[(1000, 5.0), (4000, 5.0)]).unwrap();
+        assert_eq!(label, "~O(1)");
+        assert!(!bad);
+        // One point: no verdict.
+        assert!(growth_verdict(&[(1000, 5.0)]).is_none());
+        // All points inside timer noise: no verdict either.
+        assert!(growth_verdict(&[(1000, 0.1), (4000, 0.2)]).is_none());
+    }
+
+    #[test]
+    fn median_and_cv_behave() {
+        let mut xs = vec![3.0, 1.0, 2.0];
+        assert_eq!(median(&mut xs), 2.0);
+        let mut even = vec![1.0, 2.0, 3.0, 4.0];
+        assert_eq!(median(&mut even), 2.5);
+        assert_eq!(coefficient_of_variation(&[5.0]), 0.0);
+        let cv = coefficient_of_variation(&[10.0, 10.0, 10.0]);
+        assert!(cv.abs() < 1e-9);
+    }
+}

@@ -566,12 +566,14 @@ a subprocess and compares runs against saved baselines.
 
 `--ovm-stats` prints promotions, rejections, tier crossings, and
 instructions retired; `--verbose` names each promoted or refused
-function with the reason. `otc ovm --compare <file>` runs a program both
-ways, verifies the results agree, and reports timings.
+function with the reason. To compare tiers on a program, run it twice —
+`olang run file.ol` and `olang --no-ovm run file.ol` — and diff the
+output; the differential test suites automate exactly this comparison
+across the corpus.
 
 `cargo bench` measures the interpreter itself (`benches/interpreter_bench.rs`,
 ten representative programs). Use it when changing the evaluator; use
-`otc ovm --compare` when changing the VM.
+the differential suites when changing the VM.
 
 ## Known limitations
 

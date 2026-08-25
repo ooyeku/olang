@@ -7,14 +7,23 @@ olang has a source-based package manager. A package is a directory of `.ol`
 files with an `olang.toml` manifest. There is no build step and no compiled
 artifact: dependencies are fetched as source and resolved by the same `use`
 mechanism as local modules, so a dependency is used the same way as code
-written in the same project. The package commands are provided by the
-companion tool `otc`.
+written in the same project.
+
+Projects are managed by the companion tool `otc`, whose division of labor
+with the `olang` binary is one sentence: everything that touches a *file*
+lives in `olang` (run, repl, test, fmt, check, bench, profile);
+everything that touches a *project* lives in `otc`. The workflow is
+local-first — your own libraries, on your own machine, by name — with
+git and registry sources available underneath for when a dependency
+lives elsewhere.
 
 ## Table of contents
 
 - [Starting a package](#starting-a-package)
 - [The manifest](#the-manifest)
 - [Commands](#commands)
+- [The library shelf](#the-library-shelf)
+- [Benchmarks](#benchmarks)
 - [In the REPL](#in-the-repl)
 - [The lockfile](#the-lockfile)
 - [Version resolution (MVS)](#version-resolution-mvs)
@@ -26,14 +35,24 @@ companion tool `otc`.
 ## Starting a package
 
 `otc new` scaffolds a project — an application by default, a library with
-`--lib`:
+`--lib`, a full-stack web app with `--web`:
 
 ```bash
 otc new myapp             # application: olang.toml + src/main.ol
 otc new geometry --lib    # library: olang.toml + index.ol + lib/
+otc new dashboard --web   # web app: JSON API + sqlite + wasm frontend
 ```
 
-Both shapes come with a README, a `.gitignore`, and a working `test`
+The `--web` shape is one process serving a SQLite-backed JSON API, the
+page, and the frontend's own olang source, which the browser runs
+against the DOM through the wasm runtime — the architecture the tracker
+and ledger examples prove out, trimmed to a working starter where every
+seam a real app grows along appears exactly once. Its README covers the
+one artifact the scaffold cannot write from source (the wasm runtime;
+the scaffold copies one in when it can find it, and the API works
+without it).
+
+All shapes come with a README, a `.gitignore`, and a working `test`
 block, and the generated source is parse-checked before it is written.
 The difference is the entry point. An application's life is
 `olang src/main.ol`; a library's public API lives in `index.ol`, over
@@ -120,40 +139,128 @@ is what lets its own tests import its public surface.
 
 ## Commands
 
+The whole surface is seven verbs:
+
 ```bash
-otc new NAME [--lib]               # scaffold a project or library
-otc pkg init [--name NAME]         # write olang.toml in the current directory
-otc pkg add lib --path ../lib      # add a path dependency
-otc pkg add http --git URL --tag v1.0.0   # add a git dependency
-otc pkg add json --version "^1.0"  # add a registry dependency
-otc pkg remove lib                 # drop a dependency
-otc pkg install                    # fetch, replaying olang.lock when it covers the manifest
-otc pkg install --frozen           # fail if resolution would rewrite the lock (CI)
-otc pkg update                     # re-resolve everything, rewrite the lock
-otc pkg tree                       # show the dependency graph with locked versions
-otc pkg verify                     # re-check locked content against its checksums
-otc pkg publish --registry PATH --git URL --rev COMMIT   # cut a release
+otc new NAME [--lib|--web]   # scaffold a project
+otc add ../my-lib            # add a dependency by path
+otc add my-lib               # add a dependency by name, from your shelf
+otc remove my-lib            # drop a dependency
+otc list                     # what this project depends on, and where each lives
+otc install                  # fetch dependencies, honoring olang.lock
+otc install --frozen         # fail if resolution would rewrite the lock (CI)
+otc install --update         # re-resolve everything, rewrite the lock
+otc lib add|list|remove      # your library shelf (next section)
+otc bench                    # the project benchmark harness (below)
 ```
 
-Every `pkg` command except `init` finds the project root by walking up to
-the nearest `olang.toml`; `init` writes into the directory you are in.
-`otc pkg add` covers the common dependency forms — a git `rev` or
-`branch` pin is written into `olang.toml` by hand.
+Every command finds the project root by walking up to the nearest
+`olang.toml` — and `otc add` in a directory with none **creates one**,
+so a project starts at the moment you first need a dependency, with no
+separate init step to know about. `add` takes one argument with two
+readings: anything with a path separator (or a leading `.`) is a
+directory, recorded relative to the project root no matter where the
+command ran; a bare name is looked up on your shelf. Either way the
+dependency is validated at `add` time and resolution runs immediately,
+so the lockfile is never left behind the manifest, and changing an
+existing dependency's source requires `--force`.
 
-`add` validates the dependency before writing it: a `--path` must name an
-existing directory, a `--version` must be a valid requirement (and, when a
-registry is configured, one some published version satisfies), and
-changing an existing dependency's source requires `--force` — so a typo
-surfaces at `add` time, not as an opaque failure at the next install.
-`publish` is append-only: a version that already exists in the index is
-refused (bump the version, or pass `--force` to deliberately rewrite it).
+Dependencies that live elsewhere still work — write them into
+`olang.toml` directly (`{ git = "URL", tag = "v1.0" }`, or a registry
+requirement with `OLANG_REGISTRY` set) and `otc install` resolves them
+with the same lockfile discipline. The local forms are the ones with
+first-class commands because they are the daily workflow.
 
-You rarely need `otc pkg install` day to day: **running a file inside a
+You rarely need `otc install` day to day: **running a file inside a
 package resolves dependencies automatically**. `olang main.ol` reads
 `olang.toml`, installs (replaying the lockfile — see below), and runs.
-`olang test` does the same for test files, with one caveat: it does not
-read `OLANG_REGISTRY`, so packages with registry dependencies should be
-tested via a normal run or after an explicit `otc pkg install`.
+
+## The library shelf
+
+The shelf answers "how do I use my own library from another project
+without remembering where it lives". Register a library once, per user:
+
+```bash
+otc lib add ~/code/geometry     # registers under its package name
+otc lib list                    # what is shelved, and where each points
+otc lib remove geometry
+```
+
+From then on, any project anywhere:
+
+```bash
+otc add geometry
+```
+
+The manifest records only the name — `geometry = { shelf = "geometry" }`
+— so `olang.toml` stays free of machine-specific paths. The lockfile
+pins the directory the shelf resolved to, plus a content checksum, so a
+library that moves or disappears is noticed at the next install rather
+than silently drifted past (editing a shelved library is normal
+development and reported informationally, never as tampering). The
+shelf itself is one small TOML file at `~/.olang/shelf.toml`
+(`OLANG_SHELF` overrides the location).
+
+## Benchmarks
+
+`otc bench` runs the project's benches — ordinary olang programs in
+`bench/`, each a fresh subprocess — and adds what a stopwatch cannot:
+
+```bash
+otc bench                        # every bench in bench/
+otc bench sums --runs 7          # filter by name, more repetitions
+otc bench --save base.json       # store medians as a baseline
+otc bench --against base.json --fail-on-regress   # the CI gate
+otc bench --profile              # rerun the slowest point under `olang profile`
+```
+
+A bench declares a **scaling curve** with a comment directive, and the
+harness runs it once per size (the size arrives as `os.args()[1]`),
+fits the growth on the medians, and names it:
+
+```olang no-run
+// bench: sizes = 200000, 800000, 3200000
+let n = unwrap(str.parse_int(os.args()[1]))
+fn total(n) = {
+    let mut acc = 0
+    let mut i = 0
+    while i < n { acc = (acc + i * 3) % 1000003 i = i + 1 }
+    acc
+}
+let t0 = time.monotonic_ms()
+let out = total(n)
+println(`TIME ${time.monotonic_ms() - t0}`)
+println(`CHECKSUM ${out}`)
+```
+
+```text
+  sums
+    n=200000         1.0 ms  (cv  0.0%, rss    13 MB)  checksum 520003
+    n=800000         2.0 ms  (cv  0.0%, rss    13 MB)  checksum 920015
+    n=3200000        8.0 ms  (cv  0.7%, rss    13 MB)  checksum 120153
+    growth: ~O(n) (exponent 1.00)
+```
+
+An accidentally quadratic bench announces itself:
+`⚠ growth: ~O(n²) — check for a copy-per-iteration (exponent 1.99)`.
+Every real performance bug this codebase has hunted appeared as a curve
+before it was a number, which is why the harness fits curves.
+
+The two output conventions are contracts, not decoration. A `CHECKSUM`
+line must agree across every repetition or the measurement is refused —
+a timing whose answer wobbles is measuring something else. A `TIME`
+line (milliseconds) makes the bench self-timed, excluding interpreter
+startup and setup; without one the harness uses wall clock and
+subtracts a measured startup baseline from the growth fit. Each point
+reports the median, the coefficient of variation, and peak memory (the
+child's actual RSS). Baselines record a machine fingerprint, and
+comparing against another machine's baseline warns instead of
+pretending; a point only counts as changed when it moves more than
+max(5%, 2×CV) — beneath that is noise, not news.
+
+`// bench: setup = gen_data.ol` names a program to run once before
+timing (dataset generation), receiving the largest size as its
+argument.
 
 ## In the REPL
 
@@ -209,7 +316,7 @@ and the package's own direct dependencies. Commit it.
 The mental model has one moving part: **a lockfile either *covers* the
 manifest or it doesn't**, and every install starts by asking which.
 
-- **Covered → replay.** `otc pkg install` (and every implicit install —
+- **Covered → replay.** `otc install` (and every implicit install —
   `olang main.ol`, the REPL) fetches exactly what the lock pins and
   leaves the file byte-for-byte untouched. No resolution runs, nothing
   is consulted over the network that isn't already needed for the
@@ -227,7 +334,7 @@ manifest or it doesn't**, and every install starts by asking which.
   recorded ref matches what the manifest now requests — so retagging or
   repointing a git dependency in the manifest re-resolves it, but a
   branch dependency stays on its pinned commit until you ask to move
-  (`otc pkg update` is that ask);
+  (`otc install --update` is that ask);
 - a **registry** dependency is covered when the locked version satisfies
   the manifest's requirement — so loosening a requirement changes
   nothing, and tightening it past the locked version re-resolves;
@@ -235,7 +342,7 @@ manifest or it doesn't**, and every install starts by asking which.
   other locked package depends on) breaks coverage, so removals clean
   the lock up rather than leaving fossils.
 
-`otc pkg update` skips the coverage question entirely: it always
+`otc install --update` skips the coverage question entirely: it always
 re-resolves and rewrites the lock — the explicit "move everything
 forward" action. `--frozen` guards the other direction in CI: if
 resolution runs and would change an existing lock, the command fails
@@ -261,14 +368,20 @@ constraint; there is no silent duplication of incompatible versions.
 
 ## The registry
 
+Registry distribution is currently **dormant surface**: the resolution
+machinery below works and is exercised by tests, but the CLI leads with
+the local workflow, and no public registry exists yet. This section
+documents the mechanism for when distribution matters.
+
 A registry is just a git repository of TOML index files — one `<name>.toml`
 per package, listing each published version with its git source, commit, and
 checksum. There is no hosted service required to start.
 
 Publish a release:
 
-```bash
-otc pkg publish --registry PATH --git URL --rev COMMIT
+```text
+(publishing is part of the dormant registry surface; the index format
+below is what a release writes)
 ```
 
 The published entry records the release's *registry* dependencies so MVS
@@ -285,10 +398,10 @@ From then on the checksums bite: the lockfile records a sha256 of each
 fetched source tree, and **every later install re-verifies fetched
 (git/registry) content against it** — a mismatch is a hard error, not a
 warning. A registry release's published checksum is likewise enforced at
-fetch time, and the registry index itself is append-only: `otc pkg
-publish` refuses to rewrite an already-published version. `otc pkg
-verify` re-checks everything the lock pins on demand (path dependencies
-report drift informationally — editing one is normal development). Pin
+fetch time, and the registry index itself is append-only: publishing
+refuses to rewrite an already-published version. Path and shelf
+dependencies report drift informationally — editing one is normal
+development. Pin
 git dependencies by `rev` (not just `tag`) when you need the source to be
 immutable, since a tag can be moved and a rev cannot.
 

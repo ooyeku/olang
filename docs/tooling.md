@@ -7,10 +7,12 @@ Part of [the olang book](README.md) · [Language reference](language.md) ·
 This chapter documents the developer tools built into the `olang` binary: the
 test runner, the formatter, the static checker, the documentation generator,
 the standalone-executable builder, the benchmark runner, and the record and
-replay commands. Package-management commands are provided by the companion
-tool `otc` and are described in
-[Packages and dependencies](packages.md); the language server has
-[its own chapter](editors.md).
+replay commands. Everything that touches a *project* — scaffolding (`otc new`, with
+`--lib` and `--web` shapes), local dependencies and the library shelf
+(`otc add`, `otc lib`), and the project benchmark harness (`otc bench`,
+with scaling curves and complexity detection) — is the companion tool
+`otc`, described in [Packages and dependencies](packages.md); the
+language server has [its own chapter](editors.md).
 
 ## Command overview
 

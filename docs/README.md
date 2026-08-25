@@ -41,7 +41,7 @@ For the conventions used throughout the book, see the
 
 | Chapter | Contents |
 |---|---|
-| [Packages and dependencies](packages.md) | Project and library structure, manifests, the lockfile, version resolution, the registry, and the capability model. |
+| [Packages and dependencies](packages.md) | The `otc` project tool: scaffolding, local dependencies and the library shelf, the bench harness, manifests, the lockfile, version resolution, and the capability model. |
 | [Command-line tooling](tooling.md) | The `olang` command line: running, testing, formatting, checking, building standalone executables, generating documentation, benchmarking, and recording and replaying runs. |
 | [olang in the browser](wasm.md) | The WebAssembly build, the `dom` module, structured events, canvas draw-lists, the `ui` view layer, routing and storage, and Web Workers. |
 | [Openness](openness.md) | Open code (`meta`), open artifacts (`olang inspect` and capabilities), and open execution (record and replay), described mechanically. |

@@ -1001,7 +1001,7 @@ callee like `fs.read_file`, `args`), `field`, `binop`, `if`, `match`,
 `ident`).
 
 ```olang
-// `otc deps` — list a file's imports — in four lines over meta.parse.
+// A dependency lister — a file's imports — in four lines over meta.parse.
 let program = unwrap(meta.parse("use geometry { area }\nuse fmt\nfn f() = 1"))
 for node in program |> filter((n) => map_get(n, "kind") == "use") {
     println(map_get(node, "path") + " " + show(map_get(node, "items")))
