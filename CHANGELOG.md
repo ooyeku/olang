@@ -9,6 +9,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Campaign 8: the final engine additions.** The JIT-breadth freeze is
+  lifted (roadmap: Campaign 8); five lanes land as the last engine
+  work before 1.0, each pinned by tier floors and differential tests.
+
+  - **Polymorphic specialization (E1).** A function is no longer one
+    kind-vector specialization forever: a call with new argument kinds
+    compiles a variant beside the primary (three per function; failed
+    shapes never retry), and group planning adopts or freshly plans
+    variants for direct native-to-native calls — which also unfroze
+    groups that refused outright on a callee kind mismatch. Mixed
+    Int/Float repro: 100k → 200k native calls, 300k → 0 VM
+    instructions.
+  - **OSR tails (E2).** Nested loops synthesize their outermost
+    enclosing region and the dispatch re-offers entry at that head
+    (81M → 81k VM instructions on the nested repro); the live-out
+    tuple cap rises 4 → 8 (wide-state repro 4M → 164k); and the call
+    boundary marshals Boolean arguments, which had silently kept every
+    Bool-taking function off native.
+  - **JIT template strings (E3).** `MakeTemplate` joins the whitelist:
+    scalar interpolations stringify natively with the interpreter's
+    exact rules, literals bake as borrowed pointers, parts fold
+    through the existing concat and watermark discipline. A template
+    no longer poisons its whole function: the report shape went from
+    13.5M VM instructions and zero native calls to zero and 300, 3.3×
+    wall-clock.
+  - **Build-embedded warm profiles (E5).** `olang build` embeds the
+    build machine's warm profile for the source (run once, then
+    build); the built binary installs it at startup, so its first run
+    on a fresh machine pre-compiles proven-hot functions. A local
+    sidecar still wins as fresher evidence; the profile is provenance,
+    outside the integrity digest, and can never change a result.
+  - **Data-stack fusion (E7).** Elementwise Series chains
+    (`f["a"] * f["b"] + 1.0`) build lazily and materialize in one
+    chunked, parallel pass at first observation — invisible by
+    construction (Add/Sub/Mul only, bit-identical per-element FP;
+    division, nulls, and mixed dtypes stay eager). 2.7× on a four-op
+    chain over 5M elements; the ods.md eager-evaluation record carries
+    the amendment.
+
 - **Tier engagement is now a tested fact.** The differential suites pin
   that every tier computes the same answer; nothing pinned that the
   fast tiers *engage* — which is how tail-call elimination kept every
