@@ -3682,6 +3682,10 @@ impl ErrorSuggestionEngine {
             let mut words = rest.split_whitespace();
             if let (Some(first), Some(second)) = (words.next(), words.next())
                 && first != "mut"
+                // An annotated binding (`let xs: List<Int> = ...`) is not
+                // a mistyped `mut`; the second word is its type.
+                && !first.ends_with(':')
+                && !second.starts_with(':')
                 && second != "="
                 && !second.starts_with('=')
                 && second

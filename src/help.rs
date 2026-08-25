@@ -7474,31 +7474,34 @@ For more examples on specific functions, use: {}:help <function_name>{}",
             "{}=== Olang Syntax Reference ==={}
 
 {}Variables:{}
-  let name = \"Alice\"          // Immutable variable
-  let age = 25                 // Type inferred
-  age = 26                     // Mutation (reassignment)
+  let name = \"Alice\"          // Immutable binding
+  let mut age = 25             // Reassignable binding
+  age = 26                     // Reassignment (requires `let mut`)
 
 {}Functions:{}
-  fn add(a, b) = a + b         // Simple function
-  fn greet(name: String) => String = \"Hello \" + name  // With type annotations
-  
-{}Lambda Functions:{}
+  fn add(a, b) = a + b                       // One expression
+  fn dist(a, b) = {{ let d = b - a  d * d }}   // A block; last expression is the value
+  fn label(n: Int) -> String = `#${{n}}`       // With type annotations
+
+{}Lambdas:{}
   (x) => x * 2                 // Single parameter
   (a, b) => a + b              // Multiple parameters
   () => \"Hello\"                // No parameters
+  let double = (x) => x * 2    // Bind one to a name
 
 {}Control Flow:{}
-  if condition => value1 else value2
-  for item in list => {{ ... }}
-  while condition => {{ ... }}
+  if cond => value1 else => value2
+  if cond => {{ ... }} else => {{ ... }}
+  for item in list {{ ... }}
+  while cond {{ ... }}
 
-{}Lists and Tuples:{}
+{}Lists, Tuples, Ranges:{}
   [1, 2, 3, 4]                 // List
-  (\"Alice\", 25, true)         // Tuple
-  [1..10]                      // Range syntax
+  (\"Alice\", 25, true)          // Tuple
+  1..10                        // Range (exclusive); 1..=10 inclusive
 
 {}Pipeline Operator:{}
-  data |> map(transform) |> filter(predicate) |> reduce(0, combine)
+  data |> map((x) => x * 2) |> filter((x) => x > 10) |> fold(0, (a, x) => a + x)
 
 {}Pattern Matching:{}
   match value {{
@@ -7507,8 +7510,11 @@ For more examples on specific functions, use: {}:help <function_name>{}",
   }}
 
 {}Type Annotations:{}
-  let numbers: List[Int] = [1, 2, 3]
-  fn process(items: List[String]) => List[Int] = ...
+  let count: Int = 3
+  fn process(items: List<Int>) -> Int = len(items)
+
+{}Strings:{}
+  `hello ${{name}}`              // Template string with interpolation
 
 {}Comments:{}
   // Single line comment
@@ -7516,8 +7522,8 @@ For more examples on specific functions, use: {}:help <function_name>{}",
      comment */
 
 {}Modules:{}
-  import my_module
-  export {{ function_name, CONSTANT }}
+  use collections {{ heap, table }}   // import from a module
+  share fn helper(x) = x + 1         // export from this module
 
 For function-specific syntax, use: {}:help <function_name>{}",
             Colors::BOLD,
@@ -7537,6 +7543,8 @@ For function-specific syntax, use: {}:help <function_name>{}",
             Colors::DIM,
             Colors::RESET,
             Colors::GREEN,
+            Colors::RESET,
+            Colors::MAGENTA,
             Colors::RESET,
             Colors::CYAN,
             Colors::RESET,
