@@ -3,8 +3,8 @@
 **/*.rs.bk
 *.pdb
 
-# Cargo
-Cargo.lock
+# Claude Code session config (machine-local)
+.claude/
 
 # IDE files
 .vscode/
@@ -25,6 +25,8 @@ Thumbs.db
 # Logs
 *.log
 logs/
+# ...except committed example fixtures the programs read by default
+!examples/loganalyzer/data/app.log
 
 # Runtime data
 pids

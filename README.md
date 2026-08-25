@@ -55,6 +55,12 @@ statement of what is stable, evolving, and experimental.
 ## Installation
 
 ```bash
+./setup.sh                 # guided install: builds and installs olang + otc
+```
+
+or directly with cargo:
+
+```bash
 cargo install --path .
 
 olang script.ol            # run a program; arguments reach os.args()

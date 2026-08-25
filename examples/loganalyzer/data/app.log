@@ -1,0 +1,14 @@
+2026-08-06 09:12:03 [INFO] server started on port 8080
+2026-08-06 09:12:44 [INFO] GET /api/users 200 14ms
+2026-08-06 09:13:01 [WARN] slow query detected: 320ms
+2026-08-06 09:13:02 [INFO] GET /api/users 200 12ms
+2026-08-06 09:13:15 [ERROR] database connection failed: timeout
+2026-08-06 09:13:16 [ERROR] request /api/orders failed with 500
+2026-08-06 09:13:20 [INFO] POST /api/login 200 45ms
+2026-08-06 09:14:02 [WARN] cache miss for key user:42
+2026-08-06 09:14:33 [INFO] GET /api/users 200 11ms
+2026-08-06 09:15:01 [ERROR] database connection failed: timeout
+2026-08-06 09:15:30 [INFO] GET /api/health 200 2ms
+2026-08-06 09:16:10 [WARN] rate limit approaching for 10.0.0.5
+2026-08-06 09:16:44 [DEBUG] gc pause 4ms
+2026-08-06 09:17:00 [ERROR] request /api/orders failed with 500
