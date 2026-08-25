@@ -7257,6 +7257,7 @@ impl HelpSystem {
         o.push_str(&format!("\n{b}olang help{r}\n\n"));
         o.push_str(&format!("  {c}:help <name>{r}     a function's documentation      {d}:help map, :help collections.heap.push{r}\n"));
         o.push_str(&format!("  {c}:help <module>{r}   a module's functions            {d}:help str, :help collections{r}\n"));
+        o.push_str(&format!("  {c}:help <your fn>{r}  your own code's docs            {d}/// comments above a declaration appear here{r}\n"));
         o.push_str(&format!(
             "  {c}:help list{r}       every function, grouped\n"
         ));

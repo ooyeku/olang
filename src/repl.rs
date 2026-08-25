@@ -440,6 +440,17 @@ pub struct Repl {
     /// handle, the REPL explains the convention instead of letting the
     /// unchanged variable look like a bug.
     rebind_tip_shown: bool,
+    /// `///` doc comments from declarations entered this session, so
+    /// `:help name` answers for the user's own functions the moment
+    /// they are defined. Later re-definitions replace earlier ones.
+    session_docs: Vec<crate::tools::doc::Item>,
+    /// A `///` block entered on its own line(s), waiting for the
+    /// declaration that follows on the next input.
+    pending_doc_lines: Vec<String>,
+    /// Every file this session has loaded a module from. The REPL
+    /// clears the interpreter's module cache after each input, so the
+    /// `:help` doc scan keeps its own record of where code came from.
+    loaded_doc_files: std::collections::BTreeSet<std::path::PathBuf>,
 }
 
 impl Repl {
@@ -542,6 +553,9 @@ impl Repl {
             command_history: Vec::new(),
             debugger: InteractiveDebugger::new(),
             rebind_tip_shown: false,
+            session_docs: Vec::new(),
+            pending_doc_lines: Vec::new(),
+            loaded_doc_files: std::collections::BTreeSet::new(),
         })
     }
 
@@ -678,6 +692,10 @@ impl Repl {
                     }
 
                     // Clean up module cache to prevent memory accumulation
+                    // — after remembering which files it loaded, so
+                    // `:help` can still find their doc comments.
+                    self.loaded_doc_files
+                        .extend(self.interpreter.loaded_module_files());
                     self.interpreter.clear_module_cache();
                 } else {
                     if !self.multiline_buffer.is_empty() {
@@ -759,7 +777,11 @@ impl Repl {
                 }
             }
 
-            // Clean up module cache to prevent memory accumulation
+            // Clean up module cache to prevent memory accumulation —
+            // after remembering which files it loaded, so `:help` can
+            // still find their doc comments.
+            self.loaded_doc_files
+                .extend(self.interpreter.loaded_module_files());
             self.interpreter.clear_module_cache();
         }
 
@@ -771,11 +793,177 @@ impl Repl {
         Ok(())
     }
 
+    /// The user's own documentation for `topic`, if any declaration in
+    /// scope carries a `///` block with that name: session declarations
+    /// first (latest wins), then every file this run has loaded.
+    /// `module.name` also matches when the file's stem is `module`.
+    fn find_user_doc(&self, topic: &str) -> Option<(crate::tools::doc::Item, String)> {
+        let (mod_part, name_part) = match topic.rsplit_once('.') {
+            Some((m, n)) => (Some(m), n),
+            None => (None, topic),
+        };
+        if mod_part.is_none()
+            && let Some(item) = self.session_docs.iter().rev().find(|i| i.name == name_part)
+        {
+            return Some((item.clone(), "defined this session".to_string()));
+        }
+        let mut files: Vec<std::path::PathBuf> = self.loaded_doc_files.iter().cloned().collect();
+        files.extend(self.interpreter.loaded_module_files());
+        for file in files {
+            if let Some(m) = mod_part {
+                let stem = file.file_stem().map(|s| s.to_string_lossy().to_string());
+                if stem.as_deref() != Some(m) {
+                    continue;
+                }
+            }
+            let Ok(source) = std::fs::read_to_string(&file) else {
+                continue;
+            };
+            if let Some(item) = crate::tools::doc::extract(&source)
+                .items
+                .into_iter()
+                .find(|i| i.name == name_part)
+            {
+                return Some((item, format!("documented in: {}", file.display())));
+            }
+        }
+        None
+    }
+
+    /// A loaded file whose stem matches `topic` and which carries a
+    /// `//!` module note or any documented items — the module view of
+    /// the user-doc lookup.
+    fn find_user_module_doc(
+        &self,
+        topic: &str,
+    ) -> Option<(String, crate::tools::doc::ModuleDoc, String)> {
+        let mut files: Vec<std::path::PathBuf> = self.loaded_doc_files.iter().cloned().collect();
+        files.extend(self.interpreter.loaded_module_files());
+        for file in files {
+            let stem = file.file_stem().map(|s| s.to_string_lossy().to_string());
+            if stem.as_deref() != Some(topic) {
+                continue;
+            }
+            let Ok(source) = std::fs::read_to_string(&file) else {
+                continue;
+            };
+            let md = crate::tools::doc::extract(&source);
+            if !md.module_doc.is_empty() || !md.items.is_empty() {
+                return Some((topic.to_string(), md, file.display().to_string()));
+            }
+        }
+        None
+    }
+
+    /// Render one user-documented declaration in the same visual
+    /// language as the builtin help: name and signature, the doc text
+    /// as written, and where it came from.
+    fn print_user_doc(&self, item: &crate::tools::doc::Item, origin: &str) {
+        use crate::help::Colors;
+        let shared = if item.shared { "share " } else { "" };
+        println!(
+            "\n{}{}═══ {} ═══{}",
+            Colors::BOLD,
+            Colors::CYAN,
+            item.name,
+            Colors::RESET
+        );
+        // Type/trait signatures already open with their keyword; only
+        // prefix the kind when it adds information (fn, value, ...).
+        let kind_prefix = if item.signature.starts_with(&item.kind) {
+            String::new()
+        } else {
+            format!("{} ", item.kind)
+        };
+        println!(
+            "\n  {}{}{}{}{}",
+            Colors::GREEN,
+            shared,
+            kind_prefix,
+            Colors::RESET,
+            item.signature
+        );
+        if !item.doc.is_empty() {
+            println!();
+            for line in item.doc.lines() {
+                println!("  {}", line);
+            }
+        }
+        println!("\n  {}{}{}", Colors::DIM, origin, Colors::RESET);
+    }
+
+    /// Render a user module: its `//!` note, then each documented item
+    /// on one line — the same shape as the builtin module listings.
+    fn print_user_module_doc(&self, module: &(String, crate::tools::doc::ModuleDoc, String)) {
+        use crate::help::Colors;
+        let (name, md, path) = module;
+        println!(
+            "\n{}{}═══ module {} ═══{}",
+            Colors::BOLD,
+            Colors::CYAN,
+            name,
+            Colors::RESET
+        );
+        if !md.module_doc.is_empty() {
+            println!();
+            for line in md.module_doc.lines() {
+                println!("  {}", line);
+            }
+        }
+        if !md.items.is_empty() {
+            println!();
+            for item in &md.items {
+                let first = item.doc.lines().next().unwrap_or("");
+                println!(
+                    "  {}{}{}  {}",
+                    Colors::GREEN,
+                    item.signature,
+                    Colors::RESET,
+                    first
+                );
+            }
+            println!(
+                "\n  {}:help {}.<name> shows any one of them in full{}",
+                Colors::DIM,
+                name,
+                Colors::RESET
+            );
+        }
+        println!(
+            "\n  {}documented in: {}{}",
+            Colors::DIM,
+            path,
+            Colors::RESET
+        );
+    }
+
     /// Post-evaluation duties shared by the single-line and multiline
     /// paths: `_` tracks the last printed value, and a bundled
     /// collection's write called without the rebind gets the one-time
     /// tip — the unchanged handle is the convention, not a bug.
     fn after_eval(&mut self, line: &str, value: &Value) {
+        if line.contains("///") || !self.pending_doc_lines.is_empty() {
+            let combined = if self.pending_doc_lines.is_empty() {
+                line.to_string()
+            } else {
+                format!("{}\n{}", self.pending_doc_lines.join("\n"), line)
+            };
+            let extracted = crate::tools::doc::extract(&combined);
+            let only_comments = line
+                .lines()
+                .all(|l| l.trim_start().starts_with("///") || l.trim().is_empty());
+            if extracted.items.is_empty() && only_comments {
+                // A doc block on its own: hold it for the declaration
+                // the next input brings.
+                self.pending_doc_lines.push(line.to_string());
+            } else {
+                for item in extracted.items {
+                    self.session_docs.retain(|i| i.name != item.name);
+                    self.session_docs.push(item);
+                }
+                self.pending_doc_lines.clear();
+            }
+        }
         if *value != Value::Unit {
             // `it` is the last printed result — `_` would collide with
             // the wildcard pattern in the grammar.
@@ -987,6 +1175,10 @@ impl Repl {
                             // to a single arbitrary member.
                             if self.help_system.has_exact_function(topic) {
                                 println!("{}", self.help_system.show_function_help(topic));
+                            } else if let Some((item, origin)) = self.find_user_doc(topic) {
+                                // The user's own `///` doc, from this
+                                // session or any loaded file.
+                                self.print_user_doc(&item, &origin);
                             } else {
                                 let module_fns = self.help_system.functions_in_module(topic);
                                 if !module_fns.is_empty() {
@@ -995,6 +1187,8 @@ impl Repl {
                                     // form, not the user's casing (`:help STATS` must
                                     // not advertise `STATS.<fn>(...)`).
                                     self.show_module_help(&topic.to_lowercase(), &module_fns);
+                                } else if let Some(user_mod) = self.find_user_module_doc(topic) {
+                                    self.print_user_module_doc(&user_mod);
                                 } else if let Some(members) = self.interpreter.module_members(topic)
                                 {
                                     // An imported/bound module with no static docs —

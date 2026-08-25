@@ -1802,6 +1802,20 @@ impl Interpreter {
         self.bytecode_tier.as_ref().map(|t| t.stats())
     }
 
+    /// Files backing the modules this run has loaded — the REPL's
+    /// `:help` scans them for `///` doc comments, so a user's own
+    /// documented functions are as reachable as the builtins.
+    pub fn loaded_module_files(&self) -> Vec<std::path::PathBuf> {
+        let mut out: Vec<std::path::PathBuf> = self
+            .module_cache
+            .values()
+            .filter_map(|e| e.file_path.clone())
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
     /// The per-function tier report (`OLANG_TIER_STATS=1`): every
     /// VM-callable name with its native call count and kinds.
     pub fn tier_report(&self) -> Vec<(String, u64, Vec<String>)> {

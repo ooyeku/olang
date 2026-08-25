@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 
 /// One documented declaration.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Item {
     pub kind: String,      // "fn", "type", "error", "trait", "value"
     pub name: String,      // the declared name
