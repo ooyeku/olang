@@ -762,6 +762,22 @@ impl Interpreter {
                     func.closure = Arc::new(module_scope.clone());
                 }
             }
+            // The tier recorded each of these functions at declaration,
+            // BEFORE this re-closing — with a closure that lacks any
+            // sibling declared later in the file. Re-note them so
+            // bare-name resolution through the VM (the bridge, escaped
+            // lambda forms) carries the same sibling-complete closure
+            // the interpreter resolves through. Without this, a
+            // VM-executed path that falls back to the recorded value
+            // hits "Undefined variable" on exactly the mutual
+            // references the re-closing exists to serve.
+            if let Some(tier) = self.bytecode_tier.as_mut() {
+                for (name, value) in exports.iter() {
+                    if let Value::Function(func) = value {
+                        tier.note_function(name.clone(), func.clone());
+                    }
+                }
+            }
 
             let module = Value::Struct {
                 type_name: "Module".to_string(),

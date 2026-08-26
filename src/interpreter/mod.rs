@@ -3972,6 +3972,12 @@ impl Interpreter {
             Err(e) => return err(format!("{}", e)),
         };
         let mut child = Interpreter::new();
+        // The child runs with the caller's execution model: without
+        // this, evaluated source tree-walks everything — the tier and
+        // the JIT exist only where a tier was enabled.
+        if let Some(tier) = self.bytecode_tier.as_ref() {
+            child.enable_bytecode_tier(tier.threshold(), false);
+        }
         child.caps = self.caps.clone();
         child.caps_trace = self.caps_trace.clone();
         child.dependency_map = self.dependency_map.clone();

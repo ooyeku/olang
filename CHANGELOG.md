@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The bridge interpreter tracks declarations made after its birth.**
+  The VM's exact-semantics fallback for declined function values is
+  seeded from the declaration landscape — and was seeded exactly once,
+  at first use. A bridge created during an early module load (`use
+  heap` in the REPL, say) then answered for the whole session, and a
+  later module's mutually recursive functions, reached as bare values
+  through combinator closures, failed on it with "Undefined variable"
+  — the parser example after any prior load. The landscape is now
+  versioned (declarations, trait impls, structs, variants) and a stale
+  bridge rebuilds; steady-state dispatches reuse one bridge as before.
+  Two adjacent staleness holes closed with it: a module's re-closing
+  now re-notes its exports to the tier, so the recorded values carry
+  the sibling-complete closures the interpreter resolves through, and
+  `meta.eval` at runtime gives its child interpreter the caller's
+  execution tier — profiled `meta.eval` runs had silently tree-walked
+  everything. Pinned by a regression test that drives the live
+  reproduction through the REPL binary.
+
 ### Added
 
 - **Every shelf ships stocked.** The library shelf — olang's local

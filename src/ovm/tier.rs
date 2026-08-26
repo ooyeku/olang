@@ -382,9 +382,20 @@ impl BytecodeTier {
         }
 
         if let Some(existing) = self.known_functions.get(&name) {
-            // The same declaration re-noted (e.g. a module re-closing its
-            // exports over the full scope) keeps the same body — nothing to do.
+            // The same declaration re-noted — which is exactly what a
+            // module does when it re-closes its exports over the full
+            // module scope. The body is unchanged but the CLOSURE may
+            // now carry siblings declared later in the file, so refresh
+            // the recorded value: the bridge and the compiler's escaped
+            // forms resolve bare names through it, and a stale
+            // declaration-time closure loses `expr`-style mutual
+            // references ("Undefined variable" from a path that worked
+            // interpreted).
             if Arc::ptr_eq(&existing.body, &func.body) {
+                if !Arc::ptr_eq(&existing.closure, &func.closure) {
+                    self.vm.note_function_value(name.clone(), func.clone());
+                    self.known_functions.insert(name, func);
+                }
                 return;
             }
             // A different function now shares this name. Calls can no longer be

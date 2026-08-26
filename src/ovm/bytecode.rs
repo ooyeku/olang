@@ -76,6 +76,14 @@ pub struct BytecodeVm {
     /// Interpreter -> BytecodeTier -> BytecodeVm -> Interpreter type cycle,
     /// and created on first use since most functions call no builtins.
     builtin_interpreter: Option<Box<crate::interpreter::Interpreter>>,
+    /// Bumped whenever the function/type landscape the bridge is seeded
+    /// from changes (a declaration, a trait impl, a struct, a variant).
+    /// The bridge is rebuilt when its seeding falls behind — a bridge
+    /// created during an early module load must not answer for names
+    /// declared afterwards with "Undefined variable".
+    bridge_landscape_version: u64,
+    /// The landscape version the current bridge was seeded at.
+    bridge_seeded_version: u64,
 
     /// The run's capability table, and the `--trace-caps` set, both shared
     /// with the owning interpreter. The bridge interpreter below is seeded
@@ -1146,6 +1154,8 @@ impl BytecodeVm {
             builtin_names,
             builtins: BuiltinFunctions::new(),
             builtin_interpreter: None,
+            bridge_landscape_version: 0,
+            bridge_seeded_version: 0,
             caps: None,
             caps_trace: None,
             hof_promotions: 0,
@@ -1188,6 +1198,7 @@ impl BytecodeVm {
         fields: Vec<String>,
         field_checks: HashMap<String, crate::ast::FieldTypeCheck>,
     ) -> bool {
+        self.bridge_landscape_version += 1;
         self.builtin_interpreter = None;
         if self.poisoned_structs.contains(&name) {
             return false;
@@ -1217,6 +1228,7 @@ impl BytecodeVm {
         {
             self.ambiguous_function_names.insert(name.clone());
         }
+        self.bridge_landscape_version += 1;
         self.known_function_values.insert(name, func);
     }
 
@@ -1230,6 +1242,7 @@ impl BytecodeVm {
         method: String,
         func: crate::ast::Function,
     ) -> bool {
+        self.bridge_landscape_version += 1;
         // The bridge interpreter snapshots these tables at creation; a change
         // invalidates that snapshot.
         self.builtin_interpreter = None;
@@ -1325,6 +1338,7 @@ impl BytecodeVm {
     /// bare-identifier pattern of this name as a binding, which is now an
     /// equality match, so they must recompile.
     pub fn note_unit_variant(&mut self, name: String) -> bool {
+        self.bridge_landscape_version += 1;
         self.builtin_interpreter = None;
         self.unit_variant_names.insert(name)
     }
@@ -4575,7 +4589,17 @@ impl BytecodeVm {
     }
 
     fn ensure_bridge_interpreter(&mut self) {
+        // A bridge seeded before later declarations answers for a stale
+        // world: rebuild it whenever the landscape has moved. Changes
+        // stop once a program's declarations settle, so steady-state
+        // dispatches reuse one bridge (and its warmed tier) as before.
+        if self.builtin_interpreter.is_some()
+            && self.bridge_seeded_version != self.bridge_landscape_version
+        {
+            self.builtin_interpreter = None;
+        }
         if self.builtin_interpreter.is_none() {
+            self.bridge_seeded_version = self.bridge_landscape_version;
             let mut interp = Box::new(crate::interpreter::Interpreter::new());
             // Tier first: seed_bridge_state forwards the declaration
             // tables into an existing tier, so order matters here.
