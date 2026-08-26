@@ -1500,17 +1500,6 @@ impl HelpSystem {
     /// description. Parameters/examples/see-also are left empty — the
     /// syntax and description carry the signal, and this keeps hundreds of
     /// module functions documented without a 13-line literal each.
-    fn doc(
-        &mut self,
-        name: &str,
-        syntax: &str,
-        return_type: &str,
-        category: &str,
-        description: &str,
-    ) {
-        self.doc_ex(name, syntax, return_type, category, description, &[]);
-    }
-
     /// The compact form with examples — every entry should carry at
     /// least one; `tests/help_examples_test.rs` enforces both that they
     /// exist and that each parses as real olang.
@@ -1781,2200 +1770,2546 @@ impl HelpSystem {
 
     fn add_process_and_concurrency_docs(&mut self) {
         // --- proc ---
-        self.doc(
+        self.doc_ex(
             "proc.spawn",
             "proc.spawn(program, args, opts?)",
             "Result",
             "proc",
             "start a child with piped stdin/stdout/stderr and return a live Process handle",
+            &[r##"let p = unwrap(proc.spawn("sort", ["-n"]))"##],
         );
-        self.doc(
+        self.doc_ex(
             "proc.write",
             "proc.write(p, s)",
             "Result",
             "proc",
             "write a string to the child's stdin",
+            &[r##"unwrap(proc.write(p, "42\n7\n"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "proc.write_line",
             "proc.write_line(p, s)",
             "Result",
             "proc",
             "write a string plus a newline to the child's stdin",
+            &[r##"unwrap(proc.write_line(p, "hello"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "proc.close_stdin",
             "proc.close_stdin(p)",
             "Result",
             "proc",
             "close the child's stdin, signalling end-of-input (idempotent)",
+            &[r##"unwrap(proc.close_stdin(p))  // tell the child input is done"##],
         );
-        self.doc(
+        self.doc_ex(
             "proc.read_line",
             "proc.read_line(p)",
             "Result",
             "proc",
             "the next line of the child's stdout, or Err(\"eof\") once stdout closes",
+            &[r##"proc.read_line(p)  // Ok("7"), then Err("eof") after close"##],
         );
-        self.doc(
+        self.doc_ex(
             "proc.read_all",
             "proc.read_all(p)",
             "Result",
             "proc",
             "the rest of the child's stdout as one string",
+            &[r##"unwrap(proc.read_all(p))  // the rest of stdout"##],
         );
-        self.doc(
+        self.doc_ex(
             "proc.stderr",
             "proc.stderr(p)",
             "Result",
             "proc",
             "everything the child has written to stderr (complete after exit)",
+            &[r##"unwrap(proc.stderr(p))"##],
         );
-        self.doc(
+        self.doc_ex(
             "proc.wait",
             "proc.wait(p)",
             "Result",
             "proc",
             "block until the child exits, returning Ok(#{ code })",
+            &[r##"unwrap(proc.wait(p))  // #{ code: 0 }"##],
         );
-        self.doc(
+        self.doc_ex(
             "proc.kill",
             "proc.kill(p)",
             "Result",
             "proc",
             "terminate the child immediately (SIGKILL)",
+            &[r##"unwrap(proc.kill(p))"##],
         );
-        self.doc(
+        self.doc_ex(
             "proc.pid",
             "proc.pid(p)",
             "Result",
             "proc",
             "the child's OS process id",
+            &[r##"unwrap(proc.pid(p))"##],
         );
-        self.doc(
+        self.doc_ex(
             "proc.pipeline",
             "proc.pipeline(stages, opts?)",
             "Result",
             "proc",
             "run a chain of commands wired stdout-to-stdin, the shell's a | b | c",
+            &[r##"proc.pipeline([["cat", "log.txt"], ["grep", "ERROR"], ["wc", "-l"]])"##],
         );
 
         // --- chan ---
         // task — background threads started by `spawn`.
-        self.doc(
+        self.doc_ex(
             "task.join",
             "task.join(t)",
             "Any",
             "task",
             "block until the task finishes; its value, or Err(e) if it failed",
+            &[r##"task.join(t)  // the task's value"##],
         );
-        self.doc(
+        self.doc_ex(
             "task.join_timeout",
             "task.join_timeout(t, ms)",
             "Result",
             "task",
             "Ok(v) if it finished within ms, else Err(\"timed out\") — the task keeps running",
+            &[r##"task.join_timeout(t, 2000)  // Err("timed out") leaves it running"##],
         );
 
         // cell — the one mutable location, confined to its creating thread.
-        self.doc(
+        self.doc_ex(
             "cell.new",
             "cell(v) / cell.new(v)",
             "Cell",
             "cell",
             "make a cell holding v; the module is callable, so cell(0) is cell.new(0)",
+            &[r##"let counter = cell(0)"##],
         );
-        self.doc(
+        self.doc_ex(
             "cell.get",
             "cell.get(c)",
             "Any",
             "cell",
             "read the cell's current value",
+            &[r##"cell.get(counter)"##],
         );
-        self.doc(
+        self.doc_ex(
             "cell.set",
             "cell.set(c, v)",
             "Unit",
             "cell",
             "replace the cell's value",
+            &[r##"cell.set(counter, 10)"##],
         );
-        self.doc(
+        self.doc_ex(
             "cell.update",
             "cell.update(c, f)",
             "Any",
             "cell",
             "apply f to the current value, store the result, and return it",
+            &[r##"cell.update(counter, (n) => n + 1)  // returns the new value"##],
         );
 
-        self.doc(
+        self.doc_ex(
             "chan.new",
             "chan.new()",
             "Channel",
             "chan",
             "make an unbounded channel",
+            &[r##"let c = chan.new()"##],
         );
-        self.doc(
+        self.doc_ex(
             "chan.bounded",
             "chan.bounded(n)",
             "Channel",
             "chan",
             "make a channel holding at most n in-flight messages (0 is a rendezvous channel)",
+            &[r##"let c = chan.bounded(64)  // 0 makes a rendezvous channel"##],
         );
-        self.doc(
+        self.doc_ex(
             "chan.send",
             "chan.send(c, v)",
             "Result",
             "chan",
             "send a value; Ok(()), or Err when the channel is closed",
+            &[r##"unwrap(chan.send(c, #{ "job": 7 }))"##],
         );
-        self.doc(
+        self.doc_ex(
             "chan.recv",
             "chan.recv(c)",
             "Result",
             "chan",
             "block for a message; Ok(value), or Err when closed and drained",
+            &[r##"match chan.recv(c) { Ok(msg) => handle(msg), Err(e) => () }"##],
         );
-        self.doc(
+        self.doc_ex(
             "chan.try_recv",
             "chan.try_recv(c)",
             "Result",
             "chan",
             "Ok(value), Err(\"channel is empty\"), or Err(\"channel is closed\")",
+            &[r##"chan.try_recv(c)  // Ok(v), Err("channel is empty"), or closed"##],
         );
-        self.doc(
+        self.doc_ex(
             "chan.recv_timeout",
             "chan.recv_timeout(c, ms)",
             "Result",
             "chan",
             "like recv, plus Err(\"timed out\") after ms milliseconds",
+            &[r##"chan.recv_timeout(c, 500)  // Err("timed out") after 500 ms"##],
         );
-        self.doc(
+        self.doc_ex(
             "chan.close",
             "chan.close(c)",
             "Unit",
             "chan",
             "close the sending side (idempotent); queued messages still drain",
+            &[r##"chan.close(c)  // receivers drain what is queued, then Err"##],
         );
     }
 
     fn add_time_and_encoding_docs(&mut self) {
         // --- time ---
-        self.doc(
+        self.doc_ex(
             "time.now_ms",
             "time.now_ms()",
             "Int",
             "time",
             "milliseconds since the Unix epoch",
+            &[r##"time.now_ms()  // wall-clock; use monotonic_ms for durations"##],
         );
-        self.doc(
+        self.doc_ex(
             "time.monotonic_ms",
             "time.monotonic_ms()",
             "Int",
             "time",
             "monotonic milliseconds (never goes backwards) — the clock for durations",
+            &[r##"let t0 = time.monotonic_ms()"##],
         );
-        self.doc(
+        self.doc_ex(
             "time.sleep",
             "time.sleep(ms)",
             "Unit",
             "time",
             "block for ms milliseconds",
+            &[r##"time.sleep(250)"##],
         );
 
         // --- toml ---
-        self.doc(
+        self.doc_ex(
             "toml.parse",
             "toml.parse(text)",
             "Result",
             "toml",
             "parse a TOML document into a Map (tables → Maps, arrays → Lists, datetimes → strings)",
+            &[r##"unwrap(toml.parse("name = \"app\"\n[deps]\nleft = \"1.0\"\n"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "toml.stringify",
             "toml.stringify(value)",
             "Result",
             "toml",
             "render a Map (or struct-like value) as pretty TOML",
+            &[r##"unwrap(toml.stringify(#{ "name": "app", "version": "0.1.0" }))"##],
         );
-        self.doc(
+        self.doc_ex(
             "toml.validate",
             "toml.validate(text)",
             "Bool",
             "toml",
             "does the text parse as TOML?",
+            &[r##"toml.validate("key = ")  // false"##],
         );
     }
 
     fn add_data_stack_docs(&mut self) {
         // --- ods ---
-        self.doc(
+        self.doc_ex(
             "ods.series",
             "ods.series(list|range)",
             "Series",
             "ods",
             "build a typed, null-aware Series from a list or range",
+            &[
+                r##"ods.series([1.0, 2.5, 4.0])"##,
+                r##"ods.series(range(0, 100))"##,
+            ],
         );
-        self.doc(
+        self.doc_ex(
             "ods.zeros",
             "ods.zeros(n)",
             "Series",
             "ods",
             "a Series of n float zeros",
+            &[r##"ods.zeros(3)  // a 3-element float Series of 0.0"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.linspace",
             "ods.linspace(a, b, n)",
             "Series",
             "ods",
             "n evenly spaced floats from a to b, inclusive",
+            &[r##"ods.linspace(0.0, 1.0, 5)  // 0.0, 0.25, 0.5, 0.75, 1.0"##],
         );
-        self.doc("ods.map", "ods.map(s, fn)", "Series", "ods", "apply a math.* unary function (named as a String, like \"sin\") over the whole column in one kernel pass");
-        self.doc(
+        self.doc_ex("ods.map", "ods.map(s, fn)", "Series", "ods", "apply a math.* unary function (named as a String, like \"sin\") over the whole column in one kernel pass",
+            &[r##"ods.map(ods.linspace(0.0, 3.14, 100), "sin")"##],
+        );
+        self.doc_ex(
             "ods.eq",
             "ods.eq(a, b)",
             "Series",
             "ods",
             "elementwise equality mask between two Series",
+            &[r##"ods.filter(f, ods.eq(f["cat"], "alpha"))  // rows where cat == "alpha""##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.ne",
             "ods.ne(a, b)",
             "Series",
             "ods",
             "elementwise inequality mask between two Series",
+            &[r##"ods.filter(f, ods.ne(f["status"], "done"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.is_null",
             "ods.is_null(s)",
             "Series",
             "ods",
             "a Bool mask marking the null positions of s",
+            &[r##"ods.filter(f, ods.is_null(f["email"]))  // rows missing an email"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.fill_null",
             "ods.fill_null(s, v)",
             "Series",
             "ods",
             "replace every null in s with v",
+            &[r##"ods.fill_null(f["score"], 0.0)"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.shift",
             "ods.shift(s, by)",
             "Series",
             "ods",
             "move values `by` positions down (negative moves up); vacated slots are null",
+            &[r##"ods.shift(f["price"], 1)  // yesterday's price beside today's"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.cum_max",
             "ods.cum_max(s)",
             "Series",
             "ods",
             "the running maximum, alongside cumsum",
+            &[r##"ods.cum_max(ods.series([3, 1, 4, 1, 5]))  // 3, 3, 4, 4, 5"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.cum_min",
             "ods.cum_min(s)",
             "Series",
             "ods",
             "the running minimum, alongside cumsum",
+            &[r##"ods.cum_min(ods.series([3, 1, 4, 1, 5]))  // 3, 1, 1, 1, 1"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.rank",
             "ods.rank(s, method = \"min\")",
             "Series",
             "ods",
             "the rank of each element; method is min, max, average, ordinal, or dense",
+            &[r##"ods.rank(f["score"])  // 1 for the smallest score"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.rolling",
             "ods.rolling(s, window, agg)",
             "Series",
             "ods",
             "a trailing-window aggregate; the first window-1 elements are null",
+            &[r##"ods.rolling(f["price"], 7, "mean")  // 7-row trailing average"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.unique",
             "ods.unique(s)",
             "Series",
             "ods",
             "the distinct values of s, in first-seen order (a null is a value)",
+            &[r##"ods.unique(ods.series([2, 1, 2, 3]))  // 2, 1, 3"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.n_unique",
             "ods.n_unique(s)",
             "Int",
             "ods",
             "how many distinct values s has",
+            &[r##"ods.n_unique(f["cat"])  // 4 distinct categories"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.value_counts",
             "ods.value_counts(s)",
             "Frame",
             "ods",
             "a value/count Frame for s, most frequent first",
+            &[r##"ods.value_counts(f["cat"])  // value/count Frame, most frequent first"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.median",
             "ods.median(s)",
             "Float",
             "ods",
             "the middle value of s, skipping nulls — quantile(s, 0.5)",
+            &[r##"ods.median(ods.series([1.0, 9.0, 2.0]))  // 2.0"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.cast",
             "ods.cast(s, type)",
             "Series",
             "ods",
             "s converted to \"Float\", \"Int\", \"Bool\", or \"String\"; what will not convert becomes null",
+            &[r##"ods.cast(ods.series(["1", "2", "x"]), "Int")  // 1, 2, null"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.sample",
             "ods.sample(f, n)",
             "Frame",
             "ods",
             "n random rows of a Frame or Series, without replacement, in original order",
+            &[r##"ods.sample(f, 100)  // 100 random rows, original order"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.null_count",
             "ods.null_count(s)",
             "Int",
             "ods",
             "how many values in s are null",
+            &[r##"ods.null_count(f["email"])"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.sum",
             "ods.sum(s)",
             "Value",
             "ods",
             "sum of s, skipping nulls",
+            &[r##"ods.sum(ods.series([1, 2, 3]))  // 6"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.mean",
             "ods.mean(s)",
             "Float",
             "ods",
             "arithmetic mean of s, skipping nulls",
+            &[r##"ods.mean(ods.series([1.0, 2.0, 3.0]))  // 2.0"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.var",
             "ods.var(s)",
             "Float",
             "ods",
             "sample variance of s, skipping nulls",
+            &[r##"ods.var(ods.series([1.0, 2.0, 3.0]))  // 1.0"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.std",
             "ods.std(s)",
             "Float",
             "ods",
             "sample standard deviation of s, skipping nulls",
+            &[r##"ods.std(ods.series([1.0, 2.0, 3.0]))  // 1.0"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.min",
             "ods.min(s)",
             "Value",
             "ods",
             "smallest non-null value in s",
+            &[r##"ods.min(f["price"])"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.max",
             "ods.max(s)",
             "Value",
             "ods",
             "largest non-null value in s",
+            &[r##"ods.max(f["price"])"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.quantile",
             "ods.quantile(s, q)",
             "Float",
             "ods",
             "the q-quantile of s (q in [0, 1]), skipping nulls",
+            &[r##"ods.quantile(f["latency"], 0.99)  // the p99"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.cumsum",
             "ods.cumsum(s)",
             "Series",
             "ods",
             "running cumulative sum of s",
+            &[r##"ods.cumsum(ods.series([1, 2, 3]))  // 1, 3, 6"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.dot",
             "ods.dot(a, b)",
             "Float",
             "ods",
             "dot product of two numeric Series",
+            &[r##"ods.dot(ods.series([1.0, 2.0]), ods.series([3.0, 4.0]))  // 11.0"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.sort",
             "ods.sort(s)",
             "Series",
             "ods",
             "s sorted ascending, nulls last",
+            &[r##"ods.sort(ods.series([3, 1, 2]))  // 1, 2, 3, nulls last"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.argsort",
             "ods.argsort(s)",
             "Series",
             "ods",
             "the indices that would sort s",
+            &[r##"ods.argsort(ods.series([30, 10, 20]))  // 1, 2, 0"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.take",
             "ods.take(s, idx)",
             "Series",
             "ods",
             "gather elements (or Frame rows) at the integer indices in idx",
+            &[r##"ods.take(f, ods.argsort(f["score"]))  // f sorted by score"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.get",
             "ods.get(s, i)",
             "Value",
             "ods",
             "the element at index i (negative counts from the end)",
+            &[r##"ods.get(f["name"], 0)  // first row's name; -1 is the last"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.to_list",
             "ods.to_list(s)",
             "List",
             "ods",
             "s as a language list, with nulls turned into ()",
+            &[r##"ods.to_list(ods.series([1, 2, 3]))  // [1, 2, 3]"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.len",
             "ods.len(s)",
             "Int",
             "ods",
             "number of elements in s",
+            &[r##"ods.len(f["price"])"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.frame",
             "ods.frame(columns)",
             "Frame",
             "ods",
             "build a Frame from [name, values] column pairs",
+            &[r##"ods.frame([["name", ["ann", "bo"]], ["score", [91, 84]]])"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.frame_from_records",
             "ods.frame_from_records(records)",
             "Frame",
             "ods",
             "build a Frame from a list of record maps",
+            &[r##"ods.frame_from_records([#{ "name": "ann", "score": 91 }])"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.read_csv",
             "ods.read_csv(text)",
             "Frame",
             "ods",
             "parse CSV text into a Frame, inferring column types (a parse failure raises)",
+            &[r##"ods.read_csv("id,score\n1,91\n2,84\n")  // a 2-row Frame"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.read_csv_file",
             "ods.read_csv_file(path)",
             "Result<Frame, Error>",
             "ods",
             "read a CSV file into a Frame, inferring column types. Requires the fs capability at read level; an unreadable file or malformed CSV is an Err",
+            &[r##"unwrap(ods.read_csv_file("data/sales.csv"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.open_csv",
             "ods.open_csv(path)",
             "Result<Reader, Error>",
             "ods",
             "open a CSV file for streaming: the reader holds its position, so a file larger than memory is read one chunk at a time. Requires the fs capability at read level; the reader is confined to the thread that opened it",
+            &[r##"let r = unwrap(ods.open_csv("big.csv"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.next_chunk",
             "ods.next_chunk(reader, rows)",
             "Result<Frame, Error>",
             "ods",
             "pull up to `rows` more rows as a Frame; the Frame is empty when the file is exhausted, which is how a streaming loop ends. Works on any reader, from open_csv or open_jsonl alike",
+            &[r##"unwrap(ods.next_chunk(r, 50000))  // the next 50k rows as a Frame"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.rows_read",
             "ods.rows_read(reader)",
             "Int",
             "ods",
             "how many rows this reader has handed out so far",
+            &[r##"ods.rows_read(r)"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.at_end",
             "ods.at_end(reader)",
             "Bool",
             "ods",
             "whether the reader has reached the end of its file",
+            &[r##"while !ods.at_end(r) { process(unwrap(ods.next_chunk(r, 10000))) }"##],
         );
-        self.doc(
+        self.doc_ex(
             "caps.allowed",
             "caps.allowed(name)",
             "Bool",
             "caps",
             "whether the calling code holds a capability (\"fs\", \"net\", \"proc\", \"db\", \"env\"). Answers for the *caller*: attenuated dependency code sees its own grant. Use it to choose a path before attempting a call — a denial still stops the program",
+            &[r##"if caps.allowed("net") => fetch_remote() else => use_cache()"##],
         );
-        self.doc(
+        self.doc_ex(
             "caps.level",
             "caps.level(name)",
             "String",
             "caps",
             "the granted level of a capability: \"none\", \"read\", or \"full\". Only `fs` has a middle level; every other capability answers \"none\" or \"full\"",
+            &[r##"caps.level("fs")  // "none", "read", or "full""##],
         );
-        self.doc(
+        self.doc_ex(
             "caps.granted",
             "caps.granted()",
             "Map",
             "caps",
             "the calling code's whole grant as a map — `fs` as a level string, the rest as Bool. For reporting a grant rather than branching on it",
+            &[r##"caps.granted()  // the whole grant as a map"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.all_of",
             "ods.all_of(masks)",
             "Series",
             "ods",
             "combine Bool masks with AND, elementwise. Takes a list because a real filter has several conditions; `&&` cannot serve, since the language compiles it to a short-circuiting jump. Three-valued: one false settles the result even if another entry is null",
+            &[r##"ods.filter(f, ods.all_of([ods.eq(f["cat"], "a"), ods.gt(f["score"], 90)]))"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.any_of",
             "ods.any_of(masks)",
             "Series",
             "ods",
             "combine Bool masks with OR, elementwise. Three-valued: one true settles the result even if another entry is null",
+            &[r##"ods.any_of([ods.is_null(f["email"]), ods.is_null(f["phone"])])"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.not",
             "ods.not(mask)",
             "Series",
             "ods",
             "invert a Bool mask elementwise; a null stays null",
+            &[r##"ods.filter(f, ods.not(ods.is_null(f["email"])))  // rows with an email"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.concat",
             "ods.concat(frames)",
             "Frame",
             "ods",
             "stack Frames vertically, matching columns by name. A missing or extra column is refused rather than padded with nulls; an Int column meeting a Float one widens. This is how partial results from a streaming loop are put back together",
+            &[r##"ods.concat([january, february, march])"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.write_frame",
             "ods.write_frame(f, path)",
             "Result<Unit, Error>",
             "ods",
             "write a Frame in olang's native columnar format: types survive exactly, the load is a read rather than a parse, and one column can be fetched without the others. Requires the fs capability at write level",
+            &[r##"unwrap(ods.write_frame(f, "cache.odf"))  // types survive exactly"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.read_frame",
             "ods.read_frame(path, columns = all)",
             "Result<Frame, Error>",
             "ods",
             "read a native columnar file. Pass a list of column names to decode only those, in that order — the rest are skipped by the byte lengths in the header. Requires the fs capability at read level",
+            &[r##"unwrap(ods.read_frame("cache.odf", ["id", "score"]))"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.frame_info",
             "ods.frame_info(path)",
             "Result<Frame, Error>",
             "ods",
             "the schema of a native columnar file — column, dtype, nulls, bytes — read from its text header without loading the data. Requires the fs capability at read level",
+            &[r##"unwrap(ods.frame_info("cache.odf"))  // column, dtype, nulls, bytes"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.describe",
             "ods.describe(f)",
             "Frame",
             "ods",
             "summary statistics per column — count, nulls, mean, std, min, q25, median, q75, max — as a Frame, so it prints as a table and can be sorted or written out. Numeric statistics are null for String and Bool columns",
+            &[r##"ods.describe(f)  // count, mean, std, quartiles per column"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.schema",
             "ods.schema(f)",
             "Frame",
             "ods",
             "name, type, and null count per column: describe without the arithmetic, for a Frame too wide to summarize",
+            &[r##"ods.schema(f)  // name, type, null count per column"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.open_jsonl",
             "ods.open_jsonl(path)",
             "Result<Reader, Error>",
             "ods",
             "open a JSON-lines file for streaming, driven by the same next_chunk/rows_read/at_end verbs as open_csv. Requires the fs capability at read level; the reader is confined to the thread that opened it",
+            &[r##"let r = unwrap(ods.open_jsonl("events.jsonl"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.read_jsonl",
             "ods.read_jsonl(text)",
             "Result<Frame, Error>",
             "ods",
             "parse JSON-lines text (one JSON object per line) into a Frame; columns are the union of the keys and a missing key is a null. Blank lines are skipped; a malformed or non-object line is an Err naming the line number",
+            &[r##"unwrap(ods.read_jsonl("{\"id\": 1}\n{\"id\": 2}\n"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.read_jsonl_file",
             "ods.read_jsonl_file(path)",
             "Result<Frame, Error>",
             "ods",
             "read a JSON-lines file into a Frame. Requires the fs capability at read level",
+            &[r##"unwrap(ods.read_jsonl_file("events.jsonl"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.to_jsonl",
             "ods.to_jsonl(f)",
             "String",
             "ods",
             "serialize a Frame as JSON-lines text, one object per row; nulls are omitted rather than written, so it round-trips through read_jsonl",
+            &[r##"ods.to_jsonl(f)  // one JSON object per row"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.write_jsonl",
             "ods.write_jsonl(f, path)",
             "Result<Unit, Error>",
             "ods",
             "write a Frame to a JSON-lines file. Requires the fs capability at write level",
+            &[r##"unwrap(ods.write_jsonl(f, "out.jsonl"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.to_csv",
             "ods.to_csv(f)",
             "String",
             "ods",
             "serialize a Frame as CSV text with a header row; nulls become empty cells, so it round-trips through read_csv",
+            &[r##"ods.to_csv(f)  // CSV text with a header row"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.write_csv",
             "ods.write_csv(f, path)",
             "Result<Unit, Error>",
             "ods",
             "write a Frame to a CSV file. Requires the fs capability at write level",
+            &[r##"unwrap(ods.write_csv(f, "out.csv"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.columns",
             "ods.columns(f)",
             "List",
             "ods",
             "the column names of f",
+            &[r##"ods.columns(f)  // ["id", "cat", "score"]"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.column",
             "ods.column(f, name)  //  or f[name]",
             "Series",
             "ods",
             "the named column of f as a Series",
+            &[r##"f["score"]  // sugar for ods.column(f, "score")"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.n_rows",
             "ods.n_rows(f)",
             "Int",
             "ods",
-            "number of rows in f",
+            "the number of rows in a Frame (its columns all share this length)",
+            &[r##"ods.n_rows(f)"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.n_cols",
             "ods.n_cols(f)",
             "Int",
             "ods",
             "number of columns in f",
+            &[r##"ods.n_cols(f)"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.head",
             "ods.head(f, n = 10)",
             "Frame",
             "ods",
             "the first n rows of f (n defaults to 10)",
+            &[r##"ods.head(f, 5)  // the first 5 rows"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.tail",
             "ods.tail(f, n = 10)",
             "Frame",
             "ods",
             "the last n rows of f (n defaults to 10)",
+            &[r##"ods.tail(f)  // the last 10 rows"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.rename",
             "ods.rename(f, mapping)",
             "Frame",
             "ods",
             "f with columns renamed, given a Map of old name to new name",
+            &[r##"ods.rename(f, #{ "amt": "amount" })"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.drop",
             "ods.drop(f, names)",
             "Frame",
             "ods",
             "a Frame without the named columns (the complement of select)",
+            &[r##"ods.drop(f, ["internal_id"])"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.distinct",
             "ods.distinct(f, names = every column)",
             "Frame",
             "ods",
             "f with duplicate rows removed, keeping the first occurrence",
+            &[r##"ods.distinct(f, ["email"])  // first row per email"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.drop_null",
             "ods.drop_null(f, names = every column)",
             "Frame",
             "ods",
             "f without the rows that are null in any of the named columns",
+            &[r##"ods.drop_null(f, ["score"])  // rows where score is present"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.to_records",
             "ods.to_records(f)",
             "List",
             "ods",
             "f as a list of per-row record maps",
+            &[r##"ods.to_records(ods.head(f, 2))  // two row-maps"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.select",
             "ods.select(f, names)",
             "Frame",
             "ods",
             "a Frame keeping only the named columns",
+            &[r##"ods.select(f, ["name", "score"])"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.with_column",
             "ods.with_column(f, name, series)",
             "Frame",
             "ods",
             "f with a column added or replaced",
+            &[r##"ods.with_column(f, "total", f["price"] * f["qty"])"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.filter",
             "ods.filter(f, mask)",
             "Frame",
             "ods",
             "keep the rows (or Series elements) where the Bool mask is true",
+            &[r##"ods.filter(f, ods.gt(f["score"], 90))"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.sort_by",
             "ods.sort_by(f, name, descending)",
             "Frame",
             "ods",
             "f sorted by the named column, descending when true",
+            &[r##"ods.sort_by(f, "score", true)  // best first"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.group_by",
             "ods.group_by(f, key, aggs)",
             "Frame",
             "ods",
             "group rows by key and reduce each group with the given aggregations",
+            &[r##"ods.group_by(f, ["cat"], [["total", "sum", "score"], ["rows", "count", ""]])"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.join",
             "ods.join(a, b, on_a, on_b = on_a)",
             "Frame",
             "ods",
             "inner hash join of a and b on one key column from each side",
+            &[r##"ods.join(orders, users, "user_id", "id")"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.pivot",
             "ods.pivot(f, index, columns, values, agg)",
             "Frame",
             "ods",
             "long to wide: a row per index value, a column per distinct `columns` value, cells aggregated by agg",
+            &[r##"ods.pivot(f, "month", "cat", "amount", "sum")"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.unpivot",
             "ods.unpivot(f, id_columns, value_columns = the rest)",
             "Frame",
             "ods",
             "wide to long: keep the id columns, turn the rest into name/value rows",
+            &[r##"ods.unpivot(wide, ["month"])  // name/value rows per month"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.join_full",
             "ods.join_full(a, b, on, on_b = on)",
             "Frame",
             "ods",
             "every row from both sides; the key column takes whichever side has it",
+            &[r##"ods.join_full(a, b, "id")"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.join_semi",
             "ods.join_semi(a, b, on, on_b = on)",
             "Frame",
             "ods",
             "the rows of a that have a match in b, once each, a's columns only",
+            &[r##"ods.join_semi(orders, vips, "user_id", "id")  // orders by VIPs"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.join_anti",
             "ods.join_anti(a, b, on, on_b = on)",
             "Frame",
             "ods",
             "the rows of a that have no match in b, a's columns only",
+            &[r##"ods.join_anti(users, orders, "id", "user_id")  // users with no orders"##],
         );
-        self.doc(
+        self.doc_ex(
             "ods.join_left",
             "ods.join_left(a, b, on_a, on_b)",
             "Frame",
             "ods",
             "left join keeping every row of a, filling unmatched right columns with nulls",
+            &[r##"ods.join_left(orders, users, "user_id", "id")"##],
         );
 
         // --- stats ---
-        self.doc(
+        self.doc_ex(
             "stats.describe",
             "stats.describe(s)",
             "Map",
             "stats",
             "count, null count, mean, std, min, quartiles, and max of s in one map",
+            &[r##"stats.describe(f["latency"])  // count, mean, std, quartiles"##],
         );
-        self.doc(
+        self.doc_ex(
             "stats.corr",
             "stats.corr(a, b)",
             "Float",
             "stats",
             "Pearson correlation of a and b over pairwise-complete rows",
+            &[r##"stats.corr(f["price"], f["demand"])  // -1.0 to 1.0"##],
         );
-        self.doc(
+        self.doc_ex(
             "stats.cov",
             "stats.cov(a, b)",
             "Float",
             "stats",
             "sample covariance of a and b over pairwise-complete rows",
+            &[r##"stats.cov(f["x"], f["y"])"##],
         );
-        self.doc("stats.t_test", "stats.t_test(a, b)", "Map", "stats", "t-test: Welch's two-sample when b is a Series, one-sample against mean b when b is a number");
-        self.doc(
+        self.doc_ex("stats.t_test", "stats.t_test(a, b)", "Map", "stats", "t-test: Welch's two-sample when b is a Series, one-sample against mean b when b is a number",
+            &[r##"stats.t_test(control, treatment)  // #{ statistic, p_value, df, ... }"##],
+        );
+        self.doc_ex(
             "stats.chi2_test",
             "stats.chi2_test(obs, exp)",
             "Map",
             "stats",
             "chi-square goodness-of-fit test of observed against expected counts",
+            &[r##"stats.chi2_test(ods.series([48, 52]), ods.series([50, 50]))"##],
         );
-        self.doc("stats.lm", "stats.lm(y, x)", "Map", "stats", "OLS regression of y on regressor(s) x, returning coefficients, standard errors, t-stats, p-values, and r2");
-        self.doc(
+        self.doc_ex("stats.lm", "stats.lm(y, x)", "Map", "stats", "OLS regression of y on regressor(s) x, returning coefficients, standard errors, t-stats, p-values, and r2",
+            &[r##"stats.lm(f["sales"], f["spend"])  // coefficients, stderr, r2"##],
+        );
+        self.doc_ex(
             "stats.norm.pdf",
             "stats.norm.pdf(x, mean, std)",
             "Float",
             "stats",
             "normal probability density at x",
+            &[r##"stats.norm.pdf(0.0, 0.0, 1.0)  // 0.3989... — the peak of the bell"##],
         );
-        self.doc(
+        self.doc_ex(
             "stats.norm.cdf",
             "stats.norm.cdf(x, mean, std)",
             "Float",
             "stats",
             "normal cumulative probability at x",
+            &[r##"stats.norm.cdf(1.96, 0.0, 1.0)  // 0.975"##],
         );
-        self.doc(
+        self.doc_ex(
             "stats.norm.ppf",
             "stats.norm.ppf(p, mean, std)",
             "Float",
             "stats",
             "normal quantile (inverse CDF) for probability p",
+            &[r##"stats.norm.ppf(0.975, 0.0, 1.0)  // 1.96"##],
         );
-        self.doc(
+        self.doc_ex(
             "stats.norm.sample",
             "stats.norm.sample(n, mean, std)",
             "Series",
             "stats",
             "n normal draws from the random module's seeded stream",
+            &[r##"stats.norm.sample(1000, 0.0, 1.0)  // draws from the random module's seeded stream"##],
         );
-        self.doc(
+        self.doc_ex(
             "stats.t.pdf",
             "stats.t.pdf(x, df)",
             "Float",
             "stats",
             "Student's t probability density at x",
+            &[r##"stats.t.pdf(0.0, 10)"##],
         );
-        self.doc(
+        self.doc_ex(
             "stats.t.cdf",
             "stats.t.cdf(x, df)",
             "Float",
             "stats",
             "Student's t cumulative probability at x",
+            &[r##"stats.t.cdf(2.228, 10)  // 0.975 at df = 10"##],
         );
-        self.doc(
+        self.doc_ex(
             "stats.t.ppf",
             "stats.t.ppf(p, df)",
             "Float",
             "stats",
             "Student's t quantile (inverse CDF) for probability p",
+            &[r##"stats.t.ppf(0.975, 10)  // 2.228..."##],
         );
-        self.doc(
+        self.doc_ex(
             "stats.t.sample",
             "stats.t.sample(n, df)",
             "Series",
             "stats",
             "n Student's t draws from the seeded stream",
+            &[r##"stats.t.sample(1000, 10)"##],
         );
-        self.doc(
+        self.doc_ex(
             "stats.chi2.pdf",
             "stats.chi2.pdf(x, df)",
             "Float",
             "stats",
             "chi-square probability density at x",
+            &[r##"stats.chi2.pdf(3.0, 4)"##],
         );
-        self.doc(
+        self.doc_ex(
             "stats.chi2.cdf",
             "stats.chi2.cdf(x, df)",
             "Float",
             "stats",
             "chi-square cumulative probability at x",
+            &[r##"stats.chi2.cdf(9.49, 4)  // 0.95 at df = 4"##],
         );
-        self.doc(
+        self.doc_ex(
             "stats.chi2.ppf",
             "stats.chi2.ppf(p, df)",
             "Float",
             "stats",
             "chi-square quantile (inverse CDF) for probability p",
+            &[r##"stats.chi2.ppf(0.95, 4)  // 9.49..."##],
         );
-        self.doc(
+        self.doc_ex(
             "stats.chi2.sample",
             "stats.chi2.sample(n, df)",
             "Series",
             "stats",
             "n chi-square draws from the seeded stream",
+            &[r##"stats.chi2.sample(1000, 4)"##],
         );
-        self.doc(
+        self.doc_ex(
             "stats.f.pdf",
             "stats.f.pdf(x, d1, d2)",
             "Float",
             "stats",
             "F-distribution probability density at x",
+            &[r##"stats.f.pdf(1.0, 5, 10)"##],
         );
-        self.doc(
+        self.doc_ex(
             "stats.f.cdf",
             "stats.f.cdf(x, d1, d2)",
             "Float",
             "stats",
             "F-distribution cumulative probability at x",
+            &[r##"stats.f.cdf(3.33, 5, 10)  // 0.95 at (5, 10)"##],
         );
-        self.doc(
+        self.doc_ex(
             "stats.f.ppf",
             "stats.f.ppf(p, d1, d2)",
             "Float",
             "stats",
             "F-distribution quantile (inverse CDF) for probability p",
+            &[r##"stats.f.ppf(0.95, 5, 10)  // 3.33..."##],
         );
-        self.doc(
+        self.doc_ex(
             "stats.f.sample",
             "stats.f.sample(n, d1, d2)",
             "Series",
             "stats",
             "n F-distribution draws from the seeded stream",
+            &[r##"stats.f.sample(1000, 5, 10)"##],
         );
 
         // --- plot ---
-        self.doc(
+        self.doc_ex(
             "plot.line",
             "plot.line(x, y, opts)",
             "String",
             "plot",
             "a line chart of y against x, as a standalone SVG string",
+            &[r##"plot.line(days, revenue, #{ "title": "Revenue" })  // an SVG string"##],
         );
-        self.doc(
+        self.doc_ex(
             "plot.scatter",
             "plot.scatter(x, y, opts)",
             "String",
             "plot",
             "a scatter plot of y against x, as an SVG string",
+            &[r##"plot.scatter(heights, weights, #{ "title": "H vs W" })"##],
         );
-        self.doc(
+        self.doc_ex(
             "plot.area",
             "plot.area(x, y, opts)",
             "String",
             "plot",
             "an area chart of y against x, as an SVG string",
+            &[r##"plot.area(days, active_users, #{})"##],
         );
-        self.doc(
+        self.doc_ex(
             "plot.lines",
             "plot.lines(x, series, opts)",
             "String",
             "plot",
             "a multi-series line chart with legend from [label, y] pairs sharing x",
+            &[r##"plot.lines(days, [["control", a], ["treatment", b]], #{})"##],
         );
-        self.doc(
+        self.doc_ex(
             "plot.xy",
             "plot.xy(layers, opts)",
             "String",
             "plot",
             "layered marks over shared scales from [label, mark, x, y] entries",
+            &[r##"plot.xy([["fit", "line", xs, fitted], ["data", "point", xs, ys]], #{})"##],
         );
-        self.doc(
+        self.doc_ex(
             "plot.bar",
             "plot.bar(labels, values, opts)",
             "String",
             "plot",
             "a bar chart of values against labels, as an SVG string",
+            &[r##"plot.bar(["mon", "tue", "wed"], [12, 19, 7], #{})"##],
         );
-        self.doc(
+        self.doc_ex(
             "plot.bars",
             "plot.bars(labels, series, opts)",
             "String",
             "plot",
             "a grouped bar chart from [label, values] series sharing the category labels",
+            &[r##"plot.bars(months, [["2025", last], ["2026", this]], #{})"##],
         );
-        self.doc(
+        self.doc_ex(
             "plot.stacked",
             "plot.stacked(labels, series, opts)",
             "String",
             "plot",
             "a stacked bar chart from [label, values] series sharing the category labels",
+            &[r##"plot.stacked(months, [["rent", rent], ["food", food]], #{})"##],
         );
-        self.doc(
+        self.doc_ex(
             "plot.hist",
             "plot.hist(s, bins, opts)",
             "String",
             "plot",
             "a histogram of s over the given number of bins, as an SVG string",
+            &[r##"plot.hist(latencies, 30, #{ "title": "Latency" })"##],
         );
-        self.doc(
+        self.doc_ex(
             "plot.heatmap",
             "plot.heatmap(x_labels, y_labels, rows, opts)",
             "String",
             "plot",
             "a heatmap of the row-major value grid, as an SVG string",
+            &[r##"plot.heatmap(hours, days, grid, #{})"##],
         );
-        self.doc(
+        self.doc_ex(
             "plot.box",
             "plot.box(series, opts)",
             "String",
             "plot",
             "box-and-whisker plots from [label, values] series, nulls dropped",
+            &[r##"plot.box([["control", a], ["treatment", b]], #{})"##],
         );
-        self.doc("plot.ramp", "plot.ramp(scale, t)", "String", "plot", "one color at position t in [0, 1] from a named ramp (auto, ocean, ember, thermal, diverging)");
+        self.doc_ex("plot.ramp", "plot.ramp(scale, t)", "String", "plot", "one color at position t in [0, 1] from a named ramp (auto, ocean, ember, thermal, diverging)",
+            &[r##"plot.ramp("ocean", 0.5)  // the middle color of the ocean ramp"##],
+        );
     }
 
     fn add_browser_and_toolkit_docs(&mut self) {
         // --- dom ---
-        self.doc(
+        self.doc_ex(
             "dom.query",
             "dom.query(sel)",
             "Node",
             "dom",
             "First element matching a CSS selector — an error if none matches.",
+            &[r##"let btn = dom.query("#save")"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.set_text",
             "dom.set_text(el, s)",
             "Unit",
             "dom",
             "Write an element's text content.",
+            &[r##"dom.set_text(dom.query("#count"), to_string(n))"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.get_text",
             "dom.get_text(el)",
             "String",
             "dom",
             "Read an element's text content.",
+            &[r##"dom.get_text(dom.query("h1"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.set_html",
             "dom.set_html(el, html)",
             "Unit",
             "dom",
             "Replace an element's inner HTML — the render primitive.",
+            &[r##"dom.set_html(dom.query("#list"), rows |> map(render_row) |> join(""))"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.value",
             "dom.value(el)",
             "String",
             "dom",
             "Read a form control's value.",
+            &[r##"let note = dom.value(dom.query("#note"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.set_value",
             "dom.set_value(el, s)",
             "Unit",
             "dom",
             "Write a form control's value.",
+            &[r##"dom.set_value(dom.query("#note"), "")  // clear the field"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.on",
             "dom.on(el, event, handler)",
             "Unit",
             "dom",
             "Attach an event handler; the handler receives a structured event Map.",
+            &[r##"dom.on(dom.query("#save"), "click", (ev) => save())"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.fetch",
             "dom.fetch(method, path, body, callback)",
             "Unit",
             "dom",
             "Asynchronous HTTP from the page — the callback receives the response text.",
+            &[r##"dom.fetch("GET", "/api/items", "", (text) => render(text))"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.focus",
             "dom.focus(el)",
             "Unit",
             "dom",
-            "Focus an element.",
+            "Give an element keyboard focus, as if the user had tabbed to it.",
+            &[r##"dom.focus(dom.query("#search"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.set_class",
             "dom.set_class(el, c)",
             "Unit",
             "dom",
             "Replace an element's class list wholesale.",
+            &[r##"dom.set_class(dom.query("#panel"), "open highlighted")"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.get_attr",
             "dom.get_attr(el, name)",
             "String",
             "dom",
             "Read an element's attribute value.",
+            &[r##"dom.get_attr(dom.query("a"), "href")"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.set_attr",
             "dom.set_attr(el, name, v)",
             "Unit",
             "dom",
             "Set an element's attribute.",
+            &[r##"dom.set_attr(dom.query("#next"), "disabled", "true")"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.remove_attr",
             "dom.remove_attr(el, name)",
             "Unit",
             "dom",
             "Remove an element's attribute.",
+            &[r##"dom.remove_attr(dom.query("#next"), "disabled")"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.class_add",
             "dom.class_add(el, c)",
             "Unit",
             "dom",
             "Add a class to an element's class list.",
+            &[r##"dom.class_add(dom.query("#row-3"), "selected")"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.class_remove",
             "dom.class_remove(el, c)",
             "Unit",
             "dom",
             "Remove a class from an element's class list.",
+            &[r##"dom.class_remove(dom.query("#row-3"), "selected")"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.class_toggle",
             "dom.class_toggle(el, c)",
             "Unit",
             "dom",
             "Toggle a class on an element's class list.",
+            &[r##"dom.class_toggle(dom.query("#menu"), "open")"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.set_style",
             "dom.set_style(el, prop, v)",
             "Unit",
             "dom",
             "Set one CSS style property on an element.",
+            &[r##"dom.set_style(dom.query("#bar"), "width", "75%")"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.measure",
             "dom.measure(el)",
             "Map",
             "dom",
             "Bounding rect as a Map: x, y, width, height.",
+            &[r##"let rect = dom.measure(dom.query("#chart"))  // #{ x, y, width, height }"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.create",
             "dom.create(tag)",
             "Node",
             "dom",
             "Create a detached element of the given tag.",
+            &[r##"let li = dom.create("li")"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.append",
             "dom.append(parent, child)",
             "Unit",
             "dom",
             "Append a child element to a parent.",
+            &[r##"dom.append(dom.query("#list"), li)"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.remove",
             "dom.remove(el)",
             "Unit",
             "dom",
             "Remove an element from the document.",
+            &[r##"dom.remove(dom.query("#toast"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.scroll_into_view",
             "dom.scroll_into_view(el)",
             "Unit",
             "dom",
             "Scroll an element into view.",
+            &[r##"dom.scroll_into_view(dom.query("#bottom"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.set_timeout",
             "dom.set_timeout(ms, fn)",
             "Unit",
             "dom",
             "Run a function once after a delay in milliseconds.",
+            &[r##"dom.set_timeout(2000, () => dom.remove(dom.query("#toast")))"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.set_interval",
             "dom.set_interval(ms, fn)",
             "Timer",
             "dom",
             "Run a function repeatedly every ms milliseconds; returns a timer handle.",
+            &[r##"let t = dom.set_interval(1000, () => tick())"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.clear_interval",
             "dom.clear_interval(t)",
             "Unit",
             "dom",
             "Cancel an interval timer by its handle.",
+            &[r##"dom.clear_interval(t)"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.request_frame",
             "dom.request_frame(fn)",
             "Unit",
             "dom",
             "Schedule one animation frame; re-arm inside the handler for a loop.",
+            &[r##"dom.request_frame((dt) => step(dt))  // re-arm inside step for a loop"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.on_frame",
             "dom.on_frame(fn)",
             "Unit",
             "dom",
             "Register the persistent animation loop, called every frame with a millisecond delta.",
+            &[r##"dom.on_frame((dt) => animate(dt))"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.draw",
             "dom.draw(canvas, ops)",
             "Unit",
             "dom",
             "Replay a draw-list onto a canvas — the whole scene crosses the boundary once.",
+            &[r##"dom.draw(dom.query("#canvas"), scene_ops)"##],
         );
-        self.doc("dom.draw_points", "dom.draw_points(canvas, xs, ys, style)", "Unit", "dom", "Bulk point/path plotting; coordinates cross as one packed binary buffer with a host-side affine.");
-        self.doc(
+        self.doc_ex("dom.draw_points", "dom.draw_points(canvas, xs, ys, style)", "Unit", "dom", "Bulk point/path plotting; coordinates cross as one packed binary buffer with a host-side affine.",
+            &[r##"dom.draw_points(dom.query("#plot"), xs, ys, #{ "color": "#4a90d9" })"##],
+        );
+        self.doc_ex(
             "dom.insert_before",
             "dom.insert_before(parent, child, before)",
             "Unit",
             "dom",
             "Position a child before another node (0 appends).",
+            &[r##"dom.insert_before(list_el, new_row, 0)  // 0 appends"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.push_state",
             "dom.push_state(path)",
             "Unit",
             "dom",
             "Push an SPA navigation entry for the given path.",
+            &[r##"dom.push_state("/?month=2026-08")"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.location",
             "dom.location()",
             "Map",
             "dom",
             "The current location as a Map of path and query.",
+            &[r##"let here = dom.location()  // #{ "path": ..., "query": ... }"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.on_route",
             "dom.on_route(fn)",
             "Unit",
             "dom",
             "Register the back/forward listener — a route event Map with path and query.",
+            &[r##"dom.on_route((ev) => render_for(map_get(ev, "query")))"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.storage_get",
             "dom.storage_get(k)",
             "String",
             "dom",
             "Read a localStorage value (missing keys read as \"\").",
+            &[r##"let theme = dom.storage_get("theme")  // "" when unset"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.storage_set",
             "dom.storage_set(k, v)",
             "Unit",
             "dom",
             "Write a localStorage value.",
+            &[r##"dom.storage_set("theme", "dark")"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.state_get",
             "dom.state_get(k)",
             "Value",
             "dom",
             "Read from the page-lifetime session state store (missing keys read as Unit).",
+            &[r##"let rows = dom.state_get("rows")  // Unit when unset"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.state_set",
             "dom.state_set(k, v)",
             "Unit",
             "dom",
             "Write to the page-lifetime session state store (a Map/list round-trips).",
+            &[r##"dom.state_set("rows", fetched)"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.storage_remove",
             "dom.storage_remove(k)",
             "Unit",
             "dom",
             "Remove a localStorage key.",
+            &[r##"dom.storage_remove("draft")"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.worker",
             "dom.worker(path)",
             "Worker",
             "dom",
             "Boot a second olang program in a Web Worker; returns a worker handle.",
+            &[r##"let w = dom.worker("/worker.ol")"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.worker_send",
             "dom.worker_send(w, value)",
             "Unit",
             "dom",
             "Send a value to a worker.",
+            &[r##"dom.worker_send(w, #{ "cmd": "crunch", "n": 1000000 })"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.worker_on",
             "dom.worker_on(w, handler)",
             "Unit",
             "dom",
             "Receive values from a worker.",
+            &[r##"dom.worker_on(w, (result) => show(result))"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.worker_close",
             "dom.worker_close(w)",
             "Unit",
             "dom",
-            "Terminate a worker.",
+            "Terminate a worker immediately; queued messages in either direction are dropped.",
+            &[r##"dom.worker_close(w)"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.post",
             "dom.post(value)",
             "Unit",
             "dom",
             "Worker-side mirror: post a value to the page.",
+            &[r##"dom.post(#{ "done": true, "total": total })  // worker side"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.on_message",
             "dom.on_message(handler)",
             "Unit",
             "dom",
             "Worker-side mirror: receive values from the page.",
+            &[r##"dom.on_message((msg) => dom.post(handle(msg)))  // worker side"##],
         );
-        self.doc(
+        self.doc_ex(
             "dom.fetch_json",
             "dom.fetch_json(method, path, body, callback)",
             "Unit",
             "dom",
             "Like dom.fetch, but the callback receives the parsed value directly.",
+            &[r##"dom.fetch_json("GET", "/api/items", "", (items) => render(items))"##],
         );
 
         // --- cli ---
-        self.doc(
+        self.doc_ex(
             "cli.args",
             "cli.args()",
             "List",
             "cli",
             "The program's own arguments, with the program path (argv[0]) dropped.",
+            &[r##"cli.args()  // ["--verbose", "input.csv"] — argv[0] dropped"##],
         );
-        self.doc(
+        self.doc_ex(
             "cli.parse",
             "cli.parse(spec, argv)",
             "Result",
             "cli",
             "Parse argv against spec; Ok(values) (a map incl. help) or Err(message).",
+            &[r##"cli.parse(spec, cli.args())  // Ok(values map) or Err(message)"##],
         );
-        self.doc(
+        self.doc_ex(
             "cli.help",
             "cli.help(spec)",
             "String",
             "cli",
             "Render the usage/help text for spec as a string.",
+            &[r##"println(cli.help(spec))"##],
         );
 
         // --- term ---
-        self.doc(
+        self.doc_ex(
             "term.color",
             "term.color()",
             "Bool",
             "term",
             "Whether styled output should be emitted right now.",
+            &[r##"if term.color() => term.green("ok") else => "ok""##],
         );
-        self.doc(
+        self.doc_ex(
             "term.black",
             "term.black(s)",
             "String",
             "term",
-            "Wrap s in black.",
+            "s wrapped in black ANSI codes — a no-op string when styling is off (term.color()).",
+            &[r##"println(term.black("shadow"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "term.red",
             "term.red(s)",
             "String",
             "term",
-            "Wrap s in red.",
+            "s wrapped in red ANSI codes — a no-op string when styling is off (term.color()).",
+            &[r##"println(term.red("FAIL") + " 2 tests")"##],
         );
-        self.doc(
+        self.doc_ex(
             "term.green",
             "term.green(s)",
             "String",
             "term",
-            "Wrap s in green.",
+            "s wrapped in green ANSI codes — a no-op string when styling is off (term.color()).",
+            &[r##"println(term.green("PASS") + " 41 tests")"##],
         );
-        self.doc(
+        self.doc_ex(
             "term.yellow",
             "term.yellow(s)",
             "String",
             "term",
-            "Wrap s in yellow.",
+            "s wrapped in yellow ANSI codes — a no-op string when styling is off (term.color()).",
+            &[r##"println(term.yellow("warning: 3 skipped"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "term.blue",
             "term.blue(s)",
             "String",
             "term",
-            "Wrap s in blue.",
+            "s wrapped in blue ANSI codes — a no-op string when styling is off (term.color()).",
+            &[r##"println(term.blue("info"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "term.magenta",
             "term.magenta(s)",
             "String",
             "term",
-            "Wrap s in magenta.",
+            "s wrapped in magenta ANSI codes — a no-op string when styling is off (term.color()).",
+            &[r##"println(term.magenta("debug"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "term.cyan",
             "term.cyan(s)",
             "String",
             "term",
-            "Wrap s in cyan.",
+            "s wrapped in cyan ANSI codes — a no-op string when styling is off (term.color()).",
+            &[r##"println(term.cyan("https://example.com"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "term.white",
             "term.white(s)",
             "String",
             "term",
-            "Wrap s in white.",
+            "s wrapped in white ANSI codes — a no-op string when styling is off (term.color()).",
+            &[r##"println(term.white("bright"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "term.gray",
             "term.gray(s)",
             "String",
             "term",
-            "Wrap s in gray.",
+            "s wrapped in gray ANSI codes — a no-op string when styling is off (term.color()).",
+            &[r##"println(term.gray("(cached)"))"##],
         );
-        self.doc("term.bold", "term.bold(s)", "String", "term", "Bold s.");
-        self.doc("term.dim", "term.dim(s)", "String", "term", "Dim s.");
-        self.doc(
+        self.doc_ex(
+            "term.bold",
+            "term.bold(s)",
+            "String",
+            "term",
+            "s wrapped in bold ANSI codes — a no-op string when styling is off (term.color()).",
+            &[r##"println(term.bold("Total: ") + to_string(total))"##],
+        );
+        self.doc_ex(
+            "term.dim",
+            "term.dim(s)",
+            "String",
+            "term",
+            "s wrapped in dim (faint) ANSI codes — a no-op string when styling is off.",
+            &[r##"println(term.dim("hint: use --verbose for detail"))"##],
+        );
+        self.doc_ex(
             "term.italic",
             "term.italic(s)",
             "String",
             "term",
-            "Italicize s.",
+            "s wrapped in italic ANSI codes — a no-op string when styling is off (term.color()).",
+            &[r##"println(term.italic("et al."))"##],
         );
-        self.doc(
+        self.doc_ex(
             "term.underline",
             "term.underline(s)",
             "String",
             "term",
-            "Underline s.",
+            "s wrapped in underline ANSI codes — a no-op string when styling is off (term.color()).",
+            &[r##"println(term.underline("Section 2"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "term.style",
             "term.style(s, opts)",
             "String",
             "term",
             "Style s with opts: fg, bg, bold, dim, italic, underline.",
+            &[r##"term.style("alert", #{ "fg": "white", "bg": "red", "bold": true })"##],
         );
-        self.doc(
+        self.doc_ex(
             "term.rule",
             "term.rule(width)",
             "String",
             "term",
             "A horizontal rule of box-drawing dashes.",
+            &[r##"println(term.rule(60))"##],
         );
-        self.doc(
+        self.doc_ex(
             "term.visible_len",
             "term.visible_len(s)",
             "Int",
             "term",
             "The visible screen width of s, with ANSI styling escapes discounted.",
+            &[r##"term.visible_len(term.red("abc"))  // 3 — escapes discounted"##],
         );
-        self.doc(
+        self.doc_ex(
             "term.table",
             "term.table(headers, rows)",
             "String",
             "term",
             "An aligned table; columns pad to their widest cell by visible width.",
+            &[r##"println(term.table(["name", "score"], [["ann", "91"], ["bo", "84"]]))"##],
         );
-        self.doc(
+        self.doc_ex(
             "term.bar",
             "term.bar(fraction, width)",
             "String",
             "term",
             "A progress bar for a fraction in [0, 1].",
+            &[r##"println(term.bar(0.75, 30))  // three-quarters full, 30 cells wide"##],
         );
-        self.doc(
+        self.doc_ex(
             "term.prompt",
             "term.prompt(question)",
             "String",
             "term",
             "Prompt for a line of input.",
+            &[r##"let name = term.prompt("Project name?")"##],
         );
-        self.doc(
+        self.doc_ex(
             "term.confirm",
             "term.confirm(question)",
             "Bool",
             "term",
             "Yes/no question; anything starting with y/Y is true, else false.",
+            &[r##"if term.confirm("Overwrite?") => save() else => ()"##],
         );
-        self.doc(
+        self.doc_ex(
             "term.select",
             "term.select(question, options)",
             "Result",
             "term",
             "A numbered menu; returns Ok(chosen option string) or Err on a bad choice.",
+            &[r##"term.select("Template?", ["app", "lib", "web"])  // Ok("app")"##],
         );
 
         // --- ui ---
-        self.doc("ui.h", "ui.h(tag, attrs, children)", "Node", "ui", "Build a virtual node — a tag, an attribute map, and a list of child nodes or text strings.");
-        self.doc(
+        self.doc_ex("ui.h", "ui.h(tag, attrs, children)", "Node", "ui", "Build a virtual node — a tag, an attribute map, and a list of child nodes or text strings.",
+            &[r##"ui.h("li", #{ "class": "row" }, [name])"##],
+        );
+        self.doc_ex(
             "ui.hk",
             "ui.hk(key, tag, attrs, children)",
             "Node",
             "ui",
             "Like h, plus a stable reconciliation key for keyed lists.",
+            &[r##"ui.hk(to_string(id), "li", #{}, [title])  // keyed for reconciliation"##],
         );
-        self.doc(
+        self.doc_ex(
             "ui.esc",
             "ui.esc(s)",
             "String",
             "ui",
             "HTML-escape a string (&amp; &lt; &gt; \" to entities).",
+            &[r##"ui.esc("<b>&</b>")  // "&lt;b&gt;&amp;&lt;/b&gt;""##],
         );
-        self.doc(
+        self.doc_ex(
             "ui.html",
             "ui.html(node)",
             "String",
             "ui",
             "Render a node tree to an HTML string — pure, testable without a browser.",
+            &[r##"ui.html(ui.h("p", #{}, ["hi"]))  // "<p>hi</p>""##],
         );
-        self.doc(
+        self.doc_ex(
             "ui.render",
             "ui.render(el, children)",
             "Unit",
             "ui",
             "Mount and reconcile a keyed child list into a live DOM element (browser only).",
+            &[r##"ui.render(dom.query("#list"), rows |> map(row_node))"##],
         );
 
         // --- viz ---
-        self.doc(
+        self.doc_ex(
             "viz.chart",
             "viz.chart(spec)",
             "String",
             "viz",
             "Compile a chart spec to plot SVG — pure, testable anywhere.",
+            &[r##"viz.chart(#{ "kind": "line", "x": days, "y": totals })  // SVG text"##],
         );
-        self.doc("viz.draw", "viz.draw(el, spec)", "Unit", "viz", "Compile the same xy specs to a canvas draw-list, for data too big to render as SVG nodes.");
-        self.doc("viz.tooltip", "viz.tooltip(el)", "Unit", "viz", "Attach a hover tooltip to a chart container: hovering an interactive mark shows its datum.");
-        self.doc("viz.on_mark", "viz.on_mark(el, event, handler)", "Unit", "viz", "Delegated mark events: the handler fires only for an interactive mark and receives its data map.");
-        self.doc("viz.brush", "viz.brush(el, handler)", "Unit", "viz", "Horizontal brush; the handler receives #{ from, to } as fractions of the element's width.");
+        self.doc_ex("viz.draw", "viz.draw(el, spec)", "Unit", "viz", "Compile the same xy specs to a canvas draw-list, for data too big to render as SVG nodes.",
+            &[r##"viz.draw(dom.query("#big"), #{ "kind": "scatter", "x": xs, "y": ys })"##],
+        );
+        self.doc_ex("viz.tooltip", "viz.tooltip(el)", "Unit", "viz", "Attach a hover tooltip to a chart container: hovering an interactive mark shows its datum.",
+            &[r##"viz.tooltip(dom.query("#charts"))  // once, on the container"##],
+        );
+        self.doc_ex("viz.on_mark", "viz.on_mark(el, event, handler)", "Unit", "viz", "Delegated mark events: the handler fires only for an interactive mark and receives its data map.",
+            &[r##"viz.on_mark(el, "click", (mark) => open_detail(mark))"##],
+        );
+        self.doc_ex("viz.brush", "viz.brush(el, handler)", "Unit", "viz", "Horizontal brush; the handler receives #{ from, to } as fractions of the element's width.",
+            &[r##"viz.brush(el, (range) => zoom_to(range))  // #{ from, to } fractions"##],
+        );
 
         // --- dash ---
-        self.doc(
+        self.doc_ex(
             "dash.kpi",
             "dash.kpi(label, value, note)",
             "String",
             "dash",
             "A KPI tile: the number big, the label above, a note below (\"\" omits it).",
+            &[r##"dash.kpi("Revenue", "$12,400", "this month")"##],
         );
-        self.doc(
+        self.doc_ex(
             "dash.stat",
             "dash.stat(label, value, note, accent)",
             "String",
             "dash",
             "A KPI tile with its own accent color for the value.",
+            &[r##"dash.stat("Errors", "3", "last hour", "#d64541")"##],
         );
-        self.doc(
+        self.doc_ex(
             "dash.card",
             "dash.card(title, inner)",
             "String",
             "dash",
             "A card: a titled panel around arbitrary (unescaped) inner HTML.",
+            &[r##"dash.card("Trend", plot.line(days, totals, #{}))"##],
         );
-        self.doc(
+        self.doc_ex(
             "dash.half",
             "dash.half(title, inner)",
             "String",
             "dash",
             "A card that spans two grid columns — the chart-friendly width.",
+            &[r##"dash.half("By category", plot.bar(cats, sums, #{}))"##],
         );
-        self.doc(
+        self.doc_ex(
             "dash.wide",
             "dash.wide(title, inner)",
             "String",
             "dash",
             "A card that spans the full grid width.",
+            &[r##"dash.wide("Timeline", plot.area(days, counts, #{}))"##],
         );
-        self.doc(
+        self.doc_ex(
             "dash.grid",
             "dash.grid(cards, columns)",
             "String",
             "dash",
             "The grid: cards flow into columns columns; dash-wide cards break out to full width.",
+            &[r##"dash.grid([kpi_a, kpi_b, chart_card], 3)"##],
         );
-        self.doc(
+        self.doc_ex(
             "dash.styles",
             "dash.styles()",
             "String",
             "dash",
             "The kit's stylesheet — prepend once to the mount's HTML and the classes just work.",
+            &[r##"dom.set_html(mount, dash.styles() + dash.grid(cards, 3))"##],
         );
     }
 
     fn add_recent_stdlib_additions(&mut self) {
         // os — input, terminal, and signals (previously undocumented)
-        self.doc(
+        self.doc_ex(
             "os.stdin",
             "os.stdin()",
             "Result",
             "os",
             "read all of standard input to end-of-file as one string",
+            &[r##"let text = unwrap(os.stdin())  // everything piped in"##],
         );
-        self.doc(
+        self.doc_ex(
             "os.stdin_lines",
             "os.stdin_lines()",
             "Result",
             "os",
             "all of standard input as a list of lines, endings stripped",
+            &[r##"for line in unwrap(os.stdin_lines()) { println(line) }"##],
         );
-        self.doc(
+        self.doc_ex(
             "os.read_line",
             "os.read_line()",
             "Result",
             "os",
             "one line from stdin as Ok(line), or Err(\"eof\") at end-of-input",
+            &[r##"match os.read_line() { Ok(line) => process(line), Err(e) => () }"##],
         );
-        self.doc("os.exec", "os.exec(program, args, opts?)", "Result", "os", "run a program to completion, returning Ok(#{ code, stdout, stderr }); opts sets cwd/stdin/env");
-        self.doc(
+        self.doc_ex("os.exec", "os.exec(program, args, opts?)", "Result", "os", "run a program to completion, returning Ok(#{ code, stdout, stderr }); opts sets cwd/stdin/env",
+            &[r##"unwrap(os.exec("git", ["status", "--short"]))  // #{ code, stdout, stderr }"##],
+        );
+        self.doc_ex(
             "os.is_tty",
             "os.is_tty()",
             "Bool",
             "os",
             "whether standard output is a terminal (Ok(bool))",
+            &[r##"if os.is_tty() == Ok(true) => term.green("ok") else => "ok""##],
         );
-        self.doc("os.flush", "os.flush()", "Unit", "os", "flush buffered standard output — needed to show a progress bar drawn with a leading carriage return");
-        self.doc(
+        self.doc_ex("os.flush", "os.flush()", "Unit", "os", "flush buffered standard output — needed to show a progress bar drawn with a leading carriage return",
+            &[r##"os.flush()  // show a progress line drawn with print"##],
+        );
+        self.doc_ex(
             "os.on_interrupt",
             "os.on_interrupt()",
             "Result",
             "os",
             "trap Ctrl-C (SIGINT) so it sets a flag instead of terminating — for graceful shutdown",
+            &[r##"unwrap(os.on_interrupt())  // Ctrl-C now sets a flag"##],
         );
-        self.doc(
+        self.doc_ex(
             "os.interrupted",
             "os.interrupted()",
             "Bool",
             "os",
             "whether Ctrl-C has been pressed since on_interrupt/reset_interrupt (Ok(bool))",
+            &[r##"while os.interrupted() != Ok(true) { work_one_batch() }"##],
         );
-        self.doc(
+        self.doc_ex(
             "os.reset_interrupt",
             "os.reset_interrupt()",
             "Unit",
             "os",
             "clear the interrupt flag, arming for the next Ctrl-C",
+            &[r##"os.reset_interrupt()  // arm for the next Ctrl-C"##],
         );
 
         // str — the format helper
-        self.doc("str.fmt", "str.fmt(template, ...)", "String", "str", "fill {} placeholders in a template with the display form of each argument ({{ and }} escape; a placeholder/argument count mismatch raises)");
+        self.doc_ex("str.fmt", "str.fmt(template, ...)", "String", "str", "fill {} placeholders in a template with the display form of each argument ({{ and }} escape; a placeholder/argument count mismatch raises)",
+            &[r##"str.fmt("{} of {} done", 3, 10)  // "3 of 10 done""##],
+        );
     }
 
     fn add_stdlib_coverage_gaps(&mut self) {
         // --- math: the trig/hyperbolic/exp/log family and integer helpers ---
         // (math.sin already has a rich entry with examples; don't overwrite it.)
-        self.doc(
+        self.doc_ex(
             "math.tan",
             "math.tan(radians)",
             "Float",
             "math",
             "tangent of an angle in radians",
+            &[r##"math.tan(0.7853981633974483)  // 1.0 at pi/4"##],
         );
-        self.doc(
+        self.doc_ex(
             "math.asin",
             "math.asin(x)",
             "Float",
             "math",
             "arc sine of x, result in radians",
+            &[r##"math.asin(1.0)  // 1.5707... — pi/2"##],
         );
-        self.doc(
+        self.doc_ex(
             "math.acos",
             "math.acos(x)",
             "Float",
             "math",
             "arc cosine of x, result in radians",
+            &[r##"math.acos(1.0)  // 0.0"##],
         );
-        self.doc(
+        self.doc_ex(
             "math.atan",
             "math.atan(x)",
             "Float",
             "math",
             "arc tangent of x, result in radians",
+            &[r##"math.atan(1.0)  // 0.7853... — pi/4"##],
         );
-        self.doc(
+        self.doc_ex(
             "math.atan2",
             "math.atan2(y, x)",
             "Float",
             "math",
             "angle of the point (x, y) from the positive x-axis, in radians (quadrant-correct)",
+            &[r##"math.atan2(1.0, 1.0)  // 0.7853... — 45 degrees in radians"##],
         );
-        self.doc(
+        self.doc_ex(
             "math.sinh",
             "math.sinh(x)",
             "Float",
             "math",
             "hyperbolic sine of x",
+            &[r##"math.sinh(1.0)  // 1.1752..."##],
         );
-        self.doc(
+        self.doc_ex(
             "math.cosh",
             "math.cosh(x)",
             "Float",
             "math",
             "hyperbolic cosine of x",
+            &[r##"math.cosh(1.0)  // 1.5430..."##],
         );
-        self.doc(
+        self.doc_ex(
             "math.tanh",
             "math.tanh(x)",
             "Float",
             "math",
             "hyperbolic tangent of x",
+            &[r##"math.tanh(100.0)  // 1.0 — saturates"##],
         );
-        self.doc(
+        self.doc_ex(
             "math.exp",
             "math.exp(x)",
             "Float",
             "math",
             "e raised to the power x",
+            &[r##"math.exp(1.0)  // 2.71828..."##],
         );
-        self.doc(
+        self.doc_ex(
             "math.exp2",
             "math.exp2(x)",
             "Float",
             "math",
             "2 raised to the power x",
+            &[r##"math.exp2(10.0)  // 1024.0"##],
         );
-        self.doc(
+        self.doc_ex(
             "math.log",
             "math.log(x, base)",
             "Float",
             "math",
             "logarithm of x in the given base",
+            &[r##"math.log(1000.0, 10.0)  // 3.0"##],
         );
-        self.doc(
+        self.doc_ex(
             "math.log2",
             "math.log2(x)",
             "Float",
             "math",
             "base-2 logarithm of x",
+            &[r##"math.log2(1024.0)  // 10.0"##],
         );
-        self.doc(
+        self.doc_ex(
             "math.cbrt",
             "math.cbrt(x)",
             "Float",
             "math",
-            "cube root of x",
+            "the cube root of x — defined for negatives too (cbrt(-8.0) is -2.0)",
+            &[r##"math.cbrt(27.0)  // 3.0"##],
         );
-        self.doc(
+        self.doc_ex(
             "math.trunc",
             "math.trunc(x)",
             "Float",
             "math",
             "x with its fractional part removed (rounded toward zero)",
+            &[r##"math.trunc(-2.7)  // -2.0 — toward zero, unlike floor"##],
         );
-        self.doc(
+        self.doc_ex(
             "math.fract",
             "math.fract(x)",
             "Float",
             "math",
             "the fractional part of x (x minus its truncation)",
+            &[r##"math.fract(3.75)  // 0.75"##],
         );
-        self.doc(
+        self.doc_ex(
             "math.sign",
             "math.sign(x)",
             "Int",
             "math",
             "-1, 0, or 1 according to the sign of x",
+            &[r##"math.sign(-42)  // -1"##],
         );
-        self.doc(
+        self.doc_ex(
             "math.gcd",
             "math.gcd(a, b)",
             "Int",
             "math",
             "greatest common divisor of two integers",
+            &[r##"math.gcd(12, 18)  // 6"##],
         );
-        self.doc(
+        self.doc_ex(
             "math.lcm",
             "math.lcm(a, b)",
             "Int",
             "math",
             "least common multiple of two integers",
+            &[r##"math.lcm(4, 6)  // 12"##],
         );
 
         // --- fs: path helpers and directory walking ---
-        self.doc(
+        self.doc_ex(
             "fs.join",
             "fs.join(segments)",
             "String",
             "fs",
             "join a list of path segments with the platform separator — pure, no disk access",
+            &[r##"fs.join(["data", "2026", "sales.csv"])  // "data/2026/sales.csv""##],
         );
-        self.doc(
+        self.doc_ex(
             "fs.basename",
             "fs.basename(path)",
             "String",
             "fs",
             "the final component of a path",
+            &[r##"fs.basename("/a/b/report.pdf")  // "report.pdf""##],
         );
-        self.doc(
+        self.doc_ex(
             "fs.dirname",
             "fs.dirname(path)",
             "String",
             "fs",
             "the directory portion of a path",
+            &[r##"fs.dirname("/a/b/report.pdf")  // "/a/b""##],
         );
-        self.doc(
+        self.doc_ex(
             "fs.ext",
             "fs.ext(path)",
             "String",
             "fs",
             "the file extension of a path, without the dot",
+            &[r##"fs.ext("report.pdf")  // "pdf""##],
         );
-        self.doc(
+        self.doc_ex(
             "fs.abs_path",
             "fs.abs_path(path)",
             "Result",
             "fs",
             "resolve a path to an absolute path against the current directory",
+            &[r##"unwrap(fs.abs_path("./data"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "fs.walk",
             "fs.walk(dir)",
             "Result",
             "fs",
             "every file below a directory, recursively (Ok(list of paths))",
+            &[r##"unwrap(fs.walk("src")) |> filter((p) => fs.ext(p) == "ol")"##],
         );
-        self.doc(
+        self.doc_ex(
             "fs.glob",
             "fs.glob(pattern)",
             "Result",
             "fs",
             "paths matching a glob where * matches within a segment and ** across segments",
+            &[r##"unwrap(fs.glob("examples/**/*.ol"))"##],
         );
 
         // --- csv: the mutating builder verbs and JSON bridge ---
-        self.doc(
+        self.doc_ex(
             "csv.add_row",
             "csv.add_row(csv, row)",
             "CSV",
             "csv",
             "a copy of csv with one row (a list of cells) appended",
+            &[r##"csv.add_row(parsed, ["carol", "29"])"##],
         );
-        self.doc(
+        self.doc_ex(
             "csv.add_column",
             "csv.add_column(csv, values, name)",
             "Result",
             "csv",
             "a copy of csv with a column appended: values[0] is a header-row placeholder, name is the header",
+            &[r##"unwrap(csv.add_column(parsed, ["", "yes", "no"], "active"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "csv.set_cell",
             "csv.set_cell(csv, row, col, value)",
             "Result",
             "csv",
             "a copy of csv with one cell replaced",
+            &[r##"unwrap(csv.set_cell(parsed, 1, 0, "updated"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "csv.set_headers",
             "csv.set_headers(csv, headers)",
             "CSV",
             "csv",
             "a copy of csv with its header row set",
+            &[r##"csv.set_headers(rows, ["name", "age"])"##],
         );
-        self.doc(
+        self.doc_ex(
             "csv.filter_rows",
             "csv.filter_rows(csv, col_index, value)",
             "Result",
             "csv",
             "keep only the rows whose column at integer index col_index equals the string value",
+            &[r##"unwrap(csv.filter_rows(parsed, 2, "active"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "csv.sort_by_column",
             "csv.sort_by_column(csv, col_index, ascending)",
             "CSV",
             "csv",
             "a copy of csv sorted by the column at col_index — ascending when true, descending when false",
+            &[r##"csv.sort_by_column(parsed, 1, true)  // by column 1, ascending"##],
         );
-        self.doc(
+        self.doc_ex(
             "csv.to_json",
             "csv.to_json(rows, with_headers)",
             "Result",
             "csv",
             "parsed rows to JSON text (with_headers treats row 0 as column names)",
+            &[r##"unwrap(csv.to_json(rows, true))  // row 0 becomes the keys"##],
         );
-        self.doc(
+        self.doc_ex(
             "csv.from_json",
             "csv.from_json(json, headers)",
             "Result",
             "csv",
             "JSON text plus a header list to CSV rows (a list of string-lists, headers first)",
+            &[r##"unwrap(csv.from_json(text, ["name", "age"]))"##],
         );
 
         // --- db: transactions ---
-        self.doc(
+        self.doc_ex(
             "db.begin",
             "db.begin(conn)",
             "Result",
             "db",
             "begin a transaction on the connection",
+            &[r##"unwrap(db.begin(conn))"##],
         );
-        self.doc(
+        self.doc_ex(
             "db.commit",
             "db.commit(conn)",
             "Result",
             "db",
             "commit the open transaction",
+            &[r##"unwrap(db.commit(conn))"##],
         );
-        self.doc(
+        self.doc_ex(
             "db.rollback",
             "db.rollback(conn)",
             "Result",
             "db",
             "roll back the open transaction",
+            &[r##"if is_err(result) => unwrap(db.rollback(conn)) else => unwrap(db.commit(conn))"##],
         );
 
         // --- random: remaining generators ---
-        self.doc(
+        self.doc_ex(
             "random.gauss",
             "random.gauss(mean, std)",
             "Float",
             "random",
             "a normally distributed draw with the given mean and standard deviation",
+            &[r##"random.gauss(100.0, 15.0)  // one draw around 100"##],
         );
-        self.doc(
+        self.doc_ex(
             "random.randstr_alnum",
             "random.randstr_alnum(n)",
             "String",
             "random",
             "a random alphanumeric string of length n",
+            &[r##"random.randstr_alnum(12)  // e.g. "k3ZQ9tYw1bfA""##],
         );
     }
 
     fn add_embedded_utility_docs(&mut self) {
         // --- colx: the full collections toolkit (use colx) ---
-        self.doc(
+        self.doc_ex(
             "colx.unique",
             "colx.unique(xs)",
             "List",
             "colx",
             "the distinct elements of xs, first occurrence wins, order preserved",
+            &[r##"colx.unique([3, 1, 3, 2])  // [3, 1, 2]"##],
         );
-        self.doc(
+        self.doc_ex(
             "colx.partition",
             "colx.partition(xs, pred)",
             "Tuple",
             "colx",
             "split xs into a (matching, non-matching) tuple by a predicate",
+            &[r##"colx.partition([1, 2, 3, 4], (x) => x % 2 == 0)  // ([2, 4], [1, 3])"##],
         );
-        self.doc(
+        self.doc_ex(
             "colx.sum_by",
             "colx.sum_by(xs, f)",
             "Number",
             "colx",
             "the sum of f(x) over every element of xs",
+            &[r##"colx.sum_by(orders, (o) => o.total)"##],
         );
-        self.doc(
+        self.doc_ex(
             "colx.all",
             "colx.all(xs, pred)",
             "Bool",
             "colx",
             "does pred hold for every element of xs?",
+            &[r##"colx.all([2, 4, 6], (x) => x % 2 == 0)  // true"##],
         );
-        self.doc(
+        self.doc_ex(
             "colx.any",
             "colx.any(xs, pred)",
             "Bool",
             "colx",
             "does pred hold for at least one element of xs?",
+            &[r##"colx.any([1, 2, 3], (x) => x > 2)  // true"##],
         );
-        self.doc(
+        self.doc_ex(
             "colx.count_by",
             "colx.count_by(xs, key_fn)",
             "Map",
             "colx",
             "a map from key_fn(x) to how many elements share that key",
+            &[r##"colx.count_by(words, (w) => str.length(w))  // length -> how many"##],
         );
-        self.doc(
+        self.doc_ex(
             "colx.take_while",
             "colx.take_while(xs, pred)",
             "List",
             "colx",
             "the leading run of elements satisfying pred",
+            &[r##"colx.take_while([1, 2, 9, 1], (x) => x < 5)  // [1, 2]"##],
         );
-        self.doc(
+        self.doc_ex(
             "colx.drop_while",
             "colx.drop_while(xs, pred)",
             "List",
             "colx",
             "xs with the leading run satisfying pred removed",
+            &[r##"colx.drop_while([1, 2, 9, 1], (x) => x < 5)  // [9, 1]"##],
         );
-        self.doc(
+        self.doc_ex(
             "colx.flat_map",
             "colx.flat_map(xs, f)",
             "List",
             "colx",
             "map f over xs and concatenate the resulting lists",
+            &[r##"colx.flat_map([1, 2], (x) => [x, x * 10])  // [1, 10, 2, 20]"##],
         );
-        self.doc(
+        self.doc_ex(
             "colx.frequencies",
             "colx.frequencies(xs)",
             "Map",
             "colx",
             "a map from each distinct element to how often it occurs",
+            &[r##"colx.frequencies(["a", "b", "a"])  // #{ "a": 2, "b": 1 }"##],
         );
-        self.doc(
+        self.doc_ex(
             "colx.last",
             "colx.last(xs)",
             "Value",
             "colx",
             "the last element of xs",
+            &[r##"colx.last([1, 2, 3])  // 3"##],
         );
-        self.doc(
+        self.doc_ex(
             "colx.min_by",
             "colx.min_by(xs, key_fn)",
             "Value",
             "colx",
             "the element with the smallest key_fn(x)",
+            &[r##"colx.min_by(runs, (r) => r.ms)  // the fastest run"##],
         );
-        self.doc(
+        self.doc_ex(
             "colx.max_by",
             "colx.max_by(xs, key_fn)",
             "Value",
             "colx",
             "the element with the largest key_fn(x)",
+            &[r##"colx.max_by(runs, (r) => r.ms)  // the slowest run"##],
         );
-        self.doc(
+        self.doc_ex(
             "colx.sort_by",
             "colx.sort_by(xs, key_fn)",
             "List",
             "colx",
             "xs sorted ascending by key_fn(x)",
+            &[r##"colx.sort_by(people, (p) => p.age)"##],
         );
-        self.doc(
+        self.doc_ex(
             "colx.window",
             "colx.window(xs, size)",
             "List",
             "colx",
             "every contiguous sublist of the given size (a sliding window)",
+            &[r##"colx.window([1, 2, 3, 4], 2)  // [[1, 2], [2, 3], [3, 4]]"##],
         );
-        self.doc(
+        self.doc_ex(
             "colx.zip_with",
             "colx.zip_with(a, b, f)",
             "List",
             "colx",
             "combine two lists elementwise with f, stopping at the shorter",
+            &[r##"colx.zip_with([1, 2], [10, 20], (a, b) => a + b)  // [11, 22]"##],
         );
 
         // --- mathx: math in olang source (use mathx) ---
-        self.doc(
+        self.doc_ex(
             "mathx.PI",
             "mathx.PI",
             "Float",
             "mathx",
             "the constant pi (3.14159…)",
+            &[r##"mathx.TAU / 2.0 == mathx.PI  // true"##],
         );
-        self.doc(
+        self.doc_ex(
             "mathx.E",
             "mathx.E",
             "Float",
             "mathx",
             "Euler's number e (2.71828…)",
+            &[r##"mathx.E  // 2.718281828459045"##],
         );
-        self.doc(
+        self.doc_ex(
             "mathx.TAU",
             "mathx.TAU",
             "Float",
             "mathx",
             "the constant tau, 2*pi (6.28318…)",
+            &[r##"mathx.TAU  // 6.283185307179586 — one full turn in radians"##],
         );
-        self.doc(
+        self.doc_ex(
             "mathx.abs",
             "mathx.abs(x)",
             "Number",
             "mathx",
             "the absolute value of x",
+            &[r##"mathx.abs(-7)  // 7"##],
         );
-        self.doc(
+        self.doc_ex(
             "mathx.sign",
             "mathx.sign(x)",
             "Int",
             "mathx",
             "-1, 0, or 1 according to the sign of x",
+            &[r##"mathx.sign(0)  // 0"##],
         );
-        self.doc(
+        self.doc_ex(
             "mathx.min",
             "mathx.min(a, b)",
             "Number",
             "mathx",
             "the smaller of a and b",
+            &[r##"mathx.min(3, 9)  // 3"##],
         );
-        self.doc(
+        self.doc_ex(
             "mathx.max",
             "mathx.max(a, b)",
             "Number",
             "mathx",
             "the larger of a and b",
+            &[r##"mathx.max(3, 9)  // 9"##],
         );
-        self.doc(
+        self.doc_ex(
             "mathx.gcd",
             "mathx.gcd(a, b)",
             "Int",
             "mathx",
             "greatest common divisor of two integers",
+            &[r##"mathx.gcd(12, 18)  // 6"##],
         );
-        self.doc(
+        self.doc_ex(
             "mathx.lcm",
             "mathx.lcm(a, b)",
             "Int",
             "mathx",
             "least common multiple of two integers",
+            &[r##"mathx.lcm(4, 6)  // 12"##],
         );
-        self.doc(
+        self.doc_ex(
             "mathx.factorial",
             "mathx.factorial(n)",
             "Int",
             "mathx",
             "n! — the product of 1..n",
+            &[r##"mathx.factorial(5)  // 120"##],
         );
-        self.doc(
+        self.doc_ex(
             "mathx.trunc",
             "mathx.trunc(x)",
             "Float",
             "mathx",
             "x with its fractional part removed (toward zero)",
+            &[r##"mathx.trunc(-2.7)  // -2.0"##],
         );
-        self.doc(
+        self.doc_ex(
             "mathx.floor",
             "mathx.floor(x)",
             "Float",
             "mathx",
             "the largest whole number not greater than x",
+            &[r##"mathx.floor(-2.1)  // -3.0"##],
         );
-        self.doc(
+        self.doc_ex(
             "mathx.ceil",
             "mathx.ceil(x)",
             "Float",
             "mathx",
             "the smallest whole number not less than x",
+            &[r##"mathx.ceil(2.1)  // 3.0"##],
         );
-        self.doc(
+        self.doc_ex(
             "mathx.round",
             "mathx.round(x)",
             "Float",
             "mathx",
             "x rounded to the nearest whole number, halves away from zero",
+            &[r##"mathx.round(2.5)  // 3.0 — halves away from zero"##],
         );
-        self.doc(
+        self.doc_ex(
             "mathx.fract",
             "mathx.fract(x)",
             "Float",
             "mathx",
             "the fractional part of x (x minus its truncation)",
+            &[r##"mathx.fract(3.75)  // 0.75"##],
         );
-        self.doc(
+        self.doc_ex(
             "mathx.radians",
             "mathx.radians(deg)",
             "Float",
             "mathx",
             "degrees converted to radians",
+            &[r##"mathx.radians(180.0)  // 3.14159..."##],
         );
-        self.doc(
+        self.doc_ex(
             "mathx.degrees",
             "mathx.degrees(rad)",
             "Float",
             "mathx",
             "radians converted to degrees",
+            &[r##"mathx.degrees(mathx.PI)  // 180.0"##],
         );
-        self.doc(
+        self.doc_ex(
             "mathx.sqrt",
             "mathx.sqrt(x)",
             "Float",
             "mathx",
             "the square root of x (Newton's method)",
+            &[r##"mathx.sqrt(2.0)  // 1.41421..."##],
         );
     }
 
@@ -4040,7 +4375,7 @@ impl HelpSystem {
     fn add_string_functions(&mut self) {
         self.add_function(FunctionDoc {
             name: "str.to_upper".to_string(),
-            description: "Uppercase a string.".to_string(),
+            description: "The string with every character uppercased (Unicode-aware).".to_string(),
             syntax: "str.to_upper(s)".to_string(),
             parameters: vec![],
             return_type: "String".to_string(),
@@ -4050,7 +4385,7 @@ impl HelpSystem {
         });
         self.add_function(FunctionDoc {
             name: "str.to_lower".to_string(),
-            description: "Lowercase a string.".to_string(),
+            description: "The string with every character lowercased (Unicode-aware).".to_string(),
             syntax: "str.to_lower(s)".to_string(),
             parameters: vec![],
             return_type: "String".to_string(),
@@ -4586,54 +4921,61 @@ impl HelpSystem {
 
     fn add_fs_functions(&mut self) {
         // The bytes module: immutable binary data.
-        self.doc(
+        self.doc_ex(
             "bytes.from_list",
             "bytes.from_list(ints)",
             "Bytes",
             "Bytes",
             "Build a Bytes value from a list of integers 0..=255. Raises on a non-integer or out-of-range element.",
+            &[r##"bytes.from_list([72, 105])  // the bytes of "Hi""##],
         );
-        self.doc(
+        self.doc_ex(
             "bytes.to_list",
             "bytes.to_list(b)",
             "List",
             "Bytes",
             "The bytes as a list of integers 0..=255.",
+            &[r##"bytes.to_list(bytes.from_string("Hi"))  // [72, 105]"##],
         );
-        self.doc(
+        self.doc_ex(
             "bytes.from_string",
             "bytes.from_string(s)",
             "Bytes",
             "Bytes",
             "A string's UTF-8 bytes as a Bytes value.",
+            &[r##"bytes.from_string("héllo")  // UTF-8, 6 bytes"##],
         );
-        self.doc(
+        self.doc_ex(
             "bytes.to_string",
             "bytes.to_string(b)",
             "Result",
             "Bytes",
             "Decode Bytes as UTF-8 text: Ok(string), or Err when the bytes are not valid UTF-8.",
+            &[r##"unwrap(bytes.to_string(b))  // Err if not valid UTF-8"##],
         );
-        self.doc(
+        self.doc_ex(
             "bytes.len",
             "bytes.len(b)",
             "Int",
             "Bytes",
             "The byte count. The global len(b) answers the same.",
+            &[r##"bytes.len(bytes.from_string("héllo"))  // 6 — bytes, not chars"##],
         );
-        self.doc(
+        self.doc_ex(
             "bytes.slice",
             "bytes.slice(b, from, to)",
             "Bytes",
             "Bytes",
             "Half-open byte slice, clamped to the value's bounds — the same shape as str.substring.",
+            &[r##"bytes.slice(b, 0, 4)  // the first four bytes"##],
         );
-        self.doc(
+        self.doc_ex(
             "bytes.concat",
             "bytes.concat(a, b)",
             "Bytes",
             "Bytes",
             "The concatenation of two Bytes values.",
+            &[r##"bytes.concat(header, payload)"##],
         );
 
         // File I/O operations
@@ -4669,19 +5011,21 @@ impl HelpSystem {
             see_also: vec!["fs.read_file".to_string(), "fs.append_file".to_string()],
         });
 
-        self.doc(
+        self.doc_ex(
             "fs.read_bytes",
             "fs.read_bytes(path)",
             "Result",
             "Filesystem",
             "Read a file's raw bytes — the binary twin of fs.read_file, for content that is not UTF-8 text. Ok(Bytes), or Err with the OS error. Requires the fs capability at read level.",
+            &[r##"unwrap(fs.read_bytes("logo.png"))"##],
         );
-        self.doc(
+        self.doc_ex(
             "fs.write_bytes",
             "fs.write_bytes(path, b)",
             "Result",
             "Filesystem",
             "Write a Bytes value to a file — the binary twin of fs.write_file. Requires the fs capability at write level.",
+            &[r##"unwrap(fs.write_bytes("copy.png", image_bytes))"##],
         );
 
         self.add_function(FunctionDoc {
@@ -4988,7 +5332,8 @@ impl HelpSystem {
         // HTTP Server operations
         self.add_function(FunctionDoc {
             name: "http.serve".to_string(),
-            description: "Start an HTTP server on the specified port with a request handler".to_string(),
+            description: "Start an HTTP server on the specified port with a request handler"
+                .to_string(),
             syntax: "http.serve(port, handler)".to_string(),
             parameters: vec![
                 "port: Int - The port number to listen on".to_string(),
@@ -4997,10 +5342,14 @@ impl HelpSystem {
             return_type: "Result<Unit, Error>".to_string(),
             examples: vec![
                 "http.serve(8080, (req) => http.response(200, \"Hello World!\"))".to_string(),
-                "http.serve(3000, (request) => http.response(200, \"hello from olang\"))".to_string(),
+                "http.serve(3000, (request) => http.response(200, \"hello from olang\"))"
+                    .to_string(),
             ],
             category: "HTTP".to_string(),
-            see_also: vec!["http.response".to_string(), "http.response_with_headers".to_string()],
+            see_also: vec![
+                "http.response".to_string(),
+                "http.response_with_headers".to_string(),
+            ],
         });
 
         self.add_function(FunctionDoc {
@@ -6479,12 +6828,13 @@ impl HelpSystem {
             see_also: vec!["dates.parse".to_string(), "dates.datetime".to_string()],
         });
 
-        self.doc(
+        self.doc_ex(
             "dates.parse",
             "dates.parse(s)",
             "Result",
             "Dates",
             "Parse a Date value from a date or datetime string — the canonical constructor from text; accepts every format this module emits. Date values compare chronologically, subtract to day counts (d2 - d1), and shift by days (d + 7).",
+            &[r##"unwrap(dates.parse("2026-08-25"))"##],
         );
 
         self.add_function(FunctionDoc {
@@ -7819,7 +8169,8 @@ For function-specific syntax, use: {}:help <function_name>{}",
             parameters: vec!["json_string: String - JSON string to minify".to_string()],
             return_type: "Result<String, Error>".to_string(),
             examples: vec![
-                "json.minify(pretty_text)  // strips whitespace: {\\\"name\\\":\\\"John\\\"}".to_string(),
+                "json.minify(pretty_text)  // strips whitespace: {\\\"name\\\":\\\"John\\\"}"
+                    .to_string(),
             ],
             category: "JSON".to_string(),
             see_also: vec!["json.prettify".to_string(), "json.validate".to_string()],
@@ -8390,11 +8741,10 @@ For function-specific syntax, use: {}:help <function_name>{}",
             description: "Get command line arguments as a list".to_string(),
             syntax: "os.args()".to_string(),
             parameters: vec![],
-            return_type: "[String]".to_string(),
+            return_type: "List[String]".to_string(),
             examples: vec![
-                "os.args()  // Ok([\"program\", \"arg1\", \"arg2\"])".to_string(),
-                "match os.args() { Ok(args) => map(args, println), Err(e) => println(e) }"
-                    .to_string(),
+                "os.args()  // [\"program\", \"arg1\", \"arg2\"] — a plain list".to_string(),
+                "if len(os.args()) > 1 => os.args()[1] else => \"default\"".to_string(),
             ],
             category: "OS".to_string(),
             see_also: vec!["os.exe_path".to_string(), "os.pid".to_string()],
@@ -8943,12 +9293,13 @@ For function-specific syntax, use: {}:help <function_name>{}",
             ],
         });
 
-        self.doc(
+        self.doc_ex(
             "base64.decode_bytes",
             "base64.decode_bytes(s)",
             "Result",
             "Base64",
             "Decode base64 to raw Bytes — the twin of base64.decode for payloads that are not UTF-8 text. base64.encode accepts Bytes as well as strings.",
+            &[r##"unwrap(base64.decode_bytes("SGk="))  // the bytes of "Hi""##],
         );
 
         self.add_function(FunctionDoc {

@@ -74,7 +74,10 @@ fn every_entry_is_complete() {
             continue;
         };
         if doc.description.trim().len() < 20 {
-            failures.push(format!("{name}: description too thin: {:?}", doc.description));
+            failures.push(format!(
+                "{name}: description too thin: {:?}",
+                doc.description
+            ));
         }
         if doc.examples.is_empty() {
             failures.push(format!("{name}: no examples"));
