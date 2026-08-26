@@ -9,8 +9,14 @@
 //! and checksum, so a moved or edited library is noticed rather than
 //! silently drifted past.
 //!
+//! A fresh shelf ships stocked: the first touch seeds the curated
+//! starter libraries (see `pkg::starter`) — materialized under the
+//! shelf's home directory and registered like anything else, removable
+//! and restorable like anything else.
+//!
 //! Stored as one small TOML file at `~/.olang/shelf.toml`
-//! (`OLANG_SHELF` overrides the location, which is how tests isolate).
+//! (`OLANG_SHELF` overrides the location, which is how tests isolate;
+//! starter libraries materialize into a `shelf/` directory beside it).
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -110,6 +116,63 @@ impl Shelf {
     /// The directory a shelf name resolves to, if registered.
     pub fn resolve(&self, name: &str) -> Option<&PathBuf> {
         self.libraries.get(name)
+    }
+
+    /// Where starter libraries materialize: a `shelf/` directory beside
+    /// the shelf file.
+    pub fn home() -> PathBuf {
+        Self::file()
+            .parent()
+            .map(|p| p.join("shelf"))
+            .unwrap_or_else(|| PathBuf::from("shelf"))
+    }
+
+    /// Load the shelf, seeding a brand-new one with the starter
+    /// libraries. Seeding happens only when the shelf *file* does not
+    /// exist yet — a shelf whose starters were deliberately removed
+    /// stays exactly as its owner left it.
+    pub fn load_or_seed() -> Result<Shelf, ShelfError> {
+        if Self::file().exists() {
+            return Self::load();
+        }
+        let mut shelf = Shelf::default();
+        for lib in crate::pkg::starter::STARTERS {
+            // A failed materialization skips that library rather than
+            // failing the shelf: the shelf must work on a read-only
+            // home, just with nothing pre-stocked.
+            if shelf.restore_starter(lib.name).is_err() {
+                shelf.libraries.remove(lib.name);
+            }
+        }
+        shelf.save()?;
+        Ok(shelf)
+    }
+
+    /// Materialize (or refresh) one starter library and register it.
+    /// Unknown names error, naming what exists.
+    pub fn restore_starter(&mut self, name: &str) -> Result<PathBuf, ShelfError> {
+        let lib = crate::pkg::starter::get(name).ok_or_else(|| {
+            ShelfError::NotALibrary(format!(
+                "'{}' is not a starter library (they are: {})",
+                name,
+                crate::pkg::starter::STARTERS
+                    .iter()
+                    .map(|s| s.name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+        })?;
+        let dir = Self::home().join(lib.name);
+        crate::pkg::starter::materialize(lib, &dir).map_err(|e| ShelfError::Io(e.to_string()))?;
+        self.libraries.insert(lib.name.to_string(), dir.clone());
+        Ok(dir)
+    }
+
+    /// Is this registered path a starter the shelf itself materialized
+    /// (as opposed to a user directory the shelf merely points at)?
+    /// Removal deletes such directories — the shelf owns them.
+    pub fn owns(&self, path: &Path) -> bool {
+        path.starts_with(Self::home())
     }
 }
 

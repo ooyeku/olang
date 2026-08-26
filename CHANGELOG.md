@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Every shelf ships stocked.** The library shelf — olang's local
+  package registry — now seeds a curated set of starter libraries the
+  first time it comes into being: `textkit` (text layout and humane
+  formatting: pad, wrap, columns, table, money, human_bytes,
+  human_duration, slugify), `validate` (declarative checks for
+  map-shaped input, every problem reported with its field named), and
+  `markdown` (a Markdown renderer with escaping safe for untrusted
+  input). All three are pure olang, `///`-documented — so `:help`
+  answers for them once imported — and carry their own test blocks,
+  which run in the toolchain suite: a starter with failing tests
+  cannot ship. They are ordinary shelf citizens: `otc add textkit`
+  from any project, `otc lib remove` takes one off (and a removal
+  sticks — seeding is tied to the shelf file's creation, not to every
+  load), and the new `otc lib restore` brings one back or refreshes it
+  to the running toolchain's copy. `otc lib list` marks them
+  `(starter)`. The shelf gained its own book chapter, docs/shelf.md —
+  the model, the commands, the starter APIs in full, and how pinning
+  notices drift — with its examples under the documentation guards.
+
 ## [0.74.0] - 2026-08-25
 
 ### Added

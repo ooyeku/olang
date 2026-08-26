@@ -186,7 +186,48 @@ fn the_local_workflow_end_to_end() {
     let r = run_in(&base, &shelf, &["lib", "remove", "greetings"]);
     assert!(r.ok, "{}", r.output);
     let r = run_in(&base, &shelf, &["lib", "list"]);
-    assert!(r.output.contains("empty"), "{}", r.output);
+    assert!(
+        !r.output.contains("greetings"),
+        "removed library must be gone: {}",
+        r.output
+    );
+    // The starters seeded on first touch are still there — a user
+    // removal never disturbs them.
+    assert!(r.output.contains("textkit"), "{}", r.output);
+    assert!(r.output.contains("(starter)"), "{}", r.output);
+
+    // ── starters: remove deletes the shelf-owned copy; restore brings
+    // it back and a project can use it ─────────────────────────────
+    let r = run_in(&base, &shelf, &["lib", "remove", "markdown"]);
+    assert!(r.ok, "{}", r.output);
+    assert!(
+        r.output.contains("restore"),
+        "names the way back: {}",
+        r.output
+    );
+    let r = run_in(&base, &shelf, &["lib", "list"]);
+    assert!(!r.output.contains("markdown"), "{}", r.output);
+    let r = run_in(&base, &shelf, &["lib", "restore", "markdown"]);
+    assert!(r.ok, "restore: {}", r.output);
+    let r = run_in(&base, &shelf, &["lib", "restore", "nonsense"]);
+    assert!(!r.ok, "unknown starter must refuse");
+    assert!(
+        r.output.contains("textkit"),
+        "lists the starters: {}",
+        r.output
+    );
+
+    let r = run_in(&app, &shelf, &["add", "textkit"]);
+    assert!(r.ok, "add starter by name: {}", r.output);
+    std::fs::write(
+        app.join("src/main.ol"),
+        "use textkit { money }
+println(money(-150))
+",
+    )
+    .unwrap();
+    let got = run_olang(&app, "src/main.ol");
+    assert!(!got.is_empty(), "starter import runs: {got}");
 
     unsafe { std::env::remove_var("OLANG_SHELF") };
     let _ = std::fs::remove_dir_all(&base);

@@ -13,6 +13,7 @@ pub mod manifest;
 pub mod registry;
 pub mod resolver;
 pub mod shelf;
+pub mod starter;
 
 use lock::{LockedPackage, LockedSource, Lockfile};
 use manifest::{Dependency, Manifest};

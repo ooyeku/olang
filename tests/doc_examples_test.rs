@@ -150,6 +150,7 @@ fn ods_chapter_examples_work() {
 #[test]
 fn wasm_chapter_examples_work() {
     run_doc_file("docs/wasm.md", include_str!("../docs/wasm.md"));
+    run_doc_file("docs/shelf.md", include_str!("../docs/shelf.md"));
 }
 
 #[test]

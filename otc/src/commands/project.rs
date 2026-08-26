@@ -93,7 +93,7 @@ pub fn add(spec: &str, path_flag: Option<&str>, force: bool) -> anyhow::Result<(
     } else {
         // A bare name is a shelf lookup. Failing here with the fix named
         // beats recording a dependency that can never resolve.
-        let shelf = Shelf::load().map_err(|e| anyhow::anyhow!("{}", e))?;
+        let shelf = Shelf::load_or_seed().map_err(|e| anyhow::anyhow!("{}", e))?;
         match shelf.resolve(spec) {
             Some(dir) => {
                 println!("  {} → {} (from your shelf)", spec, dir.display());

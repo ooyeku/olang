@@ -201,6 +201,12 @@ development and reported informationally, never as tampering). The
 shelf itself is one small TOML file at `~/.olang/shelf.toml`
 (`OLANG_SHELF` overrides the location).
 
+A fresh shelf arrives stocked with the curated starter libraries —
+`textkit`, `validate`, `markdown` — removable and restorable like
+anything else (`otc lib restore`). The shelf has its own chapter:
+[The library shelf](shelf.md) covers the model, the commands, the
+starter libraries' full APIs, and pinning in detail.
+
 ## Benchmarks
 
 `otc bench` runs the project's benches — ordinary olang programs in
