@@ -54,7 +54,7 @@ fn on_list_click(e) = {
         let id = str.substring(tid, len(split(tid, "-")[0]) + 1, len(tid))
         dom.push_state("/notes.html?sel=" + id)
         draw()
-    }}
+    } }
 }
 
 dom.on(list, "click", (e) => { on_list_click(e) })

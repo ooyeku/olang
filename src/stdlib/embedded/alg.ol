@@ -373,7 +373,6 @@ fn sort_indices(keys, order) = {
     a
 }
 
-
 test "sort is ordered and stable by value" {
     testing.assert_eq(sort([3, 1, 2]), [1, 2, 3])
     testing.assert_eq(sort([]), [])

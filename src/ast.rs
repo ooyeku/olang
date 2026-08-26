@@ -168,7 +168,7 @@ pub struct ErrorVariant {
 }
 
 /// Variable declaration with optional type annotation
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LetDecl {
     pub pattern: Pattern,
     pub type_annotation: Option<TypeAnnotation>,
@@ -187,7 +187,7 @@ pub struct LetDecl {
 }
 
 /// Function declaration for named/recursive functions
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionDecl {
     pub name: String,
     /// 1-based (line, column) of the function name in source.
@@ -1247,7 +1247,7 @@ pub struct ExportDecl {
 }
 
 /// Custom type declaration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypeDecl {
     pub name: String,
     /// 1-based (line, column) of the type name in source.
@@ -1255,6 +1255,39 @@ pub struct TypeDecl {
     pub name_span: Option<(u32, u32)>,
     pub type_params: Vec<String>, // Type parameters for generic types
     pub definition: TypeDefinition,
+}
+
+// Declaration equality is *semantic*: `name_span` is source metadata
+// (where the name sat in the file), not part of what was declared.
+// Ignoring it is what lets `olang fmt`'s safety gate compare the AST
+// before and after a whitespace change that shifts line numbers — the
+// same philosophy as Statement's eq unwrapping Located.
+impl PartialEq for LetDecl {
+    fn eq(&self, other: &Self) -> bool {
+        self.pattern == other.pattern
+            && self.type_annotation == other.type_annotation
+            && self.value == other.value
+            && self.mutable == other.mutable
+    }
+}
+
+impl PartialEq for FunctionDecl {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.type_params == other.type_params
+            && self.type_param_bounds == other.type_param_bounds
+            && self.parameters == other.parameters
+            && self.return_type == other.return_type
+            && self.body == other.body
+    }
+}
+
+impl PartialEq for TypeDecl {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.type_params == other.type_params
+            && self.definition == other.definition
+    }
 }
 
 /// Type definition variants

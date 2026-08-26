@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`olang fmt` now formats.** The formatter was line hygiene only —
+  `fn f( x ,y )=x+y` passed `--check` as "all formatted". It now
+  respaces every code line to canonical style: one space around binary
+  operators and arrows, commas and colons gluing left and breathing
+  right, calls and indexing hugging their value while keywords keep
+  their space, unary signs gluing to their operand, ranges glued,
+  braces breathing with empty pairs glued. The rules were calibrated
+  against every `.ol` file in the repository — the shipped style is
+  the specification — and two alignments are recognized as intentional
+  and preserved: runs of spaces before `=>` (match-arm tables) and
+  before a trailing comment. Strings, templates, comments, and
+  indentation are never touched. The safety gate compares the raw
+  pre-expansion tree (macro-using files format too) with
+  span-insensitive declaration equality, fixing the old gate silently
+  refusing any file where a whitespace change shifted a line number.
+  The whole corpus is formatted and idempotent under the new rules.
+
 ## [0.75.0] - 2026-08-26
 
 ### Fixed

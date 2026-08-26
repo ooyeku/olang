@@ -74,7 +74,7 @@ this six times in a row.
 
 | Item | Observed | Status |
 |---|---|---|
-| `olang fmt` formats | `fn f( x ,y )=x+y` reported "all formatted (1 file scanned)" — the formatter normalizes nothing | planned — real normalization (spacing around `=`, `=>`, commas, operators), idempotent, semantics-preserving via a parse-identity gate, `--check` honest |
+| `olang fmt` formats | `fn f( x ,y )=x+y` reported "all formatted (1 file scanned)" — the formatter normalizes nothing | **landed** — token respacer calibrated against the whole in-repo corpus (the shipped style is the spec); alignment before `=>` and trailing comments preserved; raw-parse identity gate (span-insensitive decl equality fixed the gate refusing any line shift); all 127 corpus files formatted and idempotent |
 | LSP depth audit | feature-frozen for months; current depth unknown; the `:help` registry and doc pipeline make hover/signatures newly cheap | planned — audit first: diagnostics parity with `olang check`, hover from the 727-entry registry, `///` docs for user code |
 
 ## W6 — concurrency you can see into

@@ -118,7 +118,7 @@ run it when you want the report, not on every save.
 
 ## `olang fmt`
 
-A conservative formatter for whitespace hygiene:
+A conservative, safety-verified formatter:
 
 ```bash
 olang fmt                 # format the current directory, in place
@@ -126,23 +126,42 @@ olang fmt src/ lib/       # specific paths
 olang fmt --check .       # report what would change; non-zero exit (CI)
 ```
 
-What it does — only ever *outside* multi-line string literals:
+Two layers, applied only *outside* string literals and comments.
 
-- CRLF line endings become LF
-- trailing spaces and tabs are stripped
-- leading tabs become 4 spaces (the book's indentation unit)
-- runs of blank lines collapse to one
-- the file ends with exactly one newline
+**Line hygiene**: CRLF line endings become LF, trailing whitespace is
+stripped, leading tabs become 4 spaces, runs of blank lines collapse
+to one, and the file ends with exactly one newline.
 
-What it deliberately does **not** do: re-indent, re-wrap, or reflow code.
-Comments and layout are the author's; template-string and raw-string
-interiors are content and are never touched.
+**Token respacing**: each code line is re-emitted with canonical
+spacing —
 
-**The safety property is absolute**: before writing, the formatted source
-is re-parsed and must produce an AST identical to the original's. A file
-whose formatting would change its meaning — or that doesn't parse — is
-skipped and reported, never modified. Formatting is idempotent: a formatted
-tree passes `--check`.
+- one space around binary operators, `=`, `=>`, `->`, and `|>`
+- `f(x, y)`, not `f( x ,y )`: commas glue left and breathe right,
+  parentheses hug their contents
+- calls and indexing glue to their value (`f(x)`, `xs[i]`); a keyword
+  keeps its space (`if (x)`)
+- unary `-`, `+`, and `!` glue to their operand; ranges glue (`1..5`)
+- `:` glues left and breathes right (`x: Int`, `#{ "a": 1 }`)
+- braces breathe (`{ ok: true }`, `#{ "a": 1 }`); empty pairs glue
+  (`{}`, `#{}`)
+
+The rules were calibrated against every `.ol` file in the repository —
+the shipped style is the specification.
+
+What it deliberately does **not** do: re-indent, re-wrap, or reflow
+lines — leading whitespace and line structure are the author's. Two
+alignments are recognized as intentional and preserved: two or more
+spaces before `=>` (match-arm tables) and before a trailing comment.
+Template-string, raw-string, and comment interiors are content and are
+never touched.
+
+**The safety property is absolute**: before writing, the formatted
+source is re-parsed and must produce an AST identical to the
+original's (source positions aside). A file whose formatting would
+change its meaning — or that doesn't parse — is skipped and reported,
+never modified. Macro-using files are compared on the raw
+pre-expansion tree, so a file importing its meta fns still formats.
+Formatting is idempotent: a formatted tree passes `--check`.
 
 ## `olang check`
 

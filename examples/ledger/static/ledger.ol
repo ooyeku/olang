@@ -474,7 +474,7 @@ fn add_transaction() = {
                 })
             }
         }
-    }}
+    } }
 }
 
 fn patch_tx(id, body) =
@@ -511,7 +511,7 @@ fn on_rows_change(e) = {
     else => { if starts_with(tid, "note-") => {
         let id = str.substring(tid, 5, len(tid))
         patch_tx(id, "{\"note\": \"" + json_esc(value) + "\"}")
-    }}
+    } }
 }
 
 // ── mutations: budgets ─────────────────────────────────────────────────

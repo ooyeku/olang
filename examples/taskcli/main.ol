@@ -15,9 +15,9 @@ let spec = #{
         #{ "name": "open", "about": "list only open tasks" },
         #{ "name": "stats", "about": "summary counts by state and priority" },
         #{ "name": "add", "about": "add a task",
-           "args": [ #{ "name": "title", "required": true, "help": "the task title" } ],
-           "flags": [ #{ "name": "priority", "short": "p", "type": "int", "default": 2,
-                         "help": "1 (low) – 3 (high)" } ] }
+           "args": [#{ "name": "title", "required": true, "help": "the task title" }],
+           "flags": [#{ "name": "priority", "short": "p", "type": "int", "default": 2,
+                         "help": "1 (low) – 3 (high)" }] }
     ]
 }
 

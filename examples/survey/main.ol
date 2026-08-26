@@ -28,12 +28,12 @@ let spec = #{
            "args": [path_arg] },
         #{ "name": "langs", "about": "every language, by line count",
            "args": [path_arg],
-           "flags": [ #{ "name": "top", "short": "n", "type": "int", "default": 12,
-                         "help": "show at most N languages" } ] },
+           "flags": [#{ "name": "top", "short": "n", "type": "int", "default": 12,
+                         "help": "show at most N languages" }] },
         #{ "name": "files", "about": "the largest files by line count",
            "args": [path_arg],
-           "flags": [ #{ "name": "top", "short": "n", "type": "int", "default": 10,
-                         "help": "show at most N files" } ] }
+           "flags": [#{ "name": "top", "short": "n", "type": "int", "default": 10,
+                         "help": "show at most N files" }] }
     ]
 }
 

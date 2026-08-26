@@ -277,7 +277,7 @@ fn on_rows_click(tid) = {
             if st("sel") == id => close_drawer()
             reload()
         })
-    }}}}
+    } } } }
 }
 
 fn on_rows_change(e) = {
@@ -288,7 +288,7 @@ fn on_rows_change(e) = {
         patch(id, "{\"assignee\": \"" + json_esc(value) + "\"}")
     } else => { if starts_with(tid, "pts-") => {
         patch(id, "{\"points\": " + show(unwrap_or(str.parse_int(str.trim(value)), 0)) + "}")
-    }}
+    } }
 }
 
 fn on_meta_click(tid) = {
@@ -298,7 +298,7 @@ fn on_meta_click(tid) = {
         patch(id, "{\"status\": \"" + next_status(dom.get_text(dom.query("#" + tid))) + "\"}")
     } else => { if starts_with(tid, "dpri-") => {
         patch(id, "{\"priority\": \"" + next_priority(dom.get_text(dom.query("#" + tid))) + "\"}")
-    }}
+    } }
 }
 
 fn on_filter_click(tid) = {

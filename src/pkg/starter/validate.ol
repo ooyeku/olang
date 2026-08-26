@@ -95,30 +95,30 @@ share fn ok(m, rules) = is_ok(check(m, rules))
 
 test "kinds and requirement" {
     let rules = [["name", "str"], ["age", "int"]]
-    assert_eq(check(#{"name": "Ada", "age": 36}, rules), Ok(#{"name": "Ada", "age": 36}))
-    assert_eq(check(#{"name": "Ada"}, rules), Err(["age: required"]))
-    assert_eq(check(#{"name": 7, "age": "x"}, rules),
+    assert_eq(check(#{ "name": "Ada", "age": 36 }, rules), Ok(#{ "name": "Ada", "age": 36 }))
+    assert_eq(check(#{ "name": "Ada" }, rules), Err(["age: required"]))
+    assert_eq(check(#{ "name": 7, "age": "x" }, rules),
         Err(["name: expected str, got Int", "age: expected int, got String"]))
     assert_eq(check("nope", rules), Err(["expected a map, got String"]))
 }
 
 test "optional fields check only when present" {
-    let rules = [["note", "str", #{"required": false}]]
+    let rules = [["note", "str", #{ "required": false }]]
     assert_eq(ok(#{}, rules), true)
-    assert_eq(ok(#{"note": "hi"}, rules), true)
-    assert_eq(ok(#{"note": 3}, rules), false)
+    assert_eq(ok(#{ "note": "hi" }, rules), true)
+    assert_eq(ok(#{ "note": 3 }, rules), false)
 }
 
 test "bounds are values for numbers, lengths for strings and lists" {
-    assert_eq(ok(#{"age": 36}, [["age", "int", #{"min": 0, "max": 130}]]), true)
-    assert_eq(ok(#{"age": 200}, [["age", "int", #{"max": 130}]]), false)
-    assert_eq(ok(#{"pin": "1234"}, [["pin", "str", #{"min": 4, "max": 4}]]), true)
-    assert_eq(ok(#{"tags": [1, 2, 3]}, [["tags", "list", #{"max": 2}]]), false)
+    assert_eq(ok(#{ "age": 36 }, [["age", "int", #{ "min": 0, "max": 130 }]]), true)
+    assert_eq(ok(#{ "age": 200 }, [["age", "int", #{ "max": 130 }]]), false)
+    assert_eq(ok(#{ "pin": "1234" }, [["pin", "str", #{ "min": 4, "max": 4 }]]), true)
+    assert_eq(ok(#{ "tags": [1, 2, 3] }, [["tags", "list", #{ "max": 2 }]]), false)
 }
 
 test "one_of and pattern" {
-    assert_eq(ok(#{"kind": "expense"}, [["kind", "str", #{"one_of": ["expense", "income"]}]]), true)
-    assert_eq(ok(#{"kind": "loan"}, [["kind", "str", #{"one_of": ["expense", "income"]}]]), false)
-    assert_eq(ok(#{"id": "tx_042"}, [["id", "str", #{"pattern": "^tx_[0-9]+$"}]]), true)
-    assert_eq(ok(#{"id": "42"}, [["id", "str", #{"pattern": "^tx_[0-9]+$"}]]), false)
+    assert_eq(ok(#{ "kind": "expense" }, [["kind", "str", #{ "one_of": ["expense", "income"] }]]), true)
+    assert_eq(ok(#{ "kind": "loan" }, [["kind", "str", #{ "one_of": ["expense", "income"] }]]), false)
+    assert_eq(ok(#{ "id": "tx_042" }, [["id", "str", #{ "pattern": "^tx_[0-9]+$" }]]), true)
+    assert_eq(ok(#{ "id": "42" }, [["id", "str", #{ "pattern": "^tx_[0-9]+$" }]]), false)
 }
