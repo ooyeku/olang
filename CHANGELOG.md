@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.75.0] - 2026-08-26
+
 ### Fixed
 
 - **The bridge interpreter tracks declarations made after its birth.**
@@ -5892,7 +5894,8 @@ opt-in bytecode tier (`--ovm-tier`) is now honest, tested, and fast.
 - `crypto.decrypt_aes` accepts the output of `crypto.encrypt_aes` directly
   (the embedded nonce is parsed rather than requiring manual hex slicing).
 
-[Unreleased]: https://github.com/ooyeku/olang/compare/v0.74.0...HEAD
+[Unreleased]: https://github.com/ooyeku/olang/compare/v0.75.0...HEAD
+[0.75.0]: https://github.com/ooyeku/olang/compare/v0.74.0...v0.75.0
 [0.74.0]: https://github.com/ooyeku/olang/compare/v0.73.0...v0.74.0
 [0.73.0]: https://github.com/ooyeku/olang/compare/v0.72.0...v0.73.0
 [0.72.0]: https://github.com/ooyeku/olang/compare/v0.71.0...v0.72.0
