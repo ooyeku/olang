@@ -664,10 +664,9 @@ These are real boundaries, stated so you can predict them:
 - **Adaptive optimization** — profiling feedback, on-stack replacement,
   polymorphic inline caches, speculation with side-exit deopt,
   feedback-driven inlining, background tiering. These are deliberate
-  omissions, not accidental gaps. Under the current plan, adaptive
-  optimization is deferred until after 1.0
-  ([roadmap](roadmap.md#post-10-candidates)); a tracing JIT and a
-  tracing garbage collector are rejected outright.
+  omissions, not accidental gaps: full adaptive optimization is not
+  planned work, and a tracing JIT and a tracing garbage collector are
+  rejected outright.
 
 ## Source map
 
