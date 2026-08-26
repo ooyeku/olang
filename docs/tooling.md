@@ -468,6 +468,30 @@ The embedded packages carry these comments, so `olang doc
 src/stdlib/embedded/cli.ol src/stdlib/embedded/term.ol` regenerates
 their reference from source rather than by hand.
 
+The same convention reaches the REPL. `:help <name>` answers from the
+builtin registry first; when the name is not a builtin, it answers
+from the user's own documented code — a `///` block above a
+declaration entered in the session, in a file the session `:run`, or
+in any module a program `use`d. `:help <module>` on a loaded file's
+name shows its `//!` note and every documented item; `:help
+module.name` qualifies the lookup to one file. Docs are re-read from
+source at lookup time, so an edited file answers with its current
+text.
+
+```
+olang> /// Steps in the collatz orbit of n.
+olang> fn collatz(n, s) = if n == 1 => s else => ...
+olang> :help collatz
+
+═══ collatz ═══
+
+  fn collatz(n, s)
+
+  Steps in the collatz orbit of n.
+
+  defined this session
+```
+
 ## `olang --watch`
 
 The edit-run loop as a flag:

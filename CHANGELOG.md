@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`:help` answers for your own code.** The `///` doc-comment
+  convention `olang doc` established now reaches the REPL: a doc
+  comment above any declaration — entered in the session, in a `:run`
+  file, or in a module a program `use`d — is what `:help <name>`
+  shows, rendered like the builtin help with its origin named.
+  `:help <module>` on a loaded file shows its `//!` note and every
+  documented item; `module.name` qualifies the lookup. Builtins keep
+  priority. Docs are re-read from source at lookup time, so an edited
+  file answers with its current text.
+
+- **Every `:help` entry teaches, and a guard keeps it that way.** The
+  329 compact registry entries (ods, dom, stats, term, math, and the
+  rest) carried a one-line description and nothing else; every entry
+  in the registry now has a real description, a worked example, and a
+  stated return type. A new test parses every example as real olang —
+  it caught 142 fictions on its first run (`->` result notation, `;`
+  as a match-arm separator, JS-style `{ }` map literals, `if` without
+  `=>`, `fn` block bodies missing `=`) and several wrong facts
+  (`os.args` documented as returning a Result it never returned). The
+  six `error.*` help topics carry their advice as prose and their
+  examples as code that parses.
+
 - **Campaign 8: the final engine additions.** The JIT-breadth freeze is
   lifted (roadmap: Campaign 8); five lanes land as the last engine
   work before 1.0, each pinned by tier floors and differential tests.
