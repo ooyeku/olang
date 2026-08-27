@@ -3857,11 +3857,11 @@ impl Interpreter {
 
     fn eval_test_decl(&mut self, test_decl: TestDecl) -> Result<Value, InterpreterError> {
         if !self.test_mode {
-            // Inline behavior (normal runs): the body executes in place and a
-            // failing assertion aborts, like any other error.
-            for statement in &test_decl.body {
-                self.eval_statement(statement)?;
-            }
+            // Test blocks are inert outside `olang test`: a normal run —
+            // and, critically, a `use` of a module, whose top-level
+            // statements execute at load — must not run assertions,
+            // print, or pay for them. (They used to execute inline;
+            // importing any tested library ran its whole suite.)
             return Ok(Value::Unit);
         }
 

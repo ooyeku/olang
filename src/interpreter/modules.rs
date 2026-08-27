@@ -644,6 +644,12 @@ impl Interpreter {
             let mut exports = std::collections::HashMap::new();
             let mut dependencies = Vec::new();
 
+            // Names that arrived via `share use` re-export: their
+            // closures belong to their OWN module's scope and must not
+            // be re-closed over this one (which cannot see the source
+            // module's private helpers).
+            let mut reexported: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
             // Process all statements in the module
             for statement in &program.statements {
                 // Coverage: a module's top-level statements execute right
@@ -721,6 +727,7 @@ impl Interpreter {
                                                 self.get_module_export(&module, name)
                                             {
                                                 exports.insert(name.clone(), value);
+                                                reexported.insert(name.clone());
                                             }
                                         }
                                         crate::ast::UseItem::Wildcard => {
@@ -728,6 +735,7 @@ impl Interpreter {
                                             if let Value::Struct { fields, .. } = &module {
                                                 for (name, value) in fields.iter() {
                                                     exports.insert(name.clone(), value.clone());
+                                                    reexported.insert(name.clone());
                                                 }
                                             }
                                         }
@@ -757,7 +765,13 @@ impl Interpreter {
             // functions in a single file can call one another regardless of
             // order.
             let module_scope = self.environment.flat_snapshot();
-            for value in exports.values_mut() {
+            for (name, value) in exports.iter_mut() {
+                if reexported.contains(name) {
+                    // A `share use` re-export keeps the closure its own
+                    // module gave it — re-closing it here would strip
+                    // access to that module's private helpers.
+                    continue;
+                }
                 if let Value::Function(func) = value {
                     func.closure = Arc::new(module_scope.clone());
                 }

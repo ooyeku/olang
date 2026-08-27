@@ -58,6 +58,7 @@ pub fn create_dom_module() -> Value {
         // Workers (page side) and their in-worker mirrors
         ("worker", 1),
         ("worker_send", 2),
+        ("available", 0),
         ("worker_on", 2),
         ("worker_close", 1),
         ("post", 1),
@@ -83,6 +84,13 @@ pub fn call_dom_function(
     name: &str,
     _args: Vec<Value>,
 ) -> Result<Value, Box<dyn std::error::Error>> {
+    // The one dom function that exists everywhere: the honest answer
+    // to "am I in a browser?", so isomorphic code can degrade
+    // gracefully (render a static preview, skip event wiring) instead
+    // of trapping.
+    if name == "available" {
+        return Ok(Value::Boolean(false));
+    }
     Err(format!(
         "dom.{}: the dom module is only available in the browser (wasm build)",
         name
@@ -95,5 +103,8 @@ pub fn call_dom_function(
     name: &str,
     args: Vec<Value>,
 ) -> Result<Value, Box<dyn std::error::Error>> {
+    if name == "available" {
+        return Ok(Value::Boolean(true));
+    }
     crate::playground::dom_call(name, args)
 }
