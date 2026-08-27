@@ -20,17 +20,19 @@ impl zed::Extension for OlangExtension {
         // the VS Code client had.
         let path = worktree.which("olang").or_else(|| {
             let home = std::env::var("HOME").ok()?;
+            // The real binary first; ~/.olang/olang is a legacy setup
+            // wrapper that only forwards to ~/.cargo/bin anyway.
             [
-                format!("{home}/.olang/olang"),
                 format!("{home}/.cargo/bin/olang"),
                 "/usr/local/bin/olang".to_string(),
                 "/opt/homebrew/bin/olang".to_string(),
+                format!("{home}/.olang/olang"),
             ]
             .into_iter()
             .find(|p| std::fs::metadata(p).is_ok())
         });
         let path = path.ok_or_else(|| {
-            "olang not found on PATH or in ~/.olang, ~/.cargo/bin, /usr/local/bin,              /opt/homebrew/bin — install olang, or add its directory to PATH"
+            "olang not found on PATH or in ~/.cargo/bin, /usr/local/bin, /opt/homebrew/bin,              ~/.olang — install olang, or add its directory to PATH"
                 .to_string()
         })?;
         Ok(zed::Command {

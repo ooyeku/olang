@@ -1,6 +1,6 @@
 id = "olang"
 name = "olang"
-version = "0.2.0"
+version = "0.2.1"
 schema_version = 1
 authors = ["Ola Yeku <ooyeku@gmail.com>"]
 description = "olang language support: highlighting and the built-in language server (olang lsp)."

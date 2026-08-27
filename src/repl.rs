@@ -824,7 +824,7 @@ impl Repl {
             pairs.push((String::new(), f));
         }
         let mut out: Vec<std::path::PathBuf> = Vec::new();
-        let mut push = |p: std::path::PathBuf, out: &mut Vec<std::path::PathBuf>| {
+        let push = |p: std::path::PathBuf, out: &mut Vec<std::path::PathBuf>| {
             if !out.contains(&p) {
                 out.push(p);
             }

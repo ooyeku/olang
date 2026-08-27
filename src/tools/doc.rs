@@ -128,16 +128,16 @@ pub fn extract(source: &str) -> ModuleDoc {
 /// fallback `:help` uses when a loaded function carries no `///` block.
 pub fn declaration_of(source: &str, name: &str) -> Option<Item> {
     for line in source.lines() {
-        if let Some((kind, n, signature, shared)) = parse_decl(line.trim_start()) {
-            if n == name {
-                return Some(Item {
-                    kind,
-                    name: n,
-                    signature,
-                    doc: String::new(),
-                    shared,
-                });
-            }
+        if let Some((kind, n, signature, shared)) = parse_decl(line.trim_start())
+            && n == name
+        {
+            return Some(Item {
+                kind,
+                name: n,
+                signature,
+                doc: String::new(),
+                shared,
+            });
         }
     }
     None
