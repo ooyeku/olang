@@ -150,11 +150,23 @@ fn assertions_accept_multiline_arguments() {
 }
 
 #[test]
-fn multiline_assertion_failures_still_fail() {
+fn multiline_assertion_failures_still_fail_under_the_runner() {
+    // The multiline call inside a test block must parse — and its
+    // failing assertion must be reported where test blocks execute:
+    // under `olang test` (test mode). On a normal run the block is
+    // inert by design.
     let src = "test \"fails\" {\n    assert_eq(\n        1,\n        2\n    )\n}";
     let program = Parser::new().parse(src).expect("parse");
-    let mut interpreter = Interpreter::new();
-    assert!(interpreter.eval_program(program).is_err());
+    let mut inert = Interpreter::new();
+    assert!(inert.eval_program(program.clone()).is_ok());
+    let mut runner = Interpreter::new();
+    runner.enable_test_mode();
+    let _ = runner.eval_program(program);
+    let outcomes = runner.take_test_results();
+    assert!(
+        outcomes.iter().any(|o| o.error.is_some()),
+        "the runner must report the failing assertion: {outcomes:?}"
+    );
 }
 
 #[test]

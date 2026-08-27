@@ -212,18 +212,25 @@ test "nested" {
 }
 
 #[test]
-fn a_failing_assertion_in_a_loop_still_fails() {
-    // The fix must not make assertions unreachable in the other
-    // direction — a nested assertion that fails has to be reported.
+fn a_failing_assertion_in_a_test_block_is_inert_on_normal_runs() {
+    // Test blocks execute only under `olang test`: a normal run of a
+    // program (or a `use` of a module) carrying a failing test block
+    // must not abort. The other direction — the runner still executes
+    // and reports that failure — is pinned by
+    // tests/module_semantics_test.rs.
     let source = r#"
 test "nested failure" {
     for i in 0..3 { assert_eq(i, 99) }
 }
+let after = 42
 "#;
     let program = olang::parser::Parser::new().parse(source).expect("parse");
     let mut interpreter = olang::interpreter::Interpreter::new();
     let result = interpreter.eval_program(program);
-    assert!(result.is_err(), "a failing nested assertion must be caught");
+    assert!(
+        result.is_ok(),
+        "test blocks are inert outside the runner: {result:?}"
+    );
 }
 
 #[test]
