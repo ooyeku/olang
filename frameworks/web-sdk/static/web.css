@@ -59,6 +59,7 @@ pre { background: var(--surface); border: 1px solid var(--line); border-radius: 
   padding: var(--gap);
 }
 .muted { color: var(--muted); }
+.strike { text-decoration: line-through; }
 .badge {
   display: inline-block;
   font-size: 0.78rem;

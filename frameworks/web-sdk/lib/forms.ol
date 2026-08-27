@@ -27,7 +27,8 @@ share fn field(name, label_text, kind, opts) =
 /// check as "num", everything else as "str".
 share fn rules(fields) =
     map(fields, (f) => {
-        let kind = if map_get(f, "kind") == "number" => "num" else => "str"
+        let k = map_get(f, "kind")
+        let kind = if typeof(k) == "String" && k == "number" => "num" else => "str"
         [map_get(f, "name"), kind, map_get(f, "opts")]
     })
 
@@ -40,7 +41,8 @@ share fn read(payload, fields) = {
         let name = map_get(f, "name")
         if map_has_key(payload, name) => {
             let v = map_get(payload, name)
-            let parsed = if map_get(f, "kind") == "number" && typeof(v) == "String" =>
+            let k = map_get(f, "kind")
+            let parsed = if typeof(k) == "String" && k == "number" && typeof(v) == "String" =>
                 match str.parse_int(v) {
                     Ok(n) => n,
                     Err(e) => match str.parse_float(v) { Ok(x) => x, Err(e2) => v }
@@ -57,13 +59,13 @@ fn control(f, value, has_error) = {
     let kind = map_get(f, "kind")
     let classes = if has_error => "field-input field-error" else => "field-input"
     if typeof(kind) == "Map" && map_has_key(kind, "select") =>
-        select(#{ "name": name, "class": classes },
+        select(#{ "name": name, "id": name, "class": classes },
             map(map_get(kind, "select"), (o) =>
                 option(#{ "value": o, "selected": o == value }, [o])))
     else if kind == "textarea" =>
-        textarea(#{ "name": name, "class": classes }, [to_string_value(value)])
+        textarea(#{ "name": name, "id": name, "class": classes }, [to_string_value(value)])
     else =>
-        input(#{ "name": name, "type": kind, "class": classes,
+        input(#{ "name": name, "id": name, "type": kind, "class": classes,
                  "value": to_string_value(value) })
 }
 
@@ -88,6 +90,15 @@ share fn form_fields(fields, values, errors) =
             else => text("")
         ])
     }))
+
+test "select fields rule and read as strings, never trapping" {
+    // A select field's kind is a MAP — the comparison against
+    // "number" must not trap on Map == String (it did, live).
+    let fs = [field("priority", "Priority", #{ "select": ["a", "b"] },
+        #{ "one_of": ["a", "b"] })]
+    assert_eq(rules(fs), [["priority", "str", #{ "one_of": ["a", "b"] }]])
+    assert_eq(read(#{ "priority": "a" }, fs), #{ "priority": "a" })
+}
 
 test "rules mirror the field declarations" {
     let fs = [

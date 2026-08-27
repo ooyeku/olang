@@ -15,9 +15,11 @@ test "the demo's real bundle parses and is module-free" {
     let client = demo_client()
     let b = bundle_client(client)
     assert_eq(is_ok(meta.parse(b)), true)
-    // No module syntax survives bundling.
+    // No LOCAL module syntax survives bundling — embedded modules
+    // (`use viz`) stay: the browser resolves those natively.
     let lines = str.lines(b)
-    assert_eq(len(filter(lines, (l) => str.starts_with(str.trim(l), "use "))), 0)
+    assert_eq(len(filter(lines, (l) => str.starts_with(str.trim(l), "use lib."))), 0)
+    assert_eq(len(filter(lines, (l) => str.starts_with(str.trim(l), "use web"))), 0)
     assert_eq(len(filter(lines, (l) => str.starts_with(str.trim(l), "share "))), 0)
     // The SDK's browser layer and the app both arrived.
     assert_eq(str.contains(b, "fn mount("), true)

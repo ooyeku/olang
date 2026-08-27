@@ -162,7 +162,9 @@ never as a blank page.
 The SDK's tests are olang tests — 105 of them, `olang test
 frameworks/web-sdk`. The route table and envelope are exercised
 in-process by constructing request values and calling `dispatch`
-directly; the data layer runs against `:memory:`; and
+directly; the data layer runs against `:memory:`; the demo (`demo/`
+— *shipit*, a project pulse board with inline validation, filters,
+and a `viz` chart) doubles as the living example; and
 `tests/live_server.ol` spawns the real server on a task thread and
 drives it over a socket with the `http` client — shell, assets,
 bundle, rpc round-trips, and the error envelope, end to end, in the
