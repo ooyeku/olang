@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.77.0] - 2026-08-27
+
 ### Added
 
 - **The web SDK** (`frameworks/web-sdk`): the foundation layer for
@@ -5998,7 +6000,8 @@ opt-in bytecode tier (`--ovm-tier`) is now honest, tested, and fast.
 - `crypto.decrypt_aes` accepts the output of `crypto.encrypt_aes` directly
   (the embedded nonce is parsed rather than requiring manual hex slicing).
 
-[Unreleased]: https://github.com/ooyeku/olang/compare/v0.76.0...HEAD
+[Unreleased]: https://github.com/ooyeku/olang/compare/v0.77.0...HEAD
+[0.77.0]: https://github.com/ooyeku/olang/compare/v0.76.0...v0.77.0
 [0.76.0]: https://github.com/ooyeku/olang/compare/v0.75.0...v0.76.0
 [0.75.0]: https://github.com/ooyeku/olang/compare/v0.74.0...v0.75.0
 [0.74.0]: https://github.com/ooyeku/olang/compare/v0.73.0...v0.74.0
