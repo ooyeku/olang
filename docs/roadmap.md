@@ -75,7 +75,7 @@ this six times in a row.
 | Item | Observed | Status |
 |---|---|---|
 | `olang fmt` formats | `fn f( x ,y )=x+y` reported "all formatted (1 file scanned)" — the formatter normalizes nothing | **landed** — token respacer calibrated against the whole in-repo corpus (the shipped style is the spec); alignment before `=>` and trailing comments preserved; raw-parse identity gate (span-insensitive decl equality fixed the gate refusing any line shift); all 127 corpus files formatted and idempotent |
-| LSP depth audit | feature-frozen for months; current depth unknown; the `:help` registry and doc pipeline make hover/signatures newly cheap | **landed** — protocol-level audit found the server healthier than assumed (diagnostics, registry hover, completions, definition, rename, signature help all real; formatting inherits the new respacer). Two real gaps closed: user declarations now hover with their full signature and `///` doc (text-level extraction, so mid-edit files keep rich hovers), and `share` declarations — invisible to hover/definition/rename/outline in both discovery paths — are first-class |
+| LSP depth audit | feature-frozen for months; current depth unknown; the `:help` registry and doc pipeline make hover/signatures newly cheap | **landed** — protocol-level audit, then the robustness batch: user-decl hovers with /// docs, `share` declarations first-class, inlay hints, code actions (doc stub, `let mut` quick fix), workspace symbols, `use` completions; diagnostics gained the scoping pass (assignment-to-immutable now surfaces) and stopped flagging stdlib modules. Grammar + Zed highlighting rebuilt for a distinct olang identity (112-file corpus, zero parse errors); extension 0.3.0 |
 
 ## W6 — concurrency you can see into
 

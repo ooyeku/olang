@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **The language server earns "robust".** Four new capabilities, each
+  protocol-tested against the real binary: inlay hints (parameter
+  names at call sites, from the file's declarations and the help
+  registry — lambdas and single-parameter calls stay unhinted), code
+  actions ("Add /// documentation" on an undocumented declaration;
+  "Declare with `let mut`" reading the scoping diagnostic and editing
+  the binding), workspace-wide symbol search, and `use`-line
+  completions offering the embedded packages, the shelf, and lib/
+  modules. Two diagnostics-parity defects fixed along the way: the
+  analyzer flagged stdlib modules ("Undefined variable: math") because
+  no module namespaces were seeded, and assignment-to-immutable — an
+  error that stops a program before its first statement — produced no
+  editor diagnostic at all; the scoping pass now runs in diagnostics
+  and feeds the quick fix.
+
+- **olang has its own look.** The tree-sitter grammar grows structure
+  for what makes olang olang — `|>`, `=>`, `->`, `#{` as their own
+  nodes, template strings with `${...}` interpolations as embedded
+  code, dotted paths with receiver/member/call-target distinguished,
+  `///` doc comments split from `//` — and the Zed highlighting maps
+  them away from the Rust-shaped defaults: pipeline and arrow marks as
+  special punctuation, templates as special strings, `share` as an
+  attribute so exports pop, dotted receivers in the voice themes give
+  `self`. Verified across the whole corpus: 112 files, zero parse
+  errors. Zed extension 0.3.0 pins the new grammar.
+
 ### Changed
 
 - **The editor speaks with `:help`'s voice.** Hovering a user-defined
