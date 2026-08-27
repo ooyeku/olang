@@ -467,3 +467,69 @@ fn rebuilt_server_features() {
         "cursor is in the second argument: {m}"
     );
 }
+
+#[test]
+fn hover_speaks_the_help_convention_for_user_code() {
+    let mut c = Client::start();
+    c.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {} }
+    }));
+    c.recv_until(|m| m["id"] == 1);
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+
+    let uri = "file:///doc_hover.ol";
+    // A documented fn, a documented share fn, and a use of each.
+    let text = "/// Doubles a number.\n\
+                fn double(x) = x * 2\n\
+                /// Greets someone warmly.\n\
+                share fn greet(name) = \"hi \" + name\n\
+                let a = double(3)\n\
+                let b = greet(\"ada\")\n";
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+            "textDocument":{"uri":uri,"languageId":"olang","version":1,"text":text}}
+    }));
+    c.recv_until(|m| diagnostics_of(m).is_some());
+
+    // Hover at double's call site: signature with parameters AND the
+    // /// doc, rendered markdown — the same voice as :help.
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":30,"method":"textDocument/hover","params":{
+            "textDocument":{"uri":uri},"position":{"line":4,"character":9}}
+    }));
+    let m = c.recv_until(|m| m["id"] == 30);
+    let v = serde_json::to_string(&m["result"]).unwrap();
+    assert!(v.contains("double(x)"), "signature with params: {v}");
+    assert!(v.contains("Doubles a number."), "the /// doc: {v}");
+
+    // The share fn carries its share marker.
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":31,"method":"textDocument/hover","params":{
+            "textDocument":{"uri":uri},"position":{"line":5,"character":9}}
+    }));
+    let m = c.recv_until(|m| m["id"] == 31);
+    let v = serde_json::to_string(&m["result"]).unwrap();
+    assert!(v.contains("share"), "share marker: {v}");
+    assert!(v.contains("Greets someone warmly."), "the /// doc: {v}");
+
+    // A file mid-edit (parse error at the end) still hovers with the
+    // full signature: the doc extractor is text-level.
+    let text2 = format!("{text}let broken = str.\n");
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"textDocument/didChange","params":{
+            "textDocument":{"uri":uri,"version":2},
+            "contentChanges":[{"text": text2}]}
+    }));
+    c.recv_until(|m| diagnostics_of(m).is_some());
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":32,"method":"textDocument/hover","params":{
+            "textDocument":{"uri":uri},"position":{"line":4,"character":9}}
+    }));
+    let m = c.recv_until(|m| m["id"] == 32);
+    let v = serde_json::to_string(&m["result"]).unwrap();
+    assert!(
+        v.contains("double(x)") && v.contains("Doubles a number."),
+        "broken file keeps rich hover: {v}"
+    );
+}

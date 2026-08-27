@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **The editor speaks with `:help`'s voice.** Hovering a user-defined
+  function now shows its real signature and the author's `///` doc
+  block, rendered like the builtin hovers — and it keeps working
+  mid-edit, because the doc extraction is text-level and survives a
+  file that does not currently parse. `share` declarations, which were
+  invisible to hover, go-to-definition, rename, references, and the
+  outline in both discovery paths (parsed and mid-edit scanner), are
+  now first-class. Found by a protocol-level audit that drove every
+  advertised capability over stdio; the rest of the server checked out,
+  and editor formatting inherits the new `olang fmt` respacer
+  automatically.
+
 - **`olang fmt` now formats.** The formatter was line hygiene only —
   `fn f( x ,y )=x+y` passed `--check` as "all formatted". It now
   respaces every code line to canonical style: one space around binary

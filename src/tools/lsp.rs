@@ -9,9 +9,11 @@
 //! - Completions, context-aware: after `mod.` the module's functions
 //!   (with signatures and docs from the help registry); otherwise
 //!   keywords, globals, modules, and this file's declarations.
-//! - Hover for every documented name: local declarations with the
-//!   checker's type knowledge, and every builtin and stdlib function
-//!   with its signature and description.
+//! - Hover for every documented name: builtins and stdlib functions
+//!   from the help registry; user declarations (including `share`)
+//!   with their real signature, the checker's type knowledge, and the
+//!   author's `///` doc block — the editor speaks with the same voice
+//!   as `:help`, which reads the identical convention.
 //! - Go to definition (local and cross-module), references, rename,
 //!   document highlight, document symbols (the outline), and signature
 //!   help with active-parameter tracking.
@@ -829,6 +831,33 @@ fn declarations(text: &str) -> Vec<(String, String, (u32, u32))> {
                     ));
                 }
             }
+            Statement::ShareDecl(sd) => {
+                use crate::ast::ShareDecl;
+                match sd {
+                    ShareDecl::Function(f) => {
+                        if let Some(span) = f.name_span {
+                            let params: Vec<&str> =
+                                f.parameters.iter().map(|p| p.name.as_str()).collect();
+                            out.push((
+                                f.name.clone(),
+                                format!("share fn {}({})", f.name, params.join(", ")),
+                                span,
+                            ));
+                        }
+                    }
+                    ShareDecl::Let(l) => {
+                        if let (Some(span), Pattern::Identifier(name)) = (l.name_span, &l.pattern) {
+                            out.push((name.clone(), format!("share let {}", name), span));
+                        }
+                    }
+                    ShareDecl::Type(t) => {
+                        if let Some(span) = t.name_span {
+                            out.push((t.name.clone(), format!("share type {}", t.name), span));
+                        }
+                    }
+                    _ => {}
+                }
+            }
             _ => {}
         }
     }
@@ -844,6 +873,9 @@ fn scan_declarations(text: &str) -> Vec<(String, String, (u32, u32))> {
         let indent = line.chars().count() - trimmed.chars().count();
         for (prefix, label) in [
             ("meta fn ", "meta fn"),
+            ("share fn ", "share fn"),
+            ("share let ", "share let"),
+            ("share type ", "share type"),
             ("fn ", "fn"),
             ("type ", "type"),
             ("let mut ", "let"),
@@ -990,12 +1022,18 @@ fn hover(text: &str, pos: Position, doc_dir: Option<&std::path::Path>) -> Option
         return Some(help_hover(d));
     }
     if let Some((name, detail, _)) = declarations(text).into_iter().find(|(n, _, _)| *n == word) {
-        let detail = OlangParser::new()
+        // The checker's view carries annotation types but degrades an
+        // unannotated `fn double(x)` to `fn double` — keep whichever
+        // string says more.
+        let typed = OlangParser::new()
             .parse_raw(text)
             .ok()
-            .and_then(|program| crate::tools::check::hover_types(&program).remove(&name))
-            .unwrap_or(detail);
-        return Some(code_hover(detail));
+            .and_then(|program| crate::tools::check::hover_types(&program).remove(&name));
+        let sig = match typed {
+            Some(t) if t.len() >= detail.len() => t,
+            _ => detail,
+        };
+        return Some(decl_hover(text, &name, sig, None));
     }
     if let Some(d) = help().get_function(&word) {
         return Some(help_hover(d));
@@ -1016,7 +1054,46 @@ fn hover(text: &str, pos: Position, doc_dir: Option<&std::path::Path>) -> Option
         .file_name()
         .map(|f| f.to_string_lossy().into_owned())
         .unwrap_or_default();
-    Some(code_hover(format!("{}    // from {}", detail, from)))
+    Some(decl_hover(&src, &word, detail, Some(&from)))
+}
+
+/// A user declaration's hover: the real signature, and the author's
+/// `///` doc block when one exists — the editor speaks with the same
+/// voice as `:help`, which reads the identical convention.
+fn decl_hover(source: &str, name: &str, sig: String, from: Option<&str>) -> lsp_types::Hover {
+    let item = crate::tools::doc::extract(source)
+        .items
+        .into_iter()
+        .find(|i| i.name == name);
+    let shared = item.as_ref().map(|i| i.shared).unwrap_or(false);
+    // In a file that does not currently parse, the declaration scanner
+    // degrades to bare names; the doc extractor's signature is
+    // text-level and keeps the parameter list — prefer it when richer.
+    let sig = match &item {
+        Some(i) if !sig.contains('(') && i.signature.contains('(') => {
+            format!("{} {}", i.kind, i.signature)
+        }
+        _ => sig,
+    };
+    let mut code = String::new();
+    if shared && !sig.starts_with("share ") {
+        code.push_str("share ");
+    }
+    code.push_str(&sig);
+    if let Some(from) = from {
+        code.push_str("    // from ");
+        code.push_str(from);
+    }
+    match item.map(|i| i.doc).filter(|d| !d.is_empty()) {
+        Some(doc) => lsp_types::Hover {
+            contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
+                kind: lsp_types::MarkupKind::Markdown,
+                value: format!("```olang\n{}\n```\n\n{}", code, doc),
+            }),
+            range: None,
+        },
+        None => code_hover(code),
+    }
 }
 
 fn code_hover(detail: String) -> lsp_types::Hover {
