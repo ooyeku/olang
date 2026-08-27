@@ -68,13 +68,11 @@ impl Analyzer {
         let mut scopes = vec![HashSet::new()];
         let mut variables = HashMap::new();
 
-        let module_names = crate::stdlib::get_stdlib()
-            .into_keys()
-            .chain(
-                crate::stdlib::embedded::names()
-                    .into_iter()
-                    .map(String::from),
-            );
+        let module_names = crate::stdlib::get_stdlib().into_keys().chain(
+            crate::stdlib::embedded::names()
+                .into_iter()
+                .map(String::from),
+        );
         for name in builtin_functions
             .get_functions()
             .keys()
