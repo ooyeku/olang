@@ -1802,6 +1802,21 @@ impl Interpreter {
         self.bytecode_tier.as_ref().map(|t| t.stats())
     }
 
+    /// The modules this run has loaded, as (registered name, file)
+    /// pairs — the REPL's `:help` maps a module-qualified query
+    /// (`geometry.point`) to the file behind the name, which a bare
+    /// file stem cannot do (a package's entry file is `index.ol`).
+    pub fn loaded_modules(&self) -> Vec<(String, std::path::PathBuf)> {
+        let mut out: Vec<(String, std::path::PathBuf)> = self
+            .module_cache
+            .iter()
+            .filter_map(|(k, e)| e.file_path.clone().map(|p| (k.clone(), p)))
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
     /// Files backing the modules this run has loaded — the REPL's
     /// `:help` scans them for `///` doc comments, so a user's own
     /// documented functions are as reachable as the builtins.

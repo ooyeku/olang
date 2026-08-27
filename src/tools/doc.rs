@@ -124,6 +124,25 @@ pub fn extract(source: &str) -> ModuleDoc {
     }
 }
 
+/// The declaration line for `name`, documented or not — the signature
+/// fallback `:help` uses when a loaded function carries no `///` block.
+pub fn declaration_of(source: &str, name: &str) -> Option<Item> {
+    for line in source.lines() {
+        if let Some((kind, n, signature, shared)) = parse_decl(line.trim_start()) {
+            if n == name {
+                return Some(Item {
+                    kind,
+                    name: n,
+                    signature,
+                    doc: String::new(),
+                    shared,
+                });
+            }
+        }
+    }
+    None
+}
+
 fn module_name(path: &Path) -> String {
     path.file_stem()
         .map(|s| s.to_string_lossy().to_string())

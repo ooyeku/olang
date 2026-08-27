@@ -451,6 +451,10 @@ pub struct Repl {
     /// clears the interpreter's module cache after each input, so the
     /// `:help` doc scan keeps its own record of where code came from.
     loaded_doc_files: std::collections::BTreeSet<std::path::PathBuf>,
+    /// Registered module name → file, from the same harvest. This is
+    /// what maps `:help geometry.point` to the package whose entry
+    /// file is `index.ol` — a name a file stem alone cannot answer.
+    loaded_doc_modules: std::collections::BTreeMap<String, std::path::PathBuf>,
 }
 
 impl Repl {
@@ -556,6 +560,7 @@ impl Repl {
             session_docs: Vec::new(),
             pending_doc_lines: Vec::new(),
             loaded_doc_files: std::collections::BTreeSet::new(),
+            loaded_doc_modules: std::collections::BTreeMap::new(),
         })
     }
 
@@ -696,6 +701,8 @@ impl Repl {
                     // `:help` can still find their doc comments.
                     self.loaded_doc_files
                         .extend(self.interpreter.loaded_module_files());
+                    self.loaded_doc_modules
+                        .extend(self.interpreter.loaded_modules());
                     self.interpreter.clear_module_cache();
                 } else {
                     if !self.multiline_buffer.is_empty() {
@@ -782,6 +789,8 @@ impl Repl {
             // still find their doc comments.
             self.loaded_doc_files
                 .extend(self.interpreter.loaded_module_files());
+            self.loaded_doc_modules
+                .extend(self.interpreter.loaded_modules());
             self.interpreter.clear_module_cache();
         }
 
@@ -793,10 +802,69 @@ impl Repl {
         Ok(())
     }
 
+    /// Every file worth scanning for user docs: the session harvest
+    /// plus whatever is live in the module cache right now. When
+    /// `module` is given, only files behind a matching registered name
+    /// (`geometry`, `lib.money` matching `money`) or file stem — plus,
+    /// for a package entry, its `lib/` siblings, where re-exported
+    /// declarations actually live.
+    fn doc_candidate_files(&self, module: Option<&str>) -> Vec<std::path::PathBuf> {
+        let mut pairs: Vec<(String, std::path::PathBuf)> = self
+            .loaded_doc_modules
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        pairs.extend(self.interpreter.loaded_modules());
+        for f in self
+            .loaded_doc_files
+            .iter()
+            .cloned()
+            .chain(self.interpreter.loaded_module_files())
+        {
+            pairs.push((String::new(), f));
+        }
+        let mut out: Vec<std::path::PathBuf> = Vec::new();
+        let mut push = |p: std::path::PathBuf, out: &mut Vec<std::path::PathBuf>| {
+            if !out.contains(&p) {
+                out.push(p);
+            }
+        };
+        for (key, path) in pairs {
+            let stem = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let matched = match module {
+                None => true,
+                Some(m) => key == m || key.ends_with(&format!(".{}", m)) || stem == m,
+            };
+            if !matched {
+                continue;
+            }
+            push(path.clone(), &mut out);
+            // A package's surface is often re-exports: the declarations
+            // (and their /// docs) live beside the entry file in lib/.
+            if let Some(dir) = path.parent() {
+                let lib = dir.join("lib");
+                if let Ok(entries) = std::fs::read_dir(&lib) {
+                    for e in entries.flatten() {
+                        let p = e.path();
+                        if p.extension().map(|x| x == "ol").unwrap_or(false) {
+                            push(p, &mut out);
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// The user's own documentation for `topic`, if any declaration in
     /// scope carries a `///` block with that name: session declarations
     /// first (latest wins), then every file this run has loaded.
-    /// `module.name` also matches when the file's stem is `module`.
+    /// `module.name` matches through the registered module name (a
+    /// package's entry file is `index.ol` — the stem says nothing), and
+    /// an *undocumented* declaration still answers with its signature.
     fn find_user_doc(&self, topic: &str) -> Option<(crate::tools::doc::Item, String)> {
         let (mod_part, name_part) = match topic.rsplit_once('.') {
             Some((m, n)) => (Some(m), n),
@@ -807,15 +875,8 @@ impl Repl {
         {
             return Some((item.clone(), "defined this session".to_string()));
         }
-        let mut files: Vec<std::path::PathBuf> = self.loaded_doc_files.iter().cloned().collect();
-        files.extend(self.interpreter.loaded_module_files());
-        for file in files {
-            if let Some(m) = mod_part {
-                let stem = file.file_stem().map(|s| s.to_string_lossy().to_string());
-                if stem.as_deref() != Some(m) {
-                    continue;
-                }
-            }
+        let mut signature_only: Option<(crate::tools::doc::Item, String)> = None;
+        for file in self.doc_candidate_files(mod_part) {
             let Ok(source) = std::fs::read_to_string(&file) else {
                 continue;
             };
@@ -824,26 +885,25 @@ impl Repl {
                 .into_iter()
                 .find(|i| i.name == name_part)
             {
-                return Some((item, format!("documented in: {}", file.display())));
+                return Some((item, file.display().to_string()));
+            }
+            if signature_only.is_none()
+                && let Some(item) = crate::tools::doc::declaration_of(&source, name_part)
+            {
+                signature_only = Some((item, file.display().to_string()));
             }
         }
-        None
+        signature_only
     }
 
-    /// A loaded file whose stem matches `topic` and which carries a
-    /// `//!` module note or any documented items — the module view of
-    /// the user-doc lookup.
+    /// A loaded module whose registered name or file stem matches
+    /// `topic` and which carries a `//!` module note or documented
+    /// items — the module view of the user-doc lookup.
     fn find_user_module_doc(
         &self,
         topic: &str,
     ) -> Option<(String, crate::tools::doc::ModuleDoc, String)> {
-        let mut files: Vec<std::path::PathBuf> = self.loaded_doc_files.iter().cloned().collect();
-        files.extend(self.interpreter.loaded_module_files());
-        for file in files {
-            let stem = file.file_stem().map(|s| s.to_string_lossy().to_string());
-            if stem.as_deref() != Some(topic) {
-                continue;
-            }
+        for file in self.doc_candidate_files(Some(topic)) {
             let Ok(source) = std::fs::read_to_string(&file) else {
                 continue;
             };
@@ -888,6 +948,12 @@ impl Repl {
             for line in item.doc.lines() {
                 println!("  {}", line);
             }
+        } else {
+            println!(
+                "\n  {}undocumented — /// lines above the declaration appear here{}",
+                Colors::DIM,
+                Colors::RESET
+            );
         }
         println!("\n  {}{}{}", Colors::DIM, origin, Colors::RESET);
     }
