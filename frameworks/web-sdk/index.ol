@@ -48,6 +48,7 @@ share use lib.api { call, fetch, unwrap_envelope, err_message, err_details }
 
 // the opinionated components
 share use lib.ui {
-    stack, row, spread, grid, card, muted, badge,
+    stack, row, spread, grid, card, muted, badge, badge_tone,
+    stat, icon_btn, tabs, list_card, list_row,
     btn, btn_primary, btn_danger, data_table, topbar
 }

@@ -66,6 +66,7 @@ fn control(f, value, has_error) = {
         textarea(#{ "name": name, "id": name, "class": classes }, [to_string_value(value)])
     else =>
         input(#{ "name": name, "id": name, "type": kind, "class": classes,
+                 "placeholder": map_get(f, "label"),
                  "value": to_string_value(value) })
 }
 

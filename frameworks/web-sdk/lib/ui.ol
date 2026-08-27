@@ -31,6 +31,33 @@ share fn muted(s) = span(#{ "class": "muted" }, [s])
 share fn badge(s, accent) =
     span(#{ "class": if accent => "badge badge-accent" else => "badge" }, [s])
 
+/// A colored pill: `tone` is "accent", "blue", "amber", or "" (quiet).
+share fn badge_tone(s, tone) =
+    span(#{ "class": if tone == "" => "badge" else => "badge badge-" + tone }, [s])
+
+/// A number with its label — the stat tiles a header wears:
+/// `stat("4", "open")`.
+share fn stat(n, label_text) =
+    span(#{ "class": "stat" }, [
+        span(#{ "class": "stat-n" }, [n]),
+        span(#{ "class": "stat-l" }, [label_text])
+    ])
+
+/// A round icon button; `on` fills it with the accent (a done toggle).
+share fn icon_btn(glyph, action_name, on) =
+    button(#{ "class": if on => "btn btn-icon done" else => "btn btn-icon",
+              "data-action": action_name }, [glyph])
+
+/// A segmented tab strip: `tabs([...])` around tab buttons.
+share fn tabs(children) = div(#{ "class": "tabs" }, children)
+
+/// One surface holding rows: `list_card(map(items, item_row))`.
+/// Rows should be `list_row(children)`.
+share fn list_card(row_nodes) = div(#{ "class": "card list" }, row_nodes)
+
+/// A row inside `list_card`; give the growing cell class "grow".
+share fn list_row(children) = div(#{ "class": "list-row" }, children)
+
 /// The standard button. `data-action` is how web.view's delegation
 /// finds it: `btn("Add", "todo.add")` fires the "todo.add" handler.
 share fn btn(label_text, action) =
