@@ -74,6 +74,9 @@ this six times in a row.
 
 | Item | Observed | Status |
 |---|---|---|
+| Test blocks are not inert | building the web SDK: `use` of a module (and any bundled/spliced program) *executed* its test blocks as ordinary statements — a loaded module's tests printed, mutated, and ran their asserts at import time | **landed** — test blocks parse everywhere, execute only under `olang test`; pinned with a runner-still-runs-them check |
+| Re-exports lose their closures | web-sdk's index re-exported `action` from a module with private cells; the re-closing pass rebound it over the *aggregator's* scope — "Undefined variable: mount_actions" at first call | **landed** — `share use` re-exports keep the closure their own module gave them; pinned |
+| Test asserts inside match arms | `assert_eq` is "Undefined variable" inside a match arm within a `test` block (minimal repro pinned); tests route around it by extracting first | planned |
 | `olang fmt` formats | `fn f( x ,y )=x+y` reported "all formatted (1 file scanned)" — the formatter normalizes nothing | **landed** — token respacer calibrated against the whole in-repo corpus (the shipped style is the spec); alignment before `=>` and trailing comments preserved; raw-parse identity gate (span-insensitive decl equality fixed the gate refusing any line shift); all 127 corpus files formatted and idempotent |
 | LSP depth audit | feature-frozen for months; current depth unknown; the `:help` registry and doc pipeline make hover/signatures newly cheap | **landed** — protocol-level audit, then the robustness batch: user-decl hovers with /// docs, `share` declarations first-class, inlay hints, code actions (doc stub, `let mut` quick fix), workspace symbols, `use` completions; diagnostics gained the scoping pass (assignment-to-immutable now surfaces) and stopped flagging stdlib modules. Grammar + Zed highlighting rebuilt for a distinct olang identity (112-file corpus, zero parse errors); extension 0.3.0 |
 

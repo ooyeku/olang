@@ -1,0 +1,115 @@
+/* web.css — the SDK's one deliberate look. Tokens first, so a future
+   theme is a variable block, not a rewrite. Dark mode follows the
+   system. Apps that write zero CSS should still look intentional. */
+
+:root {
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --ink: #1c1e21;
+  --muted: #6b7280;
+  --line: #e5e4e0;
+  --accent: #2f6f4f;
+  --accent-ink: #ffffff;
+  --danger: #b3402a;
+  --radius: 10px;
+  --gap: 1rem;
+  --font: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181a;
+    --surface: #1f2225;
+    --ink: #e8e6e3;
+    --muted: #9aa0a6;
+    --line: #33373b;
+    --accent: #58a27c;
+    --accent-ink: #10130f;
+    --danger: #e07a5f;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.55 var(--font);
+}
+main { max-width: 52rem; margin: 0 auto; padding: calc(var(--gap) * 2) var(--gap); }
+h1, h2, h3 { line-height: 1.2; margin: 0 0 0.5em; }
+h1 { font-size: 1.6rem; }
+h2 { font-size: 1.25rem; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, pre { font-family: var(--mono); font-size: 0.92em; }
+pre { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--gap); overflow-x: auto; }
+
+/* layout */
+.stack { display: flex; flex-direction: column; gap: var(--gap); }
+.row { display: flex; align-items: center; gap: var(--gap); flex-wrap: wrap; }
+.spread { display: flex; align-items: center; justify-content: space-between; gap: var(--gap); }
+.grid { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); }
+
+/* surfaces */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--gap);
+}
+.muted { color: var(--muted); }
+.badge {
+  display: inline-block;
+  font-size: 0.78rem;
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  background: var(--line);
+  color: var(--ink);
+}
+.badge-accent { background: var(--accent); color: var(--accent-ink); }
+
+/* buttons */
+.btn {
+  font: inherit;
+  padding: 0.45rem 0.95rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+.btn:hover { border-color: var(--accent); }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn-danger { background: transparent; border-color: var(--danger); color: var(--danger); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+
+/* forms — the classes web.forms renders */
+.form-fields { display: flex; flex-direction: column; gap: var(--gap); }
+.field { display: flex; flex-direction: column; gap: 0.3rem; }
+.field label { font-size: 0.9rem; color: var(--muted); }
+.field-input {
+  font: inherit;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+}
+.field-input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
+.field-error { border-color: var(--danger); }
+.field-message { color: var(--danger); font-size: 0.85rem; }
+
+/* tables */
+.table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.table th, .table td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--line); }
+.table th { font-size: 0.85rem; color: var(--muted); font-weight: 600; }
+.table tr:last-child td { border-bottom: none; }
+
+/* nav */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--gap); padding: 0.75rem var(--gap);
+  background: var(--surface); border-bottom: 1px solid var(--line);
+}
+.topbar .brand { font-weight: 700; color: var(--ink); }

@@ -1,0 +1,8 @@
+[package]
+name = "web"
+version = "0.1.0"
+description = "web-sdk — the foundation layer for building full-stack olang web applications"
+
+[dependencies]
+validate = { shelf = "validate" }
+web = { shelf = "web" }

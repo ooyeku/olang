@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **The web SDK** (`frameworks/web-sdk`): the foundation layer for
+  full-stack olang web applications, and the proof of concept for
+  what an ideal olang library looks like. One route table drives the
+  whole stack — `route`/`rpc` declare endpoints, `serve` runs them
+  behind one JSON envelope and serves the wasm frontend: shell, design
+  system, dom shim, and the client program bundled with the SDK's
+  browser modules so the browser loads one file and `use web { mount,
+  ... }` is made true by the server. Views are plain data rendered
+  identically server-side and in the browser; `forms` declares fields
+  once and renders, validates (with the shelf's validate library), and
+  reads them from that declaration; `sql` packages migrations and the
+  parameterized-query disciplines. 105 olang tests — dispatch driven
+  in-process with constructed requests, the data layer on `:memory:`,
+  and a live integration test that spawns the real server on a task
+  thread and drives it over a socket with the http client. Verified in
+  a real browser end to end. Chapter: docs/web-sdk.md.
+
+- **`dom.available()`** — the one dom function that exists everywhere:
+  `true` in the browser (wasm), `false` natively, so isomorphic code
+  degrades gracefully instead of trapping. The web SDK uses it to make
+  `olang run client.ol` render the app's initial frame as HTML — a
+  static preview with pointers to the real entry — while the same file
+  stays fully interactive when served.
+
+### Fixed
+
+- **Test blocks are inert outside `olang test`.** They executed inline
+  on every normal run — so `use` of any tested library ran its whole
+  suite (prints, asserts, side effects) at import time, and a failing
+  assertion in a library test aborted the importing program. Building
+  the web SDK surfaced it: importing the server module printed its
+  dispatch-test request log. The runner still executes them exactly as
+  before.
+
+- **`share use` re-exports keep their closures.** The module
+  re-closing pass rebound re-exported functions over the aggregator's
+  scope, stripping access to the source module's private helpers —
+  web-sdk's index re-exporting `action` died with "Undefined variable:
+  mount_actions". Re-exports now carry the closure their own module
+  built.
+
 ## [0.76.0] - 2026-08-27
 
 ### Added

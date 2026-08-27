@@ -1,0 +1,20 @@
+version = 1
+
+[package.validate]
+checksum = "24c43458b6993a5610688a40c4568680310492753582e870e21ca54bc670a58b"
+dependencies = []
+
+[package.validate.source]
+kind = "path"
+path = "/Users/olayeku/.olang/shelf/validate"
+
+[package.web]
+checksum = "8e0e7679c970f3975a012428fcc2a6be7b68e7bccf1a46864c0c79c51c9fdfbd"
+dependencies = [
+    "validate",
+    "web",
+]
+
+[package.web.source]
+kind = "path"
+path = "/Users/olayeku/Code/olang/frameworks/web-sdk"
