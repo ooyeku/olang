@@ -69,8 +69,7 @@ impl Analyzer {
         let mut variables = HashMap::new();
 
         let module_names = crate::stdlib::get_stdlib()
-            .into_iter()
-            .map(|(name, _)| name)
+            .into_keys()
             .chain(
                 crate::stdlib::embedded::names()
                     .into_iter()
