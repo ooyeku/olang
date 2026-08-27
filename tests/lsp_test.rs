@@ -533,3 +533,145 @@ fn hover_speaks_the_help_convention_for_user_code() {
         "broken file keeps rich hover: {v}"
     );
 }
+
+#[test]
+fn robustness_batch_hints_actions_symbols_use() {
+    let mut c = Client::start();
+    c.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {},
+            "rootUri": format!("file://{}/examples/minilisp", env!("CARGO_MANIFEST_DIR")) }
+    }));
+    let init = c.recv_until(|m| m["id"] == 1);
+    for cap in [
+        "inlayHintProvider",
+        "codeActionProvider",
+        "workspaceSymbolProvider",
+    ] {
+        assert!(
+            !init["result"]["capabilities"][cap].is_null(),
+            "capability {cap} must be advertised"
+        );
+    }
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+
+    let uri = "file:///robust.ol";
+    let text = "fn dist(x1, y1, x2, y2) = x1 + y1 + x2 + y2\n\
+                let d = dist(0, 0, 3, 4)\n\
+                let total = 1\n\
+                total = d\n\
+                fn undoc(a) = a\n\
+                let u = undoc(total)\n";
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+            "textDocument":{"uri":uri,"languageId":"olang","version":1,"text":text}}
+    }));
+    let diags = loop {
+        let m = c.recv_until(|m| diagnostics_of(m).is_some());
+        break diagnostics_of(&m).unwrap().clone();
+    };
+
+    // 1. The scoping error reaches the editor (it is runtime-fatal).
+    let mut_diag = diags.iter().find(|d| {
+        d["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("not declared mutable")
+    });
+    assert!(
+        mut_diag.is_some(),
+        "assignment-to-immutable must surface: {diags:?}"
+    );
+
+    // 2. Inlay hints: parameter names on the multi-arg call, none for
+    //    single-parameter functions.
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":40,"method":"textDocument/inlayHint","params":{
+            "textDocument":{"uri":uri},
+            "range":{"start":{"line":0,"character":0},"end":{"line":9,"character":0}}}
+    }));
+    let m = c.recv_until(|m| m["id"] == 40);
+    let labels: Vec<String> = m["result"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .map(|h| h["label"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert!(
+        labels.contains(&"x1:".to_string()),
+        "param hints: {labels:?}"
+    );
+    assert!(
+        labels.contains(&"y2:".to_string()),
+        "param hints: {labels:?}"
+    );
+    assert!(
+        !labels.contains(&"a:".to_string()),
+        "single-param calls stay unhinted: {labels:?}"
+    );
+
+    // 3. Code action on the failing assignment inserts `mut `.
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":41,"method":"textDocument/codeAction","params":{
+            "textDocument":{"uri":uri},
+            "range":{"start":{"line":3,"character":0},"end":{"line":3,"character":5}},
+            "context":{"diagnostics":[mut_diag.unwrap()]}}
+    }));
+    let m = c.recv_until(|m| m["id"] == 41);
+    let v = serde_json::to_string(&m["result"]).unwrap();
+    assert!(v.contains("let mut"), "mut quick fix offered: {v}");
+    assert!(
+        v.contains("\"newText\":\"mut \""),
+        "the edit inserts mut: {v}"
+    );
+
+    // 4. Doc-stub action on the undocumented declaration.
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":42,"method":"textDocument/codeAction","params":{
+            "textDocument":{"uri":uri},
+            "range":{"start":{"line":4,"character":0},"end":{"line":4,"character":2}},
+            "context":{"diagnostics":[]}}
+    }));
+    let m = c.recv_until(|m| m["id"] == 42);
+    assert!(
+        serde_json::to_string(&m["result"])
+            .unwrap()
+            .contains("Add /// documentation"),
+        "{m}"
+    );
+
+    // 5. Workspace symbols find minilisp's declarations project-wide.
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":43,"method":"workspace/symbol","params":{"query":"run"}
+    }));
+    let m = c.recv_until(|m| m["id"] == 43);
+    let names: Vec<String> = m["result"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .map(|s| s["name"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert!(
+        names.iter().any(|n| n == "run"),
+        "workspace symbols: {names:?}"
+    );
+
+    // 6. `use ` completes importable modules — embedded packages at least.
+    let text2 = format!("{text}use \n");
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"textDocument/didChange","params":{
+            "textDocument":{"uri":uri,"version":2},
+            "contentChanges":[{"text": text2}]}
+    }));
+    c.recv_until(|m| diagnostics_of(m).is_some());
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":44,"method":"textDocument/completion","params":{
+            "textDocument":{"uri":uri},"position":{"line":6,"character":4}}
+    }));
+    let m = c.recv_until(|m| m["id"] == 44);
+    let v = serde_json::to_string(&m["result"]).unwrap();
+    assert!(
+        v.contains("collections"),
+        "use-completion lists embedded packages: {v}"
+    );
+}

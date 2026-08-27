@@ -1,8 +1,129 @@
 [
   {
+    "type": "arrow",
+    "named": true,
+    "fields": {}
+  },
+  {
     "type": "boolean",
     "named": true,
     "fields": {}
+  },
+  {
+    "type": "bracket",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "call",
+    "named": true,
+    "fields": {
+      "function": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "delimiter",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "dotted",
+    "named": true,
+    "fields": {
+      "module": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "member",
+          "named": true
+        },
+        {
+          "type": "open_call",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "interp_delimiter",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "interpolation",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "arrow",
+          "named": true
+        },
+        {
+          "type": "boolean",
+          "named": true
+        },
+        {
+          "type": "call",
+          "named": true
+        },
+        {
+          "type": "dotted",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "interp_delimiter",
+          "named": true
+        },
+        {
+          "type": "number",
+          "named": true
+        },
+        {
+          "type": "operator",
+          "named": true
+        },
+        {
+          "type": "pipe",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        },
+        {
+          "type": "type_identifier",
+          "named": true
+        }
+      ]
+    }
   },
   {
     "type": "keyword",
@@ -11,11 +132,6 @@
   },
   {
     "type": "operator",
-    "named": true,
-    "fields": {}
-  },
-  {
-    "type": "punctuation",
     "named": true,
     "fields": {}
   },
@@ -34,7 +150,35 @@
       "required": false,
       "types": [
         {
+          "type": "arrow",
+          "named": true
+        },
+        {
           "type": "boolean",
+          "named": true
+        },
+        {
+          "type": "bracket",
+          "named": true
+        },
+        {
+          "type": "call",
+          "named": true
+        },
+        {
+          "type": "char",
+          "named": true
+        },
+        {
+          "type": "delimiter",
+          "named": true
+        },
+        {
+          "type": "dotted",
+          "named": true
+        },
+        {
+          "type": "hash_brace",
           "named": true
         },
         {
@@ -46,7 +190,7 @@
           "named": true
         },
         {
-          "type": "macro",
+          "type": "macro_name",
           "named": true
         },
         {
@@ -58,11 +202,15 @@
           "named": true
         },
         {
-          "type": "punctuation",
+          "type": "pipe",
           "named": true
         },
         {
           "type": "raw_string",
+          "named": true
+        },
+        {
+          "type": "share",
           "named": true
         },
         {
@@ -83,12 +231,40 @@
   {
     "type": "string",
     "named": true,
-    "fields": {}
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "escape",
+          "named": true
+        }
+      ]
+    }
   },
   {
     "type": "template",
     "named": true,
-    "fields": {}
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "escape",
+          "named": true
+        },
+        {
+          "type": "interpolation",
+          "named": true
+        },
+        {
+          "type": "template_text",
+          "named": true
+        }
+      ]
+    }
   },
   {
     "type": "!",
@@ -107,7 +283,19 @@
     "named": false
   },
   {
+    "type": "$",
+    "named": false
+  },
+  {
+    "type": "${",
+    "named": false
+  },
+  {
     "type": "%",
+    "named": false
+  },
+  {
+    "type": "&",
     "named": false
   },
   {
@@ -207,6 +395,10 @@
     "named": false
   },
   {
+    "type": "^",
+    "named": false
+  },
+  {
     "type": "`",
     "named": false
   },
@@ -215,12 +407,22 @@
     "named": false
   },
   {
-    "type": "comment",
+    "type": "char",
     "named": true
+  },
+  {
+    "type": "comment",
+    "named": true,
+    "extra": true
   },
   {
     "type": "continue",
     "named": false
+  },
+  {
+    "type": "doc_comment",
+    "named": true,
+    "extra": true
   },
   {
     "type": "else",
@@ -235,6 +437,10 @@
     "named": false
   },
   {
+    "type": "escape",
+    "named": true
+  },
+  {
     "type": "false",
     "named": false
   },
@@ -245,6 +451,10 @@
   {
     "type": "for",
     "named": false
+  },
+  {
+    "type": "hash_brace",
+    "named": true
   },
   {
     "type": "identifier",
@@ -271,12 +481,16 @@
     "named": false
   },
   {
-    "type": "macro",
+    "type": "macro_name",
     "named": true
   },
   {
     "type": "match",
     "named": false
+  },
+  {
+    "type": "member",
+    "named": true
   },
   {
     "type": "meta",
@@ -291,8 +505,16 @@
     "named": true
   },
   {
+    "type": "open_call",
+    "named": true
+  },
+  {
     "type": "par",
     "named": false
+  },
+  {
+    "type": "pipe",
+    "named": true
   },
   {
     "type": "r\"",
@@ -304,7 +526,7 @@
   },
   {
     "type": "share",
-    "named": false
+    "named": true
   },
   {
     "type": "spawn",
@@ -313,6 +535,10 @@
   {
     "type": "struct",
     "named": false
+  },
+  {
+    "type": "template_text",
+    "named": true
   },
   {
     "type": "test",
@@ -347,7 +573,7 @@
     "named": false
   },
   {
-    "type": "|>",
+    "type": "|",
     "named": false
   },
   {

@@ -68,12 +68,28 @@ impl Analyzer {
         let mut scopes = vec![HashSet::new()];
         let mut variables = HashMap::new();
 
-        for name in builtin_functions.get_functions().keys() {
+        let module_names = crate::stdlib::get_stdlib()
+            .into_iter()
+            .map(|(name, _)| name)
+            .chain(
+                crate::stdlib::embedded::names()
+                    .into_iter()
+                    .map(String::from),
+            );
+        for name in builtin_functions
+            .get_functions()
+            .keys()
+            .cloned()
+            // The stdlib module namespaces resolve at runtime exactly
+            // like builtins do; without them the analyzer reported
+            // "Undefined variable: math" for math.sqrt.
+            .chain(module_names)
+        {
             scopes[0].insert(name.clone());
             variables.insert(
                 name.clone(),
                 VariableInfo {
-                    name: name.clone(),
+                    name,
                     scope: 0,
                     is_mutable: false,
                     usage_count: 0, // Initially 0, will be incremented upon use

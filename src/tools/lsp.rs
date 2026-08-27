@@ -147,6 +147,9 @@ pub fn run() -> Result<(), Box<dyn Error + Sync + Send>> {
         references_provider: Some(OneOf::Left(true)),
         document_highlight_provider: Some(OneOf::Left(true)),
         rename_provider: Some(OneOf::Left(true)),
+        inlay_hint_provider: Some(OneOf::Left(true)),
+        code_action_provider: Some(lsp_types::CodeActionProviderCapability::Simple(true)),
+        workspace_symbol_provider: Some(OneOf::Left(true)),
         signature_help_provider: Some(lsp_types::SignatureHelpOptions {
             trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
             retrigger_characters: None,
@@ -155,9 +158,16 @@ pub fn run() -> Result<(), Box<dyn Error + Sync + Send>> {
         ..Default::default()
     };
     let init_params = connection.initialize(serde_json::to_value(capabilities)?)?;
-    let _init: InitializeParams = serde_json::from_value(init_params)?;
+    let init: InitializeParams = serde_json::from_value(init_params)?;
+    #[allow(deprecated)]
+    let root: Option<std::path::PathBuf> = init
+        .workspace_folders
+        .as_ref()
+        .and_then(|f| f.first())
+        .and_then(|f| f.uri.to_file_path().ok())
+        .or_else(|| init.root_uri.as_ref().and_then(|u| u.to_file_path().ok()));
 
-    main_loop(&connection)?;
+    main_loop(&connection, root)?;
     // The writer thread ends only when the sender side drops; drop the
     // connection before joining or the join never returns.
     drop(connection);
@@ -165,7 +175,10 @@ pub fn run() -> Result<(), Box<dyn Error + Sync + Send>> {
     Ok(())
 }
 
-fn main_loop(connection: &Connection) -> Result<(), Box<dyn Error + Sync + Send>> {
+fn main_loop(
+    connection: &Connection,
+    root: Option<std::path::PathBuf>,
+) -> Result<(), Box<dyn Error + Sync + Send>> {
     // Open documents: uri -> current text.
     let mut docs: HashMap<Uri, String> = HashMap::new();
 
@@ -175,7 +188,7 @@ fn main_loop(connection: &Connection) -> Result<(), Box<dyn Error + Sync + Send>
                 if connection.handle_shutdown(&req)? {
                     return Ok(());
                 }
-                handle_request(connection, &docs, req)?;
+                handle_request(connection, &docs, req, root.as_deref())?;
             }
             Message::Notification(note) => match note.method.as_str() {
                 DidOpenTextDocument::METHOD => {
@@ -215,6 +228,7 @@ fn handle_request(
     connection: &Connection,
     docs: &HashMap<Uri, String>,
     req: Request,
+    root: Option<&std::path::Path>,
 ) -> Result<(), Box<dyn Error + Sync + Send>> {
     match req.method.as_str() {
         Completion::METHOD => {
@@ -345,6 +359,37 @@ fn handle_request(
                 ))
             });
             respond(connection, id, &loc)?;
+        }
+        lsp_types::request::InlayHintRequest::METHOD => {
+            let (id, params): (RequestId, lsp_types::InlayHintParams) =
+                req.extract(lsp_types::request::InlayHintRequest::METHOD)?;
+            let hints = docs
+                .get(&params.text_document.uri)
+                .map(|text| inlay_hints(text, params.range))
+                .unwrap_or_default();
+            respond(connection, id, &hints)?;
+        }
+        lsp_types::request::CodeActionRequest::METHOD => {
+            let (id, params): (RequestId, lsp_types::CodeActionParams) =
+                req.extract(lsp_types::request::CodeActionRequest::METHOD)?;
+            let actions = docs
+                .get(&params.text_document.uri)
+                .map(|text| {
+                    code_actions(
+                        text,
+                        &params.text_document.uri,
+                        params.range,
+                        &params.context.diagnostics,
+                    )
+                })
+                .unwrap_or_default();
+            respond(connection, id, &actions)?;
+        }
+        lsp_types::request::WorkspaceSymbolRequest::METHOD => {
+            let (id, params): (RequestId, lsp_types::WorkspaceSymbolParams) =
+                req.extract(lsp_types::request::WorkspaceSymbolRequest::METHOD)?;
+            let symbols = workspace_symbols(root, &params.query);
+            respond(connection, id, &symbols)?;
         }
         Formatting::METHOD => {
             let (id, params): (RequestId, lsp_types::DocumentFormattingParams) =
@@ -512,6 +557,26 @@ fn program_diagnostics(
     text: &str,
     doc_dir: Option<&std::path::Path>,
 ) -> Vec<Diagnostic> {
+    // The scoping pass first: assigning to an immutable or undeclared
+    // binding fails at runtime before a single statement runs, so the
+    // editor must say so — and its message is what the `let mut` quick
+    // fix reads.
+    let mut scope_diags: Vec<Diagnostic> = {
+        let mut known = crate::scoping::Predefined::new();
+        crate::scoping::validate_program(program, &mut known)
+            .into_iter()
+            .map(|e| Diagnostic {
+                range: Range::new(
+                    Position::new(e.line.saturating_sub(1), e.column.saturating_sub(1)),
+                    Position::new(e.line.saturating_sub(1), e.column.saturating_sub(1) + 1),
+                ),
+                severity: Some(DiagnosticSeverity::ERROR),
+                source: Some("olang".to_string()),
+                message: e.message,
+                ..Default::default()
+            })
+            .collect()
+    };
     {
         {
             let mut analyzer = Analyzer::new();
@@ -523,13 +588,14 @@ fn program_diagnostics(
                     let range = name_in_error(&msg)
                         .and_then(|name| find_identifier(text, &name))
                         .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
-                    vec![Diagnostic {
+                    scope_diags.push(Diagnostic {
                         range,
                         severity: Some(DiagnosticSeverity::ERROR),
                         source: Some("olang".to_string()),
                         message: msg,
                         ..Default::default()
-                    }]
+                    });
+                    scope_diags
                 }
                 Ok(report) => {
                     let decls = declarations(text);
@@ -578,6 +644,11 @@ fn program_diagnostics(
                             }
                         }),
                     );
+                    out.append(&mut scope_diags);
+                    // The scoping pass and the checker overlap on
+                    // assignment errors; one report per finding.
+                    out.sort_by_key(|d| (d.range.start.line, d.range.start.character));
+                    out.dedup_by(|a, b| a.message == b.message && a.range == b.range);
                     out
                 }
             }
@@ -672,6 +743,21 @@ fn find_declaration(text: &str, name: &str) -> Option<Range> {
 fn completions(text: &str, pos: Position) -> Vec<CompletionItem> {
     // The module receiver, if the cursor sits right after `name.`.
     let line = text.lines().nth(pos.line as usize).unwrap_or("");
+    // On a `use` line, complete importable module names: the embedded
+    // olang packages, the shelf, and the local lib/ files.
+    {
+        let cursor = utf16_to_char_col(line, pos.character);
+        let head: String = line.chars().take(cursor).collect();
+        let t = head.trim_start();
+        let after_use = t.strip_prefix("share ").unwrap_or(t).strip_prefix("use ");
+        if let Some(rest) = after_use
+            && rest
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+        {
+            return use_completions();
+        }
+    }
     let cursor = utf16_to_char_col(line, pos.character);
     let chars: Vec<char> = line.chars().collect();
     let mut i = cursor;
@@ -1094,6 +1180,362 @@ fn decl_hover(source: &str, name: &str, sig: String, from: Option<&str>) -> lsp_
         },
         None => code_hover(code),
     }
+}
+
+/// Parameter-name inlay hints at call sites. The parameter lists come
+/// from this file's own declarations and the help registry; arguments
+/// are split at top-level commas per line, so a multi-line call hints
+/// the arguments on the line the call starts on. An argument that
+/// already reads as the parameter's name is not hinted.
+fn inlay_hints(text: &str, range: Range) -> Vec<lsp_types::InlayHint> {
+    let mut params_of: HashMap<String, Vec<String>> = HashMap::new();
+    for (name, detail, _) in declarations(text) {
+        if let Some(open) = detail.find('(') {
+            let inner = detail[open + 1..].trim_end_matches(')');
+            let ps: Vec<String> = inner
+                .split(',')
+                .map(|p| p.split(':').next().unwrap_or("").trim().to_string())
+                .filter(|p| !p.is_empty())
+                .collect();
+            if !ps.is_empty() {
+                params_of.insert(name, ps);
+            }
+        }
+    }
+    let registry_params = |name: &str| -> Option<Vec<String>> {
+        let d = help().get_function(name)?;
+        let ps: Vec<String> = d
+            .parameters
+            .iter()
+            .map(|p| {
+                p.split(&[':', ' '][..])
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string()
+            })
+            .filter(|p| !p.is_empty() && p.chars().all(|c| c.is_alphanumeric() || c == '_'))
+            .collect();
+        if ps.is_empty() { None } else { Some(ps) }
+    };
+
+    let mut hints = Vec::new();
+    for (ln, line) in text.lines().enumerate() {
+        let ln = ln as u32;
+        if ln < range.start.line || ln > range.end.line {
+            continue;
+        }
+        let chars: Vec<char> = line.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            // A comment ends the scannable part of the line.
+            if chars[i] == '/' && chars.get(i + 1) == Some(&'/') {
+                break;
+            }
+            // Skip string-ish content wholesale.
+            if chars[i] == '"' || chars[i] == '`' {
+                let quote = chars[i];
+                i += 1;
+                while i < chars.len() {
+                    if chars[i] == '\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if chars[i] == quote {
+                        break;
+                    }
+                    i += 1;
+                }
+                i += 1;
+                continue;
+            }
+            if !(chars[i].is_ascii_lowercase() || chars[i] == '_') {
+                i += 1;
+                continue;
+            }
+            // A word — possibly dotted — possibly a call.
+            let start = i;
+            while i < chars.len()
+                && (chars[i].is_alphanumeric() || chars[i] == '_' || chars[i] == '.')
+            {
+                i += 1;
+            }
+            if chars.get(i) != Some(&'(') {
+                continue;
+            }
+            let callee: String = chars[start..i].iter().collect();
+            let ps = params_of
+                .get(callee.rsplit('.').next().unwrap_or(&callee))
+                .cloned()
+                .or_else(|| registry_params(&callee));
+            let Some(ps) = ps else {
+                continue;
+            };
+            // A single-parameter call reads fine bare — hints there are
+            // noise (`math.sqrt(number: x)`).
+            if ps.len() < 2 {
+                continue;
+            }
+            // Split the arguments at top-level commas, this line only.
+            let open = i;
+            let mut depth = 1i32;
+            let mut j = open + 1;
+            let mut arg_starts = vec![j];
+            while j < chars.len() && depth > 0 {
+                match chars[j] {
+                    '(' | '[' | '{' => depth += 1,
+                    ')' | ']' | '}' => depth -= 1,
+                    '"' | '`' => {
+                        let q = chars[j];
+                        j += 1;
+                        while j < chars.len() && chars[j] != q {
+                            if chars[j] == '\\' {
+                                j += 1;
+                            }
+                            j += 1;
+                        }
+                    }
+                    ',' if depth == 1 => arg_starts.push(j + 1),
+                    _ => {}
+                }
+                j += 1;
+            }
+            let end = if depth == 0 { j - 1 } else { chars.len() };
+            for (k, &a) in arg_starts.iter().enumerate() {
+                let Some(p) = ps.get(k) else { break };
+                let mut a = a;
+                while a < end && chars[a] == ' ' {
+                    a += 1;
+                }
+                if a >= end {
+                    break;
+                }
+                // Don't hint an argument that IS the parameter name, or
+                // a lambda (the arrow says everything already).
+                let arg_end = arg_starts.get(k + 1).map(|n| n - 1).unwrap_or(end);
+                let arg_text: String = chars[a..arg_end.min(chars.len())].iter().collect();
+                let arg_text = arg_text.trim();
+                if arg_text == p || arg_text.starts_with('(') && arg_text.contains("=>") {
+                    continue;
+                }
+                hints.push(lsp_types::InlayHint {
+                    position: Position {
+                        line: ln,
+                        character: char_to_utf16_col(line, a),
+                    },
+                    label: lsp_types::InlayHintLabel::String(format!("{}:", p)),
+                    kind: Some(lsp_types::InlayHintKind::PARAMETER),
+                    text_edits: None,
+                    tooltip: None,
+                    padding_left: None,
+                    padding_right: Some(true),
+                    data: None,
+                });
+            }
+        }
+    }
+    hints
+}
+
+/// Code actions: document a declaration, and make a binding mutable
+/// when the scoping pass said the assignment needs `mut`.
+fn code_actions(
+    text: &str,
+    uri: &Uri,
+    range: Range,
+    diagnostics: &[Diagnostic],
+) -> Vec<lsp_types::CodeActionOrCommand> {
+    let mut out = Vec::new();
+    let lines: Vec<&str> = text.lines().collect();
+
+    // "Add /// documentation" on an undocumented declaration line.
+    let ln = range.start.line as usize;
+    if let Some(line) = lines.get(ln) {
+        let t = line.trim_start();
+        let is_decl = ["fn ", "share fn ", "meta fn ", "type ", "share type "]
+            .iter()
+            .any(|p| t.starts_with(p));
+        let documented = ln > 0
+            && lines
+                .get(ln - 1)
+                .map(|p| p.trim_start().starts_with("///"))
+                .unwrap_or(false);
+        if is_decl && !documented {
+            let indent: String = line.chars().take_while(|c| *c == ' ').collect();
+            let edit = TextEdit {
+                range: Range {
+                    start: Position {
+                        line: ln as u32,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: ln as u32,
+                        character: 0,
+                    },
+                },
+                new_text: format!("{}/// \n", indent),
+            };
+            out.push(action(uri, "Add /// documentation", edit, None));
+        }
+    }
+
+    // "Declare with `let mut`" from the scoping diagnostic.
+    for d in diagnostics {
+        let msg = &d.message;
+        let Some(rest) = msg.strip_prefix("cannot assign to '") else {
+            continue;
+        };
+        let Some(name) = rest.split('\'').next() else {
+            continue;
+        };
+        if !msg.contains("not declared mutable") {
+            continue;
+        }
+        // The nearest `let NAME` above the assignment.
+        let assign_line = d.range.start.line as usize;
+        for back in (0..=assign_line.min(lines.len().saturating_sub(1))).rev() {
+            let line = lines[back];
+            let t = line.trim_start();
+            let pat = format!("let {}", name);
+            if t.starts_with(&pat) && !t.starts_with(&format!("let mut {}", name)) {
+                let col = (line.len() - t.len() + 4) as u32; // after "let "
+                let edit = TextEdit {
+                    range: Range {
+                        start: Position {
+                            line: back as u32,
+                            character: col,
+                        },
+                        end: Position {
+                            line: back as u32,
+                            character: col,
+                        },
+                    },
+                    new_text: "mut ".to_string(),
+                };
+                out.push(action(
+                    uri,
+                    &format!("Declare '{}' with `let mut`", name),
+                    edit,
+                    Some(d.clone()),
+                ));
+                break;
+            }
+        }
+    }
+    out
+}
+
+fn action(
+    uri: &Uri,
+    title: &str,
+    edit: TextEdit,
+    diagnostic: Option<Diagnostic>,
+) -> lsp_types::CodeActionOrCommand {
+    let mut changes = HashMap::new();
+    changes.insert(uri.clone(), vec![edit]);
+    lsp_types::CodeActionOrCommand::CodeAction(lsp_types::CodeAction {
+        title: title.to_string(),
+        kind: Some(lsp_types::CodeActionKind::QUICKFIX),
+        diagnostics: diagnostic.map(|d| vec![d]),
+        edit: Some(lsp_types::WorkspaceEdit {
+            changes: Some(changes),
+            ..Default::default()
+        }),
+        command: None,
+        is_preferred: Some(true),
+        disabled: None,
+        data: None,
+    })
+}
+
+/// Project-wide symbol search: every declaration in every `.ol` file
+/// under the workspace root whose name contains the query.
+fn workspace_symbols(
+    root: Option<&std::path::Path>,
+    query: &str,
+) -> Vec<lsp_types::SymbolInformation> {
+    let Some(root) = root else {
+        return Vec::new();
+    };
+    let q = query.to_lowercase();
+    let mut out = Vec::new();
+    for file in super::discover_ol_files(root) {
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let Ok(uri) = Uri::from_file_path(&file) else {
+            continue;
+        };
+        for (name, detail, span) in declarations(&text) {
+            if !q.is_empty() && !name.to_lowercase().contains(&q) {
+                continue;
+            }
+            let kind = if detail.contains("fn ") {
+                lsp_types::SymbolKind::FUNCTION
+            } else if detail.starts_with("type") || detail.contains("type ") {
+                lsp_types::SymbolKind::STRUCT
+            } else {
+                lsp_types::SymbolKind::VARIABLE
+            };
+            #[allow(deprecated)]
+            out.push(lsp_types::SymbolInformation {
+                name: name.clone(),
+                kind,
+                tags: None,
+                deprecated: None,
+                location: lsp_types::Location {
+                    uri: uri.clone(),
+                    range: span_range(&text, span, name.chars().count()),
+                },
+                container_name: file.file_name().map(|f| f.to_string_lossy().into_owned()),
+            });
+            if out.len() >= 128 {
+                return out;
+            }
+        }
+    }
+    out
+}
+
+/// Everything `use` can name here: embedded stdlib packages, the
+/// user's shelf, and `lib.<stem>` for the files beside the buffer.
+fn use_completions() -> Vec<CompletionItem> {
+    let mut items: Vec<CompletionItem> = Vec::new();
+    for name in crate::stdlib::embedded::names() {
+        items.push(CompletionItem {
+            label: name.to_string(),
+            kind: Some(CompletionItemKind::MODULE),
+            detail: Some("embedded olang package".to_string()),
+            ..Default::default()
+        });
+    }
+    if let Ok(shelf) = crate::pkg::shelf::Shelf::load() {
+        for name in shelf.libraries.keys() {
+            items.push(CompletionItem {
+                label: name.clone(),
+                kind: Some(CompletionItemKind::MODULE),
+                detail: Some("from your shelf".to_string()),
+                ..Default::default()
+            });
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir("lib") {
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.extension().map(|x| x == "ol").unwrap_or(false)
+                && let Some(stem) = p.file_stem()
+            {
+                items.push(CompletionItem {
+                    label: format!("lib.{}", stem.to_string_lossy()),
+                    kind: Some(CompletionItemKind::MODULE),
+                    detail: Some("local module".to_string()),
+                    ..Default::default()
+                });
+            }
+        }
+    }
+    items.sort_by(|a, b| a.label.cmp(&b.label));
+    items
 }
 
 fn code_hover(detail: String) -> lsp_types::Hover {
