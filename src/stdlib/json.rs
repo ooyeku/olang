@@ -143,10 +143,10 @@ fn json_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     };
 
     match serde_json::from_str::<serde_json::Value>(json_str) {
-        Ok(json_value) => {
-            let olang_value = json_to_olang_value(json_value);
-            Ok(Value::Ok(Box::new(olang_value)))
-        }
+        Ok(json_value) => match json_to_olang_value(json_value) {
+            Ok(olang_value) => Ok(Value::Ok(Box::new(olang_value))),
+            Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(e))))),
+        },
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
             "JSON parse error: {}",
             e
@@ -379,10 +379,14 @@ fn json_get_values(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
     match serde_json::from_str::<serde_json::Value>(json_str) {
         Ok(json_value) => {
             if let serde_json::Value::Object(obj) = json_value {
-                let values: Vec<Value> = obj
+                let values = match obj
                     .values()
                     .map(|v| json_to_olang_value(v.clone()))
-                    .collect();
+                    .collect::<Result<Vec<Value>, _>>()
+                {
+                    Ok(v) => v,
+                    Err(e) => return Ok(Value::Err(Box::new(Value::String(Arc::new(e))))),
+                };
                 Ok(Value::Ok(Box::new(Value::List(values.into()))))
             } else {
                 Ok(Value::Err(Box::new(Value::String(Arc::new(
@@ -422,7 +426,10 @@ fn json_get(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Ok(json_value) => {
             if let serde_json::Value::Object(obj) = json_value {
                 if let Some(value) = obj.get(key) {
-                    let olang_value = json_to_olang_value(value.clone());
+                    let olang_value = match json_to_olang_value(value.clone()) {
+                        Ok(v) => v,
+                        Err(e) => return Ok(Value::Err(Box::new(Value::String(Arc::new(e))))),
+                    };
                     Ok(Value::Ok(Box::new(olang_value)))
                 } else {
                     Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
@@ -574,7 +581,10 @@ fn json_array_get(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
         Ok(json_value) => {
             if let serde_json::Value::Array(arr) = json_value {
                 if index < arr.len() {
-                    let olang_value = json_to_olang_value(arr[index].clone());
+                    let olang_value = match json_to_olang_value(arr[index].clone()) {
+                        Ok(v) => v,
+                        Err(e) => return Ok(Value::Err(Box::new(Value::String(Arc::new(e))))),
+                    };
                     Ok(Value::Ok(Box::new(olang_value)))
                 } else {
                     Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
@@ -762,36 +772,65 @@ fn json_deep_clone(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
     }
 }
 
-/// Convert serde_json::Value to Olang Value
-pub(crate) fn json_to_olang_value(json_value: serde_json::Value) -> Value {
-    match json_value {
+/// Convert serde_json::Value to Olang Value.
+///
+/// Numeric fidelity is the contract (docs/stability.md): integers within
+/// i64 arrive losslessly as Int, JSON decimals arrive as the nearest
+/// Float (the standard IEEE reading), and an integer OUTSIDE i64 is an
+/// error rather than a silently-lossy Float — `99999999999999999999` used
+/// to come back as `1e20` with no sign anything was lost.
+pub(crate) fn json_to_olang_value(json_value: serde_json::Value) -> Result<Value, String> {
+    Ok(match json_value {
         serde_json::Value::Null => Value::Unit,
         serde_json::Value::Bool(b) => Value::Boolean(b),
         serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
+            // arbitrary_precision keeps the source text, so the JSON
+            // grammar itself decides the reading: a `.`/`e`/`E` means the
+            // author wrote a float (nearest finite f64, overflow is an
+            // error, never inf); bare digits mean an integer (i64 or an
+            // error, never a silently-lossy float).
+            let text = n.to_string();
+            if text.contains(['.', 'e', 'E']) {
+                match n.as_f64() {
+                    Some(f) if f.is_finite() => Value::Float(f),
+                    _ => {
+                        return Err(format!(
+                            "JSON number {} does not fit Float (f64): its \
+                             magnitude overflows",
+                            text
+                        ));
+                    }
+                }
+            } else if let Some(i) = n.as_i64() {
                 Value::Integer(i)
-            } else if let Some(f) = n.as_f64() {
-                Value::Float(f)
             } else {
-                Value::Float(0.0) // Fallback
+                return Err(format!(
+                    "JSON integer {} does not fit Int (64-bit signed); refusing \
+                     the lossy Float reading. Transport oversized integers as \
+                     JSON strings (bigint can hold them)",
+                    text
+                ));
             }
         }
         serde_json::Value::String(s) => Value::String(Arc::new(s)),
         serde_json::Value::Array(arr) => {
-            let values: Vec<Value> = arr.into_iter().map(json_to_olang_value).collect();
+            let values: Vec<Value> = arr
+                .into_iter()
+                .map(json_to_olang_value)
+                .collect::<Result<Vec<_>, _>>()?;
             Value::List(values.into())
         }
         serde_json::Value::Object(obj) => {
             let mut fields = HashMap::new();
             for (key, value) in obj {
-                fields.insert(key, json_to_olang_value(value));
+                fields.insert(key, json_to_olang_value(value)?);
             }
             Value::Struct {
                 type_name: "JsonObject".to_string(),
                 fields: std::sync::Arc::new(fields),
             }
         }
-    }
+    })
 }
 
 /// Convert Olang Value to serde_json::Value

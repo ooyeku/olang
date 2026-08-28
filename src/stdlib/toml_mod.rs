@@ -70,20 +70,72 @@ fn toml_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Err(e) => return Ok(e),
     };
     match text.parse::<toml::Value>() {
-        Ok(tv) => match serde_json::to_value(tv) {
-            Ok(jv) => Ok(Value::Ok(Box::new(super::json::json_to_olang_value(
-                unwrap_datetimes(jv),
-            )))),
-            Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-                "TOML convert error: {}",
-                e
-            )))))),
+        Ok(tv) => match super::json::json_to_olang_value(toml_to_json(tv)) {
+            Ok(v) => Ok(Value::Ok(Box::new(v))),
+            Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(e))))),
         },
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
             "TOML parse error: {}",
             e
         )))))),
     }
+}
+
+/// toml::Value → serde_json::Value directly. `serde_json::to_value`
+/// used to do this, but with arbitrary_precision on it leaks serde's
+/// private Number wrapper as a visible one-key object; the explicit walk
+/// keeps every number a plain Number and renders datetimes as their
+/// string form (the documented shape) without the wrapper dance.
+fn toml_to_json(v: toml::Value) -> serde_json::Value {
+    match v {
+        toml::Value::String(s) => serde_json::Value::String(s),
+        toml::Value::Integer(i) => serde_json::Value::Number(serde_json::Number::from(i)),
+        toml::Value::Float(f) => serde_json::Number::from_f64(f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        toml::Value::Boolean(b) => serde_json::Value::Bool(b),
+        toml::Value::Datetime(dt) => serde_json::Value::String(dt.to_string()),
+        toml::Value::Array(items) => {
+            serde_json::Value::Array(items.into_iter().map(toml_to_json).collect())
+        }
+        toml::Value::Table(table) => serde_json::Value::Object(
+            table
+                .into_iter()
+                .map(|(k, v)| (k, toml_to_json(v)))
+                .collect(),
+        ),
+    }
+}
+
+/// serde_json::Value → toml::Value, the stringify direction of the
+/// explicit walk above. TOML has no null, so Unit-valued fields are
+/// refused with a message naming the shape rule.
+fn json_to_toml(v: serde_json::Value) -> Result<toml::Value, String> {
+    Ok(match v {
+        serde_json::Value::Null => return Err("TOML has no null: remove () fields".to_string()),
+        serde_json::Value::Bool(b) => toml::Value::Boolean(b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                toml::Value::Integer(i)
+            } else if let Some(f) = n.as_f64() {
+                toml::Value::Float(f)
+            } else {
+                return Err(format!("number {} does not fit TOML's integer or float", n));
+            }
+        }
+        serde_json::Value::String(s) => toml::Value::String(s),
+        serde_json::Value::Array(items) => toml::Value::Array(
+            items
+                .into_iter()
+                .map(json_to_toml)
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        serde_json::Value::Object(map) => toml::Value::Table(
+            map.into_iter()
+                .map(|(k, v)| json_to_toml(v).map(|tv| (k, tv)))
+                .collect::<Result<toml::map::Map<_, _>, _>>()?,
+        ),
+    })
 }
 
 /// `toml.stringify(value)` — a Map (or struct-like) as pretty TOML.
@@ -108,7 +160,7 @@ fn toml_stringify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
                 .into(),
         );
     }
-    match toml::Value::try_from(jv) {
+    match json_to_toml(jv) {
         Ok(tv) => match toml::to_string_pretty(&tv) {
             Ok(text) => Ok(Value::Ok(Box::new(Value::String(Arc::new(text))))),
             Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
@@ -120,30 +172,6 @@ fn toml_stringify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
             "TOML serialize error: {}",
             e
         )))))),
-    }
-}
-
-/// The toml crate serializes datetimes as a private one-key wrapper
-/// object (`{"$__toml_private_datetime": "..."}`); unwrap those to the
-/// plain string the documentation promises, recursively.
-fn unwrap_datetimes(v: serde_json::Value) -> serde_json::Value {
-    match v {
-        serde_json::Value::Object(map) => {
-            if map.len() == 1
-                && let Some(serde_json::Value::String(s)) = map.get("$__toml_private_datetime")
-            {
-                return serde_json::Value::String(s.clone());
-            }
-            serde_json::Value::Object(
-                map.into_iter()
-                    .map(|(k, v)| (k, unwrap_datetimes(v)))
-                    .collect(),
-            )
-        }
-        serde_json::Value::Array(items) => {
-            serde_json::Value::Array(items.into_iter().map(unwrap_datetimes).collect())
-        }
-        other => other,
     }
 }
 

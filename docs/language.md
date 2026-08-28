@@ -108,13 +108,29 @@ silent wraparound.
 
 ### Floats
 
-A decimal point is required; scientific notation is supported:
+A float literal is digits with a decimal point, an exponent, or both —
+`3.14`, `1e20`, `2.5e-3`, `1E+6`. Underscores group digits as they do in
+integers:
 
 ```olang
 println(to_string(3.14))
 println(to_string(1.5e3))     // 1500.0
 println(to_string(2.5e-1))    // 0.25
+println(to_string(1e20))      // 1e20
 ```
+
+Printing round-trips: `to_string` of any finite float is itself a valid
+float literal that reads back to the identical value, whether it prints
+in plain form (`1500.0`) or exponent form (`1e301`).
+
+Floats trap rather than produce `NaN`: `0.0 / 0.0`, `math.sqrt(-1.0)`,
+`math.log(-1.0)`, and the other operations whose IEEE result would be
+`NaN` raise a runtime error instead. Division by zero is an error for
+floats exactly as for integers. One edge is currently outside that
+wall: arithmetic that *overflows* — `1e308 * 10.0` — yields `inf`
+rather than trapping, and `inf` values propagate IEEE-style from there
+(the roadmap records this edge; `inf` and `NaN` are printable but are
+not literals).
 
 ### Booleans
 

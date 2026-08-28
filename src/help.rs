@@ -8197,7 +8197,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
         // Core parsing and serialization
         self.add_function(FunctionDoc {
             name: "json.parse".to_string(),
-            description: "Parse a JSON string into Olang values with comprehensive type mapping".to_string(),
+            description: "Parse a JSON string into olang values. Objects arrive as JsonObject structs, arrays as Lists, null as Unit. Numbers are lossless or loud: an integer within Int (i64) arrives exactly, a decimal takes the standard IEEE Float reading, and an integer outside Int — or a float that overflows — is an Err naming the value rather than a silently-lossy conversion (transport oversized integers as JSON strings).".to_string(),
             syntax: "json.parse(json_string)".to_string(),
             parameters: vec!["json_string: String - Valid JSON string to parse".to_string()],
             return_type: "Result<Value, Error>".to_string(),

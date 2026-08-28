@@ -109,6 +109,20 @@ program uses valid forever. The *contextual* declaration words (eight,
 after `meta` joined in 0.68) may gain members additively, since a
 contextual word never stops being an ordinary identifier.
 
+**Number semantics are read-back-clean.** Integers are 64-bit signed
+and overflow is a runtime error pointing at `bigint`, never a silent
+wraparound. Float literals accept a decimal point, an exponent, or
+both (`3.14`, `1e20`, `2.5e-3`), and printing round-trips: `to_string`
+of any finite float is a valid literal reading back to the identical
+value. Floats trap rather than produce `NaN` — `0.0 / 0.0`,
+`math.sqrt(-1.0)` and the other would-be-`NaN` operations raise — with
+one recorded edge: overflow (`1e308 * 10.0`) currently yields `inf`
+rather than trapping, held on the roadmap for a decision rather than
+promised here. JSON keeps numbers lossless or loud: integers within
+i64 arrive exactly, decimals take the standard IEEE reading, and an
+integer outside i64 (or a float text that overflows f64) is an `Err`
+naming the value — never a silently-lossy conversion.
+
 **Macros stabilized in 0.68** ([Macros](macros.md)), graduated after
 meeting every criterion the experimental entry set: source-mapped
 runtime error spans, an expansion-aware language server, a

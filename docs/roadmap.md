@@ -41,9 +41,10 @@ big integers to floats (`99999999999999999999999999` → `1e26`).
 
 | Item | Observed | Status |
 |---|---|---|
-| Scientific-notation literals | `1e20` fails to parse; printed floats aren't source | planned — full float literal syntax (`1e20`, `2.5e-3`, `1E+6`); print/parse round-trip pinned by proptest |
-| Trapping-float contract documented | division by zero and `sqrt(-1)` trap by design | planned — language.md and stability.md state the no-NaN contract and the trap surface |
-| JSON numeric fidelity | oversized ints silently become floats | planned — lossless within i64/f64, documented conversion at the edges, decide reject-vs-convert for oversized integers |
+| Scientific-notation literals | `1e20` fails to parse; printed floats aren't source | **landed** — full float literal syntax (`1e20`, `2.5e-3`, `1E+6`, underscores); print/parse round-trip pinned by a bit-for-bit proptest over arbitrary f64s |
+| Trapping-float contract documented | division by zero and `sqrt(-1)` trap by design | **landed** — language.md and stability.md state the contract: would-be-`NaN` operations trap; the overflow edge below is recorded rather than papered over |
+| Float overflow yields `inf` | `1e308 * 10.0` prints `inf`, and `inf - inf` then prints `NaN` — the trapping stance has a gap (found while documenting it) | planned — decide: trap on non-finite results from finite operands (a per-op check on all three tiers, with a JIT cost to measure), or promise `inf` propagation explicitly |
+| JSON numeric fidelity | oversized ints silently become floats | **landed** — reject-not-convert: integers within i64 arrive exactly, decimals take the IEEE reading, an integer outside i64 (either sign, including u64-range) or an overflowing float text is an `Err` naming the value; serde's arbitrary_precision keeps the source text so the JSON grammar decides the reading |
 
 ## W3 — errors that teach
 

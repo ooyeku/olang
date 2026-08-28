@@ -52,7 +52,11 @@ par_kw      = @{ "par" ~ kw_end }
 // Identifiers and literals - exclude keywords
 identifier  = @{ !(keyword ~ !(ASCII_ALPHANUMERIC | "_")) ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
 integer     = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ !(ASCII_ALPHA | "_") }
-float       = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ "." ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ (("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")*)? ~ !(ASCII_ALPHA | "_") }
+// A float is digits with a decimal point, an exponent, or both — `1.5`,
+// `1e20`, `2.5e-3`, `1E+6`. The exponent-only form matters because the
+// runtime prints large/small floats that way ("1e301"): printed values
+// must read back in as source.
+float       = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ (("." ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ (("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")*)?) | (("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")*)) ~ !(ASCII_ALPHA | "_") }
 string      = @{ "\"" ~ string_char* ~ "\"" }
 raw_string  = @{ "r\"" ~ ("\\\"" | (!"\"" ~ ANY))* ~ "\"" }
 // Compound-atomic (`$`): no implicit WHITESPACE is consumed between the

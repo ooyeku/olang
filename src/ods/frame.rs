@@ -1356,9 +1356,9 @@ fn frame_from_records(records: &[Value]) -> Result<Value, String> {
 /// One JSON-lines line: a single JSON object, which is one row.
 fn parse_jsonl_line(line: &str) -> Result<Value, String> {
     match serde_json::from_str::<serde_json::Value>(line) {
-        Ok(serde_json::Value::Object(obj)) => Ok(crate::stdlib::json::json_to_olang_value(
-            serde_json::Value::Object(obj),
-        )),
+        Ok(serde_json::Value::Object(obj)) => {
+            crate::stdlib::json::json_to_olang_value(serde_json::Value::Object(obj))
+        }
         // A row has named fields; a bare array or number has none, so
         // there is no honest column to put it in.
         Ok(other) => Err(format!(
@@ -1461,25 +1461,26 @@ fn read_jsonl(text: &str) -> Result<Value, String> {
         chunks.push(chunk);
     }
     let names_ref = &names;
-    let scattered: Vec<Vec<Vec<Value>>> = parallel_map_ordered(chunks, col_workers, |chunk| {
-        let mut cols: Vec<Vec<Value>> = names_ref
-            .iter()
-            .map(|_| Vec::with_capacity(chunk.len()))
-            .collect();
-        for mut rec in chunk {
-            for (k, name) in names_ref.iter().enumerate() {
-                cols[k].push(match rec.remove(name) {
-                    Some(v) => crate::stdlib::json::json_to_olang_value(v),
-                    None => Value::Unit,
-                });
+    let scattered: Vec<Result<Vec<Vec<Value>>, String>> =
+        parallel_map_ordered(chunks, col_workers, |chunk| {
+            let mut cols: Vec<Vec<Value>> = names_ref
+                .iter()
+                .map(|_| Vec::with_capacity(chunk.len()))
+                .collect();
+            for mut rec in chunk {
+                for (k, name) in names_ref.iter().enumerate() {
+                    cols[k].push(match rec.remove(name) {
+                        Some(v) => crate::stdlib::json::json_to_olang_value(v)?,
+                        None => Value::Unit,
+                    });
+                }
             }
-        }
-        cols
-    });
+            Ok(cols)
+        });
     let n_cols = names.len();
     let mut columns: Vec<Vec<Value>> = (0..n_cols).map(|_| Vec::new()).collect();
-    for mut chunk_cols in scattered {
-        for (k, col) in chunk_cols.drain(..).enumerate() {
+    for chunk_cols in scattered {
+        for (k, col) in chunk_cols?.drain(..).enumerate() {
             columns[k].extend(col);
         }
     }

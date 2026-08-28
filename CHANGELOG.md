@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Numbers read back in** (roadmap W2): float literals accept an
+  exponent without a decimal point — `1e20`, `2.5e-3`, `1E+6` — so
+  every finite float the runtime prints is valid source; the
+  print/parse round-trip is pinned bit-for-bit by proptest over
+  arbitrary f64s. The trapping-float contract is now stated in
+  language.md and stability.md (would-be-`NaN` operations raise;
+  the overflow-to-`inf` edge is recorded on the roadmap for a
+  decision, not papered over).
+
 - **The REPL under continuation** (roadmap W4): an unbalanced delimiter
   no longer traps the session. The continuation prompt wears what is
   open (`(( ...> `, `" ...> ` inside a string), balancing the input
@@ -30,6 +39,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   user-found — argued for.
 
 ### Changed
+
+- **JSON numeric fidelity — lossless or loud** (roadmap W2):
+  `json.parse` (and the JSON-lines/TOML paths behind it) no longer
+  silently converts oversized integers to floats.
+  `99999999999999999999999999` used to come back as `1e26`; it is now
+  an `Err` naming the value and pointing at string transport/bigint.
+  Integers within i64 arrive exactly (2^53+1 included), decimals take
+  the standard IEEE reading, and float text that overflows f64
+  (`1e400`) errors instead of producing `inf`. serde_json's
+  arbitrary_precision feature keeps the source text, so the JSON
+  grammar itself decides integer-vs-float. The `toml` module's serde
+  bridge leaked that feature's private number wrapper, so both
+  directions now convert explicitly — same shapes, and TOML datetimes
+  render as strings without the wrapper dance.
 
 - **Deterministic printing for maps and structs**: the harness's first
   run caught `#{...}` and struct values printing in per-process hash
