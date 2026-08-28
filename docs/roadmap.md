@@ -67,8 +67,8 @@ this six times in a row.
 
 | Item | Observed | Status |
 |---|---|---|
-| Continuation escape + indicator | commands swallowed; no unbalance display; Ctrl-C the only exit | planned — continuation prompt shows the open delimiters, `:cancel` abandons the buffer, commands at the start of a continuation line warn instead of vanishing |
-| Session-state differential harness | three session-poisoning bugs in one week (help cache, bridge landscape, meta.eval tier), all user-found | planned — generated action sequences replayed with every step asserted equal to the same step in a fresh session |
+| Continuation escape + indicator | commands swallowed; no unbalance display; Ctrl-C the only exit | **landed** — the continuation prompt wears what is open (`(( ...> `), balancing the input evaluates it immediately (no `:end` needed), `:cancel` abandons, commands and `quit` mid-continuation warn and name the unclosed delimiter instead of vanishing; `:ml` now actually exists (deliberate multi-statement entry, `:end` to run) and `:ml`/`:end`/`:cancel` have true `:help` entries |
+| Session-state differential harness | three session-poisoning bugs in one week (help cache, bridge landscape, meta.eval tier), all user-found | **landed** — seeded generated action sequences (redefine-after-promotion, hot loops, meta.eval, collections) driven through the real binary and pinned two ways: every step equal under the tiered REPL and the `--no-ovm` interpreter oracle, and every step equal on fresh replay of its prefix. First run caught a real one: maps/structs printed in per-process hash order — Display and the REPL colorizer now print sorted by key, the language's canonical order |
 
 ## W5 — tools that do what they claim
 

@@ -1433,13 +1433,19 @@ impl std::fmt::Display for Value {
                 write!(f, "]")
             }
             Value::Map(map_rc) => {
+                // Sorted by key: printing must be deterministic across
+                // sessions and tiers (a HashMap iterates in per-process
+                // random order), and sorted-by-key is already the
+                // language's canonical order — `entries()` documents it.
                 let map = map_rc.as_ref();
+                let mut keys: Vec<&String> = map.keys().collect();
+                keys.sort();
                 write!(f, "#{{")?;
-                for (i, (key, value)) in map.iter().enumerate() {
+                for (i, key) in keys.into_iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "\"{}\": {}", key, value)?;
+                    write!(f, "\"{}\": {}", key, map[key])?;
                 }
                 write!(f, "}}")
             }
@@ -1463,13 +1469,16 @@ impl std::fmt::Display for Value {
             }
             Value::Builtin(builtin) => write!(f, "<builtin: {}>", builtin.name),
             Value::Struct { type_name, fields } => {
+                // Sorted by key, like Map above — deterministic output.
                 write!(f, "<struct: {}>", type_name)?;
                 write!(f, "{{")?;
-                for (i, (name, value)) in fields.iter().enumerate() {
+                let mut names: Vec<&String> = fields.keys().collect();
+                names.sort();
+                for (i, name) in names.into_iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}: {}", name, value)?;
+                    write!(f, "{}: {}", name, fields[name])?;
                 }
                 write!(f, "}}")
             }
@@ -1504,12 +1513,15 @@ impl std::fmt::Display for Value {
                     write!(f, ")")
                 }
                 EnumVariantData::Struct(fields) => {
+                    // Sorted by key, like Map above — deterministic output.
                     write!(f, "{}.{} {{ ", type_name, variant_name)?;
-                    for (i, (name, value)) in fields.iter().enumerate() {
+                    let mut names: Vec<&String> = fields.keys().collect();
+                    names.sort();
+                    for (i, name) in names.into_iter().enumerate() {
                         if i > 0 {
                             write!(f, ", ")?;
                         }
-                        write!(f, "{}: {}", name, value)?;
+                        write!(f, "{}: {}", name, fields[name])?;
                     }
                     write!(f, " }}")
                 }

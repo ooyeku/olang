@@ -511,6 +511,24 @@ olang> :help collatz
   defined this session
 ```
 
+### Multi-line input
+
+A line that leaves a delimiter or a string open continues onto the
+next line. The continuation prompt shows exactly what is open — `((
+...> ` for two unclosed parentheses, `" ...> ` inside a string — and
+the input evaluates the moment it balances: closing the delimiter is
+the exit. Two commands work inside a continuation: `:end` evaluates
+the buffer immediately (an unbalanced buffer surfaces the parse
+error, which names the unclosed opener's line and column), and
+`:cancel` abandons it without evaluating anything, as does Ctrl+C.
+Any other command typed mid-continuation — including `quit` — is
+refused with a note naming the open delimiter rather than being
+swallowed into the buffer.
+
+`:ml` enters multi-line mode deliberately: lines collect without
+evaluating, balanced or not, until `:end` runs the whole buffer as
+one program. This is the mode for pasting several statements at once.
+
 ## `olang --watch`
 
 The edit-run loop as a flag:

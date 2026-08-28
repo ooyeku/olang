@@ -432,6 +432,10 @@ pub struct Repl {
     help_system: HelpSystem,
     config: ReplConfig,
     multiline_mode: bool,
+    /// True when multiline was entered deliberately (`:ml`): the buffer
+    /// evaluates only on `:end`, never on balance — the mode for pasting
+    /// several statements at once.
+    multiline_explicit: bool,
     multiline_buffer: String,
     command_history: Vec<String>,
     debugger: InteractiveDebugger,
@@ -553,6 +557,7 @@ impl Repl {
             help_system,
             config: ReplConfig::default(),
             multiline_mode: false,
+            multiline_explicit: false,
             multiline_buffer: String::new(),
             command_history: Vec::new(),
             debugger: InteractiveDebugger::new(),
@@ -637,18 +642,20 @@ impl Repl {
             self.refresh_completions();
 
             let prompt = if self.multiline_mode {
-                "...> "
+                self.continuation_prompt()
             } else {
-                &self.config.prompt
+                self.config.prompt.clone()
             };
 
-            let line = match self.editor.readline(prompt) {
+            let line = match self.editor.readline(&prompt) {
                 Ok(line) => line,
                 Err(ReadlineError::Interrupted) => {
                     println!("^C");
                     if self.multiline_mode {
                         self.multiline_mode = false;
+                        self.multiline_explicit = false;
                         self.multiline_buffer.clear();
+                        println!("(input abandoned)");
                     }
                     continue;
                 }
@@ -669,46 +676,41 @@ impl Repl {
 
             if self.multiline_mode {
                 if line == ":end" {
+                    self.finish_multiline();
+                } else if line == ":cancel" {
                     self.multiline_mode = false;
-                    let code = self.multiline_buffer.clone();
+                    self.multiline_explicit = false;
                     self.multiline_buffer.clear();
-
-                    // Add to command history
-                    self.command_history.push(code.clone());
-
-                    match self.eval_line(&code) {
-                        Ok(value) => {
-                            self.after_eval(&code, &value);
-                            if value != Value::Unit {
-                                if self.config.show_types {
-                                    println!(
-                                        "{} : {}",
-                                        repl_format(&value),
-                                        Self::get_type_name(&value)
-                                    );
-                                } else {
-                                    repl_print(&value);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            self.show_enhanced_error(&e);
-                        }
-                    }
-
-                    // Clean up module cache to prevent memory accumulation
-                    // — after remembering which files it loaded, so
-                    // `:help` can still find their doc comments.
-                    self.loaded_doc_files
-                        .extend(self.interpreter.loaded_module_files());
-                    self.loaded_doc_modules
-                        .extend(self.interpreter.loaded_modules());
-                    self.interpreter.clear_module_cache();
+                    println!("(input abandoned)");
+                } else if line.starts_with(':') || line == "quit" {
+                    // A command mid-continuation used to vanish into the
+                    // buffer; the session transcript that motivated this
+                    // shows a user losing six commands in a row that way.
+                    println!(
+                        "{}: `{}` looks like a command, but the input is still open{} — \
+                         commands don't run mid-input.",
+                        "Note".bright_yellow().bold(),
+                        line,
+                        self.describe_open_input()
+                    );
+                    println!(
+                        "  Close it to evaluate, or {} to evaluate now, {} to abandon.",
+                        ":end".bright_cyan(),
+                        ":cancel".bright_cyan()
+                    );
                 } else {
                     if !self.multiline_buffer.is_empty() {
                         self.multiline_buffer.push('\n');
                     }
                     self.multiline_buffer.push_str(line);
+                    // Auto-entered continuation evaluates the moment the
+                    // input balances — closing the delimiter is the exit.
+                    // Explicit `:ml` keeps collecting until `:end`.
+                    if !self.multiline_explicit
+                        && !self.is_incomplete_expression(&self.multiline_buffer)
+                    {
+                        self.finish_multiline();
+                    }
                 }
                 continue;
             }
@@ -1193,6 +1195,16 @@ impl Repl {
         let command_name = parts[0];
 
         match command_name {
+            ":ml" => {
+                self.multiline_mode = true;
+                self.multiline_explicit = true;
+                self.multiline_buffer.clear();
+                println!(
+                    "Multi-line input: type statements across lines; {} evaluates, {} abandons.",
+                    ":end".bright_cyan(),
+                    ":cancel".bright_cyan()
+                );
+            }
             ":help" => {
                 if parts.len() == 1 {
                     println!("{}", self.help_system.show_overview());
@@ -2410,16 +2422,18 @@ impl Repl {
         }
     }
 
-    fn is_incomplete_expression(&self, line: &str) -> bool {
-        let mut brace_count = 0;
-        let mut paren_count = 0;
-        let mut bracket_count = 0;
+    /// The delimiters still open at the end of `src`, in opening order,
+    /// plus whether a string literal is unterminated. String contents and
+    /// `//` comments never count. This one scan feeds continuation
+    /// detection, the continuation prompt, and the mid-input warnings.
+    fn open_delimiters(src: &str) -> (Vec<char>, bool) {
+        let mut stack: Vec<char> = Vec::new();
         let mut in_string = false;
         let mut escape_next = false;
         let mut prev_slash = false;
         let mut in_comment = false;
 
-        for ch in line.chars() {
+        for ch in src.chars() {
             if in_comment {
                 if ch == '\n' {
                     in_comment = false;
@@ -2447,17 +2461,94 @@ impl Repl {
                 '"' if !in_string => in_string = true,
                 '"' if in_string => in_string = false,
                 '\\' if in_string => escape_next = true,
-                '{' if !in_string => brace_count += 1,
-                '}' if !in_string => brace_count -= 1,
-                '(' if !in_string => paren_count += 1,
-                ')' if !in_string => paren_count -= 1,
-                '[' if !in_string => bracket_count += 1,
-                ']' if !in_string => bracket_count -= 1,
+                '{' | '(' | '[' if !in_string => stack.push(ch),
+                '}' if !in_string && stack.last() == Some(&'{') => {
+                    stack.pop();
+                }
+                ')' if !in_string && stack.last() == Some(&'(') => {
+                    stack.pop();
+                }
+                ']' if !in_string && stack.last() == Some(&'[') => {
+                    stack.pop();
+                }
                 _ => {}
             }
         }
 
-        in_string || brace_count > 0 || paren_count > 0 || bracket_count > 0
+        (stack, in_string)
+    }
+
+    fn is_incomplete_expression(&self, line: &str) -> bool {
+        let (stack, in_string) = Self::open_delimiters(line);
+        in_string || !stack.is_empty()
+    }
+
+    /// The continuation prompt wears what is still open — `(( ...> ` for
+    /// two unclosed parens, `" ...> ` inside a string — so the session
+    /// never silently waits for a delimiter the user cannot see.
+    fn continuation_prompt(&self) -> String {
+        let (stack, in_string) = Self::open_delimiters(&self.multiline_buffer);
+        let mut open: String = stack.iter().collect();
+        if in_string {
+            open.push('"');
+        }
+        if open.is_empty() {
+            "...> ".to_string()
+        } else {
+            format!("{} ...> ", open)
+        }
+    }
+
+    /// " (unclosed `(` `[`)" — the parenthetical for warnings, empty when
+    /// the buffer is balanced (explicit :ml with nothing open).
+    fn describe_open_input(&self) -> String {
+        let (stack, in_string) = Self::open_delimiters(&self.multiline_buffer);
+        let mut parts: Vec<String> = stack.iter().map(|c| format!("`{}`", c)).collect();
+        if in_string {
+            parts.push("`\"`".to_string());
+        }
+        if parts.is_empty() {
+            String::new()
+        } else {
+            format!(" (unclosed {})", parts.join(" "))
+        }
+    }
+
+    /// Evaluate and clear the continuation buffer — the shared tail of
+    /// `:end`, and of an auto-entered continuation balancing itself.
+    fn finish_multiline(&mut self) {
+        self.multiline_mode = false;
+        self.multiline_explicit = false;
+        let code = self.multiline_buffer.clone();
+        self.multiline_buffer.clear();
+
+        // Add to command history
+        self.command_history.push(code.clone());
+
+        match self.eval_line(&code) {
+            Ok(value) => {
+                self.after_eval(&code, &value);
+                if value != Value::Unit {
+                    if self.config.show_types {
+                        println!("{} : {}", repl_format(&value), Self::get_type_name(&value));
+                    } else {
+                        repl_print(&value);
+                    }
+                }
+            }
+            Err(e) => {
+                self.show_enhanced_error(&e);
+            }
+        }
+
+        // Clean up module cache to prevent memory accumulation
+        // — after remembering which files it loaded, so
+        // `:help` can still find their doc comments.
+        self.loaded_doc_files
+            .extend(self.interpreter.loaded_module_files());
+        self.loaded_doc_modules
+            .extend(self.interpreter.loaded_modules());
+        self.interpreter.clear_module_cache();
     }
 
     /// Enhanced debugging methods
@@ -3792,16 +3883,22 @@ fn color_value(value: &Value) -> String {
             format!("({})", inner.join(", "))
         }
         Value::Map(map) => {
-            let inner: Vec<String> = map
-                .iter()
-                .map(|(k, v)| format!("{}: {}", format!("\"{}\"", k).cyan(), color_value(v)))
+            // Sorted by key, matching Display — output stays deterministic
+            // whether or not color is on.
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let inner: Vec<String> = keys
+                .into_iter()
+                .map(|k| format!("{}: {}", format!("\"{}\"", k).cyan(), color_value(&map[k])))
                 .collect();
             format!("#{{{}}}", inner.join(", "))
         }
         Value::Struct { type_name, fields } => {
-            let inner: Vec<String> = fields
-                .iter()
-                .map(|(k, v)| format!("{}: {}", k.cyan(), color_value(v)))
+            let mut names: Vec<&String> = fields.keys().collect();
+            names.sort();
+            let inner: Vec<String> = names
+                .into_iter()
+                .map(|k| format!("{}: {}", k.cyan(), color_value(&fields[k])))
                 .collect();
             format!(
                 "{}{{{}}}",
@@ -3950,5 +4047,34 @@ mod tests {
         // Division doesn't start a comment.
         assert!(repl.is_incomplete_expression("(1 / 2"));
         assert!(!repl.is_incomplete_expression("1 / 2"));
+    }
+
+    #[test]
+    fn open_delimiters_stack_in_opening_order() {
+        let (stack, in_string) = Repl::open_delimiters("f([#{ x: (1");
+        assert_eq!(stack, vec!['(', '[', '{', '(']);
+        assert!(!in_string);
+        // Matched pairs pop; interleaved closers only pop their own opener.
+        let (stack, _) = Repl::open_delimiters("([1, 2] +");
+        assert_eq!(stack, vec!['(']);
+        // A stray closer with nothing open is ignored, not negative.
+        let (stack, _) = Repl::open_delimiters(") + (");
+        assert_eq!(stack, vec!['(']);
+        // Unterminated string reports itself.
+        let (stack, in_string) = Repl::open_delimiters("g(\"ab");
+        assert_eq!(stack, vec!['(']);
+        assert!(in_string);
+    }
+
+    #[test]
+    fn continuation_prompt_wears_the_open_delimiters() {
+        let mut repl = Repl::new(false).expect("repl");
+        repl.multiline_buffer = "let x = ((1 +".to_string();
+        assert_eq!(repl.continuation_prompt(), "(( ...> ");
+        repl.multiline_buffer = "let s = \"open".to_string();
+        assert_eq!(repl.continuation_prompt(), "\" ...> ");
+        // Explicit :ml with nothing open: the plain continuation prompt.
+        repl.multiline_buffer = "let a = 1".to_string();
+        assert_eq!(repl.continuation_prompt(), "...> ");
     }
 }

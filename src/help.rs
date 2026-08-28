@@ -7421,20 +7421,48 @@ impl HelpSystem {
         // Multi-line Input
         self.add_function(FunctionDoc {
             name: ":ml".to_string(),
-            description: "Enter multi-line mode for complex expressions and function definitions"
+            description: "Deliberate multi-line entry: collect statements across lines and run them together on :end. Distinct from automatic continuation — a line with an unclosed delimiter continues on its own, shows what is open in the prompt, and evaluates the moment it balances."
                 .to_string(),
             syntax: ":ml".to_string(),
-            parameters: vec!["None - Enters multi-line mode until :end is typed".to_string()],
+            parameters: vec!["None - collects lines until :end (run) or :cancel (abandon)".to_string()],
             return_type: "Mode Change".to_string(),
             examples: vec![
                 ":ml                     // Enter multi-line mode".to_string(),
-                "fn complex(x) =         // Type multi-line function".to_string(),
-                "  if x > 10 => \"big\"     // Continue on next line".to_string(),
-                "  else => \"small\"       // Continue on next line".to_string(),
-                ":end                    // Exit multi-line mode and execute".to_string(),
+                "let a = 1               // Nothing runs yet".to_string(),
+                "let b = 2".to_string(),
+                "println(a + b)".to_string(),
+                ":end                    // Run the whole buffer: 3".to_string(),
             ],
             category: "REPL".to_string(),
-            see_also: vec![":type".to_string()],
+            see_also: vec![":end".to_string(), ":cancel".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: ":end".to_string(),
+            description: "Evaluate the multi-line buffer now. Automatic continuation (an unclosed delimiter) usually needs no :end — closing the delimiter evaluates — but :end forces evaluation early, surfacing the parse error that names the unclosed opener."
+                .to_string(),
+            syntax: ":end".to_string(),
+            parameters: vec![],
+            return_type: "Evaluation".to_string(),
+            examples: vec![
+                "let x = (1 +            // continuation opens".to_string(),
+                ":end                    // evaluate now — parse error names the `(`".to_string(),
+            ],
+            category: "REPL".to_string(),
+            see_also: vec![":ml".to_string(), ":cancel".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: ":cancel".to_string(),
+            description: "Abandon the multi-line buffer without evaluating anything — the escape hatch when continuation was entered by accident. Ctrl-C does the same."
+                .to_string(),
+            syntax: ":cancel".to_string(),
+            parameters: vec![],
+            return_type: "Mode Change".to_string(),
+            examples: vec![
+                "let x = (1 +            // continuation opens".to_string(),
+                ":cancel                 // (input abandoned) — x was never bound".to_string(),
+            ],
+            category: "REPL".to_string(),
+            see_also: vec![":ml".to_string(), ":end".to_string()],
         });
 
         // Session Management

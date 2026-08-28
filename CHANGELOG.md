@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **The REPL under continuation** (roadmap W4): an unbalanced delimiter
+  no longer traps the session. The continuation prompt wears what is
+  open (`(( ...> `, `" ...> ` inside a string), balancing the input
+  evaluates it immediately — closing the delimiter is the exit, no
+  `:end` required — `:cancel` abandons the buffer, and a command (or
+  `quit`) typed mid-continuation warns and names the unclosed delimiter
+  instead of vanishing into the buffer. `:ml`, documented for months
+  but never implemented, now exists: deliberate multi-statement entry
+  that collects until `:end`. All three (`:ml`, `:end`, `:cancel`)
+  have accurate `:help` entries.
+- **Session-state differential harness** (roadmap W4): seeded,
+  generated action sequences — redefinition after promotion, hot
+  loops, `meta.eval` in a warm session, collections — driven through
+  the real `olang repl` binary and pinned two ways: every step must
+  print the same thing under the tiered REPL and under `--no-ovm`
+  (the interpreter oracle), and every step must print the same thing
+  when its prefix is replayed in a fresh session. This is the harness
+  the help-cache, bridge-landscape, and meta.eval-tier bugs — all
+  user-found — argued for.
+
+### Changed
+
+- **Deterministic printing for maps and structs**: the harness's first
+  run caught `#{...}` and struct values printing in per-process hash
+  order — the same program could print `#{"x": 1, "y": 2}` in one
+  session and `#{"y": 2, "x": 1}` in the next. `Display` and the REPL
+  colorizer now print keys sorted, the order `entries()` already
+  documents as canonical.
+
 ## [0.78.0] - 2026-08-27
 
 ### Added
