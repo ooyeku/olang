@@ -15,7 +15,7 @@ build:
 # Install using the setup script
 install:
 	@echo "Installing Olang and OTC using setup script..."
-	./setup
+	./setup.sh
 
 # Remove installed binaries and directories
 remove:

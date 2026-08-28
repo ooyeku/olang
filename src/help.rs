@@ -1754,6 +1754,54 @@ impl HelpSystem {
                 "The identity function, paired with lazy. See lazy for why neither defers                  anything.",
                 "force(lazy(5))  // 5",
             ),
+            (
+                "assert_eq",
+                "assert_eq(left, right, message?)",
+                "Unit",
+                "Testing",
+                "Raises unless the two values are equal; the primary check inside `test` \
+                 blocks. Works in any position — statement or expression (a match arm, a \
+                 lambda body). An optional third argument replaces the default failure \
+                 message.",
+                "assert_eq(total(cart), 42)",
+            ),
+            (
+                "assert_ne",
+                "assert_ne(left, right, message?)",
+                "Unit",
+                "Testing",
+                "Raises when the two values ARE equal — the negative form of assert_eq, \
+                 with the same optional message and the same everywhere-an-expression \
+                 reach.",
+                "assert_ne(id_a, id_b, \"ids must be distinct\")",
+            ),
+            (
+                "assert",
+                "assert(condition, message?)",
+                "Unit",
+                "Testing",
+                "Raises unless the condition is `true` (exactly Bool true — no \
+                 truthiness). assert_true is the same check under its longer name.",
+                "assert(len(rows) > 0, \"query returned nothing\")",
+            ),
+            (
+                "assert_true",
+                "assert_true(condition, message?)",
+                "Unit",
+                "Testing",
+                "Raises unless the condition is `true` — assert under its explicit name, \
+                 mirroring assert_false.",
+                "assert_true(str.contains(out, \"ok\"))",
+            ),
+            (
+                "assert_false",
+                "assert_false(condition, message?)",
+                "Unit",
+                "Testing",
+                "Raises unless the condition is `false` (exactly Bool false — any other \
+                 value fails, including non-Bools).",
+                "assert_false(map_has_key(m, \"deleted\"))",
+            ),
         ] {
             self.add_function(FunctionDoc {
                 name: name.to_string(),

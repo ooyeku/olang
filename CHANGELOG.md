@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.78.0] - 2026-08-27
+
 ### Added
 
 - **Asserts are expressions** (roadmap W5): `assert_eq`, `assert_ne`,
