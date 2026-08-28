@@ -4554,7 +4554,7 @@ impl BytecodeVm {
     /// compiler declines, non-callables — converts to AST and runs through
     /// the bridge interpreter, whose call_function owns the exact semantics
     /// of arity errors, default parameters, trait bounds, and the
-    /// "Cannot call non-function value" error.
+    /// "cannot call a value, not a function" error.
     /// Ensure the bridge interpreter exists and carries the program's
     /// declaration-level state. Builtins the VM cannot run natively (`fold`,
     /// and any function value declined by `call_function_value`) bridge to

@@ -427,6 +427,50 @@ impl Interpreter {
         Ok(last_value)
     }
 
+    /// "an Int", "a String" — the article English wants for a type name.
+    fn with_article(ty: &str) -> String {
+        let vowel = matches!(
+            ty.as_bytes().first(),
+            Some(b'A' | b'E' | b'I' | b'O' | b'U')
+        );
+        format!("{} {}", if vowel { "an" } else { "a" }, ty)
+    }
+
+    /// When a call failed because the callee is not a function, put the
+    /// caller's NAME in the message: "'x' is an Int, not a function".
+    fn name_uncallable(e: InterpreterError, name: Option<&str>) -> InterpreterError {
+        match (&e, name) {
+            (InterpreterError::TypeError { message }, Some(n))
+                if message.starts_with("cannot call a") =>
+            {
+                let ty = message
+                    .trim_start_matches("cannot call an ")
+                    .trim_start_matches("cannot call a ")
+                    .split(':')
+                    .next()
+                    .unwrap_or("value")
+                    .to_string();
+                let hint = match ty.as_str() {
+                    "Map" | "List" => format!(" To index it, write {}[...] instead", n),
+                    _ => format!(
+                        " If a function named '{}' exists elsewhere, this local \
+                         binding shadows it",
+                        n
+                    ),
+                };
+                InterpreterError::TypeError {
+                    message: format!(
+                        "'{}' is {}, not a function — it cannot be called.{}",
+                        n,
+                        Self::with_article(&ty),
+                        hint
+                    ),
+                }
+            }
+            _ => e,
+        }
+    }
+
     /// Loop/return/`?` signals travel as Err but aren't errors — they must
     /// never capture an error location (their consumption is normal flow).
     /// The tier hands back a bare message string; map it onto the
@@ -1188,7 +1232,13 @@ impl Interpreter {
 
                 // Enhanced named argument resolution
                 let arg_values = self.resolve_arguments(&callee_value, arguments)?;
+                let callee_name = match callee.as_ref() {
+                    Expr::Identifier(n) => Some(n.clone()),
+                    Expr::LocalRef { name, .. } => Some(name.clone()),
+                    _ => None,
+                };
                 self.call_function(callee_value, arg_values)
+                    .map_err(|e| Self::name_uncallable(e, callee_name.as_deref()))
             }
             Expr::Lambda {
                 parameters, body, ..
@@ -2554,8 +2604,11 @@ impl Interpreter {
                     message: "Cannot call a module that has no `new`".to_string(),
                 }),
             },
-            _ => Err(InterpreterError::TypeError {
-                message: "Cannot call non-function value".to_string(),
+            other => Err(InterpreterError::TypeError {
+                message: format!(
+                    "cannot call {}: it is a value, not a function",
+                    Self::with_article(&other.type_name())
+                ),
             }),
         }
     }
@@ -2731,8 +2784,11 @@ impl Interpreter {
                 let builtin_functions = self.builtin_functions.clone();
                 BuiltinFunctions::call(&builtin_functions, &name, args, self)
             }
-            _ => Err(InterpreterError::TypeError {
-                message: "Cannot call non-function value".to_string(),
+            other => Err(InterpreterError::TypeError {
+                message: format!(
+                    "cannot call {}: it is a value, not a function",
+                    Self::with_article(&other.type_name())
+                ),
             }),
         }
     }

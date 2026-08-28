@@ -43,6 +43,25 @@ impl BuiltinFunctions {
     pub fn new() -> Self {
         let mut functions = HashMap::new();
 
+        // The bare assertion forms — registered so they resolve as
+        // callables in EXPRESSION positions (match arms, lambda
+        // bodies), where the grammar's statement rewrite cannot reach.
+        for assert_name in [
+            "assert_eq",
+            "assert_ne",
+            "assert",
+            "assert_true",
+            "assert_false",
+        ] {
+            functions.insert(
+                assert_name.to_string(),
+                BuiltinFunction {
+                    name: assert_name.to_string(),
+                    arity: 0, // variadic: optional trailing message
+                },
+            );
+        }
+
         // Core I/O functions
         functions.insert(
             "println".to_string(),
@@ -918,6 +937,61 @@ impl BuiltinFunctions {
         }
 
         match name {
+            // The bare assertion forms. The grammar rewrites
+            // `assert_eq(...)` to a dedicated statement everywhere a
+            // STATEMENT can stand — but a match arm, a lambda body, or
+            // any other expression position parses it as an ordinary
+            // call, which used to die with "Undefined variable:
+            // assert_eq". These builtins give that call the identical
+            // raising semantics, so an assertion works wherever a call
+            // does.
+            "assert_eq" | "assert_ne" => {
+                if arguments.len() < 2 {
+                    return Err(InterpreterError::RuntimeError {
+                        message: format!("{} expects (actual, expected, message?)", name),
+                    });
+                }
+                let equal = arguments[0] == arguments[1];
+                let want_equal = name == "assert_eq";
+                if equal != want_equal {
+                    let message = arguments
+                        .get(2)
+                        .and_then(|m| match m {
+                            Value::String(s) => Some(s.as_str().to_string()),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| {
+                            format!(
+                                "Assertion failed: {:?} {} {:?}",
+                                arguments[0],
+                                if want_equal { "!=" } else { "==" },
+                                arguments[1]
+                            )
+                        });
+                    return Err(InterpreterError::RuntimeError { message });
+                }
+                Ok(Value::Unit)
+            }
+            "assert" | "assert_true" | "assert_false" => {
+                let Some(first) = arguments.first() else {
+                    return Err(InterpreterError::RuntimeError {
+                        message: format!("{} expects (condition, message?)", name),
+                    });
+                };
+                let truthy = matches!(first, Value::Boolean(true));
+                let want = name != "assert_false";
+                if truthy != want {
+                    let message = arguments
+                        .get(1)
+                        .and_then(|m| match m {
+                            Value::String(s) => Some(s.as_str().to_string()),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| format!("Assertion failed: {:?}", first));
+                    return Err(InterpreterError::RuntimeError { message });
+                }
+                Ok(Value::Unit)
+            }
             "println" => builtins.println(arguments),
             "print" => builtins.print(arguments),
             "map" => builtins.map(arguments, interpreter),

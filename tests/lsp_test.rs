@@ -566,9 +566,9 @@ fn robustness_batch_hints_actions_symbols_use() {
         "jsonrpc":"2.0","method":"textDocument/didOpen","params":{
             "textDocument":{"uri":uri,"languageId":"olang","version":1,"text":text}}
     }));
-    let diags = loop {
+    let diags = {
         let m = c.recv_until(|m| diagnostics_of(m).is_some());
-        break diagnostics_of(&m).unwrap().clone();
+        diagnostics_of(&m).unwrap().clone()
     };
 
     // 1. The scoping error reaches the editor (it is runtime-fatal).

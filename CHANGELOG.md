@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Asserts are expressions** (roadmap W5): `assert_eq`, `assert_ne`,
+  `assert`, `assert_true`, and `assert_false` are now also builtins,
+  so expression positions the statement-form grammar rewrite never
+  reached — match arms, lambda bodies — resolve them with identical
+  raising semantics. `match r { Ok(v) => assert_eq(v, 1), ... }` works
+  inside a `test` block instead of failing with "Undefined variable".
+
+### Changed
+
+- **Errors that teach** (roadmap W3, all four items):
+  - Calling a non-function names the binding and its type — `x(1)`
+    where `x` is an Int reports "'x' is an Int, not a function" with a
+    shadowing hint; calling a Map or List suggests indexing
+    (`m[...]`) instead.
+  - Module-not-found now teaches in the REPL too (it previously said
+    "This appears to be a system-level error"): the full search list,
+    near-miss suggestions that include registered shelf libraries, and
+    help that names `use lib.<name>` and `otc lib list`.
+  - `if x > 1 { ... }` — the C-style habit — gets a parse suggestion
+    with the exact rewrite (`if x > 1 => {`) and a note that only
+    `if`/`else` take the arrow while `while`/`for` keep braces.
+  - Unclosed delimiters name their opener: a string- and
+    comment-aware scan reports "Unclosed `(` opened at line 2,
+    column 13" instead of a bare "expected an operator" on a later
+    line.
+
 ## [0.77.0] - 2026-08-27
 
 ### Added

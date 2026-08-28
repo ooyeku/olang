@@ -1240,10 +1240,18 @@ impl Interpreter {
         }
 
         searched_paths.push("Standard library modules".to_string());
+        searched_paths.push("Shelf libraries (otc lib list)".to_string());
 
         // Get available modules from stdlib
         let stdlib = crate::stdlib::get_stdlib();
         available_modules.extend(stdlib.keys().map(|s| s.to_string()));
+
+        // Shelf libraries import by bare name too — a near-miss on one of
+        // them is the most common cause of this error, so they belong in
+        // the suggestion pool.
+        if let Ok(shelf) = crate::pkg::shelf::Shelf::load() {
+            available_modules.extend(shelf.libraries.keys().cloned());
+        }
 
         // Get available modules from current directory (if any .ol files exist)
         if let Ok(current_dir) = crate::clock::current_dir()

@@ -3709,6 +3709,114 @@ impl ErrorSuggestionEngine {
         }
     }
 
+    /// The innermost delimiter still open at the error position, with the
+    /// line/column where it was opened. String literals (with escapes) and
+    /// `//` comments are skipped so a bracket inside either never counts.
+    fn unclosed_opener_before(
+        input: &str,
+        err_line: usize,
+        err_column: usize,
+    ) -> Option<(char, usize, usize)> {
+        let mut stack: Vec<(char, usize, usize)> = Vec::new();
+        let mut line = 1usize;
+        let mut col = 1usize;
+        let mut chars = input.chars().peekable();
+        while let Some(c) = chars.next() {
+            if line > err_line || (line == err_line && col >= err_column) {
+                break;
+            }
+            match c {
+                '\n' => {
+                    line += 1;
+                    col = 1;
+                    continue;
+                }
+                '"' => {
+                    // consume the string body, honoring escapes
+                    col += 1;
+                    while let Some(&s) = chars.peek() {
+                        chars.next();
+                        col += 1;
+                        match s {
+                            '\\' => {
+                                if chars.next().is_some() {
+                                    col += 1;
+                                }
+                            }
+                            '"' => break,
+                            '\n' => {
+                                line += 1;
+                                col = 1;
+                            }
+                            _ => {}
+                        }
+                    }
+                    continue;
+                }
+                '/' if chars.peek() == Some(&'/') => {
+                    // comment: skip to end of line
+                    while let Some(&s) = chars.peek() {
+                        if s == '\n' {
+                            break;
+                        }
+                        chars.next();
+                        col += 1;
+                    }
+                    col += 1;
+                    continue;
+                }
+                '(' | '[' | '{' => stack.push((c, line, col)),
+                ')' | ']' | '}' => {
+                    let wants = match c {
+                        ')' => '(',
+                        ']' => '[',
+                        _ => '{',
+                    };
+                    if stack.last().map(|(o, _, _)| *o) == Some(wants) {
+                        stack.pop();
+                    }
+                }
+                _ => {}
+            }
+            col += 1;
+        }
+        stack.pop()
+    }
+
+    /// When the parse position sits under an unclosed delimiter, say WHERE
+    /// it was opened — "expected an operator" three lines later teaches
+    /// nothing on its own.
+    fn suggest_unclosed_opener(
+        line: usize,
+        column: usize,
+        input: &str,
+        suggestions: &mut Vec<ErrorSuggestion>,
+    ) -> bool {
+        if let Some((opener, oline, ocol)) = Self::unclosed_opener_before(input, line, column) {
+            let closer = match opener {
+                '(' => ')',
+                '[' => ']',
+                _ => '}',
+            };
+            suggestions.push(ErrorSuggestion {
+                message: format!(
+                    "Unclosed `{}` opened at line {}, column {}",
+                    opener, oline, ocol
+                ),
+                fix: Some(format!("Add the matching `{}`", closer)),
+                help: Some(format!(
+                    "Everything after that `{}` is still inside it — the parser \
+                     trips where the missing `{}` first matters, not where it \
+                     belongs",
+                    opener, closer
+                )),
+                severity: SuggestionSeverity::Error,
+            });
+            return true;
+        }
+        false
+    }
+
     fn suggest_for_invalid_syntax(
         &self,
         message: &str,
@@ -3727,6 +3835,7 @@ impl ErrorSuggestionEngine {
         };
 
         Self::suggest_let_mut_typo(line_content, &mut suggestions);
+        Self::suggest_unclosed_opener(line, column, input, &mut suggestions);
 
         // Check for common typos and mistakes
         if message.contains("integer") {
@@ -3766,6 +3875,31 @@ impl ErrorSuggestionEngine {
                 ),
                 severity: SuggestionSeverity::Error,
             });
+        }
+
+        // C-style `if cond { ... }` — the single most common habit from
+        // other languages. Only `if`/`else` need the arrow; `while` and
+        // `for` take braces directly, so the check is scoped to those two.
+        let trimmed = line_content.trim_start();
+        if (trimmed.starts_with("if ")
+            || trimmed.starts_with("} else")
+            || trimmed.starts_with("else"))
+            && !line_content.contains("=>")
+            && line_content.trim_end().ends_with('{')
+        {
+            let fixed = format!("{}=> {{", line_content.trim_end().trim_end_matches('{'));
+            suggestions.push(ErrorSuggestion {
+                message: "`if` takes an arrow before its branch".to_string(),
+                fix: Some(format!("Write `{}`", fixed.trim_start())),
+                help: Some(
+                    "olang branches are `if cond => expr else => expr`; a block is an \
+                     expression, so `if cond => { ... }` works too. Only `if`/`else` \
+                     use `=>` — `while` and `for` take braces directly"
+                        .to_string(),
+                ),
+                severity: SuggestionSeverity::Error,
+            });
+            return suggestions;
         }
 
         // Check for bracket mismatches
@@ -3822,11 +3956,13 @@ impl ErrorSuggestionEngine {
     fn suggest_for_unexpected_token(
         &self,
         token: &str,
-        _line: usize,
-        _column: usize,
-        _input: &str,
+        line: usize,
+        column: usize,
+        input: &str,
     ) -> Vec<ErrorSuggestion> {
         let mut suggestions = Vec::new();
+
+        Self::suggest_unclosed_opener(line, column, input, &mut suggestions);
 
         // Common token-specific suggestions
         match token {

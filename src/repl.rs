@@ -3257,14 +3257,17 @@ impl Repl {
                     "Err(error)".bright_cyan()
                 );
             }
+            InterpreterError::ModuleNotFound { .. } => {
+                // The formatter already knows how to teach here: where it
+                // looked, near-miss suggestions, and how the shelf works.
+                let formatter = crate::interpreter::IntuitiveErrorFormatter::default();
+                for line in formatter.format_error(interpreter_error).lines() {
+                    println!("  {}", line);
+                }
+            }
             _ => {
                 // Handle all other error types (lazy evaluation errors, etc.)
                 println!("  {}: {}", "Error".bright_red().bold(), interpreter_error);
-
-                println!(
-                    "\n  {}: This appears to be a system-level error",
-                    "Hint".bright_blue().bold()
-                );
             }
         }
     }
