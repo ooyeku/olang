@@ -728,6 +728,25 @@ println("")
 println(to_string(str.chars("abc")))
 ```
 
+### Codepoints and graphemes
+
+Indexing counts Unicode codepoints: `len`, `str.length`, `str.char_at`,
+`str.substring`, and iteration all agree on that unit, and it never
+loses information. A *visible* character can span several codepoints —
+an emoji with a skin-tone modifier, a letter with a combining accent, a
+flag — and `str.graphemes` is the view for those cases: the string's
+grapheme clusters (UAX #29) as a list of strings. Count what a reader
+sees with `len(str.graphemes(s))`, take the nth visible character by
+index, slice with list operations and join back with `str.join(gs,
+"")`. `str.reverse` works on graphemes, because reversing is a visual
+request — clusters stay whole.
+
+```olang
+println(to_string(len(str.graphemes("abc"))))     // 3
+println(str.join(str.graphemes("olang"), "."))    // o.l.a.n.g
+println(str.reverse("abc"))                       // cba
+```
+
 ## Collections
 
 ### Lists

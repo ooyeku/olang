@@ -342,7 +342,8 @@ every function returns a new string.
 |---|---|
 | `str.length(s)` | character count |
 | `str.char_at(s, i)` | 1-char string, `""` out of bounds |
-| `str.chars(s)` | list of characters |
+| `str.chars(s)` | list of characters (codepoints) |
+| `str.graphemes(s)` | list of visible characters (UAX #29 clusters) |
 | `str.substring(s, from, to)` | half-open slice, clamped |
 | `str.index_of(s, sub)` / `str.last_index_of` | position, or `()` when absent |
 | `str.contains(s, sub)` / `str.count(s, sub)` | search |
@@ -354,7 +355,7 @@ every function returns a new string.
 | `str.repeat(s, n)` | repetition |
 | `str.replace(s, from, to)` / `str.replace_first` | substitution |
 | `str.to_upper` / `str.to_lower` / `str.capitalize` | case |
-| `str.reverse(s)` | reversed |
+| `str.reverse(s)` | reversed by visible character — clusters stay whole |
 | `str.is_empty(s)` | `""` test |
 | `str.parse_int(s)` / `str.parse_float(s)` | `Result` parses |
 | `str.fmt(template, ...)` | fill `{}` placeholders, display form; `{{`/`}}` escape |

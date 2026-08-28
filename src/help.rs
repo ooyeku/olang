@@ -4610,13 +4610,28 @@ impl HelpSystem {
         });
         self.add_function(FunctionDoc {
             name: "str.reverse".to_string(),
-            description: "Reverse a string by character.".to_string(),
+            description: "Reverse a string by visible character (grapheme cluster, UAX #29): an emoji with its skin-tone modifier, a letter with its combining accent, or a flag stays whole rather than being torn apart codepoint by codepoint.".to_string(),
             syntax: "str.reverse(s)".to_string(),
             parameters: vec![],
             return_type: "String".to_string(),
-            examples: vec!["str.reverse(\"abc\")  // \"cba\"".to_string()],
+            examples: vec![
+                "str.reverse(\"abc\")  // \"cba\"".to_string(),
+            ],
             category: "String".to_string(),
-            see_also: vec![],
+            see_also: vec!["str.graphemes".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.graphemes".to_string(),
+            description: "The visible characters of a string — its grapheme clusters per UAX #29 — as a list of strings. Indexing functions (str.length, str.char_at, str.substring) count codepoints, which splits emoji and accents; this list is the visible-character view. Count with len, take the nth by index, slice with list operations and join back with str.join(gs, \"\").".to_string(),
+            syntax: "str.graphemes(s)".to_string(),
+            parameters: vec![],
+            return_type: "List".to_string(),
+            examples: vec![
+                "str.graphemes(\"ab\")  // [\"a\", \"b\"]".to_string(),
+                "len(str.graphemes(s))  // characters a reader sees".to_string(),
+            ],
+            category: "String".to_string(),
+            see_also: vec!["str.chars".to_string(), "str.reverse".to_string()],
         });
         self.add_function(FunctionDoc {
             name: "str.capitalize".to_string(),

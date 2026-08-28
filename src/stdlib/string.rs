@@ -24,6 +24,7 @@ pub fn create_string_module() -> Value {
         "trim_end",
         "reverse",
         "chars",
+        "graphemes",
         "lines",
         "words",
         "capitalize",
@@ -93,6 +94,7 @@ pub fn call_string_function(
         "trim_end" => str_trim(args, false, true),
         "reverse" => str_reverse(args),
         "chars" => str_chars(args),
+        "graphemes" => str_graphemes(args),
         "lines" => str_lines(args),
         "words" => str_words(args),
         "capitalize" => str_capitalize(args),
@@ -181,9 +183,31 @@ fn str_trim(args: Vec<Value>, start: bool, end: bool) -> Result<Value, Box<dyn s
 }
 
 fn str_reverse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    // By grapheme cluster, not by codepoint: reversing "\u{1F44B}\u{1F3FD}ab"
+    // must keep the skin-tone modifier attached to its emoji. UAX #29
+    // segmentation is what "the characters a reader sees" means.
+    use unicode_segmentation::UnicodeSegmentation;
     Ok(ok_string(
-        arg_str(&args, 0, "reverse")?.chars().rev().collect(),
+        arg_str(&args, 0, "reverse")?
+            .graphemes(true)
+            .rev()
+            .collect(),
     ))
+}
+
+/// The grapheme clusters of a string — the visible characters — as a
+/// list of strings, segmented per UAX #29 (extended clusters). The
+/// composable primitive for every visible-character question: count is
+/// `len(str.graphemes(s))`, the nth is `str.graphemes(s)[n]`, a slice
+/// is list slicing joined back with `str.join(gs, "")`.
+fn str_graphemes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    use unicode_segmentation::UnicodeSegmentation;
+    let s = arg_str(&args, 0, "graphemes")?;
+    let items: Vec<Value> = s
+        .graphemes(true)
+        .map(|g| Value::String(std::sync::Arc::new(g.to_string())))
+        .collect();
+    Ok(Value::List(items.into()))
 }
 
 fn str_chars(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {

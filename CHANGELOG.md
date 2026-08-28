@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Text is made of graphemes** (roadmap W1): `str.graphemes(s)` —
+  the visible characters of a string as a list of UAX #29 extended
+  grapheme clusters, the composable primitive for every
+  visible-character question (count with `len`, index for the nth,
+  slice with list operations and `str.join(gs, "")`). `str.reverse`
+  now reverses by grapheme, so an emoji keeps its skin-tone modifier,
+  a ZWJ family stays one character, accents stay on their letters, and
+  flags never re-pair. Codepoints remain the documented indexing unit
+  for `len`/`str.length`/`str.char_at`/`str.substring` — stated in
+  language.md's new "Codepoints and graphemes" section — and the
+  UAX #29 shapes are pinned in tests/graphemes_test.rs.
+
 - **Numbers read back in** (roadmap W2): float literals accept an
   exponent without a decimal point — `1e20`, `2.5e-3`, `1E+6` — so
   every finite float the runtime prints is valid source; the

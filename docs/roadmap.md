@@ -26,7 +26,7 @@ segmentation cases.
 
 | Item | Observed | Status |
 |---|---|---|
-| Grapheme decision + implementation | `str.reverse` corrupts emoji; `substring`/`char_at` split clusters | planned — direction: codepoints stay the documented indexing unit (O(1), lossless), a `str.graphemes` API (count/at/slice/reverse) serves the visible-character cases, and `str.reverse` keeps clusters whole; UAX #29 cases pinned |
+| Grapheme decision + implementation | `str.reverse` corrupts emoji; `substring`/`char_at` split clusters | **landed** — codepoints stay the documented indexing unit (stated in language.md's "Codepoints and graphemes"); `str.graphemes(s)` is the visible-character view (UAX #29 extended clusters as a list, composing with len/index/slice/join); `str.reverse` reverses by grapheme so skin tones, ZWJ families, accents, and flags stay whole; pinned by tests/graphemes_test.rs (ZWJ, modifiers, combining marks, regional indicators, Hangul jamo, CRLF) |
 
 ## W2 — numbers read back in
 
