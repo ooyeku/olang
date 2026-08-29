@@ -1368,8 +1368,9 @@ the runner refuses a result where any checksum disagrees across engines
 or repetitions, so speed is only ever compared on byte-identical
 answers.
 
-Medians of five runs. Apple M5 Pro (6P+12E, 24 GB), macOS 27.0,
-olang 0.71.0 versus pandas 3.0.5 and Polars 1.44.0 on CPython 3.14.5.
+Medians of seven runs. Apple M5 Pro (6P+12E, 24 GB), macOS 27.0,
+olang 0.78 (post-release engine work) versus pandas 3.0.5 and
+Polars 1.44.1 on CPython 3.14.5.
 Each engine runs as it ships: ods under the language's automatic
 parallelism policy, pandas single-threaded, Polars on its default
 thread pool. Times are per-stage, measured inside each process, so
@@ -1377,19 +1378,21 @@ startup is excluded equally.
 
 | Stage | ods | pandas | Polars |
 |---|---|---|---|
-| load (1M-row CSV) | 52 ms | 179 ms | 7 ms |
-| clean (drop nulls, derive) | 20 ms | 53 ms | 5 ms |
-| filter | 13 ms | 9 ms | 6 ms |
-| group (2 keys, 3 aggs) | 35 ms | 51 ms | 8 ms |
+| load (1M-row CSV) | 40 ms | 173 ms | 7 ms |
+| clean (drop nulls, derive) | 12 ms | 53 ms | 5 ms |
+| filter | 8 ms | 9 ms | 5 ms |
+| group (2 keys, 3 aggs) | 13 ms | 50 ms | 8 ms |
 | join (dimension table) | 0 ms | 1 ms | 1 ms |
 | sort | 0 ms | 0 ms | 0 ms |
-| daily (group, sort, rolling 7) | 6 ms | 21 ms | 6 ms |
+| daily (group, sort, rolling 7) | 6 ms | 20 ms | 6 ms |
 | write CSV | 0 ms | 1 ms | 1 ms |
-| **whole pipeline** | **126 ms** | **313 ms** | **34 ms** |
+| **whole pipeline** | **80 ms** | **308 ms** | **35 ms** |
 
 Read plainly: on this workload ods is ahead of pandas end to end
-(2.1×), and Polars — a decade of columnar engineering with a
-multithreaded SIMD CSV reader — is ahead of both.
+(3.8×), every stage after load sits within roughly 2× of Polars, and
+the pipeline's remaining distance is almost entirely the CSV reader —
+Polars parses with a multithreaded SIMD reader into zero-copy string
+views, where ods still materializes an allocation per string cell.
 
 The first publication of this table (0.71.0) showed 223 ms, and the
 per-stage columns were read as the to-do list they are. Each of the
@@ -1556,7 +1559,13 @@ Revisions and notes, recorded per the rule:
 Deferrals recorded with reopening conditions: **faer-backed linear
 algebra** (the in-crate Cholesky is textbook-correct for
 regression-sized systems; the big decompositions — SVD, PCA, QR —
-arrive with `faer` when a real demand creates them) and **lazy
+arrive with `faer` when a real demand creates them), **string-view
+columns** (string cells are `Arc<str>` — bulk movement is a refcount
+bump, and the CSV reader interns low-cardinality columns, but each
+distinct cell still owns an allocation; the Polars-style next step is a
+view variant holding offsets into the shared file buffer, which is what
+the pipeline table's remaining load gap is made of — reopen when a
+workload's load stage, not its compute, is the bottleneck), and **lazy
 evaluation**, next.
 
 ## Why eager evaluation

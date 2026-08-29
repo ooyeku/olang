@@ -28,8 +28,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - **The data stack closed more of the Polars gap** (DP4 pipeline,
-  1M rows: 126 ms → 98 ms; pandas 315 ms, Polars 35 ms; checksums
-  byte-identical across engines):
+  1M rows: 126 ms → 80 ms across two rounds; pandas 308 ms, Polars
+  35 ms; checksums byte-identical across engines):
+  - *String columns store `Arc<str>`* (was `String`), so every bulk
+    movement — gather, filter, sort, join — is a refcount bump per
+    kept cell instead of an allocation and copy: clean 19 → 12 ms,
+    filter 14 → 8 ms. The CSV reader builds cells through a streaming
+    interner: a low-cardinality column (region, category, date)
+    allocates once per distinct value; a mostly-unique column makes
+    the interner bail after a 4096-cell sample and cells allocate
+    plainly.
   - *group_by* (35 → 14 ms): multi-key grouping dictionary-encodes each
     key column independently, then combines per-row ids arithmetically
     and densifies through an array — the per-row `Vec<Option<Key>>`

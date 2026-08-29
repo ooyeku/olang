@@ -32,7 +32,7 @@ pub mod plot;
 pub mod stats;
 
 pub use bitmap::{Bitmap, merge_validity};
-pub use frame::{AggOp, AggSpec, Frame, JoinHow, RankMethod};
+pub use frame::{AggOp, AggSpec, Frame, JoinHow, RankMethod, StrCellInterner};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -170,7 +170,12 @@ pub enum Series {
         validity: Option<Bitmap>,
     },
     Str {
-        values: Arc<Vec<String>>,
+        /// `Arc<str>` per cell so bulk movement — gather, sort, join,
+        /// filter — is a refcount bump per kept row instead of an
+        /// allocation and copy. Construction from owned Strings pays
+        /// one conversion, exactly where the old layout paid its one
+        /// allocation.
+        values: Arc<Vec<Arc<str>>>,
         validity: Option<Bitmap>,
     },
 }
@@ -236,7 +241,7 @@ impl Series {
 
     pub fn from_str_values(values: Vec<String>) -> Self {
         Series::Str {
-            values: Arc::new(values),
+            values: Arc::new(values.into_iter().map(Arc::from).collect()),
             validity: None,
         }
     }
@@ -246,7 +251,35 @@ impl Series {
             return Self::from_str_values(opts.into_iter().flatten().collect());
         }
         let bits: Vec<bool> = opts.iter().map(|o| o.is_some()).collect();
-        let values = opts.into_iter().map(|o| o.unwrap_or_default()).collect();
+        let values = opts
+            .into_iter()
+            .map(|o| Arc::from(o.unwrap_or_default()))
+            .collect();
+        Series::Str {
+            values: Arc::new(values),
+            validity: Some(Bitmap::from_bools(&bits)),
+        }
+    }
+
+    /// The Arc-native constructors the bulk-movement paths (and the CSV
+    /// reader) use: cells arrive already shared, so building the series
+    /// allocates nothing per cell.
+    pub fn from_arc_str_values(values: Vec<Arc<str>>) -> Self {
+        Series::Str {
+            values: Arc::new(values),
+            validity: None,
+        }
+    }
+
+    pub fn from_arc_str_options(opts: Vec<Option<Arc<str>>>) -> Self {
+        if opts.iter().all(|o| o.is_some()) {
+            return Self::from_arc_str_values(opts.into_iter().flatten().collect());
+        }
+        let bits: Vec<bool> = opts.iter().map(|o| o.is_some()).collect();
+        let values = opts
+            .into_iter()
+            .map(|o| o.unwrap_or_else(|| Arc::from("")))
+            .collect();
         Series::Str {
             values: Arc::new(values),
             validity: Some(Bitmap::from_bools(&bits)),
@@ -337,7 +370,7 @@ impl Series {
             Series::F64 { values, .. } => Scalar::F64(values[i]),
             Series::I64 { values, .. } => Scalar::I64(values[i]),
             Series::Bool { values, .. } => Scalar::Bool(values[i]),
-            Series::Str { values, .. } => Scalar::Str(values[i].clone()),
+            Series::Str { values, .. } => Scalar::Str(values[i].to_string()),
         }
     }
 
@@ -563,7 +596,7 @@ impl Series {
             (Series::Str { values: a, .. }, Series::Str { values: b, .. }) => a
                 .iter()
                 .zip(b.iter())
-                .map(|(x, y)| cmp_one(x.as_str(), y.as_str(), op))
+                .map(|(x, y)| cmp_one(x.as_ref(), y.as_ref(), op))
                 .collect(),
             _ => {
                 return Err(OdsError::TypeMismatch(format!(
@@ -598,7 +631,7 @@ impl Series {
             }
             (Series::Str { values, .. }, Scalar::Str(s)) => values
                 .iter()
-                .map(|x| cmp_one(x.as_str(), s.as_str(), op))
+                .map(|x| cmp_one(x.as_ref(), s.as_str(), op))
                 .collect(),
             (Series::Bool { values, .. }, Scalar::Bool(s)) => match op {
                 CmpOp::Eq => values.iter().map(|&x| x == *s).collect(),
@@ -750,7 +783,7 @@ impl Series {
                 "min/max are not defined for Bool series".to_string(),
             )),
             Series::Str { values, validity } => {
-                let mut best: Option<&String> = None;
+                let mut best: Option<&Arc<str>> = None;
                 for (i, v) in values.iter().enumerate() {
                     if validity.as_ref().map(|b| b.get(i)).unwrap_or(true) {
                         best = Some(match best {
@@ -765,7 +798,9 @@ impl Series {
                         });
                     }
                 }
-                Ok(best.map(|s| Scalar::Str(s.clone())).unwrap_or(Scalar::Null))
+                Ok(best
+                    .map(|s| Scalar::Str(s.to_string()))
+                    .unwrap_or(Scalar::Null))
             }
         }
     }
@@ -912,7 +947,7 @@ impl Series {
                 ))
             }
             Series::Str { values, validity } => {
-                let mut vals: Vec<String> = match validity {
+                let mut vals: Vec<Arc<str>> = match validity {
                     None => values.as_ref().clone(),
                     Some(v) => (0..n)
                         .filter(|&i| v.get(i))
@@ -934,7 +969,7 @@ impl Series {
                     vals,
                     n,
                     nulls,
-                    Series::from_str_values,
+                    Series::from_arc_str_values,
                 ))
             }
             Series::Bool { .. } => unreachable!("rejected above"),
@@ -1077,14 +1112,16 @@ impl Series {
             }
             Series::Str { values, .. } => {
                 if opts_needed {
-                    Series::from_str_options(
+                    Series::from_arc_str_options(
                         indices
                             .iter()
                             .map(|&i| self.is_valid(i).then(|| values[i].clone()))
                             .collect(),
                     )
                 } else {
-                    Series::from_str_values(indices.iter().map(|&i| values[i].clone()).collect())
+                    Series::from_arc_str_values(
+                        indices.iter().map(|&i| values[i].clone()).collect(),
+                    )
                 }
             }
         }
@@ -1274,7 +1311,7 @@ impl Series {
                 }
             }
             (Series::Str { values, validity }, Scalar::Str(f)) => {
-                let f = f.clone();
+                let f: Arc<str> = Arc::from(f.as_str());
                 let bm = validity.take().expect("checked above");
                 let vals = Arc::make_mut(values);
                 for (i, v) in vals.iter_mut().enumerate() {

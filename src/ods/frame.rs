@@ -1167,7 +1167,14 @@ fn read_csv_borrowed(body: &str, headers: &[String]) -> Option<Result<Value, Str
     let pairs = parallel_map_ordered(
         headers.iter().cloned().zip(col_chunks).collect(),
         workers,
-        |(name, chunks)| (name, infer_column_chunks(chunks)),
+        |(name, chunks)| {
+            let t = std::time::Instant::now();
+            let s = infer_column_chunks(chunks);
+            if timing {
+                eprintln!("[ods-timing]   column {} parse={:?}", name, t.elapsed());
+            }
+            (name, s)
+        },
     );
     if timing {
         eprintln!("[ods-timing] infer+parse={:?}", t1.elapsed());
@@ -1389,16 +1396,23 @@ fn infer_column_chunks<S: AsRef<str> + Into<String>>(chunks: Vec<Vec<S>>) -> Ser
     drop(bools);
 
     // The one path that must own its cells — and the only one that
-    // allocates in the borrowed fast path.
-    Series::from_str_options(
+    // allocates in the borrowed fast path. Cells build as Arc<str>
+    // directly, through the interner: a low-cardinality column (a
+    // region, a category, a date) allocates once per distinct value
+    // and every repeat is a refcount bump; a mostly-unique column
+    // makes the interner bail after its sample and cells allocate
+    // plainly.
+    let mut interner = olang_ods::StrCellInterner::new();
+    Series::from_arc_str_options(
         chunks
             .into_iter()
             .flatten()
             .map(|s| {
-                if s.as_ref().is_empty() {
+                let s = s.as_ref();
+                if s.is_empty() {
                     None
                 } else {
-                    Some(s.into())
+                    Some(interner.intern(s))
                 }
             })
             .collect(),
