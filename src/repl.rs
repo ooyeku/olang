@@ -1425,25 +1425,11 @@ impl Repl {
                 }
             }
             ":ovm" => {
-                println!("\n{}", "=== Bytecode Tier ===".bright_cyan().bold());
-                match self.interpreter.bytecode_tier_stats() {
-                    Some(tier) => {
-                        println!(
-                            "  Status: {}",
-                            "enabled (functions compile on first call)".bright_green()
-                        );
-                        println!(
-                            "  Promoted: {}  Rejected: {}  Bytecode calls: {}",
-                            tier.promoted.to_string().bright_white(),
-                            tier.rejected.to_string().bright_white(),
-                            tier.bytecode_calls.to_string().bright_white()
-                        );
-                    }
-                    None => println!(
-                        "  Status: {} (restart without --no-ovm to enable)",
-                        "disabled".bright_yellow()
-                    ),
-                }
+                let target = parts
+                    .get(1)
+                    .filter(|t| **t != "status")
+                    .map(|t| t.to_string());
+                self.show_ovm_report(target.as_deref());
             }
             ":version" | "version" => {
                 println!("Olang v{}", VERSION);
@@ -2486,6 +2472,234 @@ impl Repl {
     /// The continuation prompt wears what is still open — `(( ...> ` for
     /// two unclosed parens, `" ...> ` inside a string — so the session
     /// never silently waits for a delimiter the user cannot see.
+    /// `:ovm` / `:ovm status` — the tier's full insight report; `:ovm
+    /// <name>` — one function's story. Built to answer the developer's
+    /// actual questions: what compiled, what didn't and WHY, what the
+    /// machine did about it, and what to change.
+    fn show_ovm_report(&self, target: Option<&str>) {
+        let Some(tier) = self.interpreter.bytecode_tier_ref() else {
+            println!("\n{}", "=== Bytecode Tier ===".bright_cyan().bold());
+            println!(
+                "  Status: {} (restart without --no-ovm to enable)",
+                "disabled".bright_yellow()
+            );
+            return;
+        };
+
+        let stats = tier.stats();
+        let vm = tier.vm_statistics();
+        let report = tier.tier_report(); // (name, native_calls, kinds)
+        let rejections = tier.rejections();
+        let ambiguous = tier.ambiguous_names();
+        let compiled = tier.compiled_names();
+
+        if let Some(name) = target {
+            self.show_ovm_function(tier, name, &report, &rejections, &ambiguous);
+            return;
+        }
+
+        println!("\n{}", "=== Bytecode Tier ===".bright_cyan().bold());
+        let native = if cfg!(feature = "native") {
+            "native JIT available".to_string()
+        } else {
+            "built without the native JIT".to_string()
+        };
+        println!(
+            "  Status: {} — compiles on call #{}; {}",
+            "enabled".bright_green(),
+            tier.threshold(),
+            native
+        );
+        let flag = |name: &str| {
+            if std::env::var_os(name).is_some() {
+                format!("{} SET", name).bright_yellow().to_string()
+            } else {
+                format!("{} unset", name).dimmed().to_string()
+            }
+        };
+        println!(
+            "  {} · {} · warm hints: {}",
+            flag("OLANG_OSR_OFF"),
+            flag("OLANG_BRIDGE_TIER_OFF"),
+            tier.warm_hint_count()
+        );
+
+        println!("\n  {}", "Session totals".bright_white().bold());
+        println!(
+            "    bytecode calls: {}   native (JIT) calls: {}   OSR loop entries: {}",
+            stats.bytecode_calls.to_string().bright_white(),
+            stats.jit_native_calls.to_string().bright_white(),
+            vm.osr_entries.to_string().bright_white()
+        );
+        println!(
+            "    VM instructions: {}   compile time: {:.1?}",
+            vm.instructions_executed.to_string().bright_white(),
+            vm.compilation_time
+        );
+        println!(
+            "    promoted: {}   rejected: {}   polymorphic: {}",
+            stats.promoted.to_string().bright_green(),
+            stats.rejected.to_string().bright_yellow(),
+            ambiguous.len()
+        );
+
+        if compiled.is_empty() && rejections.is_empty() && ambiguous.is_empty() {
+            println!(
+                "\n  Nothing has been called yet — define a function and call it,\n  \
+                 then `:ovm` again. `:profile <expr>` times an expression across tiers."
+            );
+            return;
+        }
+
+        if !report.is_empty() || !compiled.is_empty() {
+            println!("\n  {}", "Compiled functions".bright_white().bold());
+            // The JIT view knows native calls and specializations; names
+            // compiled to bytecode but never JIT-dispatched still deserve a
+            // row, so merge the two sources.
+            let mut seen = std::collections::HashSet::new();
+            let mut rows: Vec<(String, u64, Vec<String>)> = Vec::new();
+            for (name, native_calls, kinds) in &report {
+                seen.insert(name.clone());
+                rows.push((name.clone(), *native_calls, kinds.clone()));
+            }
+            for name in &compiled {
+                if !seen.contains(name) {
+                    rows.push((name.clone(), 0, Vec::new()));
+                }
+            }
+            rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            for (name, native_calls, kinds) in rows {
+                let spec = if kinds.is_empty() {
+                    "—".dimmed().to_string()
+                } else {
+                    kinds.join(", ")
+                };
+                println!(
+                    "    {:<28} native calls {:>8}   specialized on {}",
+                    name.bright_white(),
+                    native_calls,
+                    spec
+                );
+            }
+            println!(
+                "    {}",
+                "(0 native calls = ran on the bytecode VM, or declined the call\n     \
+                 boundary — trivial bodies stay off native on purpose)"
+                    .dimmed()
+            );
+        }
+
+        if !rejections.is_empty() {
+            println!(
+                "\n  {}",
+                "Still interpreted — and why".bright_white().bold()
+            );
+            for (name, why) in &rejections {
+                println!("    {:<28} {}", name.bright_yellow(), why);
+                if let Some(hint) = Self::ovm_hint(why) {
+                    println!("    {:<28} {}", "", hint.dimmed());
+                }
+            }
+        }
+
+        if !ambiguous.is_empty() {
+            println!("\n  {}", "Polymorphic names".bright_white().bold());
+            for name in &ambiguous {
+                println!(
+                    "    {:<28} two bodies share this name (trait default + override);\n    \
+                     {:<28} the interpreter dispatches by receiver type — correct by design",
+                    name.bright_white(),
+                    ""
+                );
+            }
+        }
+
+        println!(
+            "\n  {} `:ovm <name>` for one function · `:profile <expr>` times across tiers\n  \
+             `olang profile <file>` samples a whole run · `olang run` records warm profiles",
+            "More:".bright_cyan()
+        );
+    }
+
+    /// One function's tier story for `:ovm <name>`.
+    fn show_ovm_function(
+        &self,
+        tier: &crate::ovm::tier::BytecodeTier,
+        name: &str,
+        report: &[(String, u64, Vec<String>)],
+        rejections: &[(String, String)],
+        ambiguous: &[String],
+    ) {
+        println!("\n{}", format!("=== {} ===", name).bright_cyan().bold());
+        if let Some((_, why)) = rejections.iter().find(|(n, _)| n == name) {
+            println!("  Tier: {} (rejected)", "interpreter".bright_yellow());
+            println!("  Why:  {}", why);
+            if let Some(hint) = Self::ovm_hint(why) {
+                println!("  Fix:  {}", hint);
+            }
+            return;
+        }
+        if ambiguous.iter().any(|n| n == name) {
+            println!("  Tier: {} (polymorphic)", "interpreter".bright_yellow());
+            println!(
+                "  Why:  two distinct function bodies share this name (a trait default\n        \
+                 and an override); the interpreter dispatches by receiver type.\n        \
+                 This is correct — renaming one body would let each tier separately."
+            );
+            return;
+        }
+        if let Some((_, native_calls, kinds)) = report.iter().find(|(n, _, _)| n == name) {
+            println!("  Tier: {}", "compiled".bright_green());
+            println!("  Native (JIT) calls: {}", native_calls);
+            if kinds.is_empty() {
+                println!(
+                    "  Specialization: none yet — it runs on the bytecode VM until a\n  \
+                     scalar-typed call (Int/Float/Bool args) lets the JIT specialize"
+                );
+            } else {
+                println!("  Specialized on: {}", kinds.join(", "));
+            }
+            return;
+        }
+        if tier.compiled_names().iter().any(|n| n == name) {
+            println!(
+                "  Tier: {} (bytecode, no JIT view)",
+                "compiled".bright_green()
+            );
+            return;
+        }
+        println!(
+            "  Not seen by the tier yet — call it once (compiles on call #{}),\n  \
+             then `:ovm {}` again.",
+            tier.threshold(),
+            name
+        );
+    }
+
+    /// Plain-language advice for a rejection reason, when a pattern is
+    /// recognizable. The raw reason still prints; this is the "so what".
+    fn ovm_hint(why: &str) -> Option<&'static str> {
+        if why.contains("default parameter") {
+            Some(
+                "pass every argument explicitly at hot call sites, or split the defaulted path into its own wrapper — the wrapped core will tier",
+            )
+        } else if why.contains("cannot compile") && why.contains("calls '") {
+            Some("the named callee is the blocker — `:ovm <callee>` shows its reason")
+        } else if why.contains("Unresolved identifier") {
+            Some("it references a name the compiler cannot see; pass it in as a parameter")
+        } else if why.contains("Unsupported") || why.contains("not supported") {
+            Some(
+                "this construct runs on the interpreter by design; move the hot loop into its own function without it and that function will tier",
+            )
+        } else if why.contains("boundary cannot convert") {
+            Some(
+                "it returns a value kind the tier boundary refuses; returning plain data (numbers, strings, lists, maps) lets it tier",
+            )
+        } else {
+            None
+        }
+    }
+
     fn continuation_prompt(&self) -> String {
         let (stack, in_string) = Self::open_delimiters(&self.multiline_buffer);
         let mut open: String = stack.iter().collect();

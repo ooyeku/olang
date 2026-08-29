@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`:ovm` is an insight report.** It answered "Promoted: 0 Rejected: 0"
+  and nothing else; now it answers the developer's actual questions.
+  Session totals (bytecode and native-JIT calls, OSR loop entries, VM
+  instructions, compile time), every compiled function with its native
+  call count and type specialization, every rejected function with the
+  recorded reason it stays interpreted — the tier now keeps the
+  compiler's message per rejection — plus a plain-language fix when the
+  pattern is recognizable (default parameters, a blocked callee, an
+  unsupported construct), polymorphic names explained, and the
+  environment flags in effect. `:ovm <name>` tells one function's
+  story: its tier, why, and what would change it. `:ovm status` remains
+  an alias. Pinned by tests/ovm_insights_test.rs against the real
+  binary.
+
 - **Text is made of graphemes** (roadmap W1): `str.graphemes(s)` —
   the visible characters of a string as a list of UAX #29 extended
   grapheme clusters, the composable primitive for every

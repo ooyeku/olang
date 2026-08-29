@@ -133,6 +133,10 @@ pub struct BytecodeTier {
     compiled: HashMap<String, (FunctionId, Arc<crate::ast::Expr>)>,
     /// Names that failed compilation — never retried
     rejected: HashSet<String>,
+    /// Why each rejected name stays interpreted — the raw compiler
+    /// message, kept so `:ovm` can turn "0 rejected, 0 promoted" into
+    /// something a developer can act on.
+    rejected_reasons: HashMap<String, String>,
     /// User functions the interpreter has declared, so a promoted function
     /// calling a helper can have that helper compiled too
     known_functions: HashMap<String, Function>,
@@ -177,6 +181,7 @@ impl BytecodeTier {
             call_counts: HashMap::new(),
             compiled: HashMap::new(),
             rejected: HashSet::new(),
+            rejected_reasons: HashMap::new(),
             known_functions: HashMap::new(),
             ambiguous: HashSet::new(),
             arg_cache: HashMap::new(),
@@ -209,6 +214,64 @@ impl BytecodeTier {
         trace: Arc<std::sync::Mutex<std::collections::BTreeSet<crate::caps::CapUse>>>,
     ) {
         self.vm.set_caps_trace(trace);
+    }
+
+    /// Every rejected name with the reason it stays interpreted, sorted.
+    pub fn rejections(&self) -> Vec<(String, String)> {
+        let mut rows: Vec<(String, String)> = self
+            .rejected
+            .iter()
+            .map(|n| {
+                let why = self
+                    .rejected_reasons
+                    .get(n)
+                    .cloned()
+                    .unwrap_or_else(|| "reason not recorded".to_string());
+                (n.clone(), why)
+            })
+            .collect();
+        rows.sort();
+        rows
+    }
+
+    /// Names compiled to bytecode this session, sorted.
+    pub fn compiled_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.compiled.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    /// Names the tier can never dispatch because two distinct bodies share
+    /// them (trait default + override); the interpreter resolves these by
+    /// receiver type — correct, and worth *seeing*.
+    pub fn ambiguous_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.ambiguous.iter().cloned().collect();
+        names.sort();
+        names
+    }
+
+    /// Functions counting toward the promotion threshold but not yet
+    /// compiled or rejected: hot-in-waiting, with their call counts.
+    pub fn pending_counts(&self) -> Vec<(String, u32)> {
+        let mut rows: Vec<(String, u32)> = self
+            .call_counts
+            .iter()
+            .filter(|(n, _)| !self.compiled.contains_key(*n) && !self.rejected.contains(*n))
+            .map(|(n, c)| (n.clone(), *c))
+            .collect();
+        rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        rows
+    }
+
+    /// How many warm-start hints this tier was seeded with.
+    pub fn warm_hint_count(&self) -> usize {
+        self.warm_hints.len()
+    }
+
+    /// The VM's own execution counters (instructions, calls, cache
+    /// traffic, compile/execute time, OSR loop entries).
+    pub fn vm_statistics(&self) -> &crate::ovm::bytecode::VmStatistics {
+        self.vm.statistics()
     }
 
     pub fn stats(&self) -> TierStats {
@@ -407,6 +470,7 @@ impl BytecodeTier {
             self.known_functions.remove(&name);
             self.call_counts.remove(&name);
             self.rejected.remove(&name);
+            self.rejected_reasons.remove(&name);
             self.vm.unregister_function(&name);
             self.compiled.clear();
             return;
@@ -667,7 +731,10 @@ impl BytecodeTier {
                 // value; refuse rather than return something else.
                 Err(_) => {
                     if let Some(name) = reject_name {
-                        self.reject(name);
+                        self.reject(
+                            name,
+                            "returned a value the tier boundary cannot convert back",
+                        );
                     }
                     TierOutcome::Fallback
                 }
@@ -716,7 +783,10 @@ impl BytecodeTier {
             let decl = match Self::declaration(name, func) {
                 Some(decl) => decl,
                 None => {
-                    self.reject(name);
+                    self.reject(
+                        name,
+                        "its declaration shape cannot be rebuilt for the compiler",
+                    );
                     return None;
                 }
             };
@@ -747,7 +817,7 @@ impl BytecodeTier {
                                 name, callee
                             );
                         }
-                        self.reject(name);
+                        self.reject(name, format!("calls '{}', which cannot compile", callee));
                         return None;
                     }
                 }
@@ -755,7 +825,8 @@ impl BytecodeTier {
                     if self.verbose {
                         eprintln!("[ovm] '{}' stays interpreted: {}", name, e);
                     }
-                    self.reject(name);
+                    let reason = e.to_string();
+                    self.reject(name, reason);
                     return None;
                 }
             }
@@ -767,7 +838,7 @@ impl BytecodeTier {
                 name
             );
         }
-        self.reject(name);
+        self.reject(name, "its dependency chain is too deep to resolve");
         None
     }
 
@@ -798,7 +869,10 @@ impl BytecodeTier {
     fn register(&mut self, name: &str, func: &Function) -> Option<FunctionId> {
         // Default parameter values are evaluated by the interpreter
         if func.parameters.iter().any(|p| p.default_value.is_some()) {
-            self.reject(name);
+            self.reject(
+                name,
+                "has default parameter values (defaults are evaluated by the interpreter)",
+            );
             return None;
         }
 
@@ -825,11 +899,13 @@ impl BytecodeTier {
         })
     }
 
-    fn reject(&mut self, name: &str) {
+    fn reject(&mut self, name: &str, reason: impl Into<String>) {
         // Withdraw the pre-compilation registration so nothing else resolves a
         // call against a name that has no bytecode
         self.vm.unregister_function(name);
         self.rejected.insert(name.to_string());
+        self.rejected_reasons
+            .insert(name.to_string(), reason.into());
         self.compiled.remove(name);
         self.stats.rejected += 1;
     }
@@ -847,6 +923,7 @@ impl BytecodeTier {
         self.known_functions.remove(name);
         self.call_counts.remove(name);
         self.rejected.remove(name);
+        self.rejected_reasons.remove(name);
         self.vm.unregister_function(name);
         self.compiled.clear();
     }

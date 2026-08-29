@@ -7479,6 +7479,21 @@ impl HelpSystem {
             category: "REPL".to_string(),
             see_also: vec![":ml".to_string(), ":end".to_string()],
         });
+        self.add_function(FunctionDoc {
+            name: ":ovm".to_string(),
+            description: "The bytecode tier's full insight report: session totals (bytecode and native-JIT calls, OSR loop entries, compile time), every compiled function with its native call count and type specialization, every rejected function with the reason it stays interpreted and a plain-language fix, polymorphic names, and the environment flags in effect. `:ovm <name>` tells one function's story — its tier, why, and what would change it.".to_string(),
+            syntax: ":ovm [<function>]".to_string(),
+            parameters: vec![
+                "function - optional: report on this one function".to_string(),
+            ],
+            return_type: "Report".to_string(),
+            examples: vec![
+                ":ovm                    // the whole tier: totals, compiled, rejected+why".to_string(),
+                ":ovm my_fn              // one function: tier, reason, fix".to_string(),
+            ],
+            category: "REPL".to_string(),
+            see_also: vec![":profile".to_string()],
+        });
 
         // Session Management
         self.add_function(FunctionDoc {

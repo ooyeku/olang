@@ -1852,6 +1852,12 @@ impl Interpreter {
         self.bytecode_tier.as_ref().map(|t| t.stats())
     }
 
+    /// The tier itself, read-only. `:ovm` renders its full insight
+    /// surface: rejections with reasons, per-function tiers, VM counters.
+    pub fn bytecode_tier_ref(&self) -> Option<&crate::ovm::tier::BytecodeTier> {
+        self.bytecode_tier.as_deref()
+    }
+
     /// The modules this run has loaded, as (registered name, file)
     /// pairs — the REPL's `:help` maps a module-qualified query
     /// (`geometry.point`) to the file behind the name, which a bare

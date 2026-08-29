@@ -4812,6 +4812,11 @@ impl BytecodeVm {
     /// tier folds these into its `promoted` stat, since "compiled to the
     /// tier by name" is what that number has always meant, whichever
     /// channel did the compiling.
+    /// The VM's counters, read-only — the tier surfaces these in `:ovm`.
+    pub fn statistics(&self) -> &VmStatistics {
+        &self.stats
+    }
+
     pub(crate) fn hof_promotions(&self) -> u32 {
         self.hof_promotions
     }
