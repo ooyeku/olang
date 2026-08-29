@@ -32,7 +32,8 @@ let long_running = #{
     "web/webserver/": "tests/http_serve_test.rs",
     "web/app/": "tests/tracker_app_test.rs",
     "web/ledger/": "tests/ledger_app_test.rs",
-    "data-processing/climate/": "its README — downloads ~24MB of real data"
+    "data-processing/climate/": "its README — downloads ~24MB of real data",
+    "data-processing/crimes/": "its README — downloads ~2GB and trains models for minutes"
 }
 
 // ── discover targets: each is { label, dir, file } ──

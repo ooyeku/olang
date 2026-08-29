@@ -187,6 +187,16 @@ you care about.
   roughly half a second. A `test` block pins every inference. The `stats` and
   `plot` workflow it scales up is taught in
   [the Data Stack chapter](../docs/ods.md)
+- [`crimes/`](data-processing/crimes/) — 8.6 million rows, end to end:
+  the complete City of Chicago crime record (~2 GB of live CSV)
+  downloaded as part of the run, then trend inference (a two-decade
+  decline fitted at R²≈0.9), per-category arrest rates, the city's
+  hourly rhythm, a chi-square independence test, k-means over ~900k
+  geocoded incidents, and a logistic regression predicting arrests
+  (305k training rows, held-out accuracy/AUC, a converging loss
+  curve) — the clustering and the classifier written in olang itself.
+  The largest workstream in the gallery and the closest thing to a
+  whole-engine benchmark; `data/` and `out/` never touch git
 - [`climate/`](data-processing/climate/) — a real data-science workstream on real
   downloaded data: fetches Our World in Data's CO2 and energy datasets
   (~24 MB, cached, retried, atomically written), splits countries from

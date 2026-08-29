@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **examples/data-processing/crimes — 8.6 million rows, end to end.**
+  The gallery's largest workstream and the closest thing to a
+  whole-engine benchmark: the complete City of Chicago crime record
+  (~2 GB of live CSV) downloaded as part of the run (cached, retried,
+  atomically written), loaded through the general parser, and worked
+  all the way up — month/hour derived from 8.6M timestamp strings by
+  bulk lambdas, a fitted two-decade trend (R²≈0.9), per-category
+  arrest rates, the city's hourly rhythm (with the midnight data-entry
+  artifact named), a chi-square independence test, k-means over ~900k
+  geocoded incidents, and a logistic regression predicting arrests on
+  305k training rows with held-out accuracy, precision/recall, AUC,
+  and a converging loss curve — the clustering and the classifier
+  written in olang itself and executed on the bytecode tier. Outputs
+  land in out/ (markdown report, five SVG charts, three derived CSVs);
+  data/ and out/ never touch git. Nine test blocks pin the ML and
+  prep helpers; the harness skips it by name (a 2 GB download and
+  minutes of honest training).
+
 - **examples/ is organized by category.** Thirty-seven examples now
   group under five directories that say what they demonstrate:
   `data-processing/` (the ods stack: ETL, statistics, time series,
