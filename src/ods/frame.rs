@@ -326,7 +326,7 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
         // same hole `db.open` had before 0.60.
         "read_csv_file" => {
             let path = want_string(func, &args, 0)?;
-            match std::fs::read_to_string(&path) {
+            match read_csv_file_shared(&path) {
                 // A missing or unreadable file is a failure the caller can
                 // handle, so it is a Result rather than a raise — the 0.64
                 // rule. A malformed CSV *inside* a readable file is also a
@@ -335,13 +335,11 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
                     "ods.read_csv_file: {}: {}",
                     path, err
                 )))))),
-                Ok(text) => match read_csv(&text) {
-                    Ok(frame) => Ok(Value::Ok(Box::new(frame))),
-                    Err(msg) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-                        "{} (reading {})",
-                        msg, path
-                    )))))),
-                },
+                Ok(Ok(frame)) => Ok(Value::Ok(Box::new(frame))),
+                Ok(Err(msg)) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                    "{} (reading {})",
+                    msg, path
+                )))))),
             }
         }
         "read_jsonl" => {
@@ -1223,7 +1221,10 @@ enum ChunkCol {
         valid: Option<Vec<bool>>,
     },
     /// Spans into the body (already rebased); an empty span is a null.
-    Str { spans: Vec<(u32, u32)> },
+    Str {
+        spans: Vec<(u32, u32)>,
+        has_null: bool,
+    },
 }
 
 impl ChunkCol {
@@ -1233,7 +1234,7 @@ impl ChunkCol {
             ChunkCol::I64 { values, .. } => values.len(),
             ChunkCol::F64 { values, .. } => values.len(),
             ChunkCol::Bool { values, .. } => values.len(),
-            ChunkCol::Str { spans } => spans.len(),
+            ChunkCol::Str { spans, .. } => spans.len(),
         }
     }
 }
@@ -1267,9 +1268,7 @@ fn parse_i64_fast(s: &str) -> Option<i64> {
 /// The per-column speculative builder the fused scan drives.
 enum Builder {
     /// No non-empty cell yet; `nulls` counts the empties.
-    Undecided {
-        nulls: usize,
-    },
+    Undecided { nulls: usize },
     I64 {
         values: Vec<i64>,
         valid: Option<Vec<bool>>,
@@ -1284,6 +1283,7 @@ enum Builder {
     },
     Str {
         spans: Vec<(u32, u32)>,
+        has_null: bool,
     },
 }
 
@@ -1304,7 +1304,10 @@ impl Builder {
                 Self::mark_null(valid, values.len());
                 values.push(false);
             }
-            Builder::Str { spans } => spans.push((0, 0)),
+            Builder::Str { spans, has_null } => {
+                *has_null = true;
+                spans.push((0, 0));
+            }
         }
     }
 
@@ -1350,7 +1353,10 @@ fn seed_builder(cell: &str, nulls: usize, span: (u32, u32), est_rows: usize) -> 
         let mut spans = Vec::with_capacity(cap);
         spans.extend(std::iter::repeat_n((0u32, 0u32), nulls));
         spans.push(span);
-        Builder::Str { spans }
+        Builder::Str {
+            spans,
+            has_null: nulls > 0,
+        }
     }
 }
 
@@ -1388,7 +1394,10 @@ fn emit_cell(b: &mut Builder, cell: &str, span: (u32, u32), est_rows: usize) -> 
                     valid: vd,
                 };
             } else {
-                *b = Builder::Str { spans: Vec::new() };
+                *b = Builder::Str {
+                    spans: Vec::new(),
+                    has_null: false,
+                };
                 return true;
             }
         }
@@ -1397,7 +1406,10 @@ fn emit_cell(b: &mut Builder, cell: &str, span: (u32, u32), est_rows: usize) -> 
                 Builder::push_valid(valid);
                 values.push(f);
             } else {
-                *b = Builder::Str { spans: Vec::new() };
+                *b = Builder::Str {
+                    spans: Vec::new(),
+                    has_null: false,
+                };
                 return true;
             }
         }
@@ -1411,11 +1423,14 @@ fn emit_cell(b: &mut Builder, cell: &str, span: (u32, u32), est_rows: usize) -> 
                 values.push(false);
             }
             _ => {
-                *b = Builder::Str { spans: Vec::new() };
+                *b = Builder::Str {
+                    spans: Vec::new(),
+                    has_null: false,
+                };
                 return true;
             }
         },
-        Builder::Str { spans } => spans.push(span),
+        Builder::Str { spans, .. } => spans.push(span),
     }
     false
 }
@@ -1508,7 +1523,8 @@ fn fused_scan_chunk(
         let span_cols = rescan_spans(chunk, base, n_cols, &demoted)?;
         for (c, spans) in span_cols.into_iter().enumerate() {
             if demoted[c] {
-                builders[c] = Builder::Str { spans };
+                let has_null = spans.iter().any(|&(_, l)| l == 0);
+                builders[c] = Builder::Str { spans, has_null };
             }
         }
     }
@@ -1521,7 +1537,7 @@ fn fused_scan_chunk(
                 Builder::I64 { values, valid } => ChunkCol::I64 { values, valid },
                 Builder::F64 { values, valid } => ChunkCol::F64 { values, valid },
                 Builder::Bool { values, valid } => ChunkCol::Bool { values, valid },
-                Builder::Str { spans } => ChunkCol::Str { spans },
+                Builder::Str { spans, has_null } => ChunkCol::Str { spans, has_null },
             })
             .collect(),
     )
@@ -1723,13 +1739,19 @@ fn merge_column(
             Some(Series::from_bool_with_validity(values, valid))
         }
         T::S => {
+            let clean = chunks.iter().all(|c| match c {
+                C::Str { has_null, .. } => !*has_null,
+                C::AllNull { .. } => false,
+                // A numeric chunk re-derives spans below; whether it
+                // holds nulls is only knowable after the re-scan.
+                _ => false,
+            });
             let mut spans: Vec<(u32, u32)> = Vec::with_capacity(total);
-            let mut valid: Vec<bool> = Vec::with_capacity(total);
-            let mut any_null = false;
             let wanted: Vec<bool> = (0..n_cols).map(|c| c == col).collect();
+            let mut chunk_span_lists: Vec<Vec<(u32, u32)>> = Vec::with_capacity(chunks.len());
             for (ci, c) in chunks.into_iter().enumerate() {
-                let chunk_spans = match c {
-                    C::Str { spans } => spans,
+                chunk_span_lists.push(match c {
+                    C::Str { spans, .. } => spans,
                     C::AllNull { n } => vec![(0u32, 0u32); n],
                     _ => {
                         let range = chunk_ranges[ci].clone();
@@ -1741,13 +1763,25 @@ fn merge_column(
                         )?;
                         std::mem::take(&mut got[col])
                     }
-                };
-                for &(_, l) in &chunk_spans {
+                });
+            }
+            if clean {
+                // No chunk holds a null: skip the per-cell validity
+                // pass entirely.
+                for cs in chunk_span_lists {
+                    spans.extend(cs);
+                }
+                return Some(Series::from_str_spans(body_arc.clone(), spans, None));
+            }
+            let mut valid: Vec<bool> = Vec::with_capacity(total);
+            let mut any_null = false;
+            for cs in chunk_span_lists {
+                for &(_, l) in &cs {
                     let ok = l > 0;
                     valid.push(ok);
                     any_null |= !ok;
                 }
-                spans.extend(chunk_spans);
+                spans.extend(cs);
             }
             Some(Series::from_str_spans(
                 body_arc.clone(),
@@ -1767,10 +1801,11 @@ fn merge_column(
 /// not one this path may decide — a short or long row — leaving the
 /// general parser in charge of error reporting.
 fn read_csv_borrowed(
-    body_arc: &std::sync::Arc<str>,
+    text_arc: &std::sync::Arc<str>,
+    body_start: usize,
     headers: &[String],
 ) -> Option<Result<Value, String>> {
-    let body: &str = body_arc;
+    let body: &str = &text_arc[body_start..];
     let n_cols = headers.len();
     if n_cols == 0 {
         return None;
@@ -1784,17 +1819,20 @@ fn read_csv_borrowed(
     let timing = std::env::var_os("OLANG_ODS_TIMING").is_some();
     let t0 = std::time::Instant::now();
 
+    // Ranges are absolute into the full text, so spans recorded by the
+    // scan index the shared Arc directly.
     let chunk_ranges: Vec<std::ops::Range<usize>> = if workers > 1 {
         unquoted_record_splits(body, workers)
             .windows(2)
-            .map(|w| w[0]..w[1])
+            .map(|w| body_start + w[0]..body_start + w[1])
             .collect()
     } else {
-        std::iter::once(0..body.len()).collect()
+        std::iter::once(body_start..text_arc.len()).collect()
     };
+    let full: &str = text_arc;
     let scanned: Vec<Option<Vec<ChunkCol>>> =
         parallel_map_ordered(chunk_ranges.clone(), workers, |range| {
-            fused_scan_chunk(body, range, n_cols)
+            fused_scan_chunk(full, range, n_cols)
         });
     // Any chunk declining (bad row shape) declines the whole path.
     let mut per_chunk: Vec<Vec<ChunkCol>> = Vec::with_capacity(scanned.len());
@@ -1832,7 +1870,7 @@ fn read_csv_borrowed(
             .collect(),
         merge_workers,
         |(name, (c, chunks))| {
-            let s = merge_column(body_arc, chunks, ranges_ref, c, n_cols);
+            let s = merge_column(text_arc, chunks, ranges_ref, c, n_cols);
             (name, s)
         },
     );
@@ -1846,7 +1884,48 @@ fn read_csv_borrowed(
     Some(Frame::new(pairs).map(OdsFrame::into_value).map_err(e))
 }
 
+/// Read a whole file into an `Arc<str>` with one allocation: the read
+/// syscall writes directly into the Arc's buffer, so the CSV fast
+/// path's shared body never copies the file. The zeroed allocation is
+/// pages the kernel hands over zeroed anyway; UTF-8 is validated
+/// before the `Arc<[u8]>` is committed to being text.
+fn read_file_arc(path: &str) -> std::io::Result<std::sync::Arc<str>> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path)?;
+    let len = f.metadata()?.len() as usize;
+    // SAFETY: assume_init on zeroed bytes — zero is a valid u8.
+    let mut arc: std::sync::Arc<[u8]> =
+        unsafe { std::sync::Arc::new_zeroed_slice(len).assume_init() };
+    let buf = std::sync::Arc::get_mut(&mut arc).expect("freshly created, unique");
+    f.read_exact(buf)?;
+    if std::str::from_utf8(&arc).is_err() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "file is not valid UTF-8",
+        ));
+    }
+    // SAFETY: validated UTF-8 just above; str and [u8] share layout and
+    // pointer metadata, so the raw-pointer cast preserves the
+    // allocation and its refcount header exactly.
+    Ok(unsafe { std::sync::Arc::from_raw(std::sync::Arc::into_raw(arc) as *const str) })
+}
+
+fn read_csv_file_shared(path: &str) -> Result<Result<Value, String>, std::io::Error> {
+    let text = read_file_arc(path)?;
+    Ok(read_csv_arc(text))
+}
+
+/// `read_csv` over an already-shared body: the fast path records spans
+/// straight into `text` with no copy at all.
+fn read_csv_arc(text: std::sync::Arc<str>) -> Result<Value, String> {
+    read_csv_impl(&text, Some(&text))
+}
+
 fn read_csv(text: &str) -> Result<Value, String> {
+    read_csv_impl(text, None)
+}
+
+fn read_csv_impl(text: &str, shared: Option<&std::sync::Arc<str>>) -> Result<Value, String> {
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(true)
         .from_reader(text.as_bytes());
@@ -1871,10 +1950,20 @@ fn read_csv(text: &str) -> Result<Value, String> {
     // here replaces a per-cell allocation downstream.
     if !text.as_bytes()[body_start..].contains(&b'"')
         && !headers.is_empty()
-        && u32::try_from(text.len() - body_start).is_ok()
+        && u32::try_from(text.len()).is_ok()
     {
-        let body_arc: std::sync::Arc<str> = std::sync::Arc::from(&text[body_start..]);
-        if let Some(frame) = read_csv_borrowed(&body_arc, &headers) {
+        // With a pre-shared body (the file-read path) spans point into
+        // it directly — zero copies of the file anywhere. A borrowed
+        // &str body pays one copy here, as before.
+        let owned;
+        let body_arc: &std::sync::Arc<str> = match shared {
+            Some(arc) => arc,
+            None => {
+                owned = std::sync::Arc::from(text);
+                &owned
+            }
+        };
+        if let Some(frame) = read_csv_borrowed(body_arc, body_start, &headers) {
             return frame;
         }
     }

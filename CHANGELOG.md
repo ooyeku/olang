@@ -28,9 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - **The data stack closed more of the Polars gap** (DP4 pipeline,
-  1M rows: 126 ms → 55 ms across five rounds; pandas 314 ms, Polars
-  35 ms — end to end, 5.7× ahead of pandas and within 1.6× of Polars;
+  1M rows: 126 ms → 51 ms across six rounds; pandas 313 ms, Polars
+  33 ms — end to end, 6.1× ahead of pandas and within 1.5× of Polars;
   checksums byte-identical across engines):
+  - *The file reads directly into the shared body*: `read_csv_file`
+    reads the bytes straight into the `Arc<str>` allocation the string
+    columns will share (zeroed slice, read_exact, UTF-8 validation,
+    then the sound `Arc<[u8]>` → `Arc<str>` cast), and the fast path's
+    spans are absolute into that whole-file Arc — the last copy of the
+    file is gone, and peak memory during load drops by one body. A
+    string column whose chunks saw no empty cell also skips its
+    per-cell validity pass. Load 14 → 10 ms.
   - *The hidden sequential pass, found and removed*: what profiling
     kept showing as a ~2× parallel-scaling ceiling on the CSV scan was
     a quote-aware record-boundary pass walking every byte of the body
