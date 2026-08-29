@@ -1378,22 +1378,24 @@ startup is excluded equally.
 
 | Stage | ods | pandas | Polars |
 |---|---|---|---|
-| load (1M-row CSV) | 34 ms | 171 ms | 7 ms |
-| clean (drop nulls, derive) | 12 ms | 52 ms | 6 ms |
-| filter | 9 ms | 9 ms | 5 ms |
-| group (2 keys, 3 aggs) | 14 ms | 50 ms | 8 ms |
+| load (1M-row CSV) | 27 ms | 174 ms | 7 ms |
+| clean (drop nulls, derive) | 11 ms | 53 ms | 5 ms |
+| filter | 8 ms | 8 ms | 5 ms |
+| group (2 keys, 3 aggs) | 14 ms | 50 ms | 7 ms |
 | join (dimension table) | 0 ms | 1 ms | 1 ms |
 | sort | 0 ms | 0 ms | 0 ms |
-| daily (group, sort, rolling 7) | 6 ms | 20 ms | 6 ms |
-| write CSV | 0 ms | 3 ms | 1 ms |
-| **whole pipeline** | **74 ms** | **305 ms** | **34 ms** |
+| daily (group, sort, rolling 7) | 6 ms | 20 ms | 5 ms |
+| write CSV | 0 ms | 1 ms | 1 ms |
+| **whole pipeline** | **68 ms** | **309 ms** | **32 ms** |
 
 Read plainly: on this workload ods is ahead of pandas end to end
-(4.1×), every stage after load sits within roughly 2× of Polars, and
-the pipeline's remaining distance is concentrated in the CSV reader's
-field-splitting scan — string *storage* is now Polars-shaped (see
-below), and what remains is their multithreaded SIMD parse loop
-against our scalar one.
+(4.5×), and every stage sits within a small constant of Polars — a
+decade of columnar engineering with SIMD kernels throughout. The CSV
+reader is *fused*: one scan per record-aligned chunk both finds
+delimiters and parses each field into its column's speculative typed
+builder while the bytes are hot in cache; string columns keep spans
+into the file body itself. The reader's remaining distance to Polars
+is SIMD field scanning and parsing, recorded below.
 
 The first publication of this table (0.71.0) showed 223 ms, and the
 per-stage columns were read as the to-do list they are. Each of the
@@ -1560,15 +1562,16 @@ Revisions and notes, recorded per the rule:
 Deferrals recorded with reopening conditions: **faer-backed linear
 algebra** (the in-crate Cholesky is textbook-correct for
 regression-sized systems; the big decompositions — SVD, PCA, QR —
-arrive with `faer` when a real demand creates them), **split+parse
-fusion in the CSV reader** (string columns are now spans into the
-shared file body — the string-view design landed, and cells never
-exist as separate allocations — but the reader still runs two passes:
-a scalar memchr scan that materializes field spans, then per-column
-type inference over them; Polars fuses delimiter scanning and parsing
-in one multithreaded SIMD pass, which is the remaining ~27 ms of the
-load row — reopen when a workload's load stage, not its compute, is
-the bottleneck), and **lazy evaluation**, next.
+arrive with `faer` when a real demand creates them), **SIMD field
+scanning in the CSV reader** (the reader is fused — one scan per chunk
+parses fields into speculative typed builders as delimiters arrive,
+with in-place Int→Float upgrades, demotion-to-text re-scans, and
+cross-chunk type reconciliation, all pinned cell-identical to the
+general parser by `tests/csv_reader_differential_test.rs` — but the
+scan itself is scalar memchr plus a per-field branch; Polars runs
+vectorized delimiter classification and SIMD numeric parsing, which is
+most of the remaining load gap — reopen if a workload's load stage,
+not its compute, is the bottleneck), and **lazy evaluation**, next.
 
 ## Why eager evaluation
 

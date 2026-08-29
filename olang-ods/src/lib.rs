@@ -391,6 +391,29 @@ impl Series {
     /// A string series over spans into a shared buffer — the CSV
     /// reader's zero-copy path. `nulls` marks the invalid cells (their
     /// spans should be empty).
+    /// Dense values plus an optional validity vec — the bulk-reader
+    /// constructors: no per-cell Option, no second materialization.
+    pub fn from_i64_with_validity(values: Vec<i64>, valid: Option<Vec<bool>>) -> Self {
+        Series::I64 {
+            values: Arc::new(values),
+            validity: valid.map(|b| Bitmap::from_bools(&b)),
+        }
+    }
+
+    pub fn from_f64_with_validity(values: Vec<f64>, valid: Option<Vec<bool>>) -> Self {
+        Series::F64 {
+            values: Arc::new(values),
+            validity: valid.map(|b| Bitmap::from_bools(&b)),
+        }
+    }
+
+    pub fn from_bool_with_validity(values: Vec<bool>, valid: Option<Vec<bool>>) -> Self {
+        Series::Bool {
+            values: Arc::new(values),
+            validity: valid.map(|b| Bitmap::from_bools(&b)),
+        }
+    }
+
     pub fn from_str_spans(buf: Arc<str>, spans: Vec<(u32, u32)>, nulls: Option<Vec<bool>>) -> Self {
         Series::Str {
             col: StrCol::from_spans(buf, spans),

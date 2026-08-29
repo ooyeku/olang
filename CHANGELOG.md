@@ -28,8 +28,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - **The data stack closed more of the Polars gap** (DP4 pipeline,
-  1M rows: 126 ms → 74 ms across three rounds; pandas 305 ms, Polars
-  34 ms; checksums byte-identical across engines):
+  1M rows: 126 ms → 68 ms across four rounds; pandas 309 ms, Polars
+  32 ms; checksums byte-identical across engines):
+  - *The CSV reader is fused*: one scan per record-aligned chunk both
+    finds delimiters and parses each field into its column's
+    speculative typed builder while the bytes are hot in cache —
+    replacing the two-pass shape whose inference pass re-read every
+    byte cold. The first non-empty cell seeds a column's speculation;
+    a decimal upgrades an Int column to Float in place (an i64
+    converts to exactly the double its text would parse to); a word
+    demotes a numeric column to text and re-scans that chunk for its
+    spans (paid only on real conflicts); chunk outcomes reconcile with
+    the cascade's exact semantics. A fast-path i64 parser covers the
+    ≤18-digit common case. Load 34 → 27 ms (52 at campaign start);
+    tests/csv_reader_differential_test.rs pins the fused reader
+    cell-identical to the general csv-crate parser across upgrades,
+    demotions, validity, CRLF, blank lines, missing final newlines,
+    i64 boundaries, and cross-chunk conflicts on a multi-megabyte
+    table.
   - *String columns are views* — the Arrow/Polars string design:
     cells are `(start, len)` spans into one shared immutable buffer
     (`StrCol`), and the CSV reader's backing buffer is the file body

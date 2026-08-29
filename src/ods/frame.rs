@@ -1048,35 +1048,235 @@ fn csv_record_splits(text: &str, parts: usize) -> Vec<usize> {
     splits
 }
 
-/// Split an unquoted CSV body into per-column borrowed slices.
-///
-/// The point is what it does *not* do: no cell becomes an owned
-/// `String`. A numeric column is then parsed straight out of the
-/// original text, and only a column that really is text pays for an
-/// allocation — where the general path allocated every cell before
-/// anything knew what type it was.
-///
-/// Returns `None` for anything the fast path should not decide: a
-/// quote anywhere (the general parser owns escaping), or a row whose
-/// field count disagrees with the header, which the `csv` crate
-/// reports with a line number this function has no business
-/// duplicating.
-fn split_unquoted_rows(body: &str, base: u32, n_cols: usize) -> Option<Vec<Vec<(u32, u32)>>> {
-    let bytes = body.as_bytes();
-    if bytes.contains(&b'"') {
-        return None;
+// ---------------------------------------------------------------------
+// The fused CSV scan: delimiters found and fields parsed in one pass
+// ---------------------------------------------------------------------
+
+/// One column's outcome for one chunk of the fused scan.
+enum ChunkCol {
+    /// Every cell in this chunk was empty — compatible with any type.
+    AllNull { n: usize },
+    I64 {
+        values: Vec<i64>,
+        valid: Option<Vec<bool>>,
+    },
+    F64 {
+        values: Vec<f64>,
+        valid: Option<Vec<bool>>,
+    },
+    Bool {
+        values: Vec<bool>,
+        valid: Option<Vec<bool>>,
+    },
+    /// Spans into the body (already rebased); an empty span is a null.
+    Str { spans: Vec<(u32, u32)> },
+}
+
+impl ChunkCol {
+    fn len(&self) -> usize {
+        match self {
+            ChunkCol::AllNull { n } => *n,
+            ChunkCol::I64 { values, .. } => values.len(),
+            ChunkCol::F64 { values, .. } => values.len(),
+            ChunkCol::Bool { values, .. } => values.len(),
+            ChunkCol::Str { spans } => spans.len(),
+        }
     }
-    // One memchr2-driven pass over the bytes, emitting each field as an
-    // 8-byte (start, len) span — half the write traffic of a &str per
-    // field, and the exact shape a text column stores. `base` rebases
-    // offsets to the full body when this run is one parallel chunk.
-    // Commas and newlines are ASCII, so slicing at these offsets is
-    // always char-safe. The vectors pre-size from a bytes-per-row
-    // estimate: growth reallocation on n parallel-growing vectors was a
-    // measurable slice of the split.
-    let est_rows = bytes.len() / 24 + 8;
-    let mut cols: Vec<Vec<(u32, u32)>> =
-        (0..n_cols).map(|_| Vec::with_capacity(est_rows)).collect();
+}
+
+/// A fast i64 parse for the hot loop: sign plus up to 18 digits needs
+/// no overflow check (i64::MAX has 19); longer digit runs go through
+/// the stdlib's checked parse. Accepts and refuses exactly what
+/// `str::parse::<i64>` does.
+#[inline]
+fn parse_i64_fast(s: &str) -> Option<i64> {
+    let b = s.as_bytes();
+    let (neg, digits) = match b.first()? {
+        b'-' => (true, &b[1..]),
+        b'+' => (false, &b[1..]),
+        _ => (false, b),
+    };
+    if digits.is_empty() || digits.len() > 18 {
+        return s.parse::<i64>().ok();
+    }
+    let mut v: i64 = 0;
+    for &d in digits {
+        let d = d.wrapping_sub(b'0');
+        if d > 9 {
+            return None;
+        }
+        v = v * 10 + d as i64;
+    }
+    Some(if neg { -v } else { v })
+}
+
+/// The per-column speculative builder the fused scan drives.
+enum Builder {
+    /// No non-empty cell yet; `nulls` counts the empties.
+    Undecided {
+        nulls: usize,
+    },
+    I64 {
+        values: Vec<i64>,
+        valid: Option<Vec<bool>>,
+    },
+    F64 {
+        values: Vec<f64>,
+        valid: Option<Vec<bool>>,
+    },
+    Bool {
+        values: Vec<bool>,
+        valid: Option<Vec<bool>>,
+    },
+    Str {
+        spans: Vec<(u32, u32)>,
+    },
+}
+
+impl Builder {
+    #[inline]
+    fn push_null(&mut self) {
+        match self {
+            Builder::Undecided { nulls } => *nulls += 1,
+            Builder::I64 { values, valid } => {
+                Self::mark_null(valid, values.len());
+                values.push(0);
+            }
+            Builder::F64 { values, valid } => {
+                Self::mark_null(valid, values.len());
+                values.push(0.0);
+            }
+            Builder::Bool { values, valid } => {
+                Self::mark_null(valid, values.len());
+                values.push(false);
+            }
+            Builder::Str { spans } => spans.push((0, 0)),
+        }
+    }
+
+    #[inline]
+    fn mark_null(valid: &mut Option<Vec<bool>>, len: usize) {
+        valid.get_or_insert_with(|| vec![true; len]).push(false);
+    }
+
+    #[inline]
+    fn push_valid(valid: &mut Option<Vec<bool>>) {
+        if let Some(v) = valid.as_mut() {
+            v.push(true);
+        }
+    }
+}
+
+/// The first non-empty cell decides a column's speculation, and its
+/// value is the builder's first entry.
+fn seed_builder(cell: &str, nulls: usize, span: (u32, u32)) -> Builder {
+    let valid = (nulls > 0).then(|| {
+        let mut v = vec![false; nulls];
+        v.push(true);
+        v
+    });
+    if let Some(v) = parse_i64_fast(cell) {
+        let mut values = vec![0i64; nulls];
+        values.push(v);
+        Builder::I64 { values, valid }
+    } else if let Ok(f) = cell.parse::<f64>() {
+        let mut values = vec![0.0f64; nulls];
+        values.push(f);
+        Builder::F64 { values, valid }
+    } else if cell == "true" || cell == "false" {
+        let mut values = vec![false; nulls];
+        values.push(cell == "true");
+        Builder::Bool { values, valid }
+    } else {
+        let mut spans = vec![(0u32, 0u32); nulls];
+        spans.push(span);
+        Builder::Str { spans }
+    }
+}
+
+/// Feed one cell to its builder. Returns true when the column just
+/// demoted to text — the caller stops feeding it and re-scans for its
+/// spans at the end of the chunk.
+#[inline]
+fn emit_cell(b: &mut Builder, cell: &str, span: (u32, u32)) -> bool {
+    if cell.is_empty() {
+        b.push_null();
+        return false;
+    }
+    match b {
+        Builder::Undecided { nulls } => {
+            let n = *nulls;
+            *b = seed_builder(cell, n, span);
+        }
+        Builder::I64 { values, valid } => {
+            if let Some(v) = parse_i64_fast(cell) {
+                Builder::push_valid(valid);
+                values.push(v);
+            } else if let Ok(f) = cell.parse::<f64>() {
+                // Upgrade in place: an i64 converts to exactly the
+                // double its decimal text would parse to, so the
+                // accumulated values re-read losslessly.
+                let mut fv: Vec<f64> = std::mem::take(values)
+                    .into_iter()
+                    .map(|x| x as f64)
+                    .collect();
+                let mut vd = valid.take();
+                Builder::push_valid(&mut vd);
+                fv.push(f);
+                *b = Builder::F64 {
+                    values: fv,
+                    valid: vd,
+                };
+            } else {
+                *b = Builder::Str { spans: Vec::new() };
+                return true;
+            }
+        }
+        Builder::F64 { values, valid } => {
+            if let Ok(f) = cell.parse::<f64>() {
+                Builder::push_valid(valid);
+                values.push(f);
+            } else {
+                *b = Builder::Str { spans: Vec::new() };
+                return true;
+            }
+        }
+        Builder::Bool { values, valid } => match cell {
+            "true" => {
+                Builder::push_valid(valid);
+                values.push(true);
+            }
+            "false" => {
+                Builder::push_valid(valid);
+                values.push(false);
+            }
+            _ => {
+                *b = Builder::Str { spans: Vec::new() };
+                return true;
+            }
+        },
+        Builder::Str { spans } => spans.push(span),
+    }
+    false
+}
+
+/// Scan one record-aligned chunk of the body, parsing fields into
+/// per-column builders as the separators arrive. Returns `None` when
+/// the chunk's shape disqualifies the fast path (a short or long row).
+fn fused_scan_chunk(
+    body: &str,
+    range: std::ops::Range<usize>,
+    n_cols: usize,
+) -> Option<Vec<ChunkCol>> {
+    let base = range.start as u32;
+    let chunk = &body[range];
+    let bytes = chunk.as_bytes();
+    let mut builders: Vec<Builder> = (0..n_cols)
+        .map(|_| Builder::Undecided { nulls: 0 })
+        .collect();
+    let mut demoted: Vec<bool> = vec![false; n_cols];
+    let mut any_demoted = false;
+
     let mut field_start = 0usize;
     let mut col = 0usize;
     for pos in memchr::memchr2_iter(b',', b'\n', bytes) {
@@ -1084,23 +1284,36 @@ fn split_unquoted_rows(body: &str, base: u32, n_cols: usize) -> Option<Vec<Vec<(
             if col + 1 >= n_cols {
                 return None; // more fields than the header declares
             }
-            cols[col].push((base + field_start as u32, (pos - field_start) as u32));
+            if !demoted[col] {
+                let cell = &chunk[field_start..pos];
+                let span = (base + field_start as u32, (pos - field_start) as u32);
+                if emit_cell(&mut builders[col], cell, span) {
+                    demoted[col] = true;
+                    any_demoted = true;
+                }
+            }
             col += 1;
         } else {
             let mut end = pos;
             if end > field_start && bytes[end - 1] == b'\r' {
                 end -= 1;
             }
-            // The `csv` crate skips blank lines rather than reading
-            // them as a row of one empty field.
+            // Blank lines skip, exactly as the csv crate skips them.
             if col == 0 && end == field_start {
                 field_start = pos + 1;
                 continue;
             }
             if col != n_cols - 1 {
-                return None; // short row — let the general parser name the line
+                return None; // short row
             }
-            cols[col].push((base + field_start as u32, (end - field_start) as u32));
+            if !demoted[col] {
+                let cell = &chunk[field_start..end];
+                let span = (base + field_start as u32, (end - field_start) as u32);
+                if emit_cell(&mut builders[col], cell, span) {
+                    demoted[col] = true;
+                    any_demoted = true;
+                }
+            }
             col = 0;
         }
         field_start = pos + 1;
@@ -1115,15 +1328,281 @@ fn split_unquoted_rows(body: &str, base: u32, n_cols: usize) -> Option<Vec<Vec<(
             if col != n_cols - 1 {
                 return None;
             }
-            cols[col].push((base + field_start as u32, (end - field_start) as u32));
+            if !demoted[col] {
+                let cell = &chunk[field_start..end];
+                let span = (base + field_start as u32, (end - field_start) as u32);
+                if emit_cell(&mut builders[col], cell, span) {
+                    demoted[col] = true;
+                    any_demoted = true;
+                }
+            }
+        }
+    }
+
+    // Columns that demoted mid-chunk re-scan this chunk for their
+    // spans — paid only on a real type conflict.
+    if any_demoted {
+        let span_cols = rescan_spans(chunk, base, n_cols, &demoted)?;
+        for (c, spans) in span_cols.into_iter().enumerate() {
+            if demoted[c] {
+                builders[c] = Builder::Str { spans };
+            }
+        }
+    }
+
+    Some(
+        builders
+            .into_iter()
+            .map(|b| match b {
+                Builder::Undecided { nulls } => ChunkCol::AllNull { n: nulls },
+                Builder::I64 { values, valid } => ChunkCol::I64 { values, valid },
+                Builder::F64 { values, valid } => ChunkCol::F64 { values, valid },
+                Builder::Bool { values, valid } => ChunkCol::Bool { values, valid },
+                Builder::Str { spans } => ChunkCol::Str { spans },
+            })
+            .collect(),
+    )
+}
+
+/// Extract the spans of selected columns from one chunk — the fallback
+/// for mid-chunk demotions and cross-chunk type conflicts.
+fn rescan_spans(
+    chunk: &str,
+    base: u32,
+    n_cols: usize,
+    wanted: &[bool],
+) -> Option<Vec<Vec<(u32, u32)>>> {
+    let bytes = chunk.as_bytes();
+    let mut cols: Vec<Vec<(u32, u32)>> = (0..n_cols).map(|_| Vec::new()).collect();
+    let mut field_start = 0usize;
+    let mut col = 0usize;
+    for pos in memchr::memchr2_iter(b',', b'\n', bytes) {
+        if bytes[pos] == b',' {
+            if col + 1 >= n_cols {
+                return None;
+            }
+            if wanted[col] {
+                cols[col].push((base + field_start as u32, (pos - field_start) as u32));
+            }
+            col += 1;
+        } else {
+            let mut end = pos;
+            if end > field_start && bytes[end - 1] == b'\r' {
+                end -= 1;
+            }
+            if col == 0 && end == field_start {
+                field_start = pos + 1;
+                continue;
+            }
+            if col != n_cols - 1 {
+                return None;
+            }
+            if wanted[col] {
+                cols[col].push((base + field_start as u32, (end - field_start) as u32));
+            }
+            col = 0;
+        }
+        field_start = pos + 1;
+    }
+    if field_start < bytes.len() || col > 0 {
+        let mut end = bytes.len();
+        if end > field_start && bytes[end - 1] == b'\r' {
+            end -= 1;
+        }
+        if !(col == 0 && end == field_start) {
+            if col != n_cols - 1 {
+                return None;
+            }
+            if wanted[col] {
+                cols[col].push((base + field_start as u32, (end - field_start) as u32));
+            }
         }
     }
     Some(cols)
 }
 
-/// The borrowed read path: parse an unquoted body into slices, infer
-/// and build each column from them. Returns `None` when the body is not
-/// one this path may decide, leaving the general parser in charge.
+/// Append a chunk's validity onto a column's, materializing the column
+/// bitmap lazily (only once some chunk carries nulls).
+fn append_validity(
+    col_valid: &mut Option<Vec<bool>>,
+    chunk_valid: Option<Vec<bool>>,
+    prior_len: usize,
+    chunk_len: usize,
+) {
+    match (col_valid.as_mut(), chunk_valid) {
+        (None, None) => {}
+        (Some(cv), None) => cv.extend(std::iter::repeat_n(true, chunk_len)),
+        (None, Some(chv)) => {
+            let mut cv = vec![true; prior_len];
+            cv.extend(chv);
+            *col_valid = Some(cv);
+        }
+        (Some(cv), Some(chv)) => cv.extend(chv),
+    }
+}
+
+/// Reconcile one column's chunk outcomes into a Series, with the
+/// cascade's semantics: Int and Float mix as Float, Bool mixes with
+/// nothing numeric, any conflict lands on text (chunks that parsed as
+/// numbers re-derive their spans from the raw bytes). Returns `None`
+/// only if a re-scan hits a shape violation, which the fused scan has
+/// already ruled out — kept as an honest bail rather than a panic.
+fn merge_column(
+    body_arc: &std::sync::Arc<str>,
+    chunks: Vec<ChunkCol>,
+    chunk_ranges: &[std::ops::Range<usize>],
+    col: usize,
+    n_cols: usize,
+) -> Option<Series> {
+    use ChunkCol as C;
+    #[derive(Clone, Copy, PartialEq)]
+    enum T {
+        Null,
+        I,
+        F,
+        B,
+        S,
+    }
+    let mut t = T::Null;
+    for c in &chunks {
+        let ct = match c {
+            C::AllNull { .. } => T::Null,
+            C::I64 { .. } => T::I,
+            C::F64 { .. } => T::F,
+            C::Bool { .. } => T::B,
+            C::Str { .. } => T::S,
+        };
+        t = match (t, ct) {
+            (T::Null, x) | (x, T::Null) => x,
+            (a, b) if a == b => a,
+            (T::I, T::F) | (T::F, T::I) => T::F,
+            _ => T::S,
+        };
+    }
+
+    let total: usize = chunks.iter().map(|c| c.len()).sum();
+    match t {
+        T::Null => Some(Series::from_str_options(vec![None; total])),
+        T::I => {
+            let mut values = Vec::with_capacity(total);
+            let mut valid: Option<Vec<bool>> = None;
+            for c in chunks {
+                match c {
+                    C::AllNull { n } => {
+                        valid
+                            .get_or_insert_with(|| vec![true; values.len()])
+                            .extend(std::iter::repeat_n(false, n));
+                        values.extend(std::iter::repeat_n(0i64, n));
+                    }
+                    C::I64 {
+                        values: v,
+                        valid: cv,
+                    } => {
+                        append_validity(&mut valid, cv, values.len(), v.len());
+                        values.extend(v);
+                    }
+                    _ => unreachable!("reconciled I64"),
+                }
+            }
+            Some(Series::from_i64_with_validity(values, valid))
+        }
+        T::F => {
+            let mut values = Vec::with_capacity(total);
+            let mut valid: Option<Vec<bool>> = None;
+            for c in chunks {
+                match c {
+                    C::AllNull { n } => {
+                        valid
+                            .get_or_insert_with(|| vec![true; values.len()])
+                            .extend(std::iter::repeat_n(false, n));
+                        values.extend(std::iter::repeat_n(0.0f64, n));
+                    }
+                    C::I64 {
+                        values: v,
+                        valid: cv,
+                    } => {
+                        append_validity(&mut valid, cv, values.len(), v.len());
+                        values.extend(v.into_iter().map(|x| x as f64));
+                    }
+                    C::F64 {
+                        values: v,
+                        valid: cv,
+                    } => {
+                        append_validity(&mut valid, cv, values.len(), v.len());
+                        values.extend(v);
+                    }
+                    _ => unreachable!("reconciled F64"),
+                }
+            }
+            Some(Series::from_f64_with_validity(values, valid))
+        }
+        T::B => {
+            let mut values = Vec::with_capacity(total);
+            let mut valid: Option<Vec<bool>> = None;
+            for c in chunks {
+                match c {
+                    C::AllNull { n } => {
+                        valid
+                            .get_or_insert_with(|| vec![true; values.len()])
+                            .extend(std::iter::repeat_n(false, n));
+                        values.extend(std::iter::repeat_n(false, n));
+                    }
+                    C::Bool {
+                        values: v,
+                        valid: cv,
+                    } => {
+                        append_validity(&mut valid, cv, values.len(), v.len());
+                        values.extend(v);
+                    }
+                    _ => unreachable!("reconciled Bool"),
+                }
+            }
+            Some(Series::from_bool_with_validity(values, valid))
+        }
+        T::S => {
+            let mut spans: Vec<(u32, u32)> = Vec::with_capacity(total);
+            let mut valid: Vec<bool> = Vec::with_capacity(total);
+            let mut any_null = false;
+            let wanted: Vec<bool> = (0..n_cols).map(|c| c == col).collect();
+            for (ci, c) in chunks.into_iter().enumerate() {
+                let chunk_spans = match c {
+                    C::Str { spans } => spans,
+                    C::AllNull { n } => vec![(0u32, 0u32); n],
+                    _ => {
+                        let range = chunk_ranges[ci].clone();
+                        let mut got = rescan_spans(
+                            &body_arc[range.clone()],
+                            range.start as u32,
+                            n_cols,
+                            &wanted,
+                        )?;
+                        std::mem::take(&mut got[col])
+                    }
+                };
+                for &(_, l) in &chunk_spans {
+                    let ok = l > 0;
+                    valid.push(ok);
+                    any_null |= !ok;
+                }
+                spans.extend(chunk_spans);
+            }
+            Some(Series::from_str_spans(
+                body_arc.clone(),
+                spans,
+                any_null.then_some(valid),
+            ))
+        }
+    }
+}
+
+/// The borrowed read path, fused: one scan per record-aligned chunk
+/// both finds delimiters and parses each field into its column's
+/// speculative typed builder while the bytes are hot in cache. Chunk
+/// outcomes reconcile per column with the cascade's exact semantics
+/// (empty = null at every type, i64 then f64 then bool then text,
+/// Bool never mixing with numbers). Returns `None` when the body is
+/// not one this path may decide — a short or long row — leaving the
+/// general parser in charge of error reporting.
 fn read_csv_borrowed(
     body_arc: &std::sync::Arc<str>,
     headers: &[String],
@@ -1134,8 +1613,6 @@ fn read_csv_borrowed(
         return None;
     }
 
-    // Rows split across cores exactly as the general path parses across
-    // them: at record boundaries, results concatenated in order.
     let workers = if body.len() >= PAR_CSV_MIN_BYTES {
         stack_workers(usize::MAX)
     } else {
@@ -1143,63 +1620,65 @@ fn read_csv_borrowed(
     };
     let timing = std::env::var_os("OLANG_ODS_TIMING").is_some();
     let t0 = std::time::Instant::now();
-    // Per column, the list of per-chunk cell runs — inference consumes
-    // the chunks directly, so the old sequential merge (extend every
-    // chunk into one flat vector: ~7ms on a 1M-row file) is gone.
-    let mut col_chunks: Vec<Vec<Vec<(u32, u32)>>> = (0..n_cols).map(|_| Vec::new()).collect();
-    if workers > 1 {
-        let splits = csv_record_splits(body, workers);
-        let runs: Vec<(&str, u32)> = splits
+
+    let chunk_ranges: Vec<std::ops::Range<usize>> = if workers > 1 {
+        csv_record_splits(body, workers)
             .windows(2)
-            .map(|w| (&body[w[0]..w[1]], w[0] as u32))
-            .collect();
-        let parsed = parallel_map_ordered(runs, workers, |(run, base)| {
-            split_unquoted_rows(run, base, n_cols)
-        });
-        for chunk in parsed {
-            let chunk = chunk?;
-            for (c, col) in chunk.into_iter().enumerate() {
-                col_chunks[c].push(col);
-            }
-        }
+            .map(|w| w[0]..w[1])
+            .collect()
     } else {
-        for (c, col) in split_unquoted_rows(body, 0, n_cols)?
-            .into_iter()
-            .enumerate()
-        {
-            col_chunks[c].push(col);
-        }
+        std::iter::once(0..body.len()).collect()
+    };
+    let scanned: Vec<Option<Vec<ChunkCol>>> =
+        parallel_map_ordered(chunk_ranges.clone(), workers, |range| {
+            fused_scan_chunk(body, range, n_cols)
+        });
+    // Any chunk declining (bad row shape) declines the whole path.
+    let mut per_chunk: Vec<Vec<ChunkCol>> = Vec::with_capacity(scanned.len());
+    for c in scanned {
+        per_chunk.push(c?);
     }
     if timing {
-        eprintln!("[ods-timing] split={:?}", t0.elapsed());
+        eprintln!("[ods-timing] fused-scan={:?}", t0.elapsed());
     }
     let t1 = std::time::Instant::now();
 
-    // Columns are independent, so a large file infers one per core —
-    // the same split the general path uses.
-    let n_rows = col_chunks
+    // Transpose to per-column chunk lists and reconcile each column —
+    // columns are independent, so large tables merge one per core.
+    let mut col_chunks: Vec<Vec<ChunkCol>> = (0..n_cols).map(|_| Vec::new()).collect();
+    for chunk in per_chunk {
+        for (c, col) in chunk.into_iter().enumerate() {
+            col_chunks[c].push(col);
+        }
+    }
+    let n_rows: usize = col_chunks
         .first()
-        .map(|c| c.iter().map(|v| v.len()).sum())
+        .map(|c| c.iter().map(|k| k.len()).sum())
         .unwrap_or(0);
-    let workers = if n_rows >= PAR_COLUMNS_MIN_ROWS {
+    let merge_workers = if n_rows >= PAR_COLUMNS_MIN_ROWS {
         stack_workers(n_cols)
     } else {
         1
     };
-    let pairs = parallel_map_ordered(
-        headers.iter().cloned().zip(col_chunks).collect(),
-        workers,
-        |(name, chunks)| {
-            let t = std::time::Instant::now();
-            let s = infer_column_spans(chunks, body_arc);
-            if timing {
-                eprintln!("[ods-timing]   column {} parse={:?}", name, t.elapsed());
-            }
+    let ranges_ref = &chunk_ranges;
+    let merged = parallel_map_ordered(
+        headers
+            .iter()
+            .cloned()
+            .zip(col_chunks.into_iter().enumerate())
+            .collect(),
+        merge_workers,
+        |(name, (c, chunks))| {
+            let s = merge_column(body_arc, chunks, ranges_ref, c, n_cols);
             (name, s)
         },
     );
+    let mut pairs = Vec::with_capacity(merged.len());
+    for (name, s) in merged {
+        pairs.push((name, s?));
+    }
     if timing {
-        eprintln!("[ods-timing] infer+parse={:?}", t1.elapsed());
+        eprintln!("[ods-timing] merge={:?}", t1.elapsed());
     }
     Some(Frame::new(pairs).map(OdsFrame::into_value).map_err(e))
 }
@@ -1354,96 +1833,6 @@ fn to_csv(f: &Frame) -> String {
 /// as `all` short-circuited.
 fn infer_column<S: AsRef<str> + Into<String>>(raw: Vec<S>) -> Series {
     infer_column_chunks(vec![raw])
-}
-
-/// infer_column over per-chunk runs of one column, so the parallel CSV
-/// split's chunks feed inference directly instead of being merged into
-/// one flat vector first. Semantics identical to the flat form: the
-/// cascade decides over EVERY cell across all chunks.
-/// The span-native twin of `infer_column_chunks`, for the CSV fast
-/// path: cells are (start, len) spans into `body`, the cascade parses
-/// through slices of it, and a column that really is text keeps the
-/// spans verbatim — its cells never exist as separate allocations.
-/// Cascade semantics are identical: empty cell = null at every type,
-/// i64 then f64 then bool then text.
-fn infer_column_spans(chunks: Vec<Vec<(u32, u32)>>, body: &std::sync::Arc<str>) -> Series {
-    let raw_len: usize = chunks.iter().map(|c| c.len()).sum();
-    let cell = |&(a, l): &(u32, u32)| -> &str { &body[a as usize..(a + l) as usize] };
-    let raw = || chunks.iter().flat_map(|c| c.iter()).map(cell);
-    if raw().all(|s| s.is_empty()) {
-        return Series::from_str_options(vec![None; raw_len]);
-    }
-
-    let mut ints: Vec<Option<i64>> = Vec::with_capacity(raw_len);
-    if raw().all(|s| {
-        if s.is_empty() {
-            ints.push(None);
-            return true;
-        }
-        match s.parse::<i64>() {
-            Ok(v) => {
-                ints.push(Some(v));
-                true
-            }
-            Err(_) => false,
-        }
-    }) {
-        return Series::from_i64_options(ints);
-    }
-    drop(ints);
-
-    let mut floats: Vec<Option<f64>> = Vec::with_capacity(raw_len);
-    if raw().all(|s| {
-        if s.is_empty() {
-            floats.push(None);
-            return true;
-        }
-        match s.parse::<f64>() {
-            Ok(v) => {
-                floats.push(Some(v));
-                true
-            }
-            Err(_) => false,
-        }
-    }) {
-        return Series::from_f64_options(floats);
-    }
-    drop(floats);
-
-    let mut bools: Vec<Option<bool>> = Vec::with_capacity(raw_len);
-    if raw().all(|s| match s {
-        "" => {
-            bools.push(None);
-            true
-        }
-        "true" => {
-            bools.push(Some(true));
-            true
-        }
-        "false" => {
-            bools.push(Some(false));
-            true
-        }
-        _ => false,
-    }) {
-        return Series::from_bool_options(bools);
-    }
-    drop(bools);
-
-    // Text: the spans ARE the column. Empty cells are nulls.
-    let mut valid: Vec<bool> = Vec::with_capacity(raw_len);
-    let mut any_null = false;
-    let spans: Vec<(u32, u32)> = chunks
-        .iter()
-        .flat_map(|c| c.iter())
-        .map(|&(a, l)| {
-            let ok = l > 0;
-            valid.push(ok);
-            any_null |= !ok;
-            (a, l)
-        })
-        .collect();
-    Series::from_str_spans(body.clone(), spans, any_null.then_some(valid))
 }
 
 fn infer_column_chunks<S: AsRef<str> + Into<String>>(chunks: Vec<Vec<S>>) -> Series {
