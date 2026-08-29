@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Hot-loop promotion — the interpreter's own OSR.** A hot loop at the
+  top level of a script had no exit from the tree-walk: every iteration
+  interpreted, every call in it crossing the interpreter→VM boundary
+  separately. Now a `for`-over-range or `while` loop still running
+  after 512 interpreted iterations has its *remainder* synthesized into
+  a function (parameters = loop bounds + free variables, return = loop
+  value + assigned variables) and handed to the tier, which compiles it
+  by body identity like any lambda — one boundary crossing runs every
+  remaining iteration on the VM, JIT and OSR included. Bodies whose
+  control flow crosses the loop's boundary (`return`, `?`) or that the
+  analyzer cannot classify stay interpreted, and a compile refusal falls
+  back before anything runs. Error messages AND spans from the promoted
+  remainder are byte-identical to the interpreter's
+  (tests/loop_promotion_test.rs pins the differentials; the tier fuzz
+  corpus and agreement suites run clean over it).
+
+### Changed
+
+- **The JIT learned `TakeMove`.** The by-move argument plumbing from
+  Campaign 7 was refused by the JIT's inference pass, so any function
+  that passed its argument onward — `fn score(x) = clip(shift(scale(x)))`
+  — silently stayed on the bytecode VM while its leaf callees went
+  native individually, each through its own call boundary. TakeMove now
+  infers and lowers exactly as Move (it is only emitted when the source
+  is provably dead), so composed small functions compile native and
+  inline their callees.
+- **Range `for` loops count on a scalar register.** `for i in a..b`
+  (exclusive, body provably not assigning `i`) compiles to a counter
+  loop — no Range value, no per-iteration IterGet — which also makes
+  every live-in of such a loop a scalar, exactly what OSR can marshal:
+  promoted hot loops now enter native code instead of stranding on VM
+  dispatch because a Range object sat in a register.
+
+  Together: the `chain` microbenchmark (300k iterations through four
+  composed small functions) went from 160 ms to 2 ms; `collatz` from
+  152 ms to ~33 ms.
+
 - **`:ovm` is an insight report.** It answered "Promoted: 0 Rejected: 0"
   and nothing else; now it answers the developer's actual questions.
   Session totals (bytecode and native-JIT calls, OSR loop entries, VM

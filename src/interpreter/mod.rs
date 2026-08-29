@@ -8,38 +8,8 @@ use im::HashMap as ImHashMap;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-/// Integer range iterator that can't overflow (a plain `start..end + 1` panics
-/// when `end == i64::MAX`).
-struct RangeIter {
-    next: i64,
-    end: i64,
-    inclusive: bool,
-    done: bool,
-}
-
-impl Iterator for RangeIter {
-    type Item = i64;
-
-    fn next(&mut self) -> Option<i64> {
-        if self.done {
-            return None;
-        }
-        let current = self.next;
-        let last = if self.inclusive {
-            self.end
-        } else {
-            self.end - 1
-        };
-        if current >= last {
-            self.done = true;
-        } else {
-            self.next = current + 1;
-        }
-        Some(current)
-    }
-}
-
 mod errors;
+pub(crate) mod loop_promo;
 mod modules;
 mod ops;
 
@@ -3495,13 +3465,7 @@ impl Interpreter {
                 self.environment.parent = Some(Arc::new(parent_env));
                 self.environment.is_frame = true;
 
-                let items = RangeIter {
-                    next: start,
-                    end,
-                    inclusive,
-                    done: if inclusive { start > end } else { start >= end },
-                };
-                let result = self.run_loop_body(body, items.map(Value::Integer), Some(variable));
+                let result = self.run_range_loop(variable, start, end, inclusive, body);
 
                 // Restore parent environment
                 if let Some(parent) = self.environment.parent.take() {
@@ -3565,6 +3529,217 @@ impl Interpreter {
                     ),
                 })
             }
+        }
+    }
+
+    /// How many interpreted iterations a top-level loop runs before the
+    /// remainder is offered to the tier. High enough that short loops
+    /// never pay a compile, low enough that a million-iteration loop
+    /// spends its life natively.
+    const LOOP_PROMOTE_AFTER: i64 = 512;
+
+    /// A `for` over a range, with hot-loop promotion: after
+    /// LOOP_PROMOTE_AFTER interpreted iterations, the remaining range is
+    /// synthesized into a continuation function and run on the tier in
+    /// one boundary crossing (see interpreter/loop_promo.rs). Fallback
+    /// at any point — analysis refusal, unconverted value, compile
+    /// rejection — resumes right here as if nothing happened.
+    fn run_range_loop(
+        &mut self,
+        variable: &str,
+        start: i64,
+        end: i64,
+        inclusive: bool,
+        body: &Expr,
+    ) -> Result<Value, InterpreterError> {
+        let mut last_value = Value::Unit;
+        let mut i = start;
+        let mut iters: i64 = 0;
+        let mut try_promotion = self.bytecode_tier.is_some();
+        loop {
+            let done = if inclusive { i > end } else { i >= end };
+            if done {
+                break;
+            }
+            if iters == Self::LOOP_PROMOTE_AFTER && try_promotion {
+                try_promotion = false;
+                if let Some(v) =
+                    self.promote_loop_remainder(Some((variable, i, end, inclusive)), None, body)?
+                {
+                    return Ok(v);
+                }
+            }
+            self.safepoint_poll()?;
+            self.environment
+                .define(variable.to_string(), Value::Integer(i));
+            match self.eval_expr(body) {
+                Ok(_) => {}
+                Err(InterpreterError::BreakSignal(v)) => {
+                    last_value = v;
+                    break;
+                }
+                Err(InterpreterError::ContinueSignal) => {}
+                Err(e) => return Err(e),
+            }
+            // Terminate before incrementing: `i + 1` at `end == i64::MAX`
+            // would overflow (the guarantee the old RangeIter carried).
+            if i == end {
+                break;
+            }
+            i += 1;
+            iters += 1;
+        }
+        Ok(last_value)
+    }
+
+    /// Synthesize and run the remainder of a hot loop on the tier.
+    /// `range` carries `for`-loop state (variable, next value, end,
+    /// inclusive); `while_parts` carries a `while` loop's condition.
+    /// `Ok(Some(v))` means the loop ran to its end natively and `v` is
+    /// its value (live-outs already written back); `Ok(None)` means the
+    /// tier declined before running anything — keep interpreting.
+    fn promote_loop_remainder(
+        &mut self,
+        range: Option<(&str, i64, i64, bool)>,
+        while_condition: Option<&Expr>,
+        body: &Expr,
+    ) -> Result<Option<Value>, InterpreterError> {
+        if self.bytecode_tier.is_none() {
+            return Ok(None);
+        }
+        let loop_var = range.map(|(v, _, _, _)| v);
+        let Some(facts) = loop_promo::analyze(body, loop_var) else {
+            return Ok(None);
+        };
+        // For a while loop the condition's free names are live too.
+        let facts = match while_condition {
+            None => facts,
+            Some(cond) => {
+                let Some(cond_facts) = loop_promo::analyze(cond, loop_var) else {
+                    return Ok(None);
+                };
+                let mut reads = facts.reads;
+                for r in cond_facts.reads {
+                    if !reads.contains(&r) {
+                        reads.push(r);
+                    }
+                }
+                if !cond_facts.writes.is_empty() {
+                    // A condition that assigns is exotic; keep it
+                    // interpreted rather than reason about it.
+                    return Ok(None);
+                }
+                loop_promo::BodyFacts {
+                    reads,
+                    writes: facts.writes,
+                }
+            }
+        };
+
+        // Live-ins: free reads that are VARIABLES here and now. Free
+        // names holding functions are left free — the tier resolves
+        // known functions by name, which is what lets it inline them;
+        // a name it cannot resolve fails the compile and we fall back.
+        let mut live_names: Vec<String> = Vec::new();
+        let mut live_values: Vec<Value> = Vec::new();
+        for name in &facts.reads {
+            match self.environment.get(name) {
+                Some(Value::Function(_)) | Some(Value::Builtin(_)) | None => {}
+                Some(v) => {
+                    live_names.push(name.clone());
+                    live_values.push(v);
+                }
+            }
+        }
+        // Every written name must be a live-in variable we can hand
+        // back; a write target that didn't resolve stays interpreted.
+        for w in &facts.writes {
+            if !live_names.contains(w) {
+                return Ok(None);
+            }
+        }
+
+        let func = match (range, while_condition) {
+            (Some((variable, _, _, inclusive)), None) => loop_promo::synthesize_range_continuation(
+                variable,
+                inclusive,
+                body,
+                &live_names,
+                &facts.writes,
+                self.current_module_path.clone(),
+            ),
+            (None, Some(cond)) => loop_promo::synthesize_while_continuation(
+                cond,
+                body,
+                &live_names,
+                &facts.writes,
+                self.current_module_path.clone(),
+            ),
+            _ => return Ok(None),
+        };
+
+        let mut args: Vec<Value> = Vec::with_capacity(2 + live_values.len());
+        if let Some((_, next, end, _)) = range {
+            args.push(Value::Integer(next));
+            args.push(Value::Integer(end));
+        }
+        args.extend(live_values);
+
+        let mut tier = self.bytecode_tier.take();
+        let outcome = tier
+            .as_mut()
+            .map(|t| t.try_call_function_value(&func, &mut args))
+            .unwrap_or(crate::ovm::tier::TierOutcome::Fallback);
+        self.bytecode_tier = tier;
+
+        match outcome {
+            crate::ovm::tier::TierOutcome::Ran(Ok(result)) => {
+                let (loop_value, outs) = if facts.writes.is_empty() {
+                    (result, Vec::new())
+                } else {
+                    match result {
+                        Value::Tuple(items) => {
+                            let mut items = items.as_ref().clone();
+                            let rest = items.split_off(1);
+                            (items.pop().unwrap_or(Value::Unit), rest)
+                        }
+                        // The synthesized shape IS a tuple when writes
+                        // exist; anything else means the tier diverged —
+                        // refuse the result rather than corrupt state.
+                        _ => return Ok(None),
+                    }
+                };
+                for (name, value) in facts.writes.iter().zip(outs) {
+                    self.environment.set(name, value)?;
+                }
+                Ok(Some(loop_value))
+            }
+            crate::ovm::tier::TierOutcome::Ran(Err(message)) => {
+                let err = Self::map_tier_error_message(message);
+                // Splice the VM's error location onto the interpreter's
+                // stack exactly as the ordinary tiered-call path does —
+                // minus the synthetic "<hot loop>" frame, which no
+                // interpreter-only run would show.
+                if self.pending_error_location.is_none() && !Self::is_control_signal(&err) {
+                    let (span, frames, _leak) = self
+                        .bytecode_tier
+                        .as_mut()
+                        .map(|t| t.take_error_trace())
+                        .unwrap_or_default();
+                    if let Some((line, column)) = span {
+                        let mut call_stack = self.call_stack_names.clone();
+                        call_stack.extend(frames.into_iter().filter(|f| f != "<hot loop>").rev());
+                        self.pending_error_location = Some(crate::ast::ErrorLocation {
+                            line,
+                            column,
+                            call_stack,
+                            hint: self.pending_error_hint.take(),
+                        });
+                    }
+                }
+                Err(err)
+            }
+            crate::ovm::tier::TierOutcome::Fallback => Ok(None),
         }
     }
 
@@ -3747,10 +3922,20 @@ impl Interpreter {
         // Unit unless `break value` — see run_loop_body for why body values
         // are discarded rather than retained.
         let mut last_value = Value::Unit;
+        let mut iters: i64 = 0;
+        let mut try_promotion = self.bytecode_tier.is_some();
 
         loop {
             // Safepoint poll for GC coordination at start of each iteration
             self.safepoint_poll()?;
+
+            if iters == Self::LOOP_PROMOTE_AFTER && try_promotion {
+                try_promotion = false;
+                if let Some(v) = self.promote_loop_remainder(None, Some(condition), body)? {
+                    return Ok(v);
+                }
+            }
+            iters += 1;
 
             let condition_value = self.eval_expr(condition)?;
             let condition_bool = self.to_boolean(&condition_value)?;

@@ -274,6 +274,23 @@ impl BytecodeTier {
         self.vm.statistics()
     }
 
+    /// Run a function VALUE on the tier — compiled and cached by body
+    /// identity, never by name. This is the entry hot-loop promotion
+    /// uses for its synthesized continuations (and mirrors the
+    /// ambiguous-name branch of `try_call`). Fallback means the tier
+    /// declined before running anything.
+    pub fn try_call_function_value(
+        &mut self,
+        func: &crate::ast::Function,
+        args: &mut [Value],
+    ) -> TierOutcome {
+        let arity = func.parameters.len();
+        match self.vm.hof_function_id(func, arity) {
+            Some(func_id) => self.run_on_vm(func_id, args, None),
+            None => TierOutcome::Fallback,
+        }
+    }
+
     pub fn stats(&self) -> TierStats {
         // The instruction counter lives on the VM, not in the tier's own
         // tally, so it is read through at reporting time.

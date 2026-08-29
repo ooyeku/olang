@@ -7268,6 +7268,63 @@ impl BytecodeCompiler {
                 iterable,
                 body,
             } => {
+                // `for v in a..b` (exclusive) where the body provably never
+                // assigns `v`: count on a scalar register — no Range value,
+                // no IterGet, and (the point) every live-in of the loop is
+                // a scalar, so OSR can enter it natively. The proof comes
+                // from the loop-promotion analyzer; any doubt (hazard, or
+                // the body assigns the loop variable) falls through to the
+                // generic index lowering below.
+                if let Expr::Range {
+                    start,
+                    end,
+                    inclusive: false,
+                } = iterable.as_ref()
+                    && crate::interpreter::loop_promo::analyze(body, None)
+                        .is_some_and(|f| !f.writes.iter().any(|w| w == variable))
+                {
+                    let start_reg = self.compile_expression(start)?;
+                    let var_reg = self.register_allocator.allocate_register();
+                    self.emitter.instructions.push(Instruction::Move {
+                        dst: var_reg,
+                        src: start_reg,
+                    });
+                    self.local_variables.insert(variable.clone(), var_reg);
+                    let end_reg = self.compile_expression(end)?;
+                    // The range is evaluated once; a body that reassigns
+                    // the variable behind `end` must not see the bound
+                    // move (the generic path shields its source the same
+                    // way).
+                    let end_reg = self.shield_operand(end_reg, !Self::assignment_free(body));
+
+                    let loop_start = self.emitter.create_label();
+                    let loop_step = self.emitter.create_label();
+                    let loop_end = self.emitter.create_label();
+
+                    self.emitter.place_label(loop_start);
+                    let cond_reg = self.register_allocator.allocate_register();
+                    self.emitter.emit_lt(cond_reg, var_reg, end_reg);
+                    self.emitter.emit_branch_if_false(cond_reg, loop_end);
+
+                    self.loop_targets.push((loop_step, loop_end));
+                    let body_result = self.compile_expression(body);
+                    self.loop_targets.pop();
+                    body_result?;
+
+                    self.emitter.place_label(loop_step);
+                    self.emitter.instructions.push(Instruction::BinImm {
+                        op: BinaryOp::Add,
+                        dst: var_reg,
+                        lhs: var_reg,
+                        imm: OvmValue::new_integer(1),
+                        swapped: false,
+                    });
+                    self.emitter.emit_jump(loop_start);
+
+                    self.emitter.place_label(loop_end);
+                    return self.unit_register();
+                }
+
                 // Iterate by index over a list or range, matching the
                 // interpreter (which never materializes a range).
                 // IterGet re-reads the source register EVERY pass, so a body

@@ -3912,7 +3912,11 @@ impl PlanFn {
                         grow!(self.writes[i], src_mask);
                     }
                 }
-                Instruction::Move { dst, src } => {
+                Instruction::Move { dst, src } | Instruction::TakeMove { dst, src } => {
+                    // TakeMove infers exactly as Move: it is only emitted
+                    // when the source is dead afterward, so its
+                    // becomes-Unit write is unobservable — and modeling it
+                    // would wrongly widen a parameter's singleton kind.
                     let src_mask = self.writes[src.0 as usize];
                     grow!(self.writes[dst.0 as usize], src_mask);
                     if let Some(tk) = self.tuples.get(&src.0).cloned() {
@@ -5288,7 +5292,10 @@ fn translate_body(
                 builder.ins().jump(entry, &[]);
                 terminated = true;
             }
-            Instruction::Move { dst, src } => {
+            Instruction::Move { dst, src } | Instruction::TakeMove { dst, src } => {
+                // TakeMove lowers as Move: the source is dead after it
+                // (that is the condition for emitting it), so the clear
+                // has no observable effect in native code.
                 if let Some(tk) = inference.tuples.get(&src.0) {
                     if inference.tuples.contains_key(&dst.0) {
                         for i in 0..tk.len() {
