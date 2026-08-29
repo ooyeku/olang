@@ -986,6 +986,27 @@ fn stack_workers(n: usize) -> usize {
 /// order, so the output is identical to the sequential map. The
 /// data-stack twin of `parallel_apply` for host-side work (parsing,
 /// column inference) rather than olang kernels.
+/// Promote the calling worker thread to user-initiated QoS on macOS.
+/// Threads inherit their spawner's QoS class; when the process runs at
+/// a background class, the scheduler confines its threads to
+/// efficiency cores and data-parallel fan-out collapses to ~2x. A
+/// data-stack worker is user-initiated work by definition — the caller
+/// is waiting on it.
+#[cfg(target_os = "macos")]
+fn promote_worker_qos() {
+    // SAFETY: setting the current thread's QoS class has no memory
+    // preconditions; 0x21 is QOS_CLASS_USER_INITIATED.
+    unsafe extern "C" {
+        fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: i32) -> i32;
+    }
+    unsafe {
+        let _ = pthread_set_qos_class_self_np(0x21, 0);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn promote_worker_qos() {}
+
 fn parallel_map_ordered<T: Send, R: Send>(
     items: Vec<T>,
     workers: usize,
@@ -1008,7 +1029,12 @@ fn parallel_map_ordered<T: Send, R: Send>(
     std::thread::scope(|scope| {
         let handles: Vec<_> = chunks
             .into_iter()
-            .map(|chunk| scope.spawn(move || chunk.into_iter().map(f).collect::<Vec<R>>()))
+            .map(|chunk| {
+                scope.spawn(move || {
+                    promote_worker_qos();
+                    chunk.into_iter().map(f).collect::<Vec<R>>()
+                })
+            })
             .collect();
         handles
             .into_iter()
@@ -1025,6 +1051,32 @@ fn parallel_map_ordered<T: Send, R: Send>(
 /// Files at or above this size parse across cores; below it the split
 /// and merge cost more than the parse they save.
 const PAR_CSV_MIN_BYTES: usize = 4 * 1024 * 1024;
+
+/// Record-aligned split offsets for an UNQUOTED body: jump to each
+/// equal-stride target and take the next newline. O(parts) memchr
+/// probes on small windows — where the quote-aware splitter below
+/// walks every byte, which on a 40 MB body cost more than the whole
+/// parallel scan it was setting up.
+fn unquoted_record_splits(text: &str, parts: usize) -> Vec<usize> {
+    let bytes = text.as_bytes();
+    let stride = bytes.len().div_ceil(parts.max(1)).max(1);
+    let mut splits = vec![0usize];
+    let mut target = stride;
+    while target < bytes.len() {
+        match memchr::memchr(b'\n', &bytes[target..]) {
+            Some(off) => {
+                let pos = target + off + 1;
+                if pos < bytes.len() {
+                    splits.push(pos);
+                }
+                target = pos + stride;
+            }
+            None => break,
+        }
+    }
+    splits.push(bytes.len());
+    splits
+}
 
 fn csv_record_splits(text: &str, parts: usize) -> Vec<usize> {
     let bytes = text.as_bytes();
@@ -1051,6 +1103,108 @@ fn csv_record_splits(text: &str, parts: usize) -> Vec<usize> {
 // ---------------------------------------------------------------------
 // The fused CSV scan: delimiters found and fields parsed in one pass
 // ---------------------------------------------------------------------
+
+// ---------------------------------------------------------------------
+// Delimiter scanning
+// ---------------------------------------------------------------------
+
+/// Positions of every `,` and `\n` in `bytes`, in order. On aarch64 the
+/// classification is NEON: 16 bytes per compare, the 0xFF/0x00 lane
+/// mask narrowed to a 64-bit nibble mask with the `vshrn` idiom (4 bits
+/// per byte), and set nibbles iterated with trailing_zeros. Delimiters
+/// arrive every ~7 bytes in a typical CSV, which is exactly the density
+/// where memchr's find-one-at-a-time loop pays per-call overhead per
+/// hit; classifying a block at a time amortizes it.
+#[cfg(target_arch = "aarch64")]
+struct DelimIter<'a> {
+    bytes: &'a [u8],
+    /// Start of the block `mask` describes.
+    base: usize,
+    /// Nibble mask for that block: 4 identical bits per matched byte.
+    mask: u64,
+    /// Next unclassified position.
+    next: usize,
+}
+
+#[cfg(target_arch = "aarch64")]
+impl<'a> DelimIter<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        DelimIter {
+            bytes,
+            base: 0,
+            mask: 0,
+            next: 0,
+        }
+    }
+
+    #[inline]
+    fn classify(bytes: &[u8], at: usize) -> u64 {
+        use std::arch::aarch64::*;
+        // SAFETY: caller guarantees at + 16 <= bytes.len(); NEON is
+        // baseline on aarch64, and vld1q_u8 is alignment-free.
+        unsafe {
+            let v = vld1q_u8(bytes.as_ptr().add(at));
+            let hit = vorrq_u8(
+                vceqq_u8(v, vdupq_n_u8(b',')),
+                vceqq_u8(v, vdupq_n_u8(b'\n')),
+            );
+            let narrowed = vshrn_n_u16::<4>(vreinterpretq_u16_u8(hit));
+            vget_lane_u64::<0>(vreinterpret_u64_u8(narrowed))
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+impl<'a> Iterator for DelimIter<'a> {
+    type Item = usize;
+
+    #[inline]
+    fn next(&mut self) -> Option<usize> {
+        loop {
+            if self.mask != 0 {
+                let tz = self.mask.trailing_zeros() as usize;
+                // Clear the whole nibble — all 4 bits mark one byte.
+                self.mask &= !(0xFu64 << (tz & !3));
+                return Some(self.base + (tz >> 2));
+            }
+            if self.next + 16 <= self.bytes.len() {
+                self.mask = Self::classify(self.bytes, self.next);
+                self.base = self.next;
+                self.next += 16;
+                continue;
+            }
+            // Scalar tail (under 16 bytes remain).
+            if self.next >= self.bytes.len() {
+                return None;
+            }
+            let pos = self.next;
+            self.next += 1;
+            let b = self.bytes[pos];
+            if b == b',' || b == b'\n' {
+                return Some(pos);
+            }
+        }
+    }
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+struct DelimIter<'a>(memchr::Memchr2<'a>);
+
+#[cfg(not(target_arch = "aarch64"))]
+impl<'a> DelimIter<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        DelimIter(memchr::memchr2_iter(b',', b'\n', bytes))
+    }
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+impl<'a> Iterator for DelimIter<'a> {
+    type Item = usize;
+    #[inline]
+    fn next(&mut self) -> Option<usize> {
+        self.0.next()
+    }
+}
 
 /// One column's outcome for one chunk of the fused scan.
 enum ChunkCol {
@@ -1169,26 +1323,32 @@ impl Builder {
 
 /// The first non-empty cell decides a column's speculation, and its
 /// value is the builder's first entry.
-fn seed_builder(cell: &str, nulls: usize, span: (u32, u32)) -> Builder {
+fn seed_builder(cell: &str, nulls: usize, span: (u32, u32), est_rows: usize) -> Builder {
+    let cap = est_rows.max(nulls + 1);
     let valid = (nulls > 0).then(|| {
-        let mut v = vec![false; nulls];
+        let mut v = Vec::with_capacity(cap);
+        v.extend(std::iter::repeat_n(false, nulls));
         v.push(true);
         v
     });
     if let Some(v) = parse_i64_fast(cell) {
-        let mut values = vec![0i64; nulls];
+        let mut values = Vec::with_capacity(cap);
+        values.extend(std::iter::repeat_n(0i64, nulls));
         values.push(v);
         Builder::I64 { values, valid }
     } else if let Ok(f) = cell.parse::<f64>() {
-        let mut values = vec![0.0f64; nulls];
+        let mut values = Vec::with_capacity(cap);
+        values.extend(std::iter::repeat_n(0.0f64, nulls));
         values.push(f);
         Builder::F64 { values, valid }
     } else if cell == "true" || cell == "false" {
-        let mut values = vec![false; nulls];
+        let mut values = Vec::with_capacity(cap);
+        values.extend(std::iter::repeat_n(false, nulls));
         values.push(cell == "true");
         Builder::Bool { values, valid }
     } else {
-        let mut spans = vec![(0u32, 0u32); nulls];
+        let mut spans = Vec::with_capacity(cap);
+        spans.extend(std::iter::repeat_n((0u32, 0u32), nulls));
         spans.push(span);
         Builder::Str { spans }
     }
@@ -1198,7 +1358,7 @@ fn seed_builder(cell: &str, nulls: usize, span: (u32, u32)) -> Builder {
 /// demoted to text — the caller stops feeding it and re-scans for its
 /// spans at the end of the chunk.
 #[inline]
-fn emit_cell(b: &mut Builder, cell: &str, span: (u32, u32)) -> bool {
+fn emit_cell(b: &mut Builder, cell: &str, span: (u32, u32), est_rows: usize) -> bool {
     if cell.is_empty() {
         b.push_null();
         return false;
@@ -1206,7 +1366,7 @@ fn emit_cell(b: &mut Builder, cell: &str, span: (u32, u32)) -> bool {
     match b {
         Builder::Undecided { nulls } => {
             let n = *nulls;
-            *b = seed_builder(cell, n, span);
+            *b = seed_builder(cell, n, span, est_rows);
         }
         Builder::I64 { values, valid } => {
             if let Some(v) = parse_i64_fast(cell) {
@@ -1271,6 +1431,9 @@ fn fused_scan_chunk(
     let base = range.start as u32;
     let chunk = &body[range];
     let bytes = chunk.as_bytes();
+    // Pre-size builders from a bytes-per-row estimate: without it a
+    // 50k-row chunk column reallocates through ~16 doublings.
+    let est_rows = bytes.len() / (n_cols * 4).max(8) + 8;
     let mut builders: Vec<Builder> = (0..n_cols)
         .map(|_| Builder::Undecided { nulls: 0 })
         .collect();
@@ -1279,7 +1442,7 @@ fn fused_scan_chunk(
 
     let mut field_start = 0usize;
     let mut col = 0usize;
-    for pos in memchr::memchr2_iter(b',', b'\n', bytes) {
+    for pos in DelimIter::new(bytes) {
         if bytes[pos] == b',' {
             if col + 1 >= n_cols {
                 return None; // more fields than the header declares
@@ -1287,7 +1450,7 @@ fn fused_scan_chunk(
             if !demoted[col] {
                 let cell = &chunk[field_start..pos];
                 let span = (base + field_start as u32, (pos - field_start) as u32);
-                if emit_cell(&mut builders[col], cell, span) {
+                if emit_cell(&mut builders[col], cell, span, est_rows) {
                     demoted[col] = true;
                     any_demoted = true;
                 }
@@ -1309,7 +1472,7 @@ fn fused_scan_chunk(
             if !demoted[col] {
                 let cell = &chunk[field_start..end];
                 let span = (base + field_start as u32, (end - field_start) as u32);
-                if emit_cell(&mut builders[col], cell, span) {
+                if emit_cell(&mut builders[col], cell, span, est_rows) {
                     demoted[col] = true;
                     any_demoted = true;
                 }
@@ -1331,7 +1494,7 @@ fn fused_scan_chunk(
             if !demoted[col] {
                 let cell = &chunk[field_start..end];
                 let span = (base + field_start as u32, (end - field_start) as u32);
-                if emit_cell(&mut builders[col], cell, span) {
+                if emit_cell(&mut builders[col], cell, span, est_rows) {
                     demoted[col] = true;
                     any_demoted = true;
                 }
@@ -1622,7 +1785,7 @@ fn read_csv_borrowed(
     let t0 = std::time::Instant::now();
 
     let chunk_ranges: Vec<std::ops::Range<usize>> = if workers > 1 {
-        csv_record_splits(body, workers)
+        unquoted_record_splits(body, workers)
             .windows(2)
             .map(|w| w[0]..w[1])
             .collect()

@@ -28,8 +28,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - **The data stack closed more of the Polars gap** (DP4 pipeline,
-  1M rows: 126 ms → 68 ms across four rounds; pandas 309 ms, Polars
-  32 ms; checksums byte-identical across engines):
+  1M rows: 126 ms → 55 ms across five rounds; pandas 314 ms, Polars
+  35 ms — end to end, 5.7× ahead of pandas and within 1.6× of Polars;
+  checksums byte-identical across engines):
+  - *The hidden sequential pass, found and removed*: what profiling
+    kept showing as a ~2× parallel-scaling ceiling on the CSV scan was
+    a quote-aware record-boundary pass walking every byte of the body
+    sequentially before any worker started. The unquoted fast path now
+    finds chunk boundaries with O(workers) newline probes; the fused
+    scan's wall time fell from ~18 ms to ~3 ms and load from 27 ms to
+    14 ms. (Diagnosed by stamping each parallel chunk's start offset:
+    all 18 chunks began within 0.3 ms and finished within 4 ms — the
+    other 15 ms preceded them.) Delimiter classification is NEON on
+    aarch64 (16 bytes per compare, nibble-mask via vshrn) with the
+    memchr path kept for other architectures, and data-stack workers
+    promote themselves to user-initiated QoS on macOS so a background
+    shell cannot silently confine them to efficiency cores.
   - *The CSV reader is fused*: one scan per record-aligned chunk both
     finds delimiters and parses each field into its column's
     speculative typed builder while the bytes are hot in cache —

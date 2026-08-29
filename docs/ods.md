@@ -1378,24 +1378,27 @@ startup is excluded equally.
 
 | Stage | ods | pandas | Polars |
 |---|---|---|---|
-| load (1M-row CSV) | 27 ms | 174 ms | 7 ms |
-| clean (drop nulls, derive) | 11 ms | 53 ms | 5 ms |
-| filter | 8 ms | 8 ms | 5 ms |
-| group (2 keys, 3 aggs) | 14 ms | 50 ms | 7 ms |
+| load (1M-row CSV) | 14 ms | 177 ms | 7 ms |
+| clean (drop nulls, derive) | 12 ms | 54 ms | 5 ms |
+| filter | 9 ms | 9 ms | 5 ms |
+| group (2 keys, 3 aggs) | 14 ms | 51 ms | 8 ms |
 | join (dimension table) | 0 ms | 1 ms | 1 ms |
 | sort | 0 ms | 0 ms | 0 ms |
-| daily (group, sort, rolling 7) | 6 ms | 20 ms | 5 ms |
+| daily (group, sort, rolling 7) | 7 ms | 21 ms | 6 ms |
 | write CSV | 0 ms | 1 ms | 1 ms |
-| **whole pipeline** | **68 ms** | **309 ms** | **32 ms** |
+| **whole pipeline** | **55 ms** | **314 ms** | **35 ms** |
 
 Read plainly: on this workload ods is ahead of pandas end to end
-(4.5×), and every stage sits within a small constant of Polars — a
-decade of columnar engineering with SIMD kernels throughout. The CSV
-reader is *fused*: one scan per record-aligned chunk both finds
-delimiters and parses each field into its column's speculative typed
+(5.7×) and within 1.6× of Polars — a decade of columnar engineering
+with SIMD kernels throughout. The CSV reader is *fused*: one scan per
+record-aligned chunk both finds delimiters (NEON block classification
+on aarch64) and parses each field into its column's speculative typed
 builder while the bytes are hot in cache; string columns keep spans
-into the file body itself. The reader's remaining distance to Polars
-is SIMD field scanning and parsing, recorded below.
+into the file body itself. A finding worth its sentence: most of what
+looked like a parallel-scaling ceiling here was a sequential
+quote-aware record-boundary pass running before the parallel scan —
+the unquoted path now finds boundaries with O(workers) newline probes,
+and the "ceiling" vanished.
 
 The first publication of this table (0.71.0) showed 223 ms, and the
 per-stage columns were read as the to-do list they are. Each of the
@@ -1562,16 +1565,13 @@ Revisions and notes, recorded per the rule:
 Deferrals recorded with reopening conditions: **faer-backed linear
 algebra** (the in-crate Cholesky is textbook-correct for
 regression-sized systems; the big decompositions — SVD, PCA, QR —
-arrive with `faer` when a real demand creates them), **SIMD field
-scanning in the CSV reader** (the reader is fused — one scan per chunk
-parses fields into speculative typed builders as delimiters arrive,
-with in-place Int→Float upgrades, demotion-to-text re-scans, and
-cross-chunk type reconciliation, all pinned cell-identical to the
-general parser by `tests/csv_reader_differential_test.rs` — but the
-scan itself is scalar memchr plus a per-field branch; Polars runs
-vectorized delimiter classification and SIMD numeric parsing, which is
-most of the remaining load gap — reopen if a workload's load stage,
-not its compute, is the bottleneck), and **lazy evaluation**, next.
+arrive with `faer` when a real demand creates them), **SIMD numeric
+parsing in the CSV reader** (the reader is fused, and delimiter
+scanning is NEON-classified on aarch64; what remains against Polars'
+load row is vectorized digit parsing and the one-copy trip from file
+bytes into the shared `Arc<str>` body — reopen if a workload's load
+stage, not its compute, is the bottleneck), and **lazy evaluation**,
+next.
 
 ## Why eager evaluation
 
