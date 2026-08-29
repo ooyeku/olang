@@ -1119,8 +1119,93 @@ const NULL_GROUP: u64 = u64::MAX;
 
 /// Group ids for a single key column, first-seen order. The dense i64
 /// and string paths avoid per-row Scalar boxing — group_by's hot loop.
+/// Parallel dictionary encoding: chunks build local dictionaries and
+/// local ids concurrently; the local dictionaries then merge into the
+/// global one in chunk order — which reproduces sequential first-seen
+/// id order exactly, because a key's global first occurrence lies in
+/// the earliest chunk containing it, and both chunk order and
+/// within-chunk order are first-seen — and a final parallel pass
+/// translates local ids through each chunk's translation table.
+#[cfg(feature = "parallel")]
+fn group_ids_par<K>(n: usize, key_of: impl Fn(usize) -> Option<K> + Sync) -> (Vec<u32>, usize)
+where
+    K: std::hash::Hash + Eq + Copy + Send + Sync,
+{
+    use rayon::prelude::*;
+    let workers = rayon::current_num_threads().max(1);
+    let chunk = n.div_ceil(workers).max(1);
+    let ranges: Vec<(usize, usize)> = (0..n.div_ceil(chunk))
+        .map(|w| (w * chunk, ((w + 1) * chunk).min(n)))
+        .collect();
+
+    let locals: Vec<(Vec<u32>, Vec<Option<K>>)> = ranges
+        .par_iter()
+        .map(|&(lo, hi)| {
+            let mut map: FxMap<Option<K>, u32> = FxMap::default();
+            let mut order: Vec<Option<K>> = Vec::new();
+            let mut local = Vec::with_capacity(hi - lo);
+            for i in lo..hi {
+                let k = key_of(i);
+                let next = order.len() as u32;
+                let id = *map.entry(k).or_insert_with(|| {
+                    order.push(k);
+                    next
+                });
+                local.push(id);
+            }
+            (local, order)
+        })
+        .collect();
+
+    let mut global: FxMap<Option<K>, u32> = FxMap::default();
+    let mut next: u32 = 0;
+    let trans: Vec<Vec<u32>> = locals
+        .iter()
+        .map(|(_, order)| {
+            order
+                .iter()
+                .map(|k| {
+                    *global.entry(*k).or_insert_with(|| {
+                        let id = next;
+                        next += 1;
+                        id
+                    })
+                })
+                .collect()
+        })
+        .collect();
+
+    let mut ids = vec![0u32; n];
+    ids.par_chunks_mut(chunk)
+        .zip(locals.par_iter().zip(trans.par_iter()))
+        .for_each(|(out, ((local, _), tr))| {
+            for (o, &l) in out.iter_mut().zip(local.iter()) {
+                *o = tr[l as usize];
+            }
+        });
+    (ids, next as usize)
+}
+
 fn group_ids_single(key: &Series) -> (Vec<u32>, usize) {
     let n = key.len();
+
+    // The hot key types encode across all cores on large columns; the
+    // sequential arms below serve small columns and the rare types.
+    #[cfg(feature = "parallel")]
+    if n >= PAR_GROUPBY_ROWS && crate::parallel_enabled() {
+        match key {
+            Series::I64 { values, validity } => {
+                let valid = |i: usize| validity.as_ref().map(|b| b.get(i)).unwrap_or(true);
+                return group_ids_par(n, |i| valid(i).then(|| values[i]));
+            }
+            Series::Str { col, validity } => {
+                let valid = |i: usize| validity.as_ref().map(|b| b.get(i)).unwrap_or(true);
+                return group_ids_par(n, |i| valid(i).then(|| col.get(i)));
+            }
+            _ => {}
+        }
+    }
+
     let mut ids = Vec::with_capacity(n);
     let mut next: u32 = 0;
     let mut null_id: Option<u32> = None;

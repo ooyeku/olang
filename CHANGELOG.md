@@ -27,10 +27,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- **The data stack closed more of the Polars gap** (DP4 pipeline,
-  1M rows: 126 ms → 51 ms across six rounds; pandas 313 ms, Polars
-  33 ms — end to end, 6.1× ahead of pandas and within 1.5× of Polars;
-  checksums byte-identical across engines):
+- **The data stack closed the Polars gap to 12%** (DP4 pipeline,
+  1M rows: 126 ms → 38 ms across seven rounds; pandas 310 ms, Polars
+  34 ms — end to end, 8.2× ahead of pandas, with the group and daily
+  stages now ahead of Polars; checksums byte-identical across
+  engines):
+  - *Dictionary encoding parallelized*: group-by key encoding was two
+    sequential hash passes over the key columns — most of the group
+    stage. Large I64 and Str key columns now encode across all cores:
+    chunks build local dictionaries and ids concurrently, the local
+    dictionaries merge in chunk order — which reproduces sequential
+    first-seen id order exactly, since a key's first occurrence lies
+    in the earliest chunk containing it — and a parallel pass
+    translates local to global ids. Group: 14 → 4 ms; daily (which
+    groups too): 6 → 2 ms. Both now ahead of Polars on this workload.
   - *The file reads directly into the shared body*: `read_csv_file`
     reads the bytes straight into the `Arc<str>` allocation the string
     columns will share (zeroed slice, read_exact, UTF-8 validation,

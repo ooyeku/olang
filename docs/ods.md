@@ -1378,18 +1378,19 @@ startup is excluded equally.
 
 | Stage | ods | pandas | Polars |
 |---|---|---|---|
-| load (1M-row CSV) | 10 ms | 177 ms | 7 ms |
-| clean (drop nulls, derive) | 11 ms | 53 ms | 5 ms |
-| filter | 9 ms | 8 ms | 5 ms |
-| group (2 keys, 3 aggs) | 14 ms | 51 ms | 8 ms |
+| load (1M-row CSV) | 10 ms | 174 ms | 7 ms |
+| clean (drop nulls, derive) | 12 ms | 54 ms | 6 ms |
+| filter | 9 ms | 9 ms | 5 ms |
+| group (2 keys, 3 aggs) | 4 ms | 50 ms | 8 ms |
 | join (dimension table) | 0 ms | 1 ms | 1 ms |
 | sort | 0 ms | 0 ms | 0 ms |
-| daily (group, sort, rolling 7) | 6 ms | 21 ms | 6 ms |
+| daily (group, sort, rolling 7) | 2 ms | 21 ms | 6 ms |
 | write CSV | 0 ms | 1 ms | 1 ms |
-| **whole pipeline** | **51 ms** | **313 ms** | **33 ms** |
+| **whole pipeline** | **38 ms** | **310 ms** | **34 ms** |
 
 Read plainly: on this workload ods is ahead of pandas end to end
-(6.1×) and within 1.5× of Polars — a decade of columnar engineering
+(8.2×) and within 12% of Polars — with the group and daily stages
+ahead of it — a decade of columnar engineering
 with SIMD kernels throughout. The CSV reader is *fused*: one scan per
 record-aligned chunk both finds delimiters (NEON block classification
 on aarch64) and parses each field into its column's speculative typed
