@@ -1054,28 +1054,58 @@ fn csv_record_splits(text: &str, parts: usize) -> Vec<usize> {
 /// reports with a line number this function has no business
 /// duplicating.
 fn split_unquoted_rows<'a>(body: &'a str, n_cols: usize) -> Option<Vec<Vec<&'a str>>> {
-    if body.as_bytes().contains(&b'"') {
+    let bytes = body.as_bytes();
+    if bytes.contains(&b'"') {
         return None;
     }
-    let mut cols: Vec<Vec<&'a str>> = vec![Vec::new(); n_cols];
-    for line in body.split('\n') {
-        // A trailing newline leaves an empty last piece, and the `csv`
-        // crate skips blank lines rather than reading them as a row of
-        // one empty field.
-        let line = line.strip_suffix('\r').unwrap_or(line);
-        if line.is_empty() {
-            continue;
-        }
-        let mut fields = 0usize;
-        for (i, field) in line.split(',').enumerate() {
-            if i >= n_cols {
+    // One memchr2-driven pass over the bytes, emitting fields as the
+    // separators arrive — replaces split('\n') + split(',') per line,
+    // which re-scanned every line. Commas and newlines are ASCII, so
+    // slicing the str at these byte offsets is always char-safe. The
+    // vectors pre-size from a bytes-per-row estimate: growth
+    // reallocation on n parallel-growing vectors was a measurable
+    // slice of the split.
+    let est_rows = bytes.len() / 24 + 8;
+    let mut cols: Vec<Vec<&'a str>> = (0..n_cols).map(|_| Vec::with_capacity(est_rows)).collect();
+    let mut field_start = 0usize;
+    let mut col = 0usize;
+    for pos in memchr::memchr2_iter(b',', b'\n', bytes) {
+        if bytes[pos] == b',' {
+            if col + 1 >= n_cols {
                 return None; // more fields than the header declares
             }
-            cols[i].push(field);
-            fields += 1;
+            cols[col].push(&body[field_start..pos]);
+            col += 1;
+        } else {
+            let mut end = pos;
+            if end > field_start && bytes[end - 1] == b'\r' {
+                end -= 1;
+            }
+            // The `csv` crate skips blank lines rather than reading
+            // them as a row of one empty field.
+            if col == 0 && end == field_start {
+                field_start = pos + 1;
+                continue;
+            }
+            if col != n_cols - 1 {
+                return None; // short row — let the general parser name the line
+            }
+            cols[col].push(&body[field_start..end]);
+            col = 0;
         }
-        if fields != n_cols {
-            return None; // short row — let the general parser name the line
+        field_start = pos + 1;
+    }
+    // A final line without a trailing newline.
+    if field_start < bytes.len() || col > 0 {
+        let mut end = bytes.len();
+        if end > field_start && bytes[end - 1] == b'\r' {
+            end -= 1;
+        }
+        if !(col == 0 && end == field_start) {
+            if col != n_cols - 1 {
+                return None;
+            }
+            cols[col].push(&body[field_start..end]);
         }
     }
     Some(cols)
@@ -1097,7 +1127,12 @@ fn read_csv_borrowed(body: &str, headers: &[String]) -> Option<Result<Value, Str
     } else {
         1
     };
-    let mut cols: Vec<Vec<&str>> = vec![Vec::new(); n_cols];
+    let timing = std::env::var_os("OLANG_ODS_TIMING").is_some();
+    let t0 = std::time::Instant::now();
+    // Per column, the list of per-chunk cell runs — inference consumes
+    // the chunks directly, so the old sequential merge (extend every
+    // chunk into one flat vector: ~7ms on a 1M-row file) is gone.
+    let mut col_chunks: Vec<Vec<Vec<&str>>> = (0..n_cols).map(|_| Vec::new()).collect();
     if workers > 1 {
         let splits = csv_record_splits(body, workers);
         let runs: Vec<&str> = splits.windows(2).map(|w| &body[w[0]..w[1]]).collect();
@@ -1105,26 +1140,38 @@ fn read_csv_borrowed(body: &str, headers: &[String]) -> Option<Result<Value, Str
         for chunk in parsed {
             let chunk = chunk?;
             for (c, col) in chunk.into_iter().enumerate() {
-                cols[c].extend(col);
+                col_chunks[c].push(col);
             }
         }
     } else {
-        cols = split_unquoted_rows(body, n_cols)?;
+        for (c, col) in split_unquoted_rows(body, n_cols)?.into_iter().enumerate() {
+            col_chunks[c].push(col);
+        }
     }
+    if timing {
+        eprintln!("[ods-timing] split={:?}", t0.elapsed());
+    }
+    let t1 = std::time::Instant::now();
 
     // Columns are independent, so a large file infers one per core —
     // the same split the general path uses.
-    let n_rows = cols.first().map(|c| c.len()).unwrap_or(0);
+    let n_rows = col_chunks
+        .first()
+        .map(|c| c.iter().map(|v| v.len()).sum())
+        .unwrap_or(0);
     let workers = if n_rows >= PAR_COLUMNS_MIN_ROWS {
         stack_workers(n_cols)
     } else {
         1
     };
     let pairs = parallel_map_ordered(
-        headers.iter().cloned().zip(cols).collect(),
+        headers.iter().cloned().zip(col_chunks).collect(),
         workers,
-        |(name, raw)| (name, infer_column(raw)),
+        |(name, chunks)| (name, infer_column_chunks(chunks)),
     );
+    if timing {
+        eprintln!("[ods-timing] infer+parse={:?}", t1.elapsed());
+    }
     Some(Frame::new(pairs).map(OdsFrame::into_value).map_err(e))
 }
 
@@ -1268,13 +1315,23 @@ fn to_csv(f: &Frame) -> String {
 /// the first non-conforming one, because the loop stops there exactly
 /// as `all` short-circuited.
 fn infer_column<S: AsRef<str> + Into<String>>(raw: Vec<S>) -> Series {
+    infer_column_chunks(vec![raw])
+}
+
+/// infer_column over per-chunk runs of one column, so the parallel CSV
+/// split's chunks feed inference directly instead of being merged into
+/// one flat vector first. Semantics identical to the flat form: the
+/// cascade decides over EVERY cell across all chunks.
+fn infer_column_chunks<S: AsRef<str> + Into<String>>(chunks: Vec<Vec<S>>) -> Series {
+    let raw_len: usize = chunks.iter().map(|c| c.len()).sum();
+    let raw = || chunks.iter().flat_map(|c| c.iter());
     // An all-empty column has no type to infer; it reads as nulls.
-    if raw.iter().all(|s| s.as_ref().is_empty()) {
-        return Series::from_str_options(vec![None; raw.len()]);
+    if raw().all(|s| s.as_ref().is_empty()) {
+        return Series::from_str_options(vec![None; raw_len]);
     }
 
-    let mut ints: Vec<Option<i64>> = Vec::with_capacity(raw.len());
-    if raw.iter().all(|s| {
+    let mut ints: Vec<Option<i64>> = Vec::with_capacity(raw_len);
+    if raw().all(|s| {
         let s = s.as_ref();
         if s.is_empty() {
             ints.push(None);
@@ -1292,8 +1349,8 @@ fn infer_column<S: AsRef<str> + Into<String>>(raw: Vec<S>) -> Series {
     }
     drop(ints);
 
-    let mut floats: Vec<Option<f64>> = Vec::with_capacity(raw.len());
-    if raw.iter().all(|s| {
+    let mut floats: Vec<Option<f64>> = Vec::with_capacity(raw_len);
+    if raw().all(|s| {
         let s = s.as_ref();
         if s.is_empty() {
             floats.push(None);
@@ -1311,8 +1368,8 @@ fn infer_column<S: AsRef<str> + Into<String>>(raw: Vec<S>) -> Series {
     }
     drop(floats);
 
-    let mut bools: Vec<Option<bool>> = Vec::with_capacity(raw.len());
-    if raw.iter().all(|s| match s.as_ref() {
+    let mut bools: Vec<Option<bool>> = Vec::with_capacity(raw_len);
+    if raw().all(|s| match s.as_ref() {
         "" => {
             bools.push(None);
             true
@@ -1334,7 +1391,9 @@ fn infer_column<S: AsRef<str> + Into<String>>(raw: Vec<S>) -> Series {
     // The one path that must own its cells — and the only one that
     // allocates in the borrowed fast path.
     Series::from_str_options(
-        raw.into_iter()
+        chunks
+            .into_iter()
+            .flatten()
             .map(|s| {
                 if s.as_ref().is_empty() {
                     None

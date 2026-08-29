@@ -52,6 +52,7 @@ pest_derive = "2.8"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 unicode-segmentation = "1.13"
+memchr = "2"
 csv = "1.4"
 regex = "1.13"
 rusqlite = { version = "0.40", features = ["bundled"], optional = true }

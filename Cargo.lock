@@ -2046,6 +2046,7 @@ dependencies = [
  "lsp-server",
  "lsp-types",
  "md-5",
+ "memchr",
  "miette",
  "num-bigint",
  "num-traits",

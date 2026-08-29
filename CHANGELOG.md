@@ -27,6 +27,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **The data stack closed more of the Polars gap** (DP4 pipeline,
+  1M rows: 126 ms → 98 ms; pandas 315 ms, Polars 35 ms; checksums
+  byte-identical across engines):
+  - *group_by* (35 → 14 ms): multi-key grouping dictionary-encodes each
+    key column independently, then combines per-row ids arithmetically
+    and densifies through an array — the per-row `Vec<Option<Key>>`
+    allocation and composite hashing are gone. Falls back to the hash
+    path when the cardinality product exceeds the dense cap.
+  - *CSV load* (52 → 44 ms): the unquoted fast path splits fields in
+    one memchr2-driven pass over the bytes (replacing per-line
+    re-scanning), pre-sizes its column vectors, and feeds the parallel
+    chunks straight into type inference — the sequential chunk merge is
+    gone. `OLANG_ODS_TIMING=1` prints the split/parse phase timings.
+  - *Frame take/filter*: indices resolve (and the mask converts) once
+    per frame instead of once per column, and `gather` skips its
+    validity scan entirely for columns with no null bitmap.
+
 - **The JIT learned `TakeMove`.** The by-move argument plumbing from
   Campaign 7 was refused by the JIT's inference pass, so any function
   that passed its argument onward — `fn score(x) = clip(shift(scale(x)))`

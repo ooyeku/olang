@@ -1016,18 +1016,7 @@ impl Series {
                 )));
             }
         };
-        let len = self.len();
-        let mut resolved = Vec::with_capacity(idx.len());
-        for &raw in idx.iter() {
-            let i = if raw < 0 { raw + len as i64 } else { raw };
-            if i < 0 || i as usize >= len {
-                return Err(OdsError::IndexOutOfBounds {
-                    index: raw,
-                    length: len,
-                });
-            }
-            resolved.push(i as usize);
-        }
+        let resolved = resolve_take_indices(idx, self.len())?;
         Ok(self.gather(&resolved))
     }
 
@@ -1040,22 +1029,15 @@ impl Series {
                 right: mask.len(),
             });
         }
-        let keep: Vec<usize> = match mask {
-            Series::Bool { values, validity } => (0..values.len())
-                .filter(|&i| values[i] && validity.as_ref().map(|v| v.get(i)).unwrap_or(true))
-                .collect(),
-            _ => {
-                return Err(OdsError::TypeMismatch(format!(
-                    "filter mask must be a Bool series, got Series[{}]",
-                    mask.dtype()
-                )));
-            }
-        };
+        let keep = mask_keep_indices(mask)?;
         Ok(self.gather(&keep))
     }
 
-    fn gather(&self, indices: &[usize]) -> Series {
-        let opts_needed = indices.iter().any(|&i| !self.is_valid(i));
+    pub(crate) fn gather(&self, indices: &[usize]) -> Series {
+        // A column without a validity bitmap has no nulls: skip the
+        // full is_valid scan over the indices (it answered `true` per
+        // element after a bitmap check that could not exist).
+        let opts_needed = self.validity().is_some() && indices.iter().any(|&i| !self.is_valid(i));
         match self {
             Series::F64 { values, .. } => {
                 if opts_needed {
@@ -1718,5 +1700,37 @@ pub mod fuse {
                 validity: None,
             }
         }
+    }
+}
+
+/// Resolve take indices (negatives from the end, bounds checked) once —
+/// `Frame::take` shares one resolution across every column instead of
+/// re-resolving per column.
+pub(crate) fn resolve_take_indices(idx: &[i64], len: usize) -> Result<Vec<usize>> {
+    let mut resolved = Vec::with_capacity(idx.len());
+    for &raw in idx {
+        let i = if raw < 0 { raw + len as i64 } else { raw };
+        if i < 0 || i as usize >= len {
+            return Err(OdsError::IndexOutOfBounds {
+                index: raw,
+                length: len,
+            });
+        }
+        resolved.push(i as usize);
+    }
+    Ok(resolved)
+}
+
+/// The row positions a Bool mask keeps (null mask positions drop) —
+/// `Frame::filter` computes this once for every column.
+pub(crate) fn mask_keep_indices(mask: &Series) -> Result<Vec<usize>> {
+    match mask {
+        Series::Bool { values, validity } => Ok((0..values.len())
+            .filter(|&i| values[i] && validity.as_ref().map(|v| v.get(i)).unwrap_or(true))
+            .collect()),
+        _ => Err(OdsError::TypeMismatch(format!(
+            "filter mask must be a Bool series, got Series[{}]",
+            mask.dtype()
+        ))),
     }
 }

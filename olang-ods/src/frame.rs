@@ -197,30 +197,45 @@ impl Frame {
     }
 
     pub fn take(&self, indices: &Series) -> Result<Frame> {
-        // Each column gathers independently, so a large gather (the
-        // expensive half of sort_by) runs one column per core. Column
-        // order is preserved; the result is identical to the
-        // sequential gather.
+        // Resolve the indices ONCE (negatives, bounds) and share the
+        // resolved list across every column — per-column take used to
+        // redo the same 1M-element resolution six times on a six-column
+        // frame. Each column then gathers independently, one column per
+        // core on a large frame. Column order is preserved; the result
+        // is identical to the sequential gather.
+        let idx: &[i64] = match indices {
+            Series::I64 {
+                values,
+                validity: None,
+            } => values,
+            Series::I64 { .. } => {
+                return Err(OdsError::InvalidArgument(
+                    "take indices must not contain nulls".to_string(),
+                ));
+            }
+            _ => {
+                return Err(OdsError::TypeMismatch(format!(
+                    "take indices must be an Int series, got Series[{}]",
+                    indices.dtype()
+                )));
+            }
+        };
+        let resolved = crate::resolve_take_indices(idx, self.n_rows())?;
         #[cfg(feature = "parallel")]
-        let cols =
-            if indices.len() >= PAR_TAKE_ROWS && self.cols.len() > 1 && crate::parallel_enabled() {
-                use rayon::prelude::*;
-                self.cols
-                    .par_iter()
-                    .map(|c| c.take(indices))
-                    .collect::<Result<Vec<_>>>()?
-            } else {
-                self.cols
-                    .iter()
-                    .map(|c| c.take(indices))
-                    .collect::<Result<Vec<_>>>()?
-            };
+        let cols = if resolved.len() >= PAR_TAKE_ROWS
+            && self.cols.len() > 1
+            && crate::parallel_enabled()
+        {
+            use rayon::prelude::*;
+            self.cols
+                .par_iter()
+                .map(|c| c.gather(&resolved))
+                .collect::<Vec<_>>()
+        } else {
+            self.cols.iter().map(|c| c.gather(&resolved)).collect()
+        };
         #[cfg(not(feature = "parallel"))]
-        let cols = self
-            .cols
-            .iter()
-            .map(|c| c.take(indices))
-            .collect::<Result<Vec<_>>>()?;
+        let cols: Vec<Series> = self.cols.iter().map(|c| c.gather(&resolved)).collect();
         Ok(Frame {
             names: self.names.clone(),
             cols,
@@ -228,31 +243,30 @@ impl Frame {
     }
 
     pub fn filter(&self, mask: &Series) -> Result<Frame> {
-        // Columns filter independently against the same mask, so a wide
-        // frame runs one column per core — the gather half of `take`
-        // has worked this way since it shipped, and filtering is the
-        // same shape of work on the same shape of data. Column order is
-        // preserved; the result is identical to the sequential filter.
+        // The mask converts to keep-indices ONCE and every column
+        // gathers against that one list — per-column filter used to
+        // rescan the mask per column. Columns run one per core on a
+        // large frame; order preserved, result identical to sequential.
+        if self.n_rows() != mask.len() {
+            return Err(OdsError::LengthMismatch {
+                left: self.n_rows(),
+                right: mask.len(),
+            });
+        }
+        let keep = crate::mask_keep_indices(mask)?;
         #[cfg(feature = "parallel")]
         let cols =
             if mask.len() >= PAR_TAKE_ROWS && self.cols.len() > 1 && crate::parallel_enabled() {
                 use rayon::prelude::*;
                 self.cols
                     .par_iter()
-                    .map(|c| c.filter(mask))
-                    .collect::<Result<Vec<_>>>()?
+                    .map(|c| c.gather(&keep))
+                    .collect::<Vec<_>>()
             } else {
-                self.cols
-                    .iter()
-                    .map(|c| c.filter(mask))
-                    .collect::<Result<Vec<_>>>()?
+                self.cols.iter().map(|c| c.gather(&keep)).collect()
             };
         #[cfg(not(feature = "parallel"))]
-        let cols = self
-            .cols
-            .iter()
-            .map(|c| c.filter(mask))
-            .collect::<Result<Vec<_>>>()?;
+        let cols: Vec<Series> = self.cols.iter().map(|c| c.gather(&keep)).collect();
         Ok(Frame {
             names: self.names.clone(),
             cols,
@@ -1175,7 +1189,51 @@ fn group_ids_single(key: &Series) -> (Vec<u32>, usize) {
     (ids, next as usize)
 }
 
+/// Cap on the dense composite table (`u32` slots): 4M slots = 16 MB
+/// transient. Above it — or on cardinality overflow — the hash path
+/// below handles the pathological keyspace.
+const COMPOSITE_DENSE_MAX: usize = 1 << 22;
+
 fn group_ids_multi(key_cols: &[&Series], n: usize) -> (Vec<u32>, usize) {
+    // Fast path: dictionary-encode each key column independently (a
+    // per-type hash pass, no per-row allocation), then combine the
+    // per-row ids arithmetically and densify through an array — the
+    // composite pass becomes multiply-add plus an index, instead of
+    // allocating and hashing a Vec<Option<Key>> per row. First-seen
+    // order is preserved: dense ids are assigned in row order. Nulls
+    // group exactly as before — each column's encoder gives null its
+    // own id, so the composite classes are identical to the hash path's.
+    let encoded: Vec<(Vec<u32>, usize)> = key_cols.iter().map(|c| group_ids_single(c)).collect();
+    let mut product: usize = 1;
+    let mut dense_ok = true;
+    for (_, card) in &encoded {
+        match product.checked_mul((*card).max(1)) {
+            Some(p) if p <= COMPOSITE_DENSE_MAX => product = p,
+            _ => {
+                dense_ok = false;
+                break;
+            }
+        }
+    }
+    if dense_ok {
+        let mut dense: Vec<u32> = vec![u32::MAX; product];
+        let mut ids = Vec::with_capacity(n);
+        let mut next: u32 = 0;
+        for i in 0..n {
+            let mut code: usize = 0;
+            for (col_ids, card) in &encoded {
+                code = code * (*card).max(1) + col_ids[i] as usize;
+            }
+            let slot = &mut dense[code];
+            if *slot == u32::MAX {
+                *slot = next;
+                next += 1;
+            }
+            ids.push(*slot);
+        }
+        return (ids, next as usize);
+    }
+
     // The composite key per row — a Scalar clone per key column — is the
     // expensive half of the hash pass, and each row's is independent, so
     // large frames build them across all cores. The id-assigning insert
