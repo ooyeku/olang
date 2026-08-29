@@ -32,7 +32,7 @@ pub mod plot;
 pub mod stats;
 
 pub use bitmap::{Bitmap, merge_validity};
-pub use frame::{AggOp, AggSpec, Frame, JoinHow, RankMethod, StrCellInterner};
+pub use frame::{AggOp, AggSpec, Frame, JoinHow, RankMethod};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -154,6 +154,136 @@ impl std::error::Error for OdsError {}
 
 type Result<T> = std::result::Result<T, OdsError>;
 
+/// A string column: cells are `(start, len)` spans into one shared
+/// immutable buffer. Gather, filter, sort, and join copy spans and
+/// share the buffer; the CSV reader points spans straight into the
+/// file body. Offsets are u32 — a single text column is capped at
+/// 4 GB of backing text, enforced by the builders.
+#[derive(Debug, Clone)]
+pub struct StrCol {
+    buf: Arc<str>,
+    spans: Arc<Vec<(u32, u32)>>,
+}
+
+impl StrCol {
+    /// When a gather keeps less than this fraction of the backing
+    /// buffer's bytes, the result is rebuilt into a tight buffer so a
+    /// small filtered frame never pins a huge file body in memory.
+    const COMPACT_DENOM: usize = 8;
+
+    pub fn len(&self) -> usize {
+        self.spans.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.spans.is_empty()
+    }
+
+    #[inline]
+    pub fn get(&self, i: usize) -> &str {
+        let (start, len) = self.spans[i];
+        &self.buf[start as usize..(start + len) as usize]
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &str> + '_ {
+        self.spans
+            .iter()
+            .map(|&(start, len)| &self.buf[start as usize..(start + len) as usize])
+    }
+
+    /// Pack owned/borrowed strings into one contiguous buffer.
+    /// Panics if the packed text exceeds the u32 offset space (a 4 GB
+    /// text column does not fit this layout).
+    pub fn from_strings<S: AsRef<str>>(vals: impl IntoIterator<Item = S>) -> Self {
+        let vals: Vec<S> = vals.into_iter().collect();
+        let total: usize = vals.iter().map(|s| s.as_ref().len()).sum();
+        assert!(
+            u32::try_from(total).is_ok(),
+            "text column exceeds 4 GB of backing text"
+        );
+        let mut buf = String::with_capacity(total);
+        let mut spans = Vec::with_capacity(vals.len());
+        for s in &vals {
+            let s = s.as_ref();
+            spans.push((buf.len() as u32, s.len() as u32));
+            buf.push_str(s);
+        }
+        StrCol {
+            buf: Arc::from(buf),
+            spans: Arc::new(spans),
+        }
+    }
+
+    /// Cells as spans into a caller-provided buffer — the CSV reader's
+    /// zero-copy path. Spans must lie inside `buf` on char boundaries;
+    /// debug builds check every one.
+    pub fn from_spans(buf: Arc<str>, spans: Vec<(u32, u32)>) -> Self {
+        debug_assert!(
+            spans
+                .iter()
+                .all(|&(a, l)| buf.get(a as usize..(a + l) as usize).is_some()),
+            "span outside buffer or off a char boundary"
+        );
+        StrCol {
+            buf,
+            spans: Arc::new(spans),
+        }
+    }
+
+    /// Keep `indices`, sharing the buffer — unless the kept text is a
+    /// small fraction of it, in which case rebuild tight.
+    pub fn gather(&self, indices: &[usize]) -> Self {
+        let spans: Vec<(u32, u32)> = indices.iter().map(|&i| self.spans[i]).collect();
+        self.rewrap(spans)
+    }
+
+    /// Gather with absent slots (outer-join shape): absent cells become
+    /// empty spans — the caller's validity bitmap is what marks them
+    /// null.
+    pub fn gather_opt(&self, indices: &[Option<usize>]) -> Self {
+        let spans: Vec<(u32, u32)> = indices
+            .iter()
+            .map(|o| o.map(|i| self.spans[i]).unwrap_or((0, 0)))
+            .collect();
+        self.rewrap(spans)
+    }
+
+    /// The raw spans — for kernels that reorder cells while keeping
+    /// the shared buffer (sort, join gathers).
+    pub fn spans(&self) -> &[(u32, u32)] {
+        &self.spans
+    }
+
+    /// The shared backing buffer.
+    pub fn buf_arc(&self) -> Arc<str> {
+        self.buf.clone()
+    }
+
+    fn rewrap(&self, spans: Vec<(u32, u32)>) -> Self {
+        let kept: usize = spans.iter().map(|&(_, l)| l as usize).sum();
+        if kept < self.buf.len() / Self::COMPACT_DENOM {
+            let mut buf = String::with_capacity(kept);
+            let compacted = spans
+                .into_iter()
+                .map(|(a, l)| {
+                    let start = buf.len() as u32;
+                    buf.push_str(&self.buf[a as usize..(a + l) as usize]);
+                    (start, l)
+                })
+                .collect();
+            StrCol {
+                buf: Arc::from(buf),
+                spans: Arc::new(compacted),
+            }
+        } else {
+            StrCol {
+                buf: self.buf.clone(),
+                spans: Arc::new(spans),
+            }
+        }
+    }
+}
+
 /// A 1-D typed, null-aware, Arc-shared array.
 #[derive(Clone, Debug)]
 pub enum Series {
@@ -170,12 +300,12 @@ pub enum Series {
         validity: Option<Bitmap>,
     },
     Str {
-        /// `Arc<str>` per cell so bulk movement — gather, sort, join,
-        /// filter — is a refcount bump per kept row instead of an
-        /// allocation and copy. Construction from owned Strings pays
-        /// one conversion, exactly where the old layout paid its one
-        /// allocation.
-        values: Arc<Vec<Arc<str>>>,
+        /// String cells are (start, len) spans into one shared buffer
+        /// (`StrCol`) — the Arrow/Polars string design. Bulk movement
+        /// copies 8-byte spans and shares the buffer; the CSV reader
+        /// records spans into the file body itself, so loading a text
+        /// column allocates nothing per cell.
+        col: StrCol,
         validity: Option<Bitmap>,
     },
 }
@@ -241,7 +371,7 @@ impl Series {
 
     pub fn from_str_values(values: Vec<String>) -> Self {
         Series::Str {
-            values: Arc::new(values.into_iter().map(Arc::from).collect()),
+            col: StrCol::from_strings(values),
             validity: None,
         }
     }
@@ -251,38 +381,20 @@ impl Series {
             return Self::from_str_values(opts.into_iter().flatten().collect());
         }
         let bits: Vec<bool> = opts.iter().map(|o| o.is_some()).collect();
-        let values = opts
-            .into_iter()
-            .map(|o| Arc::from(o.unwrap_or_default()))
-            .collect();
+        let col = StrCol::from_strings(opts.iter().map(|o| o.as_deref().unwrap_or("")));
         Series::Str {
-            values: Arc::new(values),
+            col,
             validity: Some(Bitmap::from_bools(&bits)),
         }
     }
 
-    /// The Arc-native constructors the bulk-movement paths (and the CSV
-    /// reader) use: cells arrive already shared, so building the series
-    /// allocates nothing per cell.
-    pub fn from_arc_str_values(values: Vec<Arc<str>>) -> Self {
+    /// A string series over spans into a shared buffer — the CSV
+    /// reader's zero-copy path. `nulls` marks the invalid cells (their
+    /// spans should be empty).
+    pub fn from_str_spans(buf: Arc<str>, spans: Vec<(u32, u32)>, nulls: Option<Vec<bool>>) -> Self {
         Series::Str {
-            values: Arc::new(values),
-            validity: None,
-        }
-    }
-
-    pub fn from_arc_str_options(opts: Vec<Option<Arc<str>>>) -> Self {
-        if opts.iter().all(|o| o.is_some()) {
-            return Self::from_arc_str_values(opts.into_iter().flatten().collect());
-        }
-        let bits: Vec<bool> = opts.iter().map(|o| o.is_some()).collect();
-        let values = opts
-            .into_iter()
-            .map(|o| o.unwrap_or_else(|| Arc::from("")))
-            .collect();
-        Series::Str {
-            values: Arc::new(values),
-            validity: Some(Bitmap::from_bools(&bits)),
+            col: StrCol::from_spans(buf, spans),
+            validity: nulls.map(|valid_bits| Bitmap::from_bools(&valid_bits)),
         }
     }
 
@@ -330,7 +442,7 @@ impl Series {
             Series::F64 { values, .. } => values.len(),
             Series::I64 { values, .. } => values.len(),
             Series::Bool { values, .. } => values.len(),
-            Series::Str { values, .. } => values.len(),
+            Series::Str { col, .. } => col.len(),
         }
     }
 
@@ -370,7 +482,7 @@ impl Series {
             Series::F64 { values, .. } => Scalar::F64(values[i]),
             Series::I64 { values, .. } => Scalar::I64(values[i]),
             Series::Bool { values, .. } => Scalar::Bool(values[i]),
-            Series::Str { values, .. } => Scalar::Str(values[i].to_string()),
+            Series::Str { col, .. } => Scalar::Str(col.get(i).to_string()),
         }
     }
 
@@ -593,10 +705,10 @@ impl Series {
             },
             // Strings order lexicographically, like the language's own
             // string comparisons.
-            (Series::Str { values: a, .. }, Series::Str { values: b, .. }) => a
+            (Series::Str { col: a, .. }, Series::Str { col: b, .. }) => a
                 .iter()
                 .zip(b.iter())
-                .map(|(x, y)| cmp_one(x.as_ref(), y.as_ref(), op))
+                .map(|(x, y)| cmp_one(x, y, op))
                 .collect(),
             _ => {
                 return Err(OdsError::TypeMismatch(format!(
@@ -629,10 +741,9 @@ impl Series {
             (Series::I64 { values, .. }, Scalar::F64(s)) => {
                 values.iter().map(|&x| cmp_one(x as f64, *s, op)).collect()
             }
-            (Series::Str { values, .. }, Scalar::Str(s)) => values
-                .iter()
-                .map(|x| cmp_one(x.as_ref(), s.as_str(), op))
-                .collect(),
+            (Series::Str { col, .. }, Scalar::Str(s)) => {
+                col.iter().map(|x| cmp_one(x, s.as_str(), op)).collect()
+            }
             (Series::Bool { values, .. }, Scalar::Bool(s)) => match op {
                 CmpOp::Eq => values.iter().map(|&x| x == *s).collect(),
                 CmpOp::Ne => values.iter().map(|&x| x != *s).collect(),
@@ -782,9 +893,9 @@ impl Series {
             Series::Bool { .. } => Err(OdsError::TypeMismatch(
                 "min/max are not defined for Bool series".to_string(),
             )),
-            Series::Str { values, validity } => {
-                let mut best: Option<&Arc<str>> = None;
-                for (i, v) in values.iter().enumerate() {
+            Series::Str { col, validity } => {
+                let mut best: Option<&str> = None;
+                for (i, v) in col.iter().enumerate() {
                     if validity.as_ref().map(|b| b.get(i)).unwrap_or(true) {
                         best = Some(match best {
                             None => v,
@@ -946,31 +1057,34 @@ impl Series {
                     Series::from_i64,
                 ))
             }
-            Series::Str { values, validity } => {
-                let mut vals: Vec<Arc<str>> = match validity {
-                    None => values.as_ref().clone(),
+            Series::Str { col, validity } => {
+                let mut vals: Vec<(u32, u32)> = match validity {
+                    None => col.spans().to_vec(),
                     Some(v) => (0..n)
                         .filter(|&i| v.get(i))
-                        .map(|i| values[i].clone())
+                        .map(|i| col.spans()[i])
                         .collect(),
                 };
+                let buf = col.buf_arc();
+                let key = |&(a, l): &(u32, u32)| -> &str { &buf[a as usize..(a + l) as usize] };
                 #[cfg(feature = "parallel")]
                 if par {
-                    vals.par_sort_unstable();
+                    vals.par_sort_unstable_by(|a, b| key(a).cmp(key(b)));
                 } else {
-                    vals.sort_unstable();
+                    vals.sort_unstable_by(|a, b| key(a).cmp(key(b)));
                 }
                 #[cfg(not(feature = "parallel"))]
                 {
                     let _ = par;
-                    vals.sort_unstable();
+                    vals.sort_unstable_by(|a, b| key(a).cmp(key(b)));
                 }
-                Ok(rebuild_with_trailing_nulls(
-                    vals,
-                    n,
-                    nulls,
-                    Series::from_arc_str_values,
-                ))
+                let buf = col.buf_arc();
+                Ok(rebuild_with_trailing_nulls(vals, n, nulls, move |spans| {
+                    Series::Str {
+                        col: StrCol::from_spans(buf.clone(), spans),
+                        validity: None,
+                    }
+                }))
             }
             Series::Bool { .. } => unreachable!("rejected above"),
         }
@@ -1009,15 +1123,15 @@ impl Series {
                 #[cfg(not(feature = "parallel"))]
                 valid_idx.sort_by_key(|&i| values[i]);
             }
-            Series::Str { values, .. } => {
+            Series::Str { col, .. } => {
                 #[cfg(feature = "parallel")]
                 if par {
-                    valid_idx.par_sort_by(|&a, &b| values[a].cmp(&values[b]));
+                    valid_idx.par_sort_by(|&a, &b| col.get(a).cmp(col.get(b)));
                 } else {
-                    valid_idx.sort_by(|&a, &b| values[a].cmp(&values[b]));
+                    valid_idx.sort_by(|&a, &b| col.get(a).cmp(col.get(b)));
                 }
                 #[cfg(not(feature = "parallel"))]
-                valid_idx.sort_by(|&a, &b| values[a].cmp(&values[b]));
+                valid_idx.sort_by(|&a, &b| col.get(a).cmp(col.get(b)));
             }
             Series::Bool { .. } => {
                 return Err(OdsError::TypeMismatch(
@@ -1110,18 +1224,18 @@ impl Series {
                     Series::from_bool(indices.iter().map(|&i| values[i]).collect())
                 }
             }
-            Series::Str { values, .. } => {
+            Series::Str { col, .. } => {
                 if opts_needed {
-                    Series::from_arc_str_options(
-                        indices
-                            .iter()
-                            .map(|&i| self.is_valid(i).then(|| values[i].clone()))
-                            .collect(),
-                    )
+                    let valid: Vec<bool> = indices.iter().map(|&i| self.is_valid(i)).collect();
+                    Series::Str {
+                        col: col.gather(indices),
+                        validity: Some(Bitmap::from_bools(&valid)),
+                    }
                 } else {
-                    Series::from_arc_str_values(
-                        indices.iter().map(|&i| values[i].clone()).collect(),
-                    )
+                    Series::Str {
+                        col: col.gather(indices),
+                        validity: None,
+                    }
                 }
             }
         }
@@ -1310,15 +1424,11 @@ impl Series {
                     }
                 }
             }
-            (Series::Str { values, validity }, Scalar::Str(f)) => {
-                let f: Arc<str> = Arc::from(f.as_str());
+            (Series::Str { col, validity }, Scalar::Str(f)) => {
                 let bm = validity.take().expect("checked above");
-                let vals = Arc::make_mut(values);
-                for (i, v) in vals.iter_mut().enumerate() {
-                    if !bm.get(i) {
-                        v.clone_from(&f);
-                    }
-                }
+                *col = StrCol::from_strings(
+                    (0..col.len()).map(|i| if bm.get(i) { col.get(i) } else { f.as_str() }),
+                );
             }
             _ => {
                 return Err(OdsError::TypeMismatch(format!(
@@ -1620,7 +1730,7 @@ fn rebuild_with_trailing_nulls<T: Default + Clone>(
     mut vals: Vec<T>,
     total: usize,
     nulls: usize,
-    dense: fn(Vec<T>) -> Series,
+    dense: impl Fn(Vec<T>) -> Series,
 ) -> Series {
     if nulls == 0 {
         return dense(vals);
@@ -1641,8 +1751,8 @@ fn rebuild_with_trailing_nulls<T: Default + Clone>(
             values,
             validity: Some(Bitmap::from_bools(&bits)),
         },
-        Series::Str { values, .. } => Series::Str {
-            values,
+        Series::Str { col, .. } => Series::Str {
+            col,
             validity: Some(Bitmap::from_bools(&bits)),
         },
     }

@@ -510,3 +510,46 @@ fn value_counts_and_unique_see_all_nans_as_one_value() {
     assert_eq!(got, vec![Scalar::I64(2), Scalar::I64(2), Scalar::I64(1)]);
     assert!(matches!(values.scalar_at(0), Scalar::F64(x) if x.is_nan()));
 }
+
+// ── string-view columns (spans into a shared buffer) ─────────────────
+
+fn cell(s: &olang_ods::Series, i: i64) -> String {
+    match s.get(i).expect("get") {
+        olang_ods::Scalar::Str(v) => v,
+        other => panic!("expected Str, got {other:?}"),
+    }
+}
+
+#[test]
+fn str_gather_shares_or_compacts_by_kept_fraction() {
+    use olang_ods::Series;
+    // A large backing text where a tiny gather must compact: keeping
+    // 2 cells of 1000 is far under the 1/8 threshold.
+    let cells: Vec<String> = (0..1000).map(|i| format!("cell-{i:0>6}")).collect();
+    let s = Series::from_str_values(cells);
+    let small = s.take(&Series::from_i64(vec![3, 997])).expect("take");
+    assert_eq!(cell(&small, 0), "cell-000003");
+    assert_eq!(cell(&small, 1), "cell-000997");
+    // A large gather (everything, reversed) shares the buffer and stays
+    // correct.
+    let idx: Vec<i64> = (0..1000).rev().collect();
+    let big = s.take(&Series::from_i64(idx)).expect("take");
+    assert_eq!(cell(&big, 0), "cell-000999");
+    assert_eq!(cell(&big, 999), "cell-000000");
+}
+
+#[test]
+fn str_sort_survives_the_span_layout() {
+    use olang_ods::{Scalar, Series};
+    let s = Series::from_str_options(vec![
+        Some("pear".to_string()),
+        None,
+        Some("apple".to_string()),
+        Some("mango".to_string()),
+    ]);
+    let sorted = s.sort(false).expect("sort");
+    assert_eq!(cell(&sorted, 0), "apple");
+    assert_eq!(cell(&sorted, 1), "mango");
+    assert_eq!(cell(&sorted, 2), "pear");
+    assert!(matches!(sorted.get(3).expect("get"), Scalar::Null));
+}

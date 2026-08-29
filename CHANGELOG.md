@@ -28,16 +28,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - **The data stack closed more of the Polars gap** (DP4 pipeline,
-  1M rows: 126 ms → 80 ms across two rounds; pandas 308 ms, Polars
-  35 ms; checksums byte-identical across engines):
-  - *String columns store `Arc<str>`* (was `String`), so every bulk
-    movement — gather, filter, sort, join — is a refcount bump per
-    kept cell instead of an allocation and copy: clean 19 → 12 ms,
-    filter 14 → 8 ms. The CSV reader builds cells through a streaming
-    interner: a low-cardinality column (region, category, date)
-    allocates once per distinct value; a mostly-unique column makes
-    the interner bail after a 4096-cell sample and cells allocate
-    plainly.
+  1M rows: 126 ms → 74 ms across three rounds; pandas 305 ms, Polars
+  34 ms; checksums byte-identical across engines):
+  - *String columns are views* — the Arrow/Polars string design:
+    cells are `(start, len)` spans into one shared immutable buffer
+    (`StrCol`), and the CSV reader's backing buffer is the file body
+    itself, so loading a text column allocates nothing per cell and
+    the splitter emits 8-byte spans instead of 16-byte slices. Bulk
+    movement (gather, filter, sort, join) copies spans and shares the
+    buffer; a gather keeping under 1/8 of the backing bytes rebuilds a
+    tight buffer so a small filtered frame never pins a large file in
+    memory. A text column is capped at 4 GB of backing text (u32
+    offsets); larger bodies fall back to the owned-cell path. This
+    lands the string-view deferral recorded in the design record (and
+    retires the one-release `Arc<str>`-per-cell layout and its
+    interner): clean 19 → 12 ms, filter 14 → 9 ms, load 52 → 34 ms
+    across the campaign.
   - *group_by* (35 → 14 ms): multi-key grouping dictionary-encodes each
     key column independently, then combines per-row ids arithmetically
     and densifies through an array — the per-row `Vec<Option<Key>>`

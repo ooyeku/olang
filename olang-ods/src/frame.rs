@@ -15,7 +15,6 @@
 use crate::{Bitmap, OdsError, Scalar, Series};
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
-use std::sync::Arc;
 
 type Result<T> = std::result::Result<T, OdsError>;
 
@@ -60,53 +59,6 @@ impl Hasher for FxHasher {
 }
 
 type FxMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
-
-/// Streaming interner for `Arc<str>` column cells: repeated values
-/// share one allocation, so a low-cardinality column (a region, a
-/// category, a date) allocates per *distinct* value instead of per
-/// cell. Adaptive: after a sample of cells, a column that is clearly
-/// mostly-unique stops interning entirely — the hash lookups would be
-/// pure overhead on cells that never repeat.
-pub struct StrCellInterner {
-    map: FxMap<Arc<str>, ()>,
-    seen: usize,
-    bailed: bool,
-}
-
-impl StrCellInterner {
-    const SAMPLE: usize = 4096;
-    const MAX_DISTINCT_IN_SAMPLE: usize = 3072;
-    const CAP: usize = 1 << 16;
-
-    #[allow(clippy::new_without_default)]
-    pub fn new() -> Self {
-        StrCellInterner {
-            map: FxMap::default(),
-            seen: 0,
-            bailed: false,
-        }
-    }
-
-    pub fn intern(&mut self, s: &str) -> Arc<str> {
-        if self.bailed {
-            return Arc::from(s);
-        }
-        self.seen += 1;
-        if self.seen == Self::SAMPLE && self.map.len() > Self::MAX_DISTINCT_IN_SAMPLE {
-            self.bailed = true;
-            self.map = FxMap::default();
-            return Arc::from(s);
-        }
-        if let Some((k, ())) = self.map.get_key_value(s) {
-            return k.clone();
-        }
-        let a: Arc<str> = Arc::from(s);
-        if self.map.len() < Self::CAP {
-            self.map.insert(a.clone(), ());
-        }
-        a
-    }
-}
 
 // ---------------------------------------------------------------------
 // Frame
@@ -1194,9 +1146,9 @@ fn group_ids_single(key: &Series) -> (Vec<u32>, usize) {
                 ids.push(id);
             }
         }
-        Series::Str { values, validity } => {
+        Series::Str { col, validity } => {
             let mut map: FxMap<&str, u32> = FxMap::default();
-            for (i, v) in values.iter().enumerate() {
+            for (i, v) in col.iter().enumerate() {
                 let valid = validity.as_ref().map(|b| b.get(i)).unwrap_or(true);
                 let id = if !valid {
                     *null_id.get_or_insert_with(|| {
@@ -1205,7 +1157,7 @@ fn group_ids_single(key: &Series) -> (Vec<u32>, usize) {
                         id
                     })
                 } else {
-                    *map.entry(v.as_ref()).or_insert_with(|| {
+                    *map.entry(v).or_insert_with(|| {
                         let id = next;
                         next += 1;
                         id
@@ -1584,11 +1536,25 @@ fn gather_optional(col: &Series, idx: &[Option<usize>]) -> Series {
                 .map(|o| o.filter(|&i| col_valid(col, i)).map(|i| values[i]))
                 .collect(),
         ),
-        Series::Str { values, .. } => Series::from_arc_str_options(
-            idx.iter()
-                .map(|o| o.filter(|&i| col_valid(col, i)).map(|i| values[i].clone()))
-                .collect(),
-        ),
+        Series::Str { col: sc, .. } => {
+            let resolved: Vec<Option<usize>> = idx
+                .iter()
+                .map(|o| o.filter(|&i| col_valid(col, i)))
+                .collect();
+            if resolved.iter().all(|o| o.is_some()) {
+                let indices: Vec<usize> = resolved.into_iter().flatten().collect();
+                Series::Str {
+                    col: sc.gather(&indices),
+                    validity: None,
+                }
+            } else {
+                let valid: Vec<bool> = resolved.iter().map(|o| o.is_some()).collect();
+                Series::Str {
+                    col: sc.gather_opt(&resolved),
+                    validity: Some(Bitmap::from_bools(&valid)),
+                }
+            }
+        }
     }
 }
 

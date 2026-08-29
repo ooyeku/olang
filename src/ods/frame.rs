@@ -957,6 +957,14 @@ const PAR_JSONL_MIN_LINES: usize = 10_000;
 /// How many workers the data stack may use for `n` independent items,
 /// honoring `set_parallel` — 1 means "stay sequential".
 fn stack_workers(n: usize) -> usize {
+    // OLANG_ODS_WORKERS caps the data-stack fan-out — the tuning knob
+    // the parallel-scaling measurements use.
+    if let Some(cap) = std::env::var("OLANG_ODS_WORKERS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    {
+        return cap.clamp(1, n.max(1));
+    }
     #[cfg(feature = "native")]
     {
         let cfg = crate::parallel::get_config();
@@ -1053,20 +1061,22 @@ fn csv_record_splits(text: &str, parts: usize) -> Vec<usize> {
 /// field count disagrees with the header, which the `csv` crate
 /// reports with a line number this function has no business
 /// duplicating.
-fn split_unquoted_rows<'a>(body: &'a str, n_cols: usize) -> Option<Vec<Vec<&'a str>>> {
+fn split_unquoted_rows(body: &str, base: u32, n_cols: usize) -> Option<Vec<Vec<(u32, u32)>>> {
     let bytes = body.as_bytes();
     if bytes.contains(&b'"') {
         return None;
     }
-    // One memchr2-driven pass over the bytes, emitting fields as the
-    // separators arrive — replaces split('\n') + split(',') per line,
-    // which re-scanned every line. Commas and newlines are ASCII, so
-    // slicing the str at these byte offsets is always char-safe. The
-    // vectors pre-size from a bytes-per-row estimate: growth
-    // reallocation on n parallel-growing vectors was a measurable
-    // slice of the split.
+    // One memchr2-driven pass over the bytes, emitting each field as an
+    // 8-byte (start, len) span — half the write traffic of a &str per
+    // field, and the exact shape a text column stores. `base` rebases
+    // offsets to the full body when this run is one parallel chunk.
+    // Commas and newlines are ASCII, so slicing at these offsets is
+    // always char-safe. The vectors pre-size from a bytes-per-row
+    // estimate: growth reallocation on n parallel-growing vectors was a
+    // measurable slice of the split.
     let est_rows = bytes.len() / 24 + 8;
-    let mut cols: Vec<Vec<&'a str>> = (0..n_cols).map(|_| Vec::with_capacity(est_rows)).collect();
+    let mut cols: Vec<Vec<(u32, u32)>> =
+        (0..n_cols).map(|_| Vec::with_capacity(est_rows)).collect();
     let mut field_start = 0usize;
     let mut col = 0usize;
     for pos in memchr::memchr2_iter(b',', b'\n', bytes) {
@@ -1074,7 +1084,7 @@ fn split_unquoted_rows<'a>(body: &'a str, n_cols: usize) -> Option<Vec<Vec<&'a s
             if col + 1 >= n_cols {
                 return None; // more fields than the header declares
             }
-            cols[col].push(&body[field_start..pos]);
+            cols[col].push((base + field_start as u32, (pos - field_start) as u32));
             col += 1;
         } else {
             let mut end = pos;
@@ -1090,7 +1100,7 @@ fn split_unquoted_rows<'a>(body: &'a str, n_cols: usize) -> Option<Vec<Vec<&'a s
             if col != n_cols - 1 {
                 return None; // short row — let the general parser name the line
             }
-            cols[col].push(&body[field_start..end]);
+            cols[col].push((base + field_start as u32, (end - field_start) as u32));
             col = 0;
         }
         field_start = pos + 1;
@@ -1105,7 +1115,7 @@ fn split_unquoted_rows<'a>(body: &'a str, n_cols: usize) -> Option<Vec<Vec<&'a s
             if col != n_cols - 1 {
                 return None;
             }
-            cols[col].push(&body[field_start..end]);
+            cols[col].push((base + field_start as u32, (end - field_start) as u32));
         }
     }
     Some(cols)
@@ -1114,9 +1124,13 @@ fn split_unquoted_rows<'a>(body: &'a str, n_cols: usize) -> Option<Vec<Vec<&'a s
 /// The borrowed read path: parse an unquoted body into slices, infer
 /// and build each column from them. Returns `None` when the body is not
 /// one this path may decide, leaving the general parser in charge.
-fn read_csv_borrowed(body: &str, headers: &[String]) -> Option<Result<Value, String>> {
+fn read_csv_borrowed(
+    body_arc: &std::sync::Arc<str>,
+    headers: &[String],
+) -> Option<Result<Value, String>> {
+    let body: &str = body_arc;
     let n_cols = headers.len();
-    if n_cols == 0 || body.as_bytes().contains(&b'"') {
+    if n_cols == 0 {
         return None;
     }
 
@@ -1132,11 +1146,16 @@ fn read_csv_borrowed(body: &str, headers: &[String]) -> Option<Result<Value, Str
     // Per column, the list of per-chunk cell runs — inference consumes
     // the chunks directly, so the old sequential merge (extend every
     // chunk into one flat vector: ~7ms on a 1M-row file) is gone.
-    let mut col_chunks: Vec<Vec<Vec<&str>>> = (0..n_cols).map(|_| Vec::new()).collect();
+    let mut col_chunks: Vec<Vec<Vec<(u32, u32)>>> = (0..n_cols).map(|_| Vec::new()).collect();
     if workers > 1 {
         let splits = csv_record_splits(body, workers);
-        let runs: Vec<&str> = splits.windows(2).map(|w| &body[w[0]..w[1]]).collect();
-        let parsed = parallel_map_ordered(runs, workers, |run| split_unquoted_rows(run, n_cols));
+        let runs: Vec<(&str, u32)> = splits
+            .windows(2)
+            .map(|w| (&body[w[0]..w[1]], w[0] as u32))
+            .collect();
+        let parsed = parallel_map_ordered(runs, workers, |(run, base)| {
+            split_unquoted_rows(run, base, n_cols)
+        });
         for chunk in parsed {
             let chunk = chunk?;
             for (c, col) in chunk.into_iter().enumerate() {
@@ -1144,7 +1163,10 @@ fn read_csv_borrowed(body: &str, headers: &[String]) -> Option<Result<Value, Str
             }
         }
     } else {
-        for (c, col) in split_unquoted_rows(body, n_cols)?.into_iter().enumerate() {
+        for (c, col) in split_unquoted_rows(body, 0, n_cols)?
+            .into_iter()
+            .enumerate()
+        {
             col_chunks[c].push(col);
         }
     }
@@ -1169,7 +1191,7 @@ fn read_csv_borrowed(body: &str, headers: &[String]) -> Option<Result<Value, Str
         workers,
         |(name, chunks)| {
             let t = std::time::Instant::now();
-            let s = infer_column_chunks(chunks);
+            let s = infer_column_spans(chunks, body_arc);
             if timing {
                 eprintln!("[ods-timing]   column {} parse={:?}", name, t.elapsed());
             }
@@ -1202,8 +1224,17 @@ fn read_csv(text: &str) -> Result<Value, String> {
     // below allocates every cell before anything knows its type. Any
     // shape this path declines (a quote, a short row) falls through to
     // the general parser, whose errors carry the true line number.
-    if let Some(frame) = read_csv_borrowed(&text[body_start..], &headers) {
-        return frame;
+    // The body becomes the shared backing buffer for any column that
+    // really is text: string cells are spans into it, so the one copy
+    // here replaces a per-cell allocation downstream.
+    if !text.as_bytes()[body_start..].contains(&b'"')
+        && !headers.is_empty()
+        && u32::try_from(text.len() - body_start).is_ok()
+    {
+        let body_arc: std::sync::Arc<str> = std::sync::Arc::from(&text[body_start..]);
+        if let Some(frame) = read_csv_borrowed(&body_arc, &headers) {
+            return frame;
+        }
     }
 
     // A large file parses across all cores: split at record boundaries,
@@ -1329,6 +1360,92 @@ fn infer_column<S: AsRef<str> + Into<String>>(raw: Vec<S>) -> Series {
 /// split's chunks feed inference directly instead of being merged into
 /// one flat vector first. Semantics identical to the flat form: the
 /// cascade decides over EVERY cell across all chunks.
+/// The span-native twin of `infer_column_chunks`, for the CSV fast
+/// path: cells are (start, len) spans into `body`, the cascade parses
+/// through slices of it, and a column that really is text keeps the
+/// spans verbatim — its cells never exist as separate allocations.
+/// Cascade semantics are identical: empty cell = null at every type,
+/// i64 then f64 then bool then text.
+fn infer_column_spans(chunks: Vec<Vec<(u32, u32)>>, body: &std::sync::Arc<str>) -> Series {
+    let raw_len: usize = chunks.iter().map(|c| c.len()).sum();
+    let cell = |&(a, l): &(u32, u32)| -> &str { &body[a as usize..(a + l) as usize] };
+    let raw = || chunks.iter().flat_map(|c| c.iter()).map(cell);
+    if raw().all(|s| s.is_empty()) {
+        return Series::from_str_options(vec![None; raw_len]);
+    }
+
+    let mut ints: Vec<Option<i64>> = Vec::with_capacity(raw_len);
+    if raw().all(|s| {
+        if s.is_empty() {
+            ints.push(None);
+            return true;
+        }
+        match s.parse::<i64>() {
+            Ok(v) => {
+                ints.push(Some(v));
+                true
+            }
+            Err(_) => false,
+        }
+    }) {
+        return Series::from_i64_options(ints);
+    }
+    drop(ints);
+
+    let mut floats: Vec<Option<f64>> = Vec::with_capacity(raw_len);
+    if raw().all(|s| {
+        if s.is_empty() {
+            floats.push(None);
+            return true;
+        }
+        match s.parse::<f64>() {
+            Ok(v) => {
+                floats.push(Some(v));
+                true
+            }
+            Err(_) => false,
+        }
+    }) {
+        return Series::from_f64_options(floats);
+    }
+    drop(floats);
+
+    let mut bools: Vec<Option<bool>> = Vec::with_capacity(raw_len);
+    if raw().all(|s| match s {
+        "" => {
+            bools.push(None);
+            true
+        }
+        "true" => {
+            bools.push(Some(true));
+            true
+        }
+        "false" => {
+            bools.push(Some(false));
+            true
+        }
+        _ => false,
+    }) {
+        return Series::from_bool_options(bools);
+    }
+    drop(bools);
+
+    // Text: the spans ARE the column. Empty cells are nulls.
+    let mut valid: Vec<bool> = Vec::with_capacity(raw_len);
+    let mut any_null = false;
+    let spans: Vec<(u32, u32)> = chunks
+        .iter()
+        .flat_map(|c| c.iter())
+        .map(|&(a, l)| {
+            let ok = l > 0;
+            valid.push(ok);
+            any_null |= !ok;
+            (a, l)
+        })
+        .collect();
+    Series::from_str_spans(body.clone(), spans, any_null.then_some(valid))
+}
+
 fn infer_column_chunks<S: AsRef<str> + Into<String>>(chunks: Vec<Vec<S>>) -> Series {
     let raw_len: usize = chunks.iter().map(|c| c.len()).sum();
     let raw = || chunks.iter().flat_map(|c| c.iter());
@@ -1395,25 +1512,14 @@ fn infer_column_chunks<S: AsRef<str> + Into<String>>(chunks: Vec<Vec<S>>) -> Ser
     }
     drop(bools);
 
-    // The one path that must own its cells — and the only one that
-    // allocates in the borrowed fast path. Cells build as Arc<str>
-    // directly, through the interner: a low-cardinality column (a
-    // region, a category, a date) allocates once per distinct value
-    // and every repeat is a refcount bump; a mostly-unique column
-    // makes the interner bail after its sample and cells allocate
-    // plainly.
-    let mut interner = olang_ods::StrCellInterner::new();
-    Series::from_arc_str_options(
+    // A column that really is text: pack the owned cells.
+    Series::from_str_options(
         chunks
             .into_iter()
             .flatten()
             .map(|s| {
-                let s = s.as_ref();
-                if s.is_empty() {
-                    None
-                } else {
-                    Some(interner.intern(s))
-                }
+                let s: String = s.into();
+                if s.is_empty() { None } else { Some(s) }
             })
             .collect(),
     )
