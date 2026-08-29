@@ -172,6 +172,17 @@ you care about.
   roughly half a second. A `test` block pins every inference. The `stats` and
   `plot` workflow it scales up is taught in
   [the Data Stack chapter](../docs/ods.md)
+- [`climate/`](climate/) — a real data-science workstream on real
+  downloaded data: fetches Our World in Data's CO2 and energy datasets
+  (~24 MB, cached, retried, atomically written), splits countries from
+  aggregates with an anti-join, then answers real questions — the
+  global emissions trajectory and its peak, top emitters and their
+  global share, the absolute-decoupling list (GDP up, CO2 down over a
+  decade), renewables' biggest movers since 2000, and a cross-sectional
+  model of per-capita CO2 against energy use (r=0.87, R²=0.76) — into a
+  self-contained `out/` report with SVG charts and derived CSVs.
+  Neither the data nor the outputs touch version control; `test`
+  blocks pin the prep and rendering helpers
 - [`parmap/`](parmap/) — data-parallel pipelines with `par_map` /
   `par_filter` and the `par for` loop: counts primes in 48 blocks both
   sequentially and fanned out across every core, asserts the answers

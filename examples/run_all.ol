@@ -31,7 +31,8 @@ let root =
 let long_running = #{
     "webserver/": "tests/http_serve_test.rs",
     "app/": "tests/tracker_app_test.rs",
-    "ledger/": "tests/ledger_app_test.rs"
+    "ledger/": "tests/ledger_app_test.rs",
+    "climate/": "climate/README.md — downloads ~24MB of real data"
 }
 
 // ── discover targets: each is { label, dir, file } ──
@@ -73,7 +74,7 @@ fn args_for(label) =
 let runnable = targets |> filter((t) => !map_has_key(long_running, t.label))
 for t in targets {
     if map_has_key(long_running, t.label) =>
-        { println("  ~ skip   " + t.label + "  (long-running server; covered by "
+        { println("  ~ skip   " + t.label + "  (long-running; see "
             + map_get(long_running, t.label) + ")") }
 }
 let targets = runnable

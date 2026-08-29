@@ -1,0 +1,4 @@
+# Downloaded datasets and generated outputs live outside version
+# control — `olang run main.ol` recreates both from scratch.
+data/
+out/
