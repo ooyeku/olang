@@ -105,21 +105,21 @@ fn example_cases() -> Vec<Case> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
     let mut cases = Vec::new();
     for name in [
-        "nbody",
-        "minilisp",
-        "parser",
-        "regex",
-        "template",
-        "markdown",
-        "jsonschema",
-        "scheduler",
-        "parmap",
-        "workflow",
-        "timeseries",
-        "derives",
-        "macros",
-        "instrument",
-        "contracts",
+        "concurrency/nbody",
+        "language/minilisp",
+        "language/parser",
+        "language/regex",
+        "language/template",
+        "language/markdown",
+        "language/jsonschema",
+        "concurrency/scheduler",
+        "concurrency/parmap",
+        "language/workflow",
+        "data-processing/timeseries",
+        "language/derives",
+        "language/macros",
+        "language/instrument",
+        "language/contracts",
     ] {
         let dir = root.join(name);
         for entry in ["main.ol", "index.ol"] {

@@ -69,7 +69,7 @@ changes the policy). Programs see a bare `os.args()`, so a file that
 branches on arguments takes its no-argument path.
 
 ```text
-examples/markdown/main.ol
+examples/language/markdown/main.ol
   ✓ markdown conversion
 tests/math_test.ol
   ✓ doubling works
@@ -604,7 +604,7 @@ than as changes to the compiler; `olang check --rules` runs such tools
 alongside the built-in checker. The `meta` module is documented in the
 [standard library reference](stdlib.md#meta--the-program-as-data-the-open-ast),
 and the [Openness](openness.md) chapter describes the program-as-data model.
-A complete example is [`examples/metatool`](../examples/metatool/main.ol).
+A complete example is [`examples/language/metatool`](../examples/language/metatool/main.ol).
 
 ## The examples harness
 

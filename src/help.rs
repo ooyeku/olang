@@ -7521,7 +7521,7 @@ impl HelpSystem {
             return_type: "Environment Update".to_string(),
             examples: vec![
                 ":load my_session.ol     // Load saved session".to_string(),
-                ":load examples/demo.ol  // Load example definitions".to_string(),
+                ":load examples/concurrency/demo.ol  // Load example definitions".to_string(),
             ],
             category: "REPL".to_string(),
             see_also: vec![":save".to_string(), ":env".to_string()],

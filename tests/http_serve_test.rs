@@ -230,7 +230,7 @@ http.serve(0, handle, #{ "workers": 2, "queue_capacity": 8 })
 }
 
 /// A server whose handler writes to shared SQLite on every request and can
-/// report the row count — the same shape as examples/loadtest.
+/// report the row count — the same shape as examples/web/loadtest.
 const COUNTING_SERVER: &str = r#"
 let conn = unwrap(db.open(":memory:"))
 unwrap(db.execute(conn, "CREATE TABLE hits (id INTEGER PRIMARY KEY)"))

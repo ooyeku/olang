@@ -4,7 +4,7 @@ Part of [the olang book](README.md) ·
 [Architecture and internals](internals.md) ·
 [Language reference](language.md)
 
-`examples/demo/` is Harborline, a harbor-operations simulator and the largest
+`examples/concurrency/demo/` is Harborline, a harbor-operations simulator and the largest
 program in this repository intended to be run rather than only read. Vessels
 arrive on a seeded random stream, queue in the roads, receive berths from a
 depth- and tide-aware scheduler, unload through a crew of operating-system
@@ -16,7 +16,7 @@ the ledger using the `testing` module. A failed invariant terminates the
 process.
 
 ```bash
-cd examples/demo && olang main.ol
+cd examples/concurrency/demo && olang main.ol
 ```
 
 runs it forever (Ctrl-C triggers a graceful shutdown: the partial day is
@@ -42,7 +42,7 @@ Part of [the olang book](README.md) · [Tour](tour.md) ·
 ## The map
 
 ```text
-examples/demo/
+examples/concurrency/demo/
   main.ol           the world record, the tick loop, CLI, config,
                     graceful shutdown, daily invariants
   config.toml       the simulation's dials (validated at boot)

@@ -15,7 +15,7 @@ This chapter describes the architecture that supports this, the `dom` module
 that makes a page programmable, the patterns used to write browser olang,
 and a reading of a complete frontend. Code blocks that drive a browser are
 marked `no-run`: they are parse-checked by the test suite but need a page to
-execute. The code they show runs in [`examples/app/`](../examples/app/).
+execute. The code they show runs in [`examples/web/app/`](../examples/web/app/).
 
 ## Table of contents
 
@@ -34,7 +34,7 @@ execute. The code they show runs in [`examples/app/`](../examples/app/).
 
 ## The same language, end to end
 
-[`examples/app/`](../examples/app/) is an issue tracker: a SQLite
+[`examples/web/app/`](../examples/web/app/) is an issue tracker: a SQLite
 store behind a validated JSON API, with a spreadsheet-style grid in
 the browser. Start it and look at what the one process serves:
 
@@ -393,7 +393,7 @@ nothing. A canvas can also trade retina sharpness for fill rate with
 piece rarely needs a full devicePixelRatio backing store, and the
 pixel cost falls with the square of the ratio.
 
-See it whole in [`examples/app/static/orbit.ol`](../examples/app/static/orbit.ol),
+See it whole in [`examples/web/app/static/orbit.ol`](../examples/web/app/static/orbit.ol),
 served at `/orbit.html`: five bodies orbiting on trails, and a click
 adds a new one at the clicked radius — structured event coordinates,
 `dom.measure`, and the draw-list in ~100 lines.
@@ -463,7 +463,7 @@ back-button-correct. Persistence: `dom.storage_get` / `storage_set` /
 `storage_remove` wrap localStorage (missing keys read as `""` — pair
 with `json.parse` and `unwrap_or` for a default).
 
-[`examples/app/static/notes.ol`](../examples/app/static/notes.ol),
+[`examples/web/app/static/notes.ol`](../examples/web/app/static/notes.ol),
 served at `/notes.html`, composes all of it with `ui.render`: notes
 persist across reloads, selecting one writes `?sel=` into the URL, and
 the back button unselects — a complete SPA in ~80 lines.
@@ -494,8 +494,8 @@ The property that makes this more than an escape hatch: a worker may
 `post` *mid-computation*, and the messages arrive as ordinary events
 while the worker keeps grinding. Long jobs stream progress; the page's
 frame loop never misses a beat. The demo at `/primes.html`
-([`primes.ol`](../examples/app/static/primes.ol) /
-[`primes-worker.ol`](../examples/app/static/primes-worker.ol)) makes
+([`primes.ol`](../examples/web/app/static/primes.ol) /
+[`primes-worker.ol`](../examples/web/app/static/primes-worker.ol)) makes
 the property visible: the progress bar fills *during* the count while
 an animation dial — driven by `dom.on_frame` on the main thread —
 never stutters.
@@ -508,7 +508,7 @@ surface, and a worker's is two functions long.
 
 ## Reading a real frontend
 
-[`examples/app/static/app.ol`](../examples/app/static/app.ol) is the
+[`examples/web/app/static/app.ol`](../examples/web/app/static/app.ol) is the
 tracker's complete frontend: ~330 lines of olang for a full product —
 live search, status filters, sortable columns, an issue drawer with
 comments, a stats strip, and an activity ticker. Its JavaScript
@@ -576,9 +576,9 @@ repository root:
 
 ```bash
 cargo build -p olang-playground --target wasm32-unknown-unknown --release
-cp target/wasm32-unknown-unknown/release/olang_playground.wasm examples/app/static/
+cp target/wasm32-unknown-unknown/release/olang_playground.wasm examples/web/app/static/
 
-cd examples/app
+cd examples/web/app
 olang main.ol            # http://127.0.0.1:7317
 ```
 
@@ -589,7 +589,7 @@ checks for the artifact at boot and prints these exact commands if it
 is missing.
 
 On the server side, each frontend page is a handful of routes in
-[`examples/app/main.ol`](../examples/app/main.ol) — the page, its
+[`examples/web/app/main.ol`](../examples/web/app/main.ol) — the page, its
 `.ol` source, and the shared shim — all serving text read at startup;
 the wasm route uses `body_file`, which streams raw bytes from disk —
 the response form for binary content:

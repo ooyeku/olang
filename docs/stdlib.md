@@ -225,7 +225,7 @@ println(to_string(unwrap(find([3, 8, 2], (x) => x > 5))))
 same arguments, same results in the same order, but the work fans out
 across OS threads — one interpreter (with its own bytecode tier) per
 worker, no GIL. Use them when `f` does real computation per element;
-`examples/parmap/` measures the speedup. One deliberate difference: like
+`examples/concurrency/parmap/` measures the speedup. One deliberate difference: like
 `spawn`, the function runs against worker snapshots, so mutating enclosing
 state from inside it is not visible to the caller. If several elements
 would fail, the error reported is the one `map` would have hit first.
@@ -1018,7 +1018,7 @@ silently miss a call hidden in a subtree. What is summarized (not dropped)
 is non-expression detail: patterns collapse to their bound names, type
 annotations to source text. Enough to *analyze* a program, not to perfectly
 reconstruct one. See
-[`examples/metatool`](../examples/metatool/main.ol) for a linter that
+[`examples/language/metatool`](../examples/language/metatool/main.ol) for a linter that
 counts bare `unwrap()` calls per function.
 
 Three functions serve [the macro system](macros.md) and stand on their
@@ -1137,7 +1137,7 @@ println(str.trim(r.stdout))    // "3"
 println(show(r.codes))         // [0, 0, 0]
 ```
 
-The [`watch` example](../examples/watch/) is the flagship: it streams a
+The [`watch` example](../examples/tools/watch/) is the flagship: it streams a
 command's output, runs pipelines, and shuts down gracefully on Ctrl-C.
 
 ## `cli` — command-line argument parsing
@@ -1190,7 +1190,7 @@ match cli.parse(spec, cli.args()) {
 }
 ```
 
-[`examples/taskcli`](../examples/taskcli/) is the worked example — a
+[`examples/tools/taskcli`](../examples/tools/taskcli/) is the worked example — a
 small task tracker whose entire command surface (`list`, `open`,
 `stats`, `add --priority`) is one `cli` spec, with `--help` and clean
 exit codes for free.
@@ -1234,7 +1234,7 @@ println("")
 if term.confirm("deploy now?") => run_deploy()
 ```
 
-The [`taskcli` example](../examples/taskcli/) uses it for a colored
+The [`taskcli` example](../examples/tools/taskcli/) uses it for a colored
 summary and a `term.table` breakdown — both of which print plain when
 its output is piped (which is why the examples harness still sees clean
 text).
@@ -1336,9 +1336,9 @@ http.serve(8080, handle, #{ "workers": 8, "queue_capacity": 512 })
 // blocks the calling program; Ctrl-C to stop
 ```
 
-See [`examples/webserver/`](../examples/webserver/) for a complete JSON API
+See [`examples/web/webserver/`](../examples/web/webserver/) for a complete JSON API
 with a router (`:id` path parameters) over a SQLite store, and
-[`examples/app/`](../examples/app/) for a full-stack issue tracker — the
+[`examples/web/app/`](../examples/web/app/) for a full-stack issue tracker — the
 same server also delivering its own browser frontend from disk.
 
 ## `db` — SQLite
@@ -1429,7 +1429,7 @@ for motion trails, or without to wipe), `rect`, `circle`, `line`,
 transforms `save`/`restore`/`translate`/`rotate`/`scale`. Fill and
 stroke take any CSS color; `line_width` sets stroke width. Paired with
 `dom.on_frame`, that is a 60fps rendering loop in ordinary olang — see
-`examples/app/static/orbit.ol`, an animated orbital system served by
+`examples/web/app/static/orbit.ol`, an animated orbital system served by
 the tracker at `/orbit.html`, where a click adds a body at the clicked
 radius (structured event coordinates + `dom.measure`).
 
@@ -1441,7 +1441,7 @@ own wasm instance, no DOM. The two sides exchange plain values
 `dom.on_message`. Closures do not cross — programs and messages do,
 which is the same discipline as `chan` on native. A worker may `post`
 mid-computation, so long jobs stream progress while the page's frame
-loop never misses a beat. See `examples/app/static/primes.ol` and
+loop never misses a beat. See `examples/web/app/static/primes.ol` and
 `primes-worker.ol` — served by the tracker at `/primes.html`, a prime
 counter whose progress bar fills while an animation dial proves the
 main thread stayed live.
@@ -1454,7 +1454,7 @@ and `html(tree)` renders to a string — pure and testable anywhere.
 the previous render: unchanged children are untouched (input state and
 focus survive), changed ones re-render in place, added and removed keys
 insert and remove surgically, and reorders reposition without
-rebuilding. See `examples/app/static/notes.ol` — a small SPA at
+rebuilding. See `examples/web/app/static/notes.ol` — a small SPA at
 `/notes.html` combining `ui.render`, `push_state`/`on_route`
 navigation, and localStorage persistence.
 
@@ -1492,7 +1492,7 @@ The module has its own chapter, **[olang in the Browser](wasm.md)**:
 element handles and their lifetime, the event payload conventions that
 make delegation the natural style, `dom.fetch`'s callback contract, the
 stateless-frontend architecture, and a guided reading of
-[`examples/app/`](../examples/app/) — the issue tracker whose frontend
+[`examples/web/app/`](../examples/web/app/) — the issue tracker whose frontend
 is olang running as WebAssembly.
 
 ## `testing` — assertions

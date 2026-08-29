@@ -8,5 +8,5 @@ Generate and test the parser from this directory:
 
 ```sh
 npx tree-sitter-cli generate
-npx tree-sitter-cli parse ../../examples/webserver/main.ol
+npx tree-sitter-cli parse ../../examples/web/webserver/main.ol
 ```

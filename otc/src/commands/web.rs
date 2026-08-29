@@ -20,8 +20,8 @@ use std::path::PathBuf;
 
 /// The generic pieces, taken verbatim from the proven examples at
 /// compile time so there is exactly one source of truth for each.
-const ROUTER_OL: &str = include_str!("../../../examples/ledger/lib/router.ol");
-const DOM_SHIM_JS: &str = include_str!("../../../examples/app/static/olang-dom.js");
+const ROUTER_OL: &str = include_str!("../../../examples/web/ledger/lib/router.ol");
+const DOM_SHIM_JS: &str = include_str!("../../../examples/web/app/static/olang-dom.js");
 
 /// (relative path, contents) for every file the template writes.
 pub fn files(name: &str) -> Vec<(String, String)> {

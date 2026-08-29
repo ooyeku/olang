@@ -1,4 +1,4 @@
-//! The ledger example (`examples/ledger/`) is a real backend: this test
+//! The ledger example (`examples/web/ledger/`) is a real backend: this test
 //! boots the actual main.ol on an ephemeral port with an in-memory
 //! database and locks the API contract: validation envelopes, the month
 //! window, budget upserts, category guards, and 404/405/400 semantics.
@@ -17,7 +17,7 @@ impl Drop for KillOnDrop {
 }
 
 fn app_dir() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/ledger")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/web/ledger")
 }
 
 fn spawn_ledger(token: Option<&str>) -> (KillOnDrop, u16) {

@@ -115,7 +115,7 @@ fn signal_flag_starts_clear_and_resets() {
     // Arming installs the handler and clears the flag; with no Ctrl-C sent,
     // interrupted() stays false, and reset is idempotent. (Delivering a
     // real SIGINT to the test process would abort the whole run, so the
-    // graceful-shutdown loop is exercised end-to-end in examples/watch.)
+    // graceful-shutdown loop is exercised end-to-end in examples/tools/watch.)
     assert_all_true(
         r#"
 unwrap(os.on_interrupt())

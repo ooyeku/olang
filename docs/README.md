@@ -55,7 +55,7 @@ For the conventions used throughout the book, see the
 |---|---|
 | [Architecture and internals](internals.md) | The three-tier execution model, why the interpreter is the semantic authority, the refusal ladder, promotion and deoptimization, the value model, and the repository layout. |
 | [The execution model: OVM and JIT](ovm.md) | The bytecode VM and the Cranelift JIT in depth: the register machine, the compilation whitelist, type specialization, measured performance, and the deliberate limits. |
-| [Case study: building robust systems](demo.md) | A design study of the flagship example, `examples/demo` (Harborline): state threading, algebraic data types, `Result` discipline, testable concurrency, and self-checking invariants. |
+| [Case study: building robust systems](demo.md) | A design study of the flagship example, `examples/concurrency/demo` (Harborline): state threading, algebraic data types, `Result` discipline, testable concurrency, and self-checking invariants. |
 | [Stability and compatibility](stability.md) | What is stable, what is experimental, and how the language evolves. |
 | [Roadmap](roadmap.md) | The plan of record for reaching 1.0: the locked design decisions and the campaigns that implement them. |
 
@@ -80,7 +80,7 @@ For the conventions used throughout the book, see the
 ## Example programs
 
 Complete programs live in [`examples/`](../examples/). The largest is
-[`demo/`](../examples/demo/) (Harborline), a long-running harbor-operations
+[`demo/`](../examples/concurrency/demo/) (Harborline), a long-running harbor-operations
 simulator built to exercise the language across many features and documented
 as a [case study](demo.md). The directory also includes a task-management
 CLI, a log analyzer, a template engine, a regular-expression engine, a parser

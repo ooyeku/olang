@@ -6,7 +6,7 @@
 // builds HTML as STRINGS — pure functions, testable anywhere — and
 // `dash.styles()` ships the styling, so a page needs no CSS of its
 // own. The wiring pattern (fetch → compute → set_html per card) stays
-// in your program, where it belongs; see /board.html in examples/app.
+// in your program, where it belongs; see /board.html in examples/web/app.
 //
 //   dom.set_html(mount, dash.styles() + dash.grid([
 //       dash.kpi("open issues", "12", "+3 this week"),

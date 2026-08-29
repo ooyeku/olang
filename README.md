@@ -179,7 +179,7 @@ tested rule. Full details and measured tables are in
 ## Examples
 
 [`examples/`](examples/) contains complete programs. The largest is
-[`demo/`](examples/demo/) (Harborline), a long-running harbor-operations
+[`demo/`](examples/concurrency/demo/) (Harborline), a long-running harbor-operations
 simulator that uses threaded worker crews over channels, a SQLite ledger,
 tariff expression trees, an RSA-signed digest chain, and daily self-checked
 invariants; [the case study](docs/demo.md) reads it as a design study for

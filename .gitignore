@@ -26,7 +26,7 @@ Thumbs.db
 *.log
 logs/
 # ...except committed example fixtures the programs read by default
-!examples/loganalyzer/data/app.log
+!examples/data-processing/loganalyzer/data/app.log
 
 # Runtime data
 pids
@@ -81,18 +81,18 @@ editors/zed/extension.wasm
 
 # Example runtime data: databases, backups, generated charts
 examples/**/*.db
-examples/app/backups/
-examples/statlab/*.svg
+examples/web/app/backups/
+examples/data-processing/statlab/*.svg
 
 # `olang build` output inside examples: a built binary is named after its
 # source directory's entry point, so these collide with nothing but must
 # not be committed.
-examples/*/main
-examples/*/ledger
+examples/*/*/main
+examples/*/*/ledger
 
 # Local distribution staging (make dist). dist/homebrew (the formula
 # template) stays tracked.
 /dist/*
 !/dist/homebrew/
 editors/vscode/dist/
-examples/meterflow/cache/
+examples/data-processing/meterflow/cache/

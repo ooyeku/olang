@@ -3,7 +3,7 @@
 // an entropy source — no filesystem, network, process, or DOM access
 // exists on the other side of the boundary. The `dom` module's imports
 // must still be present for the instance to link (the wasm build carries
-// them for pages that ARE a browser frontend, like examples/app), but in
+// them for pages that ARE a browser frontend, like examples/web/app), but in
 // this sandbox they are inert: dom.query finds nothing (handle 0, a clean
 // olang-level error), reads yield empty strings, writes are no-ops. The
 // page terminates this worker on timeout, which is what bounds runaway

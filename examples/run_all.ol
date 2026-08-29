@@ -29,10 +29,10 @@ let root =
 // harness; each is listed here with the test that covers it instead, so the
 // skip is visible and its replacement is named, never silent.
 let long_running = #{
-    "webserver/": "tests/http_serve_test.rs",
-    "app/": "tests/tracker_app_test.rs",
-    "ledger/": "tests/ledger_app_test.rs",
-    "climate/": "climate/README.md — downloads ~24MB of real data"
+    "web/webserver/": "tests/http_serve_test.rs",
+    "web/app/": "tests/tracker_app_test.rs",
+    "web/ledger/": "tests/ledger_app_test.rs",
+    "data-processing/climate/": "its README — downloads ~24MB of real data"
 }
 
 // ── discover targets: each is { label, dir, file } ──
@@ -47,26 +47,32 @@ for e in entries {
         { targets = targets + [{ label: e, dir: root, file: e }] }
 }
 
-// Packages: a directory with a main.ol, looking one level deeper for nested
-// package roots like packages/demo.
-for e in entries {
-    if (!str.ends_with(e, ".ol")) && fs.is_dir(root + "/" + e) => {
-        if fs.exists(root + "/" + e + "/main.ol") =>
-            { targets = targets + [{ label: e + "/", dir: root + "/" + e, file: "main.ol" }] }
-        else => {
-            for sub in sort(unwrap(fs.list_dir(root + "/" + e))) {
-                let rel = e + "/" + sub
-                if fs.is_dir(root + "/" + rel) && fs.exists(root + "/" + rel + "/main.ol") =>
-                    { targets = targets + [{ label: rel + "/", dir: root + "/" + rel, file: "main.ol" }] }
-            }
-        }
+// Examples live under category directories (data-processing/, web/,
+// language/, concurrency/, tools/), and a category entry may itself
+// nest one more level (language/packages/demo). A directory with a
+// main.ol is a target; one without is walked one level deeper, to a
+// depth of three from the root.
+fn discover(rel, depth) = {
+    let dir = root + "/" + rel
+    if fs.exists(dir + "/main.ol") =>
+        return [{ label: rel + "/", dir: dir, file: "main.ol" }]
+    if depth >= 3 => return []
+    let mut found = []
+    for sub in sort(unwrap(fs.list_dir(dir))) {
+        if fs.is_dir(dir + "/" + sub) =>
+            { found = found + discover(rel + "/" + sub, depth + 1) }
     }
+    found
+}
+for e in entries {
+    if (!str.ends_with(e, ".ol")) && fs.is_dir(root + "/" + e) =>
+        { targets = targets + discover(e, 1) }
 }
 
 // Per-target arguments: a long-running-by-design program gets a bounded,
 // deterministic invocation under the harness. Everything else runs bare.
 let harness_args = #{
-    "demo/": ["--ticks", "48", "--fast", "--quiet", "--seed", "7"]
+    "concurrency/demo/": ["--ticks", "48", "--fast", "--quiet", "--seed", "7"]
 }
 fn args_for(label) =
     if map_has_key(harness_args, label) => map_get(harness_args, label) else => []

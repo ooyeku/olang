@@ -280,14 +280,15 @@ fn built_binary_is_transparent_and_enforces_its_manifest() {
     let _ = std::fs::remove_dir_all(&ws);
 }
 
-/// The shipped `examples/capabilities` demo: the same app runs twice against
+/// The shipped `examples/language/capabilities` demo: the same app runs twice against
 /// the same malicious dependency, and the guarded manifest blocks the
 /// backdoor the unguarded one lets through. The narrator self-verifies and
 /// exits non-zero on any deviation, so running it is the assertion — a
 /// regression in per-dependency attenuation fails here.
 #[test]
 fn capabilities_demo_example_runs_clean() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/capabilities");
+    let dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/language/capabilities");
     let out = Command::new(olang())
         .current_dir(&dir)
         .arg("main.ol")

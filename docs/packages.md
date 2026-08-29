@@ -275,7 +275,7 @@ Start `olang` from a directory inside a package (one containing an
 dependencies automatically:
 
 ```text
-$ cd examples/packages/demo
+$ cd examples/language/packages/demo
 $ olang
 Package 'demo' loaded — its dependencies are available via `use`
 
@@ -503,7 +503,7 @@ name.
 
 For a runnable demonstration — the same app run twice against a malicious
 dependency, blocked in one variant and not the other — see
-[`examples/capabilities`](../examples/capabilities/).
+[`examples/language/capabilities`](../examples/language/capabilities/).
 
 `--deny` restricts any run further, on top of any manifest, from the
 command line (also read from `OLANG_DENY`):

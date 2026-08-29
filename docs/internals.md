@@ -339,7 +339,7 @@ that owns it:
 | Layer | Where | What it protects |
 |---|---|---|
 | Doc examples | `doc_examples_test.rs` | every `olang` block in README + book chapters parses and runs |
-| Example programs | `example_programs_test.rs` | every `examples/demo` module parses, and a bounded soak run keeps its invariants |
+| Example programs | `example_programs_test.rs` | every `examples/concurrency/demo` module parses, and a bounded soak run keeps its invariants |
 | Self-hosted harness | `examples/run_all.ol` | every example (incl. packages) runs in a real subprocess |
 | Differential | `embedded_stdlib_test.rs` | `colx`/`mathx` agree with `col`/`math` |
 | Tier consistency | `bytecode_tier_test.rs` and friends | OVM results match the interpreter, function by function |

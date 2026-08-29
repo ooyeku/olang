@@ -1,4 +1,4 @@
-//! The tracker example (`examples/app/`) is a real backend: this test
+//! The tracker example (`examples/web/app/`) is a real backend: this test
 //! boots it — the actual main.ol, not a copy — on an ephemeral port with
 //! an in-memory database and locks the API contract: validation shapes,
 //! filtering, comments, the audit trail, stats, CSV export, 404/405
@@ -18,7 +18,7 @@ impl Drop for KillOnDrop {
 }
 
 fn app_dir() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/app")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/web/app")
 }
 
 fn spawn_tracker(token: Option<&str>) -> (KillOnDrop, u16) {

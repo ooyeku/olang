@@ -153,7 +153,7 @@ declaration transforms it, and each one above that receives the previous
 result.
 
 For a complete program — `@bake`, `@unless`, `@dbg`, and a `@json`
-derive, with tests — see [`examples/macros`](../examples/macros/main.ol).
+derive, with tests — see [`examples/language/macros`](../examples/language/macros/main.ol).
 
 ## Hygiene
 
@@ -237,7 +237,7 @@ println(log("started"))   // [app] started
 
 A top-level `use m` also brings `m`'s top-level meta fns into the
 importing file's expansion, which is what makes a macro *library*
-possible — [`examples/derives`](../examples/derives/) ships one. The
+possible — [`examples/language/derives`](../examples/language/derives/) ships one. The
 module is resolved as `m.ol` or `m/index.ol` (dots as directories)
 relative to the working directory; a local meta fn of the same name
 shadows an imported one, and an imported module's own imports are not
@@ -270,7 +270,7 @@ println(to_string(base(4)))   // 50
 
 Stacked decorators apply nearest-first, so the outermost decorator sees
 everything the inner ones generated — which is why a decorator that
-generates `test` blocks (like `examples/derives`' `@arbitrary`) goes
+generates `test` blocks (like `examples/language/derives`' `@arbitrary`) goes
 outermost: its tests land after every function they call.
 
 ## Argument order
@@ -288,11 +288,11 @@ re-expanded on the next round.
 ## Real libraries in the corpus
 
 Three macro libraries ship as examples, each imported with `use` by a
-real program: [`examples/derives`](../examples/derives/) (serialization,
+real program: [`examples/language/derives`](../examples/language/derives/) (serialization,
 builders, and generated tests from one type declaration),
-[`examples/instrument`](../examples/instrument/) (`@memo`, `@trace`,
+[`examples/language/instrument`](../examples/language/instrument/) (`@memo`, `@trace`,
 `@timed`, `@dbg` — instrumentation as generated code rather than
-runtime machinery), and [`examples/contracts`](../examples/contracts/)
+runtime machinery), and [`examples/language/contracts`](../examples/language/contracts/)
 (`@require`/`@ensure` contracts that quote their own source, and
 `@fmtc`, a format string checked against its arguments before the
 program loads). All three run under the example harness and the

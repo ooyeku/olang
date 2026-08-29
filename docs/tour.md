@@ -398,7 +398,7 @@ came back.
 A failing worker doesn't kill the batch, either — joining a failed task
 yields an `Err` value, handled with the same Result toolkit as any
 other failure. The [language reference](language.md#concurrency)
-has the full semantics; [`examples/parmap/`](../examples/parmap/)
+has the full semantics; [`examples/concurrency/parmap/`](../examples/concurrency/parmap/)
 measures the speedup on real kernels.
 
 ## The data stack
@@ -461,7 +461,7 @@ println(to_string(str.contains(svg, "<svg")))
 
 [The Data Stack](ods.md) is the full chapter — every Series and Frame
 verb, the complete `stats` and `plot` modules, and the performance
-story; [`examples/statlab/`](../examples/statlab/) is a complete
+story; [`examples/data-processing/statlab/`](../examples/data-processing/statlab/) is a complete
 statistical study built on this stack.
 
 ## Testing
@@ -558,7 +558,7 @@ same engine, not a lookalike, what works there works installed.
 The playground engine also powers olang in the browser as a *frontend*
 language: the `dom` module lets an olang program drive a real page —
 queries, events, fetch — which is how
-[`examples/app/`](../examples/app/) serves an issue tracker whose
+[`examples/web/app/`](../examples/web/app/) serves an issue tracker whose
 frontend is itself written in olang.
 [olang in the Browser](wasm.md) tells that story whole, architecture
 to application.

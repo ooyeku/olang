@@ -57,7 +57,7 @@ boxing, no per-element interpretation — and the memory access pattern
 is exactly the sequential streaming that hardware is built to prefetch.
 
 The effect is large, and it is reproducible from the repository.
-[`examples/dataproc/`](../examples/dataproc/) contains the same job in both
+[`examples/data-processing/dataproc/`](../examples/data-processing/dataproc/) contains the same job in both
 representations: `records.ol` is the records-and-fold pipeline above, and
 `main.ol` is the Frame pipeline this chapter describes. The checked-in data
 is a nine-row sample; `gen.ol` generates a seeded input of any size. On a
@@ -1324,11 +1324,11 @@ println(`95% CI: [${math.round(ods.quantile(means, 0.025))}, ${math.round(ods.qu
 
 Two complete worked programs extend these patterns to full scale:
 
-- [`examples/dataproc/`](../examples/dataproc/) — the CSV → Frame →
+- [`examples/data-processing/dataproc/`](../examples/data-processing/dataproc/) — the CSV → Frame →
   `group_by` → JSON pipeline, with the opening section's representation
   comparison shipped as two runnable programs (`main.ol` and
   `records.ol`) and a seeded data generator (`gen.ol`).
-- [`examples/statlab/`](../examples/statlab/) — a full statistical
+- [`examples/data-processing/statlab/`](../examples/data-processing/statlab/) — a full statistical
   study: 10,000 simulated subjects, a Welch t-test cross-validated by
   a 1,000-round permutation test and a bootstrap CI (both fanned over
   `par_map`), a three-predictor regression, and charts of the results,
@@ -1558,7 +1558,7 @@ Revisions and notes, recorded per the rule:
   reproducible — pinned by test.
 - **The representation comparison** at the top of this chapter is
   B-series discipline applied end-to-end, and it ships as runnable code:
-  `examples/dataproc` contains both pipelines (`records.ol` and
+  `examples/data-processing/dataproc` contains both pipelines (`records.ol` and
   `main.ol`) and a seeded generator (`gen.ol`). At the 0.40 rewrite the
   measured change was 3.0 s → 0.06 s on 200,000 rows; re-measured on the
   0.60 binary with the shipped programs, it is about 5 s → 0.06 s.

@@ -65,7 +65,7 @@ show(contains(hits, "docs/language.md")) + "/" + show(col.all(hits, (f) => str.e
 fn glob_double_star_spans_segments() {
     let src = r#"
 let hits = unwrap(fs.glob("examples/**/main.ol"))
-show(len(hits) > 5) + "/" + show(contains(hits, "examples/regex/main.ol"))
+show(len(hits) > 5) + "/" + show(contains(hits, "examples/language/regex/main.ol"))
 "#;
     assert_eq!(s(eval(src)), "true/true");
 }

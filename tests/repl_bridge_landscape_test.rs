@@ -54,7 +54,7 @@ fn a_bridge_born_early_still_sees_later_declarations() {
     let out = repl(
         "use heap\n\
          heap.size(heap.new())\n\
-         :run examples/parser/main.ol\n\
+         :run examples/language/parser/main.ol\n\
          quit\n",
         root,
     );

@@ -45,7 +45,7 @@ for node in program |> filter((n) => map_get(n, "kind") == "use") {
 
 For the full node vocabulary, see the [meta
 reference](stdlib.md#meta--the-program-as-data-the-open-ast). For a
-complete linter, see [examples/metatool](../examples/metatool/main.ol).
+complete linter, see [examples/language/metatool](../examples/language/metatool/main.ol).
 
 The toolchain uses the same format. `olang check --rules` runs
 project-specific lint rules, written in olang over the meta AST, alongside

@@ -1,4 +1,4 @@
-//! The consolidated example system — examples/demo, "Harborline" — must
+//! The consolidated example system — examples/concurrency/demo, "Harborline" — must
 //! stay healthy: every module parses, and a bounded, deterministic soak
 //! run completes with its invariants intact. A language change that breaks
 //! the demo is a CI failure, not a discovery a reader makes.
@@ -19,8 +19,8 @@ macro_rules! parse_test {
         #[test]
         fn $name() {
             parses(
-                concat!("examples/demo/", $file),
-                include_str!(concat!("../examples/demo/", $file)),
+                concat!("examples/concurrency/demo/", $file),
+                include_str!(concat!("../examples/concurrency/demo/", $file)),
             );
         }
     };
@@ -45,7 +45,8 @@ parse_test!(demo_console_parses, "lib/console.ol");
 /// held. Runs the real binary, exactly as a user would.
 #[test]
 fn demo_soak_runs_clean() {
-    let demo_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/demo");
+    let demo_dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/concurrency/demo");
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_olang"))
         .current_dir(&demo_dir)
         .args([

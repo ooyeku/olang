@@ -64,7 +64,7 @@ fn datetimes_are_plain_strings() {
 fn parses_a_real_package_manifest() {
     // The repo's own manifest format is the first customer.
     let v = eval(
-        "let d = unwrap(toml.parse(unwrap(fs.read_file(\"examples/packages/demo/olang.toml\"))))\nshow(map_get(map_get(d, \"package\"), \"name\"))",
+        "let d = unwrap(toml.parse(unwrap(fs.read_file(\"examples/language/packages/demo/olang.toml\"))))\nshow(map_get(map_get(d, \"package\"), \"name\"))",
     );
     assert_eq!(v, Value::String("demo".to_string().into()));
 }

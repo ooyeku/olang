@@ -9,7 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **examples/climate — a real data-science workstream on real
+- **examples/ is organized by category.** Thirty-seven examples now
+  group under five directories that say what they demonstrate:
+  `data-processing/` (the ods stack: ETL, statistics, time series,
+  workstreams on real data), `web/` (full-stack apps and the load
+  tester), `language/` (parsers, engines, macros, metaprogramming, the
+  package system), `concurrency/` (threads, channels, parallel
+  pipelines, Harborline), and `tools/` (command-line programs). The
+  harness discovers targets recursively, every path reference across
+  docs, tests, the Makefile, and the website moved with them, and the
+  gallery README opens with the category map.
+
+- **examples/data-processing/climate — a real data-science workstream on real
   downloaded data.** Eight stages end to end: fetch Our World in
   Data's CO2 and energy datasets (~24 MB of live CSV, cached under
   `data/` with retries, size sanity checks, and atomic `.part` writes
@@ -578,7 +589,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   tier declines (defaults, bounds, uncompilable bodies) fall back to
   the unchanged per-element path. Measured with identical results: a
   2M-element map·filter pipeline 904 ms → 153 ms, a 2M fold 449 ms →
-  81 ms, examples/benchmark.ol 1001 ms → 350 ms with its tier profile
+  81 ms, examples/data-processing/benchmark/main.ol 1001 ms → 350 ms with its tier profile
   going from 91% interpreted to ~0%.
 
 ### Fixed
@@ -837,7 +848,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   output and the `:time` line are tinted to stay out of the way. Colors
   engage only on a terminal — piped output remains plain text.
 
-- **examples/ledger: robustness and visual pass.** The frontend gains a
+- **examples/web/ledger: robustness and visual pass.** The frontend gains a
   category manager (add, inline rename, delete — the API existed, the UI
   didn't), budget progress bars, summary stat cards, toast notifications
   that surface the server's real error messages (field-level 422 details
@@ -1323,11 +1334,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - **Two more macro libraries, completing the graduation corpus:**
-  `examples/instrument` (`@memo` — a function rewritten into a cache
+  `examples/language/instrument` (`@memo` — a function rewritten into a cache
   around its own body, recursion memoizing itself, with a generated
   `_cache_size()` so tests pin the cache rather than the clock;
   `@trace`; `@timed`; `@dbg` printing an expression's own source) and
-  `examples/contracts` (`@require`/`@ensure` contracts that quote the
+  `examples/language/contracts` (`@require`/`@ensure` contracts that quote the
   violated condition, and `@fmtc`, a format string whose placeholder
   count is checked against its arguments at load). Both imported with
   `use`, both under the harness and the tier-agreement corpus.
@@ -1372,7 +1383,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - **`use`-imported macro libraries resolve relative to the importing
   file, not the process working directory.** `olang check
-  examples/derives/main.ol` from the repo root failed to find
+  examples/language/derives/main.ol` from the repo root failed to find
   `derive.ol` and fell into the binding bug above; the run path, the
   checker, and the language server now all pass the file's directory as
   the import base, so a macro program means the same thing wherever the
@@ -1396,7 +1407,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   experimental macro system from prototype to usable and reliable:
 
   - **Macro libraries**: a top-level `use m` brings `m`'s top-level meta
-    fns into the importing file's expansion. `examples/derives` ships
+    fns into the importing file's expansion. `examples/language/derives` ships
     the first — `@json`, `@builder`, and `@arbitrary` deriving a
     serializer, a builder API, and a *generated test suite* from one
     `type` declaration.
@@ -1478,7 +1489,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   substring scan and nothing else. Generated code is ordinary code —
   checked, promoted, and capability-gated like anything handwritten.
   Documented in a new book chapter (docs/macros.md), demonstrated in
-  `examples/macros` (`@bake`, `@unless`, `@dbg`, a `@json` derive),
+  `examples/language/macros` (`@bake`, `@unless`, `@dbg`, a `@json` derive),
   and pinned by a 20-case test matrix plus the tier-agreement corpus.
 
 ### Fixed
@@ -1543,7 +1554,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   rule, so pest consumed the implicit `WHITESPACE` between the opening
   backtick and the content; it is now compound-atomic. The bug was
   pre-existing and had been silently eating the indentation of report
-  lines like `` `  utilization ${bar}` `` in `examples/demo`; those now
+  lines like `` `  utilization ${bar}` `` in `examples/concurrency/demo`; those now
   render with their intended indent. Found while migrating the corpus off
   `+ to_string(...)` (below), where every indented line hit it.
 
@@ -1567,7 +1578,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **`examples/timeseries` — analysis over ordered data.** The sequence
+- **`examples/data-processing/timeseries` — analysis over ordered data.** The sequence
   counterpart to the bag examples (`dataproc`, `meterflow`), and the
   first program to exercise the window verbs shipped in 0.67 (`rolling`,
   `shift`, `cum_max`/`cum_min`, `rank`), which until now had only
@@ -1960,7 +1971,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   REPL was the one that raised most often, because it demanded a count.
 
 - **`meterflow`: the data stack's flagship ETL (Campaign 2, DP4).**
-  A multi-source pipeline in [`examples/meterflow/`](examples/meterflow/):
+  A multi-source pipeline in [`examples/data-processing/meterflow/`](examples/data-processing/meterflow/):
   meter telemetry arrives as JSON lines too large to hold, two CSV
   dimension tables carry sites and tariffs, and the job streams the
   readings, gates them on quality, aggregates across chunks, joins the
@@ -2346,7 +2357,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   masked, since running faster is the point; everything else is compared
   verbatim.
 
-  It found `examples/parser` diverging. Two closures built from the same
+  It found `examples/language/parser` diverging. Two closures built from the same
   higher-order combinator give different answers on the compiled tier,
   the second behaving as though it captured the first one's argument:
   `word "olang"` yields `olang` interpreted and `""` compiled, and
@@ -2487,7 +2498,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
   Reading an enclosing binding is unaffected — that is how the body gets
   its inputs — and a `let mut` declared inside the body is local to one
-  iteration. `examples/parmap/` demonstrated the old dead write; it now
+  iteration. `examples/concurrency/parmap/` demonstrated the old dead write; it now
   collects its results over a channel and cross-checks them against the
   sequential total.
 
@@ -2557,7 +2568,7 @@ twice over.
 ### Fixed
 
 - **`http.serve`'s bind failure was silently discarded in both flagship
-  apps.** Starting `examples/app` or `examples/ledger` on a taken port
+  apps.** Starting `examples/web/app` or `examples/web/ledger` on a taken port
   printed the startup banner and exited with status 0, as though it had
   served. Found by the new warning on its first run over the corpus; both
   now report the failure and exit non-zero.
@@ -2747,7 +2758,7 @@ breaking changes to the language surface.
 
   ```text
   package 'loadtest' has no root module: `use loadtest` needs one of
-  index.ol, mod.ol, loadtest.ol, or src/index.ol at examples/loadtest/.
+  index.ol, mod.ol, loadtest.ol, or src/index.ol at examples/web/loadtest/.
   Importable modules there: loadtest.lib.server, loadtest.lib.stats
   ```
 
@@ -2755,7 +2766,7 @@ breaking changes to the language surface.
 
 `olang check .` reports every site. The corpus migration in this release
 (scheduler, loadtest, pargrep, demo, and the book's concurrency chapter)
-is the worked example. `examples/scheduler/` is the clearest before and
+is the worked example. `examples/concurrency/scheduler/` is the clearest before and
 after: it was built entirely on `Promise.delay` + `Promise.race` and is
 now `spawn` + `task.join` + `task.join_timeout`, with the "the task is
 still running" caveat stated where the timeout is taken.
@@ -3002,7 +3013,7 @@ release and checks clean.
   attenuation) — the static counterpart to the observed `--trace-caps`
   profile — and defers to `inspect --caps` for a built binary.
 
-- **`examples/capabilities` — a runnable malicious-dependency demo.** The
+- **`examples/language/capabilities` — a runnable malicious-dependency demo.** The
   same app runs twice against a third-party package with a backdoor: the
   unguarded variant lets it read a local secret; the guarded variant grants
   the dependency `fs = false`, so the identical read is refused at the gate
@@ -3146,7 +3157,7 @@ release and checks clean.
   linters, codemods, and import extractors become olang scripts, not
   compiler changes (`otc deps` is four lines over it). Faithful for the
   shapes a tool inspects, summarizing the deep interior; a syntax error is
-  an ordinary `Err`, never a crash. `examples/metatool` lints bare
+  an ordinary `Err`, never a crash. `examples/language/metatool` lints bare
   `unwrap()` calls per function. With this the openness campaign's
   three-pillar thesis — open artifacts, open execution, open code — is
   complete.
@@ -3199,7 +3210,7 @@ release and checks clean.
     keep full speed. Pinned by an integration suite covering manifest
     grants, attenuation, `--deny`, ghost-dependency refusal, and the
     build → inspect → enforce round-trip.
-- **`examples/demo` — Harborline, the consolidated flagship example.**
+- **`examples/concurrency/demo` — Harborline, the consolidated flagship example.**
   The 23 loose scripts at the top of `examples/` are consolidated into
   one coherent, long-running system: a harbor-operations simulator with
   eleven library modules (domain ADTs and tariff expression trees, a
@@ -3275,7 +3286,7 @@ release and checks clean.
   false { ... }`) and `os.reset_interrupt()` clears it, so a server or
   watch loop can drain and exit cleanly.
 
-- **`examples/watch` — the process-story dogfood.** A `watch(1)`-style
+- **`examples/tools/watch` — the process-story dogfood.** A `watch(1)`-style
   tool that reruns a command on an interval and streams its output, or
   runs a pipeline with `--pipe`, until Ctrl-C — exercising `proc`
   streaming, `proc.pipeline`, and `os` signal handling through the `cli`
@@ -3484,7 +3495,7 @@ release and checks clean.
 ### Added
 
 - **`survey` — the command-line flagship (dogfood).** A new example
-  (`examples/survey`): a codebase surveyor that turns a directory into a
+  (`examples/tools/survey`): a codebase surveyor that turns a directory into a
   report — colored totals, a per-language bar chart, aligned tables, and
   a live progress bar — exercising `cli`, `term`, and `fs` in one
   self-contained file. It is the terminal counterpart of the tracker web
@@ -3713,7 +3724,7 @@ release and checks clean.
   `dom.worker_on` on the page and `dom.post` / `dom.on_message` inside the
   worker. Workers can post mid-computation, so long jobs stream progress
   while the page's frame loop keeps running. New `/primes.html` demo in
-  `examples/app`: a prime counter with a live progress bar and an animation
+  `examples/web/app`: a prime counter with a live progress bar and an animation
   dial proving the main thread never blocks.
 - **`dom.fetch_json`** — `dom.fetch`, but the callback receives the parsed
   response value directly instead of raw text.
@@ -3742,7 +3753,7 @@ release and checks clean.
   module gains SPA navigation — `push_state`, `location` (a Map of
   path and query), `on_route` for back/forward — and localStorage
   (`storage_get`/`set`/`remove`). The proof is
-  `examples/app/static/notes.ol` at `/notes.html`: a notes SPA
+  `examples/web/app/static/notes.ol` at `/notes.html`: a notes SPA
   verified live in a browser — selection updates the URL, the back
   button unselects through `on_route`, additions reconcile in, and
   notes persist across the session. The dom harness pins routing,
@@ -3757,7 +3768,7 @@ release and checks clean.
   replayed onto the canvas 2D context by the page. `dom.on_frame`
   completes the loop: register once, called every frame with a
   millisecond delta, no per-frame handler registration. The proof is
-  `examples/app/static/orbit.ol`, served by the tracker at
+  `examples/web/app/static/orbit.ol`, served by the tracker at
   `/orbit.html`: an animated orbital system with motion trails where
   clicking adds a body at the clicked radius (structured event
   coordinates + `dom.measure`), verified live in a browser at 60fps.
@@ -4021,7 +4032,7 @@ release and checks clean.
   text on both tiers ("got true", not "got Bool"). Intersection
   annotations remain the only reserved form.
 
-- **The tracker example is a real product now.** `examples/app` grew
+- **The tracker example is a real product now.** `examples/web/app` grew
   from a bare grid into a full app — live search, status filter pills,
   sortable columns (assignee joined the sortable set), an issue drawer
   with editable title, cycling pills, and comments, a stats strip
@@ -4111,7 +4122,7 @@ release and checks clean.
 ### Fixed
 
 - **The tracker example no longer defaults to a port macOS owns.**
-  `examples/app` listened on 7000 by default — a port macOS AirPlay
+  `examples/web/app` listened on 7000 by default — a port macOS AirPlay
   Receiver (Control Center) binds on every modern Mac and answers
   with `403 Forbidden`, so a browser hitting the app when it wasn't
   running got AirPlay's baffling "access denied" instead of
@@ -4398,7 +4409,7 @@ documented.
   `random.sample` order differently — rand 0.9 changed uniform integer
   index sampling. Treat any exact seeded sequence as reproducible only
   within a single olang version; assert properties, not pinned streams
-  (the repo's own tests and examples/statlab already do). Seeding,
+  (the repo's own tests and examples/data-processing/statlab already do). Seeding,
   determinism within a run, and `stats.norm.sample` riding the same
   stream are all unchanged.
 - **A maintained HTTP stack under the `http` client.** reqwest
@@ -4475,7 +4486,7 @@ documented.
   the bearer token. The list endpoint now carries each issue's comment
   count (one subquery — no n+1), locked into the contract test.
 
-- **`examples/app` — the tracker grows a real backend.** The
+- **`examples/web/app` — the tracker grows a real backend.** The
   full-stack issue tracker now runs on a persistent, schema-migrated
   SQLite store (a `schema_version` table; migrations append, run once,
   in transactions) with request validation (422s naming each field
@@ -4497,7 +4508,7 @@ documented.
   missing primitive for prompts, REPLs, and shells, and for reading
   piped input line by line.
 
-- **`examples/oshell/` — a Unix-like shell written in olang.** An
+- **`examples/tools/oshell/` — a Unix-like shell written in olang.** An
   interactive `os.read_line` loop where every operation is the stdlib:
   pipelines thread stdout→stdin through `os.exec`, redirection
   (`< > >>`) and globbing ride on `fs`, `grep` is `re`, and 25 builtins
@@ -4534,7 +4545,7 @@ documented.
   Neovim wiring included.
 
 - **The tracker runs on olang end to end — page shim, dom.fetch, and
-  the JS frontend deleted.** examples/app now serves ONE frontend:
+  the JS frontend deleted.** examples/web/app now serves ONE frontend:
   app.ol, running in the browser as WebAssembly through the page shim
   (static/olang-dom.js — real DOM host imports, session boot, event
   and fetch-response dispatch). dom.fetch(method, path, body, cb)
@@ -4715,7 +4726,7 @@ documented.
   joins (SQL); groups keep first-seen order. **B6 gate met: a 10M-row,
   1k-group sum+mean aggregates in 27.2 ms single-threaded vs 24.0 ms
   for Polars on 18 threads** — an inline Fx hasher and L1-resident
-  accumulators, measured table in the design doc. `examples/dataproc`
+  accumulators, measured table in the design doc. `examples/data-processing/dataproc`
   is rewritten on the Frame pipeline: **3.0 s → 0.06 s at 200k rows
   (50×)** with identical aggregates.
 
@@ -4922,7 +4933,7 @@ documented.
   (the error you get is the one `map` would have hit first), filter's
   keep-on-`true` rule, and fail-closed refusal in the VM (functions
   calling par_map stay interpreted). **Measured: 9–13× vs sequential
-  `map` on compute-heavy kernels** (examples/parmap, which self-checks
+  `map` on compute-heavy kernels** (examples/concurrency/parmap, which self-checks
   parallel == sequential on every run).
 
 ### Fixed
@@ -5457,7 +5468,7 @@ documented.
   identifier (a local shadowing `math` is still field access, not the
   builtin). Before this, a single `math.sqrt` in a hot loop kept the whole
   function on the interpreter — so any real numeric kernel missed the tier.
-- **`examples/nbody/`** — an N-body gravity simulation: `Body` structs whose
+- **`examples/concurrency/nbody/`** — an N-body gravity simulation: `Body` structs whose
   force kernels (`accel_x`/`accel_y`) read five fields per interaction in an
   O(n²) loop and call `math.sqrt`, exactly the field-access + math shape the
   tier now accelerates. It times itself and reports throughput; a `test`
@@ -5475,7 +5486,7 @@ documented.
 
 ### Added
 
-- **`examples/loadtest/`** — a self-contained HTTP load test, the server and
+- **`examples/web/loadtest/`** — a self-contained HTTP load test, the server and
   its concurrent client fleet in one olang program. It boots a SQLite-backed
   API in a spawned task, fans client workers out across `spawn` threads
   (each firing a burst of requests and timing them), merges per-worker stats
@@ -5521,7 +5532,7 @@ documented.
 
 ### Added
 
-- **`examples/pargrep/`** — parallel code search dogfooding the real
+- **`examples/concurrency/pargrep/`** — parallel code search dogfooding the real
   `spawn`: the coordinator walks a tree, deals files to spawned worker
   threads (fs + re + str running concurrently), merges after `await`, and
   prints sequential-vs-parallel timings (~2× on the examples tree). A
@@ -5709,11 +5720,11 @@ by item (the plan lives in `docs/roadmap.md`).
   `http.response`/`response_with_headers` struct is honored. Handler errors
   become 500s, malformed requests 400s, and the server keeps serving through
   both. Sequential and blocking by design; integration-tested over real TCP.
-- **`examples/webserver/`** — a notes JSON API on `http.serve`: a router with
+- **`examples/web/webserver/`** — a notes JSON API on `http.serve`: a router with
   `:id` path parameters dispatching handlers over a SQLite store that
   persists across requests (the handler closes over the connection).
   `run_all.ol` skips long-running servers with a visible note.
-- **`examples/markdown/`** — a markdown→HTML converter: a block parser
+- **`examples/language/markdown/`** — a markdown→HTML converter: a block parser
   (headings, lists, blockquotes, fenced code, rules, paragraphs) over a
   recursive inline span renderer (`code`, bold, italic, links, escaping).
   Handles unclosed markers gracefully and converts the repository's own
@@ -5784,36 +5795,36 @@ by item (the plan lives in `docs/roadmap.md`).
   `Type::Variant` form, so the bare constructor had to travel with the import.
 - **Multi-line `use` import lists.** The names inside `use m { ... }` may span
   lines and end with a trailing comma.
-- **`examples/jsonschema/`** — a JSON Schema validator: the schema and document
+- **`examples/language/jsonschema/`** — a JSON Schema validator: the schema and document
   are both parsed JSON, and validation recursively walks them, collecting a
   pathed error (`$.address.zip`) per violated keyword (type, enum, required,
   properties, items, and the min/max/length bounds). Found no new bugs — the
   JSON, map-accessor, recursion, and comparison paths were already hardened by
   earlier rounds.
-- **`examples/regex/`** — a backtracking regex engine: a recursive-descent
+- **`examples/language/regex/`** — a backtracking regex engine: a recursive-descent
   parser compiles a pattern to a recursive `Re` AST, and a continuation-passing
   matcher walks it. Supports `. * + ? | ( )`, character classes, anchors, and
   `\d \w \s`, with `find`/`find_all`/`matches`.
-- **`examples/parser/`** — a parser combinator library (parsers as
+- **`examples/language/parser/`** — a parser combinator library (parsers as
   `(input, pos) -> result` functions, composed by higher-order combinators)
   with a recursive arithmetic grammar that parses and evaluates in one pass.
-- **`examples/workflow/`** — a data-driven state machine engine with guards
+- **`examples/language/workflow/`** — a data-driven state machine engine with guards
   and actions as first-class function values, running two machines (an
   expense-approval pipeline and a cyclic turnstile) on one engine.
-- **`examples/template/`** — a mustache-style template engine self-hosted in
+- **`examples/language/template/`** — a mustache-style template engine self-hosted in
   olang (lexer, parser over a shared `Node` ADT, renderer), driven by a JSON
   context. Exercises all four fixes above.
-- **`examples/dataproc/`** — a CSV→aggregate→JSON data pipeline: reads sales
+- **`examples/data-processing/dataproc/`** — a CSV→aggregate→JSON data pipeline: reads sales
   rows with `csv`, types and aggregates them, emits a `json` report, then
   reads it back and selects fields by a runtime key.
-- **`examples/scheduler/`** — concurrent fan-out and timeouts with
+- **`examples/concurrency/scheduler/`** — concurrent fan-out and timeouts with
   `async`/`await` and `Promise.all`/`race`.
-- **`examples/loganalyzer/`** — a second dogfooded package: parses
+- **`examples/data-processing/loganalyzer/`** — a second dogfooded package: parses
   application logs with `re` capture groups, aggregates by level and route
   with `col` + pipelines, and reads files with `fs`. Handles malformed
   lines, missing/empty files, and 2000-line logs. Found no new bugs — the
   taskcli round had already hardened the shared package/args/import paths.
-- **`examples/taskcli/`** — a persistent task tracker as a real multi-file
+- **`examples/tools/taskcli/`** — a persistent task tracker as a real multi-file
   package (SQLite store, a `col`+pipeline reporting module, a domain module,
   and CLI dispatch on `os.args()`), built by dogfooding the language.
 

@@ -540,7 +540,7 @@ fn robustness_batch_hints_actions_symbols_use() {
     c.send(&serde_json::json!({
         "jsonrpc": "2.0", "id": 1, "method": "initialize",
         "params": { "capabilities": {},
-            "rootUri": format!("file://{}/examples/minilisp", env!("CARGO_MANIFEST_DIR")) }
+            "rootUri": format!("file://{}/examples/language/minilisp", env!("CARGO_MANIFEST_DIR")) }
     }));
     let init = c.recv_until(|m| m["id"] == 1);
     for cap in [
