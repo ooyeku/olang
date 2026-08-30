@@ -98,6 +98,25 @@ this six times in a row.
 | HTTP server hardening | never adversarially probed: malformed requests, oversized payloads, slow clients | shipped — explicit `serve` limits (`max_header_bytes`, `max_body_bytes`, `request_timeout_ms`), precise 400/408/413/431 answers, header-injection flattening; `tests/http_abuse_test.rs` is the gauntlet |
 | Platform coverage | every gate runs on one macOS machine; `setup.sh` claims cross-platform | shipped — `dist/linux-verify.sh` runs the full suite and the examples harness in a Linux container (RELEASING.md gate list); architecture follows the host |
 
+## W8 — what building the crimes workstream asked for
+
+Every row below was observed while building
+`examples/data-processing/crimes/` into a fourteen-stage,
+three-model analysis (2026-08-30) — the largest olang program yet
+written, and a deliberate audit of the data-science surface by use.
+
+| Item | Observed | Status |
+|---|---|---|
+| Multi-series plotting | the calibration diagram needs its points *and* a y=x reference; the three models' F1-threshold curves belong on one chart with a legend; rates-with-intervals want grouped bars. None expressible — every `plot.*` chart is a single series, so cross-model comparisons live only in tables | planned — a multi-series form (shared axes, legend) and a histogram primitive; the crimes charts are the acceptance cases |
+| A vector/matrix layer for numeric code | every kernel in `lib/ml.ol` — dot products, axpy updates, covariance, standardization — is a hand-written index loop, and the feature matrix is a list-of-columns convention each function re-documents; extraction from a frame repeats `ods.to_list(ods.cast(...))` per column | planned — `vec.dot/scale/add/sum` over Float lists (dedicated JIT targets), and `ods.to_matrix(frame, cols)` blessing the columns convention once |
+| Error spans through promoted code | a division-by-zero inside `tree_train` reported its span as `main.ol:405 println("")` — the call stack named the right function but the wrong site, and finding the failing expression meant rebuilding the function inline with prints | planned — span fidelity through hot-loop promotion and OSR, or at minimum "span unavailable (promoted code)" instead of a wrong line |
+| Template-literal ergonomics | backtick strings neither process escapes nor nest, and both facts surface only at runtime: progress bars printed a literal `\r` per frame, and report assembly needed four rounds of hoisting `let`s out of `${...}` | planned — decide: escape processing and nested interpolation in templates, or keep the semantics and add check-time lints (`\r`/`\n` inside backticks; a backtick inside `${...}`) |
+| Import shadowing | `use term` silently rebound `table` over the earlier `use lib.report { table }`; the failure surfaced at runtime as "len: argument must be a list" inside the wrong function | planned — named-import aliasing (`use lib.report { table as md_table }`) and a check-time warning when a bare `use` shadows an explicit import |
+| `map_get` on a missing key | returns Unit, not a Result — `unwrap_or(map_get(q, "v"), d)` raises instead of defaulting, and the guard idiom (`map_has_key` first) must be known in advance | planned — decide: an Option-shaped `map_get`, or a `map_get_or(m, k, default)` beside it with the current form documented as the raw read |
+| Derived group keys and splits | the year-month series needed a two-key `group_by` plus two `sort_by` calls; the train/test split is a hand-written every-5th-row scheme, and the report's own limitations section names the chronological leakage a forward-in-time split would fix | planned — a date-truncation/derived-key helper for `group_by`, and split utilities (deterministic holdout, forward-in-time) in ods or a stdlib `ml` module. The Int/Int series division row in W2 belongs to this same cluster |
+| Optional parameters | `logistic_train_with`/`kmeans2_with` exist solely because there are no default arguments — every progress-aware function pays a duplicate-signature tax and the original name becomes a delegating stub | planned — default parameter values, with the `_with` pattern as the workaround until decided |
+| Approximate test assertions | the estimator test blocks reduce to `assert_eq(x > 0.5, true)` because there is no tolerance-based comparison — numeric tests are both weaker and less readable than they should be | planned — `assert_close(a, b, tol)` beside the existing asserts, expression-position semantics included |
+
 ## Process
 
 One lane at a time, each landing with its tests and documentation in
