@@ -29,12 +29,21 @@ fn sigmoid(z) =
 /// `labels` a list of 0.0/1.0, `epochs` and `rate` the schedule.
 /// Returns #{ "weights", "bias", "loss_curve" } — the loss curve is
 /// recorded every 10 epochs so convergence is inspectable.
-share fn logistic_train(cols, labels, epochs, rate) = {
+share fn logistic_train(cols, labels, epochs, rate) =
+    logistic_train_with(cols, labels, epochs, rate, (done, total, loss) => ())
+
+/// `logistic_train` with a progress callback: `on_epoch(done, total,
+/// latest_loss)` after every epoch (latest_loss is the most recent
+/// entry of the loss curve, 0.0 before the first is computed). The
+/// callback runs once per epoch — outside the hot loops, so the native
+/// tier is unaffected.
+share fn logistic_train_with(cols, labels, epochs, rate, on_epoch) = {
     let n_features = len(cols)
     let n = len(labels)
     let mut weights = map(0..n_features, (j) => 0.0)
     let mut bias = 0.0
     let mut losses = []
+    let mut last_loss = 0.0
 
     let mut epoch = 0
     while epoch < epochs {
@@ -67,9 +76,11 @@ share fn logistic_train(cols, labels, epochs, rate) = {
                 let p = math.max(0.000001, math.min(0.999999, preds[i]))
                 loss = loss - (labels[i] * math.ln(p) + (1.0 - labels[i]) * math.ln(1.0 - p))
             }
-            losses = losses + [math.round(loss / to_float(n) * 10000.0) / 10000.0]
+            last_loss = math.round(loss / to_float(n) * 10000.0) / 10000.0
+            losses = losses + [last_loss]
         }
         epoch = epoch + 1
+        on_epoch(epoch, epochs, last_loss)
     }
     #{ "weights": weights, "bias": bias, "loss_curve": losses }
 }
@@ -139,7 +150,12 @@ share fn auc(preds, labels) = {
 /// Lloyd's k-means on 2-D points. Centroids seed from evenly spaced
 /// points (deterministic); iterates assignment/update `iters` times.
 /// Returns #{ "cx", "cy", "assignment", "sizes" }.
-share fn kmeans2(xs, ys, k, iters) = {
+share fn kmeans2(xs, ys, k, iters) =
+    kmeans2_with(xs, ys, k, iters, (done, total) => ())
+
+/// `kmeans2` with a progress callback: `on_iter(done, total)` after
+/// each Lloyd iteration.
+share fn kmeans2_with(xs, ys, k, iters, on_iter) = {
     let n = len(xs)
     let stride = n / k
     let mut cx = map(0..k, (c) => xs[c * stride])
@@ -177,6 +193,7 @@ share fn kmeans2(xs, ys, k, iters) = {
             }
         }
         it = it + 1
+        on_iter(it, iters)
     }
     let mut sizes = map(0..k, (c) => 0)
     for i in 0..n { sizes = col.set(sizes, assignment[i], sizes[assignment[i]] + 1) }

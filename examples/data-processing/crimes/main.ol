@@ -11,33 +11,100 @@
 //!
 //! Run:  olang run main.ol      (first run downloads ~2 GB)
 
+use term
 use lib.fetch { fetch }
 use lib.prep { derive_time, label_share, one_hot }
-use lib.ml { train_test_indices, logistic_train, logistic_predict,
-             classification_report, auc, kmeans2, normalize }
+use lib.ml { train_test_indices, logistic_train_with, logistic_predict,
+             classification_report, auc, kmeans2_with, normalize }
 use lib.report { table, chart, derived_csv, write }
 
+// ── presentation ─────────────────────────────────────────────────────
+// Styling degrades to plain text automatically when output is piped;
+// the in-place progress bars and spinners additionally gate on
+// term.color() so a piped run stays line-oriented.
+let tty = term.color()
 let t0 = time.monotonic_ms()
 let t = cell(time.monotonic_ms())
+let stage_rows = cell([])
+let stage_i = cell(0)
+fn wipe() = if tty => { print("\r" + str.pad_start("", 72, " ") + "\r") } else => ()
 fn stage(name, note) = {
     let now = time.monotonic_ms()
-    println(`[${name}] ${now - cell.get(t)} ms — ${note}`)
+    let ms = now - cell.get(t)
+    cell.set(stage_i, cell.get(stage_i) + 1)
+    wipe()
+    let idx = term.dim(`${cell.get(stage_i)}/10`)
+    let took = term.cyan(str.pad_start(`${ms} ms`, 9, " "))
+    println(`${term.green("✓")} ${idx} ${term.bold(str.pad_end(name, 10, " "))} ${took}  ${note}`)
+    cell.set(stage_rows, concat(cell.get(stage_rows), [[name, `${ms}`]]))
     cell.set(t, now)
 }
+/// Print a small aligned preview table, indented under its stage line.
+fn preview(headers, rows) =
+    println(str.join(map(str.lines(term.table(headers, rows)), (l) => "      " + l), "\n"))
+/// Animate a spinner on its own task while `work()` runs on this
+/// thread — the stop signal rides a channel, the join collects the
+/// spinner. Quiet when piped.
+fn with_spinner(label, work) = {
+    if tty => {
+        let stop = chan.bounded(1)
+        let spinner = spawn {
+            let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+            let mut i = 0
+            let mut go = true
+            while go {
+                match chan.try_recv(stop) {
+                    Ok(x) => { go = false }
+                    Err(e) => {
+                        print(`\r${term.cyan(frames[i % 10])} ${term.dim(label)}`)
+                        os.flush()
+                        i = i + 1
+                        time.sleep(80)
+                    }
+                }
+            }
+        }
+        let out = work()
+        unwrap(chan.send(stop, 1))
+        task.join(spinner)
+        wipe()
+        out
+    } else => work()
+}
+/// One in-place progress bar frame for a long computation.
+fn progress(label, done, total, extra) =
+    if tty => {
+        print(`\r  ${term.bar(to_float(done) / to_float(total), 26)} ${term.dim(label)} ${done}/${total}${extra}`)
+        os.flush()
+    } else => ()
+/// A one-line unicode sparkline (min-to-max scaled).
+fn spark(vals) = {
+    let lo = fold(vals, vals[0], (a, v) => if v < a => v else => a)
+    let hi = fold(vals, vals[0], (a, v) => if v > a => v else => a)
+    let ticks = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
+    str.join(map(vals, (v) =>
+        ticks[to_int(math.round((v - lo) / math.max(0.000001, hi - lo) * 7.0))]), "")
+}
+
+println("")
+println(term.bold("  Chicago crime, 2001—present") + term.dim(" — the full-record workstream"))
+println(term.dim("  8.6M rows · trend, categories, rhythm, χ², k-means, logistic regression — all in olang"))
+println(term.dim(term.rule(72)))
 let blocks = cell(["# Chicago crime, 2001—present — the full-record workstream",
     `Generated ${dates.today()} by examples/data-processing/crimes/main.ol on the complete City of Chicago crime extract.`])
 fn section(title, body) =
     cell.set(blocks, concat(cell.get(blocks), ["## " + title, body]))
 
 // ── 1. fetch: the full record ────────────────────────────────────────
-println("fetching the full Chicago crime extract (~2 GB, cached after the first run)...")
+println(term.dim("  fetching the full Chicago crime extract (~2 GB, cached after the first run)"))
 let src = unwrap(fetch(
     "https://data.cityofchicago.org/api/views/ijzp-q8t2/rows.csv?accessType=DOWNLOAD",
     fs.join("data", "chicago-crimes.csv"), 1500000000))
 stage("fetch", `${map_get(src, "bytes")} bytes (cached=${map_get(src, "cached")})`)
 
 // ── 2. load + profile ────────────────────────────────────────────────
-let raw = unwrap(ods.read_csv_file(map_get(src, "path")))
+let raw = with_spinner("loading and typing 2 GB of CSV (parallel fused reader)...",
+    () => unwrap(ods.read_csv_file(map_get(src, "path"))))
 let n_all = ods.n_rows(raw)
 let f = ods.select(raw, ["Date", "Primary Type", "Location Description",
     "Arrest", "Domestic", "District", "Year", "Latitude", "Longitude"])
@@ -45,7 +112,8 @@ let null_lat = ods.null_count(f["Latitude"])
 stage("load", `${n_all} rows x ${ods.n_cols(raw)} cols; ${null_lat} rows lack coordinates`)
 
 // ── 3. derive: month and hour for all 8.6M rows ─────────────────────
-let tm = derive_time(ods.to_list(f["Date"]))
+let tm = with_spinner("deriving month and hour for 8.6M timestamps...",
+    () => derive_time(ods.to_list(f["Date"])))
 let f2 = ods.with_column(ods.with_column(f, "month", ods.series(map_get(tm, "months"))),
     "hour", ods.series(map_get(tm, "hours")))
 let arrest_f = ods.cast(f2["Arrest"], "Float")
@@ -77,7 +145,12 @@ let types_svg = plot.bar(top_types["Primary Type"], top_types["n"],
     #{ "title": "Twelve most-reported categories, all years", "y_label": "incidents" })
 section("Categories and arrest rates",
     `${type_rows} distinct primary types. The twelve most reported, with the share of incidents that led to an arrest:` + "\n\n" + table(top_types, 12) + "\n\n" + chart("types.svg", types_svg))
-stage("categories", `${type_rows} types; most-reported ${ods.to_list(top_types["Primary Type"])[0]}`)
+stage("categories", `${type_rows} types; most-reported ${term.bold(ods.to_list(top_types["Primary Type"])[0])}`)
+let t5 = ods.head(top_types, 5)
+preview(["primary type", "incidents", "arrest rate"], map(0..5, (r) => [
+    ods.to_list(t5["Primary Type"])[r],
+    show(ods.to_list(t5["n"])[r]),
+    `${math.round(ods.to_list(t5["arrest_rate"])[r] * 1000.0) / 10.0}%`]))
 
 // ── 6. the city's rhythm: month and hour ─────────────────────────────
 let by_month = ods.sort_by(ods.group_by(f2, ["month"], [["n", "count"]]), "month", false)
@@ -117,7 +190,8 @@ let recent = ods.drop_null(ods.select(ods.filter(f2, f2["Year"] >= 2023),
     ["Latitude", "Longitude"]))
 let lats = ods.to_list(recent["Latitude"])
 let lons = ods.to_list(recent["Longitude"])
-let km = kmeans2(lats, lons, 10, 12)
+let km = kmeans2_with(lats, lons, 10, 12,
+    (done, total) => progress("k-means over 900k points, iteration", done, total, ""))
 let sizes = map_get(km, "sizes")
 let centroids = ods.frame_from_records(map(0..10, (c) => #{
     "cluster": c,
@@ -130,7 +204,13 @@ let spatial_svg = plot.scatter(ods.series(map(0..2000, (i) => lons[i * (len(lons
     #{ "title": "Incident locations, 2023— (2,000-point sample)", "x_label": "longitude", "y_label": "latitude" })
 section("Spatial structure (k-means, k=10, written in olang)",
     `Lloyd's algorithm over **${len(lats)}** recent incidents — ${12} iterations of ${len(lats)} x 10 distance evaluations, all in olang's own loops:` + "\n\n" + table(ods.sort_by(centroids, "incidents", true), 10) + "\n\n" + chart("spatial.svg", spatial_svg))
-stage("kmeans", `${len(lats)} points, largest cluster ${ods.max(centroids["incidents"])}`)
+stage("kmeans", `${len(lats)} points in 10 clusters; largest holds ${term.bold(show(ods.max(centroids["incidents"])))}`)
+let c5 = ods.head(ods.sort_by(centroids, "incidents", true), 5)
+preview(["cluster", "lat", "lon", "incidents"], map(0..5, (r) => [
+    show(ods.to_list(c5["cluster"])[r]),
+    show(ods.to_list(c5["lat"])[r]),
+    show(ods.to_list(c5["lon"])[r]),
+    show(ods.to_list(c5["incidents"])[r])]))
 
 // ── 9. predicting arrests: logistic regression in olang ─────────────
 let ml_frame = ods.drop_null(ods.select(ods.filter(f2, f2["Year"] >= 2025),
@@ -156,8 +236,10 @@ let train_cols = map(features, (colv) => gather(colv, train_idx))
 let test_cols = map(features, (colv) => gather(colv, test_idx))
 let train_y = gather(labels_all, train_idx)
 let test_y = gather(labels_all, test_idx)
-println(`  training: ${len(train_y)} rows x ${len(features)} features x 100 epochs of full-batch gradient descent (pure olang — this is the long stage)`)
-let model = logistic_train(train_cols, train_y, 100, 2.0)
+println(term.dim(`  training: ${len(train_y)} rows x ${len(features)} features x 100 epochs of full-batch gradient descent, pure olang`))
+let model = logistic_train_with(train_cols, train_y, 100, 2.0,
+    (done, total, loss) => progress("epoch", done, total,
+        if loss > 0.0 => `  ${term.dim("log loss")} ${loss}` else => ""))
 let preds = logistic_predict(model, test_cols, len(test_y))
 let rep = classification_report(preds, test_y)
 let model_auc = math.round(auc(preds, test_y) * 1000.0) / 1000.0
@@ -168,9 +250,23 @@ let loss_svg = plot.line(ods.series(map(0..len(losses), (i) => i * 10)), ods.ser
     #{ "title": "Logistic regression training loss", "x_label": "epoch", "y_label": "log loss" })
 section("Predicting arrests (logistic regression, written in olang)",
     `Trained on **${len(train_y)}** incidents from 2024— with ${len(features)} features (time, place, domestic flag, one-hot top-5 category), tested on ${len(test_y)} held-out rows: **accuracy ${acc}%** against a ${base_rate}% always-no baseline, **AUC ${model_auc}**, precision ${math.round(map_get(rep, "precision") * 100.0) / 100.0}, recall ${math.round(map_get(rep, "recall") * 100.0) / 100.0}. Full-batch gradient descent, 100 epochs, every arithmetic step written in olang and executed on the bytecode tier — the loss curve is the proof of convergence:` + "\n\n" + chart("loss.svg", loss_svg))
-stage("logistic", `n=${n_ml}, acc ${acc}%, AUC ${model_auc}`)
+let acc_b = term.bold(`${acc}%`)
+stage("logistic", `n=${n_ml}; accuracy ${acc_b}, AUC ${term.bold(show(model_auc))}`)
+preview(["metric", "model", "baseline"], [
+    ["accuracy", `${acc}%`, `${base_rate}% (always-no)`],
+    ["AUC", show(model_auc), "0.500"],
+    ["precision", show(math.round(map_get(rep, "precision") * 1000.0) / 1000.0), "—"],
+    ["recall", show(math.round(map_get(rep, "recall") * 1000.0) / 1000.0), "—"]])
+let loss_span = term.dim(`${losses[0]} → ${losses[len(losses) - 1]}`)
+println(`      ${term.dim("loss")} ${term.cyan(spark(losses))} ${loss_span}`)
 
 // ── 10. report ───────────────────────────────────────────────────────
 let bytes = write(cell.get(blocks))
 stage("report", `out/report.md (${bytes} bytes), 5 charts, 3 derived CSVs`)
-println(`done in ${math.round(to_float(time.monotonic_ms() - t0) / 100.0) / 10.0} s over ${n_all} rows — open out/report.md`)
+println(term.dim(term.rule(72)))
+preview(["stage", "ms"], cell.get(stage_rows))
+let total_s = math.round(to_float(time.monotonic_ms() - t0) / 100.0) / 10.0
+println("")
+let took_all = term.bold(`${total_s} s`)
+println(`  ${term.green(term.bold("done"))} in ${took_all} over ${term.bold(show(n_all))} rows — open ${term.underline("out/report.md")}`)
+println("")
