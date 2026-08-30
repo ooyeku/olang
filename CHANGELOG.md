@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Typed-list backing in the VM.** A homogeneous scalar list crossing
+  the tier boundary now lives in its native layout — `Vec<f64>` /
+  `Vec<i64>` behind one Arc — instead of a vector of boxed values:
+  indexing yields an immediate, iteration streams contiguous memory,
+  destructuring patterns, in-place `col.set`/`col.swap`, the
+  accumulate-append fusion, concatenation, and equality all work on
+  raw scalars, and any operation that inserts a non-matching element
+  rebuilds the boxed form (correctness first — the layout is
+  invisible). Large conversions go through a bounded pointer-keyed
+  cache whose keepalive makes it sound (a pinned list can be neither
+  freed nor mutated in place), so a lambda capturing a 300k-element
+  list still crosses the boundary in O(1) per call — the property the
+  AstList wrapper had, which the first cut of detection broke: a
+  gather over 240k elements briefly cost 102 seconds and now costs
+  13 ms. Small typed lists cross the JIT call boundary by one-time
+  boxing; large ones stay on the VM's typed instruction paths (an
+  early per-call conversion there was the same O(n²) cliff).
+  tests/typed_list_test.rs pins every reimplemented path
+  differentially against the interpreter oracle; the crimes benchmark:
+  k-means 9.5 → 7.5 s, logistic 122 → 113 s, results bit-identical.
+  Honest scoreboard: the ML training loop still executes on the
+  bytecode VM — its body has constructs the JIT refuses — so the
+  native-code win for list-shaped ML needs raw-stride native list
+  kinds and wider JIT list-op coverage, recorded as the next step.
+
 - **examples/data-processing/crimes — 8.6 million rows, end to end.**
   The gallery's largest workstream and the closest thing to a
   whole-engine benchmark: the complete City of Chicago crime record

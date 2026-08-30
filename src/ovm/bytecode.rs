@@ -1314,7 +1314,10 @@ impl BytecodeVm {
             ValueData::Float(_) => "Float",
             ValueData::String(_) => "String",
             ValueData::Boolean(_) => "Bool",
-            ValueData::List(_) | ValueData::AstList(_) => "List",
+            ValueData::List(_)
+            | ValueData::AstList(_)
+            | ValueData::FloatList(_)
+            | ValueData::IntList(_) => "List",
             ValueData::Tuple(_) => "Tuple",
             ValueData::Function(_) | ValueData::AstFunction(_) | ValueData::Closure(_) => {
                 "Function"
@@ -2047,14 +2050,17 @@ impl BytecodeVm {
                     bits[i] = *b as i64;
                     kinds[i] = JitKind::Bool;
                 }
-                Ok(crate::ovm::value::ValueData::AstList(items)) => {
-                    let conv: std::sync::Arc<Vec<crate::ovm::value::OvmValue>> =
-                        std::sync::Arc::new(
-                            items
-                                .iter()
-                                .map(|v| crate::ovm::value::OvmValue::from_ast(v.clone()))
-                                .collect(),
-                        );
+                Ok(
+                    crate::ovm::value::ValueData::AstList(_)
+                    | crate::ovm::value::ValueData::FloatList(_)
+                    | crate::ovm::value::ValueData::IntList(_),
+                ) => {
+                    let conv: std::sync::Arc<Vec<crate::ovm::value::OvmValue>> = self
+                        .execution_state
+                        .register_ref(*reg)
+                        .ok()
+                        .and_then(|v| v.to_boxed_list())
+                        .expect("matched a list shape");
                     match crate::ovm::jit::classify_list(&conv) {
                         Some(k) => {
                             bits[i] = std::sync::Arc::as_ptr(&conv) as i64;
@@ -2720,6 +2726,73 @@ impl BytecodeVm {
                     // recognizable; aliased lists copy, exactly like the
                     // interpreter's fusion and AddAssign's extend.
                     let target_val = self.execution_state.take_register(*target)?;
+                    // Typed lists write the raw scalar in place when the
+                    // element matches the layout; a mismatched element
+                    // rebuilds the boxed form (correctness first).
+                    if let ValueData::FloatList(mut arc) = target_val.data {
+                        let at = crate::stdlib::collections::resolve_index("set", idx, arc.len())
+                            .map_err(BytecodeError::RuntimeError)?;
+                        if let ValueData::Float(f) = v.data {
+                            match std::sync::Arc::get_mut(&mut arc) {
+                                Some(items) => items[at] = f,
+                                None => {
+                                    let mut items = (*arc).clone();
+                                    items[at] = f;
+                                    arc = std::sync::Arc::new(items);
+                                }
+                            }
+                            self.execution_state.set_register(
+                                *target,
+                                OvmValue {
+                                    data: ValueData::FloatList(arc),
+                                },
+                            )?;
+                        } else {
+                            let mut items: Vec<OvmValue> =
+                                arc.iter().map(|&x| OvmValue::new_float(x)).collect();
+                            items[at] = v;
+                            self.execution_state.set_register(
+                                *target,
+                                OvmValue {
+                                    data: ValueData::List(std::sync::Arc::new(items)),
+                                },
+                            )?;
+                        }
+                        pc += 1;
+                        continue;
+                    }
+                    if let ValueData::IntList(mut arc) = target_val.data {
+                        let at = crate::stdlib::collections::resolve_index("set", idx, arc.len())
+                            .map_err(BytecodeError::RuntimeError)?;
+                        if let ValueData::Integer(n) = v.data {
+                            match std::sync::Arc::get_mut(&mut arc) {
+                                Some(items) => items[at] = n,
+                                None => {
+                                    let mut items = (*arc).clone();
+                                    items[at] = n;
+                                    arc = std::sync::Arc::new(items);
+                                }
+                            }
+                            self.execution_state.set_register(
+                                *target,
+                                OvmValue {
+                                    data: ValueData::IntList(arc),
+                                },
+                            )?;
+                        } else {
+                            let mut items: Vec<OvmValue> =
+                                arc.iter().map(|&x| OvmValue::new_integer(x)).collect();
+                            items[at] = v;
+                            self.execution_state.set_register(
+                                *target,
+                                OvmValue {
+                                    data: ValueData::List(std::sync::Arc::new(items)),
+                                },
+                            )?;
+                        }
+                        pc += 1;
+                        continue;
+                    }
                     // A wrapped interpreter list writes in place too:
                     // one element converts, the arc stays shared with
                     // the interpreter side — the boundary-free write the
@@ -2812,6 +2885,51 @@ impl BytecodeVm {
                     let ia = read_idx(self, *i)?;
                     let ib = read_idx(self, *j)?;
                     let target_val = self.execution_state.take_register(*target)?;
+                    // Typed lists swap raw scalars in place.
+                    if let ValueData::FloatList(mut arc) = target_val.data {
+                        let a = crate::stdlib::collections::resolve_index("swap", ia, arc.len())
+                            .map_err(BytecodeError::RuntimeError)?;
+                        let b = crate::stdlib::collections::resolve_index("swap", ib, arc.len())
+                            .map_err(BytecodeError::RuntimeError)?;
+                        match std::sync::Arc::get_mut(&mut arc) {
+                            Some(items) => items.swap(a, b),
+                            None => {
+                                let mut items = (*arc).clone();
+                                items.swap(a, b);
+                                arc = std::sync::Arc::new(items);
+                            }
+                        }
+                        self.execution_state.set_register(
+                            *target,
+                            OvmValue {
+                                data: ValueData::FloatList(arc),
+                            },
+                        )?;
+                        pc += 1;
+                        continue;
+                    }
+                    if let ValueData::IntList(mut arc) = target_val.data {
+                        let a = crate::stdlib::collections::resolve_index("swap", ia, arc.len())
+                            .map_err(BytecodeError::RuntimeError)?;
+                        let b = crate::stdlib::collections::resolve_index("swap", ib, arc.len())
+                            .map_err(BytecodeError::RuntimeError)?;
+                        match std::sync::Arc::get_mut(&mut arc) {
+                            Some(items) => items.swap(a, b),
+                            None => {
+                                let mut items = (*arc).clone();
+                                items.swap(a, b);
+                                arc = std::sync::Arc::new(items);
+                            }
+                        }
+                        self.execution_state.set_register(
+                            *target,
+                            OvmValue {
+                                data: ValueData::IntList(arc),
+                            },
+                        )?;
+                        pc += 1;
+                        continue;
+                    }
                     if let ValueData::AstList(mut arc) = target_val.data {
                         if std::env::var_os("OLANG_DEBUG_ASTLIST").is_some()
                             && std::sync::Arc::strong_count(&arc) > 1
@@ -2941,10 +3059,94 @@ impl BytecodeVm {
                                 data: ValueData::AstList(arc),
                             },
                         )?;
+                    } else if matches!(target_val.data, ValueData::FloatList(_))
+                        && matches!(&rhs_val.data,
+                            ValueData::List(b) if b.len() == 1
+                                && matches!(b[0].data, ValueData::Float(_)))
+                    {
+                        // Typed accumulate fusion: appending a matching
+                        // scalar to a typed list pushes the raw value —
+                        // `preds = preds + [x]` in a training loop runs on
+                        // a Vec<f64>, not a Vec of boxed values. The rhs
+                        // arrives as a one-element boxed list; peel it.
+                        let f = match &rhs_val.data {
+                            ValueData::List(b) => match b[0].data {
+                                ValueData::Float(f) => f,
+                                _ => unreachable!("matched above"),
+                            },
+                            _ => unreachable!("matched above"),
+                        };
+                        let ValueData::FloatList(mut arc) = target_val.data else {
+                            unreachable!("matched above");
+                        };
+                        match std::sync::Arc::get_mut(&mut arc) {
+                            Some(v) => v.push(f),
+                            None => {
+                                let mut v = (*arc).clone();
+                                v.push(f);
+                                arc = std::sync::Arc::new(v);
+                            }
+                        }
+                        self.execution_state.set_register(
+                            *target,
+                            OvmValue {
+                                data: ValueData::FloatList(arc),
+                            },
+                        )?;
+                    } else if matches!(target_val.data, ValueData::IntList(_))
+                        && matches!(&rhs_val.data,
+                            ValueData::List(b) if b.len() == 1
+                                && matches!(b[0].data, ValueData::Integer(_)))
+                    {
+                        let n = match &rhs_val.data {
+                            ValueData::List(b) => match b[0].data {
+                                ValueData::Integer(n) => n,
+                                _ => unreachable!("matched above"),
+                            },
+                            _ => unreachable!("matched above"),
+                        };
+                        let ValueData::IntList(mut arc) = target_val.data else {
+                            unreachable!("matched above");
+                        };
+                        match std::sync::Arc::get_mut(&mut arc) {
+                            Some(v) => v.push(n),
+                            None => {
+                                let mut v = (*arc).clone();
+                                v.push(n);
+                                arc = std::sync::Arc::new(v);
+                            }
+                        }
+                        self.execution_state.set_register(
+                            *target,
+                            OvmValue {
+                                data: ValueData::IntList(arc),
+                            },
+                        )?;
+                    } else if matches!(
+                        (&target_val.data, &rhs_val.data),
+                        (
+                            ValueData::FloatList(_) | ValueData::IntList(_),
+                            ValueData::List(_)
+                                | ValueData::FloatList(_)
+                                | ValueData::IntList(_)
+                                | ValueData::AstList(_)
+                        )
+                    ) {
+                        // Mixed typed append: rebuild boxed and extend —
+                        // correctness first, the typed layout is only an
+                        // optimization.
+                        let mut items = (*target_val.to_boxed_list().expect("list")).clone();
+                        items.extend(rhs_val.to_boxed_list().expect("list").iter().cloned());
+                        self.execution_state.set_register(
+                            *target,
+                            OvmValue {
+                                data: ValueData::List(std::sync::Arc::new(items)),
+                            },
+                        )?;
                     } else if let (ValueData::List(_), ValueData::List(b)) =
                         (&target_val.data, &rhs_val.data)
                     {
-                        // The same accumulate fusion for lists: `xs = xs + [v]`
+                        // The same accumulate fusion for lists: `xs = xs + [v]'
                         // in a loop is O(n²) as a copy per iteration; when `xs`
                         // holds the only reference, extend in place for O(1)
                         // amortized. The aliasing guard is identical to the
@@ -3852,6 +4054,20 @@ impl BytecodeVm {
                                 items.len() >= *min_len
                             }
                         }
+                        ValueData::FloatList(items) => {
+                            if *exact {
+                                items.len() == *min_len
+                            } else {
+                                items.len() >= *min_len
+                            }
+                        }
+                        ValueData::IntList(items) => {
+                            if *exact {
+                                items.len() == *min_len
+                            } else {
+                                items.len() >= *min_len
+                            }
+                        }
                         _ => false,
                     };
                     self.execution_state
@@ -3877,6 +4093,12 @@ impl BytecodeVm {
                         ValueData::AstList(items) => {
                             items.get(*index).map(|v| OvmValue::from_ast(v.clone()))
                         }
+                        ValueData::FloatList(items) => {
+                            items.get(*index).map(|&f| OvmValue::new_float(f))
+                        }
+                        ValueData::IntList(items) => {
+                            items.get(*index).map(|&n| OvmValue::new_integer(n))
+                        }
                         _ => None,
                     };
                     match element {
@@ -3891,6 +4113,25 @@ impl BytecodeVm {
 
                 Instruction::ExtractRest { dst, value, from } => {
                     use crate::ovm::value::ValueData;
+                    // Typed lists slice in their own layout — the rest of
+                    // an IntList is an IntList.
+                    match &self.execution_state.register_ref(*value)?.data {
+                        ValueData::FloatList(items) => {
+                            let rest: Vec<f64> = items.iter().skip(*from).copied().collect();
+                            self.execution_state
+                                .set_register(*dst, OvmValue::new_float_list(rest))?;
+                            pc += 1;
+                            continue;
+                        }
+                        ValueData::IntList(items) => {
+                            let rest: Vec<i64> = items.iter().skip(*from).copied().collect();
+                            self.execution_state
+                                .set_register(*dst, OvmValue::new_int_list(rest))?;
+                            pc += 1;
+                            continue;
+                        }
+                        _ => {}
+                    }
                     let rest = match &self.execution_state.register_ref(*value)?.data {
                         ValueData::List(items) => {
                             Some(items.iter().skip(*from).cloned().collect::<Vec<_>>())
@@ -4280,6 +4521,74 @@ impl BytecodeVm {
                 }
                 BinaryOp::Equal => OvmValue::new_boolean(Self::pattern_eq(left, right)),
                 BinaryOp::NotEqual => OvmValue::new_boolean(!Self::pattern_eq(left, right)),
+                _ => {
+                    return Err(BytecodeError::TypeError(format!(
+                        "Invalid binary operation: cannot apply '{}' to {} and {}",
+                        op.symbol(),
+                        left.type_name(),
+                        right.type_name()
+                    )));
+                }
+            },
+            // Typed lists under binary ops: same-typed concatenation
+            // extends the raw vectors; anything mixed goes through the
+            // boxed form (an O(n) op was O(n) already), and equality
+            // reuses the layout-aware PartialEq.
+            (ValueData::FloatList(a), ValueData::FloatList(b)) => match op {
+                BinaryOp::Add => {
+                    let mut items = Vec::with_capacity(a.len() + b.len());
+                    items.extend_from_slice(a);
+                    items.extend_from_slice(b);
+                    OvmValue::new_float_list(items)
+                }
+                BinaryOp::Equal => OvmValue::new_boolean(left == right),
+                BinaryOp::NotEqual => OvmValue::new_boolean(left != right),
+                _ => {
+                    return Err(BytecodeError::TypeError(format!(
+                        "Invalid binary operation: cannot apply '{}' to {} and {}",
+                        op.symbol(),
+                        left.type_name(),
+                        right.type_name()
+                    )));
+                }
+            },
+            (ValueData::IntList(a), ValueData::IntList(b)) => match op {
+                BinaryOp::Add => {
+                    let mut items = Vec::with_capacity(a.len() + b.len());
+                    items.extend_from_slice(a);
+                    items.extend_from_slice(b);
+                    OvmValue::new_int_list(items)
+                }
+                BinaryOp::Equal => OvmValue::new_boolean(left == right),
+                BinaryOp::NotEqual => OvmValue::new_boolean(left != right),
+                _ => {
+                    return Err(BytecodeError::TypeError(format!(
+                        "Invalid binary operation: cannot apply '{}' to {} and {}",
+                        op.symbol(),
+                        left.type_name(),
+                        right.type_name()
+                    )));
+                }
+            },
+            (
+                ValueData::FloatList(_) | ValueData::IntList(_),
+                ValueData::List(_)
+                | ValueData::AstList(_)
+                | ValueData::FloatList(_)
+                | ValueData::IntList(_),
+            )
+            | (
+                ValueData::List(_) | ValueData::AstList(_),
+                ValueData::FloatList(_) | ValueData::IntList(_),
+            ) => match op {
+                BinaryOp::Add => {
+                    let mut items =
+                        (*left.to_boxed_list().expect("matched a list")).clone();
+                    items.extend(right.to_boxed_list().expect("matched a list").iter().cloned());
+                    OvmValue::new_list(items)
+                }
+                BinaryOp::Equal => OvmValue::new_boolean(left == right),
+                BinaryOp::NotEqual => OvmValue::new_boolean(left != right),
                 _ => {
                     return Err(BytecodeError::TypeError(format!(
                         "Invalid binary operation: cannot apply '{}' to {} and {}",
@@ -4912,6 +5221,28 @@ impl BytecodeVm {
         {
             return None;
         }
+        // Typed lists: the O(1) probes answer through the typed layout
+        // below; everything else sees the boxed form — one O(n)
+        // conversion in front of an O(n) operation.
+        let normalized: Vec<OvmValue>;
+        let args: &[OvmValue] = if !matches!(name, "len" | "head")
+            && args
+                .iter()
+                .any(|a| matches!(a.data, ValueData::FloatList(_) | ValueData::IntList(_)))
+        {
+            normalized = args
+                .iter()
+                .map(|a| match &a.data {
+                    ValueData::FloatList(_) | ValueData::IntList(_) => OvmValue {
+                        data: ValueData::List(a.to_boxed_list().expect("matched a list")),
+                    },
+                    _ => a.clone(),
+                })
+                .collect();
+            &normalized
+        } else {
+            args
+        };
         match name {
             "map" | "filter" if args.len() == 2 => {
                 let items = match &args[0].data {
@@ -5098,6 +5429,8 @@ impl BytecodeVm {
             "len" if args.len() == 1 => Some(match &args[0].data {
                 ValueData::List(items) => Ok(OvmValue::new_integer(items.len() as i64)),
                 ValueData::AstList(items) => Ok(OvmValue::new_integer(items.len() as i64)),
+                ValueData::FloatList(items) => Ok(OvmValue::new_integer(items.len() as i64)),
+                ValueData::IntList(items) => Ok(OvmValue::new_integer(items.len() as i64)),
                 ValueData::Tuple(items) => Ok(OvmValue::new_integer(items.len() as i64)),
                 ValueData::String(st) => Ok(OvmValue::new_integer(st.chars().count() as i64)),
                 // Mirrors the interpreter: a native that declares a length
@@ -5118,6 +5451,18 @@ impl BytecodeVm {
                 },
                 ValueData::AstList(items) => match items.first() {
                     Some(v) => Ok(OvmValue::from_ast(v.clone())),
+                    None => Err(BytecodeError::RuntimeError(
+                        "head: cannot get head of empty list".to_string(),
+                    )),
+                },
+                ValueData::FloatList(items) => match items.first() {
+                    Some(&f) => Ok(OvmValue::new_float(f)),
+                    None => Err(BytecodeError::RuntimeError(
+                        "head: cannot get head of empty list".to_string(),
+                    )),
+                },
+                ValueData::IntList(items) => match items.first() {
+                    Some(&n) => Ok(OvmValue::new_integer(n)),
                     None => Err(BytecodeError::RuntimeError(
                         "head: cannot get head of empty list".to_string(),
                     )),
@@ -5454,6 +5799,8 @@ impl BytecodeVm {
         match &source.data {
             ValueData::List(items) => Ok(items.len() as i64),
             ValueData::AstList(items) => Ok(items.len() as i64),
+            ValueData::FloatList(items) => Ok(items.len() as i64),
+            ValueData::IntList(items) => Ok(items.len() as i64),
             ValueData::Range(range) => {
                 let span = if range.inclusive {
                     (range.end as i128) - (range.start as i128) + 1
@@ -5499,6 +5846,20 @@ impl BytecodeVm {
                         length: items.len(),
                     })
             }
+            ValueData::FloatList(items) => items
+                .get(idx as usize)
+                .map(|&f| OvmValue::new_float(f))
+                .ok_or_else(|| BytecodeError::IndexOutOfBounds {
+                    index: idx,
+                    length: items.len(),
+                }),
+            ValueData::IntList(items) => items
+                .get(idx as usize)
+                .map(|&n| OvmValue::new_integer(n))
+                .ok_or_else(|| BytecodeError::IndexOutOfBounds {
+                    index: idx,
+                    length: items.len(),
+                }),
             ValueData::Range(range) => range
                 .start
                 .checked_add(idx)
@@ -5557,6 +5918,17 @@ impl BytecodeVm {
             | (ValueData::AstList(_), ValueData::AstList(_))
             | (ValueData::AstList(_), ValueData::List(_))
             | (ValueData::List(_), ValueData::AstList(_))
+            | (
+                ValueData::FloatList(_) | ValueData::IntList(_),
+                ValueData::List(_)
+                | ValueData::AstList(_)
+                | ValueData::FloatList(_)
+                | ValueData::IntList(_),
+            )
+            | (
+                ValueData::List(_) | ValueData::AstList(_),
+                ValueData::FloatList(_) | ValueData::IntList(_),
+            )
             | (ValueData::Tuple(_), ValueData::Tuple(_)) => match (a.to_ast(), b.to_ast()) {
                 (Ok(x), Ok(y)) => x == y,
                 _ => false,
@@ -5629,6 +6001,8 @@ impl BytecodeVm {
             ValueData::String(s) => !s.is_empty(),
             ValueData::List(items) => !items.is_empty(),
             ValueData::AstList(items) => !items.is_empty(),
+            ValueData::FloatList(items) => !items.is_empty(),
+            ValueData::IntList(items) => !items.is_empty(),
             ValueData::Tuple(items) => !items.is_empty(),
             ValueData::Range(r) => {
                 if r.inclusive {
@@ -5794,6 +6168,26 @@ impl BytecodeVm {
                     ))
                 })
             }
+            // Typed lists index straight into contiguous scalars — the
+            // read the training loops make millions of times.
+            ValueData::FloatList(items) => resolve(items.len())
+                .map(|i| OvmValue::new_float(items[i]))
+                .ok_or_else(|| {
+                    BytecodeError::RuntimeError(format!(
+                        "Index {} out of bounds for list of length {}",
+                        idx,
+                        items.len()
+                    ))
+                }),
+            ValueData::IntList(items) => resolve(items.len())
+                .map(|i| OvmValue::new_integer(items[i]))
+                .ok_or_else(|| {
+                    BytecodeError::RuntimeError(format!(
+                        "Index {} out of bounds for list of length {}",
+                        idx,
+                        items.len()
+                    ))
+                }),
             // A wrapped interpreter list reads element-wise: one
             // conversion per access, never a whole-list one.
             ValueData::AstList(items) => resolve(items.len())

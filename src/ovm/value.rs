@@ -73,6 +73,37 @@ pub enum TypeTag {
 /// big data list) never pays a whole-list conversion per call.
 pub const AST_LIST_EAGER: usize = 64;
 
+/// The typed-conversion cache: interpreter list (by Arc pointer) → its
+/// typed OvmValue. Bounded; oldest entry evicted. Thread-local because
+/// conversions happen on whichever thread runs the boundary.
+const TYPED_CACHE_CAP: usize = 16;
+type TypedCacheEntry = (usize, Arc<Vec<Value>>, OvmValue);
+thread_local! {
+    static TYPED_CACHE: std::cell::RefCell<std::collections::VecDeque<TypedCacheEntry>> =
+        const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
+}
+
+fn typed_cache_lookup(items: &Arc<Vec<Value>>) -> Option<OvmValue> {
+    let key = Arc::as_ptr(items) as usize;
+    TYPED_CACHE.with(|c| {
+        c.borrow()
+            .iter()
+            .find(|(k, _, _)| *k == key)
+            .map(|(_, _, v)| v.clone())
+    })
+}
+
+fn typed_cache_insert(items: &Arc<Vec<Value>>, typed: &OvmValue) {
+    let key = Arc::as_ptr(items) as usize;
+    TYPED_CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.len() >= TYPED_CACHE_CAP {
+            c.pop_front();
+        }
+        c.push_back((key, items.clone(), typed.clone()));
+    });
+}
+
 /// Value data variants
 #[derive(Debug)]
 pub enum ValueData {
@@ -87,6 +118,17 @@ pub enum ValueData {
     // dealloc anywhere) and required unsafe derefs at every use site.
     String(Arc<String>),
     List(Arc<Vec<OvmValue>>),
+    /// Homogeneous scalar lists in their native layout (Campaign:
+    /// typed-list backing). A list of a million floats is a
+    /// `Vec<f64>`, not a million boxed values: indexing yields an
+    /// immediate, iteration streams contiguous memory, and the
+    /// sole-owner in-place write and append paths work on raw
+    /// scalars. Detected at the tier boundary by one early-exit scan;
+    /// any operation that inserts a non-matching element rebuilds the
+    /// boxed form (correctness first, the fast layout is an
+    /// optimization).
+    FloatList(Arc<Vec<f64>>),
+    IntList(Arc<Vec<i64>>),
     /// An interpreter list held verbatim — the AstFunction idea applied
     /// to data (Campaign 7, T2). Crossing the tier boundary with a large
     /// list used to convert every element, both directions, per call:
@@ -512,6 +554,41 @@ impl PartialEq for OvmValue {
                         .zip(b.iter())
                         .all(|(x, y)| *x == OvmValue::from_ast(y.clone()))
             }
+            // Typed lists: element equality is strict per the language
+            // ([1] != [1.0]), so a FloatList never equals an IntList,
+            // and against boxed forms only the matching scalar arm hits.
+            (ValueData::FloatList(a), ValueData::FloatList(b)) => a == b,
+            (ValueData::IntList(a), ValueData::IntList(b)) => a == b,
+            (ValueData::FloatList(_), ValueData::IntList(_))
+            | (ValueData::IntList(_), ValueData::FloatList(_)) => false,
+            (ValueData::FloatList(a), ValueData::List(b))
+            | (ValueData::List(b), ValueData::FloatList(a)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|(x, y)| matches!(y.data, ValueData::Float(f) if f == *x))
+            }
+            (ValueData::IntList(a), ValueData::List(b))
+            | (ValueData::List(b), ValueData::IntList(a)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|(x, y)| matches!(y.data, ValueData::Integer(n) if n == *x))
+            }
+            (ValueData::FloatList(a), ValueData::AstList(b))
+            | (ValueData::AstList(b), ValueData::FloatList(a)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|(x, y)| matches!(y, Value::Float(f) if f == x))
+            }
+            (ValueData::IntList(a), ValueData::AstList(b))
+            | (ValueData::AstList(b), ValueData::IntList(a)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|(x, y)| matches!(y, Value::Integer(n) if n == x))
+            }
 
             (ValueData::Tuple(a), ValueData::Tuple(b)) => a == b,
 
@@ -556,7 +633,10 @@ impl OvmValue {
             ValueData::Float(_) => "Float",
             ValueData::Boolean(_) => "Bool",
             ValueData::String(_) => "String",
-            ValueData::List(_) | ValueData::AstList(_) => "List",
+            ValueData::List(_)
+            | ValueData::AstList(_)
+            | ValueData::FloatList(_)
+            | ValueData::IntList(_) => "List",
             ValueData::Map(_) => "Map",
             ValueData::Tuple(_) => "Tuple",
             ValueData::Function(_) | ValueData::AstFunction(_) | ValueData::Closure(_) => {
@@ -651,6 +731,8 @@ impl OvmValue {
             ValueData::String(p) => ValueData::String(p.clone()),
             ValueData::Native(p) => ValueData::Native(p.clone()),
             ValueData::List(p) => ValueData::List(p.clone()),
+            ValueData::FloatList(p) => ValueData::FloatList(p.clone()),
+            ValueData::IntList(p) => ValueData::IntList(p.clone()),
             ValueData::AstList(p) => ValueData::AstList(p.clone()),
             ValueData::Tuple(p) => ValueData::Tuple(p.clone()),
             ValueData::Function(p) => ValueData::Function(p.clone()),
@@ -676,7 +758,10 @@ impl OvmValue {
             ValueData::Boolean(_) => TypeTag::Boolean,
             ValueData::Unit => TypeTag::Unit,
             ValueData::String(_) => TypeTag::String,
-            ValueData::List(_) | ValueData::AstList(_) => TypeTag::List,
+            ValueData::List(_)
+            | ValueData::AstList(_)
+            | ValueData::FloatList(_)
+            | ValueData::IntList(_) => TypeTag::List,
             ValueData::Tuple(_) => TypeTag::Tuple,
             ValueData::Function(_) | ValueData::AstFunction(_) | ValueData::Closure(_) => {
                 TypeTag::Function
@@ -767,6 +852,74 @@ impl OvmValue {
         }
     }
 
+    fn detect_float_list(items: &[Value]) -> Option<Self> {
+        if items.is_empty() {
+            return None;
+        }
+        let mut out = Vec::with_capacity(items.len());
+        for v in items {
+            match v {
+                Value::Float(f) => out.push(*f),
+                _ => return None,
+            }
+        }
+        Some(OvmValue {
+            data: ValueData::FloatList(Arc::new(out)),
+        })
+    }
+
+    fn detect_int_list(items: &[Value]) -> Option<Self> {
+        if items.is_empty() {
+            return None;
+        }
+        let mut out = Vec::with_capacity(items.len());
+        for v in items {
+            match v {
+                Value::Integer(n) => out.push(*n),
+                _ => return None,
+            }
+        }
+        Some(OvmValue {
+            data: ValueData::IntList(Arc::new(out)),
+        })
+    }
+
+    /// The boxed form of any list-shaped value: typed lists box their
+    /// scalars, a boxed list hands back its own Arc. The JIT/OSR
+    /// boundaries use this to classify and keep alive a typed list the
+    /// native ABI reads in boxed layout — one O(n) pass, paid at a
+    /// call that was about to run O(n * epochs) of work.
+    pub fn to_boxed_list(&self) -> Option<Arc<Vec<OvmValue>>> {
+        match &self.data {
+            ValueData::List(items) => Some(items.clone()),
+            ValueData::FloatList(v) => Some(Arc::new(
+                v.iter().map(|&f| OvmValue::new_float(f)).collect(),
+            )),
+            ValueData::IntList(v) => Some(Arc::new(
+                v.iter().map(|&n| OvmValue::new_integer(n)).collect(),
+            )),
+            ValueData::AstList(items) => Some(Arc::new(
+                items
+                    .iter()
+                    .map(|v| OvmValue::from_ast(v.clone()))
+                    .collect(),
+            )),
+            _ => None,
+        }
+    }
+
+    pub fn new_float_list(values: Vec<f64>) -> Self {
+        OvmValue {
+            data: ValueData::FloatList(Arc::new(values)),
+        }
+    }
+
+    pub fn new_int_list(values: Vec<i64>) -> Self {
+        OvmValue {
+            data: ValueData::IntList(Arc::new(values)),
+        }
+    }
+
     /// Enhanced from_ast conversion with better builtin support
     pub fn from_ast(ast_value: Value) -> Self {
         match ast_value {
@@ -777,6 +930,38 @@ impl OvmValue {
             Value::Unit => Self::new_unit(),
 
             Value::List(items) => {
+                // Homogeneous scalar lists take the typed layout: the
+                // detection scan is one early-exit pass and the typed
+                // copy a contiguous fill. Large lists go through a
+                // pointer-keyed cache, because the SAME interpreter list
+                // can cross the boundary once per lambda call (a
+                // captured 300k-element list in a mapped closure crosses
+                // millions of times) — the AstList wrapper kept that
+                // boundary O(1), and the typed layout must too. The
+                // cached entry's keepalive Arc makes the cache sound: a
+                // pinned allocation cannot be freed and reused, and the
+                // interpreter's sole-owner in-place writes see the extra
+                // reference and copy instead of mutating.
+                if items.len() > AST_LIST_EAGER {
+                    if let Some(hit) = typed_cache_lookup(&items) {
+                        return hit;
+                    }
+                    let detected =
+                        Self::detect_float_list(&items).or_else(|| Self::detect_int_list(&items));
+                    if let Some(tl) = detected {
+                        typed_cache_insert(&items, &tl);
+                        return tl;
+                    }
+                    return OvmValue {
+                        data: ValueData::AstList(items),
+                    };
+                }
+                if let Some(fl) = Self::detect_float_list(&items) {
+                    return fl;
+                }
+                if let Some(il) = Self::detect_int_list(&items) {
+                    return il;
+                }
                 if items.len() <= AST_LIST_EAGER {
                     let ovm_items: Vec<Self> = items
                         .iter()
@@ -927,6 +1112,8 @@ impl OvmValue {
             + match &ovm_value.data {
                 ValueData::String(s) => s.len(),
                 ValueData::List(gc_ptr) => gc_ptr.len() * std::mem::size_of::<OvmValue>(),
+                ValueData::FloatList(v) => v.len() * 8,
+                ValueData::IntList(v) => v.len() * 8,
                 ValueData::AstList(items) => items.len() * std::mem::size_of::<crate::ast::Value>(),
                 ValueData::Tuple(gc_ptr) => gc_ptr.len() * std::mem::size_of::<OvmValue>(),
                 ValueData::Function(_) => std::mem::size_of::<FunctionObject>(),
@@ -1011,6 +1198,12 @@ impl OvmValue {
             ValueData::Boolean(b) => Ok(Value::Boolean(*b)),
             ValueData::Unit => Ok(Value::Unit),
             ValueData::String(gc_ptr) => Ok(Value::String(gc_ptr.clone())),
+            ValueData::FloatList(v) => Ok(Value::List(Arc::new(
+                v.iter().map(|&f| Value::Float(f)).collect(),
+            ))),
+            ValueData::IntList(v) => Ok(Value::List(Arc::new(
+                v.iter().map(|&n| Value::Integer(n)).collect(),
+            ))),
             ValueData::List(gc_ptr) => {
                 let mut ast_values = Vec::with_capacity(gc_ptr.len());
                 for ovm_val in gc_ptr.iter() {
@@ -1141,6 +1334,26 @@ impl fmt::Display for OvmValue {
             ValueData::Unit => write!(f, "()"),
             ValueData::Native(handle) => write!(f, "{}", handle.0.display()),
             ValueData::String(gc_ptr) => write!(f, "\"{}\"", gc_ptr),
+            ValueData::FloatList(v) => {
+                write!(f, "[")?;
+                for (i, x) in v.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", crate::ast::format_float(*x))?;
+                }
+                write!(f, "]")
+            }
+            ValueData::IntList(v) => {
+                write!(f, "[")?;
+                for (i, x) in v.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", x)?;
+                }
+                write!(f, "]")
+            }
             ValueData::AstList(items) => {
                 write!(f, "[")?;
                 for (i, val) in items.iter().enumerate() {

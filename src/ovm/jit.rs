@@ -1359,6 +1359,9 @@ impl JitCache {
             return None;
         }
         let mut any_ref = false;
+        // Keepalives for typed lists converted to the boxed native ABI
+        // layout — dropped after the call returns.
+        let mut converted: Vec<Arc<Vec<OvmValue>>> = Vec::new();
         for (i, arg) in args.iter().enumerate() {
             match &arg.data {
                 ValueData::Integer(v) => {
@@ -1381,6 +1384,30 @@ impl JitCache {
                 ValueData::List(items) => {
                     kinds[i] = classify_list(items)?;
                     bits[i] = Arc::as_ptr(items) as i64;
+                    any_ref = true;
+                }
+                // Small typed lists cross into native in the boxed
+                // layout the ABI reads: one conversion per call. LARGE
+                // typed lists refuse the native boundary instead — a hot
+                // lambda capturing a 300k-element list would otherwise
+                // pay an O(n) conversion per element call, an O(n²)
+                // cliff. The VM executes those with the typed
+                // instruction fast paths; raw 8-byte-stride native kinds
+                // are the recorded next step.
+                ValueData::FloatList(_) | ValueData::IntList(_) => {
+                    const TYPED_BOUNDARY_MAX: usize = 1024;
+                    let small = match &arg.data {
+                        ValueData::FloatList(v) => v.len() <= TYPED_BOUNDARY_MAX,
+                        ValueData::IntList(v) => v.len() <= TYPED_BOUNDARY_MAX,
+                        _ => unreachable!("matched above"),
+                    };
+                    if !small {
+                        return None;
+                    }
+                    let conv = arg.to_boxed_list().expect("matched a list");
+                    kinds[i] = classify_list(&conv)?;
+                    bits[i] = Arc::as_ptr(&conv) as i64;
+                    converted.push(conv);
                     any_ref = true;
                 }
                 ValueData::String(s) => {
@@ -1451,6 +1478,10 @@ impl JitCache {
                     map_args.push(m.clone());
                 }
             }
+            // Typed-list conversions join the list family: native code
+            // that returns one of its argument lists resolves the
+            // pointer through this set.
+            list_args.extend(converted.iter().cloned());
         }
         self.try_call_raw_with_shapes(
             func_id,
