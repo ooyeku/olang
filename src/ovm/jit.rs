@@ -253,7 +253,10 @@ fn observe_struct(obj: &crate::ovm::value::StructObject) -> Option<(Kind, ShapeS
 }
 
 const STATUS_OK: i64 = 0;
-const MAX_PARAMS: usize = 16;
+/// Raised from 16 for the OSR marshal: a training loop's forward pass
+/// carries ~17 live registers, and the synthesized region function
+/// takes each as a parameter.
+pub(crate) const MAX_PARAMS: usize = 24;
 /// Sanity bound on how many functions one group may pull in.
 const MAX_GROUP: usize = 32;
 /// Polymorphic specializations per function beyond the primary. Enough
@@ -2799,7 +2802,11 @@ const K_RESULT: u16 = 256;
 /// Maps ride borrowed `Arc<HashMap<String, OvmValue>>` pointers.
 const K_MAP: u16 = 512;
 /// Largest tuple the JIT returns natively (multi-value return slots).
-const MAX_TUPLE: usize = 8;
+/// Raised from 8 alongside MAX_PARAMS: an OSR region returns its
+/// live-outs as one tuple. Tuple variables address as
+/// tuple_base + r * MAX_TUPLE + i, so the cost of the headroom is
+/// Cranelift variable space, not runtime work.
+pub(crate) const MAX_TUPLE: usize = 16;
 const K_NUM: u16 = K_INT | K_FLOAT;
 const K_ANY: u16 =
     K_INT | K_BOOL | K_UNIT | K_FLOAT | K_STRUCT | K_LIST | K_TUPLE | K_STR | K_RESULT | K_MAP;

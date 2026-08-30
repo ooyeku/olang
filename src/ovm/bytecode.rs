@@ -2016,14 +2016,22 @@ impl BytecodeVm {
         }
         let region = self.osr_regions.get(&fid)?.clone()?;
         let osr_debug = std::env::var_os("OLANG_OSR_DEBUG").is_some();
-        if region.head != head || region.live_in.len() > 16 {
+        if region.head != head || region.live_in.len() > crate::ovm::jit::MAX_PARAMS {
             if osr_debug {
-                eprintln!(
-                    "[osr] fn#{}: hot head {} is not the region head {}",
-                    fid.index(),
-                    head,
-                    region.head
-                );
+                if region.head != head {
+                    eprintln!(
+                        "[osr] fn#{}: hot head {} is not the region head {}",
+                        fid.index(),
+                        head,
+                        region.head
+                    );
+                } else {
+                    eprintln!(
+                        "[osr] fn#{}: {} live-ins exceed the marshal",
+                        fid.index(),
+                        region.live_in.len()
+                    );
+                }
             }
             return None;
         }
@@ -2031,8 +2039,8 @@ impl BytecodeVm {
         // Marshal the live-in registers exactly the way the call-boundary
         // raw entry marshals arguments (that block is the reference; the
         // kinds it cannot carry refuse here the same way).
-        let mut bits = [0i64; 16];
-        let mut kinds = [JitKind::Int; 16];
+        let mut bits = [0i64; crate::ovm::jit::MAX_PARAMS];
+        let mut kinds = [JitKind::Int; crate::ovm::jit::MAX_PARAMS];
         let mut any_ref = false;
         // T2's by-move representation: a large list arrives as an AstList
         // handle, which native list ops don't read. Materialize the
@@ -2095,7 +2103,17 @@ impl BytecodeVm {
                     any_ref = true;
                 }
                 Ok(crate::ovm::value::ValueData::List(items)) => {
-                    let k = crate::ovm::jit::classify_list(items)?;
+                    let Some(k) = crate::ovm::jit::classify_list(items) else {
+                        if osr_debug {
+                            eprintln!(
+                                "[osr] fn#{}: live-in r{} is a list the JIT cannot classify (first element: {})",
+                                fid.index(),
+                                reg.0,
+                                items.first().map(|v| v.type_name()).unwrap_or("none")
+                            );
+                        }
+                        return None;
+                    };
                     bits[i] = std::sync::Arc::as_ptr(items) as i64;
                     kinds[i] = k;
                     any_ref = true;
@@ -2337,8 +2355,8 @@ impl BytecodeVm {
                 )));
             }
             use crate::ovm::jit::Kind as JitKind;
-            let mut bits = [0i64; 16];
-            let mut kinds = [JitKind::Int; 16];
+            let mut bits = [0i64; crate::ovm::jit::MAX_PARAMS];
+            let mut kinds = [JitKind::Int; crate::ovm::jit::MAX_PARAMS];
             let mut extractable = true;
             let mut any_ref = false;
             for (i, reg) in arg_regs.iter().enumerate() {

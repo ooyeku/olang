@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The OSR marshal caps are raised, and refusals name themselves.**
+  MAX_PARAMS 16 → 24 and MAX_TUPLE 8 → 16 (with the OSR live-in/out
+  caps and the entry gate's own hardcoded 16 following), so a loop
+  region carrying up to 24 live-ins and 16 live-outs — a training
+  loop's forward pass runs 18/15 — now synthesizes, marshals, and is
+  offered native entry. The silent exits on that path speak now: a
+  cap refusal prints its counts, a mismatched entry names both heads,
+  and an unclassifiable live-in names its register and element type.
+  Which is how the next gate identified itself precisely: the forward
+  pass carries a list-of-lists live-in (`cols[j][i]`), and the native
+  ABI has no kind for a nested list — recorded as the next step.
+
 - **List constants compile to native, and OSR picks the widest
   compilable loop.** Two JIT gaps closed on the road to native
   list-shaped code. A lambda's captured values are baked into its

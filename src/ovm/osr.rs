@@ -45,8 +45,8 @@ pub struct OsrRegion {
 
 /// The raw entry marshals at most 16 arguments; tuple returns carry at
 /// most `MAX_TUPLE` (8) elements. Loop state beyond that stays on the VM.
-const MAX_LIVE_IN: usize = 16;
-const MAX_LIVE_OUT: usize = 8;
+const MAX_LIVE_IN: usize = crate::ovm::jit::MAX_PARAMS;
+const MAX_LIVE_OUT: usize = crate::ovm::jit::MAX_TUPLE;
 
 fn osr_debug() -> bool {
     std::env::var_os("OLANG_OSR_DEBUG").is_some()
@@ -212,7 +212,16 @@ fn synthesize_region(bytecode: &CompiledBytecode, h: usize, e: usize) -> Option<
         .map(Register)
         .collect();
     if live_in.len() > MAX_LIVE_IN || live_out.is_empty() || live_out.len() > MAX_LIVE_OUT {
-        refuse(bytecode, "live state past the marshal caps");
+        refuse(
+            bytecode,
+            &format!(
+                "live state past the marshal caps ({} in / {} out; caps {} / {})",
+                live_in.len(),
+                live_out.len(),
+                MAX_LIVE_IN,
+                MAX_LIVE_OUT
+            ),
+        );
         return None;
     }
 
