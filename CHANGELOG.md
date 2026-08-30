@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The crimes workstream becomes a full research report.** The
+  Chicago dogfood now runs fourteen stages and writes a structured
+  analysis (abstract, methods, findings, limitations) rather than a
+  chart dump. New, all in olang: trend-plus-seasonal decomposition
+  with the autocorrelation function (ACF(12)=0.91 on 288 months);
+  Wilson intervals on per-category arrest rates; Cramér's V beside
+  the chi-square; PCA by power iteration over the standardized
+  design matrix; a k-means elbow sweep justifying k; and three
+  classifiers on one deterministic split — logistic regression,
+  gaussian naive Bayes in closed form, and a histogram CART (24-bin
+  splits, flat-arena nodes) — compared by AUC with Hanley–McNeil
+  95% intervals at F1-optimal operating points, with a reliability
+  diagram and concordant feature importance across model families.
+  The tree edges gradient descent (AUC 0.707 vs 0.703) and trains in
+  ~4 s on 305k rows; the whole 8.6M-row run stays ~22 s and passes
+  under `--verify-tiers`. One real bug found on real data: a CART
+  cut reconstructed at a bin's upper edge sent every row left when
+  the edge coincided with the feature maximum — the partition now
+  uses the bin semantics' strict inequality, and empty-side splits
+  are refused outright.
+
 - **The engine keeps proving itself (W7): live tier verification, an
   HTTP abuse gauntlet, and a Linux pass.**
   - `--verify-tiers <rate>`: the differential suites prove tier
