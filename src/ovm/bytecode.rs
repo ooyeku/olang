@@ -110,10 +110,12 @@ pub struct BytecodeVm {
     jit: crate::ovm::jit::JitCache,
     /// On-stack replacement table: per original function, the compiled
     /// hot-loop region (None = analyzed and refused, never retried).
-    /// Filled lazily, the first time a frame's back-edge counter crosses
-    /// OSR_BACK_EDGE_THRESHOLD.
+    /// Filled lazily, per hot loop head, the first time a frame's
+    /// back-edge counter crosses OSR_BACK_EDGE_THRESHOLD (and every
+    /// multiple after — a function's later loops get their own offers).
+    /// `None` records a refusal so a head is judged once.
     #[cfg(feature = "native")]
-    osr_regions: HashMap<FunctionId, Option<std::sync::Arc<crate::ovm::osr::OsrRegion>>>,
+    osr_regions: HashMap<(FunctionId, usize), Option<std::sync::Arc<crate::ovm::osr::OsrRegion>>>,
     /// Trace of the error currently unwinding: the innermost located
     /// statement's span, and function names innermost-first. Frames
     /// deeper than the first span-owning frame are dropped — exactly the
@@ -1990,6 +1992,49 @@ impl BytecodeVm {
     /// execute(), but the arguments come straight from the caller's
     /// registers into the callee's window — the CallFn/CallValue hot path,
     /// with no argument buffer in between.
+    /// One back edge's OSR decision: offer entry at every threshold
+    /// multiple (so each of a function's loops eventually gets its own
+    /// offer, and later loops are not shut out by an earlier one), at a
+    /// pending enclosing-region head, and at any head already proven in
+    /// this frame. Returns the resume pc on a successful native run.
+    #[cfg(feature = "native")]
+    #[inline]
+    fn osr_offer(
+        &mut self,
+        bytecode: &CompiledBytecode,
+        t: usize,
+        back_edges: u64,
+        osr_wait: &mut Option<usize>,
+        osr_ready: &mut Vec<usize>,
+    ) -> Option<usize> {
+        let periodic = back_edges.is_multiple_of(OSR_BACK_EDGE_THRESHOLD);
+        if !(periodic || *osr_wait == Some(t) || osr_ready.contains(&t)) {
+            return None;
+        }
+        if let Some(resume) = self.try_osr(bytecode, t) {
+            *osr_wait = None;
+            if !osr_ready.contains(&t) {
+                osr_ready.push(t);
+            }
+            return Some(resume);
+        }
+        // A proven head that declines (say, a live-in demoted to a shape
+        // the marshal cannot carry) drops back to periodic offers rather
+        // than re-marshaling every iteration.
+        osr_ready.retain(|h| *h != t);
+        if periodic {
+            *osr_wait = self
+                .osr_regions
+                .get(&(bytecode.function_id, t))
+                .and_then(|r| r.as_deref())
+                .map(|r| r.head)
+                .filter(|h| *h != t);
+        } else if *osr_wait == Some(t) {
+            *osr_wait = None;
+        }
+        None
+    }
+
     /// On-stack replacement (Campaign 7, T3): the current frame's hot
     /// loop, entered natively mid-frame. Called from the dispatch loop
     /// when a back-edge to `head` crosses the threshold. On success the
@@ -2007,14 +2052,20 @@ impl BytecodeVm {
             return None;
         }
         let fid = bytecode.function_id;
-        if !self.osr_regions.contains_key(&fid) {
+        if !self.osr_regions.contains_key(&(fid, head)) {
             let region = crate::ovm::osr::synthesize(bytecode, head).map(std::sync::Arc::new);
             if let Some(r) = &region {
                 self.jit.try_compile(r.region_id, &r.synth);
+                // A region anchored at an enclosing loop's head is also
+                // filed under that head, so the re-offer there finds it
+                // without synthesizing again.
+                if r.head != head {
+                    self.osr_regions.insert((fid, r.head), Some(r.clone()));
+                }
             }
-            self.osr_regions.insert(fid, region);
+            self.osr_regions.insert((fid, head), region);
         }
-        let region = self.osr_regions.get(&fid)?.clone()?;
+        let region = self.osr_regions.get(&(fid, head))?.clone()?;
         let osr_debug = std::env::var_os("OLANG_OSR_DEBUG").is_some();
         if region.head != head || region.live_in.len() > crate::ovm::jit::MAX_PARAMS {
             if osr_debug {
@@ -2240,7 +2291,7 @@ impl BytecodeVm {
                     region.region_id.index()
                 );
             }
-            self.osr_regions.insert(fid, None);
+            self.osr_regions.insert((fid, head), None);
             return None;
         };
         // A tuple of live-outs must unmarshal faithfully — heap kinds in
@@ -2255,7 +2306,7 @@ impl BytecodeVm {
                     region.region_id.index()
                 );
             }
-            self.osr_regions.insert(fid, None);
+            self.osr_regions.insert((fid, head), None);
             return None;
         }
         if region.live_out.len() == 1 {
@@ -2264,11 +2315,11 @@ impl BytecodeVm {
                 .ok()?;
         } else {
             let crate::ovm::value::ValueData::Tuple(elems) = &result.data else {
-                self.osr_regions.insert(fid, None);
+                self.osr_regions.insert((fid, head), None);
                 return None;
             };
             if elems.len() != region.live_out.len() {
-                self.osr_regions.insert(fid, None);
+                self.osr_regions.insert((fid, head), None);
                 return None;
             }
             for (reg, v) in region.live_out.iter().zip(elems.iter()) {
@@ -2714,6 +2765,11 @@ impl BytecodeVm {
         let mut back_edges: u64 = 0;
         #[cfg(feature = "native")]
         let mut osr_wait: Option<usize> = None;
+        // Heads that have already run natively in this frame: re-entry
+        // is offered on their next back edge (one small-vec scan), not
+        // only at threshold multiples.
+        #[cfg(feature = "native")]
+        let mut osr_ready: Vec<usize> = Vec::new();
 
         while pc < bytecode.instructions.len() {
             let instruction = &bytecode.instructions[pc];
@@ -3384,22 +3440,11 @@ impl BytecodeVm {
                     #[cfg(feature = "native")]
                     if t <= pc {
                         back_edges += 1;
-                        if (back_edges == OSR_BACK_EDGE_THRESHOLD || osr_wait == Some(t))
-                            && let Some(resume) = self.try_osr(bytecode, t)
+                        if let Some(resume) =
+                            self.osr_offer(bytecode, t, back_edges, &mut osr_wait, &mut osr_ready)
                         {
-                            osr_wait = None;
                             pc = resume;
                             continue;
-                        }
-                        if back_edges == OSR_BACK_EDGE_THRESHOLD {
-                            osr_wait = self
-                                .osr_regions
-                                .get(&bytecode.function_id)
-                                .and_then(|r| r.as_deref())
-                                .map(|r| r.head)
-                                .filter(|h| *h != t);
-                        } else if osr_wait == Some(t) {
-                            osr_wait = None;
                         }
                     }
                     pc = t;
@@ -3412,22 +3457,15 @@ impl BytecodeVm {
                         #[cfg(feature = "native")]
                         if t <= pc {
                             back_edges += 1;
-                            if (back_edges == OSR_BACK_EDGE_THRESHOLD || osr_wait == Some(t))
-                                && let Some(resume) = self.try_osr(bytecode, t)
-                            {
-                                osr_wait = None;
+                            if let Some(resume) = self.osr_offer(
+                                bytecode,
+                                t,
+                                back_edges,
+                                &mut osr_wait,
+                                &mut osr_ready,
+                            ) {
                                 pc = resume;
                                 continue;
-                            }
-                            if back_edges == OSR_BACK_EDGE_THRESHOLD {
-                                osr_wait = self
-                                    .osr_regions
-                                    .get(&bytecode.function_id)
-                                    .and_then(|r| r.as_deref())
-                                    .map(|r| r.head)
-                                    .filter(|h| *h != t);
-                            } else if osr_wait == Some(t) {
-                                osr_wait = None;
                             }
                         }
                         pc = t;
@@ -3441,22 +3479,15 @@ impl BytecodeVm {
                         #[cfg(feature = "native")]
                         if t <= pc {
                             back_edges += 1;
-                            if (back_edges == OSR_BACK_EDGE_THRESHOLD || osr_wait == Some(t))
-                                && let Some(resume) = self.try_osr(bytecode, t)
-                            {
-                                osr_wait = None;
+                            if let Some(resume) = self.osr_offer(
+                                bytecode,
+                                t,
+                                back_edges,
+                                &mut osr_wait,
+                                &mut osr_ready,
+                            ) {
                                 pc = resume;
                                 continue;
-                            }
-                            if back_edges == OSR_BACK_EDGE_THRESHOLD {
-                                osr_wait = self
-                                    .osr_regions
-                                    .get(&bytecode.function_id)
-                                    .and_then(|r| r.as_deref())
-                                    .map(|r| r.head)
-                                    .filter(|h| *h != t);
-                            } else if osr_wait == Some(t) {
-                                osr_wait = None;
                             }
                         }
                         pc = t;
@@ -9646,25 +9677,15 @@ impl BytecodeOptimizer {
                     _ => succ(pc + 1),
                 }
                 let mut new_in = out;
-                match Self::uses_defs(&instructions[pc]) {
-                    Some((uses, defs)) => {
-                        for d in defs {
-                            if (d as usize) < nregs {
-                                new_in[d as usize] = false;
-                            }
-                        }
-                        for u in uses {
-                            if (u as usize) < nregs {
-                                new_in[u as usize] = true;
-                            }
-                        }
+                let (uses, defs) = Self::uses_defs(&instructions[pc]);
+                for d in defs {
+                    if (d as usize) < nregs {
+                        new_in[d as usize] = false;
                     }
-                    // Unmodeled: assume it reads everything and defines
-                    // nothing — the conservative direction.
-                    None => {
-                        for b in new_in.iter_mut() {
-                            *b = true;
-                        }
+                }
+                for u in uses {
+                    if (u as usize) < nregs {
+                        new_in[u as usize] = true;
                     }
                 }
                 if new_in != live_in[pc] {
@@ -9738,13 +9759,28 @@ impl BytecodeOptimizer {
         (instructions, any_rewrite)
     }
 
-    /// Registers an instruction reads and writes, or None when this model
-    /// does not describe it (treated as a full barrier by the liveness).
+    /// Registers an instruction reads and writes. Total: every variant
+    /// is modeled, and the exhaustive match makes a new instruction a
+    /// compile error here rather than a silent liveness pessimization —
+    /// an unmodeled variant once poisoned backward liveness ("everything
+    /// is live"), inflating OSR live-out sets with dead temps until a
+    /// region either blew the marshal caps or dragged an `if`-statement's
+    /// Int-or-Unit result register into inference. Uses must cover every
+    /// possible read; defs are total writes (each variant either fully
+    /// writes its destinations or raises, and a raise abandons the
+    /// register file), so a def soundly kills liveness.
     #[allow(clippy::type_complexity)]
-    pub(crate) fn uses_defs(inst: &Instruction) -> Option<(Vec<u32>, Vec<u32>)> {
-        use Instruction as I;
+    pub(crate) fn uses_defs(inst: &Instruction) -> (Vec<u32>, Vec<u32>) {
         let mut uses = Vec::new();
         let mut defs = Vec::new();
+        Self::uses_defs_into(inst, &mut uses, &mut defs);
+        (uses, defs)
+    }
+
+    /// `uses_defs` writing into caller scratch — the fixpoint loops call
+    /// this per instruction per iteration.
+    pub(crate) fn uses_defs_into(inst: &Instruction, uses: &mut Vec<u32>, defs: &mut Vec<u32>) {
+        use Instruction as I;
         match inst {
             I::LoadConst { dst, .. } => defs.push(dst.0),
             I::Move { dst, src } => {
@@ -9876,17 +9912,91 @@ impl BytecodeOptimizer {
                     defs.push(i as u32);
                 }
             }
-            _ => return None,
+            I::Call {
+                dst,
+                function,
+                args,
+                ..
+            } => {
+                uses.push(function.0);
+                for a in args {
+                    uses.push(a.0);
+                }
+                defs.push(dst.0);
+            }
+            I::CallMethod {
+                dst, object, args, ..
+            } => {
+                uses.push(object.0);
+                for a in args {
+                    uses.push(a.0);
+                }
+                defs.push(dst.0);
+            }
+            // Locals are a side channel, not registers: only the register
+            // halves of these appear here.
+            I::LoadLocal { dst, .. } => defs.push(dst.0),
+            I::StoreLocal { src, .. } => uses.push(src.0),
+            I::GetField { dst, object, .. } => {
+                uses.push(object.0);
+                defs.push(dst.0);
+            }
+            I::MakeStruct {
+                dst, field_regs, ..
+            } => {
+                for r in field_regs {
+                    uses.push(r.0);
+                }
+                defs.push(dst.0);
+            }
+            I::MakeMap { dst, entries } => {
+                for (k, v) in entries {
+                    uses.push(k.0);
+                    uses.push(v.0);
+                }
+                defs.push(dst.0);
+            }
+            I::MakeRange {
+                dst, start, end, ..
+            } => {
+                uses.push(start.0);
+                uses.push(end.0);
+                defs.push(dst.0);
+            }
+            I::MakeClosure { dst, captures, .. } => {
+                for c in captures {
+                    uses.push(c.0);
+                }
+                defs.push(dst.0);
+            }
+            I::MakeEnum { dst, args, .. } => {
+                for a in args {
+                    uses.push(a.0);
+                }
+                defs.push(dst.0);
+            }
+            I::MakeResult { dst, value, .. }
+            | I::ExtractResult { dst, value, .. }
+            | I::ExtractElement { dst, value, .. }
+            | I::ExtractRest { dst, value, .. }
+            | I::ExtractEnumPayload { dst, value, .. }
+            | I::PatternTestResult { dst, value, .. }
+            | I::PatternTestTuple { dst, value, .. }
+            | I::PatternTestList { dst, value, .. }
+            | I::PatternTestEnum { dst, value, .. }
+            | I::PatternTestStructField { dst, value, .. }
+            | I::PatternInRange { dst, value, .. } => {
+                uses.push(value.0);
+                defs.push(dst.0);
+            }
         }
-        Some((uses, defs))
     }
 
     /// Visit every register an instruction mentions (for sizing).
     fn visit_registers(inst: &Instruction, f: &mut impl FnMut(&Register)) {
-        if let Some((uses, defs)) = Self::uses_defs(inst) {
-            for u in uses.iter().chain(defs.iter()) {
-                f(&Register(*u));
-            }
+        let (uses, defs) = Self::uses_defs(inst);
+        for u in uses.iter().chain(defs.iter()) {
+            f(&Register(*u));
         }
     }
 }

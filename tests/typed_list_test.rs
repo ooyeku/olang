@@ -161,3 +161,53 @@ fn native_col_set_out_of_bounds_matches_the_oracle() {
          println(f(map(0..500, (i) => to_float(i))))",
     );
 }
+
+#[test]
+fn every_hot_loop_in_a_function_gets_its_own_region() {
+    // The kmeans shape: one function, an outer iteration around several
+    // sequential hot loops — a scan with a data-dependent conditional,
+    // then an accumulation pass writing three lists at data-dependent
+    // indexes (a multi-list live-out marshaled back as a tuple). Each
+    // loop must reach native independently and re-enter on every outer
+    // iteration, and the whole run must print what the interpreter
+    // prints.
+    assert_tiers_agree(
+        "fn cluster(xs, ys, k, iters) = {\n\
+             let n = len(xs)\n\
+             let mut cx = map(0..k, (c) => xs[c * (n / k)])\n\
+             let mut assign = map(0..n, (i) => 0)\n\
+             let mut it = 0\n\
+             while it < iters {\n\
+                 for i in 0..n {\n\
+                     let mut best = 0\n\
+                     let mut bd = 100000000.0\n\
+                     for c in 0..k {\n\
+                         let d = (xs[i] - cx[c]) * (xs[i] - cx[c])\n\
+                         if d < bd => { bd = d; best = c }\n\
+                     }\n\
+                     assign = col.set(assign, i, best)\n\
+                 }\n\
+                 let mut sx = map(0..k, (c) => 0.0)\n\
+                 let mut sy = map(0..k, (c) => 0.0)\n\
+                 let mut ct = map(0..k, (c) => 0)\n\
+                 for i in 0..n {\n\
+                     let c = assign[i]\n\
+                     sx = col.set(sx, c, sx[c] + xs[i])\n\
+                     sy = col.set(sy, c, sy[c] + ys[i])\n\
+                     ct = col.set(ct, c, ct[c] + 1)\n\
+                 }\n\
+                 for c in 0..k {\n\
+                     if ct[c] > 0 => { cx = col.set(cx, c, sx[c] / to_float(ct[c])) }\n\
+                 }\n\
+                 it = it + 1\n\
+             }\n\
+             let mut sizes = map(0..k, (c) => 0)\n\
+             for i in 0..n { sizes = col.set(sizes, assign[i], sizes[assign[i]] + 1) }\n\
+             sizes\n\
+         }\n\
+         let n = 20000\n\
+         let xs = map(0..n, (i) => to_float(i % 100) / 10.0)\n\
+         let ys = map(0..n, (i) => to_float((i * 7) % 100) / 10.0)\n\
+         println(cluster(xs, ys, 5, 4))",
+    );
+}

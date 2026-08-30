@@ -47,7 +47,7 @@
 
 use crate::ast::BinaryOp;
 use crate::ovm::FunctionId;
-use crate::ovm::bytecode::{CompiledBytecode, Instruction};
+use crate::ovm::bytecode::{BytecodeOptimizer, CompiledBytecode, Instruction};
 use crate::ovm::value::{OvmValue, ValueData};
 
 use std::collections::HashMap;
@@ -1788,9 +1788,19 @@ impl JitCache {
     pub fn ready_tuple_ret_scalar(&self, func_id: FunctionId) -> bool {
         match self.table.get(func_id.index()).and_then(|s| s.as_ref()) {
             Some(Slot::Ready(j)) => match &j.ret_tuple {
-                Some(ks) => ks
-                    .iter()
-                    .all(|k| matches!(k, Kind::Int | Kind::Bool | Kind::Float)),
+                // Scalars unmarshal by reinterpretation; raw typed lists
+                // resolve through the ownership families (a miss refuses
+                // the whole result), so both come back faithfully.
+                Some(ks) => ks.iter().all(|k| {
+                    matches!(
+                        k,
+                        Kind::Int
+                            | Kind::Bool
+                            | Kind::Float
+                            | Kind::ListFloatRaw
+                            | Kind::ListIntRaw
+                    )
+                }),
                 None => true,
             },
             _ => false,
@@ -2340,6 +2350,20 @@ impl JitCache {
                             plan.writes,
                             plan.exotic
                         );
+                        for (pc, inst) in plan.bytecode.instructions.iter().enumerate() {
+                            eprintln!("[jit]   pc {}: {:?}", pc, inst);
+                        }
+                        for (r, m) in plan.writes.iter().enumerate() {
+                            if plan.was_read[r] && mask_singleton(*m).is_none() && *m != 0 {
+                                eprintln!("[jit]   r{} mask {} defined by:", r, m);
+                                for (pc, inst) in plan.bytecode.instructions.iter().enumerate() {
+                                    let (_, defs) = BytecodeOptimizer::uses_defs(inst);
+                                    if defs.contains(&(r as u32)) {
+                                        eprintln!("[jit]     pc {}: {:?}", pc, inst);
+                                    }
+                                }
+                            }
+                        }
                     }
                     return None;
                 }
@@ -3129,9 +3153,8 @@ pub(crate) fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
 /// second register or handed to a callee — otherwise an in-place write
 /// through one name would be visible through the other, where the VM's
 /// Arc semantics would have diverged them. The one permitted alias is
-/// the exit write-back: a MakeTuple whose result goes straight to
-/// Return, with no jump target at or past the MakeTuple (so no write
-/// can execute after it).
+/// the exit write-back: a MakeTuple after which only Nops and the
+/// Return remain, so no write can execute once the tuple exists.
 fn list_write_targets_unaliased(bytecode: &CompiledBytecode) -> bool {
     use std::collections::HashSet;
     let mut targets: HashSet<u32> = HashSet::new();
@@ -3143,17 +3166,17 @@ fn list_write_targets_unaliased(bytecode: &CompiledBytecode) -> bool {
     if targets.is_empty() {
         return true;
     }
-    let max_jump_target = bytecode
-        .instructions
-        .iter()
-        .flat_map(|i| match i {
-            Instruction::Jump { target }
-            | Instruction::JumpIfTrue { target, .. }
-            | Instruction::JumpIfFalse { target, .. } => Some(target.0 as usize),
-            _ => None,
-        })
-        .max()
-        .unwrap_or(0);
+    // The exit write-back exemption: a MakeTuple may carry written lists
+    // when nothing but the return can run after it — every later
+    // instruction is a Nop or Return, so no in-place write (and no jump
+    // back to one) can ever observe the tuple's aliases. A jump target
+    // AT the tuple is fine (that is exactly how a synthesized region's
+    // exit reaches its epilogue); what matters is what follows.
+    let pure_exit_after = |pc: usize| {
+        bytecode.instructions[pc + 1..]
+            .iter()
+            .all(|i| matches!(i, Instruction::Return { .. } | Instruction::Nop))
+    };
     for (pc, inst) in bytecode.instructions.iter().enumerate() {
         let aliased = match inst {
             Instruction::Move { src, .. } | Instruction::TakeMove { src, .. } => {
@@ -3168,7 +3191,7 @@ fn list_write_targets_unaliased(bytecode: &CompiledBytecode) -> bool {
                 elements.iter().any(|e| targets.contains(&e.0))
             }
             Instruction::MakeTuple { elements, .. } => {
-                elements.iter().any(|e| targets.contains(&e.0)) && pc <= max_jump_target
+                elements.iter().any(|e| targets.contains(&e.0)) && !pure_exit_after(pc)
             }
             Instruction::MakeMap { entries, .. } => entries
                 .iter()
@@ -3786,9 +3809,7 @@ fn propagate_copies(b: &mut CompiledBytecode) {
         for inst in &b.instructions {
             uses_scratch.clear();
             defs_scratch.clear();
-            if !inst_uses_defs(inst, &mut uses_scratch, &mut defs_scratch) {
-                return;
-            }
+            inst_uses_defs(inst, &mut uses_scratch, &mut defs_scratch);
             for d in &defs_scratch {
                 if (*d as usize) < nregs {
                     def_counts[*d as usize] += 1;
@@ -3860,9 +3881,7 @@ fn scalar_replace(b: &mut CompiledBytecode) {
         for inst in &b.instructions {
             uses_scratch.clear();
             defs_scratch.clear();
-            if !inst_uses_defs(inst, &mut uses_scratch, &mut defs_scratch) {
-                return; // unmodeled instruction: leave the function alone
-            }
+            inst_uses_defs(inst, &mut uses_scratch, &mut defs_scratch);
             for d in &defs_scratch {
                 if (*d as usize) < nregs {
                     def_counts[*d as usize] += 1;
@@ -4033,131 +4052,13 @@ fn scalar_replace(b: &mut CompiledBytecode) {
     }
 }
 
-/// The registers an instruction reads and the register it defines —
-/// the vocabulary of the loop-liveness analysis. Returns false for an
-/// instruction it doesn't model, which the caller must treat as
-/// "reads everything" (conservatively live). Only whitelisted
-/// instructions reach planning, so the catch-all is a safety net.
-fn inst_uses_defs(inst: &Instruction, uses: &mut Vec<u32>, defs: &mut Vec<u32>) -> bool {
-    use Instruction as I;
-    match inst {
-        I::LoadConst { dst, .. } => defs.push(dst.0),
-        I::Move { dst, src } => {
-            uses.push(src.0);
-            defs.push(dst.0);
-        }
-        I::TakeMove { dst, src } => {
-            uses.push(src.0);
-            defs.push(dst.0);
-            // The source is Unit afterward — a definition, exactly as
-            // the optimizer models it.
-            defs.push(src.0);
-        }
-        I::TailCallSelf { args } => {
-            for (i, a) in args.iter().enumerate() {
-                uses.push(a.0);
-                defs.push(i as u32);
-            }
-        }
-        I::AddAssign { target, rhs } => {
-            uses.push(target.0);
-            uses.push(rhs.0);
-            defs.push(target.0);
-        }
-        I::Add { dst, lhs, rhs }
-        | I::Sub { dst, lhs, rhs }
-        | I::Mul { dst, lhs, rhs }
-        | I::Div { dst, lhs, rhs }
-        | I::Mod { dst, lhs, rhs }
-        | I::Eq { dst, lhs, rhs }
-        | I::Ne { dst, lhs, rhs }
-        | I::Lt { dst, lhs, rhs }
-        | I::Le { dst, lhs, rhs }
-        | I::Gt { dst, lhs, rhs }
-        | I::Ge { dst, lhs, rhs }
-        | I::And { dst, lhs, rhs }
-        | I::Or { dst, lhs, rhs } => {
-            uses.push(lhs.0);
-            uses.push(rhs.0);
-            defs.push(dst.0);
-        }
-        I::Not { dst, src } | I::Neg { dst, src } => {
-            uses.push(src.0);
-            defs.push(dst.0);
-        }
-        I::BinImm { dst, lhs, .. } => {
-            uses.push(lhs.0);
-            defs.push(dst.0);
-        }
-        I::Jump { .. } | I::MatchFail | I::Nop => {}
-        I::JumpIfTrue { condition, .. } | I::JumpIfFalse { condition, .. } => {
-            uses.push(condition.0);
-        }
-        I::CallFn { dst, args, .. }
-        | I::CallNamed { dst, args, .. }
-        | I::CallBuiltin { dst, args, .. } => {
-            uses.extend(args.iter().map(|a| a.0));
-            defs.push(dst.0);
-        }
-        I::Return { value } => {
-            if let Some(v) = value {
-                uses.push(v.0);
-            }
-        }
-        I::MakeStruct {
-            dst, field_regs, ..
-        } => {
-            uses.extend(field_regs.iter().map(|r| r.0));
-            defs.push(dst.0);
-        }
-        I::MakeList { dst, elements } | I::MakeTuple { dst, elements } => {
-            uses.extend(elements.iter().map(|r| r.0));
-            defs.push(dst.0);
-        }
-        I::MakeTemplate { dst, parts } => {
-            for p in parts {
-                if let crate::ovm::bytecode::TplPart::Reg(r) = p {
-                    uses.push(r.0);
-                }
-            }
-            defs.push(dst.0);
-        }
-        I::MakeMap { dst, entries } => {
-            for (k, v) in entries {
-                uses.push(k.0);
-                uses.push(v.0);
-            }
-            defs.push(dst.0);
-        }
-        I::MakeResult { dst, value, .. }
-        | I::PatternTestResult { dst, value, .. }
-        | I::ExtractResult { dst, value, .. }
-        | I::PatternTestTuple { dst, value, .. }
-        | I::ExtractElement { dst, value, .. } => {
-            uses.push(value.0);
-            defs.push(dst.0);
-        }
-        I::IterLen { dst, src } => {
-            uses.push(src.0);
-            defs.push(dst.0);
-        }
-        I::IterGet { dst, src, idx } => {
-            uses.push(src.0);
-            uses.push(idx.0);
-            defs.push(dst.0);
-        }
-        I::GetField { dst, object, .. } => {
-            uses.push(object.0);
-            defs.push(dst.0);
-        }
-        I::IndexGet { dst, object, index } => {
-            uses.push(object.0);
-            uses.push(index.0);
-            defs.push(dst.0);
-        }
-        _ => return false,
-    }
-    true
+/// The registers an instruction reads and writes — delegated to the
+/// optimizer's total model (`BytecodeOptimizer::uses_defs_into`), so
+/// the JIT's liveness and the VM optimizer's can never diverge. The
+/// model is exhaustive over the instruction set; a new variant is a
+/// compile error there, not a silent liveness pessimization here.
+fn inst_uses_defs(inst: &Instruction, uses: &mut Vec<u32>, defs: &mut Vec<u32>) {
+    BytecodeOptimizer::uses_defs_into(inst, uses, defs);
 }
 
 /// The single loop's shape, when the function has exactly one backward-
@@ -4239,22 +4140,16 @@ pub(crate) fn live_in_at(bytecode: &CompiledBytecode, nregs: usize, at: usize) -
             }
             uses.clear();
             defs.clear();
-            let modeled = inst_uses_defs(inst, &mut uses, &mut defs);
+            inst_uses_defs(inst, &mut uses, &mut defs);
             let mut new_in = out;
-            if modeled {
-                for d in &defs {
-                    if (*d as usize) < nregs {
-                        new_in[*d as usize] = false;
-                    }
+            for d in &defs {
+                if (*d as usize) < nregs {
+                    new_in[*d as usize] = false;
                 }
-                for u in &uses {
-                    if (*u as usize) < nregs {
-                        new_in[*u as usize] = true;
-                    }
-                }
-            } else {
-                for b in new_in.iter_mut() {
-                    *b = true;
+            }
+            for u in &uses {
+                if (*u as usize) < nregs {
+                    new_in[*u as usize] = true;
                 }
             }
             if new_in != live_in[pc] {
@@ -4333,14 +4228,11 @@ impl PlanFn {
                 for inst in &bytecode.instructions[h..=e] {
                     uses.clear();
                     defs.clear();
-                    if inst_uses_defs(inst, &mut uses, &mut defs) {
-                        for d in &defs {
-                            if (*d as usize) < nregs {
-                                defined[*d as usize] = true;
-                            }
+                    inst_uses_defs(inst, &mut uses, &mut defs);
+                    for d in &defs {
+                        if (*d as usize) < nregs {
+                            defined[*d as usize] = true;
                         }
-                    } else {
-                        defined.iter_mut().for_each(|b| *b = true);
                     }
                 }
                 (Some((h, e)), live, defined)
@@ -4749,9 +4641,21 @@ impl PlanFn {
                     let mut kinds = Vec::with_capacity(elements.len());
                     let mut resolved = true;
                     for e in elements {
-                        narrow!(e.0, K_NUM | K_BOOL);
-                        match mask_singleton(self.writes[e.0 as usize]) {
+                        // Scalars and raw typed lists may ride in tuple
+                        // slots: a raw list is an I64 pointer the return
+                        // path resolves through the ownership families
+                        // (a multi-list live-out region's write-back).
+                        narrow!(e.0, K_NUM | K_BOOL | K_LIST);
+                        let m = self.writes[e.0 as usize];
+                        match mask_singleton(m) {
                             Some(k) => kinds.push(k),
+                            None if m == K_LIST => match self.exotic[e.0 as usize] {
+                                Some(k @ (Kind::ListFloatRaw | Kind::ListIntRaw)) => kinds.push(k),
+                                _ => {
+                                    resolved = false;
+                                    break;
+                                }
+                            },
                             None => {
                                 resolved = false;
                                 break;

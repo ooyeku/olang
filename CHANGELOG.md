@@ -9,6 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Every hot loop reaches native, and liveness stopped lying.** The
+  k-means gate fell, and not where the map said it would: the reused
+  register carrying `K_INT|K_UNIT` was never genuinely live — an
+  unmodeled instruction (`MakeRange`, rebuilding the inner loop's
+  range each outer iteration) sat on the path after the loop's exit,
+  and the backward liveness treated anything it didn't model as
+  "everything is live", dragging every dead temp, including the
+  `if`-statement's Int-or-Unit result, into the OSR live-out marshal.
+  Four fixes, each pinned by the k-means differential:
+  - The uses/defs register model is now **total and single-sourced**:
+    one exhaustive match in the optimizer covers every instruction
+    (a new variant is a compile error there, not a silent liveness
+    pessimization), and the JIT's copy of the model — which was
+    missing `ListSetAssign` among others — now delegates to it. OSR
+    live-in/live-out sets shrank from "everything ever touched"
+    (22 in / 18 out on the k-means scan) to the true loop state
+    (8 in / 1 out).
+  - **One OSR region per loop head, not per function.** Regions key
+    on `(function, head)`; offers fire at every back-edge-threshold
+    multiple rather than exactly once, and a head that has entered
+    natively re-enters on its next back edge. A function whose outer
+    iteration drives several sequential hot loops — assign, then
+    accumulate, then recount — runs each of them native on every
+    pass instead of one of them, once.
+  - **Multi-list live-outs marshal home.** A region writing several
+    lists returns them as a tuple of raw pointers: the `MakeTuple`
+    inference arm now admits raw typed-list elements, the tuple
+    write-back gate accepts them (they resolve through the ownership
+    families, so the write-back is faithful or refused, never
+    garbled), and the alias scan's epilogue exemption now states the
+    real property — nothing but Nops and the Return after the tuple —
+    instead of a jump-target inequality that misfired on the exact
+    jump every synthesized exit takes.
+  - A finalize refusal now prints the offending registers and the
+    instructions that define them, which is how a wrong hypothesis
+    (SSA-style register splitting) died in minutes.
+  The k-means probe (200k points, k=10, 12 iterations) runs 1460 ms →
+  121 ms, bit-identical to the interpreter, with all three of its hot
+  loops entering natively on all 12 iterations. The Chicago-crimes
+  workstream (8.6M rows) drops ~131 s → 39.5 s end to end with every
+  stage statistic unchanged; its k-means stage clusters 900k points
+  in under a second, leaving logistic training as the one hot stage
+  still on the VM. The DP4 benchmark and micro set are unchanged.
+  Still open for the full ML-loop win: the nested-list kind
+  (`cols[j][i]`) and native fused list append for the logistic
+  forward pass.
+
 - **Native list writes: `col.set` lowers to machine code.** The raw
   typed-list kinds gained their write half. `ListSetAssign` on a
   `ListFloatRaw`/`ListIntRaw` register compiles to a helper call that

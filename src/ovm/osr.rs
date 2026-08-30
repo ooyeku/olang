@@ -172,20 +172,15 @@ fn synthesize_region(bytecode: &CompiledBytecode, h: usize, e: usize) -> Option<
     }
     let exit_pc = exits[0];
 
-    // Reads and writes inside the region, from the optimizer's model; an
-    // unmodeled instruction refuses (the JIT would too, later — this is
-    // just cheaper).
+    // Reads and writes inside the region, from the optimizer's total
+    // model. Compilability is not judged here — the JIT's whitelist
+    // gates the synthesized function; a refused region falls to the
+    // next-smaller candidate.
     let nregs = bytecode.register_count as usize;
     let mut reads = vec![false; nregs];
     let mut writes = vec![false; nregs];
     for inst in region {
-        let Some((uses, defs)) = BytecodeOptimizer::uses_defs(inst) else {
-            refuse(
-                bytecode,
-                &format!("an unmodeled instruction inside the region: {:?}", inst),
-            );
-            return None;
-        };
+        let (uses, defs) = BytecodeOptimizer::uses_defs(inst);
         for u in uses {
             if (u as usize) < nregs {
                 reads[u as usize] = true;
