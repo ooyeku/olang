@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Native list writes: `col.set` lowers to machine code.** The raw
+  typed-list kinds gained their write half. `ListSetAssign` on a
+  `ListFloatRaw`/`ListIntRaw` register compiles to a helper call that
+  enforces the language's value semantics through an ownership
+  oracle: the ScratchCtx's Arc families now distinguish caller-owned
+  lists (`*_args` — also the deopt state) from region-born ones
+  (`*_allocs`), so a first write to a caller's list copies it into
+  the alloc family and every subsequent write mutates in place —
+  a rewrite loop is O(n) with one copy, exactly the VM's
+  Arc-clone-on-shared behavior, and the caller's binding is
+  provably untouched on deopt. A static alias scan gates admission
+  (a written register that is also moved, passed to a call, or
+  packed into a list/map refuses the region), out-of-bounds or
+  unknown pointers deopt cleanly, and MAX_TUPLE rises 16 → 24 so
+  write-heavy regions can marshal their live-outs. A 40M-op
+  read+write loop over a 2M-float list runs in 493 ms native. The
+  k-means assignment loop still refuses, and the refusal now names
+  the precise next gate: a reused register carries mask
+  `K_INT|K_UNIT` (an if-without-else Unit result sharing a register
+  with an Int temp), which flow-insensitive inference cannot split —
+  SSA-style register splitting at region synthesis is the recorded
+  fix, ahead of the nested-list kind and the fused-append lowering.
+
 - **Raw typed-list kinds in the native ABI.** The JIT gained
   `ListFloatRaw`/`ListIntRaw`: a typed list (the OVM's
   `Vec<f64>`/`Vec<i64>` backing) crosses every native boundary — the

@@ -127,3 +127,37 @@ fn captured_big_lists_stay_cheap_across_millions_of_calls() {
          println(`${len(g)} ${g[0]} ${g[49999]}`)",
     );
 }
+
+#[test]
+fn native_col_set_keeps_value_semantics() {
+    // The write loop runs native (col.set on a raw list inside an OSR
+    // region); the caller's list must stay untouched — the first write
+    // copies, exactly as the VM's Arc semantics do.
+    assert_tiers_agree(
+        "fn double_all(xs) = {\n\
+             let n = len(xs)\n\
+             let mut out = xs\n\
+             for i in 0..n { out = col.set(out, i, out[i] * 2.0) }\n\
+             out\n\
+         }\n\
+         let big = map(0..50000, (i) => to_float(i))\n\
+         let d = double_all(big)\n\
+         println(`${d[0]} ${d[1]} ${d[49999]} ${len(d)}`)\n\
+         println(`${big[49999]} ${d[49999]}`)\n\
+         let mut ints = map(0..50000, (i) => i)\n\
+         for i in 0..50000 { ints = col.set(ints, i, ints[i] + 1) }\n\
+         println(`${ints[0]} ${ints[49999]}`)",
+    );
+}
+
+#[test]
+fn native_col_set_out_of_bounds_matches_the_oracle() {
+    assert_tiers_agree(
+        "fn f(xs) = {\n\
+             let mut out = xs\n\
+             for i in 0..600 { out = col.set(out, i, 1.0) }\n\
+             out\n\
+         }\n\
+         println(f(map(0..500, (i) => to_float(i))))",
+    );
+}

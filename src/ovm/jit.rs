@@ -88,8 +88,15 @@ pub struct ScratchCtx {
     /// Arc. Native code never allocates these, so there is no allocs
     /// family.
     float_list_args: Vec<Arc<Vec<f64>>>,
+    /// Region-born raw lists: the copies the write helpers make when a
+    /// caller-owned list is first written. Owned by the region alone,
+    /// so later writes mutate them in place; excluded from the
+    /// mark/release truncation because an accumulator must survive
+    /// back edges.
+    float_list_allocs: Vec<Arc<Vec<f64>>>,
     retained_float_list: Option<Arc<Vec<f64>>>,
     int_list_args: Vec<Arc<Vec<i64>>>,
+    int_list_allocs: Vec<Arc<Vec<i64>>>,
     retained_int_list: Option<Arc<Vec<i64>>>,
     map_allocs: Vec<Arc<HashMap<String, OvmValue>>>,
     map_args: Vec<Arc<HashMap<String, OvmValue>>>,
@@ -122,8 +129,10 @@ impl ScratchCtx {
         self.list_args.clear();
         self.retained_list = None;
         self.float_list_args.clear();
+        self.float_list_allocs.clear();
         self.retained_float_list = None;
         self.int_list_args.clear();
+        self.int_list_allocs.clear();
         self.retained_int_list = None;
         self.map_allocs.clear();
         self.map_args.clear();
@@ -1130,9 +1139,8 @@ unsafe fn scalar_from_bits(kind: i64, bits: i64) -> OvmValue {
     }
 }
 
-/// Raw-typed-list twins of olang_jit_retain: pass-through returns only
-/// (native code never allocates a raw list), so resolution scans the
-/// argument keepalives alone.
+/// Raw-typed-list twins of olang_jit_retain: resolution scans the
+/// argument keepalives and the region-born write copies.
 ///
 /// # Safety
 /// Called only from JIT code with the call's own ctx.
@@ -1142,6 +1150,7 @@ unsafe extern "C" fn olang_jit_float_list_retain(ctx: *mut ScratchCtx, ptr: i64)
         if let Some(l) = ctx
             .float_list_args
             .iter()
+            .chain(ctx.float_list_allocs.iter())
             .find(|l| Arc::as_ptr(l) as i64 == ptr)
         {
             ctx.retained_float_list = Some(l.clone());
@@ -1159,12 +1168,155 @@ unsafe extern "C" fn olang_jit_int_list_retain(ctx: *mut ScratchCtx, ptr: i64) -
         if let Some(l) = ctx
             .int_list_args
             .iter()
+            .chain(ctx.int_list_allocs.iter())
             .find(|l| Arc::as_ptr(l) as i64 == ptr)
         {
             ctx.retained_int_list = Some(l.clone());
             return 0;
         }
         1
+    }
+}
+
+/// Raw typed-list writes (`col.set`), with the ownership families as
+/// the aliasing oracle: a pointer that resolves to an ARGUMENT list is
+/// caller-owned (and part of the deopt state), so the write copies it
+/// into a region-born alloc; a pointer that resolves to an ALLOC is
+/// owned by this region alone and mutates in place. Returns the
+/// (possibly new) list pointer, or 0 to deopt (index out of bounds, or
+/// a pointer from neither family). Negative indices wrap, as the VM's
+/// col.set does.
+///
+/// # Safety
+/// Called only from JIT code with the call's own ctx.
+unsafe extern "C" fn olang_jit_set_rawf(
+    ctx: *mut ScratchCtx,
+    list: i64,
+    idx: i64,
+    bits: i64,
+) -> i64 {
+    unsafe {
+        let ctx = &mut *ctx;
+        let value = f64::from_bits(bits as u64);
+        if let Some(pos) = ctx
+            .float_list_allocs
+            .iter()
+            .position(|l| Arc::as_ptr(l) as i64 == list)
+        {
+            let arc = &mut ctx.float_list_allocs[pos];
+            // Region-born allocs are uniquely owned by construction; if
+            // anything ever holds a second reference, fall back to the
+            // copy path rather than trusting the invariant.
+            match Arc::get_mut(arc) {
+                Some(items) => {
+                    let len = items.len() as i64;
+                    let at = if idx < 0 { len + idx } else { idx };
+                    if at < 0 || at >= len {
+                        return 0;
+                    }
+                    items[at as usize] = value;
+                    return list;
+                }
+                None => {
+                    let src = arc.clone();
+                    let len = src.len() as i64;
+                    let at = if idx < 0 { len + idx } else { idx };
+                    if at < 0 || at >= len {
+                        return 0;
+                    }
+                    let mut items = (*src).clone();
+                    items[at as usize] = value;
+                    let fresh = Arc::new(items);
+                    let ptr = Arc::as_ptr(&fresh) as i64;
+                    ctx.float_list_allocs.push(fresh);
+                    return ptr;
+                }
+            }
+        }
+        if let Some(src) = ctx
+            .float_list_args
+            .iter()
+            .find(|l| Arc::as_ptr(l) as i64 == list)
+        {
+            let len = src.len() as i64;
+            let at = if idx < 0 { len + idx } else { idx };
+            if at < 0 || at >= len {
+                return 0;
+            }
+            let mut items = (**src).clone();
+            items[at as usize] = value;
+            let arc = Arc::new(items);
+            let ptr = Arc::as_ptr(&arc) as i64;
+            ctx.float_list_allocs.push(arc);
+            return ptr;
+        }
+        0
+    }
+}
+
+/// # Safety
+/// Called only from JIT code with the call's own ctx.
+unsafe extern "C" fn olang_jit_set_rawi(
+    ctx: *mut ScratchCtx,
+    list: i64,
+    idx: i64,
+    value: i64,
+) -> i64 {
+    unsafe {
+        let ctx = &mut *ctx;
+        if let Some(pos) = ctx
+            .int_list_allocs
+            .iter()
+            .position(|l| Arc::as_ptr(l) as i64 == list)
+        {
+            let arc = &mut ctx.int_list_allocs[pos];
+            // Region-born allocs are uniquely owned by construction; if
+            // anything ever holds a second reference, fall back to the
+            // copy path rather than trusting the invariant.
+            match Arc::get_mut(arc) {
+                Some(items) => {
+                    let len = items.len() as i64;
+                    let at = if idx < 0 { len + idx } else { idx };
+                    if at < 0 || at >= len {
+                        return 0;
+                    }
+                    items[at as usize] = value;
+                    return list;
+                }
+                None => {
+                    let src = arc.clone();
+                    let len = src.len() as i64;
+                    let at = if idx < 0 { len + idx } else { idx };
+                    if at < 0 || at >= len {
+                        return 0;
+                    }
+                    let mut items = (*src).clone();
+                    items[at as usize] = value;
+                    let fresh = Arc::new(items);
+                    let ptr = Arc::as_ptr(&fresh) as i64;
+                    ctx.int_list_allocs.push(fresh);
+                    return ptr;
+                }
+            }
+        }
+        if let Some(src) = ctx
+            .int_list_args
+            .iter()
+            .find(|l| Arc::as_ptr(l) as i64 == list)
+        {
+            let len = src.len() as i64;
+            let at = if idx < 0 { len + idx } else { idx };
+            if at < 0 || at >= len {
+                return 0;
+            }
+            let mut items = (**src).clone();
+            items[at as usize] = value;
+            let arc = Arc::new(items);
+            let ptr = Arc::as_ptr(&arc) as i64;
+            ctx.int_list_allocs.push(arc);
+            return ptr;
+        }
+        0
     }
 }
 
@@ -1391,6 +1543,8 @@ impl JitCache {
             builder.symbol("olang_jit_index_rawi", olang_jit_index_rawi as *const u8);
             builder.symbol("olang_jit_len_rawf", olang_jit_len_rawf as *const u8);
             builder.symbol("olang_jit_len_rawi", olang_jit_len_rawi as *const u8);
+            builder.symbol("olang_jit_set_rawf", olang_jit_set_rawf as *const u8);
+            builder.symbol("olang_jit_set_rawi", olang_jit_set_rawi as *const u8);
             self.module = Some(JITModule::new(builder));
         }
         self.module.as_mut()
@@ -1814,15 +1968,42 @@ impl JitCache {
         let result = if status != STATUS_OK {
             None
         } else if let Some(tk) = &ret_tuple {
-            let elems: Vec<OvmValue> = tk
-                .iter()
-                .zip(out.iter())
-                .map(|(k, bits)| match k {
+            // Ref-kind elements (a written raw list flowing out of an
+            // OSR region) resolve their pointer against the ownership
+            // families; an unresolvable pointer refuses the whole
+            // result, exactly like a failed retain.
+            let mut elems: Vec<OvmValue> = Vec::with_capacity(tk.len());
+            for (k, bits) in tk.iter().zip(out.iter()) {
+                let v = match k {
                     Kind::Int => OvmValue::new_integer(*bits),
                     Kind::Bool => OvmValue::new_boolean(*bits != 0),
+                    Kind::Float => OvmValue::new_float(f64::from_bits(*bits as u64)),
+                    Kind::ListFloatRaw => {
+                        let ptr = *bits;
+                        let l = ctx
+                            .float_list_args
+                            .iter()
+                            .chain(ctx.float_list_allocs.iter())
+                            .find(|l| Arc::as_ptr(l) as i64 == ptr)?;
+                        OvmValue {
+                            data: ValueData::FloatList(l.clone()),
+                        }
+                    }
+                    Kind::ListIntRaw => {
+                        let ptr = *bits;
+                        let l = ctx
+                            .int_list_args
+                            .iter()
+                            .chain(ctx.int_list_allocs.iter())
+                            .find(|l| Arc::as_ptr(l) as i64 == ptr)?;
+                        OvmValue {
+                            data: ValueData::IntList(l.clone()),
+                        }
+                    }
                     _ => OvmValue::new_float(f64::from_bits(*bits as u64)),
-                })
-                .collect();
+                };
+                elems.push(v);
+            }
             Some(OvmValue::new_tuple(elems))
         } else {
             match ret_kind {
@@ -2520,6 +2701,26 @@ impl JitCache {
                 .declare_function("olang_jit_len_rawi", Linkage::Import, &sig)
                 .ok()?
         };
+        let set_rawf_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..4 {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_set_rawf", Linkage::Import, &sig)
+                .ok()?
+        };
+        let set_rawi_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..4 {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_set_rawi", Linkage::Import, &sig)
+                .ok()?
+        };
         let mut clif_ids = Vec::with_capacity(plans.len());
         for (plan, inf) in plans.iter().zip(&inferences) {
             let mut sig = module.make_signature();
@@ -2590,6 +2791,8 @@ impl JitCache {
                         index_rawi: index_rawi_helper,
                         len_rawf: len_rawf_helper,
                         len_rawi: len_rawi_helper,
+                        set_rawf: set_rawf_helper,
+                        set_rawi: set_rawi_helper,
                         make_struct: make_struct_helper,
                         str_cmp: str_cmp_helper,
                         str_concat: str_concat_helper,
@@ -2804,6 +3007,9 @@ pub(crate) fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
     {
         return false;
     }
+    if !list_write_targets_unaliased(bytecode) {
+        return false;
+    }
     bytecode.instructions.iter().all(|inst| match inst {
         Instruction::LoadConst { const_idx, .. } => {
             match bytecode.constants.get(*const_idx as usize).map(|c| &c.data) {
@@ -2868,6 +3074,11 @@ pub(crate) fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         // A tail self-call is a backward jump to the entry with a
         // parameter rebind — a native loop once compiled.
         Instruction::TailCallSelf { .. } => true,
+        // In-place list writes: sound only when no second register can
+        // watch the same buffer — checked function-wide by
+        // list_write_targets_unaliased below (part of this whitelist's
+        // caller contract via the conjunction at the end).
+        Instruction::ListSetAssign { .. } => true,
         // Allocation is allowed only in straight-line code (constructors).
         // In a native loop every allocation would live until the call
         // ends — the scratch model's memory cost — and a cap-triggered
@@ -2911,6 +3122,64 @@ pub(crate) fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         Instruction::Return { value } => value.is_some(),
         _ => false,
     })
+}
+
+/// The static half of the list-write aliasing contract: a register that
+/// is ever the target of ListSetAssign must never be duplicated into a
+/// second register or handed to a callee — otherwise an in-place write
+/// through one name would be visible through the other, where the VM's
+/// Arc semantics would have diverged them. The one permitted alias is
+/// the exit write-back: a MakeTuple whose result goes straight to
+/// Return, with no jump target at or past the MakeTuple (so no write
+/// can execute after it).
+fn list_write_targets_unaliased(bytecode: &CompiledBytecode) -> bool {
+    use std::collections::HashSet;
+    let mut targets: HashSet<u32> = HashSet::new();
+    for inst in bytecode.instructions.iter() {
+        if let Instruction::ListSetAssign { target, .. } = inst {
+            targets.insert(target.0);
+        }
+    }
+    if targets.is_empty() {
+        return true;
+    }
+    let max_jump_target = bytecode
+        .instructions
+        .iter()
+        .flat_map(|i| match i {
+            Instruction::Jump { target }
+            | Instruction::JumpIfTrue { target, .. }
+            | Instruction::JumpIfFalse { target, .. } => Some(target.0 as usize),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0);
+    for (pc, inst) in bytecode.instructions.iter().enumerate() {
+        let aliased = match inst {
+            Instruction::Move { src, .. } | Instruction::TakeMove { src, .. } => {
+                targets.contains(&src.0)
+            }
+            Instruction::CallFn { args, .. } => args.iter().any(|a| targets.contains(&a.0)),
+            Instruction::CallNamed { args, .. } | Instruction::CallBuiltin { args, .. } => {
+                args.iter().any(|a| targets.contains(&a.0))
+            }
+            Instruction::TailCallSelf { args } => args.iter().any(|a| targets.contains(&a.0)),
+            Instruction::MakeList { elements, .. } => {
+                elements.iter().any(|e| targets.contains(&e.0))
+            }
+            Instruction::MakeTuple { elements, .. } => {
+                elements.iter().any(|e| targets.contains(&e.0)) && pc <= max_jump_target
+            }
+            Instruction::MakeMap { entries, .. } => entries
+                .iter()
+                .any(|(k, v)| targets.contains(&k.0) || targets.contains(&v.0)),
+            _ => false,
+        };
+        if aliased {
+            return false;
+        }
+    }
+    true
 }
 
 /// How many non-plumbing instructions an allocating body must carry
@@ -2998,7 +3267,7 @@ const K_MAP: u16 = 512;
 /// live-outs as one tuple. Tuple variables address as
 /// tuple_base + r * MAX_TUPLE + i, so the cost of the headroom is
 /// Cranelift variable space, not runtime work.
-pub(crate) const MAX_TUPLE: usize = 16;
+pub(crate) const MAX_TUPLE: usize = 24;
 const K_NUM: u16 = K_INT | K_FLOAT;
 const K_ANY: u16 =
     K_INT | K_BOOL | K_UNIT | K_FLOAT | K_STRUCT | K_LIST | K_TUPLE | K_STR | K_RESULT | K_MAP;
@@ -3278,6 +3547,15 @@ pub(crate) fn for_each_reg(
             f(dst);
             f(object);
             f(index);
+        }
+        I::ListSetAssign {
+            target,
+            index,
+            value,
+        } => {
+            f(target);
+            f(index);
+            f(value);
         }
         _ => return false,
     }
@@ -4411,6 +4689,25 @@ impl PlanFn {
                         kind_mask(spec.field_kinds[idx])
                     );
                 }
+                Instruction::ListSetAssign {
+                    target,
+                    index,
+                    value,
+                } => {
+                    narrow!(target.0, K_LIST);
+                    narrow!(index.0, K_INT);
+                    match self.exotic[target.0 as usize] {
+                        Some(Kind::ListFloatRaw) => narrow!(value.0, K_FLOAT),
+                        Some(Kind::ListIntRaw) => narrow!(value.0, K_INT),
+                        // Boxed and other list layouts keep their writes
+                        // on the VM in this piece.
+                        None => continue,
+                        _ => return None,
+                    }
+                    // The write re-defines the target with the same kind
+                    // (the pointer may change; the layout does not).
+                    grow!(self.writes[target.0 as usize], K_LIST);
+                }
                 Instruction::IndexGet { dst, object, index } => {
                     narrow!(object.0, K_LIST);
                     narrow!(index.0, K_INT);
@@ -4996,8 +5293,12 @@ impl PlanFn {
                         self.return_regs.push(reg.0);
                         grow!(self.ret_mask, kind_mask(rk));
                     } else if let Some(
-                        lk
-                        @ (Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_) | Kind::ListStr),
+                        lk @ (Kind::ListInt
+                        | Kind::ListFloat
+                        | Kind::ListFloatRaw
+                        | Kind::ListIntRaw
+                        | Kind::ListStruct(_)
+                        | Kind::ListStr),
                     ) = self.exotic[reg.0 as usize]
                     {
                         narrow!(reg.0, K_LIST);
@@ -5304,6 +5605,8 @@ struct Helpers {
     index_rawi: cranelift_module::FuncId,
     len_rawf: cranelift_module::FuncId,
     len_rawi: cranelift_module::FuncId,
+    set_rawf: cranelift_module::FuncId,
+    set_rawi: cranelift_module::FuncId,
     make_struct: cranelift_module::FuncId,
     str_cmp: cranelift_module::FuncId,
     str_concat: cranelift_module::FuncId,
@@ -5375,6 +5678,8 @@ fn translate_body(
         index_rawi: index_rawi_helper,
         len_rawf: len_rawf_helper,
         len_rawi: len_rawi_helper,
+        set_rawf: set_rawf_helper,
+        set_rawi: set_rawi_helper,
         make_struct: make_struct_helper,
         str_cmp: str_cmp_helper,
         str_concat: str_concat_helper,
@@ -6350,6 +6655,48 @@ fn translate_body(
                 builder.switch_to_block(ok_block);
                 let val = builder.ins().stack_load(ptr_ty, load_ty, slot, 0);
                 r#gen.write(builder, dst.0, val);
+            }
+            Instruction::ListSetAssign {
+                target,
+                index,
+                value,
+            } => {
+                let (which, val_is_float) = match r#gen.kind(target.0)? {
+                    Kind::ListFloatRaw => (set_rawf_helper, true),
+                    Kind::ListIntRaw => (set_rawi_helper, false),
+                    _ => return None,
+                };
+                let ctx = builder.use_var(ctx_var);
+                let list_ptr = builder.use_var(Variable::from_u32(target.0));
+                let idx_v = r#gen.read(builder, index.0)?;
+                let raw_val = r#gen.read(builder, value.0)?;
+                let val_bits = if val_is_float {
+                    // Float bits through a stack slot — the codebase's
+                    // idiom for reinterpreting between F64 and I64.
+                    let bits_slot =
+                        builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                            cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        ));
+                    builder.ins().stack_store(ptr_ty, raw_val, bits_slot, 0);
+                    builder.ins().stack_load(ptr_ty, types::I64, bits_slot, 0)
+                } else {
+                    raw_val
+                };
+                let helper_ref = module.declare_func_in_func(which, builder.func);
+                let call = builder
+                    .ins()
+                    .call(helper_ref, &[ctx, list_ptr, idx_v, val_bits]);
+                let new_ptr = builder.inst_results(call)[0];
+                // 0 means out of bounds or an unowned pointer: deopt and
+                // let the VM raise its own error.
+                let ok_block = builder.create_block();
+                builder.ins().brif(new_ptr, ok_block, &[], deopt_block, &[]);
+                builder.switch_to_block(ok_block);
+                // The write may have copied: rebind the register to the
+                // pointer the helper settled on.
+                builder.def_var(Variable::from_u32(target.0), new_ptr);
             }
             Instruction::IndexGet { dst, object, index } => {
                 let obj_kind = r#gen.kind(object.0)?;
