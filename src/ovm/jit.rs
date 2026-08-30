@@ -83,6 +83,14 @@ pub struct ScratchCtx {
     list_allocs: Vec<Arc<Vec<OvmValue>>>,
     list_args: Vec<Arc<Vec<OvmValue>>>,
     retained_list: Option<Arc<Vec<OvmValue>>>,
+    /// The raw typed-list families (Kind::ListFloatRaw / ListIntRaw):
+    /// argument keepalives and, for a pass-through return, the resolved
+    /// Arc. Native code never allocates these, so there is no allocs
+    /// family.
+    float_list_args: Vec<Arc<Vec<f64>>>,
+    retained_float_list: Option<Arc<Vec<f64>>>,
+    int_list_args: Vec<Arc<Vec<i64>>>,
+    retained_int_list: Option<Arc<Vec<i64>>>,
     map_allocs: Vec<Arc<HashMap<String, OvmValue>>>,
     map_args: Vec<Arc<HashMap<String, OvmValue>>>,
     retained_map: Option<Arc<HashMap<String, OvmValue>>>,
@@ -113,6 +121,10 @@ impl ScratchCtx {
         self.list_allocs.clear();
         self.list_args.clear();
         self.retained_list = None;
+        self.float_list_args.clear();
+        self.retained_float_list = None;
+        self.int_list_args.clear();
+        self.retained_int_list = None;
         self.map_allocs.clear();
         self.map_args.clear();
         self.retained_map = None;
@@ -291,6 +303,12 @@ pub enum Kind {
     /// Per-read helper guards keep differently-typed elements safe.
     ListFloat,
     ListInt,
+    /// A typed list argument (the OVM's FloatList/IntList): a borrowed
+    /// pointer to the raw Vec<f64>/Vec<i64> itself — 8-byte stride, no
+    /// boxed elements. Read-only in native code; regions that write
+    /// lists stay on the VM until the write helpers land.
+    ListFloatRaw,
+    ListIntRaw,
     ListStruct(u32),
     /// A list argument whose elements are uniformly strings. Element
     /// reads hand out borrowed pointers into the list, valid for the
@@ -1112,6 +1130,98 @@ unsafe fn scalar_from_bits(kind: i64, bits: i64) -> OvmValue {
     }
 }
 
+/// Raw-typed-list twins of olang_jit_retain: pass-through returns only
+/// (native code never allocates a raw list), so resolution scans the
+/// argument keepalives alone.
+///
+/// # Safety
+/// Called only from JIT code with the call's own ctx.
+unsafe extern "C" fn olang_jit_float_list_retain(ctx: *mut ScratchCtx, ptr: i64) -> i64 {
+    unsafe {
+        let ctx = &mut *ctx;
+        if let Some(l) = ctx
+            .float_list_args
+            .iter()
+            .find(|l| Arc::as_ptr(l) as i64 == ptr)
+        {
+            ctx.retained_float_list = Some(l.clone());
+            return 0;
+        }
+        1
+    }
+}
+
+/// # Safety
+/// Called only from JIT code with the call's own ctx.
+unsafe extern "C" fn olang_jit_int_list_retain(ctx: *mut ScratchCtx, ptr: i64) -> i64 {
+    unsafe {
+        let ctx = &mut *ctx;
+        if let Some(l) = ctx
+            .int_list_args
+            .iter()
+            .find(|l| Arc::as_ptr(l) as i64 == ptr)
+        {
+            ctx.retained_int_list = Some(l.clone());
+            return 0;
+        }
+        1
+    }
+}
+
+/// Raw typed-list reads: 8-byte stride straight off the Vec.
+///
+/// # Safety
+/// Called only from JIT code with pointers extracted from live slots.
+unsafe extern "C" fn olang_jit_index_rawf(
+    list: *const Vec<f64>,
+    idx: i64,
+    wrap: i64,
+    out: *mut i64,
+) -> i64 {
+    unsafe {
+        let items = &*list;
+        let len = items.len() as i64;
+        let adjusted = if idx < 0 && wrap != 0 { len + idx } else { idx };
+        if adjusted < 0 || adjusted >= len {
+            return 1;
+        }
+        *out = items[adjusted as usize].to_bits() as i64;
+        0
+    }
+}
+
+/// # Safety
+/// Called only from JIT code with pointers extracted from live slots.
+unsafe extern "C" fn olang_jit_index_rawi(
+    list: *const Vec<i64>,
+    idx: i64,
+    wrap: i64,
+    out: *mut i64,
+) -> i64 {
+    unsafe {
+        let items = &*list;
+        let len = items.len() as i64;
+        let adjusted = if idx < 0 && wrap != 0 { len + idx } else { idx };
+        if adjusted < 0 || adjusted >= len {
+            return 1;
+        }
+        *out = items[adjusted as usize];
+        0
+    }
+}
+
+/// # Safety
+/// Called only from JIT code with pointers extracted from live slots.
+unsafe extern "C" fn olang_jit_len_rawf(list: *const Vec<f64>) -> i64 {
+    unsafe { (*list).len() as i64 }
+}
+
+/// # Safety
+/// Called only from JIT code with pointers extracted from live slots.
+unsafe extern "C" fn olang_jit_len_rawi(list: *const Vec<i64>) -> i64 {
+    unsafe { (*list).len() as i64 }
+}
+
 /// Map twin of olang_jit_retain: resolve a returned borrowed pointer to
 /// an owned Arc at the entry boundary.
 ///
@@ -1269,6 +1379,18 @@ impl JitCache {
             builder.symbol("olang_jit_release", olang_jit_release as *const u8);
             builder.symbol("olang_jit_list_concat", olang_jit_list_concat as *const u8);
             builder.symbol("olang_jit_list_retain", olang_jit_list_retain as *const u8);
+            builder.symbol(
+                "olang_jit_float_list_retain",
+                olang_jit_float_list_retain as *const u8,
+            );
+            builder.symbol(
+                "olang_jit_int_list_retain",
+                olang_jit_int_list_retain as *const u8,
+            );
+            builder.symbol("olang_jit_index_rawf", olang_jit_index_rawf as *const u8);
+            builder.symbol("olang_jit_index_rawi", olang_jit_index_rawi as *const u8);
+            builder.symbol("olang_jit_len_rawf", olang_jit_len_rawf as *const u8);
+            builder.symbol("olang_jit_len_rawi", olang_jit_len_rawi as *const u8);
             self.module = Some(JITModule::new(builder));
         }
         self.module.as_mut()
@@ -1369,9 +1491,6 @@ impl JitCache {
             return None;
         }
         let mut any_ref = false;
-        // Keepalives for typed lists converted to the boxed native ABI
-        // layout — dropped after the call returns.
-        let mut converted: Vec<Arc<Vec<OvmValue>>> = Vec::new();
         for (i, arg) in args.iter().enumerate() {
             match &arg.data {
                 ValueData::Integer(v) => {
@@ -1396,28 +1515,17 @@ impl JitCache {
                     bits[i] = Arc::as_ptr(items) as i64;
                     any_ref = true;
                 }
-                // Small typed lists cross into native in the boxed
-                // layout the ABI reads: one conversion per call. LARGE
-                // typed lists refuse the native boundary instead — a hot
-                // lambda capturing a 300k-element list would otherwise
-                // pay an O(n) conversion per element call, an O(n²)
-                // cliff. The VM executes those with the typed
-                // instruction fast paths; raw 8-byte-stride native kinds
-                // are the recorded next step.
-                ValueData::FloatList(_) | ValueData::IntList(_) => {
-                    const TYPED_BOUNDARY_MAX: usize = 1024;
-                    let small = match &arg.data {
-                        ValueData::FloatList(v) => v.len() <= TYPED_BOUNDARY_MAX,
-                        ValueData::IntList(v) => v.len() <= TYPED_BOUNDARY_MAX,
-                        _ => unreachable!("matched above"),
-                    };
-                    if !small {
-                        return None;
-                    }
-                    let conv = arg.to_boxed_list().expect("matched a list");
-                    kinds[i] = classify_list(&conv)?;
-                    bits[i] = Arc::as_ptr(&conv) as i64;
-                    converted.push(conv);
+                // Typed lists cross as raw kinds: a borrowed pointer to
+                // the Vec<f64>/Vec<i64> itself, read by the raw-stride
+                // helpers — no conversion at any size.
+                ValueData::FloatList(v) => {
+                    kinds[i] = Kind::ListFloatRaw;
+                    bits[i] = Arc::as_ptr(v) as i64;
+                    any_ref = true;
+                }
+                ValueData::IntList(v) => {
+                    kinds[i] = Kind::ListIntRaw;
+                    bits[i] = Arc::as_ptr(v) as i64;
                     any_ref = true;
                 }
                 ValueData::String(s) => {
@@ -1467,6 +1575,8 @@ impl JitCache {
         let mut str_args: Vec<Arc<String>> = Vec::new();
         let mut result_args: Vec<Arc<crate::ovm::value::ResultObject>> = Vec::new();
         let mut list_args: Vec<Arc<Vec<OvmValue>>> = Vec::new();
+        let mut float_list_args: Vec<Arc<Vec<f64>>> = Vec::new();
+        let mut int_list_args: Vec<Arc<Vec<i64>>> = Vec::new();
         let mut map_args: Vec<Arc<HashMap<String, OvmValue>>> = Vec::new();
         // The per-family sweep only matters when a reference-kind argument
         // exists; all-scalar calls (the common boundary) skip it whole.
@@ -1484,14 +1594,16 @@ impl JitCache {
                 if let ValueData::List(l) = &arg.data {
                     list_args.push(l.clone());
                 }
+                if let ValueData::FloatList(l) = &arg.data {
+                    float_list_args.push(l.clone());
+                }
+                if let ValueData::IntList(l) = &arg.data {
+                    int_list_args.push(l.clone());
+                }
                 if let ValueData::Map(m) = &arg.data {
                     map_args.push(m.clone());
                 }
             }
-            // Typed-list conversions join the list family: native code
-            // that returns one of its argument lists resolves the
-            // pointer through this set.
-            list_args.extend(converted.iter().cloned());
         }
         self.try_call_raw_with_shapes(
             func_id,
@@ -1505,6 +1617,8 @@ impl JitCache {
             &str_args,
             &result_args,
             &list_args,
+            &float_list_args,
+            &int_list_args,
             &map_args,
         )
     }
@@ -1595,6 +1709,8 @@ impl JitCache {
             &[],
             &[],
             &[],
+            &[],
+            &[],
         )
     }
 
@@ -1612,6 +1728,8 @@ impl JitCache {
         str_args_for_ctx: &[Arc<String>],
         result_args_for_ctx: &[Arc<crate::ovm::value::ResultObject>],
         list_args_for_ctx: &[Arc<Vec<OvmValue>>],
+        float_list_args_for_ctx: &[Arc<Vec<f64>>],
+        int_list_args_for_ctx: &[Arc<Vec<i64>>],
         map_args_for_ctx: &[Arc<HashMap<String, OvmValue>>],
     ) -> Option<OvmValue> {
         let idx = func_id.index();
@@ -1665,6 +1783,12 @@ impl JitCache {
         for l in list_args_for_ctx {
             ctx.list_args.push(l.clone());
         }
+        for l in float_list_args_for_ctx {
+            ctx.float_list_args.push(l.clone());
+        }
+        for l in int_list_args_for_ctx {
+            ctx.int_list_args.push(l.clone());
+        }
         // List constants can flow to the return value (a lambda returning
         // its captured list); their Arcs join the resolvable set.
         for c in bytecode.constants.iter() {
@@ -1711,6 +1835,12 @@ impl JitCache {
                 }),
                 Kind::Result(..) => ctx.retained_result.take().map(|arc| OvmValue {
                     data: ValueData::Result(arc),
+                }),
+                Kind::ListFloatRaw => ctx.retained_float_list.take().map(|arc| OvmValue {
+                    data: ValueData::FloatList(arc),
+                }),
+                Kind::ListIntRaw => ctx.retained_int_list.take().map(|arc| OvmValue {
+                    data: ValueData::IntList(arc),
                 }),
                 Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_) | Kind::ListStr => {
                     ctx.retained_list.take().map(|arc| OvmValue {
@@ -2336,6 +2466,60 @@ impl JitCache {
                 .declare_function("olang_jit_list_retain", Linkage::Import, &sig)
                 .ok()?
         };
+        let float_list_retain_helper = {
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_float_list_retain", Linkage::Import, &sig)
+                .ok()?
+        };
+        let int_list_retain_helper = {
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_int_list_retain", Linkage::Import, &sig)
+                .ok()?
+        };
+        let index_rawf_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..4 {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_index_rawf", Linkage::Import, &sig)
+                .ok()?
+        };
+        let index_rawi_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..4 {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_index_rawi", Linkage::Import, &sig)
+                .ok()?
+        };
+        let len_rawf_helper = {
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_len_rawf", Linkage::Import, &sig)
+                .ok()?
+        };
+        let len_rawi_helper = {
+            let mut sig = module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_len_rawi", Linkage::Import, &sig)
+                .ok()?
+        };
         let mut clif_ids = Vec::with_capacity(plans.len());
         for (plan, inf) in plans.iter().zip(&inferences) {
             let mut sig = module.make_signature();
@@ -2402,6 +2586,10 @@ impl JitCache {
                         math: math_helper,
                         index: index_helper,
                         len: len_helper,
+                        index_rawf: index_rawf_helper,
+                        index_rawi: index_rawi_helper,
+                        len_rawf: len_rawf_helper,
+                        len_rawi: len_rawi_helper,
                         make_struct: make_struct_helper,
                         str_cmp: str_cmp_helper,
                         str_concat: str_concat_helper,
@@ -2500,6 +2688,8 @@ impl JitCache {
                         | Kind::Result(..)
                         | Kind::ListInt
                         | Kind::ListFloat
+                        | Kind::ListFloatRaw
+                        | Kind::ListIntRaw
                         | Kind::ListStruct(_)
                         | Kind::ListStr
                         | Kind::Map(_)
@@ -2519,6 +2709,8 @@ impl JitCache {
                         Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_) | Kind::ListStr => {
                             list_retain_helper
                         }
+                        Kind::ListFloatRaw => float_list_retain_helper,
+                        Kind::ListIntRaw => int_list_retain_helper,
                         Kind::Map(_) => map_retain_helper,
                         _ => retain_helper,
                     };
@@ -2817,7 +3009,12 @@ fn kind_mask(k: Kind) -> u16 {
         Kind::Bool => K_BOOL,
         Kind::Float => K_FLOAT,
         Kind::Struct(_) => K_STRUCT,
-        Kind::ListFloat | Kind::ListInt | Kind::ListStruct(_) | Kind::ListStr => K_LIST,
+        Kind::ListFloat
+        | Kind::ListInt
+        | Kind::ListFloatRaw
+        | Kind::ListIntRaw
+        | Kind::ListStruct(_)
+        | Kind::ListStr => K_LIST,
         Kind::Str => K_STR,
         Kind::Result(..) => K_RESULT,
         Kind::Map(_) => K_MAP,
@@ -2839,9 +3036,12 @@ fn kind_discharges(
         Kind::Bool => check.accepts("Bool"),
         Kind::Str => check.accepts("String"),
         Kind::Result(okp, errp) => result_return_discharged(check, okp, errp),
-        Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_) | Kind::ListStr => {
-            check.accepts("List")
-        }
+        Kind::ListInt
+        | Kind::ListFloat
+        | Kind::ListFloatRaw
+        | Kind::ListIntRaw
+        | Kind::ListStruct(_)
+        | Kind::ListStr => check.accepts("List"),
         Kind::Map(_) => check.accepts("Map"),
         Kind::Struct(sid) => shapes
             .get(&sid)
@@ -4215,8 +4415,8 @@ impl PlanFn {
                     narrow!(object.0, K_LIST);
                     narrow!(index.0, K_INT);
                     let elem = match self.exotic[object.0 as usize] {
-                        Some(Kind::ListFloat) => Kind::Float,
-                        Some(Kind::ListInt) => Kind::Int,
+                        Some(Kind::ListFloat | Kind::ListFloatRaw) => Kind::Float,
+                        Some(Kind::ListInt | Kind::ListIntRaw) => Kind::Int,
                         Some(Kind::ListStruct(sid)) => Kind::Struct(sid),
                         Some(Kind::ListStr) => Kind::Str,
                         // A callee's list return resolves a fixpoint
@@ -4617,7 +4817,14 @@ impl PlanFn {
                     narrow!(src.0, K_LIST);
                     if !matches!(
                         self.exotic[src.0 as usize],
-                        Some(Kind::ListFloat | Kind::ListInt | Kind::ListStruct(_) | Kind::ListStr)
+                        Some(
+                            Kind::ListFloat
+                                | Kind::ListInt
+                                | Kind::ListFloatRaw
+                                | Kind::ListIntRaw
+                                | Kind::ListStruct(_)
+                                | Kind::ListStr
+                        )
                     ) {
                         return None; // ranges etc. stay on bytecode
                     }
@@ -4627,8 +4834,8 @@ impl PlanFn {
                     narrow!(src.0, K_LIST);
                     narrow!(idx.0, K_INT);
                     let elem = match self.exotic[src.0 as usize] {
-                        Some(Kind::ListFloat) => Kind::Float,
-                        Some(Kind::ListInt) => Kind::Int,
+                        Some(Kind::ListFloat | Kind::ListFloatRaw) => Kind::Float,
+                        Some(Kind::ListInt | Kind::ListIntRaw) => Kind::Int,
                         Some(Kind::ListStruct(sid)) => Kind::Struct(sid),
                         Some(Kind::ListStr) => Kind::Str,
                         _ => return None,
@@ -5093,6 +5300,10 @@ struct Helpers {
     math: cranelift_module::FuncId,
     index: cranelift_module::FuncId,
     len: cranelift_module::FuncId,
+    index_rawf: cranelift_module::FuncId,
+    index_rawi: cranelift_module::FuncId,
+    len_rawf: cranelift_module::FuncId,
+    len_rawi: cranelift_module::FuncId,
     make_struct: cranelift_module::FuncId,
     str_cmp: cranelift_module::FuncId,
     str_concat: cranelift_module::FuncId,
@@ -5160,6 +5371,10 @@ fn translate_body(
         math: math_helper,
         index: index_helper,
         len: len_helper,
+        index_rawf: index_rawf_helper,
+        index_rawi: index_rawi_helper,
+        len_rawf: len_rawf_helper,
+        len_rawi: len_rawi_helper,
         make_struct: make_struct_helper,
         str_cmp: str_cmp_helper,
         str_concat: str_concat_helper,
@@ -6067,14 +6282,47 @@ fn translate_body(
                 r#gen.write(builder, dst.0, val);
             }
             Instruction::IterLen { dst, src } => {
+                let which = match r#gen.kind(src.0)? {
+                    Kind::ListFloatRaw => len_rawf_helper,
+                    Kind::ListIntRaw => len_rawi_helper,
+                    _ => len_helper,
+                };
                 let list_ptr = builder.use_var(Variable::from_u32(src.0));
-                let helper_ref = module.declare_func_in_func(len_helper, builder.func);
+                let helper_ref = module.declare_func_in_func(which, builder.func);
                 let call = builder.ins().call(helper_ref, &[list_ptr]);
                 let val = builder.inst_results(call)[0];
                 r#gen.write(builder, dst.0, val);
             }
             Instruction::IterGet { dst, src, idx } => {
-                let (expect, expect_shape, load_ty) = match r#gen.kind(src.0)? {
+                let src_kind = r#gen.kind(src.0)?;
+                if matches!(src_kind, Kind::ListFloatRaw | Kind::ListIntRaw) {
+                    let (which, load_ty) = match src_kind {
+                        Kind::ListFloatRaw => (index_rawf_helper, types::F64),
+                        _ => (index_rawi_helper, types::I64),
+                    };
+                    let list_ptr = builder.use_var(Variable::from_u32(src.0));
+                    let idx_v = r#gen.read(builder, idx.0)?;
+                    let wrap_v = builder.ins().iconst(types::I64, 0);
+                    let slot =
+                        builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                            cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        ));
+                    let out_ptr = builder.ins().stack_addr(types::I64, slot, 0);
+                    let helper_ref = module.declare_func_in_func(which, builder.func);
+                    let call = builder
+                        .ins()
+                        .call(helper_ref, &[list_ptr, idx_v, wrap_v, out_ptr]);
+                    let status = builder.inst_results(call)[0];
+                    let ok_block = builder.create_block();
+                    builder.ins().brif(status, deopt_block, &[], ok_block, &[]);
+                    builder.switch_to_block(ok_block);
+                    let val = builder.ins().stack_load(ptr_ty, load_ty, slot, 0);
+                    r#gen.write(builder, dst.0, val);
+                    continue;
+                }
+                let (expect, expect_shape, load_ty) = match src_kind {
                     Kind::ListFloat => (FIELD_FLOAT, 0, types::F64),
                     Kind::ListInt => (FIELD_INT, 0, types::I64),
                     Kind::ListStruct(sid) => (EXPECT_STRUCT, sid as u64, types::I64),
@@ -6104,7 +6352,35 @@ fn translate_body(
                 r#gen.write(builder, dst.0, val);
             }
             Instruction::IndexGet { dst, object, index } => {
-                let (expect, expect_shape, load_ty) = match r#gen.kind(object.0)? {
+                let obj_kind = r#gen.kind(object.0)?;
+                if matches!(obj_kind, Kind::ListFloatRaw | Kind::ListIntRaw) {
+                    let (which, load_ty) = match obj_kind {
+                        Kind::ListFloatRaw => (index_rawf_helper, types::F64),
+                        _ => (index_rawi_helper, types::I64),
+                    };
+                    let list_ptr = builder.use_var(Variable::from_u32(object.0));
+                    let idx_v = r#gen.read(builder, index.0)?;
+                    let wrap_v = builder.ins().iconst(types::I64, 1);
+                    let slot =
+                        builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                            cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        ));
+                    let out_ptr = builder.ins().stack_addr(types::I64, slot, 0);
+                    let helper_ref = module.declare_func_in_func(which, builder.func);
+                    let call = builder
+                        .ins()
+                        .call(helper_ref, &[list_ptr, idx_v, wrap_v, out_ptr]);
+                    let status = builder.inst_results(call)[0];
+                    let ok_block = builder.create_block();
+                    builder.ins().brif(status, deopt_block, &[], ok_block, &[]);
+                    builder.switch_to_block(ok_block);
+                    let val = builder.ins().stack_load(ptr_ty, load_ty, slot, 0);
+                    r#gen.write(builder, dst.0, val);
+                    continue;
+                }
+                let (expect, expect_shape, load_ty) = match obj_kind {
                     Kind::ListFloat => (FIELD_FLOAT | 0x100, 0, types::F64),
                     Kind::ListInt => (FIELD_INT | 0x100, 0, types::I64),
                     Kind::ListStruct(sid) => (EXPECT_STRUCT | 0x100, sid as u64, types::I64),

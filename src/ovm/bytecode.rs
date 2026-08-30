@@ -2058,11 +2058,7 @@ impl BytecodeVm {
                     bits[i] = *b as i64;
                     kinds[i] = JitKind::Bool;
                 }
-                Ok(
-                    crate::ovm::value::ValueData::AstList(_)
-                    | crate::ovm::value::ValueData::FloatList(_)
-                    | crate::ovm::value::ValueData::IntList(_),
-                ) => {
+                Ok(crate::ovm::value::ValueData::AstList(_)) => {
                     let conv: std::sync::Arc<Vec<crate::ovm::value::OvmValue>> = self
                         .execution_state
                         .register_ref(*reg)
@@ -2130,6 +2126,16 @@ impl BytecodeVm {
                     kinds[i] = k;
                     any_ref = true;
                 }
+                Ok(crate::ovm::value::ValueData::FloatList(v)) => {
+                    bits[i] = std::sync::Arc::as_ptr(v) as i64;
+                    kinds[i] = JitKind::ListFloatRaw;
+                    any_ref = true;
+                }
+                Ok(crate::ovm::value::ValueData::IntList(v)) => {
+                    bits[i] = std::sync::Arc::as_ptr(v) as i64;
+                    kinds[i] = JitKind::ListIntRaw;
+                    any_ref = true;
+                }
                 other => {
                     if osr_debug {
                         eprintln!(
@@ -2177,6 +2183,8 @@ impl BytecodeVm {
         let mut map_args: Vec<
             std::sync::Arc<std::collections::HashMap<String, crate::ovm::value::OvmValue>>,
         > = Vec::new();
+        let mut float_list_args: Vec<std::sync::Arc<Vec<f64>>> = Vec::new();
+        let mut int_list_args: Vec<std::sync::Arc<Vec<i64>>> = Vec::new();
         list_args.extend(converted_lists.iter().cloned());
         if any_ref {
             for reg in &region.live_in {
@@ -2192,6 +2200,12 @@ impl BytecodeVm {
                     }
                     if let crate::ovm::value::ValueData::List(l) = &v.data {
                         list_args.push(l.clone());
+                    }
+                    if let crate::ovm::value::ValueData::FloatList(l) = &v.data {
+                        float_list_args.push(l.clone());
+                    }
+                    if let crate::ovm::value::ValueData::IntList(l) = &v.data {
+                        int_list_args.push(l.clone());
                     }
                     if let crate::ovm::value::ValueData::Map(m) = &v.data {
                         map_args.push(m.clone());
@@ -2212,6 +2226,8 @@ impl BytecodeVm {
             &str_args,
             &result_args,
             &list_args,
+            &float_list_args,
+            &int_list_args,
             &map_args,
         );
         let Some(result) = result else {
@@ -2392,6 +2408,16 @@ impl BytecodeVm {
                             }
                         }
                     }
+                    Ok(crate::ovm::value::ValueData::FloatList(v)) => {
+                        bits[i] = std::sync::Arc::as_ptr(v) as i64;
+                        kinds[i] = JitKind::ListFloatRaw;
+                        any_ref = true;
+                    }
+                    Ok(crate::ovm::value::ValueData::IntList(v)) => {
+                        bits[i] = std::sync::Arc::as_ptr(v) as i64;
+                        kinds[i] = JitKind::ListIntRaw;
+                        any_ref = true;
+                    }
                     Ok(crate::ovm::value::ValueData::Result(r)) => {
                         match crate::ovm::jit::classify_result(r) {
                             Some(k) => {
@@ -2454,6 +2480,8 @@ impl BytecodeVm {
                     Vec::new();
                 let mut list_args: Vec<std::sync::Arc<Vec<crate::ovm::value::OvmValue>>> =
                     Vec::new();
+                let mut float_list_args: Vec<std::sync::Arc<Vec<f64>>> = Vec::new();
+                let mut int_list_args: Vec<std::sync::Arc<Vec<i64>>> = Vec::new();
                 let mut map_args: Vec<
                     std::sync::Arc<std::collections::HashMap<String, crate::ovm::value::OvmValue>>,
                 > = Vec::new();
@@ -2474,6 +2502,12 @@ impl BytecodeVm {
                             }
                             if let crate::ovm::value::ValueData::List(l) = &v.data {
                                 list_args.push(l.clone());
+                            }
+                            if let crate::ovm::value::ValueData::FloatList(l) = &v.data {
+                                float_list_args.push(l.clone());
+                            }
+                            if let crate::ovm::value::ValueData::IntList(l) = &v.data {
+                                int_list_args.push(l.clone());
                             }
                             if let crate::ovm::value::ValueData::Map(m) = &v.data {
                                 map_args.push(m.clone());
@@ -2501,6 +2535,8 @@ impl BytecodeVm {
                     &str_args,
                     &result_args,
                     &list_args,
+                    &float_list_args,
+                    &int_list_args,
                     &map_args,
                 );
                 if profiled {

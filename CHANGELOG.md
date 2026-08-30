@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Raw typed-list kinds in the native ABI.** The JIT gained
+  `ListFloatRaw`/`ListIntRaw`: a typed list (the OVM's
+  `Vec<f64>`/`Vec<i64>` backing) crosses every native boundary — the
+  call boundary, OSR entry, the self-call fast path — as a borrowed
+  pointer to the raw vector itself, read by 8-byte-stride helpers. No
+  boxing, no conversion, no size cap: the earlier stopgap (box small
+  typed lists, refuse large ones) is gone. Indexing, `for` iteration,
+  and length run native over raw scalars — a summing loop over a
+  2M-float list measures 1.04 ns per element read — and pass-through
+  returns resolve through their own retain families. Read-only by
+  design for now: regions that write lists (`col.set`, the fused
+  append) still run on the VM, and the two remaining sub-gates for
+  the full ML-loop win are recorded — a nested-list kind for a
+  feature matrix (`cols[j][i]`), and native lowering for
+  `ListSetAssign`/list `AddAssign` with the sole-owner copy
+  semantics.
+
 - **The OSR marshal caps are raised, and refusals name themselves.**
   MAX_PARAMS 16 → 24 and MAX_TUPLE 8 → 16 (with the OSR live-in/out
   caps and the entry gate's own hardcoded 16 following), so a loop
