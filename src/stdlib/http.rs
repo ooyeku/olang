@@ -927,6 +927,10 @@ pub fn serve_blocking(
             .name(format!("olang-http-{}", worker_id + 1))
             .stack_size(32 * 1024 * 1024)
             .spawn(move || {
+                // In the census while serving: an idle worker counts as
+                // live, which correctly disables the stall abort for a
+                // program that may still receive external requests.
+                let _live = crate::stdlib::chan::live_guard();
                 loop {
                     let stream = {
                         let receiver = match receiver.lock() {

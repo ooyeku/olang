@@ -1925,6 +1925,22 @@ impl HelpSystem {
             "Ok(v) if it finished within ms, else Err(\"timed out\") — the task keeps running",
             &[r##"task.join_timeout(t, 2000)  // Err("timed out") leaves it running"##],
         );
+        self.doc_ex(
+            "task.list",
+            "task.list()",
+            "List",
+            "task",
+            "every task a live handle still watches: #{ id, state, elapsed_ms } (state: running/joining/done)",
+            &[r##"task.list()  // [#{ "id": 1, "state": "running", "elapsed_ms": 40 }]"##],
+        );
+        self.doc_ex(
+            "task.parked",
+            "task.parked()",
+            "List",
+            "task",
+            "threads blocked on unbounded waits right now: #{ thread, on, waited_ms }",
+            &[r##"task.parked()  // [#{ "thread": "main", "on": "chan.recv on channel #1", ... }]"##],
+        );
 
         // cell — the one mutable location, confined to its creating thread.
         self.doc_ex(
@@ -2007,6 +2023,14 @@ impl HelpSystem {
             "chan",
             "like recv, plus Err(\"timed out\") after ms milliseconds",
             &[r##"chan.recv_timeout(c, 500)  // Err("timed out") after 500 ms"##],
+        );
+        self.doc_ex(
+            "chan.stat",
+            "chan.stat(c)",
+            "Map",
+            "chan",
+            "a snapshot of the channel: #{ id, queued, closed, recv_waiting, send_waiting }",
+            &[r##"chan.stat(c)  // #{ "queued": 3, "closed": false, ... }"##],
         );
         self.doc_ex(
             "chan.close",

@@ -14,11 +14,40 @@ enum TaskSlot {
     Done(Result<Value, String>),
 }
 
-static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-static TASKS: OnceLock<Mutex<HashMap<u64, TaskSlot>>> = OnceLock::new();
+/// One task's registry entry: its slot plus when it was spawned, so
+/// `task.list()` can report elapsed time.
+struct Entry {
+    slot: TaskSlot,
+    started: std::time::Instant,
+}
 
-fn tasks() -> &'static Mutex<HashMap<u64, TaskSlot>> {
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+static TASKS: OnceLock<Mutex<HashMap<u64, Entry>>> = OnceLock::new();
+
+fn tasks() -> &'static Mutex<HashMap<u64, Entry>> {
     TASKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// A snapshot of every task a live handle still watches: (id, state,
+/// elapsed ms since spawn), for `task.list()`. A `Running` slot whose
+/// thread has already finished reports "done" — the memoized join just
+/// has not collected it yet, and "running" would be a lie.
+pub(crate) fn list() -> Vec<(u64, &'static str, u64)> {
+    let map = tasks().lock().unwrap();
+    let mut out: Vec<(u64, &'static str, u64)> = map
+        .iter()
+        .map(|(id, e)| {
+            let state = match &e.slot {
+                TaskSlot::Running(h) if h.is_finished() => "done",
+                TaskSlot::Running(_) => "running",
+                TaskSlot::Joining => "joining",
+                TaskSlot::Done(_) => "done",
+            };
+            (*id, state, e.started.elapsed().as_millis() as u64)
+        })
+        .collect();
+    out.sort();
+    out
 }
 
 pub(crate) fn next_id() -> u64 {
@@ -26,10 +55,13 @@ pub(crate) fn next_id() -> u64 {
 }
 
 pub(crate) fn register(id: u64, handle: JoinHandle<Result<Value, String>>) {
-    tasks()
-        .lock()
-        .unwrap()
-        .insert(id, TaskSlot::Running(handle));
+    tasks().lock().unwrap().insert(
+        id,
+        Entry {
+            slot: TaskSlot::Running(handle),
+            started: std::time::Instant::now(),
+        },
+    );
 }
 
 /// Held by a `Task` handle (behind an `Arc`, so all clones of the handle
@@ -93,7 +125,7 @@ pub(crate) fn join_until(
     loop {
         let ready = {
             let map = tasks().lock().unwrap();
-            match map.get(&id) {
+            match map.get(&id).map(|e| &e.slot) {
                 None => return None,
                 Some(TaskSlot::Done(r)) => return Some(Some(r.clone())),
                 Some(TaskSlot::Running(h)) => h.is_finished(),
@@ -117,32 +149,72 @@ pub(crate) fn join_until(
 /// a spawned task may join other tasks, and holding the lock while
 /// blocking would deadlock.
 pub(crate) fn join(id: u64) -> Option<Result<Value, String>> {
+    // An unbounded wait: park it so the stall detector counts this
+    // thread among the blocked. Sound to include — a join wakes when
+    // its target finishes, which requires the target to be running, so
+    // "every thread parked" still proves nothing can progress.
+    let token = crate::stdlib::chan::parked_token(format!("task.join on task {}", id));
+    let result = join_inner(id, token.as_ref());
+    drop(token);
+    result
+}
+
+fn join_inner(
+    id: u64,
+    park: Option<&crate::stdlib::chan::ParkToken>,
+) -> Option<Result<Value, String>> {
     loop {
         let handle = {
             let mut map = tasks().lock().unwrap();
-            match map.get(&id) {
-                None => return None,
-                Some(TaskSlot::Done(r)) => return Some(r.clone()),
-                Some(TaskSlot::Joining) => None,
-                Some(TaskSlot::Running(_)) => match map.insert(id, TaskSlot::Joining) {
-                    Some(TaskSlot::Running(h)) => Some(h),
-                    _ => unreachable!("slot state checked under the same lock"),
-                },
+            let started = map.get(&id).map(|e| e.started);
+            match (map.get(&id).map(|e| &e.slot), started) {
+                (None, _) => return None,
+                (Some(TaskSlot::Done(r)), _) => return Some(r.clone()),
+                (Some(TaskSlot::Joining), _) => None,
+                (Some(TaskSlot::Running(h)), Some(started)) => {
+                    if h.is_finished() {
+                        match map.insert(
+                            id,
+                            Entry {
+                                slot: TaskSlot::Joining,
+                                started,
+                            },
+                        ) {
+                            Some(Entry {
+                                slot: TaskSlot::Running(h),
+                                ..
+                            }) => Some((h, started)),
+                            _ => unreachable!("slot state checked under the same lock"),
+                        }
+                    } else {
+                        None
+                    }
+                }
+                (Some(TaskSlot::Running(_)), None) => unreachable!("entry has a start time"),
             }
         };
         match handle {
-            Some(h) => {
+            Some((h, started)) => {
                 let result = h
                     .join()
                     .unwrap_or_else(|_| Err("task thread panicked".to_string()));
-                tasks()
-                    .lock()
-                    .unwrap()
-                    .insert(id, TaskSlot::Done(result.clone()));
+                tasks().lock().unwrap().insert(
+                    id,
+                    Entry {
+                        slot: TaskSlot::Done(result.clone()),
+                        started,
+                    },
+                );
                 return Some(result);
             }
-            // Someone else is joining; wait for their result.
-            None => std::thread::sleep(std::time::Duration::from_millis(1)),
+            // Still running, or someone else is mid-join: tick the
+            // stall detector and look again.
+            None => {
+                if let Some(p) = park {
+                    p.tick();
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
         }
     }
 }

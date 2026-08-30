@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Concurrency you can see into (W6): the stall detector,
+  `task.list()`, `task.parked()`, and `chan.stat(c)`.** A `chan.recv`
+  no live thread could ever satisfy used to hang the program forever,
+  silently. Now the runtime proves the deadlock and says so. Every
+  thread that runs olang code — main, `spawn` workers, http workers,
+  parallel-map workers — is censused; every unbounded wait (a
+  blocking recv, a send against a full bounded channel, a
+  `task.join`) is a registered parked site, and blocking waits poll
+  under the hood so a parked thread can sample the world. When two
+  consecutive quarter-second samples agree that every censused thread
+  is parked — the park/unpark generation counter unchanged, parked
+  equal to live — no internal wake is possible and none can arrive,
+  and the program aborts (exit 101) with a report naming each blocked
+  site by thread, operation, and channel. The proof is conservative
+  by construction: a computing, sleeping, or timeout-bounded thread
+  counts live but never parked, and a running `http.serve` disables
+  the abort entirely because an external request can wake a worker.
+  `OLANG_STALL_ABORT=0` restores the hang for embedding hosts.
+  Introspection rides the same bookkeeping: `task.list()` reports
+  every watched task's id, state, and elapsed time; `task.parked()`
+  is the live view of blocked sites; `chan.stat(c)` snapshots a
+  channel's queue depth, closed flag, and waiting counts. Seven
+  subprocess tests pin the detector's two obligations — genuine
+  deadlocks die fast with the right sites named, and anything that
+  can still progress (a late sender, a rendezvous handoff, a clean
+  close-and-drain) is never touched.
+
 - **The logistic forward pass runs native: nested-list reads and the
   fused scalar append.** The last two ML-loop gates fell together.
   - A new `ListAppendAssign` instruction: the optimizer rewrites the

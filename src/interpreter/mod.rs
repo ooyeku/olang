@@ -1674,7 +1674,12 @@ impl Interpreter {
                 let handle = std::thread::Builder::new()
                     .name(format!("olang-spawn-{}", task_id))
                     .stack_size(64 * 1024 * 1024)
-                    .spawn(move || worker.eval_expr(&expr).map_err(|e| e.to_string()))
+                    .spawn(move || {
+                        // In the stall detector's census for its whole
+                        // life: this thread runs olang code.
+                        let _live = crate::stdlib::chan::live_guard();
+                        worker.eval_expr(&expr).map_err(|e| e.to_string())
+                    })
                     .map_err(|e| InterpreterError::RuntimeError {
                         message: format!("spawn: could not start thread: {}", e),
                     })?;
@@ -3837,6 +3842,7 @@ impl Interpreter {
                             .map(|(chunk_idx, chunk)| {
                                 let mut worker = self.thread_safe_clone();
                                 scope.spawn(move || {
+                                    let _live = crate::stdlib::chan::live_guard();
                                     for (i, item) in chunk.iter().enumerate() {
                                         run_one(&mut worker, item.clone())
                                             .map_err(|e| (chunk_idx * chunk_size + i, e))?;

@@ -86,8 +86,8 @@ this six times in a row.
 
 | Item | Observed | Status |
 |---|---|---|
-| Blocked-channel visibility | `chan.recv` with no sender hangs the program forever, silently | planned — `chan.recv_timeout(c, ms)` for bounded waits; detect the all-threads-parked stall and abort with a report naming the blocked sites |
-| Task/channel introspection | no way to ask what is running or blocked | planned — `task.list()` / channel state for the REPL and the profiler |
+| Blocked-channel visibility | `chan.recv` with no sender hangs the program forever, silently | shipped — the stall detector: every olang thread is censused, unbounded waits are parked sites, and an all-parked program aborts with a report naming each blocked site (`OLANG_STALL_ABORT=0` opts out) |
+| Task/channel introspection | no way to ask what is running or blocked | shipped — `task.list()`, `task.parked()`, `chan.stat(c)` |
 | Timeline reach | record/replay covers main-thread fs/net; db reads, channels, and workers run live and silently break the "clean replay is proof" property beyond a warning | planned |
 
 ## W7 — the engine keeps proving itself

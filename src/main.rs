@@ -357,6 +357,10 @@ fn main() {
 }
 
 fn run() -> i32 {
+    // The main interpreter thread joins the stall detector's census:
+    // with every olang-running thread counted, "all counted threads
+    // parked" proves a deadlock (src/stdlib/chan.rs).
+    let _live = olang::stdlib::chan::live_guard();
     // A binary produced by `olang build` carries its program appended
     // after the runtime. Run that and nothing else — checked before any
     // CLI parsing, so the bundled tool's own arguments reach it intact.

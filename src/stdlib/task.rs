@@ -89,7 +89,7 @@ pub fn handle(id: u64) -> Value {
 
 pub fn create_task_module() -> Value {
     let mut module = HashMap::new();
-    for (name, arity) in [("join", 1), ("join_timeout", 2)] {
+    for (name, arity) in [("join", 1), ("join_timeout", 2), ("list", 0), ("parked", 0)] {
         module.insert(
             name.to_string(),
             Value::Builtin(crate::ast::BuiltinFunction {
@@ -137,8 +137,54 @@ pub fn call_task_function(name: &str, args: Vec<Value>) -> Result<Value, Interpr
     match name {
         "join" => task_join(args),
         "join_timeout" => task_join_timeout(args),
+        "list" => task_list(args),
+        "parked" => task_parked(args),
         _ => Err(raise(format!("Unknown task function: {}", name))),
     }
+}
+
+/// Every task a live handle still watches, as `#{ id, state,
+/// elapsed_ms }` maps — the introspection the REPL and the profiler
+/// read. States: "running", "joining" (a thread is mid-collect), and
+/// "done" (finished; the memoized result may or may not be collected).
+fn task_list(args: Vec<Value>) -> Result<Value, InterpreterError> {
+    if !args.is_empty() {
+        return Err(raise("task.list takes no arguments".to_string()));
+    }
+    let rows = spawn_registry::list()
+        .into_iter()
+        .map(|(id, state, elapsed_ms)| {
+            let mut m = HashMap::new();
+            m.insert("id".to_string(), Value::Integer(id as i64));
+            m.insert(
+                "state".to_string(),
+                Value::String(Arc::new(state.to_string())),
+            );
+            m.insert("elapsed_ms".to_string(), Value::Integer(elapsed_ms as i64));
+            Value::Map(Arc::new(m))
+        })
+        .collect();
+    Ok(Value::List(Arc::new(rows)))
+}
+
+/// Every thread currently blocked in an unbounded wait, as
+/// `#{ thread, on, waited_ms }` maps — the live view behind the stall
+/// detector's report.
+fn task_parked(args: Vec<Value>) -> Result<Value, InterpreterError> {
+    if !args.is_empty() {
+        return Err(raise("task.parked takes no arguments".to_string()));
+    }
+    let rows = crate::stdlib::chan::parked_sites()
+        .into_iter()
+        .map(|(thread, what, waited_ms)| {
+            let mut m = HashMap::new();
+            m.insert("thread".to_string(), Value::String(Arc::new(thread)));
+            m.insert("on".to_string(), Value::String(Arc::new(what)));
+            m.insert("waited_ms".to_string(), Value::Integer(waited_ms as i64));
+            Value::Map(Arc::new(m))
+        })
+        .collect();
+    Ok(Value::List(Arc::new(rows)))
 }
 
 fn task_join(args: Vec<Value>) -> Result<Value, InterpreterError> {

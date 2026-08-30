@@ -722,12 +722,20 @@ The model is covered in
 |---|---|
 | `task.join(t)` | the task's value, or `Err(e)` if it failed — blocks until it finishes |
 | `task.join_timeout(t, ms)` | `Ok(v)` if it finished within `ms`, else `Err("timed out")` |
+| `task.list()` | every task a live handle still watches: `#{ id, state, elapsed_ms }` |
+| `task.parked()` | threads blocked on unbounded waits: `#{ thread, on, waited_ms }` |
 
 Neither wraps success in `Result` unnecessarily: `task.join` hands back
 the value itself, and reports failure as `Err(e)` so one bad worker is
 a value to handle rather than a crash. `task.join_timeout` *does* wrap,
 because it must distinguish "the task produced `Err`" from "we stopped
 waiting" — two very different things.
+
+`task.list` reports each watched task's state — `"running"`,
+`"joining"` (a thread is mid-collect), or `"done"` (finished, its
+memoized result still collectible). `task.parked` is the live view
+behind [the stall detector](#the-stall-detector)'s report: every thread
+currently blocked in an unbounded wait, and what it is waiting on.
 
 ```olang
 fn work(n) = { time.sleep(10); n * n }
@@ -813,12 +821,37 @@ boundary like anything else.
 | `chan.recv(c)` | blocks; `Ok(value)`, or `Err` when closed and drained |
 | `chan.try_recv(c)` | `Ok(value)`, `Err("channel is empty")`, or `Err("channel is closed")` |
 | `chan.recv_timeout(c, ms)` | like `recv`, plus `Err("timed out")` |
+| `chan.stat(c)` | a snapshot map: `id`, `queued`, `closed`, `recv_waiting`, `send_waiting` |
 | `chan.close(c)` | closes the sending side (idempotent) |
 
 Closing is cooperative and drains: after `chan.close(c)` new sends
 fail, but messages already queued are still received before `recv`
 starts reporting the close — so a consumer loop can simply `match` on
 `recv` and stop on `Err`.
+
+### The stall detector
+
+A `chan.recv` that no live thread can ever satisfy does not hang the
+program. The runtime keeps a census of every thread running olang code
+and a registry of every unbounded wait — blocking receives, sends
+against a full bounded channel, and `task.join`. When every counted
+thread has sat blocked in such a wait for two consecutive quarter-second
+samples, no internal wake is possible and none can arrive from outside,
+so the runtime prints each blocked site and aborts with exit code 101:
+
+```text
+deadlock: every live thread is blocked on an unbounded wait — nothing can ever send
+  main: task.join on task 1 (waiting 0.5s)
+  olang-spawn-1: chan.recv on channel #1 (waiting 0.5s)
+```
+
+A program that can still make progress is never interrupted: a thread
+that is computing, sleeping, or waiting with a bound (`recv_timeout`,
+`join_timeout`, `try_recv`) counts as live but not parked, and a
+running `http.serve` disables the abort entirely, because an incoming
+request can wake a worker at any time. Setting `OLANG_STALL_ABORT=0`
+restores the old behavior (the program hangs) for embedding hosts that
+manage their own threads.
 
 ```olang
 fn producer(ch, n) = {
