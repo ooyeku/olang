@@ -216,6 +216,9 @@ pub fn classify_list(items: &[OvmValue]) -> Option<Kind> {
         ValueData::Integer(_) => Kind::ListInt,
         ValueData::Struct(s) => Kind::ListStruct(s.shape.id),
         ValueData::String(_) => Kind::ListStr,
+        // A feature matrix: every element already in the typed layout,
+        // so indexing can hand out raw Vec<f64> pointers.
+        ValueData::FloatList(_) => Kind::ListListFloat,
         _ => return None,
     };
     for v in items.iter().skip(1) {
@@ -224,6 +227,7 @@ pub fn classify_list(items: &[OvmValue]) -> Option<Kind> {
             (ValueData::Integer(_), Kind::ListInt) => true,
             (ValueData::Struct(s), Kind::ListStruct(sid)) => s.shape.id == sid,
             (ValueData::String(_), Kind::ListStr) => true,
+            (ValueData::FloatList(_), Kind::ListListFloat) => true,
             _ => false,
         };
         if !ok {
@@ -314,10 +318,17 @@ pub enum Kind {
     ListInt,
     /// A typed list argument (the OVM's FloatList/IntList): a borrowed
     /// pointer to the raw Vec<f64>/Vec<i64> itself — 8-byte stride, no
-    /// boxed elements. Read-only in native code; regions that write
-    /// lists stay on the VM until the write helpers land.
+    /// boxed elements. Writes and appends go through the ownership-
+    /// family helpers (copy a caller's list once, then mutate the
+    /// region-born copy in place).
     ListFloatRaw,
     ListIntRaw,
+    /// A list of float lists (a feature matrix as columns): a borrowed
+    /// pointer to the outer Vec<OvmValue>, every element of which is a
+    /// FloatList. Indexing hands out the inner list's raw Vec<f64>
+    /// pointer. Read-only by construction: an inner pointer resolves in
+    /// no ownership family, so any write through it deopts.
+    ListListFloat,
     ListStruct(u32),
     /// A list argument whose elements are uniformly strings. Element
     /// reads hand out borrowed pointers into the list, valid for the
@@ -1320,6 +1331,123 @@ unsafe extern "C" fn olang_jit_set_rawi(
     }
 }
 
+/// Raw typed-list append (`x = x + [v]` fused), under the same
+/// ownership-family oracle as the writes: an argument list copies into
+/// a region-born alloc on its first append, an alloc pushes in place
+/// (a push may regrow the Vec's buffer, but the Arc target — the Vec
+/// struct itself — never moves, so the returned pointer is stable).
+/// Returns the (possibly new) list pointer, or 0 to deopt on a pointer
+/// from neither family.
+///
+/// # Safety
+/// Called only from JIT code with the call's own ctx.
+unsafe extern "C" fn olang_jit_append_rawf(ctx: *mut ScratchCtx, list: i64, bits: i64) -> i64 {
+    unsafe {
+        let ctx = &mut *ctx;
+        let value = f64::from_bits(bits as u64);
+        if let Some(pos) = ctx
+            .float_list_allocs
+            .iter()
+            .position(|l| Arc::as_ptr(l) as i64 == list)
+        {
+            let arc = &mut ctx.float_list_allocs[pos];
+            match Arc::get_mut(arc) {
+                Some(items) => {
+                    items.push(value);
+                    return list;
+                }
+                None => {
+                    let mut items = (**arc).clone();
+                    items.push(value);
+                    let fresh = Arc::new(items);
+                    let ptr = Arc::as_ptr(&fresh) as i64;
+                    ctx.float_list_allocs.push(fresh);
+                    return ptr;
+                }
+            }
+        }
+        if let Some(src) = ctx
+            .float_list_args
+            .iter()
+            .find(|l| Arc::as_ptr(l) as i64 == list)
+        {
+            let mut items = (**src).clone();
+            items.push(value);
+            let arc = Arc::new(items);
+            let ptr = Arc::as_ptr(&arc) as i64;
+            ctx.float_list_allocs.push(arc);
+            return ptr;
+        }
+        0
+    }
+}
+
+/// # Safety
+/// Called only from JIT code with the call's own ctx.
+unsafe extern "C" fn olang_jit_append_rawi(ctx: *mut ScratchCtx, list: i64, value: i64) -> i64 {
+    unsafe {
+        let ctx = &mut *ctx;
+        if let Some(pos) = ctx
+            .int_list_allocs
+            .iter()
+            .position(|l| Arc::as_ptr(l) as i64 == list)
+        {
+            let arc = &mut ctx.int_list_allocs[pos];
+            match Arc::get_mut(arc) {
+                Some(items) => {
+                    items.push(value);
+                    return list;
+                }
+                None => {
+                    let mut items = (**arc).clone();
+                    items.push(value);
+                    let fresh = Arc::new(items);
+                    let ptr = Arc::as_ptr(&fresh) as i64;
+                    ctx.int_list_allocs.push(fresh);
+                    return ptr;
+                }
+            }
+        }
+        if let Some(src) = ctx
+            .int_list_args
+            .iter()
+            .find(|l| Arc::as_ptr(l) as i64 == list)
+        {
+            let mut items = (**src).clone();
+            items.push(value);
+            let arc = Arc::new(items);
+            let ptr = Arc::as_ptr(&arc) as i64;
+            ctx.int_list_allocs.push(arc);
+            return ptr;
+        }
+        0
+    }
+}
+
+/// Feature-matrix indexing: `outer[idx]` where the outer list's
+/// elements are FloatLists. Returns the inner raw Vec<f64> pointer, or
+/// 0 to deopt (out of bounds, or an element demoted from the typed
+/// layout). The outer list is retained for the whole call in the args
+/// family, so the borrowed inner pointer needs no retain of its own —
+/// and it resolves in no ownership family, so writes through it deopt.
+///
+/// # Safety
+/// Called only from JIT code with pointers extracted from live slots.
+unsafe extern "C" fn olang_jit_index_ll(outer: *const Vec<OvmValue>, idx: i64, wrap: i64) -> i64 {
+    unsafe {
+        let items = &*outer;
+        let len = items.len() as i64;
+        let adjusted = if idx < 0 && wrap != 0 { len + idx } else { idx };
+        if adjusted < 0 || adjusted >= len {
+            return 0;
+        }
+        match &items[adjusted as usize].data {
+            ValueData::FloatList(inner) => Arc::as_ptr(inner) as i64,
+            _ => 0,
+        }
+    }
+}
+
 /// Raw typed-list reads: 8-byte stride straight off the Vec.
 ///
 /// # Safety
@@ -1545,6 +1673,9 @@ impl JitCache {
             builder.symbol("olang_jit_len_rawi", olang_jit_len_rawi as *const u8);
             builder.symbol("olang_jit_set_rawf", olang_jit_set_rawf as *const u8);
             builder.symbol("olang_jit_set_rawi", olang_jit_set_rawi as *const u8);
+            builder.symbol("olang_jit_append_rawf", olang_jit_append_rawf as *const u8);
+            builder.symbol("olang_jit_append_rawi", olang_jit_append_rawi as *const u8);
+            builder.symbol("olang_jit_index_ll", olang_jit_index_ll as *const u8);
             self.module = Some(JITModule::new(builder));
         }
         self.module.as_mut()
@@ -2033,11 +2164,13 @@ impl JitCache {
                 Kind::ListIntRaw => ctx.retained_int_list.take().map(|arc| OvmValue {
                     data: ValueData::IntList(arc),
                 }),
-                Kind::ListInt | Kind::ListFloat | Kind::ListStruct(_) | Kind::ListStr => {
-                    ctx.retained_list.take().map(|arc| OvmValue {
-                        data: ValueData::List(arc),
-                    })
-                }
+                Kind::ListInt
+                | Kind::ListFloat
+                | Kind::ListListFloat
+                | Kind::ListStruct(_)
+                | Kind::ListStr => ctx.retained_list.take().map(|arc| OvmValue {
+                    data: ValueData::List(arc),
+                }),
                 Kind::Map(_) => ctx.retained_map.take().map(|arc| OvmValue {
                     data: ValueData::Map(arc),
                 }),
@@ -2745,6 +2878,36 @@ impl JitCache {
                 .declare_function("olang_jit_set_rawi", Linkage::Import, &sig)
                 .ok()?
         };
+        let append_rawf_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..3 {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_append_rawf", Linkage::Import, &sig)
+                .ok()?
+        };
+        let append_rawi_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..3 {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_append_rawi", Linkage::Import, &sig)
+                .ok()?
+        };
+        let index_ll_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..3 {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_index_ll", Linkage::Import, &sig)
+                .ok()?
+        };
         let mut clif_ids = Vec::with_capacity(plans.len());
         for (plan, inf) in plans.iter().zip(&inferences) {
             let mut sig = module.make_signature();
@@ -2817,6 +2980,9 @@ impl JitCache {
                         len_rawi: len_rawi_helper,
                         set_rawf: set_rawf_helper,
                         set_rawi: set_rawi_helper,
+                        append_rawf: append_rawf_helper,
+                        append_rawi: append_rawi_helper,
+                        index_ll: index_ll_helper,
                         make_struct: make_struct_helper,
                         str_cmp: str_cmp_helper,
                         str_concat: str_concat_helper,
@@ -3103,6 +3269,8 @@ pub(crate) fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         // list_write_targets_unaliased below (part of this whitelist's
         // caller contract via the conjunction at the end).
         Instruction::ListSetAssign { .. } => true,
+        // The fused scalar append follows the same aliasing contract.
+        Instruction::ListAppendAssign { .. } => true,
         // Allocation is allowed only in straight-line code (constructors).
         // In a native loop every allocation would live until the call
         // ends — the scratch model's memory cost — and a cap-triggered
@@ -3159,7 +3327,9 @@ fn list_write_targets_unaliased(bytecode: &CompiledBytecode) -> bool {
     use std::collections::HashSet;
     let mut targets: HashSet<u32> = HashSet::new();
     for inst in bytecode.instructions.iter() {
-        if let Instruction::ListSetAssign { target, .. } = inst {
+        if let Instruction::ListSetAssign { target, .. }
+        | Instruction::ListAppendAssign { target, .. } = inst
+        {
             targets.insert(target.0);
         }
     }
@@ -3305,6 +3475,7 @@ fn kind_mask(k: Kind) -> u16 {
         | Kind::ListInt
         | Kind::ListFloatRaw
         | Kind::ListIntRaw
+        | Kind::ListListFloat
         | Kind::ListStruct(_)
         | Kind::ListStr => K_LIST,
         Kind::Str => K_STR,
@@ -3332,6 +3503,7 @@ fn kind_discharges(
         | Kind::ListFloat
         | Kind::ListFloatRaw
         | Kind::ListIntRaw
+        | Kind::ListListFloat
         | Kind::ListStruct(_)
         | Kind::ListStr => check.accepts("List"),
         Kind::Map(_) => check.accepts("Map"),
@@ -3578,6 +3750,10 @@ pub(crate) fn for_each_reg(
         } => {
             f(target);
             f(index);
+            f(value);
+        }
+        I::ListAppendAssign { target, value } => {
+            f(target);
             f(value);
         }
         _ => return false,
@@ -4600,6 +4776,18 @@ impl PlanFn {
                     // (the pointer may change; the layout does not).
                     grow!(self.writes[target.0 as usize], K_LIST);
                 }
+                Instruction::ListAppendAssign { target, value } => {
+                    narrow!(target.0, K_LIST);
+                    match self.exotic[target.0 as usize] {
+                        Some(Kind::ListFloatRaw) => narrow!(value.0, K_FLOAT),
+                        Some(Kind::ListIntRaw) => narrow!(value.0, K_INT),
+                        // Boxed and other list layouts keep their appends
+                        // on the VM in this piece.
+                        None => continue,
+                        _ => return None,
+                    }
+                    grow!(self.writes[target.0 as usize], K_LIST);
+                }
                 Instruction::IndexGet { dst, object, index } => {
                     narrow!(object.0, K_LIST);
                     narrow!(index.0, K_INT);
@@ -4608,6 +4796,9 @@ impl PlanFn {
                         Some(Kind::ListInt | Kind::ListIntRaw) => Kind::Int,
                         Some(Kind::ListStruct(sid)) => Kind::Struct(sid),
                         Some(Kind::ListStr) => Kind::Str,
+                        // Indexing a feature matrix yields the inner raw
+                        // list — read through the same rawf helpers.
+                        Some(Kind::ListListFloat) => Kind::ListFloatRaw,
                         // A callee's list return resolves a fixpoint
                         // iteration late: defer, don't refuse.
                         None => continue,
@@ -4622,7 +4813,7 @@ impl PlanFn {
                         }
                     };
                     grow!(self.writes[dst.0 as usize], kind_mask(elem));
-                    if matches!(elem, Kind::Struct(_)) {
+                    if matches!(elem, Kind::Struct(_) | Kind::ListFloatRaw) {
                         if self.exotic[dst.0 as usize].is_none() {
                             self.exotic[dst.0 as usize] = Some(elem);
                             changed = true;
@@ -5511,6 +5702,9 @@ struct Helpers {
     len_rawi: cranelift_module::FuncId,
     set_rawf: cranelift_module::FuncId,
     set_rawi: cranelift_module::FuncId,
+    append_rawf: cranelift_module::FuncId,
+    append_rawi: cranelift_module::FuncId,
+    index_ll: cranelift_module::FuncId,
     make_struct: cranelift_module::FuncId,
     str_cmp: cranelift_module::FuncId,
     str_concat: cranelift_module::FuncId,
@@ -5584,6 +5778,9 @@ fn translate_body(
         len_rawi: len_rawi_helper,
         set_rawf: set_rawf_helper,
         set_rawi: set_rawi_helper,
+        append_rawf: append_rawf_helper,
+        append_rawi: append_rawi_helper,
+        index_ll: index_ll_helper,
         make_struct: make_struct_helper,
         str_cmp: str_cmp_helper,
         str_concat: str_concat_helper,
@@ -6602,8 +6799,57 @@ fn translate_body(
                 // pointer the helper settled on.
                 builder.def_var(Variable::from_u32(target.0), new_ptr);
             }
+            Instruction::ListAppendAssign { target, value } => {
+                let (which, val_is_float) = match r#gen.kind(target.0)? {
+                    Kind::ListFloatRaw => (append_rawf_helper, true),
+                    Kind::ListIntRaw => (append_rawi_helper, false),
+                    _ => return None,
+                };
+                let ctx = builder.use_var(ctx_var);
+                let list_ptr = builder.use_var(Variable::from_u32(target.0));
+                let raw_val = r#gen.read(builder, value.0)?;
+                let val_bits = if val_is_float {
+                    let bits_slot =
+                        builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+                            cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                            8,
+                            3,
+                        ));
+                    builder.ins().stack_store(ptr_ty, raw_val, bits_slot, 0);
+                    builder.ins().stack_load(ptr_ty, types::I64, bits_slot, 0)
+                } else {
+                    raw_val
+                };
+                let helper_ref = module.declare_func_in_func(which, builder.func);
+                let call = builder.ins().call(helper_ref, &[ctx, list_ptr, val_bits]);
+                let new_ptr = builder.inst_results(call)[0];
+                // 0 means an unowned pointer: deopt and rerun on the VM.
+                let ok_block = builder.create_block();
+                builder.ins().brif(new_ptr, ok_block, &[], deopt_block, &[]);
+                builder.switch_to_block(ok_block);
+                // The first append copies a caller list: rebind to the
+                // pointer the helper settled on.
+                builder.def_var(Variable::from_u32(target.0), new_ptr);
+            }
             Instruction::IndexGet { dst, object, index } => {
                 let obj_kind = r#gen.kind(object.0)?;
+                if matches!(obj_kind, Kind::ListListFloat) {
+                    // Feature-matrix row: hand the inner raw list's
+                    // pointer to the dst register (kind ListFloatRaw).
+                    let list_ptr = builder.use_var(Variable::from_u32(object.0));
+                    let idx_v = r#gen.read(builder, index.0)?;
+                    let wrap_v = builder.ins().iconst(types::I64, 1);
+                    let helper_ref = module.declare_func_in_func(index_ll_helper, builder.func);
+                    let call = builder.ins().call(helper_ref, &[list_ptr, idx_v, wrap_v]);
+                    let inner_ptr = builder.inst_results(call)[0];
+                    let ok_block = builder.create_block();
+                    builder
+                        .ins()
+                        .brif(inner_ptr, ok_block, &[], deopt_block, &[]);
+                    builder.switch_to_block(ok_block);
+                    r#gen.write(builder, dst.0, inner_ptr);
+                    continue;
+                }
                 if matches!(obj_kind, Kind::ListFloatRaw | Kind::ListIntRaw) {
                     let (which, load_ty) = match obj_kind {
                         Kind::ListFloatRaw => (index_rawf_helper, types::F64),

@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The logistic forward pass runs native: nested-list reads and the
+  fused scalar append.** The last two ML-loop gates fell together.
+  - A new `ListAppendAssign` instruction: the optimizer rewrites the
+    accumulate idiom's pair — a one-element `MakeList` feeding
+    `AddAssign` — into one instruction that appends the scalar
+    directly, so the per-iteration wrapper list never exists on any
+    tier. The VM arm mirrors `x = x + [v]` byte for byte (in-place
+    under the sole-owner discipline, demotion on a mismatched
+    element, the ordinary binary error off a non-list), and adds the
+    empty-accumulator convention: `[]` carries no element type, so
+    the first scalar append chooses the typed layout — invisible, and
+    the list a loop grows from nothing is a `Vec<f64>` from element
+    one. The JIT lowers the append through ownership-family helpers
+    (a caller's list copies once, the region-born copy pushes in
+    place; an Arc's pointer survives the Vec regrowing, so the
+    rebound register stays honest).
+  - A `ListListFloat` kind: a list whose elements are all typed float
+    lists — the feature-matrix shape — crosses the boundary as a
+    borrowed pointer, and `cols[j][i]` compiles to an inner-pointer
+    extraction (0 deopts: out of bounds, or an element demoted out of
+    the typed layout) followed by the ordinary raw read. Read-only by
+    construction: the inner pointer resolves in no ownership family,
+    so any write through it deopts rather than aliasing.
+  The forward-pass probe (200k rows × 8 features, with a compiled
+  activation call and the growing predictions list) runs 69 ms → 14
+  ms; the full logistic-training probe drops 112 ms → 21 ms with both
+  the forward and gradient loops entering natively every epoch — all
+  bit-identical to the interpreter. The Chicago-crimes workstream's
+  training stage (305k rows × 11 features × 100 epochs) drops 28.4 s
+  → 5.6 s, taking the whole 8.6M-row workstream to 17.5 s end to end
+  with every stage statistic unchanged — from ~131 s when this
+  campaign began.
+
 - **Every hot loop reaches native, and liveness stopped lying.** The
   k-means gate fell, and not where the map said it would: the reused
   register carrying `K_INT|K_UNIT` was never genuinely live — an

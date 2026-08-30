@@ -437,6 +437,17 @@ pub enum Instruction {
         i: Register,
         j: Register,
     },
+    /// `x = x + [v]`, fused one step further than AddAssign: append the
+    /// scalar in `value` to the list in `target`, in place under the
+    /// sole-owner discipline. The optimizer rewrites the one-element
+    /// MakeList + AddAssign pair into this, so the per-iteration
+    /// wrapper list never exists. An empty boxed list promotes to the
+    /// typed layout on its first scalar append — the accumulator a
+    /// training loop grows from `[]` is a `Vec<f64>` from element one.
+    ListAppendAssign {
+        target: Register,
+        value: Register,
+    },
     AddAssign {
         target: Register,
         rhs: Register,
@@ -3103,6 +3114,127 @@ impl BytecodeVm {
                             data: ValueData::List(arc),
                         },
                     )?;
+                }
+                Instruction::ListAppendAssign { target, value } => {
+                    use crate::ovm::value::ValueData;
+                    // Semantically `target = target + [value]` — every arm
+                    // below must land exactly where AddAssign with a
+                    // one-element list rhs would have, minus building the
+                    // wrapper list.
+                    let v = self.execution_state.get_register(*value)?;
+                    let target_val = self.execution_state.take_register(*target)?;
+                    let out = match target_val.data {
+                        ValueData::FloatList(mut arc) => {
+                            if let ValueData::Float(f) = v.data {
+                                match std::sync::Arc::get_mut(&mut arc) {
+                                    Some(items) => items.push(f),
+                                    None => {
+                                        let mut items = (*arc).clone();
+                                        items.push(f);
+                                        arc = std::sync::Arc::new(items);
+                                    }
+                                }
+                                OvmValue {
+                                    data: ValueData::FloatList(arc),
+                                }
+                            } else {
+                                // Mismatched element: rebuild boxed,
+                                // exactly like the mixed typed append.
+                                let mut items: Vec<OvmValue> =
+                                    arc.iter().map(|&x| OvmValue::new_float(x)).collect();
+                                items.push(v);
+                                OvmValue {
+                                    data: ValueData::List(std::sync::Arc::new(items)),
+                                }
+                            }
+                        }
+                        ValueData::IntList(mut arc) => {
+                            if let ValueData::Integer(n) = v.data {
+                                match std::sync::Arc::get_mut(&mut arc) {
+                                    Some(items) => items.push(n),
+                                    None => {
+                                        let mut items = (*arc).clone();
+                                        items.push(n);
+                                        arc = std::sync::Arc::new(items);
+                                    }
+                                }
+                                OvmValue {
+                                    data: ValueData::IntList(arc),
+                                }
+                            } else {
+                                let mut items: Vec<OvmValue> =
+                                    arc.iter().map(|&x| OvmValue::new_integer(x)).collect();
+                                items.push(v);
+                                OvmValue {
+                                    data: ValueData::List(std::sync::Arc::new(items)),
+                                }
+                            }
+                        }
+                        ValueData::AstList(mut arc) => {
+                            let ast_v = v
+                                .to_ast()
+                                .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
+                            match std::sync::Arc::get_mut(&mut arc) {
+                                Some(items) => items.push(ast_v),
+                                None => {
+                                    let mut items = (*arc).clone();
+                                    items.push(ast_v);
+                                    arc = std::sync::Arc::new(items);
+                                }
+                            }
+                            OvmValue {
+                                data: ValueData::AstList(arc),
+                            }
+                        }
+                        ValueData::List(arc) if arc.is_empty() => {
+                            // The empty-accumulator convention: `[]`
+                            // carries no element type, so the first
+                            // scalar append chooses the typed layout —
+                            // invisible (layouts compare and print
+                            // identically), and the list a loop grows
+                            // from nothing is raw from element one.
+                            match v.data {
+                                ValueData::Float(f) => OvmValue {
+                                    data: ValueData::FloatList(std::sync::Arc::new(vec![f])),
+                                },
+                                ValueData::Integer(n) => OvmValue {
+                                    data: ValueData::IntList(std::sync::Arc::new(vec![n])),
+                                },
+                                _ => OvmValue {
+                                    data: ValueData::List(std::sync::Arc::new(vec![v])),
+                                },
+                            }
+                        }
+                        ValueData::List(mut arc) => {
+                            match std::sync::Arc::get_mut(&mut arc) {
+                                Some(items) => items.push(v),
+                                None => {
+                                    let mut items = (*arc).clone();
+                                    items.push(v);
+                                    arc = std::sync::Arc::new(items);
+                                }
+                            }
+                            OvmValue {
+                                data: ValueData::List(arc),
+                            }
+                        }
+                        other => {
+                            // Not a list: reproduce `target + [value]`
+                            // through the ordinary binary path so the
+                            // error is byte-identical.
+                            let target_val = OvmValue { data: other };
+                            let boxed = OvmValue {
+                                data: ValueData::List(std::sync::Arc::new(vec![v])),
+                            };
+                            match Self::binary_fast(&target_val, &boxed, BinaryOp::Add) {
+                                Some(r) => r,
+                                None => {
+                                    self.execute_binary_op(&target_val, &boxed, BinaryOp::Add)?
+                                }
+                            }
+                        }
+                    };
+                    self.execution_state.set_register(*target, out)?;
                 }
                 Instruction::AddAssign { target, rhs } => {
                     use crate::ovm::value::ValueData;
@@ -9528,7 +9660,63 @@ impl BytecodeOptimizer {
     ) -> Result<Vec<Instruction>, BytecodeError> {
         let instructions = Self::fold_constant_branches(instructions, constants);
         let instructions = Self::sweep_unreachable(instructions);
+        let instructions = Self::fuse_scalar_appends(instructions);
         Ok(Self::eliminate_dead_moves(instructions))
+    }
+
+    /// Rewrite the accumulate idiom's instruction pair — `MakeList` of
+    /// one element immediately feeding `AddAssign` — into
+    /// `ListAppendAssign`, dropping the per-iteration wrapper list.
+    /// Sound only when the wrapper register is read nowhere else and no
+    /// jump lands between the pair (the pair executes atomically or not
+    /// at all).
+    fn fuse_scalar_appends(mut instructions: Vec<Instruction>) -> Vec<Instruction> {
+        use Instruction as I;
+        let n = instructions.len();
+        if n < 2 {
+            return instructions;
+        }
+        let mut jump_targets = vec![false; n + 1];
+        for inst in &instructions {
+            match inst {
+                I::Jump { target }
+                | I::JumpIfTrue { target, .. }
+                | I::JumpIfFalse { target, .. } => {
+                    let t = target.0 as usize;
+                    if t <= n {
+                        jump_targets[t] = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        // Reads per register across the whole stream.
+        let mut read_counts: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        for inst in &instructions {
+            let (uses, _) = Self::uses_defs(inst);
+            for u in uses {
+                *read_counts.entry(u).or_insert(0) += 1;
+            }
+        }
+        for pc in 0..n - 1 {
+            let I::MakeList { dst, elements } = &instructions[pc] else {
+                continue;
+            };
+            if elements.len() != 1 || jump_targets[pc + 1] {
+                continue;
+            }
+            let (t, e) = (*dst, elements[0]);
+            let I::AddAssign { target, rhs } = &instructions[pc + 1] else {
+                continue;
+            };
+            if *rhs != t || *target == t || read_counts.get(&t.0).copied().unwrap_or(0) != 1 {
+                continue;
+            }
+            let target = *target;
+            instructions[pc] = I::ListAppendAssign { target, value: e };
+            instructions[pc + 1] = I::Nop;
+        }
+        instructions
     }
 
     /// A conditional jump whose condition register was just loaded with a
@@ -9851,6 +10039,11 @@ impl BytecodeOptimizer {
                 uses.push(target.0);
                 uses.push(i.0);
                 uses.push(j.0);
+                defs.push(target.0);
+            }
+            I::ListAppendAssign { target, value } => {
+                uses.push(target.0);
+                uses.push(value.0);
                 defs.push(target.0);
             }
             I::IndexGet { dst, object, index } => {

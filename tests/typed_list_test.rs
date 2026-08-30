@@ -211,3 +211,55 @@ fn every_hot_loop_in_a_function_gets_its_own_region() {
          println(cluster(xs, ys, 5, 4))",
     );
 }
+
+#[test]
+fn native_fused_append_keeps_value_semantics() {
+    // The accumulate idiom `acc = acc + [v]` runs native (the fused
+    // append with the ownership families). The demotion cases and the
+    // aliasing case must land exactly where the interpreter does: a
+    // shared accumulator's other name is untouched, and a mismatched
+    // element rebuilds the boxed layout mid-loop.
+    assert_tiers_agree(
+        "fn build(xs, n) = {\n\
+             let mut acc = []\n\
+             for i in 0..n { acc = acc + [xs[i] * 2.0] }\n\
+             acc\n\
+         }\n\
+         let xs = map(0..50000, (i) => to_float(i))\n\
+         let a = build(xs, 50000)\n\
+         println(`${a[0]} ${a[49999]} ${len(a)}`)\n\
+         let mut shared = map(0..100, (i) => to_float(i))\n\
+         let keep = shared\n\
+         for i in 0..100 { shared = shared + [to_float(i)] }\n\
+         println(`${len(keep)} ${len(shared)} ${keep[99]} ${shared[199]}`)\n\
+         let mut mixed = []\n\
+         for i in 0..50 { mixed = mixed + [i] }\n\
+         mixed = mixed + [\"end\"]\n\
+         println(`${mixed[49]} ${mixed[50]} ${len(mixed)}`)",
+    );
+}
+
+#[test]
+fn nested_list_reads_run_the_forward_pass_natively() {
+    // The feature-matrix shape: cols[j][i] inside a loop that also
+    // calls a compiled function and appends its result. The whole
+    // logistic forward pass, against the interpreter oracle.
+    assert_tiers_agree(
+        "fn act(z) = if z > 1.0 => 1.0 else => z\n\
+         fn forward(cols, weights, bias, n, nf) = {\n\
+             let mut preds = []\n\
+             for i in 0..n {\n\
+                 let mut z = bias\n\
+                 for j in 0..nf { z = z + weights[j] * cols[j][i] }\n\
+                 preds = preds + [act(z)]\n\
+             }\n\
+             preds\n\
+         }\n\
+         let n = 30000\n\
+         let cols = map(0..6, (j) => map(0..n, (i) => to_float((i * (j + 2)) % 89) / 89.0))\n\
+         let weights = map(0..6, (j) => 0.2 * to_float(j) - 0.3)\n\
+         let p = forward(cols, weights, 0.1, n, 6)\n\
+         println(`${p[0]} ${p[1]} ${p[29999]} ${len(p)}`)\n\
+         println(`${cols[0][0]} ${cols[5][29999]}`)",
+    );
+}
