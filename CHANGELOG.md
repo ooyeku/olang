@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **List constants compile to native, and OSR picks the widest
+  compilable loop.** Two JIT gaps closed on the road to native
+  list-shaped code. A lambda's captured values are baked into its
+  compiled bytecode as constants — and a List constant refused the
+  JIT's whitelist, locking every list-capturing lambda (a gather's
+  `(i) => vals[i]`, a training step's weight update) out of native
+  code; classifiable list constants now qualify, seed their element
+  kind through inference, and lower to a baked Arc pointer exactly as
+  String constants do, with their Arcs joining the return-resolvable
+  set. And on-stack replacement no longer gives up when the outermost
+  enclosing loop nest refuses to compile: region selection now walks
+  the nesting levels around the hot back edge, largest first, and
+  takes the widest region that both synthesizes and passes the JIT
+  whitelist — an epoch loop that allocates closures per iteration no
+  longer blocks its clean inner counter loops from running native.
+  OSR refusals also name the offending instruction now. Recorded next
+  gates for the full ML-loop win, in order: the OSR marshal caps (a
+  forward pass with ~17 live registers exceeds the 16-in/8-out
+  marshal), then native lowering for the fused list append.
+
 - **Typed-list backing in the VM.** A homogeneous scalar list crossing
   the tier boundary now lives in its native layout — `Vec<f64>` /
   `Vec<i64>` behind one Arc — instead of a vector of boxed values:

@@ -9227,6 +9227,20 @@ impl InstructionEmitter {
     }
 
     pub fn add_constant(&mut self, value: OvmValue) -> u32 {
+        // Constants normalize typed lists to the boxed layout: a constant
+        // is immutable (the typed layout buys nothing at the VM level for
+        // read-only data), and the boxed form is the one the JIT's list
+        // helpers read — which is what lets a lambda whose captured list
+        // was baked as a constant compile to native code.
+        let value = match &value.data {
+            crate::ovm::value::ValueData::FloatList(_)
+            | crate::ovm::value::ValueData::IntList(_) => OvmValue {
+                data: crate::ovm::value::ValueData::List(
+                    value.to_boxed_list().expect("matched a list"),
+                ),
+            },
+            _ => value,
+        };
         let idx = self.constants.len() as u32;
         self.constants.push(value);
         idx

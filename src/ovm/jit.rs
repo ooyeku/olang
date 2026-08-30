@@ -1306,6 +1306,13 @@ impl JitCache {
                         .map(instruction_name)
                         .collect::<Vec<_>>()
                 );
+                for inst in &bytecode.instructions {
+                    if let Instruction::LoadConst { const_idx, .. } = inst
+                        && let Some(c) = bytecode.constants.get(*const_idx as usize)
+                    {
+                        eprintln!("[jit]   const#{}: {}", const_idx, c.type_name());
+                    }
+                }
             }
             self.table[idx] = Some(Slot::Refused);
         }
@@ -1654,6 +1661,13 @@ impl JitCache {
         }
         for l in list_args_for_ctx {
             ctx.list_args.push(l.clone());
+        }
+        // List constants can flow to the return value (a lambda returning
+        // its captured list); their Arcs join the resolvable set.
+        for c in bytecode.constants.iter() {
+            if let ValueData::List(items) = &c.data {
+                ctx.list_args.push(items.clone());
+            }
         }
         for m in map_args_for_ctx {
             ctx.map_args.push(m.clone());
@@ -2588,7 +2602,7 @@ impl JitCache {
 /// type information — cheap enough to run at registration for every
 /// promoted function. CallFn targets are resolved (and arity-checked)
 /// later, at group-planning time.
-fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
+pub(crate) fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
     if bytecode.param_count > MAX_PARAMS
         || bytecode.instructions.is_empty()
         || bytecode.entry_point >= bytecode.instructions.len()
@@ -2596,16 +2610,29 @@ fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         return false;
     }
     bytecode.instructions.iter().all(|inst| match inst {
-        Instruction::LoadConst { const_idx, .. } => matches!(
-            bytecode.constants.get(*const_idx as usize).map(|c| &c.data),
-            Some(
-                ValueData::Integer(_)
+        Instruction::LoadConst { const_idx, .. } => {
+            match bytecode.constants.get(*const_idx as usize).map(|c| &c.data) {
+                Some(
+                    ValueData::Integer(_)
                     | ValueData::Boolean(_)
                     | ValueData::Unit
                     | ValueData::Float(_)
-                    | ValueData::String(_)
-            )
-        ),
+                    | ValueData::String(_),
+                ) => true,
+                // A classifiable list constant lowers to its baked Arc
+                // pointer, exactly like a String constant — this is what
+                // lets a lambda whose captured list was baked as a
+                // constant (the closure compiler's representation of
+                // captures) compile to native code.
+                Some(ValueData::List(items)) => {
+                    matches!(
+                        classify_list(items),
+                        Some(Kind::ListFloat | Kind::ListInt | Kind::ListStr)
+                    )
+                }
+                _ => false,
+            }
+        }
         Instruction::Move { .. }
         | Instruction::TakeMove { .. }
         | Instruction::Add { .. }
@@ -3888,6 +3915,7 @@ impl PlanFn {
                 Some(ValueData::Unit) => K_UNIT,
                 Some(ValueData::Float(_)) => K_FLOAT,
                 Some(ValueData::String(_)) => K_STR,
+                Some(ValueData::List(_)) => K_LIST,
                 _ => 0,
             }
         };
@@ -3924,6 +3952,21 @@ impl PlanFn {
             match inst {
                 Instruction::LoadConst { dst, const_idx } => {
                     grow!(self.writes[dst.0 as usize], const_mask(*const_idx));
+                    // A list constant carries its element kind — the same
+                    // exotic seeding a classified list argument gets.
+                    if let Some(ValueData::List(items)) =
+                        bytecode.constants.get(*const_idx as usize).map(|c| &c.data)
+                        && let Some(k) = classify_list(items)
+                    {
+                        match self.exotic[dst.0 as usize] {
+                            None => {
+                                self.exotic[dst.0 as usize] = Some(k);
+                                changed = true;
+                            }
+                            Some(prev) if prev == k => {}
+                            _ => return None,
+                        }
+                    }
                 }
                 // A tail self-call is a parallel Move of every argument
                 // into its parameter register; a tuple-kinded argument
@@ -4986,7 +5029,7 @@ impl PlanFn {
     }
 }
 
-fn instruction_name(inst: &Instruction) -> &'static str {
+pub(crate) fn instruction_name(inst: &Instruction) -> &'static str {
     match inst {
         Instruction::LoadConst { .. } => "LoadConst",
         Instruction::LoadLocal { .. } => "LoadLocal",
@@ -5283,6 +5326,9 @@ fn translate_body(
                     // JittedFn owns — a baked borrowed pointer is sound.
                     (ValueData::String(s), Kind::Str) => {
                         builder.ins().iconst(types::I64, Arc::as_ptr(s) as i64)
+                    }
+                    (ValueData::List(items), Kind::ListFloat | Kind::ListInt | Kind::ListStr) => {
+                        builder.ins().iconst(types::I64, Arc::as_ptr(items) as i64)
                     }
                     _ => return None,
                 };

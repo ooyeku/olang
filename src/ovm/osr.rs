@@ -60,7 +60,63 @@ fn osr_debug() -> bool {
 /// the marshal caps. The JIT's own qualification runs later, on the
 /// synthesized function — a region it refuses costs one attempt, ever.
 pub fn synthesize(bytecode: &CompiledBytecode, head: usize) -> Option<OsrRegion> {
-    let (h, e) = enclosing_loop_region(bytecode, head)?;
+    // The outermost enclosing loop is the most profitable region — the
+    // whole nest runs native. But an outer loop may carry constructs
+    // the tier cannot take (a map with a fresh closure per epoch, say)
+    // while the hot inner loop is a clean counter loop: when the merged
+    // region refuses, retry with the innermost loop containing the hot
+    // back edge before giving up.
+    let outer = enclosing_loop_region(bytecode, head)?;
+    let mut candidates: Vec<(usize, usize)> = vec![outer];
+    for iv in raw_intervals_containing(bytecode, head) {
+        if !candidates.contains(&iv) {
+            candidates.push(iv);
+        }
+    }
+    // Largest first: the widest region that both synthesizes and passes
+    // the JIT's syntactic whitelist wins — a tiny inner loop would
+    // otherwise be picked over a compilable middle loop and spend its
+    // native entry overhead on two iterations.
+    candidates.sort_by_key(|(s, e)| std::cmp::Reverse(e - s));
+    for (h, e) in candidates {
+        if let Some(r) = synthesize_region(bytecode, h, e) {
+            if crate::ovm::jit::whitelist_ok(&r.synth) {
+                return Some(r);
+            }
+            if osr_debug() {
+                eprintln!(
+                    "[osr] region {}..={} synthesized but fails the JIT whitelist; trying a smaller region",
+                    h, e
+                );
+            }
+        }
+    }
+    None
+}
+
+/// Every raw back-edge interval containing `head`, unmerged — the
+/// nesting levels around the hot loop.
+fn raw_intervals_containing(bytecode: &CompiledBytecode, head: usize) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    for (pc, inst) in bytecode.instructions.iter().enumerate() {
+        let target = match inst {
+            Instruction::Jump { target }
+            | Instruction::JumpIfTrue { target, .. }
+            | Instruction::JumpIfFalse { target, .. } => Some(target.0 as usize),
+            Instruction::TailCallSelf { .. } => Some(bytecode.entry_point),
+            _ => None,
+        };
+        if let Some(t) = target
+            && t <= pc
+            && (t..=pc).contains(&head)
+        {
+            out.push((t, pc));
+        }
+    }
+    out
+}
+
+fn synthesize_region(bytecode: &CompiledBytecode, h: usize, e: usize) -> Option<OsrRegion> {
     if e < h {
         return None;
     }
@@ -124,7 +180,10 @@ pub fn synthesize(bytecode: &CompiledBytecode, head: usize) -> Option<OsrRegion>
     let mut writes = vec![false; nregs];
     for inst in region {
         let Some((uses, defs)) = BytecodeOptimizer::uses_defs(inst) else {
-            refuse(bytecode, "an unmodeled instruction inside the region");
+            refuse(
+                bytecode,
+                &format!("an unmodeled instruction inside the region: {:?}", inst),
+            );
             return None;
         };
         for u in uses {
