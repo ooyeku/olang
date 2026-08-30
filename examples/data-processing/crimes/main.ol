@@ -42,39 +42,10 @@ fn stage(name, note) = {
 /// Print a small aligned preview table, indented under its stage line.
 fn preview(headers, rows) =
     println(str.join(map(str.lines(term.table(headers, rows)), (l) => "      " + l), "\n"))
-/// Animate a spinner on its own task while `work()` runs on this
-/// thread — the stop signal rides a channel, the join collects the
-/// spinner. Quiet when piped.
-fn with_spinner(label, work) = {
-    if tty => {
-        let stop = chan.bounded(1)
-        let spinner = spawn {
-            let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-            let mut i = 0
-            let mut go = true
-            while go {
-                match chan.try_recv(stop) {
-                    Ok(x) => { go = false }
-                    Err(e) => {
-                        print(`\r${term.cyan(frames[i % 10])} ${term.dim(label)}`)
-                        os.flush()
-                        i = i + 1
-                        time.sleep(80)
-                    }
-                }
-            }
-        }
-        let out = work()
-        unwrap(chan.send(stop, 1))
-        task.join(spinner)
-        wipe()
-        out
-    } else => work()
-}
 /// One in-place progress bar frame for a long computation.
 fn progress(label, done, total, extra) =
     if tty => {
-        print(`\r  ${term.bar(to_float(done) / to_float(total), 26)} ${term.dim(label)} ${done}/${total}${extra}`)
+        print("\r" + `  ${term.bar(to_float(done) / to_float(total), 26)} ${term.dim(label)} ${done}/${total}${extra}`)
         os.flush()
     } else => ()
 /// A one-line unicode sparkline (min-to-max scaled).
@@ -96,15 +67,13 @@ fn section(title, body) =
     cell.set(blocks, concat(cell.get(blocks), ["## " + title, body]))
 
 // ── 1. fetch: the full record ────────────────────────────────────────
-println(term.dim("  fetching the full Chicago crime extract (~2 GB, cached after the first run)"))
 let src = unwrap(fetch(
     "https://data.cityofchicago.org/api/views/ijzp-q8t2/rows.csv?accessType=DOWNLOAD",
     fs.join("data", "chicago-crimes.csv"), 1500000000))
 stage("fetch", `${map_get(src, "bytes")} bytes (cached=${map_get(src, "cached")})`)
 
 // ── 2. load + profile ────────────────────────────────────────────────
-let raw = with_spinner("loading and typing 2 GB of CSV (parallel fused reader)...",
-    () => unwrap(ods.read_csv_file(map_get(src, "path"))))
+let raw = unwrap(ods.read_csv_file(map_get(src, "path")))
 let n_all = ods.n_rows(raw)
 let f = ods.select(raw, ["Date", "Primary Type", "Location Description",
     "Arrest", "Domestic", "District", "Year", "Latitude", "Longitude"])
@@ -112,8 +81,7 @@ let null_lat = ods.null_count(f["Latitude"])
 stage("load", `${n_all} rows x ${ods.n_cols(raw)} cols; ${null_lat} rows lack coordinates`)
 
 // ── 3. derive: month and hour for all 8.6M rows ─────────────────────
-let tm = with_spinner("deriving month and hour for 8.6M timestamps...",
-    () => derive_time(ods.to_list(f["Date"])))
+let tm = derive_time(ods.to_list(f["Date"]))
 let f2 = ods.with_column(ods.with_column(f, "month", ods.series(map_get(tm, "months"))),
     "hour", ods.series(map_get(tm, "hours")))
 let arrest_f = ods.cast(f2["Arrest"], "Float")
