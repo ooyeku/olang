@@ -32,6 +32,18 @@ If uncommitted WIP in `examples/` (historically `loops.ol`,
 `benchmark.ol`) interferes with `run_all`, stash it scoped around that
 step only.
 
+The Linux pass runs the same suite and the examples harness inside a
+Linux container against the working tree (requires a Docker-compatible
+daemon; the container builds into its own cached volume, so the host
+`target/` is untouched):
+
+```bash
+dist/linux-verify.sh                   # full suite + examples on Linux
+```
+
+The pass is architecture-honest — on Apple silicon it verifies
+linux/aarch64; run it on an x86_64 host for x86_64 coverage.
+
 ## 3. Release commit
 
 ```bash

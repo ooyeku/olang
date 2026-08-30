@@ -1351,12 +1351,26 @@ An optional map/object configures the bounded server:
 | `max_requests_per_connection` | `100` |
 | `idle_timeout_ms` | `5000` |
 | `write_timeout_ms` | `10000` |
+| `max_header_bytes` | `65536` |
+| `max_body_bytes` | `10485760` (10 MB) |
+| `request_timeout_ms` | `30000` |
 
 The handler returns either a bare string (a `200 text/plain`) or a response
 built with `http.response`/`http.response_with_headers` — pass headers as a
 map literal so keys like `Content-Type` can contain `-`. A handler error
-becomes a `500` and a malformed request a `400`; the server keeps running
-through both.
+becomes a `500`; the server keeps running through both.
+
+Abuse is answered precisely, with the connection closed: a malformed
+request line or unparseable `Content-Length` is a `400`, a header block
+past `max_header_bytes` a `431`, a declared body past `max_body_bytes` a
+`413`, and a request that has not arrived in full within
+`request_timeout_ms` a `408` — the whole-request deadline is what stops
+a client dribbling one byte at a time from holding a worker forever,
+which per-read timeouts alone cannot. Header values a handler returns
+are flattened to one line (CR and LF become spaces), so interpolating
+untrusted text into a header cannot split the response or inject
+headers. The abuse suite in `tests/http_abuse_test.rs` pins all of
+this.
 
 ```olang no-run
 fn handle(req) = {

@@ -67,6 +67,14 @@ struct Cli {
     #[arg(long, help_heading = "Run options")]
     ovm_stats: bool,
 
+    /// Re-execute a sample of native-tier calls on the bytecode VM and
+    /// compare results bit-for-bit; a divergence aborts with a report.
+    /// RATE is the sampling probability (1 verifies every native call).
+    /// Native code is pure with respect to caller state by construction,
+    /// so re-execution is unobservable beyond the time it costs.
+    #[arg(long, value_name = "RATE", help_heading = "Run options")]
+    verify_tiers: Option<f64>,
+
     /// Re-run the file whenever any .ol file in its directory changes
     /// (place before the file: `olang --watch script.ol`)
     #[arg(long, help_heading = "Run options")]
@@ -361,6 +369,7 @@ fn run() -> i32 {
     // with every olang-running thread counted, "all counted threads
     // parked" proves a deadlock (src/stdlib/chan.rs).
     let _live = olang::stdlib::chan::live_guard();
+
     // A binary produced by `olang build` carries its program appended
     // after the runtime. Run that and nothing else — checked before any
     // CLI parsing, so the bundled tool's own arguments reach it intact.
@@ -373,6 +382,19 @@ fn run() -> i32 {
     }
 
     let mut cli = Cli::parse();
+
+    // The tier self-verifier reads its rate from the environment so the
+    // VM needs no plumbing from here; the flag simply sets it. Set
+    // before any interpreter exists.
+    if let Some(rate) = cli.verify_tiers {
+        if !(0.0..=1.0).contains(&rate) {
+            eprintln!("--verify-tiers expects a rate in 0..=1, got {}", rate);
+            return 2;
+        }
+        // SAFETY: single-threaded at this point — no interpreter or
+        // worker threads have started.
+        unsafe { std::env::set_var("OLANG_VERIFY_TIERS", format!("{}", rate)) };
+    }
 
     // Initialize logger
     let logger = init_logger();

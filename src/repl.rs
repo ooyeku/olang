@@ -2531,6 +2531,12 @@ impl Repl {
             stats.jit_native_calls.to_string().bright_white(),
             vm.osr_entries.to_string().bright_white()
         );
+        if vm.verified_calls > 0 {
+            println!(
+                "    tier-verified calls: {} (all agreed — a divergence would have aborted)",
+                vm.verified_calls.to_string().bright_green()
+            );
+        }
         println!(
             "    VM instructions: {}   compile time: {:.1?}",
             vm.instructions_executed.to_string().bright_white(),

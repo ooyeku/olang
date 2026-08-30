@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The engine keeps proving itself (W7): live tier verification, an
+  HTTP abuse gauntlet, and a Linux pass.**
+  - `--verify-tiers <rate>`: the differential suites prove tier
+    agreement over the programs they contain; this flag proves it over
+    the program actually running. At the sampled rate, each
+    native-tier result — a compiled call or an OSR loop region — is
+    re-executed on the bytecode VM with the same inputs and compared
+    bit-for-bit, which is sound live because the JIT whitelist admits
+    only code that is pure with respect to caller-visible state. A
+    divergence aborts (exit 102) with both renderings clipped to
+    readable length; `:ovm` reports the session's verified-call count.
+    Rate 1 roughly doubles native work (kmeans probe 125 → 240 ms);
+    0.05 costs ~14%. `OLANG_VERIFY_SELFTEST` forces a divergence so
+    the scream path itself is testable end to end.
+  - **`http.serve` hardening.** The limits are explicit options now —
+    `max_header_bytes` (default 64 KB), `max_body_bytes` (10 MB), and
+    `request_timeout_ms` (30 s), the whole-request deadline that stops
+    a client dribbling one byte at a time from holding a worker
+    forever, which per-read timeouts alone cannot. Abuse is answered
+    precisely, with the connection closed: 400 for a malformed request
+    line or an unparseable `Content-Length` (previously a silent zero
+    that desynchronized the kept-alive stream), 431 past the header
+    cap, 413 past the body cap, 408 past the deadline. Header values a
+    handler returns are flattened to one line, so interpolating
+    untrusted text into a header can no longer split the response or
+    inject headers. `tests/http_abuse_test.rs` runs the gauntlet —
+    garbage bytes, oversized blocks, bad lengths, an injection
+    attempt, a dripping client — against one server and proves a
+    well-formed request still works after all of it.
+  - **A documented Linux verification pass.** `dist/linux-verify.sh`
+    runs the full workspace suite and the examples harness inside a
+    Linux container against the working tree, building into a cached
+    container volume so the host is untouched; RELEASING.md carries it
+    in the gate list. Architecture-honest: on Apple silicon it
+    verifies linux/aarch64.
+
 - **Concurrency you can see into (W6): the stall detector,
   `task.list()`, `task.parked()`, and `chan.stat(c)`.** A `chan.recv`
   no live thread could ever satisfy used to hang the program forever,

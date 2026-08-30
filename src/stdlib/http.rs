@@ -403,11 +403,25 @@ struct ParsedRequest {
 
 /// Read and parse one HTTP/1.1 request from the stream. Minimal but honest:
 /// request line, headers (keys lowercased), and a Content-Length body.
-fn read_request(stream: &mut std::net::TcpStream) -> Result<Option<ParsedRequest>, String> {
+/// Errors carry the status they deserve (400/408/413/431), so abuse is
+/// answered precisely and the connection closed.
+fn read_request(
+    stream: &mut std::net::TcpStream,
+    limits: &ServeConfig,
+) -> Result<Option<ParsedRequest>, (i64, String)> {
     use std::io::Read;
 
-    const MAX_HEAD: usize = 64 * 1024;
-    const MAX_BODY: usize = 10 * 1024 * 1024;
+    let max_head = limits.max_header_bytes;
+    let max_body = limits.max_body_bytes;
+    // The whole-request deadline. Per-read timeouts bound each read;
+    // this bounds their sum, which is what stops a client dribbling one
+    // byte per second from holding a worker forever.
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_millis(limits.request_timeout_ms);
+    let overdue = |buf: &Vec<u8>| -> Option<(i64, String)> {
+        (std::time::Instant::now() >= deadline && !buf.is_empty())
+            .then(|| (408, "request took too long to arrive".to_string()))
+    };
 
     // Read until the blank line that ends the header block.
     let mut buf: Vec<u8> = Vec::with_capacity(1024);
@@ -416,14 +430,17 @@ fn read_request(stream: &mut std::net::TcpStream) -> Result<Option<ParsedRequest
         if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
             break pos;
         }
-        if buf.len() > MAX_HEAD {
-            return Err("request header block too large".to_string());
+        if buf.len() > max_head {
+            return Err((431, "request header block too large".to_string()));
+        }
+        if let Some(e) = overdue(&buf) {
+            return Err(e);
         }
         match stream.read(&mut chunk) {
             // A close (or idle timeout) before any bytes is the clean end of
             // a kept-alive connection, not an error.
             Ok(0) if buf.is_empty() => return Ok(None),
-            Ok(0) => return Err("connection closed mid-request".to_string()),
+            Ok(0) => return Err((400, "connection closed mid-request".to_string())),
             Ok(n) => buf.extend_from_slice(&chunk[..n]),
             Err(e)
                 if buf.is_empty()
@@ -434,7 +451,19 @@ fn read_request(stream: &mut std::net::TcpStream) -> Result<Option<ParsedRequest
             {
                 return Ok(None);
             }
-            Err(e) => return Err(e.to_string()),
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                // Mid-request idle: the per-read timeout fired. Let the
+                // deadline decide whether to keep waiting.
+                if let Some(e) = overdue(&buf) {
+                    return Err(e);
+                }
+            }
+            Err(e) => return Err((400, e.to_string())),
         }
     };
 
@@ -446,11 +475,11 @@ fn read_request(stream: &mut std::net::TcpStream) -> Result<Option<ParsedRequest
     let mut parts = request_line.split_whitespace();
     let method = parts
         .next()
-        .ok_or_else(|| "malformed request line".to_string())?
+        .ok_or_else(|| (400, "malformed request line".to_string()))?
         .to_uppercase();
     let target = parts
         .next()
-        .ok_or_else(|| "malformed request line".to_string())?;
+        .ok_or_else(|| (400, "malformed request line".to_string()))?;
 
     let (path, raw_query) = match target.split_once('?') {
         Some((p, q)) => (p.to_string(), q.to_string()),
@@ -467,18 +496,36 @@ fn read_request(stream: &mut std::net::TcpStream) -> Result<Option<ParsedRequest
         }
     }
 
-    // Body: exactly Content-Length bytes (what's already buffered plus more).
-    let content_length = headers
-        .iter()
-        .find(|(k, _)| k == "content-length")
-        .and_then(|(_, v)| v.parse::<usize>().ok())
-        .unwrap_or(0);
-    if content_length > MAX_BODY {
-        return Err("request body too large".to_string());
+    // Body: exactly Content-Length bytes (what's already buffered plus
+    // more). A Content-Length that does not parse is a malformed
+    // request, not an empty body — treating it as 0 would desynchronize
+    // the kept-alive stream into the next request.
+    let content_length = match headers.iter().find(|(k, _)| k == "content-length") {
+        None => 0,
+        Some((_, v)) => v
+            .parse::<usize>()
+            .map_err(|_| (400, format!("invalid Content-Length: {:?}", v)))?,
+    };
+    if content_length > max_body {
+        return Err((413, "request body too large".to_string()));
     }
     let mut body_bytes: Vec<u8> = buf[head_end + 4..].to_vec();
     while body_bytes.len() < content_length {
-        let n = stream.read(&mut chunk).map_err(|e| e.to_string())?;
+        if let Some(e) = overdue(&buf) {
+            return Err(e);
+        }
+        let n = match stream.read(&mut chunk) {
+            Ok(n) => n,
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                continue;
+            }
+            Err(e) => return Err((400, e.to_string())),
+        };
         if n == 0 {
             break;
         }
@@ -572,7 +619,11 @@ fn response_raw_bytes(
         out.push_str("Content-Type: application/octet-stream\r\n");
     }
     for (k, v) in extra_headers {
-        out.push_str(&format!("{}: {}\r\n", k, v));
+        out.push_str(&format!(
+            "{}: {}\r\n",
+            header_line_safe(k),
+            header_line_safe(v)
+        ));
     }
     out.push_str(&format!("Content-Length: {}\r\n", body.len()));
     out.push_str(if keep_alive {
@@ -583,6 +634,17 @@ fn response_raw_bytes(
     let mut bytes = out.into_bytes();
     bytes.extend_from_slice(body);
     bytes
+}
+
+/// A header key or value is one line: strip CR and LF so a handler
+/// interpolating attacker-controlled text into a header cannot split
+/// the response or inject headers of its own.
+fn header_line_safe(s: &str) -> String {
+    if s.contains(['\r', '\n']) {
+        s.replace(['\r', '\n'], " ")
+    } else {
+        s.to_string()
+    }
 }
 
 fn response_bytes(
@@ -599,7 +661,11 @@ fn response_bytes(
         out.push_str("Content-Type: text/plain; charset=utf-8\r\n");
     }
     for (k, v) in extra_headers {
-        out.push_str(&format!("{}: {}\r\n", k, v));
+        out.push_str(&format!(
+            "{}: {}\r\n",
+            header_line_safe(k),
+            header_line_safe(v)
+        ));
     }
     out.push_str(&format!("Content-Length: {}\r\n", body.len()));
     if keep_alive {
@@ -691,6 +757,13 @@ struct ServeConfig {
     max_requests_per_connection: usize,
     idle_timeout_ms: u64,
     write_timeout_ms: u64,
+    /// Ceiling for one request's header block (431 past it).
+    max_header_bytes: usize,
+    /// Ceiling for one request's body (413 past it).
+    max_body_bytes: usize,
+    /// Whole-request deadline, head plus body (408 past it) — the
+    /// slow-client bound the per-read timeout alone cannot give.
+    request_timeout_ms: u64,
 }
 
 fn default_worker_count() -> usize {
@@ -740,6 +813,9 @@ fn serve_config(options: Option<&Value>) -> Result<ServeConfig, String> {
         max_requests_per_connection: 100,
         idle_timeout_ms: 5_000,
         write_timeout_ms: 10_000,
+        max_header_bytes: 64 * 1024,
+        max_body_bytes: 10 * 1024 * 1024,
+        request_timeout_ms: 30_000,
     };
     let Some(options) = options else {
         return Ok(defaults);
@@ -760,6 +836,9 @@ fn serve_config(options: Option<&Value>) -> Result<ServeConfig, String> {
         "max_requests_per_connection",
         "idle_timeout_ms",
         "write_timeout_ms",
+        "max_header_bytes",
+        "max_body_bytes",
+        "request_timeout_ms",
     ];
     if let Some(unknown) = fields.keys().find(|key| !known.contains(&key.as_str())) {
         return Err(format!("serve: unknown option '{}'", unknown));
@@ -796,6 +875,27 @@ fn serve_config(options: Option<&Value>) -> Result<ServeConfig, String> {
             1,
             3_600_000,
         )? as u64,
+        max_header_bytes: option_usize(
+            fields,
+            "max_header_bytes",
+            defaults.max_header_bytes,
+            1024,
+            1024 * 1024,
+        )?,
+        max_body_bytes: option_usize(
+            fields,
+            "max_body_bytes",
+            defaults.max_body_bytes,
+            1024,
+            1024 * 1024 * 1024,
+        )?,
+        request_timeout_ms: option_usize(
+            fields,
+            "request_timeout_ms",
+            defaults.request_timeout_ms as usize,
+            100,
+            3_600_000,
+        )? as u64,
     })
 }
 
@@ -819,7 +919,7 @@ fn serve_connection(
     )));
 
     for served in 0..config.max_requests_per_connection {
-        match read_request(&mut stream) {
+        match read_request(&mut stream, &config) {
             Ok(None) => break,
             Ok(Some(req)) => {
                 let client_wants_close = req
@@ -850,8 +950,8 @@ fn serve_connection(
                     break;
                 }
             }
-            Err(message) => {
-                let bytes = response_bytes(400, &format!("bad request: {}", message), &[], false);
+            Err((status, message)) => {
+                let bytes = response_bytes(status, &message, &[], false);
                 let _ = stream.write_all(&bytes);
                 let _ = stream.flush();
                 break;

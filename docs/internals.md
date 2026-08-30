@@ -117,6 +117,18 @@ The practical rule this buys: any observable difference between
 definition, a bug in the tier — never a "new behavior". When
 investigating anything surprising, run both modes first.
 
+The suites prove agreement over the programs they contain; `--verify-tiers
+<rate>` proves it over the program actually running. At the given
+sampling probability, each native-tier result — a compiled call or an
+OSR loop region — is re-executed on the bytecode VM with the same
+inputs and compared bit-for-bit. This is sound to do live because the
+JIT whitelist admits only code that is pure with respect to
+caller-visible state, so the re-execution is unobservable; it costs
+what it re-runs (rate 1 roughly doubles native work, `0.01` is noise).
+A divergence aborts with both renderings and exit code 102 — an engine
+bug by definition, per the rule above. `:ovm` reports how many calls a
+session verified.
+
 ## The refusal ladder
 
 The second decision: **when a tier cannot reproduce the interpreter

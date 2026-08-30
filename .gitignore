@@ -91,8 +91,9 @@ examples/*/*/main
 examples/*/*/ledger
 
 # Local distribution staging (make dist). dist/homebrew (the formula
-# template) stays tracked.
+# template) and the Linux verification pass stay tracked.
 /dist/*
 !/dist/homebrew/
+!/dist/linux-verify.sh
 editors/vscode/dist/
 examples/data-processing/meterflow/cache/

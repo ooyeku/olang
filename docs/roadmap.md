@@ -94,9 +94,9 @@ this six times in a row.
 
 | Item | Observed | Status |
 |---|---|---|
-| Runtime tier self-verification | tier agreement is proven by the suite, not by the running program; two "since it shipped" latent bugs this month argue for live evidence | planned — `--verify-tiers <rate>`: re-execute a sample of promoted calls on the interpreter, scream on divergence |
-| HTTP server hardening | never adversarially probed: malformed requests, oversized payloads, slow clients | planned — abuse suite + explicit limits |
-| Platform coverage | every gate runs on one macOS machine; `setup.sh` claims cross-platform | planned — at minimum, a documented Linux verification pass |
+| Runtime tier self-verification | tier agreement is proven by the suite, not by the running program; two "since it shipped" latent bugs this month argue for live evidence | shipped — `--verify-tiers <rate>` re-executes sampled native results (compiled calls and OSR regions, pure by whitelist construction) on the VM and aborts with a report on divergence; `:ovm` counts the session's verified calls |
+| HTTP server hardening | never adversarially probed: malformed requests, oversized payloads, slow clients | shipped — explicit `serve` limits (`max_header_bytes`, `max_body_bytes`, `request_timeout_ms`), precise 400/408/413/431 answers, header-injection flattening; `tests/http_abuse_test.rs` is the gauntlet |
+| Platform coverage | every gate runs on one macOS machine; `setup.sh` claims cross-platform | shipped — `dist/linux-verify.sh` runs the full suite and the examples harness in a Linux container (RELEASING.md gate list); architecture follows the host |
 
 ## Process
 

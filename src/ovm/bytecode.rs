@@ -881,6 +881,14 @@ pub struct ExecutionState {
     top: usize,
 }
 
+thread_local! {
+    /// `--verify-tiers` sampling state: the draw RNG, and whether this
+    /// thread is already inside a verification re-run (nested native
+    /// calls are not re-sampled).
+    static VERIFY_RNG: std::cell::Cell<u64> = const { std::cell::Cell::new(0x9E37_79B9_7F4A_7C15) };
+    static IN_VERIFY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// VM performance statistics
 #[derive(Debug, Default)]
 pub struct VmStatistics {
@@ -895,6 +903,9 @@ pub struct VmStatistics {
     pub gc_triggers: u64,
     /// Loops entered natively mid-frame (Campaign 7, T3).
     pub osr_entries: u64,
+    /// Native results re-executed on the VM and compared bit-for-bit
+    /// (`--verify-tiers`).
+    pub verified_calls: u64,
 }
 
 /// Register allocator for bytecode generation
@@ -2003,6 +2014,122 @@ impl BytecodeVm {
     /// execute(), but the arguments come straight from the caller's
     /// registers into the callee's window — the CallFn/CallValue hot path,
     /// with no argument buffer in between.
+    /// The sampling rate behind `--verify-tiers` (0 = off), read once.
+    /// Native code is pure with respect to caller-visible state by the
+    /// JIT whitelist's construction, so re-executing a native call on
+    /// the VM dispatch is unobservable — which is what makes live
+    /// verification sound at all.
+    fn verify_tiers_rate() -> f64 {
+        static RATE: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+        *RATE.get_or_init(|| {
+            std::env::var("OLANG_VERIFY_TIERS")
+                .ok()
+                .and_then(|s| s.parse::<f64>().ok())
+                .filter(|r| *r > 0.0)
+                .map(|r| r.min(1.0))
+                .unwrap_or(0.0)
+        })
+    }
+
+    /// Should this native result be verified? Samples an xorshift per
+    /// call; never inside a verification re-run (the re-run's own inner
+    /// calls may go native again, and rechecking them would compound).
+    fn verify_sample() -> bool {
+        let rate = Self::verify_tiers_rate();
+        if rate == 0.0 || IN_VERIFY.with(|f| f.get()) {
+            return false;
+        }
+        if rate >= 1.0 {
+            return true;
+        }
+        VERIFY_RNG.with(|s| {
+            let mut x = s.get();
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            s.set(x);
+            ((x >> 11) as f64 / (1u64 << 53) as f64) < rate
+        })
+    }
+
+    /// Mark this thread as inside a verification re-run for the guard's
+    /// lifetime (suppresses nested sampling).
+    fn verify_enter() -> impl Drop {
+        struct G;
+        impl Drop for G {
+            fn drop(&mut self) {
+                IN_VERIFY.with(|f| f.set(false));
+            }
+        }
+        IN_VERIFY.with(|f| f.set(true));
+        G
+    }
+
+    /// Re-execute a native result's bytecode on the VM dispatch with
+    /// the same arguments and compare bit-for-bit. A divergence is an
+    /// engine bug: report both results and abort — nothing after this
+    /// point could be trusted. Skips silently when the re-run cannot
+    /// fit (call depth exhausted).
+    fn verify_native_result(
+        &mut self,
+        what: &str,
+        bytecode: &CompiledBytecode,
+        arg_regs: &[Register],
+        native: &OvmValue,
+    ) {
+        if self.call_depth >= self.max_call_depth {
+            return;
+        }
+        let _guard = Self::verify_enter();
+        self.call_depth += 1;
+        let outcome = match self.execution_state.push_frame_from_regs(
+            bytecode.register_count as usize,
+            arg_regs,
+            0,
+        ) {
+            Ok(saved) => {
+                let r = self.execute_bytecode(bytecode);
+                self.execution_state.pop_frame(saved);
+                r
+            }
+            Err(e) => Err(e),
+        };
+        self.call_depth -= 1;
+        self.stats.verified_calls += 1;
+        let selftest = std::env::var_os("OLANG_VERIFY_SELFTEST").is_some();
+        let diverged = match &outcome {
+            Ok(vm) => vm != native || selftest,
+            Err(_) => true,
+        };
+        if !diverged {
+            return;
+        }
+        // Truncated renderings: the point is the fact and the first
+        // differing region, not megabytes of list.
+        fn clip(s: String) -> String {
+            const MAX: usize = 400;
+            if s.len() <= MAX {
+                return s;
+            }
+            let cut = (0..=MAX)
+                .rev()
+                .find(|i| s.is_char_boundary(*i))
+                .unwrap_or(0);
+            format!("{}… ({} more chars)", &s[..cut], s.len() - cut)
+        }
+        let vm_text = match &outcome {
+            Ok(vm) => clip(format!("{}", vm)),
+            Err(e) => format!("error: {:?}", e),
+        };
+        eprintln!(
+            "tier divergence: the native tier and the VM disagree\n  at:     {}\n  native: {}\n  vm:     {}\nThis is an engine bug — the program's results past this point cannot be trusted.\nPlease report it (a reproducing program plus this message).",
+            what,
+            clip(format!("{}", native)),
+            vm_text
+        );
+        std::process::exit(102);
+    }
+
     /// One back edge's OSR decision: offer entry at every threshold
     /// multiple (so each of a function's loops eventually gets its own
     /// offer, and later loops are not shut out by an earlier one), at a
@@ -2320,6 +2447,23 @@ impl BytecodeVm {
             self.osr_regions.insert((fid, head), None);
             return None;
         }
+        // Verify before the write-back: the live-in registers still hold
+        // their pre-entry values, which is exactly the state the VM
+        // re-run needs.
+        if Self::verify_sample() {
+            let what = format!(
+                "{} (OSR region fn#{})",
+                region
+                    .synth
+                    .debug_info
+                    .function_name
+                    .as_deref()
+                    .unwrap_or("?"),
+                region.region_id.index()
+            );
+            let synth = region.synth.clone();
+            self.verify_native_result(&what, &synth, &region.live_in, &result);
+        }
         if region.live_out.len() == 1 {
             self.execution_state
                 .set_register(region.live_out[0], result)
@@ -2605,6 +2749,13 @@ impl BytecodeVm {
                     crate::profile::pop();
                 }
                 if let Some(result) = native {
+                    if Self::verify_sample() {
+                        let what = format!(
+                            "fn {} (native call)",
+                            bytecode.debug_info.function_name.as_deref().unwrap_or("?")
+                        );
+                        self.verify_native_result(&what, &bytecode, arg_regs, &result);
+                    }
                     return Ok(result);
                 }
             }
