@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The cross-language benchmark suite, and what it found.**
+  `benchmarks/xlang/` runs eight benchmarks — recursion, integer
+  loops, a sieve, n-body physics, dense matrix multiply, string
+  building, hash-map counting, k-means — identically in olang, C++,
+  Rust, Go, Java, Node, Lua, Python, and R, each printing a CHECK
+  value the runner validates across languages (float benchmarks use
+  explicit temporaries and `-ffp-contract=off`, so even the chaotic
+  n-body energy agrees bit for bit) and a self-timed MS the runner
+  medians. Building it surfaced and fixed three engine issues:
+  - **A tier divergence in the move-call fusion.** `m = map_set(m,
+    k, map_get(m, k) + 1)` moved `m` into argument 0 before the later
+    argument read it — Unit on the VM where the interpreter read the
+    live map. The fusion now declines when any later argument
+    references the target (`references_name`, conservative on
+    unmodeled forms); pinned by a differential.
+  - **Domain-constrained math kept whole loops off native.** One
+    `math.sqrt` in a loop body excluded the entire region from the
+    JIT. sqrt/asin/acos/ln/log2/log10 now compile behind a domain
+    guard — an out-of-domain argument branches to deopt and the VM
+    re-run raises the interpreter's exact error. The n-body loop went
+    140 s → 0.65 s; domain errors stay byte-identical across tiers.
+  - **Boxed scalar lists at OSR entry now convert to the typed
+    layout once**, at the marshal, and are written back — a sieve
+    whose list was built by `map(...) + [0]` (boxed) ran its marking
+    loop through boxed writes; it now runs native (9.9 s → 1.1 s).
+  Whitelist refusals also name their instruction under
+  OLANG_JIT_DEBUG now. One limit was found and recorded rather than
+  papered over: hot string-keyed map accumulation is quadratic in
+  every current idiom (the builtin `map_set` clones per insert even
+  when the moved argument is sole-owner; `collections.table` pays
+  the tier boundary once its caller promotes) — wordfreq reports DNF
+  for olang and the roadmap carries the row.
+
 - **The crimes workstream becomes a full research report.** The
   Chicago dogfood now runs fourteen stages and writes a structured
   analysis (abstract, methods, findings, limitations) rather than a

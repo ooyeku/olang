@@ -2299,8 +2299,56 @@ impl BytecodeVm {
                         }
                         return None;
                     };
-                    bits[i] = std::sync::Arc::as_ptr(items) as i64;
-                    kinds[i] = k;
+                    // A uniformly scalar boxed list converts to its typed
+                    // layout once, here — the loop is about to read (and
+                    // possibly write) it natively thousands of times, and
+                    // only the raw kinds have native writes. Written back
+                    // so re-entries pay nothing.
+                    match k {
+                        crate::ovm::jit::Kind::ListFloat => {
+                            let v: Vec<f64> = items
+                                .iter()
+                                .map(|x| match &x.data {
+                                    crate::ovm::value::ValueData::Float(f) => *f,
+                                    _ => unreachable!("classified ListFloat"),
+                                })
+                                .collect();
+                            let typed = crate::ovm::value::OvmValue {
+                                data: crate::ovm::value::ValueData::FloatList(std::sync::Arc::new(
+                                    v,
+                                )),
+                            };
+                            // The register keeps the Arc alive for the
+                            // whole call; the family loop below re-reads
+                            // it into float_list_args.
+                            if let crate::ovm::value::ValueData::FloatList(l) = &typed.data {
+                                bits[i] = std::sync::Arc::as_ptr(l) as i64;
+                            }
+                            self.execution_state.set_register(*reg, typed).ok()?;
+                            kinds[i] = JitKind::ListFloatRaw;
+                        }
+                        crate::ovm::jit::Kind::ListInt => {
+                            let v: Vec<i64> = items
+                                .iter()
+                                .map(|x| match &x.data {
+                                    crate::ovm::value::ValueData::Integer(n) => *n,
+                                    _ => unreachable!("classified ListInt"),
+                                })
+                                .collect();
+                            let typed = crate::ovm::value::OvmValue {
+                                data: crate::ovm::value::ValueData::IntList(std::sync::Arc::new(v)),
+                            };
+                            if let crate::ovm::value::ValueData::IntList(l) = &typed.data {
+                                bits[i] = std::sync::Arc::as_ptr(l) as i64;
+                            }
+                            self.execution_state.set_register(*reg, typed).ok()?;
+                            kinds[i] = JitKind::ListIntRaw;
+                        }
+                        _ => {
+                            bits[i] = std::sync::Arc::as_ptr(items) as i64;
+                            kinds[i] = k;
+                        }
+                    }
                     any_ref = true;
                 }
                 Ok(crate::ovm::value::ValueData::Result(r)) => {
@@ -8253,7 +8301,9 @@ impl BytecodeCompiler {
                         && (matches!(exprs[0], Expr::Identifier(n) if n == target)
                             || matches!(exprs[0], Expr::LocalRef { name, .. } if name == target));
                     if names_target
-                        && exprs[1..].iter().all(|e| Self::assignment_free(e))
+                        && exprs[1..]
+                            .iter()
+                            .all(|e| Self::assignment_free(e) && !Self::references_name(e, target))
                         && !self.local_variables.contains_key("__moved_arg0__")
                     {
                         if std::env::var_os("OLANG_DEBUG_TAKEMOVE").is_some() {
@@ -9342,6 +9392,59 @@ impl BytecodeCompiler {
                 crate::ast::TemplatePart::Interpolation(e) => Self::assignment_free(e),
             }),
             _ => false,
+        }
+    }
+
+    /// True when the expression can read `name`. Conservative: any form
+    /// the walk does not model counts as a reference. Guards the
+    /// move-call fusion — `x = f(x, g(x))` must NOT move `x` into
+    /// argument 0, because `g(x)` still reads it afterward (the
+    /// interpreter reads x twice; a moved x reads as Unit — a tier
+    /// divergence found by the wordfreq cross-language benchmark).
+    pub(crate) fn references_name(e: &crate::ast::Expr, name: &str) -> bool {
+        use crate::ast::Expr as E;
+        match e {
+            E::Integer(_) | E::Float(_) | E::String(_) | E::Boolean(_) => false,
+            E::Identifier(n) => n == name,
+            E::LocalRef { name: n, .. } => n == name,
+            E::BinaryOp { left, right, .. } => {
+                Self::references_name(left, name) || Self::references_name(right, name)
+            }
+            E::UnaryOp { operand, .. } => Self::references_name(operand, name),
+            E::FieldAccess { object, .. } => Self::references_name(object, name),
+            E::Index { object, index } => {
+                Self::references_name(object, name) || Self::references_name(index, name)
+            }
+            E::ResultOk(inner) | E::ResultErr(inner) | E::Try(inner) => {
+                Self::references_name(inner, name)
+            }
+            E::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                Self::references_name(condition, name)
+                    || Self::references_name(then_branch, name)
+                    || else_branch
+                        .as_ref()
+                        .is_some_and(|e| Self::references_name(e, name))
+            }
+            E::Call { callee, arguments } => {
+                Self::references_name(callee, name)
+                    || arguments.iter().any(|a| match a {
+                        crate::ast::Argument::Positional(e) => Self::references_name(e, name),
+                        crate::ast::Argument::Named { value, .. } => {
+                            Self::references_name(value, name)
+                        }
+                    })
+            }
+            E::List(items) => items.iter().any(|e| Self::references_name(e, name)),
+            E::Tuple(items) => items.iter().any(|e| Self::references_name(e, name)),
+            E::TemplateString { parts } => parts.iter().any(|p| match p {
+                crate::ast::TemplatePart::Literal(_) => false,
+                crate::ast::TemplatePart::Interpolation(e) => Self::references_name(e, name),
+            }),
+            _ => true,
         }
     }
 

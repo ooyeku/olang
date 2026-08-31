@@ -47,7 +47,7 @@
 
 use crate::ast::BinaryOp;
 use crate::ovm::FunctionId;
-use crate::ovm::bytecode::{BytecodeOptimizer, CompiledBytecode, Instruction};
+use crate::ovm::bytecode::{BytecodeOptimizer, CompiledBytecode, Instruction, Register};
 use crate::ovm::value::{OvmValue, ValueData};
 
 use std::collections::HashMap;
@@ -3198,9 +3198,15 @@ pub(crate) fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         return false;
     }
     if !list_write_targets_unaliased(bytecode) {
+        if jit_debug() {
+            eprintln!(
+                "[jit] whitelist: '{}' refused by the list-write alias scan",
+                bytecode.debug_info.function_name.as_deref().unwrap_or("?")
+            );
+        }
         return false;
     }
-    bytecode.instructions.iter().all(|inst| match inst {
+    let ok = bytecode.instructions.iter().all(|inst| match inst {
         Instruction::LoadConst { const_idx, .. } => {
             match bytecode.constants.get(*const_idx as usize).map(|c| &c.data) {
                 Some(
@@ -3298,22 +3304,44 @@ pub(crate) fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         Instruction::BinImm { imm, .. } => {
             matches!(imm.data, ValueData::Integer(_) | ValueData::Float(_))
         }
-        // Domain-constrained math builtins (sqrt, asin, acos, ln, log2,
-        // log10) stay off the JIT: native code would compute a raw NaN
-        // where the interpreter raises a domain error. Excluded here, they
-        // run on bytecode, which routes out-of-domain inputs through the
-        // interpreter's checked path. The domain-free builtins still compile.
+        // Every float-math builtin compiles, the domain-constrained ones
+        // (sqrt, asin, acos, ln, log2, log10) behind a codegen guard: an
+        // out-of-domain argument branches to deopt, and the VM re-run
+        // raises the interpreter's exact domain error — native code
+        // never computes the NaN the checked path would have refused.
         Instruction::CallBuiltin {
             builtin_id, args, ..
         } => {
             matches!(
                 crate::ovm::bytecode::BytecodeVm::FLOAT_MATH.get(*builtin_id as usize),
                 Some((_, arity)) if args.len() == *arity && *arity <= 2
-            ) && !matches!(*builtin_id as usize, 0 | 10 | 11 | 18 | 19 | 20)
+            )
         }
         Instruction::Return { value } => value.is_some(),
         _ => false,
-    })
+    });
+    // Name the first refusing instruction under OLANG_JIT_DEBUG by
+    // re-running the check on one-instruction probes (plus a valid
+    // return); probe-sized bytecodes skip the print to stay quiet.
+    if !ok && jit_debug() && bytecode.instructions.len() > 2 {
+        let first = bytecode.instructions.iter().find(|inst| {
+            !whitelist_ok(&CompiledBytecode {
+                instructions: vec![
+                    (*inst).clone(),
+                    Instruction::Return {
+                        value: Some(Register(0)),
+                    },
+                ],
+                ..(*bytecode).clone()
+            })
+        });
+        eprintln!(
+            "[jit] whitelist: '{}' refused at {:?}",
+            bytecode.debug_info.function_name.as_deref().unwrap_or("?"),
+            first.map(instruction_name).unwrap_or("?")
+        );
+    }
+    ok
 }
 
 /// The static half of the list-write aliasing contract: a register that
@@ -6265,6 +6293,32 @@ fn translate_body(
                 let a = fargs[0]?;
                 // The VM leaves the unused slot at 0.0 for unary ops.
                 let b = fargs[1].unwrap_or_else(|| builder.ins().f64const(0.0));
+                // Domain guard: sqrt(-x), asin/acos outside [-1,1], and
+                // logs of non-positives deopt — the VM re-run raises the
+                // interpreter's exact domain error.
+                let bad = match *builtin_id as usize {
+                    0 => {
+                        let zero = builder.ins().f64const(0.0);
+                        Some(builder.ins().fcmp(FloatCC::LessThan, a, zero))
+                    }
+                    10 | 11 => {
+                        let lo = builder.ins().f64const(-1.0);
+                        let hi = builder.ins().f64const(1.0);
+                        let below = builder.ins().fcmp(FloatCC::LessThan, a, lo);
+                        let above = builder.ins().fcmp(FloatCC::GreaterThan, a, hi);
+                        Some(builder.ins().bor(below, above))
+                    }
+                    18..=20 => {
+                        let zero = builder.ins().f64const(0.0);
+                        Some(builder.ins().fcmp(FloatCC::LessThanOrEqual, a, zero))
+                    }
+                    _ => None,
+                };
+                if let Some(bad) = bad {
+                    let ok_block = builder.create_block();
+                    builder.ins().brif(bad, deopt_block, &[], ok_block, &[]);
+                    builder.switch_to_block(ok_block);
+                }
                 // sqrt/floor/ceil/trunc are bit-exact IEEE operations with
                 // native instructions; everything else goes through the
                 // imported helper, which IS the VM's eval_float_math.

@@ -263,3 +263,47 @@ fn nested_list_reads_run_the_forward_pass_natively() {
          println(`${cols[0][0]} ${cols[5][29999]}`)",
     );
 }
+
+#[test]
+fn guarded_domain_math_agrees_across_tiers() {
+    // sqrt/ln compile natively behind a domain guard: in-domain loops
+    // run native, an out-of-domain argument deopts and the VM re-run
+    // raises the interpreter's exact error (observed through the task
+    // boundary, which turns it into a value).
+    assert_tiers_agree(
+        "fn ok_sqrt(n) = { let mut t = 0.0\n\
+             for i in 0..n { t = t + math.sqrt(to_float(i)) }\nt }\n\
+         fn bad_sqrt(n) = { let mut t = 0.0\n\
+             for i in 0..n { t = t + math.sqrt(to_float(1000 - i)) }\nt }\n\
+         fn bad_ln(n) = { let mut t = 0.0\n\
+             for i in 0..n { t = t + math.ln(to_float(1000 - i)) }\nt }\n\
+         println(ok_sqrt(2000))\n\
+         println(task.join(spawn bad_sqrt(2000)))\n\
+         println(task.join(spawn bad_ln(2000)))",
+    );
+}
+
+#[test]
+fn move_call_fusion_declines_when_a_later_argument_reads_the_target() {
+    // `m = map_set(m, k, map_get(m, k) + 1)`: the rebind names the
+    // target as argument 0 (the move-fusion shape), but a LATER
+    // argument still reads it — moving first made the read see Unit
+    // on the VM while the interpreter read the live value (found by
+    // the cross-language wordfreq benchmark). The fusion must
+    // decline; both tiers must print 2.
+    assert_tiers_agree(
+        "fn f() = {\n\
+             let mut m = #{}\n\
+             m = map_set(m, \"a\", 1)\n\
+             m = map_set(m, \"a\", map_get(m, \"a\") + 1)\n\
+             map_get(m, \"a\")\n\
+         }\n\
+         println(f())\n\
+         fn g() = {\n\
+             let mut xs = [1, 2, 3]\n\
+             xs = concat(xs, [len(xs)])\n\
+             xs\n\
+         }\n\
+         println(g())",
+    );
+}
