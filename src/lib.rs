@@ -17,6 +17,7 @@ pub mod clock;
 pub mod effects;
 pub mod expand;
 pub mod help;
+pub mod home;
 pub mod interpreter;
 pub mod log;
 pub mod native;

@@ -634,7 +634,8 @@ both exist.
 | `OLANG_HTTP_WORKERS` | Default worker count for `http.serve` when the options map does not set one. |
 | `OLANG_ODS_WORKERS` | Worker count for the ods data stack's parallel operations. |
 | `OVM_PARALLELISM` | Thread count for `par_map`/`par for` and other VM parallelism (also `--ovm-parallelism N`). |
-| `OLANG_SHELF` | Location of the library shelf (default `~/.olang/shelf`). |
+| `OLANG_HOME` | Relocate the whole `~/.olang` tree ([the home directory](packages.md#the-home-directory)). |
+| `OLANG_SHELF` | Location of the shelf manifest (default `~/.olang/shelf.toml`). |
 | `NO_COLOR` / `CLICOLOR_FORCE` | Disable or force `term` styling regardless of whether output is a TTY. |
 
 Diagnostic switches, useful when reporting engine issues or reading

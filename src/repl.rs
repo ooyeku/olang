@@ -379,8 +379,34 @@ impl Completer for ReplHelper {
     }
 }
 
+/// The bracket hint: with the cursor at the end of a line whose
+/// delimiters are unbalanced, the exact closing sequence appears as
+/// ghost text — `(map [1, 2` hints `])` — and the Right arrow accepts
+/// it (rustyline's standard hint completion). Suppressed inside an
+/// unterminated string, where a bracket is content, not structure.
 impl Hinter for ReplHelper {
     type Hint = String;
+
+    fn hint(&self, line: &str, pos: usize, _ctx: &Context<'_>) -> Option<String> {
+        if line.is_empty() || pos < line.len() {
+            return None;
+        }
+        let (stack, in_string) = open_delimiters_scan(line);
+        if in_string || stack.is_empty() {
+            return None;
+        }
+        Some(
+            stack
+                .iter()
+                .rev()
+                .map(|c| match c {
+                    '(' => ')',
+                    '[' => ']',
+                    _ => '}',
+                })
+                .collect(),
+        )
+    }
 }
 
 /// Live syntax color for the input line: keywords, literals, comments,
@@ -388,11 +414,26 @@ impl Hinter for ReplHelper {
 /// string must keep the original's display width, so colors only wrap
 /// the original characters — nothing is inserted or dropped.
 impl Highlighter for ReplHelper {
-    fn highlight<'l>(&self, line: &'l str, _pos: usize) -> std::borrow::Cow<'l, str> {
+    fn highlight<'l>(&self, line: &'l str, pos: usize) -> std::borrow::Cow<'l, str> {
         if !colored::control::SHOULD_COLORIZE.should_colorize() {
             return std::borrow::Cow::Borrowed(line);
         }
-        std::borrow::Cow::Owned(highlight_source(line))
+        let colored_line = highlight_source(line);
+        // Matching-bracket emphasis: when the cursor sits on or just
+        // after a bracket, its partner (and it) render bold-underlined.
+        match bracket_pair_at(line, pos) {
+            Some((a, b)) => {
+                std::borrow::Cow::Owned(emphasize_raw_indices(&colored_line, line, a, b))
+            }
+            None => std::borrow::Cow::Owned(colored_line),
+        }
+    }
+
+    fn highlight_hint<'h>(&self, hint: &'h str) -> std::borrow::Cow<'h, str> {
+        if !colored::control::SHOULD_COLORIZE.should_colorize() {
+            return std::borrow::Cow::Borrowed(hint);
+        }
+        std::borrow::Cow::Owned(hint.dimmed().to_string())
     }
 
     fn highlight_prompt<'b, 's: 'b, 'p: 'b>(
@@ -410,8 +451,13 @@ impl Highlighter for ReplHelper {
         }
     }
 
-    fn highlight_char(&self, _line: &str, _pos: usize, kind: CmdKind) -> bool {
-        !matches!(kind, CmdKind::MoveCursor)
+    fn highlight_char(&self, line: &str, _pos: usize, _kind: CmdKind) -> bool {
+        // Re-render on every edit and cursor move; the bracket-pair
+        // emphasis depends on the cursor position. Plain lines with no
+        // brackets skip the cursor-move repaints.
+        line.bytes()
+            .any(|b| matches!(b, b'(' | b')' | b'[' | b']' | b'{' | b'}'))
+            || !matches!(_kind, CmdKind::MoveCursor)
     }
 }
 impl Validator for ReplHelper {}
@@ -528,11 +574,22 @@ impl Repl {
         function_names.dedup();
         editor.set_helper(Some(ReplHelper::new(function_names)));
 
-        // Load history if available
-        let history_file = format!(
-            "{}/.olang_history",
-            std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
-        );
+        // History lives at the home contract's state/history; a legacy
+        // ~/.olang_history migrates on first load.
+        let history_file = crate::home::history()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| ".olang_history".to_string());
+        if let Some(dir) = std::path::Path::new(&history_file).parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if !std::path::Path::new(&history_file).exists()
+            && let Ok(home) = std::env::var("HOME")
+        {
+            let legacy = format!("{}/.olang_history", home);
+            if std::path::Path::new(&legacy).exists() {
+                let _ = std::fs::rename(&legacy, &history_file);
+            }
+        }
         if let Err(e) = editor.load_history(&history_file)
             && verbose
         {
@@ -2409,61 +2466,169 @@ impl Repl {
     }
 
     /// The delimiters still open at the end of `src`, in opening order,
-    /// plus whether a string literal is unterminated. String contents and
-    /// `//` comments never count. This one scan feeds continuation
-    /// detection, the continuation prompt, and the mid-input warnings.
+    /// plus whether a string literal is unterminated. Delegates to the
+    /// module-level scanner shared with the bracket hinter.
     fn open_delimiters(src: &str) -> (Vec<char>, bool) {
-        let mut stack: Vec<char> = Vec::new();
-        let mut in_string = false;
-        let mut escape_next = false;
-        let mut prev_slash = false;
-        let mut in_comment = false;
+        open_delimiters_scan(src)
+    }
+}
 
-        for ch in src.chars() {
-            if in_comment {
-                if ch == '\n' {
-                    in_comment = false;
-                }
-                continue;
-            }
-            if escape_next {
-                escape_next = false;
-                prev_slash = false;
-                continue;
-            }
-
-            // A `//` outside a string starts a comment: nothing up to the end
-            // of the line can open or close a bracket.
-            if ch == '/' && !in_string {
-                if prev_slash {
-                    in_comment = true;
-                }
-                prev_slash = !prev_slash;
-                continue;
-            }
-            prev_slash = false;
-
-            match ch {
-                '"' if !in_string => in_string = true,
-                '"' if in_string => in_string = false,
-                '\\' if in_string => escape_next = true,
-                '{' | '(' | '[' if !in_string => stack.push(ch),
-                '}' if !in_string && stack.last() == Some(&'{') => {
-                    stack.pop();
-                }
-                ')' if !in_string && stack.last() == Some(&'(') => {
-                    stack.pop();
-                }
-                ']' if !in_string && stack.last() == Some(&'[') => {
-                    stack.pop();
-                }
+/// The delimiters still open at the end of `src`, in opening order,
+/// plus whether a string literal is unterminated. String contents and
+/// `//` comments never count. This one scan feeds continuation
+/// detection, the continuation prompt, the mid-input warnings, and the
+/// closing-bracket hint.
+/// The byte indices of the bracket at (or immediately before) `pos`
+/// and its partner, when both exist. Strings and comments are honored
+/// by scanning with the same rules as `open_delimiters_scan`.
+fn bracket_pair_at(line: &str, pos: usize) -> Option<(usize, usize)> {
+    let bytes = line.as_bytes();
+    let here = if pos < bytes.len() && matches!(bytes[pos], b'(' | b')' | b'[' | b']' | b'{' | b'}')
+    {
+        pos
+    } else if pos > 0
+        && pos <= bytes.len()
+        && matches!(bytes[pos - 1], b'(' | b')' | b'[' | b']' | b'{' | b'}')
+    {
+        pos - 1
+    } else {
+        return None;
+    };
+    // Walk the line with a stack of opener indices; a closer pairs with
+    // the top. Record the partner of `here` when either side matches.
+    let mut stack: Vec<(u8, usize)> = Vec::new();
+    let mut in_string = false;
+    let mut escape = false;
+    let mut prev_slash = false;
+    for (i, &b) in bytes.iter().enumerate() {
+        if escape {
+            escape = false;
+            continue;
+        }
+        if in_string {
+            match b {
+                b'\\' => escape = true,
+                b'"' => in_string = false,
                 _ => {}
             }
+            continue;
+        }
+        match b {
+            b'/' if prev_slash => return None, // comment: nothing to match past here
+            b'/' => {
+                prev_slash = true;
+                continue;
+            }
+            b'"' => in_string = true,
+            b'(' | b'[' | b'{' => stack.push((b, i)),
+            b')' | b']' | b'}' => {
+                let open = match b {
+                    b')' => b'(',
+                    b']' => b'[',
+                    _ => b'{',
+                };
+                if let Some((top, oi)) = stack.pop() {
+                    if top != open {
+                        return None; // mismatched nesting: no emphasis
+                    }
+                    if i == here || oi == here {
+                        return Some((oi.min(i), oi.max(i)));
+                    }
+                }
+            }
+            _ => {}
+        }
+        prev_slash = false;
+    }
+    None
+}
+
+/// Wrap the characters at raw byte indices `a` and `b` of `raw` in a
+/// bold-underline style inside `colored_line` (the ANSI-colored
+/// rendering of `raw`), by walking both strings and skipping escape
+/// sequences.
+fn emphasize_raw_indices(colored_line: &str, raw: &str, a: usize, b: usize) -> String {
+    let mut out = String::with_capacity(colored_line.len() + 24);
+    let mut raw_idx = 0usize;
+    let mut chars = colored_line.chars().peekable();
+    let raw_bytes = raw.as_bytes();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            out.push(c);
+            for e in chars.by_ref() {
+                out.push(e);
+                if e == 'm' {
+                    break;
+                }
+            }
+            continue;
+        }
+        if raw_idx == a || raw_idx == b {
+            out.push_str("\u{1b}[1;4m");
+            out.push(c);
+            out.push_str("\u{1b}[24;22m");
+        } else {
+            out.push(c);
+        }
+        raw_idx += c.len_utf8();
+        let _ = raw_bytes;
+    }
+    out
+}
+
+fn open_delimiters_scan(src: &str) -> (Vec<char>, bool) {
+    let mut stack: Vec<char> = Vec::new();
+    let mut in_string = false;
+    let mut escape_next = false;
+    let mut prev_slash = false;
+    let mut in_comment = false;
+
+    for ch in src.chars() {
+        if in_comment {
+            if ch == '\n' {
+                in_comment = false;
+            }
+            continue;
+        }
+        if escape_next {
+            escape_next = false;
+            prev_slash = false;
+            continue;
         }
 
-        (stack, in_string)
+        // A `//` outside a string starts a comment: nothing up to the end
+        // of the line can open or close a bracket.
+        if ch == '/' && !in_string {
+            if prev_slash {
+                in_comment = true;
+            }
+            prev_slash = !prev_slash;
+            continue;
+        }
+        prev_slash = false;
+
+        match ch {
+            '"' if !in_string => in_string = true,
+            '"' if in_string => in_string = false,
+            '\\' if in_string => escape_next = true,
+            '{' | '(' | '[' if !in_string => stack.push(ch),
+            '}' if !in_string && stack.last() == Some(&'{') => {
+                stack.pop();
+            }
+            ')' if !in_string && stack.last() == Some(&'(') => {
+                stack.pop();
+            }
+            ']' if !in_string && stack.last() == Some(&'[') => {
+                stack.pop();
+            }
+            _ => {}
+        }
     }
 
+    (stack, in_string)
+}
+
+impl Repl {
     fn is_incomplete_expression(&self, line: &str) -> bool {
         let (stack, in_string) = Self::open_delimiters(line);
         in_string || !stack.is_empty()
@@ -4267,6 +4432,32 @@ mod tests {
         // Division doesn't start a comment.
         assert!(repl.is_incomplete_expression("(1 / 2"));
         assert!(!repl.is_incomplete_expression("1 / 2"));
+    }
+
+    #[test]
+    fn bracket_hints_complete_the_open_stack() {
+        let h = ReplHelper::new(vec![]);
+        let hist = rustyline::history::DefaultHistory::new();
+        let ctx = Context::new(&hist);
+        assert_eq!(h.hint("(map [1, 2", 10, &ctx), Some("])".to_string()));
+        assert_eq!(h.hint("let x = 1", 9, &ctx), None);
+        // The paren before a terminated string is genuinely open; the
+        // bracket inside the string is content.
+        assert_eq!(h.hint("println(\"a (b\"", 15, &ctx), Some(")".to_string()));
+        // An unterminated string suppresses the hint entirely.
+        assert_eq!(h.hint("println(\"a (b", 14, &ctx), None);
+        // Only at the end of the line.
+        assert_eq!(h.hint("(x)", 1, &ctx), None);
+    }
+
+    #[test]
+    fn bracket_pair_at_matches_and_honors_strings() {
+        assert_eq!(bracket_pair_at("(a + b)", 0), Some((0, 6)));
+        assert_eq!(bracket_pair_at("(a + b)", 7), Some((0, 6)));
+        assert_eq!(bracket_pair_at("f([1, 2])", 2), Some((2, 7)));
+        assert_eq!(bracket_pair_at("a + b", 2), None);
+        // The bracket inside the string does not pair with the real one.
+        assert_eq!(bracket_pair_at("f(\")\")", 1), Some((1, 5)));
     }
 
     #[test]

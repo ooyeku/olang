@@ -42,10 +42,7 @@ pub fn cache_root() -> Result<PathBuf, CacheError> {
     if let Ok(dir) = std::env::var("OLANG_CACHE") {
         return Ok(PathBuf::from(dir));
     }
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|_| CacheError::NoHome)?;
-    Ok(PathBuf::from(home).join(".olang").join("cache"))
+    crate::home::cache().ok_or(CacheError::NoHome)
 }
 
 /// Run a git command in `dir`, returning trimmed stdout or an error carrying

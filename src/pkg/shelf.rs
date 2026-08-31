@@ -55,9 +55,7 @@ impl Shelf {
         if let Ok(p) = std::env::var("OLANG_SHELF") {
             return PathBuf::from(p);
         }
-        dirs_home()
-            .map(|h| h.join(".olang").join("shelf.toml"))
-            .unwrap_or_else(|| PathBuf::from(".olang-shelf.toml"))
+        crate::home::shelf_manifest().unwrap_or_else(|| PathBuf::from(".olang-shelf.toml"))
     }
 
     /// Load the shelf; a missing file is an empty shelf, not an error.
@@ -176,9 +174,6 @@ impl Shelf {
     }
 }
 
-fn dirs_home() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
-}
 
 #[cfg(test)]
 mod tests {

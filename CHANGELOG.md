@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **The `~/.olang` contract, `otc doctor`, `otc clean`.** Everything
+  the toolchain writes under the user's home is now defined in one
+  runtime module (`src/home.rs`) with a stated layout — shims,
+  toolchains, shelf, prunable cache, regenerable state — and
+  `OLANG_HOME` relocates the whole tree. `otc doctor` audits an
+  installation: every `olang`/`otc` on PATH with version and origin
+  and which copy wins, olang/otc version agreement, legacy scaffolding
+  from older layouts, dead shelf entries, and the sizes of the
+  prunable parts; `--fix` applies the safe repairs (it found and
+  removed six empty directories, two legacy wrapper scripts, a stray
+  playground wasm, and an orphaned cache on the machine it was built
+  on). `otc clean` reclaims cache and state with sizes reported. The
+  setup script no longer scaffolds directories; REPL history migrates
+  from `~/.olang_history` to `~/.olang/state/history` automatically.
+- **`otc update` and side-by-side toolchains.** `otc update` installs
+  the latest release — downloaded from the project's releases,
+  verified against `SHA256SUMS`, staged, smoke-tested, and switched to
+  by atomically relinking the shims in `~/.olang/bin`, so the running
+  binaries are never overwritten. `--check` reports without
+  installing; nothing contacts the network except these explicit
+  invocations. `otc toolchain list/install/default/remove` keeps
+  multiple releases side by side (removing the default refuses).
+  Installations owned by Homebrew or cargo are reported by doctor,
+  never modified.
+- **REPL bracket assistance.** The line editor hints the closing
+  brackets for whatever is still open — `(map [1, 2` shows `])` as
+  ghost text, accepted with the Right arrow — suppressed inside
+  unterminated strings, where a bracket is content. When the cursor
+  sits on or after a bracket, its partner is underlined, with string-
+  and comment-aware matching. Both ride the same delimiter scanner as
+  the continuation prompt.
+- **`completions` for both tools** (`olang completions zsh`,
+  `otc completions zsh`; also bash, fish, elvish), and
+  `olang --version --verbose` reports which binary answered and from
+  where — the question behind most stale-version confusion, answered
+  in full by `otc doctor`.
+
 ## [0.79.0] - 2026-08-30
 
 ### Added

@@ -65,7 +65,7 @@ fn warm_dir() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("OLANG_WARM_DIR") {
         return Some(PathBuf::from(dir));
     }
-    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".olang").join("warm"))
+    crate::home::warm()
 }
 
 fn key_for(source: &str) -> String {

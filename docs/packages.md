@@ -207,6 +207,68 @@ anything else (`otc lib restore`). The shelf has its own chapter:
 [The library shelf](shelf.md) covers the model, the commands, the
 starter libraries' full APIs, and pinning in detail.
 
+## The home directory
+
+Everything the toolchain writes under the user's home lives in
+`~/.olang`, whose layout is a stated contract (defined once in the
+runtime, `src/home.rs`):
+
+```text
+~/.olang/
+  bin/          shims pointing at the default toolchain
+  toolchains/   <version>/bin/{olang, otc} — managed by `otc update`
+  shelf/        registered library copies
+  shelf.toml    the shelf manifest
+  cache/        git dependency clones (prunable)
+  state/        warm hints, REPL history (regenerable)
+```
+
+`OLANG_HOME` relocates the whole tree (tests use this). Three commands
+manage it:
+
+- **`otc doctor`** audits an installation: every `olang`/`otc` on
+  PATH with its version and origin (cargo, Homebrew, olang-home) and
+  which copy wins; version agreement between `olang` and `otc`; legacy
+  files and directories from older layouts; shelf entries whose paths
+  no longer resolve; and the sizes of the prunable parts. The default
+  run is read-only; `otc doctor --fix` applies the safe repairs —
+  removing legacy scaffolding, migrating the REPL history — and never
+  touches installations owned by other package managers.
+- **`otc clean`** reclaims the prunable parts: the dependency cache by
+  default, `--state` for regenerable runtime state, `--all` for both.
+  Sizes are reported as they are reclaimed. The shelf and the
+  toolchains are never clean's business.
+- **`otc update`** installs the latest release. See the next section.
+
+## Updating and toolchains
+
+`otc update` downloads the latest release for the platform, verifies
+it against the release's `SHA256SUMS`, installs it under
+`~/.olang/toolchains/<version>/`, and atomically repoints the shims in
+`~/.olang/bin` — the running binaries are never overwritten in place.
+`otc update --check` reports the current and latest versions without
+installing anything. Nothing contacts the network except these two
+invocations, explicitly.
+
+Multiple releases install side by side:
+
+```bash
+otc toolchain list              # installed versions, default marked
+otc toolchain install 0.78.0    # add a specific release
+otc toolchain default 0.78.0    # switch the shims
+otc toolchain remove 0.78.0     # remove (the default refuses)
+```
+
+Installations from Homebrew or cargo are independent of this
+machinery; `otc doctor` shows how the copies on PATH shadow one
+another, and `olang --version --verbose` reports which binary answered
+and from where.
+
+Shell completion scripts for both tools come from the tools
+themselves: `otc completions zsh` and `olang completions zsh` (also
+`bash`, `fish`, `elvish`) print a script to install in the shell's
+completion directory.
+
 ## Benchmarks
 
 `otc bench` runs the project's benches — ordinary olang programs in

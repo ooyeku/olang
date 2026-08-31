@@ -67,6 +67,16 @@ To build without installing — for development on the compiler itself — use
 olang supports macOS and Linux, on both x86-64 and ARM. There is no
 native Windows build; on Windows, use WSL and follow the Linux path.
 
+## Updating
+
+However olang was installed, `otc update --check` reports whether a
+newer release exists. For installations managed under `~/.olang`,
+`otc update` downloads, verifies, and switches to the latest release;
+multiple releases can be kept side by side and switched with
+`otc toolchain` ([Packages](packages.md#updating-and-toolchains)).
+Homebrew installations update with `brew upgrade olang`, and Cargo
+installations by re-running the `cargo install` command.
+
 ## Running programs
 
 Pass a file to run it. Any arguments after the file name are passed to the
@@ -103,6 +113,14 @@ olang> x * 2
 42
 olang> :help
 ```
+
+The line editor completes identifiers and REPL commands with Tab, and
+hints the closing brackets for whatever is still open — typing
+`(map [1, 2` shows `])` as ghost text at the end of the line, and the
+Right arrow accepts it. Unbalanced input continues onto the next line
+with a prompt that shows which delimiters are open. When the cursor
+sits on a bracket, its partner is underlined. History persists across
+sessions in `~/.olang/state/history`.
 
 Commands beginning with a colon control the session; `:help` lists them,
 `:type <expr>` reports an expression's type, and `:time <expr>` wall-clocks

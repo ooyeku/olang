@@ -86,47 +86,10 @@ main() {
     CARGO_BIN=$(get_cargo_bin)
     print_status "Cargo bin directory: $CARGO_BIN"
     
-    # Create .olang directory structure
-    OLANG_DIR="$HOME_DIR/.olang"
-    OTC_DIR="$OLANG_DIR/.otc"
-    PROJECTS_DIR="$OLANG_DIR/projects"
-    TEMPLATES_DIR="$OLANG_DIR/templates"
-    CACHE_DIR="$OLANG_DIR/cache"
-    LOGS_DIR="$OLANG_DIR/logs"
-    CONFIG_DIR="$OLANG_DIR/config"
-    PACKAGES_DIR="$OLANG_DIR/packages"
-    EXAMPLES_DIR="$OLANG_DIR/examples"
-    DOCS_DIR="$OLANG_DIR/docs"
-    
-    print_status "Creating directory structure..."
-    mkdir -p "$OLANG_DIR"
-    mkdir -p "$OTC_DIR"
-    mkdir -p "$PROJECTS_DIR"
-    mkdir -p "$TEMPLATES_DIR"
-    mkdir -p "$CACHE_DIR"
-    mkdir -p "$LOGS_DIR"
-    mkdir -p "$CONFIG_DIR"
-    mkdir -p "$PACKAGES_DIR"
-    mkdir -p "$EXAMPLES_DIR"
-    mkdir -p "$DOCS_DIR"
-    print_success "Created comprehensive .olang directory structure"
-    
-    # Copy example files to user's .olang/examples directory
-    print_status "Copying example files..."
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    SOURCE_EXAMPLES="$SCRIPT_DIR/examples"
-    
-    if [ -d "$SOURCE_EXAMPLES" ]; then
-        # Copy all .ol files and utils directory
-        cp -r "$SOURCE_EXAMPLES"/*.ol "$EXAMPLES_DIR/" 2>/dev/null || true
-        if [ -d "$SOURCE_EXAMPLES/utils" ]; then
-            cp -r "$SOURCE_EXAMPLES/utils" "$EXAMPLES_DIR/" 2>/dev/null || true
-        fi
-        print_success "Copied example files to $EXAMPLES_DIR"
-    else
-        print_warning "Source examples directory not found, skipping example copy"
-    fi
-    
+    # The ~/.olang layout is owned by the runtime (src/home.rs) and by
+    # `otc update`; setup creates nothing there. Subsystems create their
+    # own directories on first use, and `otc doctor` audits the result.
+
     # Install olang and otc using cargo install
     print_status "Installing olang..."
     if cargo install --path . --bin olang; then

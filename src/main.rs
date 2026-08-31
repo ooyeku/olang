@@ -133,6 +133,11 @@ struct Cli {
 /// with the rest passed through as the program's argv.
 #[derive(Subcommand)]
 enum Commands {
+    /// Print a shell completion script (zsh, bash, fish, elvish)
+    Completions {
+        /// The shell to generate for
+        shell: clap_complete::Shell,
+    },
     /// Run a program (the explicit form of `olang <file>`)
     Run {
         /// Program to execute
@@ -381,6 +386,24 @@ fn run() -> i32 {
         return run_embedded(bundle, logger);
     }
 
+    // `--version --verbose` reports which binary answered and from
+    // where — the question behind most "why is it the old version"
+    // confusion, and the same view `otc doctor` gives for every copy
+    // on PATH. Handled before clap, whose auto --version exits first.
+    {
+        let args: Vec<String> = std::env::args().collect();
+        let wants_version = args.iter().any(|a| a == "--version" || a == "-V");
+        let verbose = args.iter().any(|a| a == "--verbose" || a == "-v");
+        if wants_version && verbose {
+            println!("olang {}", olang::VERSION);
+            if let Ok(exe) = std::env::current_exe() {
+                println!("binary: {}", exe.display());
+            }
+            println!("(otc doctor lists every olang on PATH and which one wins)");
+            return 0;
+        }
+    }
+
     let mut cli = Cli::parse();
 
     // The tier self-verifier reads its rate from the environment so the
@@ -463,6 +486,11 @@ fn run() -> i32 {
     // `cli` for the runner to read.
     let command = cli.command.take();
     match command {
+        Some(Commands::Completions { shell }) => {
+            use clap::CommandFactory;
+            clap_complete::generate(shell, &mut Cli::command(), "olang", &mut std::io::stdout());
+            0
+        }
         None | Some(Commands::Repl) => {
             if let Err(e) = start_repl(cli.verbose, cli.no_ovm, logger) {
                 logger.error("main", &format!("REPL error: {}", e));

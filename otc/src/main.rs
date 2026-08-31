@@ -96,6 +96,39 @@ enum Commands {
         #[arg(long)]
         profile: bool,
     },
+    /// Audit the installation against the ~/.olang contract; --fix
+    /// applies the safe repairs
+    Doctor {
+        /// Apply the safe repairs (legacy files, history migration)
+        #[arg(long)]
+        fix: bool,
+    },
+    /// Reclaim the prunable parts of ~/.olang (cache by default)
+    Clean {
+        /// The dependency cache (the default when no flag is given)
+        #[arg(long)]
+        cache: bool,
+        /// Regenerable runtime state (warm hints, REPL history)
+        #[arg(long)]
+        state: bool,
+        /// Everything prunable
+        #[arg(long)]
+        all: bool,
+    },
+    /// Install the latest release and make it the default toolchain
+    Update {
+        /// Only report the current and latest versions
+        #[arg(long)]
+        check: bool,
+    },
+    /// Manage side-by-side toolchain installs
+    #[command(subcommand)]
+    Toolchain(commands::update::ToolchainCommand),
+    /// Print a shell completion script (zsh, bash, fish, elvish)
+    Completions {
+        /// The shell to generate for
+        shell: clap_complete::Shell,
+    },
 }
 
 fn main() {
@@ -113,6 +146,15 @@ fn main() {
             commands::project::do_install(frozen, update, verbose)
         }
         Commands::Lib(cmd) => cmd.execute(),
+        Commands::Doctor { fix } => commands::doctor::run(fix),
+        Commands::Clean { cache, state, all } => commands::clean::run(cache, state, all),
+        Commands::Update { check } => commands::update::update(check),
+        Commands::Toolchain(cmd) => commands::update::toolchain(cmd),
+        Commands::Completions { shell } => {
+            use clap::CommandFactory;
+            clap_complete::generate(shell, &mut Cli::command(), "otc", &mut std::io::stdout());
+            Ok(())
+        }
         Commands::Bench {
             filter,
             runs,
