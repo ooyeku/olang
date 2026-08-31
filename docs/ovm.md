@@ -470,6 +470,76 @@ their own tier and JIT.
 `tests/jit_test.rs` holds the parity suite: every guard edge runs tiered
 and interpreted and must agree byte-for-byte.
 
+### On-stack replacement
+
+A hot loop inside a function the whole-function JIT refused — a
+`println` in the prologue, a formatting epilogue — no longer strands
+its iterations on the dispatch loop. When a frame's back-edge counter
+crosses a threshold, the loop region is synthesized into a standalone
+function: its parameters are the registers the loop reads, its return
+value the registers it writes that outlive it. The synthesized
+function goes through the ordinary JIT pipeline, and the dispatch loop
+calls it mid-frame, resuming at the loop's exit with the returned
+state.
+
+Region selection walks the loop nesting around the hot back edge,
+largest first, and takes the widest region that both synthesizes and
+passes the whitelist — an outer loop that allocates closures per
+iteration does not block a clean inner loop from running native. Each
+loop head in a function holds its own region: a function whose outer
+iteration drives several sequential hot loops runs each of them
+natively on every pass. Entry is offered periodically and re-offered
+cheaply for loops that have already run native in the frame. Backward
+liveness with a total instruction model keeps the marshaled state to
+the loop's true live registers.
+
+Soundness rests on the same purity rule as deoptimization: every
+instruction a region may contain is pure with respect to
+caller-visible state, so a region that fails natively — a refusal, a
+deopt, a runtime error — is simply discarded, and the VM resumes at
+the loop head with its original registers. A real error then re-raises
+on bytecode with the original function's spans.
+
+### Typed lists and native writes
+
+Homogeneous scalar lists carry a typed backing (`Vec<f64>` or
+`Vec<i64>`) across the whole stack. At a native boundary such a list
+passes as a borrowed pointer to the raw vector, read by direct
+indexing with no per-element conversion; a uniformly scalar boxed list
+converts to the typed layout once, at the marshal, and the conversion
+is written back so re-entries pay nothing. A list of float lists (a
+feature matrix) passes the same way, and indexing it natively yields
+the inner raw vector.
+
+Writes preserve the language's value semantics through an ownership
+discipline. The rebind forms compile to fused instructions:
+
+| Form | Instruction |
+|---|---|
+| `xs = col.set(xs, i, v)` | `ListSetAssign` |
+| `xs = col.swap(xs, i, j)` | `ListSwapAssign` |
+| `xs = xs + [v]` | `ListAppendAssign` |
+| `m = map_set(m, k, v)` | `MapSetAssign` |
+| `s = s + t` | `AddAssign` (string and list extend) |
+
+Each takes the target out of its register so a sole owner is
+recognizable: an unshared value mutates in place, a shared one copies,
+exactly as the interpreter's semantics require. Natively, the JIT
+tracks two ownership families per type — caller-owned arguments
+(which are also the deoptimization state) and region-born values — so
+the first write to a caller's list copies it once and every later
+write mutates in place. A deoptimization therefore never observes a
+mutated caller binding. `MapSetAssign` additionally re-checks at run
+time that `map_set` still names the builtin, so a user definition
+shadows the fused form exactly as it shadows the call.
+
+Domain-constrained math (`sqrt`, `asin`, `acos`, `ln`, `log2`,
+`log10`) compiles behind a guard: an out-of-domain argument branches
+to deoptimization, and the bytecode re-run raises the interpreter's
+exact domain error. Native code never computes the NaN the checked
+path would have refused, and one `math.sqrt` in a loop body no longer
+keeps the whole region on bytecode.
+
 ## Compile-time knowledge
 
 Two things the compiler knows for the whole run, exploited by default.
@@ -570,34 +640,47 @@ the user's definition in compiled code too.
 
 ## Performance
 
-Measured on an Apple Silicon laptop, release build — best-of-3, inner
-timings. All workloads are algorithm-identical across languages and
-checksum-verified (the N-body sample position matches across every
-implementation to the last digit). Since the tier is on by default, the
-olang numbers are what a plain `olang program.ol` gets — no flags.
+The repository carries a reproducible cross-language suite,
+[`benchmarks/xlang/`](../benchmarks/xlang/): eight benchmarks
+implemented identically — same algorithm, plain loops, the language's
+natural containers, no vectorization libraries — in olang, C++, Rust,
+Go, Java, JavaScript (Node), Lua, Python, and R. Every implementation
+prints a checksum the runner validates across languages, and times its
+own measured section; the runner medians the repetitions. Since the
+tier is on by default, the olang numbers are what a plain
+`olang program.ol` gets, with no flags.
 
-Four representative workloads against the field:
+Median milliseconds on an Apple Silicon laptop (Node 26, OpenJDK 25,
+CPython 3.14, Lua 5.5 without LuaJIT, R 4.6; C++ and Rust at `-O3`/`-O`):
 
-| Workload | Rust | Node | Bun | CPython | Ruby | **olang** |
-|---|---|---|---|---|---|---|
-| N-body (120 bodies × 150 steps) | 2.5 ms | 6 ms | 8 ms | 396 ms | 470 ms | **26 ms** |
-| Word frequency (50k tokens × 20) | 5 ms | 16 ms | 12 ms | 15 ms | 61 ms | **26 ms** |
-| `map(λ) \|> sum` pipeline, 1M elements | ~0 ms | 9 ms | 4 ms | 23 ms | 21 ms | **20 ms** |
-| fib(30) (2.7M recursive calls) | 1.2 ms | 4 ms | 4 ms | 46 ms | 43 ms | **4 ms** |
+| Bench | olang | C++ | Rust | Go | Java | Node | Lua | Python | R |
+|---|---|---|---|---|---|---|---|---|---|
+| fib(32), naive recursion | 10 | 2 | 3 | 4 | 3 | 15 | 59 | 117 | 709 |
+| collatz, 1..300k | 49 | 24 | 24 | 37 | 44 | 222 | 395 | 1145 | 3000 |
+| sieve to 10M | 922 | 10 | 10 | 12 | 19 | 25 | 271 | 1425 | 771 |
+| n-body, 2M steps | 611 | 39 | 35 | 57 | 71 | 81 | 1829 | 12009 | 6550 |
+| matmul 300×300 | 192 | 18 | 17 | 29 | 18 | 27 | 234 | 1698 | 719 |
+| string build, 2M appends | 263 | 13 | 31 | 20 | 12 | 45 | 145 | 92327 | 1081 |
+| word frequency, 3M words | 1178 | 104 | 143 | 130 | 90 | 358 | 301 | 636 | 7214 |
+| k-means, 200k points | 189 | 10 | 10 | 61 | 76 | 75 | 615 | 4530 | 2206 |
 
-(Interpreter-only mode runs the same programs at 23.6 s / — / 370 ms /
-1.1 s; the word-frequency workload exceeds the interpreter's allocation
-guard entirely, so the tier is what makes it runnable at this size.)
+The shape of the result: olang wins recursion and integer loops
+against the JavaScript JIT (fib and collatz run ahead of Node) and
+runs ahead of Lua, Python, and R on nearly everything, by 2× to 24×.
+Float- and array-heavy loops land within 2.5–7× of Node and the JVM.
+The remaining distance to C and Rust — roughly an order of magnitude
+on compute loops — is the price of guards, value-semantics copies at
+ownership boundaries, and the refusal rules around allocation in
+loops. The sieve row isolates one specific cost: its marking loop runs
+native, and nearly all of its time is constructing a 10M-element list
+through the boxed representation before the typed conversion.
 
-The shape of the result: on pure numeric work the JIT puts olang
-**level with the JavaScript JITs** — fib(30) at 4 ms sits beside Node
-and Bun's 4 ms and runs ~11× ahead of CPython and Ruby; the pipeline
-workload (a jitted lambda inside the VM's native map loop) leads CPython
-and Ruby. N-body — structs, floats, lists, tuples, and `math.sqrt` in a
-hot loop — runs 15× ahead of CPython and 18× ahead of Ruby. The
-remaining gap to Rust is the price of guards, boxing at tier
-boundaries, and the deliberate refusal rules around allocation in
-loops.
+For data-frame workloads the comparison that matters is
+[`benchmarks/run.sh`](../benchmarks/), the checksum-locked pipeline
+against pandas and Polars; the ods engine runs the full pipeline
+within ~25% of Polars and about 7× ahead of pandas. The
+[data stack chapter](ods.md#performance-characteristics) holds the
+per-operation numbers.
 
 Against its own interpreter, the tiers are worth roughly 275× (fib,
 bytecode + JIT) to ~900× (N-body): the whole N-body simulation —
@@ -661,12 +744,15 @@ These are real boundaries, stated so you can predict them:
   throughput matters, the honest route is explicit vectorized
   operations — which is what [the ods data stack](stdlib.md#ods--series-and-frames)
   provides — rather than a speculative auto-vectorizer inside the VM.
-- **Adaptive optimization** — profiling feedback, on-stack replacement,
-  polymorphic inline caches, speculation with side-exit deopt,
-  feedback-driven inlining, background tiering. These are deliberate
-  omissions, not accidental gaps: full adaptive optimization is not
-  planned work, and a tracing JIT and a tracing garbage collector are
-  rejected outright.
+- **Speculative adaptive optimization** — polymorphic inline caches,
+  speculation with side-exit deopt, feedback-driven inlining,
+  background tiering. These are deliberate omissions, not accidental
+  gaps, and a tracing JIT and a tracing garbage collector are rejected
+  outright. On-stack replacement is the exception: it is implemented
+  (see [On-stack replacement](#on-stack-replacement)) in a
+  non-speculative form — a loop region either compiles under the same
+  pure whitelist as a whole function or stays on bytecode, and a
+  failed native run is discarded rather than resumed mid-loop.
 
 ## Source map
 

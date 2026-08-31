@@ -1350,13 +1350,18 @@ columns against NumPy and 10M-row tables against Polars, are as follows:
 | null-aware `mean` (10% nulls) | 4.71 ms | NumPy `nanmean` 7.84 ms | ~1.7× ahead |
 | OLS fit, 1M rows × 20 predictors | 36.4 ms parallel | NumPy `lstsq` 137.8 ms | ~3.8× ahead |
 | group-by, 10M rows, 1k groups | 27.2 ms (one thread) | Polars 24.0 ms (18 threads) | within 1.13× |
+| group-by after parallel dictionary encoding (E9) | 5 ms in the pipeline below | Polars 8 ms | ahead as executed |
 
 Reductions on large columns parallelize automatically under the
 language's standard policy — the same machinery as `par_map`, tuned by
 `set_parallel(n)` — with no change to any result. The practical
 guidance is simpler than the table: keep computations in Series and
 Frame operations, cross to lists at the edges, and column size stops
-being something to think about.
+being something to think about. The end-to-end standing is measured by
+[`benchmarks/run.sh`](../benchmarks/), a checksum-locked eight-stage
+pipeline (load, clean, filter, group, join, sort, aggregate, write)
+run identically against pandas and Polars; the full pipeline runs
+within ~25% of Polars and about 7× ahead of pandas.
 
 ## The pipeline benchmark
 

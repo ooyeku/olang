@@ -341,6 +341,40 @@ let all = os.args()      // ["/path/to/tool", "arg1", "arg2"]
 let args = skip(all, 1)  // ["arg1", "arg2"]
 ```
 
+## Template strings take no escape sequences and do not nest
+
+Backtick strings interpolate with `${...}` but, like raw strings,
+process no backslash escapes: `` `a\nb` `` contains a backslash and an
+`n`, not a newline. Code that prints control characters — a carriage
+return for an in-place progress line, a tab separator — must take them
+from a double-quoted string:
+
+```olang no-run
+print("\r" + `progress ${done}/${total}`)
+```
+
+An interpolation cannot contain another template string. Bind the inner
+template to a name first:
+
+```olang
+let inner = `${2 + 2}`
+println(`the answer starts with ${inner}`)
+```
+
+Both facts surface only at run time — the literal backslash prints, and
+the nested backtick is a parse error at an unexpected position — so they
+are worth knowing before the first progress bar.
+
+## A bare `use` can shadow an earlier named import
+
+`use module` brings the module's exported names into scope unqualified.
+If an earlier `use lib.x { name }` imported the same name, the later
+bare `use` rebinds it, and the failure appears at run time inside
+whichever function the wrong binding reaches. Put bare `use` lines
+before named imports so the explicit names win, or refer to the
+module's members qualified (`module.name`) and skip the collision
+entirely.
+
 ## Small syntax reminders
 
 A few things that are easy to forget rather than truly surprising:

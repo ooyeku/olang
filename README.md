@@ -171,10 +171,15 @@ error reporting. A lower tier that cannot reproduce the interpreter's result
 exactly refuses to run the function rather than diverging.
 
 The bytecode tier compiles the large majority of ordinary code; the JIT
-covers integer, float, struct, list, tuple, and string operations, each by a
-tested rule. Full details and measured tables are in
-[Architecture and internals](docs/internals.md) and
-[The execution model: OVM and JIT](docs/ovm.md).
+covers integer, float, struct, list, map, tuple, and string operations,
+each by a tested rule, with on-stack replacement compiling hot loops
+mid-frame. Where this lands is measured by the repository's own
+cross-language suite ([`benchmarks/xlang/`](benchmarks/xlang/)):
+identical algorithms in nine languages with cross-validated checksums —
+olang runs ahead of Lua, Python, and R on nearly all of them and trades
+results with Node, ahead on recursion and integer loops. Full details
+and the tables are in [Architecture and internals](docs/internals.md)
+and [The execution model: OVM and JIT](docs/ovm.md#performance).
 
 ## Examples
 

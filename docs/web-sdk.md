@@ -157,6 +157,11 @@ and `share` markers stripped, test blocks removed, and the result
 parse-checked at boot — a broken client fails loudly at the server,
 never as a blank page.
 
+The playground wasm the demo serves (`static/olang_playground.wasm`)
+is a build artifact, not a committed file: `make wasm` builds it and
+copies it into place, as it does for the browser examples. A fresh
+clone runs `make wasm` once before starting the demo.
+
 ## Testing
 
 The SDK's tests are olang tests — 105 of them, `olang test

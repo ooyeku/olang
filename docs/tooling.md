@@ -595,6 +595,62 @@ fully-determined run. (Roadmap: `replay --why`,
 which carries value provenance during replay to answer "where did this
 number come from?" — a chain back to the recorded inputs.)
 
+## `--verify-tiers` — live tier verification
+
+The differential suites prove that the execution tiers agree on the
+programs the suites contain. `--verify-tiers <rate>` proves it on the
+program actually running:
+
+```bash
+olang --verify-tiers 0.05 run pipeline.ol   # verify 5% of native results
+olang --verify-tiers 1 run pipeline.ol      # verify every native result
+```
+
+At the given sampling probability, each native-tier result — a
+compiled call or an on-stack-replacement loop region — is re-executed
+on the bytecode VM with the same inputs, and the two results are
+compared bit for bit. Re-execution is unobservable because the JIT
+compiles only code that is pure with respect to caller-visible state;
+the cost is the work re-run (rate `1` roughly doubles native work;
+`0.01` is noise). A divergence prints both renderings and exits with
+code 102: by the correctness policy, any such difference is an engine
+bug, and the report asks for it to be filed. The `:ovm` report in the
+REPL shows how many calls a session verified.
+
+The flag suits long-running or high-stakes runs where the standing
+suites are not evidence enough: a sampled rate provides continuous
+spot-checking for a few percent of overhead.
+
+## Environment variables
+
+Controls read at startup. Command-line flags take precedence where
+both exist.
+
+| Variable | Effect |
+|---|---|
+| `OLANG_DENY` | Deny capabilities for the run, as `--deny`: a comma list of `fs`, `fs-write`, `net`, `proc`, `db`, `env`. |
+| `OLANG_VERIFY_TIERS` | The `--verify-tiers` sampling rate (`0`–`1`). |
+| `OLANG_STALL_ABORT` | `0` disables the deadlock abort: an all-threads-parked program hangs instead of exiting with the stall report. |
+| `OLANG_HTTP_WORKERS` | Default worker count for `http.serve` when the options map does not set one. |
+| `OLANG_ODS_WORKERS` | Worker count for the ods data stack's parallel operations. |
+| `OVM_PARALLELISM` | Thread count for `par_map`/`par for` and other VM parallelism (also `--ovm-parallelism N`). |
+| `OLANG_SHELF` | Location of the library shelf (default `~/.olang/shelf`). |
+| `NO_COLOR` / `CLICOLOR_FORCE` | Disable or force `term` styling regardless of whether output is a TTY. |
+
+Diagnostic switches, useful when reporting engine issues or reading
+the tier's decisions. These are development aids, not stable
+interfaces:
+
+| Variable | Effect |
+|---|---|
+| `OLANG_TIER_STATS=1` | Machine-readable tier counters on exit. |
+| `OLANG_JIT_DEBUG=1` | JIT compilation decisions: what compiled, what refused, and the instruction or register that refused it. |
+| `OLANG_OSR_DEBUG=1` | On-stack-replacement decisions: regions synthesized, entries, refusals with live-register counts. |
+| `OLANG_OSR_OFF=1` | Disable on-stack replacement. |
+| `OLANG_BRIDGE_TIER_OFF=1` | Disable the bridge interpreter's bytecode tier. |
+| `OLANG_DUMP_FN=<name>` | Print the compiled instruction stream for one function. |
+| `OLANG_ODS_TIMING=1` | Per-phase timings from the ods CSV reader and group-by. |
+
 ## Writing custom tools with `meta`
 
 Several of the commands above are built on the `meta` module, which returns a

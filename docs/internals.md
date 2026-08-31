@@ -190,9 +190,11 @@ where a third design decision quietly pays for the other two: **the JIT
 whitelist admits only pure operations**. Because a qualifying function
 has no side effects, a deopt can simply *re-execute the whole call* on
 bytecode — no partially-performed effects to undo, no resume-point
-bookkeeping, no on-stack replacement machinery. Purity turns
-deoptimization from the hardest problem in JIT engineering into a
-retry. The JIT never reproduces an error message either; it only ever
+bookkeeping. Purity turns deoptimization from the hardest problem in
+JIT engineering into a retry. The on-stack replacement machinery that
+enters hot loops natively mid-frame keeps this exact discipline: a
+failed native region is discarded and the loop resumes on bytecode
+from its head, never from a mid-loop resume point. The JIT never reproduces an error message either; it only ever
 declines or deopts, and bytecode produces the canonical error. Every
 native call carries a depth budget clamped to the VM's own call-depth
 limit, so runaway recursion errors identically instead of overflowing

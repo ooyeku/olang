@@ -163,11 +163,17 @@ println("\u{41}\u{42}\u{43}")   // ABC
 println(r"C:\path\no\newlines")
 ```
 
-**Template strings** (backticks) interpolate expressions with `${...}`:
+**Template strings** (backticks) interpolate expressions with `${...}`.
+Like raw strings, they take no escape sequences — `\n` inside backticks
+is a backslash and an `n`, not a newline — and an interpolation cannot
+contain another template string. Control characters come from a
+double-quoted string, and a nested interpolation is written by binding
+the inner template to a name first:
 
 ```olang
 let n = 6
 println(`${n} times 7 is ${n * 7}`)
+println("line one\n" + `line ${n}`)
 ```
 
 **Character literals** (`'a'`) are one-character strings — olang has no

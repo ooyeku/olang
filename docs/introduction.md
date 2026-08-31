@@ -66,7 +66,13 @@ machine, and a native-code JIT. The interpreter defines the language's
 semantics. The faster tiers are optimizations: each either reproduces the
 interpreter's result exactly or declines to run the function and falls back.
 A program therefore means the same thing regardless of which tier executes
-it, and performance requires no configuration. This model is described in
+it, and performance requires no configuration. Where the result lands is
+measured, not asserted: the repository carries a cross-language benchmark
+suite ([`benchmarks/xlang/`](../benchmarks/xlang/)) whose current
+standings are tabulated in
+[The execution model: OVM and JIT](ovm.md#performance), and a
+checksum-locked data-pipeline benchmark against pandas and Polars
+([`benchmarks/`](../benchmarks/)). The model itself is described in
 [Architecture and internals](internals.md) and
 [The execution model: OVM and JIT](ovm.md).
 
