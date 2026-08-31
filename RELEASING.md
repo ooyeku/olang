@@ -68,8 +68,9 @@ Pushing the `vX.Y.Z` tag triggers `.github/workflows/release.yml`,
 which with **no further action**:
 
 1. Builds `olang` + `otc` in release mode for **macos-arm64**,
-   **macos-x64**, and **linux-x64**; strips them; packages each with
-   LICENSE + README as `olang-X.Y.Z-<platform>.tar.gz`.
+   **macos-x64**, **linux-x64**, and **linux-arm64**; strips them;
+   packages each with LICENSE + README as
+   `olang-X.Y.Z-<platform>.tar.gz`.
 2. Builds the playground wasm and packages it as
    `olang-playground-X.Y.Z.wasm`.
 3. Generates `SHA256SUMS` over all of it.
@@ -77,6 +78,13 @@ which with **no further action**:
 
 Cross-check locally any time with `make dist` — same binaries, same
 wasm, plus the .vsix, staged into `dist/out/` with its own SHA256SUMS.
+
+The Homebrew tap updates itself: the workflow's `homebrew` job renders
+`dist/homebrew/olang.rb.tmpl` with the release's checksums and pushes it
+to `ooyeku/homebrew-olang`, provided the `TAP_PUSH_TOKEN` secret (a
+fine-grained PAT with Contents read/write on the tap repo) is
+configured. Without the secret the job skips and the manual procedure
+in `dist/homebrew/README.md` applies.
 
 ## 6. Per-channel publishing
 

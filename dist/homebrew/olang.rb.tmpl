@@ -1,32 +1,34 @@
-# Homebrew formula template for olang. Lives in the olang repo as the
-# canonical copy; the published version goes in the ooyeku/homebrew-olang
-# tap repo (see README.md next to this file).
-#
-# Per release, update `version` and the three sha256 values — the URLs
-# derive from `version` and never change shape. The checksums come
-# straight from the SHA256SUMS file that the release workflow attaches
-# to every GitHub Release.
+# Homebrew formula template for olang. The canonical copy lives in the
+# olang repo; the release workflow's `homebrew` job substitutes the
+# @VERSION@ and @SHA_*@ placeholders from the fresh SHA256SUMS and
+# pushes the result to Formula/olang.rb in the ooyeku/homebrew-olang
+# tap. Edit this file — never the tap copy — and the next release
+# propagates it.
 class Olang < Formula
-  desc "Minimal, expressive language with first-class functions, pipelines, and pattern matching"
+  desc "Dynamically typed functional language with a tiered interpreter/VM/JIT runtime"
   homepage "https://github.com/ooyeku/olang"
   license "MIT"
-  version "0.45.0" # release tag without the leading v
+  version "@VERSION@"
 
   on_macos do
     on_arm do
       url "https://github.com/ooyeku/olang/releases/download/v#{version}/olang-#{version}-macos-arm64.tar.gz"
-      sha256 "REPLACE_WITH_MACOS_ARM64_SHA256"
+      sha256 "@SHA_MACOS_ARM64@"
     end
     on_intel do
       url "https://github.com/ooyeku/olang/releases/download/v#{version}/olang-#{version}-macos-x64.tar.gz"
-      sha256 "REPLACE_WITH_MACOS_X64_SHA256"
+      sha256 "@SHA_MACOS_X64@"
     end
   end
 
   on_linux do
+    on_arm do
+      url "https://github.com/ooyeku/olang/releases/download/v#{version}/olang-#{version}-linux-arm64.tar.gz"
+      sha256 "@SHA_LINUX_ARM64@"
+    end
     on_intel do
       url "https://github.com/ooyeku/olang/releases/download/v#{version}/olang-#{version}-linux-x64.tar.gz"
-      sha256 "REPLACE_WITH_LINUX_X64_SHA256"
+      sha256 "@SHA_LINUX_X64@"
     end
   end
 

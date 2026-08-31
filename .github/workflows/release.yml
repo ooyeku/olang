@@ -3,8 +3,10 @@
 # supported desktop targets plus the playground wasm artifact, checksums
 # everything, and attaches it all to a GitHub Release for the tag.
 #
-# Nothing here publishes to Homebrew, the VS Code Marketplace, or the Zed
-# registry — those are manual per-channel steps, also in RELEASING.md.
+# The trailing job pushes an updated Homebrew formula to the
+# ooyeku/homebrew-olang tap when a TAP_PUSH_TOKEN secret is configured
+# (and skips quietly when it is not). The VS Code Marketplace and the
+# Zed registry remain manual per-channel steps, in RELEASING.md.
 
 name: Release
 
@@ -37,6 +39,9 @@ jobs:
           - name: linux-x64
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
 
     steps:
       - uses: actions/checkout@v4
@@ -153,4 +158,38 @@ jobs:
             [CHANGELOG.md](https://github.com/ooyeku/olang/blob/main/CHANGELOG.md)
             for what changed. `SHA256SUMS` covers every attached file; the
             Homebrew formula in `dist/homebrew/` consumes the macOS/Linux
-            tarballs.
+            tarballs. Install with the one-line script in the README, the
+            Homebrew tap, or a tarball below.
+
+  homebrew:
+    name: Update Homebrew tap
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Push formula to the tap
+        env:
+          TAP_PUSH_TOKEN: ${{ secrets.TAP_PUSH_TOKEN }}
+        run: |
+          if [ -z "$TAP_PUSH_TOKEN" ]; then
+            echo "TAP_PUSH_TOKEN not configured; skipping the tap update."
+            exit 0
+          fi
+          VERSION="${GITHUB_REF_NAME#v}"
+          sha() { shasum -a 256 "assets/olang-${VERSION}-$1.tar.gz" | cut -d' ' -f1; }
+          git clone "https://x-access-token:${TAP_PUSH_TOKEN}@github.com/ooyeku/homebrew-olang.git" tap
+          sed -e "s/@VERSION@/${VERSION}/g"               -e "s/@SHA_MACOS_ARM64@/$(sha macos-arm64)/"               -e "s/@SHA_MACOS_X64@/$(sha macos-x64)/"               -e "s/@SHA_LINUX_X64@/$(sha linux-x64)/"               -e "s/@SHA_LINUX_ARM64@/$(sha linux-arm64)/"               dist/homebrew/olang.rb.tmpl > tap/Formula/olang.rb
+          cd tap
+          git config user.name "olang-release"
+          git config user.email "release@olang.invalid"
+          git add Formula/olang.rb
+          git commit -m "olang ${VERSION}"
+          git push

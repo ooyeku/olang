@@ -6,16 +6,48 @@ anything.
 
 Part of [the olang book](README.md).
 
-## Requirements
+## The installer script
 
-olang is built with Cargo, the Rust package manager. Installing from source
-requires a recent stable Rust toolchain, available from
-[rustup.rs](https://rustup.rs). No other dependencies are required; the SQLite
-library used by the `db` module is bundled and built from source.
+The fastest path on macOS and Linux downloads a prebuilt binary from the
+latest release, verifies its checksum, and installs `olang` and `otc`
+into `~/.olang/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
+```
+
+The script prints the `PATH` line to add if the directory is not already
+on the path. `OLANG_VERSION=v0.79.0` pins a specific release;
+`OLANG_INSTALL_DIR` changes the destination. On a platform with no
+prebuilt tarball the script falls back to building from source, which
+requires a Rust toolchain.
+
+## Homebrew
+
+```bash
+brew install ooyeku/olang/olang
+```
+
+The tap installs both `olang` and `otc` and follows releases;
+`brew upgrade olang` picks up new versions.
+
+## With Cargo
+
+For users with a Rust toolchain, Cargo installs straight from the
+repository without a clone:
+
+```bash
+cargo install --locked --git https://github.com/ooyeku/olang.git olang otc
+```
+
+Binaries land on the Cargo binary path (typically `~/.cargo/bin`).
 
 ## Installing from source
 
-Clone the repository and install the `olang` binary with Cargo:
+Building from a clone requires a recent stable Rust toolchain, available
+from [rustup.rs](https://rustup.rs). No other dependencies are required;
+the SQLite library used by the `db` module is bundled and built from
+source.
 
 ```bash
 git clone https://github.com/ooyeku/olang.git
@@ -23,8 +55,7 @@ cd olang
 cargo install --path .
 ```
 
-This builds an optimized binary and places it on the Cargo binary path
-(typically `~/.cargo/bin`). Confirm the installation:
+Confirm any installation with:
 
 ```bash
 olang --version
@@ -32,6 +63,9 @@ olang --version
 
 To build without installing — for development on the compiler itself — use
 `cargo build --release`; the binary is then at `target/release/olang`.
+
+olang supports macOS and Linux, on both x86-64 and ARM. There is no
+native Windows build; on Windows, use WSL and follow the Linux path.
 
 ## Running programs
 

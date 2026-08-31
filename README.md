@@ -54,14 +54,19 @@ statement of what is stable, evolving, and experimental.
 
 ## Installation
 
+One line on macOS or Linux (downloads a checksum-verified prebuilt
+binary; falls back to a source build where none exists):
+
 ```bash
-./setup.sh                 # guided install: builds and installs olang + otc
+curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
 ```
 
-or directly with cargo:
+or with Homebrew, or Cargo, or from a clone:
 
 ```bash
-cargo install --path .
+brew install ooyeku/olang/olang
+cargo install --locked --git https://github.com/ooyeku/olang.git olang otc
+./setup.sh                 # in a clone: guided source build of olang + otc
 
 olang script.ol            # run a program; arguments reach os.args()
 olang                      # start the REPL
