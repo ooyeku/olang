@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Error reports are byte-identical on every tier, and richer.** The
+  tree_train incident (a division by zero attributed to an unrelated
+  top-level line) came down to the bytecode emitter leaking one
+  function's span rows into the next compile: a dependency compiled
+  mid-way inherited its caller's table, so its errors pointed at
+  another function's lines. Hunting it with a differential suite of
+  seven acceleration shapes (JIT call chains, mid-function loop
+  promotion, OSR regions, fused writes, promoted top-level loops,
+  bridged kernels, deep stacks) surfaced three more losses, all
+  fixed: an error inside a hot `map`/`filter` kernel dropped its span
+  and frames entirely; a bridged lambda's error lost its location
+  crossing the tier boundary as a string; and the interpreter itself
+  captured call stacks only after unwinding had popped the deep
+  frames, so `drive → level1 → level2 → level3` reported as `drive`.
+  Stacks now record at raise depth on both tiers, tier frames splice
+  with boundary dedup, and a nameless function renders as `<lambda>`
+  in traces everywhere. tests/error_span_test.rs pins the whole
+  report — message, span, and stack — byte for byte.
+
 - **Import aliasing, and the shadowing trap warned about.**
   `use lib.report { table as md_table }` binds the export under the
   alias (and only the alias); `share use m { name as alias }`

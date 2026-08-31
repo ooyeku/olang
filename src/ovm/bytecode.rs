@@ -2935,12 +2935,16 @@ impl BytecodeVm {
                     }
                 }
                 None => {
-                    // No span here: this frame is invisible (the
-                    // interpreter has already popped it) — but its pop
-                    // consumes any leaked slot, so the leak becomes this
-                    // frame instead.
+                    // No span in this frame — it cannot anchor the
+                    // report's location, but it still names itself in
+                    // the stack: the interpreter records its frames at
+                    // raise depth, so the trace must carry the same
+                    // names. The leak bookkeeping is unchanged.
                     if self.error_trace_leak.is_some() {
                         self.error_trace_leak = bytecode.debug_info.function_name.clone();
+                    }
+                    if let Some(name) = &bytecode.debug_info.function_name {
+                        self.error_trace_frames.push(name.clone());
                     }
                     return;
                 }
@@ -2949,6 +2953,27 @@ impl BytecodeVm {
         if let Some(name) = &bytecode.debug_info.function_name {
             self.error_trace_frames.push(name.clone());
         }
+    }
+
+    /// A bridged call failed: the bridge interpreter captured the error's
+    /// location and raise-depth stack on its own side, and the error is
+    /// about to cross back as a plain string. Adopt that trace as this
+    /// VM's, so the boundary splice reports the same span and frames a
+    /// pure interpreter run would.
+    fn adopt_bridge_error_trace(&mut self) {
+        if self.error_trace_span.is_some() {
+            return;
+        }
+        let Some(bridge) = self.builtin_interpreter.as_mut() else {
+            return;
+        };
+        let Some(loc) = bridge.take_error_location() else {
+            return;
+        };
+        self.error_trace_span = Some((loc.line, loc.column));
+        // take_error_trace's contract is innermost-first; the captured
+        // stack is outermost-first.
+        self.error_trace_frames = loc.call_stack.into_iter().rev().collect();
     }
 
     /// Hand the finished trace to the tier boundary (resetting it). The
@@ -5320,7 +5345,10 @@ impl BytecodeVm {
             name: func
                 .name
                 .clone()
-                .unwrap_or_else(|| "<function value>".to_string()),
+                // The interpreter renders a nameless function as
+                // "<lambda>" in call stacks; the compiled twin must use
+                // the same name or tiered error traces diverge on it.
+                .unwrap_or_else(|| "<lambda>".to_string()),
             type_params: Vec::new(),
             type_param_bounds: Vec::new(),
             parameters: func.parameters.clone(),
@@ -5525,9 +5553,13 @@ impl BytecodeVm {
         let interpreter = self.builtin_interpreter.as_mut().expect("just ensured");
         interpreter.seed_bridge_caps(caps, trace, attributed_to);
         interpreter.set_call_depth_base(depth);
-        let result = interpreter
-            .call_function(callee_ast, ast_args)
-            .map_err(|e| BytecodeError::RuntimeError(e.to_string()))?;
+        let result = match interpreter.call_function(callee_ast, ast_args) {
+            Ok(v) => v,
+            Err(e) => {
+                self.adopt_bridge_error_trace();
+                return Err(BytecodeError::RuntimeError(e.to_string()));
+            }
+        };
         if !Self::round_trips(&result) {
             return Err(BytecodeError::RuntimeError(
                 "function value returned a value the bytecode tier cannot represent".to_string(),
@@ -6289,8 +6321,13 @@ impl BytecodeVm {
             interpreter.set_cap_pregranted();
         }
 
-        let result = BuiltinFunctions::call(&self.builtins, name, ast_args, interpreter)
-            .map_err(|e| BytecodeError::RuntimeError(e.to_string()))?;
+        let result = match BuiltinFunctions::call(&self.builtins, name, ast_args, interpreter) {
+            Ok(v) => v,
+            Err(e) => {
+                self.adopt_bridge_error_trace();
+                return Err(BytecodeError::RuntimeError(e.to_string()));
+            }
+        };
 
         // Defence in depth: the curated builtin set should only ever produce
         // representable values, but returning something lossy would silently
@@ -7118,6 +7155,9 @@ impl BytecodeCompiler {
             );
             for (pc, inst) in instructions.iter().enumerate() {
                 eprintln!("  {:4}: {:?}", pc, inst);
+            }
+            for (start, line, col) in self.emitter.spans() {
+                eprintln!("  span pc {:4} -> {}:{}", start, line, col);
             }
         }
 
@@ -9885,6 +9925,12 @@ impl InstructionEmitter {
 
     pub fn reset(&mut self) {
         self.instructions.clear();
+        // Spans too: a dependency compiled mid-way through another
+        // function otherwise inherits the outer function's accumulated
+        // rows, and an error inside the callee then reports a line from
+        // a different function entirely (the tree_train incident: a
+        // division by zero attributed to an unrelated top-level line).
+        self.span_table.clear();
         self.label_positions.clear();
         self.next_label_id = 0;
         self.constants.clear();
@@ -10079,6 +10125,10 @@ impl InstructionEmitter {
             }
         }
         self.span_table.push((at, line, column));
+    }
+
+    pub fn spans(&self) -> &[(u32, u32, u32)] {
+        &self.span_table
     }
 
     pub fn take_spans(&mut self) -> Vec<(u32, u32, u32)> {

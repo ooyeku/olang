@@ -678,6 +678,7 @@ impl BytecodeTier {
         args.push(crate::ovm::value::OvmValue::from_ast(Value::Function(
             kernel.clone(),
         )));
+        self.vm.clear_error_trace();
         let out = self.vm.native_hof(name, &args);
         if std::env::var_os("OLANG_DEBUG_HOF").is_some() {
             eprintln!(
@@ -698,7 +699,13 @@ impl BytecodeTier {
                 Ok(ast) => Ok(ast),
                 Err(_) => return None,
             },
-            Err(e) => Err(format!("{}", e)),
+            Err(e) => {
+                // Carry the kernel's error trace to the boundary, as
+                // run_on_vm does — without it, an error inside a hot
+                // map/filter kernel loses its span and frames.
+                self.last_error_trace = self.vm.take_error_trace();
+                Err(format!("{}", e))
+            }
         })
     }
 

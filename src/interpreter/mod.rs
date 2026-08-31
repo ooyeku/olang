@@ -130,6 +130,12 @@ pub struct Interpreter {
     /// an error is consumed (caught) so a later error can't inherit a
     /// stale position.
     pending_error_location: Option<crate::ast::ErrorLocation>,
+    /// The call stack as it stood in the deepest frame when an error
+    /// began propagating — captured before unwinding pops the frames,
+    /// so the located-statement report can name the whole chain (the
+    /// VM's error trace keeps its frames; the interpreter must too, or
+    /// the two tiers render different stacks for the same error).
+    pending_error_frames: Option<Vec<String>>,
 
     /// Top-level bindings this interpreter has seen, with their
     /// mutability — the seed for validating the next program. A script is
@@ -291,6 +297,7 @@ impl Interpreter {
             stmt_span_stack: Vec::new(),
             call_stack_names: Vec::new(),
             pending_error_location: None,
+            pending_error_frames: None,
             pending_error_hint: None,
             scope_bindings: crate::scoping::Predefined::new(),
             bytecode_tier: None,
@@ -400,6 +407,7 @@ impl Interpreter {
             // captured for an earlier (recovered) failure must not be
             // inherited by a later error.
             self.pending_error_location = None;
+            self.pending_error_frames = None;
             self.pending_error_hint = None;
             last_value = self.eval_statement(statement)?;
         }
@@ -483,6 +491,22 @@ impl Interpreter {
         }
     }
 
+    /// Compose the interpreter's live stack with a tier trace's frames
+    /// (innermost-first). The tier notes every VM frame including the
+    /// boundary callee, which the interpreter's stack already ends
+    /// with — drop that duplicate when the two meet.
+    fn splice_tier_stack(&self, frames: Vec<String>) -> Vec<String> {
+        let mut call_stack = self.call_stack_names.clone();
+        let mut outermost_first = frames.into_iter().rev().peekable();
+        if let (Some(last), Some(first)) = (call_stack.last(), outermost_first.peek())
+            && last == first
+        {
+            outermost_first.next();
+        }
+        call_stack.extend(outermost_first);
+        call_stack
+    }
+
     fn is_control_signal(e: &InterpreterError) -> bool {
         matches!(
             e,
@@ -562,7 +586,31 @@ impl Interpreter {
         self.bytecode_tier = Some(tier);
         match out? {
             Ok(v) => Some(Ok(v)),
-            Err(message) => Some(Err(Self::map_tier_error_message(message))),
+            Err(message) => {
+                let err = Self::map_tier_error_message(message);
+                // Splice the kernel's error trace exactly as the tiered
+                // call path does — without this, an error inside a hot
+                // `map`/`filter` kernel reported the caller's top-level
+                // line instead of the failing statement.
+                if self.pending_error_location.is_none() && !Self::is_control_signal(&err) {
+                    let (span, frames, _leak) = self
+                        .bytecode_tier
+                        .as_mut()
+                        .map(|t| t.take_error_trace())
+                        .unwrap_or_default();
+                    if let Some((line, column)) = span {
+                        self.pending_error_location = Some(crate::ast::ErrorLocation {
+                            line,
+                            column,
+                            call_stack: self.splice_tier_stack(frames),
+                            hint: self.pending_error_hint.take(),
+                        });
+                    } else if !frames.is_empty() && self.pending_error_frames.is_none() {
+                        self.pending_error_frames = Some(self.splice_tier_stack(frames));
+                    }
+                }
+                Some(Err(err))
+            }
         }
     }
 
@@ -599,6 +647,7 @@ impl Interpreter {
     /// propagating, if any. Top-level reporters call this after a failed
     /// run to render "where" alongside the error's own "what".
     pub fn take_error_location(&mut self) -> Option<crate::ast::ErrorLocation> {
+        self.pending_error_frames = None;
         self.pending_error_location.take()
     }
 
@@ -651,7 +700,10 @@ impl Interpreter {
                     self.pending_error_location = Some(crate::ast::ErrorLocation {
                         line: *line,
                         column: *column,
-                        call_stack: self.call_stack_names.clone(),
+                        call_stack: self
+                            .pending_error_frames
+                            .take()
+                            .unwrap_or_else(|| self.call_stack_names.clone()),
                         hint: self.pending_error_hint.take(),
                     });
                 }
@@ -2484,14 +2536,19 @@ impl Interpreter {
                                     .map(|t| t.take_error_trace())
                                     .unwrap_or_default();
                                 if let Some((line, column)) = span {
-                                    let mut call_stack = self.call_stack_names.clone();
-                                    call_stack.extend(frames.into_iter().rev());
                                     self.pending_error_location = Some(crate::ast::ErrorLocation {
                                         line,
                                         column,
-                                        call_stack,
+                                        call_stack: self.splice_tier_stack(frames),
                                         hint: self.pending_error_hint.take(),
                                     });
+                                } else if !frames.is_empty() && self.pending_error_frames.is_none()
+                                {
+                                    // No located statement inside the VM,
+                                    // but the frames are real: keep them
+                                    // for the located capture upstream.
+                                    self.pending_error_frames =
+                                        Some(self.splice_tier_stack(frames));
                                 } else if let Some(leaked) = leak {
                                     // No located statement inside the VM:
                                     // the capture happens at an enclosing
@@ -2615,6 +2672,18 @@ impl Interpreter {
                 other => other,
             };
 
+            // An error leaving this frame: remember the stack as it
+            // stands, deepest frame included, before the pop below
+            // erases it. The located-statement capture upstream uses
+            // this instead of its own (already-unwound) view.
+            if let Err(e) = &result
+                && !Self::is_control_signal(e)
+                && self.pending_error_location.is_none()
+                && self.pending_error_frames.is_none()
+            {
+                self.pending_error_frames = Some(self.call_stack_names.clone());
+            }
+
             // Decrement call depth when function completes
             self.call_depth -= 1;
             self.call_stack_names.pop();
@@ -2707,6 +2776,7 @@ impl Interpreter {
             stmt_span_stack: Vec::new(),
             call_stack_names: Vec::new(),
             pending_error_location: None,
+            pending_error_frames: None,
             pending_error_hint: None,
             scope_bindings: self.scope_bindings.clone(),
             environment: self.environment.clone(),
@@ -3004,7 +3074,10 @@ impl Interpreter {
                     self.pending_error_location = Some(crate::ast::ErrorLocation {
                         line: *line,
                         column: *column,
-                        call_stack: self.call_stack_names.clone(),
+                        call_stack: self
+                            .pending_error_frames
+                            .take()
+                            .unwrap_or_else(|| self.call_stack_names.clone()),
                         hint: self.pending_error_hint.take(),
                     });
                 }
@@ -3837,15 +3910,17 @@ impl Interpreter {
                         .as_mut()
                         .map(|t| t.take_error_trace())
                         .unwrap_or_default();
+                    let frames: Vec<String> =
+                        frames.into_iter().filter(|f| f != "<hot loop>").collect();
                     if let Some((line, column)) = span {
-                        let mut call_stack = self.call_stack_names.clone();
-                        call_stack.extend(frames.into_iter().filter(|f| f != "<hot loop>").rev());
                         self.pending_error_location = Some(crate::ast::ErrorLocation {
                             line,
                             column,
-                            call_stack,
+                            call_stack: self.splice_tier_stack(frames),
                             hint: self.pending_error_hint.take(),
                         });
+                    } else if !frames.is_empty() && self.pending_error_frames.is_none() {
+                        self.pending_error_frames = Some(self.splice_tier_stack(frames));
                     }
                 }
                 Err(err)
