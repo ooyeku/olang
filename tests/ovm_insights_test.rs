@@ -30,9 +30,10 @@ const WORKOUT: &str = "fn hot(x) = x * 3 + 1\n\
     let mut s = 0\n\
     for i in 1..500 { s = s + hot(i) }\n\
     println(s)\n\
-    fn defaulted(x, y = 2) = x + y\n\
-    println(defaulted(1))\n\
-    fn blocked(x) = defaulted(x, 3) + 1\n\
+    fn pair(a, b) = a * 10 + b\n\
+    fn nb(x) = pair(b: 1, a: x)\n\
+    println(nb(1))\n\
+    fn blocked(x) = nb(x) + 1\n\
     println(blocked(4))\n";
 
 #[test]
@@ -50,28 +51,28 @@ fn rejections_carry_their_reason_and_a_fix() {
     let out = repl(&format!("{WORKOUT}:ovm\n"));
     assert!(out.contains("Still interpreted"), "{out}");
     assert!(
-        out.contains("has default parameter values"),
-        "no reason for 'defaulted': {out}"
+        out.contains("Named arguments are not supported"),
+        "no reason for 'nb': {out}"
     );
     assert!(
-        out.contains("calls 'defaulted', which cannot compile"),
+        out.contains("calls 'nb', which cannot compile"),
         "no chained reason for 'blocked': {out}"
     );
     // The plain-language layer.
     assert!(
-        out.contains("pass every argument explicitly"),
+        out.contains("runs on the interpreter by design"),
         "no fix hint: {out}"
     );
 }
 
 #[test]
 fn single_function_reports_tell_one_story() {
-    let out = repl(&format!("{WORKOUT}:ovm hot\n:ovm defaulted\n:ovm ghost\n"));
+    let out = repl(&format!("{WORKOUT}:ovm hot\n:ovm nb\n:ovm ghost\n"));
     // Compiled: tier + native calls + specialization.
     assert!(out.contains("=== hot ==="), "{out}");
     assert!(out.contains("Native (JIT) calls"), "{out}");
     // Rejected: why + fix.
-    assert!(out.contains("=== defaulted ==="), "{out}");
+    assert!(out.contains("=== nb ==="), "{out}");
     assert!(out.contains("Why:"), "{out}");
     assert!(out.contains("Fix:"), "{out}");
     // Unknown: an orientation, not an error.

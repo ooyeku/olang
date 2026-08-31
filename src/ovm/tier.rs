@@ -883,15 +883,11 @@ impl BytecodeTier {
 
     /// Assign a function id and make the name resolvable before compiling, so
     /// self- and mutual recursion can refer to it.
-    fn register(&mut self, name: &str, func: &Function) -> Option<FunctionId> {
-        // Default parameter values are evaluated by the interpreter
-        if func.parameters.iter().any(|p| p.default_value.is_some()) {
-            self.reject(
-                name,
-                "has default parameter values (defaults are evaluated by the interpreter)",
-            );
-            return None;
-        }
+    fn register(&mut self, name: &str, _func: &Function) -> Option<FunctionId> {
+        // Default parameter values are filled at the call boundary (the
+        // interpreter evaluates them in the callee's scope before the
+        // tier is offered the call), so the body compiles like any
+        // other: by the time bytecode runs, every argument is present.
 
         let func_id = FunctionId::new();
         self.vm.register_function(name.to_string(), func_id);

@@ -1129,6 +1129,27 @@ println(greet("lin", "hey"))
 println(greet(greeting: "yo", name: "sam"))
 ```
 
+A default is evaluated **at call time, in the function's own scope** —
+as if it were the first statement of the body. It sees the function's
+closure and every parameter to its left, and it never sees the
+caller's locals. Defaults evaluate left to right, once per call that
+omits them:
+
+```olang
+fn window(lo, hi = lo + 10, label = `${lo}..${hi}`) = label
+println(window(5))          // 5..15
+println(window(5, 8))       // 5..8
+println(window(5, label: "custom"))
+```
+
+Parameters without defaults are required; a call must cover them
+positionally or by name, and positional arguments may not follow named
+ones. Lambdas take defaults with the same rules. Functions with
+defaults run on every tier: a compiled call site fills literal
+defaults as constants, and any other omitted default is evaluated by
+the reference semantics — the two are indistinguishable by
+observation, like every other tier boundary.
+
 ### Return type annotation
 
 ```olang

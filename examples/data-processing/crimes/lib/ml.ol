@@ -29,15 +29,12 @@ fn sigmoid(z) =
 /// `labels` a list of 0.0/1.0, `epochs` and `rate` the schedule.
 /// Returns #{ "weights", "bias", "loss_curve" } — the loss curve is
 /// recorded every 10 epochs so convergence is inspectable.
-share fn logistic_train(cols, labels, epochs, rate) =
-    logistic_train_with(cols, labels, epochs, rate, (done, total, loss) => ())
-
-/// `logistic_train` with a progress callback: `on_epoch(done, total,
-/// latest_loss)` after every epoch (latest_loss is the most recent
-/// entry of the loss curve, 0.0 before the first is computed). The
-/// callback runs once per epoch — outside the hot loops, so the native
-/// tier is unaffected.
-share fn logistic_train_with(cols, labels, epochs, rate, on_epoch) = {
+/// The optional `on_epoch(done, total, latest_loss)` callback runs
+/// after every epoch (latest_loss is the most recent entry of the
+/// loss curve, 0.0 before the first is computed) — outside the hot
+/// loops, so the native tier is unaffected.
+share fn logistic_train(cols, labels, epochs, rate,
+                        on_epoch = (done, total, loss) => ()) = {
     let n_features = len(cols)
     let n = len(labels)
     let mut weights = map(0..n_features, (j) => 0.0)
@@ -150,12 +147,9 @@ share fn auc(preds, labels) = {
 /// Lloyd's k-means on 2-D points. Centroids seed from evenly spaced
 /// points (deterministic); iterates assignment/update `iters` times.
 /// Returns #{ "cx", "cy", "assignment", "sizes" }.
-share fn kmeans2(xs, ys, k, iters) =
-    kmeans2_with(xs, ys, k, iters, (done, total) => ())
-
-/// `kmeans2` with a progress callback: `on_iter(done, total)` after
-/// each Lloyd iteration.
-share fn kmeans2_with(xs, ys, k, iters, on_iter) = {
+/// The optional `on_iter(done, total)` callback runs after each
+/// Lloyd iteration.
+share fn kmeans2(xs, ys, k, iters, on_iter = (done, total) => ()) = {
     let n = len(xs)
     let stride = n / k
     let mut cx = map(0..k, (c) => xs[c * stride])

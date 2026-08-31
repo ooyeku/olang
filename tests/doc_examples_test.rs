@@ -161,7 +161,10 @@ fn pitfalls_chapter_examples_work() {
 
 #[test]
 fn performance_chapter_examples_work() {
-    run_doc_file("docs/performance.md", include_str!("../docs/performance.md"));
+    run_doc_file(
+        "docs/performance.md",
+        include_str!("../docs/performance.md"),
+    );
 }
 
 #[test]

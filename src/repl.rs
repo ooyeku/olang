@@ -2850,11 +2850,7 @@ impl Repl {
     /// Plain-language advice for a rejection reason, when a pattern is
     /// recognizable. The raw reason still prints; this is the "so what".
     fn ovm_hint(why: &str) -> Option<&'static str> {
-        if why.contains("default parameter") {
-            Some(
-                "pass every argument explicitly at hot call sites, or split the defaulted path into its own wrapper — the wrapped core will tier",
-            )
-        } else if why.contains("cannot compile") && why.contains("calls '") {
+        if why.contains("cannot compile") && why.contains("calls '") {
             Some("the named callee is the blocker — `:ovm <callee>` shows its reason")
         } else if why.contains("Unresolved identifier") {
             Some("it references a name the compiler cannot see; pass it in as a parameter")

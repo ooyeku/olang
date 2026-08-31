@@ -254,6 +254,15 @@ impl Default for Interpreter {
     }
 }
 
+/// One argument position at a call boundary: provided by the caller,
+/// or to be filled from the parameter's default. Defaults are
+/// evaluated by `fill_default_arguments` — in the callee's scope,
+/// never the caller's.
+pub enum ArgSlot {
+    Given(Value),
+    FromDefault,
+}
+
 impl Interpreter {
     pub fn new() -> Self {
         // Feature 8: Initialize smart caching
@@ -1201,13 +1210,13 @@ impl Interpreter {
                 let callee_value = self.eval_expr(callee)?;
 
                 // Enhanced named argument resolution
-                let arg_values = self.resolve_arguments(&callee_value, arguments)?;
+                let arg_slots = self.resolve_argument_slots(&callee_value, arguments)?;
                 let callee_name = match callee.as_ref() {
                     Expr::Identifier(n) => Some(n.clone()),
                     Expr::LocalRef { name, .. } => Some(name.clone()),
                     _ => None,
                 };
-                self.call_function(callee_value, arg_values)
+                self.call_function_slots(callee_value, arg_slots)
                     .map_err(|e| Self::name_uncallable(e, callee_name.as_deref()))
             }
             Expr::Lambda {
@@ -1247,13 +1256,14 @@ impl Interpreter {
                             }
                             other => other.clone(),
                         };
-                        let additional_args = self.resolve_arguments(&resolve_target, arguments)?;
+                        let additional_slots =
+                            self.resolve_argument_slots(&resolve_target, arguments)?;
 
                         // Prepend the piped value as the first argument
-                        let mut final_args = vec![left_value];
-                        final_args.extend(additional_args);
+                        let mut final_slots = vec![ArgSlot::Given(left_value)];
+                        final_slots.extend(additional_slots);
 
-                        self.call_function(callee_value, final_args)
+                        self.call_function_slots(callee_value, final_slots)
                     }
                     Expr::Identifier(name) => {
                         let function_value = self.environment.get(name).ok_or_else(|| {
@@ -2309,11 +2319,97 @@ impl Interpreter {
     /// tables — heap allocations per element, and allocator contention
     /// once a dozen cores did it at once. Borrowing removes the clone;
     /// nothing here needed ownership.
+    /// Produce the full positional argument vector for `func`,
+    /// evaluating defaults for the missing positions. A default
+    /// evaluates as if it were the first statement of the body: in a
+    /// fresh callee environment carrying the function's closure and
+    /// its own name, with every earlier parameter already bound — so
+    /// `fn f(x, y = x * 2)` sees the parameter `x`, and a caller-side
+    /// variable that happens to share a default's name is invisible.
+    /// Left to right, once per call.
+    fn fill_default_arguments(
+        &mut self,
+        func: &Function,
+        slots: Vec<ArgSlot>,
+    ) -> Result<Vec<Value>, InterpreterError> {
+        let mut env = Environment::with_parent(self.environment.clone());
+        if !func.closure.is_empty() {
+            env.variables = func.closure.clone();
+        }
+        if let Some(name) = &func.name {
+            env.define_local(name.clone(), Value::Function(func.clone()));
+        }
+        let saved = std::mem::replace(&mut self.environment, env);
+        let mut slots = slots.into_iter();
+        let mut filled = Vec::with_capacity(func.parameters.len());
+        let mut fill_error = None;
+        for param in func.parameters.iter() {
+            let value = match slots.next() {
+                Some(ArgSlot::Given(v)) => Ok(v),
+                Some(ArgSlot::FromDefault) | None => match &param.default_value {
+                    Some(default_expr) => self.eval_expr(default_expr),
+                    None => Err(InterpreterError::RuntimeError {
+                        message: format!("Missing argument for parameter {}", param.name),
+                    }),
+                },
+            };
+            match value {
+                Ok(v) => {
+                    self.environment.define_local(param.name.clone(), v.clone());
+                    filled.push(v);
+                }
+                Err(e) => {
+                    fill_error = Some(e);
+                    break;
+                }
+            }
+        }
+        self.environment = saved;
+        match fill_error {
+            Some(e) => Err(e),
+            None => Ok(filled),
+        }
+    }
+
+    /// `call_user_function` for a slot vector from named-argument
+    /// resolution (holes fill from defaults in the callee's scope).
+    pub fn call_user_function_slots(
+        &mut self,
+        func: &Function,
+        slots: Vec<ArgSlot>,
+    ) -> Result<Value, InterpreterError> {
+        let needs_fill = slots.len() < func.parameters.len()
+            || slots.iter().any(|s| matches!(s, ArgSlot::FromDefault));
+        let arguments = if needs_fill {
+            self.fill_default_arguments(func, slots)?
+        } else {
+            slots
+                .into_iter()
+                .map(|s| match s {
+                    ArgSlot::Given(v) => v,
+                    ArgSlot::FromDefault => unreachable!("needs_fill checked"),
+                })
+                .collect()
+        };
+        self.call_user_function(func, arguments)
+    }
+
     pub fn call_user_function(
         &mut self,
         func: &Function,
-        arguments: Vec<Value>,
+        mut arguments: Vec<Value>,
     ) -> Result<Value, InterpreterError> {
+        // A short positional call fills its trailing parameters from
+        // their defaults here, before the depth/tier machinery, so the
+        // promoted path receives the same full vector the interpreter
+        // binds. Only when defaults exist: a short call to a function
+        // without them keeps its ArityMismatch from the boundary check.
+        if arguments.len() < func.parameters.len()
+            && func.parameters.iter().any(|p| p.default_value.is_some())
+        {
+            let slots = arguments.into_iter().map(ArgSlot::Given).collect();
+            arguments = self.fill_default_arguments(func, slots)?;
+        }
         if self.call_depth >= self.max_call_depth {
             return Err(InterpreterError::RuntimeError {
                 message: format!(
@@ -2457,16 +2553,11 @@ impl Interpreter {
                 // copy per operation.
                 let mut bind_error = None;
                 for (i, param) in func.parameters.iter().enumerate() {
+                    // Defaults were filled at the call boundary (in the
+                    // callee's scope, by fill_default_arguments); a short
+                    // vector reaching the bind loop is a missing argument.
                     let value = if i < arguments.len() {
                         std::mem::replace(&mut arguments[i], Value::Unit)
-                    } else if let Some(default_expr) = &param.default_value {
-                        match self.eval_expr(default_expr) {
-                            Ok(v) => v,
-                            Err(e) => {
-                                bind_error = Some(e);
-                                break;
-                            }
-                        }
                     } else {
                         bind_error = Some(InterpreterError::RuntimeError {
                             message: format!("Missing argument for parameter {}", param.name),
@@ -2851,21 +2942,30 @@ impl Interpreter {
                     && Arc::ptr_eq(&target.body, &me.body)
                     && Arc::ptr_eq(&target.closure, &me.closure)
                 {
-                    let args = self.resolve_arguments(&callee_value, arguments)?;
-                    // Only a fully applied self-call elides: a defaulted
-                    // parameter's expression evaluates in the *calling*
-                    // frame's environment, which an elided frame no
-                    // longer has. Under-application takes the ordinary
-                    // call path and keeps its exact semantics.
-                    if args.len() == me.parameters.len() {
+                    let slots = self.resolve_argument_slots(&callee_value, arguments)?;
+                    // Only a fully applied self-call elides; a call with
+                    // default holes takes the ordinary path, which fills
+                    // them in the callee's scope before binding.
+                    if slots.len() == me.parameters.len()
+                        && slots.iter().all(|s| matches!(s, ArgSlot::Given(_)))
+                    {
+                        let args = slots
+                            .into_iter()
+                            .map(|s| match s {
+                                ArgSlot::Given(v) => v,
+                                ArgSlot::FromDefault => unreachable!("checked all Given"),
+                            })
+                            .collect();
                         return Ok(TailFlow::SelfCall(args));
                     }
-                    return self.call_function(callee_value, args).map(TailFlow::Value);
+                    return self
+                        .call_function_slots(callee_value, slots)
+                        .map(TailFlow::Value);
                 }
                 // Not a self-call: complete it here — same order as the
                 // normal path (callee, then arguments, then call).
-                let arg_values = self.resolve_arguments(&callee_value, arguments)?;
-                self.call_function(callee_value, arg_values)
+                let arg_slots = self.resolve_argument_slots(&callee_value, arguments)?;
+                self.call_function_slots(callee_value, arg_slots)
                     .map(TailFlow::Value)
             }
             _ => self.eval_expr(expr).map(TailFlow::Value),
@@ -3986,19 +4086,24 @@ impl Interpreter {
         }
     }
 
-    /// Resolve arguments (both positional and named) for function calls
-    fn resolve_arguments(
+    /// Resolve arguments (both positional and named) for function calls.
+    /// Produces one slot per parameter position: `Given` for provided
+    /// values (named arguments moved to their positions), `FromDefault`
+    /// for holes a parameter default will fill — evaluation of those
+    /// defaults happens later, in the callee's scope, never here in the
+    /// caller's.
+    fn resolve_argument_slots(
         &mut self,
         callee: &Value,
         arguments: &[Argument],
-    ) -> Result<Vec<Value>, InterpreterError> {
+    ) -> Result<Vec<ArgSlot>, InterpreterError> {
         // Get function parameter information if available
         let parameters = match callee {
             Value::Function(func) => Some(&func.parameters),
             _ => None, // For builtin functions and other callables, use positional-only
         };
 
-        let mut resolved_args = Vec::new();
+        let mut resolved_args: Vec<ArgSlot> = Vec::new();
         // Vec keeps source order — a HashMap would append named args to
         // builtins in nondeterministic order
         let mut named_args: Vec<(String, Value)> = Vec::new();
@@ -4014,7 +4119,7 @@ impl Interpreter {
                                 .to_string(),
                         });
                     }
-                    resolved_args.push(self.eval_expr(expr)?);
+                    resolved_args.push(ArgSlot::Given(self.eval_expr(expr)?));
                     positional_count += 1;
                 }
                 Argument::Named { name, value } => {
@@ -4052,11 +4157,11 @@ impl Interpreter {
 
                 if let Some(pos) = named_args.iter().position(|(n, _)| n == &param.name) {
                     // Use named argument value
-                    resolved_args.push(named_args.remove(pos).1);
-                } else if let Some(default_expr) = &param.default_value {
-                    // Use default value
-                    let default_value = self.eval_expr(default_expr)?;
-                    resolved_args.push(default_value);
+                    resolved_args.push(ArgSlot::Given(named_args.remove(pos).1));
+                } else if param.default_value.is_some() {
+                    // A hole for the default — evaluated at the call
+                    // boundary in the callee's scope, not here.
+                    resolved_args.push(ArgSlot::FromDefault);
                 } else {
                     // Missing required argument
                     return Err(InterpreterError::RuntimeError {
@@ -4078,11 +4183,34 @@ impl Interpreter {
         } else {
             // For builtin functions, just append named arguments as positional
             for (_, value) in named_args {
-                resolved_args.push(value);
+                resolved_args.push(ArgSlot::Given(value));
             }
         }
 
         Ok(resolved_args)
+    }
+
+    /// Dispatch a slot vector: user functions fill their default holes
+    /// in their own scope; every other callee takes plain values (its
+    /// slots are always `Given` — `FromDefault` is only produced when
+    /// the callee is a `Function` with parameter information).
+    fn call_function_slots(
+        &mut self,
+        callee: Value,
+        slots: Vec<ArgSlot>,
+    ) -> Result<Value, InterpreterError> {
+        if let Value::Function(func) = &callee {
+            let func = func.clone();
+            return self.call_user_function_slots(&func, slots);
+        }
+        let args = slots
+            .into_iter()
+            .map(|s| match s {
+                ArgSlot::Given(v) => v,
+                ArgSlot::FromDefault => Value::Unit,
+            })
+            .collect();
+        self.call_function(callee, args)
     }
 
     fn eval_share_decl(&mut self, share: ShareDecl) -> Result<Value, InterpreterError> {

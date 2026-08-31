@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Default parameter values work everywhere, correctly, at speed.**
+  Defaults and named arguments were parsed and half-implemented;
+  landing the roadmap row meant three fixes. Semantics: a default now
+  evaluates at call time in the function's own scope — the closure
+  plus every parameter to its left, as if it were the first statement
+  of the body — never the caller's environment. (Previously it
+  evaluated in the caller's scope: `fn mid(x, y = x * 2)` called as
+  `mid(10)` with a caller-side `x = 99` silently produced 208 — a
+  live dynamic-scoping leak, now impossible, and
+  parameter-referencing defaults like `hi = lo + 10` now work.)
+  Speed: defaulted functions were blanket-rejected from promotion, so
+  one default cost 650× on a hot call (1939 ms vs 3 ms on a 2M-call
+  loop). The interpreter now fills defaults at the call boundary
+  before the tier is offered the call, defaulted functions promote
+  and JIT like any other, compiled call sites splice literal defaults
+  as constants (the 2M-call loop runs 5 ms), and non-literal
+  defaults take the interpreter-exact function-value path. An
+  eight-way differential battery (tests/default_params_test.rs) pins
+  scope, evaluation count, named-argument resolution, recursion,
+  errors, and the hot paths; the language reference documents the
+  semantics, and the `_with` callback stubs in crimes/lib/ml.ol are
+  replaced by defaulted parameters with k-means confirmed still fully
+  native.
+
 - **The `~/.olang` contract, `otc doctor`, `otc clean`.** Everything
   the toolchain writes under the user's home is now defined in one
   runtime module (`src/home.rs`) with a stated layout — shims,

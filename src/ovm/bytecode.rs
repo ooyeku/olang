@@ -5293,10 +5293,9 @@ impl BytecodeVm {
         func: &crate::ast::Function,
         arity: usize,
     ) -> Option<FunctionId> {
-        if func.parameters.len() != arity
-            || func.parameters.iter().any(|p| p.default_value.is_some())
-            || !func.param_bounds.is_empty()
-        {
+        // Full application only — the arity check guarantees no default
+        // would fire, so defaulted functions are admissible here.
+        if func.parameters.len() != arity || !func.param_bounds.is_empty() {
             return None;
         }
 
@@ -5664,9 +5663,7 @@ impl BytecodeVm {
         let Some(func) = self.known_function_values.get(name).cloned() else {
             return false;
         };
-        if func.parameters.iter().any(|p| p.default_value.is_some())
-            || !func.param_bounds.is_empty()
-        {
+        if !func.param_bounds.is_empty() {
             return false;
         }
         let dep_id = FunctionId::new();
@@ -7794,6 +7791,39 @@ impl BytecodeCompiler {
                 if !closure_disagrees
                     && let Some(&func_id) = self.function_registry.get(&function_name)
                 {
+                    // A short call to a defaulted function completes its
+                    // argument list here when every missing default is a
+                    // literal (loaded as constants — scope-free by
+                    // construction). Any other short call goes through
+                    // the baked function value: CallValue's interpreter
+                    // fallback evaluates the defaults in the callee's
+                    // scope, exactly as a direct interpreted call would.
+                    let mut arg_regs = arg_regs;
+                    let known = self.known_function_values.get(&function_name).cloned();
+                    if let Some(f) = &known
+                        && arg_regs.len() < f.parameters.len()
+                        && f.parameters.iter().any(|p| p.default_value.is_some())
+                    {
+                        match self.splice_literal_defaults(f, arg_regs.len()) {
+                            Some(mut extra) => arg_regs.append(&mut extra),
+                            None => {
+                                let idx = self.emitter.add_constant(OvmValue::from_ast(
+                                    crate::ast::Value::Function(f.clone()),
+                                ));
+                                let callee_reg = self.register_allocator.allocate_register();
+                                self.emitter.instructions.push(Instruction::LoadConst {
+                                    dst: callee_reg,
+                                    const_idx: idx,
+                                });
+                                self.emitter.instructions.push(Instruction::CallValue {
+                                    dst: dst_reg,
+                                    callee: callee_reg,
+                                    args: arg_regs,
+                                });
+                                return Ok(dst_reg);
+                            }
+                        }
+                    }
                     self.emitter.instructions.push(Instruction::CallFn {
                         dst: dst_reg,
                         func_id,
@@ -9623,6 +9653,36 @@ impl BytecodeCompiler {
 
     /// Compile positional call arguments via `compile_operands`; named
     /// arguments refuse compilation.
+    /// Registers holding the literal defaults for parameters
+    /// `from..`, or None when any of those parameters has a
+    /// non-literal default (whose evaluation needs the callee's scope)
+    /// or no default at all (arity error — the value path reproduces
+    /// the interpreter's message).
+    fn splice_literal_defaults(
+        &mut self,
+        func: &crate::ast::Function,
+        from: usize,
+    ) -> Option<Vec<Register>> {
+        let mut extra = Vec::new();
+        for param in &func.parameters[from..] {
+            let value = match &param.default_value {
+                Some(Expr::Integer(n)) => OvmValue::new_integer(*n),
+                Some(Expr::Float(f)) => OvmValue::new_float(*f),
+                Some(Expr::Boolean(b)) => OvmValue::new_boolean(*b),
+                Some(Expr::String(st)) => OvmValue::from_ast(crate::ast::Value::String(st.clone())),
+                _ => return None,
+            };
+            let idx = self.emitter.add_constant(value);
+            let reg = self.register_allocator.allocate_register();
+            self.emitter.instructions.push(Instruction::LoadConst {
+                dst: reg,
+                const_idx: idx,
+            });
+            extra.push(reg);
+        }
+        Some(extra)
+    }
+
     fn compile_call_args(
         &mut self,
         arguments: &[crate::ast::Argument],

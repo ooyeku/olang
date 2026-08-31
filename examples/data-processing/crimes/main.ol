@@ -14,8 +14,8 @@
 use term
 use lib.fetch { fetch }
 use lib.prep { derive_time, label_share, one_hot }
-use lib.ml { train_test_indices, logistic_train_with, logistic_predict,
-             classification_report_at, auc, auc_ci, kmeans2_with, normalize,
+use lib.ml { train_test_indices, logistic_train, logistic_predict,
+             classification_report_at, auc, auc_ci, kmeans2, normalize,
              gnb_train, gnb_predict, tree_train, tree_predict, pca2,
              threshold_sweep, calibration, wilson_ci, acf }
 use lib.report { table, chart, derived_csv, write }
@@ -204,13 +204,13 @@ let e_stride = math.max(1, len(lats) / 60000)
 let e_lats = map(0..(len(lats) / e_stride), (i) => lats[i * e_stride])
 let e_lons = map(0..(len(lats) / e_stride), (i) => lons[i * e_stride])
 let elbow_ks = map(0..9, (i) => i + 2)
-let elbow_in = map(elbow_ks, (k) => map_get(kmeans2_with(e_lats, e_lons, k, 8, (d, tot) => ()), "inertia"))
+let elbow_in = map(elbow_ks, (k) => map_get(kmeans2(e_lats, e_lons, k, 8), "inertia"))
 let elbow_svg = plot.line(ods.series(elbow_ks), ods.series(elbow_in),
     #{ "title": "k-means inertia by k (60k-point subsample)", "x_label": "k", "y_label": "within-cluster SS" })
 let elbow_drop = math.round((1.0 - elbow_in[8] / elbow_in[0]) * 1000.0) / 10.0
 stage("elbow", `k swept 2—11 on ${len(e_lats)} points; inertia falls ${elbow_drop}% by k=11`)
 
-let km = kmeans2_with(lats, lons, 10, 12,
+let km = kmeans2(lats, lons, 10, 12,
     (done, total) => progress("k-means over 900k points, iteration", done, total, ""))
 let sizes = map_get(km, "sizes")
 let centroids = ods.frame_from_records(map(0..10, (c) => #{
@@ -279,7 +279,7 @@ stage("pca", `PC1 ${share1}%, PC2 ${share2}% of variance; led by ${feat_names[le
 // ── 11. three models against the same split ─────────────────────────
 println(term.dim(`  training: ${len(train_y)} rows x ${len(features)} features — logistic (100 epochs), gaussian NB, CART depth 6`))
 let t_log0 = time.monotonic_ms()
-let model = logistic_train_with(train_cols, train_y, 100, 2.0,
+let model = logistic_train(train_cols, train_y, 100, 2.0,
     (done, total, loss) => progress("epoch", done, total,
         if loss > 0.0 => `  ${term.dim("log loss")} ${loss}` else => ""))
 let t_log = time.monotonic_ms() - t_log0
