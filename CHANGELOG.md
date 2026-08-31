@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Sole-owner map writes: `m = map_set(m, k, v)` is in place now.**
+  The rebind form compiles to a fused `MapSetAssign` that takes the
+  map out of its register and inserts through `Arc::get_mut` when the
+  register held the only reference — the map counterpart of the list
+  writes, and the fix for the quadratic hash-count loop the
+  cross-language wordfreq benchmark exposed. The interpreter's
+  move-call fusion admits the map_set builtin with the same
+  discipline, so both tiers are linear. Shadowing stays exact: a
+  local named map_set declines the fusion at compile time, a known
+  user function resolves as a call, and the instruction re-checks the
+  builtin's presence at run time, falling back to CallNamed's own
+  resolution. wordfreq: DNF (>120 s) → 1.19 s — from unrunnable to
+  faster than R, within 2× of Python's dict, with Lua/Node/compiled
+  languages still ahead. Differentials pin value semantics (an alias
+  kept before the write never sees it), the counting loop, struct
+  receivers, and the shadow.
+
 - **The cross-language benchmark suite, and what it found.**
   `benchmarks/xlang/` runs eight benchmarks — recursion, integer
   loops, a sieve, n-body physics, dense matrix multiply, string

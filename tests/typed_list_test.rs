@@ -307,3 +307,51 @@ fn move_call_fusion_declines_when_a_later_argument_reads_the_target() {
          println(g())",
     );
 }
+
+#[test]
+fn fused_map_writes_keep_value_semantics() {
+    // MapSetAssign (the fused `m = map_set(m, k, v)`) must be
+    // invisible: an alias kept before the write still sees the old
+    // map (sole-owner writes only mutate unshared Arcs), a hot
+    // counting loop stays correct across promotion, and a struct
+    // receiver keeps map_set's struct semantics.
+    assert_tiers_agree(
+        "fn count(n) = {\n\
+             let mut m = #{}\n\
+             let mut i = 0\n\
+             while i < n {\n\
+                 let k = \"k\" + to_string(i % 137)\n\
+                 let cur = if map_has_key(m, k) => map_get(m, k) else => 0\n\
+                 m = map_set(m, k, cur + 1)\n\
+                 i = i + 1\n\
+             }\n\
+             m\n\
+         }\n\
+         let m = count(5000)\n\
+         println(`${len(map_keys(m))} ${map_get(m, \"k0\")}`)\n\
+         let mut a = #{ \"x\": 1 }\n\
+         let keep = a\n\
+         a = map_set(a, \"x\", 2)\n\
+         a = map_set(a, \"y\", 3)\n\
+         println(`${map_get(keep, \"x\")} ${map_has_key(keep, \"y\")} ${map_get(a, \"x\")}`)\n\
+         let mut s = { x: 1, y: 2 }\n\
+         s = map_set(s, \"x\", 9)\n\
+         println(`${s.x} ${s.y}`)",
+    );
+}
+
+#[test]
+fn a_user_defined_map_set_still_shadows_the_fused_form() {
+    // The fusion compiles before shadowing is knowable; the
+    // instruction re-checks the registry at run time, so a user's
+    // map_set wins on both tiers.
+    assert_tiers_agree(
+        "fn map_set(m, k, v) = \"shadowed\"\n\
+         fn f() = {\n\
+             let mut m = #{ \"a\": 1 }\n\
+             m = map_set(m, \"a\", 2)\n\
+             m\n\
+         }\n\
+         println(f())",
+    );
+}

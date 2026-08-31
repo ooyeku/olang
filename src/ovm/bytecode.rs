@@ -437,6 +437,18 @@ pub enum Instruction {
         i: Register,
         j: Register,
     },
+    /// `m = map_set(m, k, v)`, fused: insert into the map in `target`'s
+    /// register in place when the register holds the only reference —
+    /// the map counterpart of ListSetAssign, and the fix for the
+    /// quadratic hash-count loop the cross-language wordfreq benchmark
+    /// exposed (the unfused builtin clones the whole map per insert).
+    /// A user-defined `map_set` still wins: the arm re-checks the
+    /// function registry at run time and falls back to the real call.
+    MapSetAssign {
+        target: Register,
+        key: Register,
+        value: Register,
+    },
     /// `x = x + [v]`, fused one step further than AddAssign: append the
     /// scalar in `value` to the list in `target`, in place under the
     /// sole-owner discipline. The optimizer rewrites the one-element
@@ -3435,6 +3447,94 @@ impl BytecodeVm {
                     };
                     self.execution_state.set_register(*target, out)?;
                 }
+                Instruction::MapSetAssign { target, key, value } => {
+                    use crate::ovm::value::ValueData;
+                    // A user-defined map_set shadows the builtin: resolve
+                    // exactly as CallNamed would and call it.
+                    // A shadowed map_set resolves exactly as CallNamed
+                    // would: the registered user function, or the
+                    // not-found error whose deopt re-runs on the
+                    // interpreter (where the user's definition lives).
+                    if !self.builtin_names.contains("map_set") {
+                        let outcome = if let Some(&func_id) = self.function_registry.get("map_set")
+                        {
+                            let arg_values = [
+                                self.execution_state.get_register(*target)?,
+                                self.execution_state.get_register(*key)?,
+                                self.execution_state.get_register(*value)?,
+                            ];
+                            self.execute(func_id, &arg_values)
+                        } else {
+                            Err(BytecodeError::NamedFunctionNotFound("map_set".to_string()))
+                        };
+                        self.execution_state.set_register(*target, outcome?)?;
+                        pc += 1;
+                        continue;
+                    }
+                    // Key coercion first, then the receiver — the native
+                    // map_set's own order and messages.
+                    let key_val = self.execution_state.get_register(*key)?;
+                    let key_str = match &key_val.data {
+                        ValueData::String(st) => st.as_ref().clone(),
+                        ValueData::Integer(i) => i.to_string(),
+                        ValueData::Float(f) => crate::ast::format_float(*f),
+                        ValueData::Boolean(b) => b.to_string(),
+                        _ => {
+                            return Err(BytecodeError::TypeError(
+                                "map_set: key must be string, integer, float, or boolean"
+                                    .to_string(),
+                            ));
+                        }
+                    };
+                    let v = self.execution_state.get_register(*value)?;
+                    // Take the map out of its register so a sole owner is
+                    // recognizable; aliased maps copy, exactly like the
+                    // list writes.
+                    let target_val = self.execution_state.take_register(*target)?;
+                    match target_val.data {
+                        ValueData::Map(mut arc) => {
+                            match std::sync::Arc::get_mut(&mut arc) {
+                                Some(m) => {
+                                    m.insert(key_str, v);
+                                }
+                                None => {
+                                    let mut m = (*arc).clone();
+                                    m.insert(key_str, v);
+                                    arc = std::sync::Arc::new(m);
+                                }
+                            }
+                            self.execution_state.set_register(
+                                *target,
+                                OvmValue {
+                                    data: ValueData::Map(arc),
+                                },
+                            )?;
+                        }
+                        ValueData::Struct(st) => {
+                            let mut pairs: Vec<(String, OvmValue)> = st
+                                .iter()
+                                .filter(|(name, _)| **name != key_str)
+                                .map(|(name, val)| (name.clone(), val.clone()))
+                                .collect();
+                            pairs.push((key_str, v));
+                            self.execution_state.set_register(
+                                *target,
+                                OvmValue::new_struct(std::sync::Arc::new(
+                                    crate::ovm::value::StructObject::from_pairs(
+                                        st.type_name(),
+                                        pairs,
+                                    ),
+                                )),
+                            )?;
+                        }
+                        _ => {
+                            return Err(BytecodeError::TypeError(
+                                "map_set: first argument must be a map or object".to_string(),
+                            ));
+                        }
+                    }
+                }
+
                 Instruction::AddAssign { target, rhs } => {
                     use crate::ovm::value::ValueData;
                     let rhs_val = self.execution_state.get_register(*rhs)?;
@@ -8274,6 +8374,42 @@ impl BytecodeCompiler {
                     });
                     return Ok(target_reg);
                 }
+                // Fuse `m = map_set(m, k, v)` into MapSetAssign — the
+                // sole-owner in-place map write. Key and value are
+                // evaluated before the target is taken, so they may read
+                // it freely; a local named map_set shadows the builtin
+                // and declines (the call goes through CallValue as
+                // usual), and a user FUNCTION shadow is honored by the
+                // instruction itself at run time.
+                if let Expr::Call { callee, arguments } = value.as_ref()
+                    && matches!(callee.as_ref(), Expr::Identifier(n) if n == "map_set")
+                    && !self.local_variables.contains_key("map_set")
+                    && !self.known_function_values.contains_key("map_set")
+                    && arguments.len() == 3
+                {
+                    let mut exprs = Vec::with_capacity(3);
+                    for a in arguments {
+                        if let crate::ast::Argument::Positional(e) = a {
+                            exprs.push(e);
+                        }
+                    }
+                    let names_target = exprs.len() == 3
+                        && (matches!(exprs[0], Expr::Identifier(n) if n == target)
+                            || matches!(exprs[0], Expr::LocalRef { name, .. } if name == target));
+                    if names_target
+                        && Self::assignment_free(exprs[1])
+                        && Self::assignment_free(exprs[2])
+                    {
+                        let k = self.compile_expression(exprs[1])?;
+                        let v = self.compile_expression(exprs[2])?;
+                        self.emitter.instructions.push(Instruction::MapSetAssign {
+                            target: target_reg,
+                            key: k,
+                            value: v,
+                        });
+                        return Ok(target_reg);
+                    }
+                }
                 // `x = f(x, ...)`: pass x by move — TakeMove into a temp
                 // that becomes argument 0, so the callee's frame holds
                 // the only reference and its in-place writes stay in
@@ -10293,6 +10429,12 @@ impl BytecodeOptimizer {
                 uses.push(target.0);
                 uses.push(i.0);
                 uses.push(j.0);
+                defs.push(target.0);
+            }
+            I::MapSetAssign { target, key, value } => {
+                uses.push(target.0);
+                uses.push(key.0);
+                uses.push(value.0);
                 defs.push(target.0);
             }
             I::ListAppendAssign { target, value } => {

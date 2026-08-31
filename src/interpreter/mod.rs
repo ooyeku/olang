@@ -2207,7 +2207,13 @@ impl Interpreter {
             Ok(v) => v,
             Err(e) => return Some(Err(e)),
         };
-        if !matches!(callee_value, Value::Function(_)) {
+        // User functions take the move path; among builtins, exactly
+        // map_set does too — its receiver is Arc-backed and the builtin
+        // inserts in place when the moved argument makes it sole-owner
+        // (the fix for the quadratic hash-count loop the wordfreq
+        // benchmark exposed). Other builtins keep the plain path.
+        let is_movable_builtin = matches!(&callee_value, Value::Builtin(b) if b.name == "map_set");
+        if !matches!(callee_value, Value::Function(_)) && !is_movable_builtin {
             return None;
         }
         let mut args = Vec::with_capacity(exprs.len());

@@ -3682,6 +3682,11 @@ pub(crate) fn for_each_reg(
             f(target);
             f(rhs);
         }
+        I::MapSetAssign { target, key, value } => {
+            f(target);
+            f(key);
+            f(value);
+        }
         I::Add { dst, lhs, rhs }
         | I::Sub { dst, lhs, rhs }
         | I::Mul { dst, lhs, rhs }
@@ -5711,6 +5716,9 @@ pub(crate) fn instruction_name(inst: &Instruction) -> &'static str {
         Instruction::ExtractResult { .. } => "ExtractResult",
         Instruction::MakeList { .. } => "MakeList",
         Instruction::MakeMap { .. } => "MakeMap",
+        Instruction::MapSetAssign { .. } => "MapSetAssign",
+        Instruction::ListSetAssign { .. } => "ListSetAssign",
+        Instruction::ListAppendAssign { .. } => "ListAppendAssign",
         _ => "other",
     }
 }

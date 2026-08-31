@@ -3185,7 +3185,7 @@ impl BuiltinFunctions {
         })
     }
 
-    fn map_set(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+    fn map_set(&self, mut args: Vec<Value>) -> Result<Value, InterpreterError> {
         if args.len() != 3 {
             return Err(InterpreterError::ArityMismatch {
                 expected: 3,
@@ -3209,20 +3209,38 @@ impl BuiltinFunctions {
 
         // Writers mirror the readers' struct-likeness: updating a map yields
         // a map; updating an object, struct, or parsed JSON object yields a
-        // new value of the same kind with the field set.
-        match &args[0] {
-            Value::Map(map_ref) => {
-                let mut new_map = (**map_ref).clone();
-                new_map.insert(key, value);
-                Ok(Value::Map(std::sync::Arc::new(new_map)))
+        // new value of the same kind with the field set. A sole-owner
+        // receiver (the move-call fusion's whole point) inserts in place;
+        // an aliased one copies, exactly like the list writes.
+        match args.swap_remove(0) {
+            Value::Map(mut map_ref) => {
+                match std::sync::Arc::get_mut(&mut map_ref) {
+                    Some(m) => {
+                        m.insert(key, value);
+                    }
+                    None => {
+                        let mut m = (*map_ref).clone();
+                        m.insert(key, value);
+                        map_ref = std::sync::Arc::new(m);
+                    }
+                }
+                Ok(Value::Map(map_ref))
             }
-            Value::Struct { type_name, fields } => {
-                let mut new_fields = fields.as_ref().clone();
-                new_fields.insert(key, value);
-                Ok(Value::Struct {
-                    type_name: type_name.clone(),
-                    fields: std::sync::Arc::new(new_fields),
-                })
+            Value::Struct {
+                type_name,
+                mut fields,
+            } => {
+                match std::sync::Arc::get_mut(&mut fields) {
+                    Some(f) => {
+                        f.insert(key, value);
+                    }
+                    None => {
+                        let mut f = fields.as_ref().clone();
+                        f.insert(key, value);
+                        fields = std::sync::Arc::new(f);
+                    }
+                }
+                Ok(Value::Struct { type_name, fields })
             }
             _ => Err(InterpreterError::TypeError {
                 message: "map_set: first argument must be a map or object".to_string(),
