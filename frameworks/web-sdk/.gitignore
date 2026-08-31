@@ -1,2 +1,7 @@
 # OS noise
 .DS_Store
+
+# Build artifact: copied here by `make wasm`, never committed.
+static/olang_playground.wasm
+# Machine-specific (absolute shelf paths); regenerated on first run.
+olang.lock
