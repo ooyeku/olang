@@ -66,12 +66,22 @@ pub fn run(fix: bool) -> Result<()> {
     let bin = home.join("bin");
     if bin.is_dir() {
         let on_path = path_dirs().iter().any(|d| d == &bin);
+        let managed = std::fs::read_dir(home.join("toolchains"))
+            .map(|mut r| r.next().is_some())
+            .unwrap_or(false);
         if on_path {
             println!("✓ {} is on PATH", bin.display());
-        } else {
+        } else if managed {
+            // Shims exist and a toolchain is installed behind them:
+            // being off PATH defeats `otc update`.
             println!("✗ {} exists but is not on PATH", bin.display());
             println!("    add: export PATH=\"{}:$PATH\"", bin.display());
             problems += 1;
+        } else {
+            println!(
+                "  note: {} is not on PATH (only matters once `otc update` manages toolchains)",
+                bin.display()
+            );
         }
     }
 
@@ -208,8 +218,13 @@ pub fn run(fix: bool) -> Result<()> {
 }
 
 fn path_dirs() -> Vec<PathBuf> {
+    let mut seen = std::collections::HashSet::new();
     std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).collect())
+        .map(|p| {
+            std::env::split_paths(&p)
+                .filter(|d| seen.insert(d.clone()))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
