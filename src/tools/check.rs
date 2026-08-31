@@ -88,7 +88,9 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
         };
         let modules = module_programs(&source, file.parent());
         let context: Vec<&Program> = modules.iter().map(|(_, _, p)| p).collect();
-        for d in check_program_with_context(&context, &program) {
+        let mut diagnostics = check_program_with_context(&context, &program);
+        diagnostics.extend(use_shadow_warnings(&program, file.parent()));
+        for d in diagnostics {
             if d.warning {
                 warnings += 1;
             } else {
@@ -339,6 +341,122 @@ fn rule_findings(result: &Value) -> Vec<(i64, String)> {
         Value::List(items) => items.iter().filter_map(one).collect(),
         other => one(other).into_iter().collect(),
     }
+}
+
+/// Warnings for the import-shadowing trap: a bare `use module` (a
+/// wildcard import) that also exports a name an *earlier* explicit
+/// import bound. The runtime silently rebinds — the failure then
+/// surfaces at a distance, inside whichever call received the wrong
+/// binding — so the collision is reported here, where both lines are
+/// visible. Exports come from the module's `share` declarations,
+/// resolved from disk for user modules and from the embedded registry
+/// for stdlib packages; a module that cannot be resolved is skipped.
+pub fn use_shadow_warnings(
+    program: &Program,
+    doc_dir: Option<&std::path::Path>,
+) -> Vec<CheckDiagnostic> {
+    fn share_names(p: &Program, out: &mut Vec<String>) {
+        for stmt in &p.statements {
+            if let Statement::ShareDecl(d) = stmt.unwrapped() {
+                match d {
+                    crate::ast::ShareDecl::Function(f) => out.push(f.name.clone()),
+                    crate::ast::ShareDecl::Type(t) => out.push(t.name.clone()),
+                    crate::ast::ShareDecl::Let(l) => {
+                        if let crate::ast::Pattern::Identifier(n) = &l.pattern {
+                            out.push(n.clone());
+                        }
+                    }
+                    crate::ast::ShareDecl::Use(u) => {
+                        for item in &u.items {
+                            if let Some(n) = item.bound_name() {
+                                out.push(n.to_string());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    fn exports_of(path: &[String], doc_dir: Option<&std::path::Path>) -> Option<Vec<String>> {
+        let mut names = Vec::new();
+        if path.len() == 1 && crate::stdlib::embedded::is_embedded(&path[0]) {
+            let parsed = crate::stdlib::embedded::parsed(&path[0]).ok()??;
+            share_names(&parsed, &mut names);
+            return Some(names);
+        }
+        let dir = doc_dir?;
+        let joined = path.join("/");
+        let last = path.last()?;
+        let candidates = [
+            dir.join(format!("{}.ol", joined)),
+            dir.join(&joined).join("index.ol"),
+            dir.join(&joined).join("mod.ol"),
+            dir.join(format!("{}.ol", last)),
+        ];
+        for c in candidates {
+            if let Ok(src) = std::fs::read_to_string(&c) {
+                let prog = crate::parser::Parser::new().parse(&src).ok()?;
+                share_names(&prog, &mut names);
+                return Some(names);
+            }
+        }
+        None
+    }
+
+    let mut out = Vec::new();
+    // Explicit imports seen so far: bound name -> declaration line.
+    let mut explicit: Vec<(String, u32)> = Vec::new();
+    for stmt in &program.statements {
+        let (line, column) = match stmt {
+            Statement::Located { line, column, .. } => (*line, *column),
+            _ => (0, 0),
+        };
+        let (Statement::UseDecl(u) | Statement::ShareDecl(crate::ast::ShareDecl::Use(u))) =
+            stmt.unwrapped()
+        else {
+            continue;
+        };
+        let is_wildcard = u
+            .items
+            .iter()
+            .any(|i| matches!(i, crate::ast::UseItem::Wildcard));
+        if is_wildcard {
+            let Some(exports) = exports_of(&u.path, doc_dir) else {
+                continue;
+            };
+            let module = u.path.join(".");
+            for (name, decl_line) in &explicit {
+                if exports.iter().any(|e| e == name) {
+                    out.push(CheckDiagnostic {
+                        line,
+                        column,
+                        message: format!(
+                            "`use {}` also exports '{}', shadowing the explicit import \
+from line {} — call it as `{}.{}`, or alias the earlier import \
+(`{} as other_name`)",
+                            module,
+                            name,
+                            decl_line,
+                            module.rsplit('.').next().unwrap_or(&module),
+                            name,
+                            name
+                        ),
+                        runtime: false,
+                        warning: true,
+                        scope: false,
+                    });
+                }
+            }
+        }
+        for item in &u.items {
+            if let Some(n) = item.bound_name() {
+                explicit.push((n.to_string(), line));
+            }
+        }
+    }
+    out
 }
 
 /// The modules a source file `use`s, resolved with the runtime's local

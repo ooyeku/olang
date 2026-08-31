@@ -3401,6 +3401,14 @@ impl Parser {
                     Rule::identifier => {
                         items.push(crate::ast::UseItem::Specific(inner.as_str().to_string()));
                     }
+                    Rule::use_alias => {
+                        let mut ids = inner
+                            .into_inner()
+                            .filter(|p| p.as_rule() == Rule::identifier);
+                        let name = ids.next().unwrap().as_str().to_string();
+                        let alias = ids.next().unwrap().as_str().to_string();
+                        items.push(crate::ast::UseItem::Aliased { name, alias });
+                    }
                     Rule::wildcard => {
                         items.push(crate::ast::UseItem::Wildcard);
                     }

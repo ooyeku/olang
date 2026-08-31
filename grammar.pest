@@ -126,7 +126,12 @@ share_decl = { share_kw ~ (use_decl | function_decl | let_decl | type_decl | tra
 use_decl = { use_kw ~ use_path ~ ("{" ~ NL* ~ use_list ~ NL* ~ "}")? }
 use_path = { identifier ~ ("." ~ identifier)* }
 use_list = { use_item ~ (NL* ~ "," ~ NL* ~ use_item)* ~ (NL* ~ ",")? }
-use_item = { wildcard | identifier }
+use_item = { wildcard | use_alias | identifier }
+// `name as alias`: imported under the alias. `as` is contextual — a
+// keyword only in this position, so identifiers named `as` stay legal
+// everywhere else.
+use_alias = { identifier ~ as_kw ~ identifier }
+as_kw = @{ "as" ~ kw_end }
 wildcard = { "*" }
 
 // Test declarations

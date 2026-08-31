@@ -213,6 +213,7 @@ impl Validator {
         for item in &u.items {
             match item {
                 crate::ast::UseItem::Specific(name) => self.bind(name, false),
+                crate::ast::UseItem::Aliased { alias, .. } => self.bind(alias, false),
                 // A wildcard's names are only known once the module loads;
                 // nothing to record here.
                 crate::ast::UseItem::Wildcard => {}

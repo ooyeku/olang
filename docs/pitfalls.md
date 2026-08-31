@@ -370,10 +370,10 @@ are worth knowing before the first progress bar.
 `use module` brings the module's exported names into scope unqualified.
 If an earlier `use lib.x { name }` imported the same name, the later
 bare `use` rebinds it, and the failure appears at run time inside
-whichever function the wrong binding reaches. Put bare `use` lines
-before named imports so the explicit names win, or refer to the
-module's members qualified (`module.name`) and skip the collision
-entirely.
+whichever function the wrong binding reaches. `olang check` warns when
+it can resolve the module and see the collision. The fix that keeps
+both names is an alias — `use lib.x { name as other }` — or referring
+to the wildcard module's members qualified (`module.name`).
 
 ## Small syntax reminders
 

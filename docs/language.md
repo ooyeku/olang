@@ -1729,8 +1729,9 @@ declaration order — the module's whole scope is visible to its exports.
 
 ```olang no-run
 use lib.geometry { area, Shape }       // selective import
+use lib.geometry { area as region }    // aliased: bound as `region`
 use lib.geometry { * }                 // wildcard: everything shared
-use lib.geometry                       // namespace only: geometry.area(...)
+use lib.geometry                       // sugar for the wildcard form
 
 // Long import lists may span lines and end with a trailing comma:
 use lib.geometry {
@@ -1739,11 +1740,22 @@ use lib.geometry {
 }
 ```
 
+An aliased item looks up the export under its source name and binds
+only the alias — `area` itself is not brought into scope by
+`area as region`. `as` is contextual: it is a keyword only inside a
+`use` list.
+
 Importing a shared **enum type also imports its variant constructors**,
 so `Sq(2)` constructs in the importer. A `use` also binds the module's
-name as a namespace (`geometry.area(3, 4)`).
+name as a namespace (`geometry.area(3, 4)`), and the bare form imports
+everything shared *and* binds the namespace. Because a later wildcard
+import rebinds any earlier explicit import of the same name,
+`olang check` warns when it can see the collision; the alias form is
+the resolution that keeps both names.
 
-`share use other { name }` re-exports an import (transitive sharing).
+`share use other { name }` re-exports an import (transitive
+sharing); `share use other { name as alias }` re-exports it under the
+alias.
 
 ### How `use` resolves
 

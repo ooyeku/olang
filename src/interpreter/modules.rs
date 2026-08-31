@@ -257,7 +257,15 @@ impl Interpreter {
                 } else {
                     // Import specific items: use module { func1, func2 }
                     for item in item_list {
-                        if let crate::ast::UseItem::Specific(item_name) = item {
+                        // An aliased item looks up the export under its
+                        // source name and binds under the alias; a plain
+                        // item binds under its own name.
+                        let (item_name, bind_name) = match item {
+                            crate::ast::UseItem::Specific(n) => (n, n),
+                            crate::ast::UseItem::Aliased { name, alias } => (name, alias),
+                            crate::ast::UseItem::Wildcard => continue,
+                        };
+                        {
                             match self.get_module_export(module, item_name) {
                                 Some(value) => {
                                     // Importing an enum type name also brings its
@@ -278,7 +286,7 @@ impl Interpreter {
                                             }
                                         }
                                     }
-                                    self.environment.define(item_name.clone(), value);
+                                    self.environment.define(bind_name.clone(), value);
                                     crate::log::get_logger().debug(
                                         "interpreter",
                                         &format!("Imported {} from module", item_name),
@@ -728,6 +736,14 @@ impl Interpreter {
                                             {
                                                 exports.insert(name.clone(), value);
                                                 reexported.insert(name.clone());
+                                            }
+                                        }
+                                        crate::ast::UseItem::Aliased { name, alias } => {
+                                            if let Some(value) =
+                                                self.get_module_export(&module, name)
+                                            {
+                                                exports.insert(alias.clone(), value);
+                                                reexported.insert(alias.clone());
                                             }
                                         }
                                         crate::ast::UseItem::Wildcard => {

@@ -1609,7 +1609,31 @@ pub enum ShareDecl {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum UseItem {
     Specific(String),
+    /// `name as alias` — the export `name`, bound under `alias`.
+    Aliased {
+        name: String,
+        alias: String,
+    },
     Wildcard,
+}
+
+impl UseItem {
+    /// The name this item binds in the importing scope.
+    pub fn bound_name(&self) -> Option<&str> {
+        match self {
+            UseItem::Specific(n) => Some(n),
+            UseItem::Aliased { alias, .. } => Some(alias),
+            UseItem::Wildcard => None,
+        }
+    }
+    /// The export looked up in the source module.
+    pub fn source_name(&self) -> Option<&str> {
+        match self {
+            UseItem::Specific(n) => Some(n),
+            UseItem::Aliased { name, .. } => Some(name),
+            UseItem::Wildcard => None,
+        }
+    }
 }
 
 // New UseDecl struct

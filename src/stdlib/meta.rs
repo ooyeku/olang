@@ -290,6 +290,7 @@ fn use_to_value(d: &UseDecl) -> Value {
         .iter()
         .map(|i| match i {
             UseItem::Specific(n) => s(n),
+            UseItem::Aliased { name, alias } => s(&format!("{} as {}", name, alias)),
             UseItem::Wildcard => s("*"),
         })
         .collect();

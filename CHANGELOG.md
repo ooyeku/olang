@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Import aliasing, and the shadowing trap warned about.**
+  `use lib.report { table as md_table }` binds the export under the
+  alias (and only the alias); `share use m { name as alias }`
+  re-exports under it. `as` is contextual — a keyword only inside a
+  `use` list. The companion fix: `olang check` now warns when a
+  wildcard import (`use term`, or `{ * }`) also exports a name an
+  earlier explicit import bound — the runtime silently rebinds, and
+  the failure used to surface at a distance inside whichever call got
+  the wrong binding. The warning names both lines and both fixes
+  (qualify, or alias), resolves user modules from disk and stdlib
+  packages from the embedded registry, and stays advisory. The
+  language chapter also corrects a wrong claim: bare `use m` was
+  documented as namespace-only, but it has always been wildcard sugar.
+
 - **Default parameter values work everywhere, correctly, at speed.**
   Defaults and named arguments were parsed and half-implemented;
   landing the roadmap row meant three fixes. Semantics: a default now

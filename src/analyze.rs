@@ -1593,7 +1593,8 @@ impl Analyzer {
         // Track imported symbols in current scope
         for item in &use_decl.items {
             match item {
-                crate::ast::UseItem::Specific(name) => {
+                crate::ast::UseItem::Specific(name)
+                | crate::ast::UseItem::Aliased { alias: name, .. } => {
                     if name.is_empty() {
                         return Err(AnalysisError::TypeError {
                             message: "Empty import item name".to_string(),
