@@ -1776,6 +1776,18 @@ impl HelpSystem {
                 "assert_ne(id_a, id_b, \"ids must be distinct\")",
             ),
             (
+                "assert_close",
+                "assert_close(actual, expected, tolerance, message?)",
+                "Unit",
+                "Testing",
+                "Raises unless |actual - expected| <= tolerance — the numeric check that \
+                 makes float tests both stricter and more readable than a boolean \
+                 comparison. Ints and Floats mix freely; a NaN on either side fails; a \
+                 negative tolerance is an error. Works in any position, like the other \
+                 asserts.",
+                "assert_close(auc, 0.7, 0.05)",
+            ),
+            (
                 "assert",
                 "assert(condition, message?)",
                 "Unit",

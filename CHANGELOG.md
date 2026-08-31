@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`assert_close(actual, expected, tolerance, message?)`** — the
+  tolerance-based numeric assertion beside the existing asserts, with
+  the same everywhere-an-expression reach (match arms, lambda bodies,
+  `test` blocks) and the same raising semantics. `Int` and `Float` mix
+  freely, a `NaN` on either side fails with the difference shown, and
+  a negative tolerance is an error. The default failure message names
+  both values, the tolerance, and the actual difference. The crimes
+  estimator tests adopted it, replacing boolean threshold checks.
+
 - **Error reports are byte-identical on every tier, and richer.** The
   tree_train incident (a division by zero attributed to an unrelated
   top-level line) came down to the bytecode emitter leaking one

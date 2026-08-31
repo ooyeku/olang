@@ -663,12 +663,15 @@ test "threshold sweep beats the default cut on an imbalanced problem" {
     let preds = [0.1, 0.2, 0.3, 0.35, 0.4, 0.45, 0.3, 0.2, 0.42, 0.44]
     let y = [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0]
     let sw = threshold_sweep(preds, y)
-    assert_eq(map_get(map_get(sw, "best"), "f1") > 0.9, true)
+    assert_close(map_get(map_get(sw, "best"), "f1"), 1.0, 0.000001)
 }
 
 test "wilson interval brackets the point estimate" {
     let ci = wilson_ci(30, 100)
     assert_eq(ci[0] < 0.3 && 0.3 < ci[1], true)
+    // The interval's center sits near the point estimate (Wilson pulls
+    // it slightly toward 0.5).
+    assert_close((ci[0] + ci[1]) / 2.0, 0.3, 0.02)
 }
 
 test "acf of a periodic series peaks at its period" {

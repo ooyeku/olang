@@ -1803,6 +1803,7 @@ test "addition works" {
     assert_ne(add(1, 2), 4)
     assert_true(add(0, 1) == 1)
     assert_false(add(1, 1) == 3)
+    assert_close(0.1 + 0.2, 0.3, 0.000001)
     assert_eq(
         add(20, 22),
         42,
@@ -1813,8 +1814,12 @@ println("tests passed")
 ```
 
 These assertions (`assert`, `assert_eq`, `assert_ne`, `assert_true`,
-`assert_false`, with an optional trailing message) are language-level
-forms: they raise on failure, which is what makes a failing test abort.
+`assert_false`, and `assert_close(actual, expected, tolerance)` for
+numeric comparisons within a tolerance — each with an optional trailing
+message) are language-level forms: they raise on failure, which is what
+makes a failing test abort. `assert_close` accepts `Int` and `Float`
+freely, fails when either side is `NaN`, and rejects a negative
+tolerance.
 The `testing` stdlib module offers a related but different tool —
 assertion *functions* that return `Result` values for building custom
 harnesses — see the [stdlib reference](stdlib.md#testing--assertions)

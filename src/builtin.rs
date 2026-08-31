@@ -52,6 +52,7 @@ impl BuiltinFunctions {
             "assert",
             "assert_true",
             "assert_false",
+            "assert_close",
         ] {
             functions.insert(
                 assert_name.to_string(),
@@ -966,6 +967,56 @@ impl BuiltinFunctions {
                                 arguments[0],
                                 if want_equal { "!=" } else { "==" },
                                 arguments[1]
+                            )
+                        });
+                    return Err(InterpreterError::RuntimeError { message });
+                }
+                Ok(Value::Unit)
+            }
+            "assert_close" => {
+                if arguments.len() < 3 {
+                    return Err(InterpreterError::RuntimeError {
+                        message: "assert_close expects (actual, expected, tolerance, message?)"
+                            .to_string(),
+                    });
+                }
+                let num = |v: &Value, which: &str| match v {
+                    Value::Integer(i) => Ok(*i as f64),
+                    Value::Float(f) => Ok(*f),
+                    other => Err(InterpreterError::RuntimeError {
+                        message: format!(
+                            "assert_close: {} must be a number, got {}",
+                            which,
+                            other.type_name()
+                        ),
+                    }),
+                };
+                let actual = num(&arguments[0], "actual")?;
+                let expected = num(&arguments[1], "expected")?;
+                let tolerance = num(&arguments[2], "tolerance")?;
+                if tolerance < 0.0 {
+                    return Err(InterpreterError::RuntimeError {
+                        message: format!(
+                            "assert_close: tolerance must be non-negative, got {}",
+                            crate::ast::format_float(tolerance)
+                        ),
+                    });
+                }
+                // A NaN on either side compares false and fails the
+                // assertion (with the difference rendered as NaN), the
+                // same direction every comparison in the language takes.
+                let difference = (actual - expected).abs();
+                if !(difference <= tolerance) {
+                    let message = arguments
+                        .get(3)
+                        .and_then(|m| match m {
+                            Value::String(s) => Some(s.as_str().to_string()),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| {
+                            format!(
+                                "Assertion failed: {:?} is not within {:?} of {:?} (difference {:?})",
+                                arguments[0], arguments[2], arguments[1], difference
                             )
                         });
                     return Err(InterpreterError::RuntimeError { message });
