@@ -1006,7 +1006,7 @@ impl BuiltinFunctions {
                 // assertion (with the difference rendered as NaN), the
                 // same direction every comparison in the language takes.
                 let difference = (actual - expected).abs();
-                if !(difference <= tolerance) {
+                if difference.is_nan() || difference > tolerance {
                     let message = arguments
                         .get(3)
                         .and_then(|m| match m {
