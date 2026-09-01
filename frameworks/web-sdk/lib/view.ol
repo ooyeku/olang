@@ -66,8 +66,13 @@ fn dispatch_action(ev) = {
             }
         }
         if h != () => {
+            // Repaint only if the handler changed state: `apply` already
+            // repaints, and an unconditional rerender here would wipe
+            // focus and in-progress typing on every click into an
+            // action-carrying form control.
+            let before = current()
             let r = h(ev)
-            rerender()
+            if current() != before => rerender() else => ()
         }
     }
 }
