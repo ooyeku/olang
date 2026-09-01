@@ -466,23 +466,37 @@
     },
   };
 
-  const [wasmBytes, source] = await Promise.all([
-    fetch("/olang.wasm").then((r) => r.arrayBuffer()),
-    fetch(src).then((r) => r.text()),
-  ]);
-  if (wasmBytes.byteLength < 8) {
-    document.body.insertAdjacentHTML(
-      "beforeend",
-      `<pre style="color:#c33;padding:1rem">/olang.wasm came back empty.
+  // Streaming instantiation compiles the module WHILE it downloads —
+  // for a multi-megabyte runtime that overlap is most of the boot.
+  // Fall back to the buffered path (with its diagnostics) when
+  // streaming is unavailable or refuses (wrong MIME, old server).
+  async function instantiateWasm() {
+    if (WebAssembly.instantiateStreaming) {
+      try {
+        return await WebAssembly.instantiateStreaming(fetch("/olang.wasm"), imports);
+      } catch (e) { /* buffered fallback below */ }
+    }
+    const wasmBytes = await fetch("/olang.wasm").then((r) => r.arrayBuffer());
+    if (wasmBytes.byteLength < 8) {
+      document.body.insertAdjacentHTML(
+        "beforeend",
+        `<pre style="color:#c33;padding:1rem">/olang.wasm came back empty.
 Two known causes:
   1. the server binary predates body_file support — reinstall olang (make install)
   2. static/olang_playground.wasm is missing — build it:
      cargo build -p olang-playground --target wasm32-unknown-unknown --release
      cp target/wasm32-unknown-unknown/release/olang_playground.wasm examples/web/app/static/</pre>`
-    );
-    return;
+      );
+      throw new Error("empty wasm");
+    }
+    return WebAssembly.instantiate(wasmBytes, imports);
   }
-  ({ instance: { exports: ex } } = await WebAssembly.instantiate(wasmBytes, imports));
+
+  const [wasmModule, source] = await Promise.all([
+    instantiateWasm(),
+    fetch(src).then((r) => r.text()),
+  ]);
+  ({ instance: { exports: ex } } = wasmModule);
 
   const enc = new TextEncoder().encode(source);
   const ptr = ex.olang_alloc(enc.length);
