@@ -176,6 +176,13 @@ println(`${n} times 7 is ${n * 7}`)
 println("line one\n" + `line ${n}`)
 ```
 
+Both mistakes are caught before they print: `olang check` warns on an
+escape-looking `\n`, `\t`, or `\r` inside a template (write `\\n` — the
+same two output characters — to mark the backslash deliberate; escapes
+inside a `${...}`'s own double-quoted strings are real syntax and draw
+no warning), and the parse error from a backtick inside `${...}` names
+the nesting rule.
+
 **Character literals** (`'a'`) are one-character strings — olang has no
 separate character type:
 
@@ -845,8 +852,19 @@ println(`${map_has_key(scores, "cyn")}/${map_has_key(scores2, "cyn")}`)
 println(to_string(sort(map_keys(scores2))))
 ```
 
-`map_get` on a missing key returns `Unit` (test presence with
-`map_has_key`). The `map_*` accessors also read **any struct-like value** —
+`map_get` is the **raw read**: on a missing key it returns `Unit`, and
+distinguishing absent from stored-null takes `map_has_key`. The
+lookup-with-default is `map_get_or(m, key, default)`, which yields the
+default for a missing key *and* for a stored `Unit` — absence is one
+rule, not two:
+
+```olang
+let m = #{ "a": 1 }
+println(to_string(map_get_or(m, "a", 0)))   // 1
+println(to_string(map_get_or(m, "z", 0)))   // 0
+```
+
+The `map_*` accessors also read **any struct-like value** —
 anonymous objects, structs, and parsed JSON objects — so dynamic key access
 works uniformly:
 

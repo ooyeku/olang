@@ -197,12 +197,138 @@ fn humanize_pest_error(e: pest::error::Error<Rule>, input: &str) -> ParseError {
         ErrorVariant::CustomError { message } => message.clone(),
     };
 
+    // The nested-template mistake — a backtick inside `${...}` — ends the
+    // template at the inner backtick, so the raw error lands "at an
+    // unexpected position" with no mention of the cause. When the error
+    // line up to the caret closes a template whose `${` never closed,
+    // name the real problem.
+    let raw_line = input.lines().nth(line.saturating_sub(1)).unwrap_or("");
+    let message = if template_nesting_suspected(raw_line, column) {
+        format!(
+            "{} — a backtick inside `${{...}}` ends the template (templates \
+             do not nest); bind the inner template to a name first",
+            message
+        )
+    } else {
+        message
+    };
+
     ParseError::InvalidSyntaxWithPosition {
         message,
         line,
         column,
         snippet: snippet.into(),
     }
+}
+
+/// Does `line` up to `column` (1-based) contain a completed backtick
+/// template whose `${` interpolation never closed? That shape means a
+/// backtick inside the interpolation terminated the template early — the
+/// classic nesting mistake. Double-quoted strings, char literals, and
+/// `//` comments on the line are skipped so their backticks don't
+/// confuse the pairing; the scan is line-local, so a template spanning
+/// lines simply produces no hint.
+fn template_nesting_suspected(line: &str, column: usize) -> bool {
+    let prefix: String = line.chars().take(column.saturating_sub(1)).collect();
+    let mut chars = prefix.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => {
+                let mut esc = false;
+                for c in chars.by_ref() {
+                    if esc {
+                        esc = false;
+                    } else if c == '\\' {
+                        esc = true;
+                    } else if c == '"' {
+                        break;
+                    }
+                }
+            }
+            '\'' => {
+                for c in chars.by_ref() {
+                    if c == '\'' {
+                        break;
+                    }
+                }
+            }
+            '/' if chars.peek() == Some(&'/') => return false,
+            '`' => {
+                // Collect this template's raw content up to its closing
+                // backtick (backslash escapes the next character, as in
+                // the grammar). Unterminated on this line → no verdict.
+                let mut content = String::new();
+                let mut closed = false;
+                while let Some(c) = chars.next() {
+                    if c == '\\' {
+                        content.push(c);
+                        if let Some(n) = chars.next() {
+                            content.push(n);
+                        }
+                    } else if c == '`' {
+                        closed = true;
+                        break;
+                    } else {
+                        content.push(c);
+                    }
+                }
+                if closed && template_has_unclosed_interpolation(&content) {
+                    return true;
+                }
+                if !closed {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Does template raw content contain a `${` whose brace never closes
+/// before the content ends? Mirrors `parse_template_content`'s brace and
+/// string tracking.
+fn template_has_unclosed_interpolation(content: &str) -> bool {
+    let mut chars = content.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            chars.next();
+            continue;
+        }
+        if ch == '$' && chars.peek() == Some(&'{') {
+            chars.next();
+            let mut depth = 1;
+            let mut in_string = false;
+            let mut esc = false;
+            for c in chars.by_ref() {
+                if in_string {
+                    if esc {
+                        esc = false;
+                    } else if c == '\\' {
+                        esc = true;
+                    } else if c == '"' {
+                        in_string = false;
+                    }
+                    continue;
+                }
+                match c {
+                    '"' => in_string = true,
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if depth > 0 {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 impl ParseError {
@@ -3139,7 +3265,10 @@ impl Parser {
 
                 if brace_count > 0 {
                     return Err(ParseError::InvalidSyntax {
-                        message: "Unclosed template interpolation".to_string(),
+                        message: "Unclosed template interpolation — if the `${...}` \
+                                  contains a backtick, note that templates do not \
+                                  nest; bind the inner template to a name first"
+                            .to_string(),
                     });
                 }
 
@@ -3158,6 +3287,37 @@ impl Parser {
         }
 
         Ok(Expr::TemplateString { parts })
+    }
+
+    /// The source spans of every template literal in `source`:
+    /// `(line, column, raw_content)`, both 1-based, positioned at the
+    /// first character after the opening backtick. Check-time lints need
+    /// the source *spelling* — the parsed AST cannot distinguish `\n`
+    /// from the deliberate `\\n` (both yield the same literal) — and the
+    /// grammar keeps `template_raw_content` findable for exactly this.
+    /// A source that does not parse yields no spans.
+    pub fn template_literal_spans(source: &str) -> Vec<(u32, u32, String)> {
+        // Shebang lines are masked with spaces exactly as `parse` does,
+        // keeping every position identical to the file on disk.
+        let masked;
+        let source = if source.starts_with("#!") {
+            let line_end = source.find('\n').unwrap_or(source.len());
+            masked = format!("{}{}", " ".repeat(line_end), &source[line_end..]);
+            masked.as_str()
+        } else {
+            source
+        };
+        let Ok(pairs) = <OlangParser as PestParser<Rule>>::parse(Rule::program, source) else {
+            return Vec::new();
+        };
+        pairs
+            .flatten()
+            .filter(|p| p.as_rule() == Rule::template_raw_content)
+            .map(|p| {
+                let (line, col) = p.as_span().start_pos().line_col();
+                (line as u32, col as u32, p.as_str().to_string())
+            })
+            .collect()
     }
 
     fn parse_expression_from_string(&self, expr_str: &str) -> Result<Expr, ParseError> {

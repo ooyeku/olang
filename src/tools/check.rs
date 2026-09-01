@@ -90,6 +90,7 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
         let context: Vec<&Program> = modules.iter().map(|(_, _, p)| p).collect();
         let mut diagnostics = check_program_with_context(&context, &program);
         diagnostics.extend(use_shadow_warnings(&program, file.parent()));
+        diagnostics.extend(template_escape_warnings(&source));
         for d in diagnostics {
             if d.warning {
                 warnings += 1;
@@ -453,6 +454,102 @@ from line {} — call it as `{}.{}`, or alias the earlier import \
         for item in &u.items {
             if let Some(n) = item.bound_name() {
                 explicit.push((n.to_string(), line));
+            }
+        }
+    }
+    out
+}
+
+/// Warnings for escape-looking sequences in template literals. Backtick
+/// strings process no escapes — `\n` inside one is a backslash and an
+/// `n`, and the mistake surfaces only at run time (a literal `\r` per
+/// progress-bar frame). The lint reads the source *spelling*, because
+/// the parsed literal cannot tell `\n` from a deliberate `\\n`: writing
+/// `\\n` (the escaped backslash) keeps the same two output characters
+/// and silences the warning, which makes it the opt-out for code that
+/// wants the backslash (generated LaTeX, regex source, and the like).
+/// Interpolations are exempt — a double-quoted `"\n"` inside `${...}`
+/// is real string syntax and processes its escapes normally.
+pub fn template_escape_warnings(source: &str) -> Vec<CheckDiagnostic> {
+    fn advance(c: char, line: &mut u32, col: &mut u32) {
+        if c == '\n' {
+            *line += 1;
+            *col = 1;
+        } else {
+            *col += 1;
+        }
+    }
+    let mut out = Vec::new();
+    for (start_line, start_col, raw) in crate::parser::Parser::template_literal_spans(source) {
+        let mut line = start_line;
+        let mut col = start_col;
+        let mut warned: Vec<char> = Vec::new();
+        let mut chars = raw.chars().peekable();
+        while let Some(ch) = chars.next() {
+            let (at_line, at_col) = (line, col);
+            advance(ch, &mut line, &mut col);
+            match ch {
+                '\\' => match chars.peek().copied() {
+                    // The three real template escapes; `\\` is also the
+                    // lint's opt-out spelling.
+                    Some('`') | Some('$') | Some('\\') => {
+                        let next = chars.next().expect("peeked");
+                        advance(next, &mut line, &mut col);
+                    }
+                    Some(esc @ ('n' | 't' | 'r')) if !warned.contains(&esc) => {
+                        warned.push(esc);
+                        out.push(CheckDiagnostic {
+                            line: at_line,
+                            column: at_col,
+                            message: format!(
+                                "`\\{esc}` in a backtick template is a literal \
+                                 backslash and '{esc}' — templates process no \
+                                 escapes. Take the control character from a \
+                                 double-quoted string, or write `\\\\{esc}` to \
+                                 say the two characters are deliberate"
+                            ),
+                            runtime: false,
+                            warning: true,
+                            scope: false,
+                        });
+                    }
+                    _ => {}
+                },
+                // Skip `${...}` bodies: they are expression syntax, where
+                // double-quoted strings process escapes normally. Mirrors
+                // the parser's brace/string tracking.
+                '$' if chars.peek() == Some(&'{') => {
+                    let brace = chars.next().expect("peeked");
+                    advance(brace, &mut line, &mut col);
+                    let mut depth = 1;
+                    let mut in_string = false;
+                    let mut prev_escape = false;
+                    for c in chars.by_ref() {
+                        advance(c, &mut line, &mut col);
+                        if in_string {
+                            if prev_escape {
+                                prev_escape = false;
+                            } else if c == '\\' {
+                                prev_escape = true;
+                            } else if c == '"' {
+                                in_string = false;
+                            }
+                            continue;
+                        }
+                        match c {
+                            '"' => in_string = true,
+                            '{' => depth += 1,
+                            '}' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }

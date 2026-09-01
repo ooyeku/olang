@@ -361,9 +361,11 @@ let inner = `${2 + 2}`
 println(`the answer starts with ${inner}`)
 ```
 
-Both facts surface only at run time — the literal backslash prints, and
-the nested backtick is a parse error at an unexpected position — so they
-are worth knowing before the first progress bar.
+Neither mistake has to wait for output any more: `olang check` warns on
+an escape-looking `\n`, `\t`, or `\r` inside a template (spell it `\\n`
+to mark the two characters deliberate — same output, no warning), and
+the parse error a nested backtick produces now says that templates do
+not nest.
 
 ## A bare `use` can shadow an earlier named import
 

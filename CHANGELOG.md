@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Template-literal lints.** The semantics stay (backtick templates
+  process no escapes and do not nest — ruled after the W8 triage), and
+  the two mistakes are caught before they print. `olang check` warns
+  on an escape-looking `\n`, `\t`, or `\r` inside a template,
+  positioned at the exact backslash; the lint reads the source
+  spelling, so writing `\\n` — the same two output characters — marks
+  the backslash deliberate and stays silent, and escapes inside a
+  `${...}`'s own double-quoted strings are real string syntax and
+  exempt. The parse errors a backtick inside `${...}` produces (both
+  the truncated-template shape and a genuinely unclosed `${`) now say
+  that templates do not nest and to bind the inner template to a name
+  first. Advisory warnings; runtime behavior is unchanged, and the
+  whole repository's own `.ol` sources check clean.
+
+- **`map_get` ruled and documented as the raw read.** The W8 decision
+  row closed: `map_get` keeps its Unit-on-missing shape, and
+  `map_get_or(m, key, default)` (in the language since 0.69) is the
+  blessed lookup-with-default, now documented beside `map_get` in the
+  language reference rather than only in the pitfalls chapter.
+
 - **`assert_close(actual, expected, tolerance, message?)`** — the
   tolerance-based numeric assertion beside the existing asserts, with
   the same everywhere-an-expression reach (match arms, lambda bodies,
