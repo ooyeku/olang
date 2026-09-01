@@ -112,17 +112,25 @@
   }
 
   // Every DOM event delivers the same shape; handlers pick what they use.
+  // `data` walks up to the nearest [data-action] carrier (self first),
+  // so a click landing on a styled child still names its action;
+  // `zone` walks to the nearest [data-zone] container — how a drop (or
+  // any region-scoped handler) learns which region it happened in.
   function eventPayload(e, type) {
     const t = e.target ?? {};
+    const a = (t.closest && t.closest("[data-action]")) || t;
+    const z = (t.closest && t.closest("[data-zone]")) || null;
     return {
       type,
       id: t.id ?? "",
       value: t.value ?? "",
       key: e.key ?? "",
+      tag: (t.tagName ?? "").toLowerCase(),
       x: Math.round(e.clientX ?? 0),
       y: Math.round(e.clientY ?? 0),
       alt: !!e.altKey, ctrl: !!e.ctrlKey, shift: !!e.shiftKey, meta: !!e.metaKey,
-      data: { ...(t.dataset ?? {}) },
+      data: { ...(a.dataset ?? {}) },
+      zone: { ...((z && z.dataset) ?? {}) },
     };
   }
 
@@ -167,6 +175,24 @@
               p.value = el.value ?? "";
               dispatchJson(cb, p);
             }
+          });
+        } else if (ev === "drop") {
+          // Subscribing to "drop" makes the element a drop zone: the
+          // browser only permits a drop where dragover is cancelled.
+          el.addEventListener("dragover", (e) => e.preventDefault());
+          el.addEventListener("drop", (e) => {
+            e.preventDefault();
+            dispatchJson(cb, eventPayload(e, "drop"));
+          });
+        } else if (ev === "dragstart") {
+          el.addEventListener("dragstart", (e) => {
+            // Firefox refuses to drag until dataTransfer holds data;
+            // the payload itself crosses through the event map.
+            if (e.dataTransfer) {
+              e.dataTransfer.setData("text/plain", "olang-drag");
+              e.dataTransfer.effectAllowed = "move";
+            }
+            dispatchJson(cb, eventPayload(e, "dragstart"));
           });
         } else {
           el.addEventListener(ev, (e) => dispatchJson(cb, eventPayload(e, ev)));
