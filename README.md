@@ -61,10 +61,9 @@ binary; falls back to a source build where none exists):
 curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
 ```
 
-or with Homebrew, or Cargo, or from a clone:
+or with Cargo, or from a clone:
 
 ```bash
-brew install ooyeku/olang/olang
 cargo install --locked --git https://github.com/ooyeku/olang.git olang otc
 ./setup.sh                 # in a clone: guided source build of olang + otc
 

@@ -52,7 +52,7 @@
       <div class="copybox">
         <div class="lines">
           <div><span class="prompt">$</span> curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh</div>
-          <div class="alt">or <code>brew install ooyeku/olang/olang</code> — details in <a href="/book/installation">Installation</a></div>
+          <div class="alt">other methods in <a href="/book/installation">Installation</a></div>
         </div>
         <button on:click={copy}>{copied ? 'copied' : 'copy'}</button>
       </div>

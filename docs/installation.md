@@ -22,15 +22,6 @@ on the path. `OLANG_VERSION=v0.79.0` pins a specific release;
 prebuilt tarball the script falls back to building from source, which
 requires a Rust toolchain.
 
-## Homebrew
-
-```bash
-brew install ooyeku/olang/olang
-```
-
-The tap installs both `olang` and `otc` and follows releases;
-`brew upgrade olang` picks up new versions.
-
 ## With Cargo
 
 For users with a Rust toolchain, Cargo installs straight from the
@@ -74,8 +65,7 @@ newer release exists. For installations managed under `~/.olang`,
 `otc update` downloads, verifies, and switches to the latest release;
 multiple releases can be kept side by side and switched with
 `otc toolchain` ([Packages](packages.md#updating-and-toolchains)).
-Homebrew installations update with `brew upgrade olang`, and Cargo
-installations by re-running the `cargo install` command.
+Cargo installations update by re-running the `cargo install` command.
 
 ## Running programs
 
