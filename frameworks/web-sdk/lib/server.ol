@@ -220,6 +220,28 @@ fn content_type_for(path_str) =
 fn text_response(body, ctype) =
     http.response_with_headers(200, body, #{ "Content-Type": ctype })
 
+// ── static asset caching ─────────────────────────────────────────────
+// Every static asset carries an ETag and `no-cache` (use the cache,
+// but revalidate): an unchanged asset answers 304 with an empty body,
+// which matters most for the multi-megabyte wasm the browser would
+// otherwise re-download on every load.
+
+fn etag_of(content) = "\"" + str.substring(crypto.sha256(content), 0, 16) + "\""
+
+fn if_none_match(req) =
+    if map_has_key(req.headers, "if-none-match") =>
+        map_get(req.headers, "if-none-match")
+    else => ""
+
+/// A cache-validated response: 304 when the client already holds this
+/// exact content, the full body (with its ETag) otherwise.
+share fn static_response(req, body, ctype, tag) =
+    if if_none_match(req) == tag =>
+        http.response_with_headers(304, "",
+            #{ "ETag": tag, "Cache-Control": "no-cache" })
+    else => http.response_with_headers(200, body,
+        #{ "Content-Type": ctype, "ETag": tag, "Cache-Control": "no-cache" })
+
 /// The full stack, one call. Config keys:
 ///
 ///   title    the page title (default "olang app")
@@ -259,21 +281,38 @@ share fn serve(config) = {
         raw("<main id=\"app\"></main>"
             + "<script type=\"module\" src=\"/olang-dom.js\" data-src=\"/app.ol\"></script>"))
 
+    let css_tag = etag_of(css)
+    let shim_tag = etag_of(shim)
+    let bundle_tag = etag_of(bundle)
+    // The wasm's ETag comes from its bytes, hashed once at boot
+    // (crypto hashes accept Bytes directly).
+    let wasm_tag = match fs.read_bytes(wasm_path) {
+        Ok(b) => "\"" + str.substring(crypto.sha256(b), 0, 16) + "\"",
+        Err(e) => ""
+    }
+
     let static_routes = [
         #{ "method": "GET", "pattern": "/", "name": "",
            "handler": (req, p) => text_response(shell, "text/html; charset=utf-8") },
         #{ "method": "GET", "pattern": "/web.css", "name": "",
-           "handler": (req, p) => text_response(css, "text/css") },
+           "handler": (req, p) => static_response(req, css, "text/css", css_tag) },
         #{ "method": "GET", "pattern": "/olang-dom.js", "name": "",
-           "handler": (req, p) => text_response(shim, "application/javascript") },
+           "handler": (req, p) =>
+               static_response(req, shim, "application/javascript", shim_tag) },
         #{ "method": "GET", "pattern": "/app.ol", "name": "",
-           "handler": (req, p) => text_response(bundle, "text/plain; charset=utf-8") },
+           "handler": (req, p) =>
+               static_response(req, bundle, "text/plain; charset=utf-8", bundle_tag) },
         #{ "method": "GET", "pattern": "/olang.wasm", "name": "",
-           "handler": (req, p) => {
-               status: 200,
-               body_file: wasm_path,
-               headers: #{ "Content-Type": "application/wasm" }
-           } }
+           "handler": (req, p) =>
+               if wasm_tag != "" && if_none_match(req) == wasm_tag =>
+                   http.response_with_headers(304, "",
+                       #{ "ETag": wasm_tag, "Cache-Control": "no-cache" })
+               else => {
+                   status: 200,
+                   body_file: wasm_path,
+                   headers: #{ "Content-Type": "application/wasm",
+                               "ETag": wasm_tag, "Cache-Control": "no-cache" }
+               } }
     ]
     let table = static_routes + user_routes
 
@@ -381,6 +420,26 @@ test "strip_module_lines flattens a module for the bundle" {
     // Test blocks strip: they would execute as statements in a bundle.
     let tested = "fn a(x) = x\ntest \"t\" {\n    assert_eq(a(1), 1)\n}\nfn b(y) = y"
     assert_eq(strip_module_lines(tested), "fn a(x) = x\nfn b(y) = y")
+}
+
+test "static responses revalidate: 304 on a matching ETag" {
+    let tag = etag_of("body text")
+    let cold = static_response(fake_req("GET", "/x"), "body text", "text/css", tag)
+    assert_eq(cold.status, 200)
+    assert_eq(map_get(cold.headers, "ETag"), tag)
+    assert_eq(map_get(cold.headers, "Cache-Control"), "no-cache")
+    let warm = static_response(
+        { method: "GET", path: "/x", query: #{}, body: "",
+          headers: #{ "if-none-match": tag } },
+        "body text", "text/css", tag)
+    assert_eq(warm.status, 304)
+    assert_eq(warm.body, "")
+    // A stale tag gets the full body again.
+    let stale = static_response(
+        { method: "GET", path: "/x", query: #{}, body: "",
+          headers: #{ "if-none-match": "\"old\"" } },
+        "body text", "text/css", tag)
+    assert_eq(stale.status, 200)
 }
 
 test "content types" {
