@@ -42,8 +42,11 @@ share use lib.forms { field, rules, read, form_fields }
 // browser side — real in the served bundle; importable everywhere so
 // client code resolves, documents, and type-checks. Calling these
 // natively reaches the dom module's own browser-only error.
-share use lib.view { mount, rerender, apply, action, action_arg, input_value }
+// state before view: view.ol imports lib.state, and a dependency's
+// nested sibling imports only resolve when already in the module
+// cache (resolver limitation — see open-track/olang-improvements.md).
 share use lib.state { init, current, set, update }
+share use lib.view { mount, rerender, apply, action, action_arg, input_value }
 share use lib.api { call, fetch, unwrap_envelope, err_message, err_details }
 
 // the opinionated components
