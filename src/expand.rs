@@ -228,6 +228,21 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
                 candidates.extend(names.iter().map(|n| dir.join(n)));
             }
             candidates.extend(names.iter().map(std::path::PathBuf::from));
+            // Package imports resolve through the shelf exactly as the
+            // runtime resolves them — without this, a LIBRARY could
+            // never export a macro: `use web` finds the package's
+            // index.ol, `use web.lib.store` a module inside it.
+            if let Ok(shelf) = crate::pkg::shelf::Shelf::load() {
+                if let Some(dir) = shelf.libraries.get(&u[0]) {
+                    if u.len() == 1 {
+                        candidates.push(dir.join("index.ol"));
+                    } else {
+                        let rest = u[1..].join("/");
+                        candidates.push(dir.join(format!("{rest}.ol")));
+                        candidates.push(dir.join(format!("{rest}/index.ol")));
+                    }
+                }
+            }
             let Some(module_src) = candidates
                 .iter()
                 .find_map(|c| std::fs::read_to_string(c).ok())
