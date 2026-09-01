@@ -149,6 +149,44 @@ migration is how capability arrives. `rows`/`row`/`exec`/`insert_row`/
 `update_row` keep parameters positional, and `row` returns Unit for
 absence. `tx(conn, f)` commits on Ok and rolls back on Err.
 
+## The store
+
+`lib/store.ol` grows the one-store contract into a declarative,
+persistence-aware store. The whole shape is a single `@store`
+declaration — a prefix and a field table — validated and normalized
+while the program loads:
+
+```olang no-run
+let SPEC = @store("app", [
+    ["mode",  "url",   "list"],
+    ["query", "url",   "state: open"],
+    ["theme", "local", "system"],
+    ["items", "mem",   []]
+])
+mount("#app", view, hydrate(SPEC))
+```
+
+Each field names where it lives: `mem` is ordinary per-load state;
+`url` fields reflect into the querystring, so reloads land exactly
+where the user was, links deep-link, and back/forward walk app
+history; `local` fields persist in localStorage under
+`<prefix>-<name>` (defaults are stored as absent, so users who never
+chose keep following new defaults). `url`/`local` values are strings
+by contract — parse at the use site.
+
+The lifecycle is four calls: `hydrate(SPEC)` builds the initial state
+(defaults ⊕ URL ⊕ storage), `persist(SPEC, current())` after any
+navigation-ish change reflects it back (one `pushState` per real
+change), `on_restore(SPEC, handler)` hands decoded url fields to the
+app on back/forward, and `default_of(SPEC, name)` keeps the spec the
+single source of defaults.
+
+The macro is the checked front door: duplicate fields, unknown
+classes, non-identifier names, and non-string persisted defaults are
+load-time errors naming the `@store` site, and the normalized spec is
+baked as a literal — `olang expand` shows exactly what the runtime
+receives.
+
 ## The bundle
 
 The browser loads one source file. `serve` builds it: the SDK's

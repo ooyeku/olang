@@ -148,7 +148,8 @@ fn sdk_file(rel) = unwrap(fs.read_file(sdk_dir() + "/" + rel))
 /// intra-SDK `use lib.*` lines are stripped: the bundle is one flat
 /// program, so the names resolve by concatenation.
 fn browser_modules() = ["lib/html.ol", "lib/forms.ol", "lib/ui.ol",
-                        "lib/state.ol", "lib/view.ol", "lib/api.ol"]
+                        "lib/state.ol", "lib/view.ol", "lib/api.ol",
+                        "lib/store.ol"]
 
 fn strip_module_lines(source) = {
     let mut out = []

@@ -46,6 +46,7 @@ share use lib.forms { field, rules, read, form_fields }
 // nested sibling imports only resolve when already in the module
 // cache (resolver limitation — see open-track/olang-improvements.md).
 share use lib.state { init, current, set, update }
+share use lib.store { hydrate, persist, on_restore, default_of, querystring }
 share use lib.view { mount, rerender, apply, action, action_arg, input_value }
 share use lib.api { call, fetch, unwrap_envelope, err_message, err_details }
 
