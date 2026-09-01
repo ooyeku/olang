@@ -909,7 +909,16 @@ impl Svg {
     fn legend<'a>(&mut self, geo: &Geometry, entries: impl Iterator<Item = (&'a str, &'a str)>) {
         let mut x = geo.left;
         let y = geo.top - 12.0;
+        // An empty label is "no legend entry", and a repeated
+        // (label, color) pair collapses — so a layered chart (a line
+        // plus interactive scatter points of the same series) shows
+        // each series once.
+        let mut seen: Vec<(&str, &str)> = Vec::new();
         for (label, color) in entries {
+            if label.is_empty() || seen.contains(&(label, color)) {
+                continue;
+            }
+            seen.push((label, color));
             let _ = write!(
                 self.body,
                 "<rect x=\"{x:.2}\" y=\"{:.2}\" width=\"10\" height=\"10\" rx=\"2\" fill=\"{}\"/>\
