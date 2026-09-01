@@ -71,7 +71,7 @@ fn count_lines(path) = len(str.lines(unwrap_or(fs.read_file(path), "")))
 fn ignored(f) =
     str.contains(f, "/target/") || str.starts_with(f, "target/") ||
     str.contains(f, "/.git/") || str.starts_with(f, ".git/") ||
-    str.contains(f, "/node_modules/") || str.contains(f, "/.claude/") ||
+    str.contains(f, "/node_modules/") || str.contains(f, "/.cache/") ||
     str.contains(f, "/dist/") || str.contains(f, "/.svelte-kit/") ||
     str.contains(f, "/build/")
 

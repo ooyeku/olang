@@ -10,7 +10,7 @@
     <p class="sub">{data.entry.description}</p>
     <div class="copybox">
       <span class="prompt">$</span>
-      <span>cd examples/{data.entry.name} && olang main.ol</span>
+      <span>cd examples/{data.entry.path} && olang main.ol</span>
     </div>
     <p style="margin-top:0.9rem"><a href={data.github}>View on GitHub →</a></p>
     <div class="example-files">

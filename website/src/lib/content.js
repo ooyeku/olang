@@ -70,12 +70,16 @@ export const BOOK = [
   { slug: 'language', file: 'language.md', title: 'Language reference', part: 'The language' },
   { slug: 'types', file: 'types.md', title: 'Types and gradual typing', part: 'The language' },
   { slug: 'pitfalls', file: 'pitfalls.md', title: 'Common pitfalls', part: 'The language' },
+  { slug: 'macros', file: 'macros.md', title: 'Macros', part: 'The language' },
   // Part III — The standard library
   { slug: 'stdlib', file: 'stdlib.md', title: 'Standard library reference', part: 'The standard library' },
   { slug: 'ods', file: 'ods.md', title: 'The data stack', part: 'The standard library' },
   // Part IV — Building and running programs
   { slug: 'packages', file: 'packages.md', title: 'Packages and dependencies', part: 'Building and running programs' },
+  { slug: 'shelf', file: 'shelf.md', title: 'The library shelf', part: 'Building and running programs' },
+  { slug: 'web-sdk', file: 'web-sdk.md', title: 'The web SDK', part: 'Building and running programs' },
   { slug: 'tooling', file: 'tooling.md', title: 'Command-line tooling', part: 'Building and running programs' },
+  { slug: 'performance', file: 'performance.md', title: 'Writing fast olang', part: 'Building and running programs' },
   { slug: 'wasm', file: 'wasm.md', title: 'olang in the browser', part: 'Building and running programs' },
   { slug: 'openness', file: 'openness.md', title: 'Openness', part: 'Building and running programs' },
   { slug: 'editors', file: 'editors.md', title: 'Editor support', part: 'Building and running programs' },
@@ -206,22 +210,30 @@ export async function renderChapter(slug) {
 export function examplesCatalog() {
   const md = readFileSync(join(examplesDir, 'README.md'), 'utf-8');
   const entries = [];
-  // Package bullets: - [`name/`](name/) — description...
-  const bulletRe = /^- \[`([\w/]+?)\/?`\]\([\w/]+?\/?\)\s+—\s+([\s\S]*?)(?=^- \[|^```|^##|\Z)/gm;
+  // Program bullets: - [`name/`](category/name/) — description...
+  // The backticked display name addresses the example (the gallery keeps
+  // flat /examples/<name> URLs); the link target is its real directory
+  // under examples/. Category bullets (a bare single-segment target) and
+  // library packages are the repo's structure, not runnable programs, so
+  // they are not gallery entries.
+  const bulletRe = /^- \[`([\w-]+)\/?`\]\(([\w/-]+?)\/?\)\s+—\s+([\s\S]*?)(?=^- \[|^```|^##|$(?![\s\S]))/gm;
   let m;
   while ((m = bulletRe.exec(md))) {
-    const name = m[1].replace(/\/$/, '');
-    if (name.startsWith('packages/')) continue;
-    const desc = m[2].replace(/\s+/g, ' ').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    const [, name, path] = m;
+    if (!path.includes('/')) continue;
+    if (path.includes('packages/')) continue;
+    if (entries.some((e) => e.name === name)) continue;
+    const desc = m[3].replace(/\s+/g, ' ').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
       .replace(/`([^`]+)`/g, '$1').trim();
-    entries.push({ name, description: desc });
+    entries.push({ name, path, description: desc });
   }
   return entries;
 }
 
-/** All .ol/.toml source files for one example, real bytes from the repo. */
-export async function exampleSource(name) {
-  const dir = join(examplesDir, name);
+/** All .ol source files for one example, real bytes from the repo.
+ * `path` is the example's directory relative to examples/. */
+export async function exampleSource(path) {
+  const dir = join(examplesDir, path);
   const files = [];
   const walk = (d, prefix = '') => {
     for (const entry of readdirSync(d).sort()) {

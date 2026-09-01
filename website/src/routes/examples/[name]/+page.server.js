@@ -8,5 +8,5 @@ export function entries() {
 export async function load({ params }) {
   const entry = examplesCatalog().find((e) => e.name === params.name);
   if (!entry) error(404, 'no such example');
-  return { entry, files: await exampleSource(params.name), github: `${GITHUB}/tree/main/examples/${params.name}` };
+  return { entry, files: await exampleSource(entry.path), github: `${GITHUB}/tree/main/examples/${entry.path}` };
 }

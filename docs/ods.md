@@ -530,7 +530,8 @@ zero-row chunk is the loop's own stopping signal.
 A reader is not a value like a Frame. It holds a position in a file —
 mutable state — and so it belongs to the thread that opened it. Reaching
 one from a `spawn`ed task or sending one down a channel is refused, the
-same rule and for the same reason as [`cell`](concurrency.md#cell). To
+same rule and for the same reason as
+[`cell`](language.md#cells-the-one-mutable-location). To
 process chunks in parallel, read on one thread and send the chunks:
 
 ```olang no-run

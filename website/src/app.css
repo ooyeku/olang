@@ -192,10 +192,16 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .gh-link { display: inline-flex; align-items: center; gap: 0.45rem; }
 .gh-link svg { width: 17px; height: 17px; fill: currentColor; }
 @media (max-width: 560px) {
-  .site-header .container { gap: 0.75rem; }
-  .site-header nav { gap: 0.1rem; }
-  .site-header nav a { font-size: 0.8rem; padding: 0.4rem 0.4rem; }
+  /* Every element narrows a little so the full nav — three links, the
+     GitHub icon, and the theme toggle — fits a 375px viewport without
+     clipping at the right edge. */
+  .site-header .container { gap: 0.4rem; padding: 0 0.75rem; }
+  .site-header .brand img { height: 18px; }
+  .site-header nav { gap: 0; }
+  .site-header nav a { font-size: 0.74rem; padding: 0.4rem 0.2rem; }
+  .site-header nav a.active::after { left: 0.2rem; right: 0.2rem; }
   .gh-label { display: none; }
+  .theme-toggle { margin-left: 0; width: 1.8rem; }
 }
 
 /* ── hero ───────────────────────────────────────────────────────────── */
@@ -391,6 +397,8 @@ a code:not(pre code) { color: inherit; border-color: var(--line-strong); }
 }
 .copybox .lines { display: grid; gap: 0.2rem; overflow-x: auto; white-space: nowrap; min-width: 0; }
 .copybox .prompt { color: var(--text-3); user-select: none; padding-right: 0.4rem; }
+.copybox .alt { color: var(--text-4); font-size: 0.78rem; }
+.copybox .alt code { background: none; border: 0; padding: 0; color: var(--text-3); font-size: 1em; }
 .copybox button {
   margin-left: auto; background: none; border: 1px solid var(--line-strong);
   color: var(--text-3); border-radius: 3px; padding: 0.3rem 0.7rem;
@@ -627,16 +635,19 @@ a code:not(pre code) { color: inherit; border-color: var(--line-strong); }
 
 /* ── two-tone art swaps with the theme ──────────────────────────────── */
 /* The mark is two-tone, so it cannot be recoloured with currentColor —
-   each palette gets its own file, and only one is ever displayed. */
-.logo-dark { display: none; }
+   each palette gets its own file, and only one is ever displayed. The
+   `!important` is load-bearing: layout rules elsewhere set `display:
+   block` on these images with higher specificity (`.site-header .brand
+   img`, `.hero h1 img`), and without it both logos render stacked. */
+.logo-dark { display: none !important; }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) .logo-dark { display: block; }
-  :root:not([data-theme='light']) .logo-light { display: none; }
+  :root:not([data-theme='light']) .logo-dark { display: block !important; }
+  :root:not([data-theme='light']) .logo-light { display: none !important; }
 }
-:root[data-theme='dark'] .logo-dark { display: block; }
-:root[data-theme='dark'] .logo-light { display: none; }
-:root[data-theme='light'] .logo-dark { display: none; }
-:root[data-theme='light'] .logo-light { display: block; }
+:root[data-theme='dark'] .logo-dark { display: block !important; }
+:root[data-theme='dark'] .logo-light { display: none !important; }
+:root[data-theme='light'] .logo-dark { display: none !important; }
+:root[data-theme='light'] .logo-light { display: block !important; }
 
 /* ── skip link ──────────────────────────────────────────────────────── */
 .skip-link {
@@ -652,7 +663,9 @@ a code:not(pre code) { color: inherit; border-color: var(--line-strong); }
 .notfound { padding: 6rem 0 8rem; text-align: center; }
 .notfound .code {
   font-family: var(--mono); font-size: 3.4rem; color: var(--accent);
-  margin: 0 0 0.6rem; letter-spacing: -0.02em;
+  /* `auto` inline margins: `.notfound p` caps every paragraph at 34rem,
+     and this one must stay centered inside the section like the rest. */
+  margin: 0 auto 0.6rem; letter-spacing: -0.02em;
 }
 .notfound h1 { color: var(--text); font-size: 1.5rem; margin: 0 0 0.8rem; }
 .notfound p { max-width: 34rem; margin: 0 auto 2rem; }

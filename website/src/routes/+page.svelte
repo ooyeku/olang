@@ -1,7 +1,7 @@
 <script>
   export let data;
   let copied = false;
-  const install = 'git clone https://github.com/ooyeku/olang && cd olang && cargo install --path .';
+  const install = 'curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh';
   function copy() {
     navigator.clipboard?.writeText(install);
     copied = true;
@@ -51,8 +51,8 @@
       </div>
       <div class="copybox">
         <div class="lines">
-          <div><span class="prompt">$</span> git clone https://github.com/ooyeku/olang</div>
-          <div><span class="prompt">$</span> cd olang && cargo install --path .</div>
+          <div><span class="prompt">$</span> curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh</div>
+          <div class="alt">or <code>brew install ooyeku/olang/olang</code> — details in <a href="/book/installation">Installation</a></div>
         </div>
         <button on:click={copy}>{copied ? 'copied' : 'copy'}</button>
       </div>
