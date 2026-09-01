@@ -952,8 +952,8 @@ impl Svg {
                 "<text x=\"16\" y=\"{:.2}\" text-anchor=\"middle\" font-size=\"13\" fill=\"{}\" \
                  transform=\"rotate(-90 16 {:.2})\">{}</text>",
                 geo.top + geo.plot_h / 2.0,
-                geo.top + geo.plot_h / 2.0,
                 self.theme.ink2(),
+                geo.top + geo.plot_h / 2.0,
                 escape(&opts.y_label)
             );
         }
