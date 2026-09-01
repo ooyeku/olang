@@ -45,9 +45,19 @@ share fn apply(f) = {
 share fn action(name, handler) =
     cell.update(mount_actions, (m) => map_set(m, name, handler))
 
+/// A click on a form control is a focus/open gesture (a select opening
+/// its dropdown, a caret landing in an input) — never an action. The
+/// control's action fires on change (and Enter, via the keydown
+/// delegation) instead. Without this, clicking a select fired its
+/// action with the PRE-change values and the async repaint snapped the
+/// open dropdown shut.
+fn click_on_form_control(ev) =
+    map_get(ev, "type") == "click"
+        && contains(["input", "select", "textarea"], map_get(ev, "tag"))
+
 fn dispatch_action(ev) = {
     let data = map_get(ev, "data")
-    let name = if data == () => "" else => {
+    let name = if data == () || click_on_form_control(ev) => "" else => {
         let a = map_get(data, "action")
         if a == () => "" else => a
     }
