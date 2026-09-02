@@ -515,29 +515,40 @@ impl Interpreter {
         &mut self,
         module_path: &str,
     ) -> Result<Value, InterpreterError> {
+        // Resolve first: the cache and the loading stack are keyed by the
+        // resolved file, never by the dotted name. Two packages may each
+        // have a `lib.state` — keyed by name, the second importer received
+        // the first package's module, and a dependency's internal imports
+        // worked only when its index.ol happened to cache the name first.
+        let file_path = self.resolve_module_path(module_path)?;
+        let file_path_str = file_path.to_string_lossy().to_string();
+        self.module_name_index
+            .entry(module_path.to_string())
+            .or_insert_with(|| file_path.clone());
+
         // Feature 7: Check for circular dependency before loading
-        if self.module_loading_stack.contains(&module_path.to_string()) {
+        if self.module_loading_stack.contains(&file_path_str) {
             // Build cycle path for clear error message
             let cycle_start = self
                 .module_loading_stack
                 .iter()
-                .position(|m| m == module_path)
+                .position(|m| *m == file_path_str)
                 .unwrap_or(0);
             let mut cycle_path = self.module_loading_stack[cycle_start..].to_vec();
-            cycle_path.push(module_path.to_string());
+            cycle_path.push(file_path_str.clone());
 
             return Err(InterpreterError::CircularDependencyDetected {
                 cycle_path: cycle_path.join(" → "),
             });
         }
 
-        // Check cache first
-        if let Ok(Some(cached)) = self.get_cached_module(module_path) {
+        // Check cache first. A `Unit` entry is a placeholder — the entry
+        // file's directory marker or a module mid-load — not a module.
+        if let Ok(Some(cached)) = self.get_cached_module(&file_path_str)
+            && !matches!(cached.module, Value::Unit)
+        {
             return Ok(cached.module);
         }
-
-        // Determine the file path
-        let file_path = self.resolve_module_path(module_path)?;
 
         // Handle standard library modules
         if file_path.to_string_lossy().starts_with("__stdlib__/") {
@@ -551,7 +562,7 @@ impl Interpreter {
             let stdlib = crate::stdlib::get_stdlib();
             if let Some(module) = stdlib.get(stdlib_name) {
                 // Cache the stdlib module
-                self.cache_module(module_path.to_string(), module.clone(), None, Vec::new())?;
+                self.cache_module(file_path_str, module.clone(), None, Vec::new())?;
                 return Ok(module.clone());
             } else {
                 return Err(InterpreterError::RuntimeError {
@@ -614,7 +625,7 @@ impl Interpreter {
         }
 
         // Feature 7: Add module to loading stack to track circular dependencies
-        self.module_loading_stack.push(module_path.to_string());
+        self.module_loading_stack.push(file_path_str.clone());
         let stack_size_before = self.module_loading_stack.len();
 
         // Save current environment and module path
@@ -623,7 +634,6 @@ impl Interpreter {
 
         // Set current module path to the FULL file path (not just module name)
         // This allows nested imports to resolve relative to this file's directory
-        let file_path_str = file_path.to_string_lossy().to_string();
         self.current_module_path = Some(file_path_str.clone());
 
         // Pre-cache a placeholder entry so nested imports can find this module's directory
@@ -645,7 +655,8 @@ impl Interpreter {
             cache_generation: 0,
             memory_size: 0,
         };
-        self.module_cache.insert(file_path_str, placeholder_entry);
+        self.module_cache
+            .insert(file_path_str.clone(), placeholder_entry);
 
         // Execute the module and collect exports
         let result = {
@@ -817,7 +828,7 @@ impl Interpreter {
             // Feature 8: Cache the module with smart caching enhancements
             let compilation_time = start_time.elapsed();
             self.cache_module_with_options(
-                module_path.to_string(),
+                file_path_str,
                 module.clone(),
                 Some(file_path),
                 dependencies,
@@ -908,6 +919,23 @@ impl Interpreter {
                 crate::log::get_logger().debug(
                     "interpreter",
                     &format!("Found in same directory: {}", path.display()),
+                );
+            }
+            return Ok(path);
+        }
+
+        // The loading module's own package comes before the entry project:
+        // a dependency's `lib/view.ol` doing `use lib.state` means the
+        // dependency's lib/state.ol, whatever the consumer keeps in its
+        // own lib/. (For the entry project's files this is the project
+        // root, checked again below from the working directory.)
+        if let Some(root) = self.current_package_root()
+            && let Ok(path) = self.try_resolve_in_directory(&root, module_path)
+        {
+            if debug_config.enable_resolution_tracing {
+                crate::log::get_logger().debug(
+                    "interpreter",
+                    &format!("Found relative to the module's package: {}", path.display()),
                 );
             }
             return Ok(path);
@@ -1055,41 +1083,50 @@ impl Interpreter {
         &mut self,
         module_path: &str,
     ) -> Result<std::path::PathBuf, InterpreterError> {
-        let current_file_dir = if let Some(current_module) = self.current_module_path.clone() {
-            // If we're loading from within a module, use that module's directory
-            match self.get_cached_module(&current_module) {
-                Ok(cached) => {
-                    if let Some(cached_entry) = cached {
-                        if let Some(ref file_path) = cached_entry.file_path {
-                            file_path
-                                .parent()
-                                .unwrap_or_else(|| std::path::Path::new("."))
-                                .to_path_buf()
-                        } else {
-                            crate::clock::current_dir().map_err(|e| {
-                                InterpreterError::RuntimeError {
-                                    message: format!("Failed to get current directory: {}", e),
-                                }
-                            })?
-                        }
-                    } else {
-                        crate::clock::current_dir().map_err(|e| InterpreterError::RuntimeError {
-                            message: format!("Failed to get current directory: {}", e),
-                        })?
-                    }
-                }
-                _ => crate::clock::current_dir().map_err(|e| InterpreterError::RuntimeError {
-                    message: format!("Failed to get current directory: {}", e),
-                })?,
-            }
-        } else {
-            // No current module context, use current working directory
-            crate::clock::current_dir().map_err(|e| InterpreterError::RuntimeError {
+        // The current module path is the loading file's full path (set by
+        // load_module_from_file and set_current_file); its directory is
+        // the base. Stdlib and embedded modules have no directory.
+        let current_file_dir = match self.current_module_path.as_deref() {
+            Some(current) if !current.starts_with("__") => std::path::Path::new(current)
+                .parent()
+                .filter(|d| !d.as_os_str().is_empty())
+                .map(|d| d.to_path_buf()),
+            _ => None,
+        };
+        let current_file_dir = match current_file_dir {
+            Some(dir) => dir,
+            None => crate::clock::current_dir().map_err(|e| InterpreterError::RuntimeError {
                 message: format!("Failed to get current directory: {}", e),
-            })?
+            })?,
         };
 
         self.try_resolve_in_directory(&current_file_dir, module_path)
+    }
+
+    /// The root of the package the current module belongs to: the nearest
+    /// ancestor directory holding an `olang.toml`, or the dependency root
+    /// the file sits under. A module inside a dependency resolves its own
+    /// `use lib.x` here — against its package, not the consuming project.
+    /// None for stdlib/embedded modules and when no module is current.
+    fn current_package_root(&self) -> Option<std::path::PathBuf> {
+        let current = self.current_module_path.as_deref()?;
+        if current.starts_with("__") {
+            return None;
+        }
+        let dep_roots: Vec<std::path::PathBuf> = self
+            .dependency_map
+            .values()
+            .map(|root| std::fs::canonicalize(root).unwrap_or_else(|_| root.clone()))
+            .collect();
+        let start = std::path::Path::new(current);
+        let start = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
+        let mut dir = start.parent()?.to_path_buf();
+        loop {
+            if dir.join("olang.toml").exists() || dep_roots.contains(&dir) {
+                return Some(dir);
+            }
+            dir = dir.parent()?.to_path_buf();
+        }
     }
 
     /// 2. Check relative to project root

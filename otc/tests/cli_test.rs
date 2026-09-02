@@ -81,10 +81,24 @@ fn the_local_workflow_end_to_end() {
     assert!(r.ok, "new: {}", r.output);
     parses(&base.join("myapp/src/main.ol"));
 
+    // `--web` is two files on the web SDK; `--web-bare` is the raw shape
+    // with every seam written out.
     let r = run_in(&base, &shelf, &["new", "webby", "--web"]);
     assert!(r.ok, "new --web: {}", r.output);
-    for rel in ["main.ol", "lib/router.ol", "static/app.ol"] {
+    for rel in ["main.ol", "client.ol"] {
         parses(&base.join("webby").join(rel));
+    }
+    assert!(
+        base.join("webby/README.md").exists(),
+        "web scaffold missing README.md"
+    );
+    let manifest = std::fs::read_to_string(base.join("webby/olang.toml")).unwrap();
+    assert!(manifest.contains("shelf = \"web\""), "{manifest}");
+
+    let r = run_in(&base, &shelf, &["new", "webbare", "--web-bare"]);
+    assert!(r.ok, "new --web-bare: {}", r.output);
+    for rel in ["main.ol", "lib/router.ol", "static/app.ol"] {
+        parses(&base.join("webbare").join(rel));
     }
     for rel in [
         "static/index.html",
@@ -93,8 +107,8 @@ fn the_local_workflow_end_to_end() {
         "README.md",
     ] {
         assert!(
-            base.join("webby").join(rel).exists(),
-            "web scaffold missing {rel}"
+            base.join("webbare").join(rel).exists(),
+            "bare web scaffold missing {rel}"
         );
     }
 

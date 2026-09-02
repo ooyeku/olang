@@ -173,6 +173,24 @@
         }
       },
       host_dom_focus: (h) => { elements[Number(h)].focus(); },
+      host_dom_prefers_dark: () =>
+        (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? 1 : 0,
+      host_dom_active_id: () => giveStr((document.activeElement && document.activeElement.id) || ""),
+      host_dom_confirm: (ptr, len) => (window.confirm(readStr(ptr, len)) ? 1 : 0),
+      host_dom_read_file: (h, id) => {
+        const el = elements[Number(h)];
+        const file = el && el.files && el.files[0];
+        const cb = Number(id);
+        if (!file) { dispatchRawJson(cb, JSON.stringify({ error: "no file selected" })); return; }
+        const reader = new FileReader();
+        reader.onload = () => {
+          const url = String(reader.result);
+          const base64 = url.slice(url.indexOf(",") + 1);
+          dispatchRawJson(cb, JSON.stringify({ name: file.name, size: file.size, type: file.type, base64 }));
+        };
+        reader.onerror = () => dispatchRawJson(cb, JSON.stringify({ error: String(reader.error) }));
+        reader.readAsDataURL(file);
+      },
       host_dom_set_class: (h, ptr, len) => { elements[Number(h)].className = readStr(ptr, len); },
       host_dom_fetch: (mp, ml, pp, pl, bp, bl, id) => {
         const method = readStr(mp, ml);

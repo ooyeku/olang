@@ -22,8 +22,14 @@
   --font: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
+/* Dark: written once, applied twice — to a reader whose system asks
+   for it and who has not chosen otherwise, and to a reader who picked
+   it. An app offering a light/dark/system toggle writes one attribute
+   (`data-theme="light"` or `"dark"` on <html>) and every token
+   follows; "system" is the attribute's absence. The two selectors
+   must carry identical bodies. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #131517;
     --surface: #1c1f22;
     --ink: #e9e7e3;
@@ -39,6 +45,22 @@
     --amber-soft: #362d1c;
     --shadow: none;
   }
+}
+:root[data-theme="dark"] {
+    --bg: #131517;
+    --surface: #1c1f22;
+    --ink: #e9e7e3;
+    --muted: #969ca4;
+    --line: #2e3237;
+    --accent: #63a983;
+    --accent-soft: #22352b;
+    --accent-ink: #0f130f;
+    --danger: #e07a5f;
+    --blue: #8fb0d8;
+    --blue-soft: #232c38;
+    --amber: #d9b36a;
+    --amber-soft: #362d1c;
+    --shadow: none;
 }
 
 * { box-sizing: border-box; }

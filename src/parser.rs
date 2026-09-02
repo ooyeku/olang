@@ -472,6 +472,48 @@ impl Parser {
             }
         }
 
+        // A bare `share` is never a statement: the grammar accepts only
+        // `share` followed by a declaration, so a lone `share` here means
+        // the thing after it was not one — `share meta fn` is the case
+        // that reaches users, since a meta fn is exported by being
+        // declared in the module and travels with `use`. Without this
+        // the identifier `share` survived to run time and failed there
+        // as "Undefined variable: share", attributed to the importer's
+        // `use` line.
+        for statement in &statements {
+            if let Statement::Located { stmt, line, column } = statement
+                && let Statement::Expression(Expr::Identifier(name)) = stmt.as_ref()
+                && name == "share"
+            {
+                let source_line = input
+                    .lines()
+                    .nth((*line as usize).saturating_sub(1))
+                    .unwrap_or("");
+                let hint = if source_line.contains("meta") {
+                    " A meta fn cannot be shared: declare it in the module without `share`; \
+                     it is exported to every `use` of the module by being declared there."
+                } else {
+                    ""
+                };
+                return Err(ParseError::InvalidSyntaxWithPosition {
+                    message: format!(
+                        "`share` must be followed by a declaration: `share fn`, `share let`, \
+                         `share type`, `share trait`, `share impl`, or `share use`.{hint}"
+                    ),
+                    line: *line as usize,
+                    column: *column as usize,
+                    snippet: format!(
+                        "{:4} | {}\n{:4} | {}^",
+                        line,
+                        sanitize_snippet(source_line),
+                        "",
+                        " ".repeat((*column as usize).saturating_sub(1))
+                    )
+                    .into(),
+                });
+            }
+        }
+
         Ok(Program { statements })
     }
 
@@ -1369,9 +1411,13 @@ impl Parser {
     }
 
     fn build_spawn_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let expr = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing expression in spawn".to_string(),
-        })?;
+        // The keyword is its own pair now (bounded so `spawn_cost` is a
+        // name, not a spawn); the spawned call follows it.
+        let expr = pairs
+            .find(|p| p.as_rule() == Rule::call_expr)
+            .ok_or_else(|| ParseError::InvalidSyntax {
+                message: "Missing expression in spawn".to_string(),
+            })?;
 
         let spawned_expr = self.build_call_expr(expr.into_inner())?;
 

@@ -642,6 +642,54 @@ fn call_target(callee: &Expr) -> String {
 /// effects, judged by the run's own capability table. This function
 /// still validates every call's argument shape: non-string arguments
 /// fall through to the error arms below on both paths.
+/// The optional second argument of `meta.eval`: a budget for untrusted
+/// or user-authored source. `max_steps` bounds loop iterations and calls
+/// (the deterministic bound); `timeout_ms` is wall clock. A sandbox
+/// needs one: `while true { }` passes every static check, and without a
+/// bound it is a hung thread. Returns `(max_steps, timeout)`.
+pub fn eval_budget(
+    args: &[Value],
+) -> Result<(Option<u64>, Option<std::time::Duration>), Box<dyn std::error::Error>> {
+    let mut max_steps = None;
+    let mut timeout = None;
+    match args.get(1) {
+        None => {}
+        Some(Value::Map(options)) => {
+            for (key, value) in options.iter() {
+                match (key.as_str(), value) {
+                    ("max_steps", Value::Integer(n)) if *n >= 0 => max_steps = Some(*n as u64),
+                    ("timeout_ms", Value::Integer(n)) if *n >= 0 => {
+                        timeout = Some(std::time::Duration::from_millis(*n as u64))
+                    }
+                    ("max_steps" | "timeout_ms", other) => {
+                        return Err(format!(
+                            "meta.eval: {} must be a non-negative Int, got {}",
+                            key,
+                            other.type_name()
+                        )
+                        .into());
+                    }
+                    (other, _) => {
+                        return Err(format!(
+                            "meta.eval: unknown option '{}' — the options are max_steps and timeout_ms",
+                            other
+                        )
+                        .into());
+                    }
+                }
+            }
+        }
+        Some(other) => {
+            return Err(format!(
+                "meta.eval: options must be a map like #{{ \"max_steps\": 100000 }}, got {}",
+                other.type_name()
+            )
+            .into());
+        }
+    }
+    Ok((max_steps, timeout))
+}
+
 fn meta_eval(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let source = match args.first() {
         Some(Value::String(text)) => text.as_str().to_string(),
@@ -674,12 +722,14 @@ fn meta_eval(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             .into());
         }
     };
+    let (max_steps, timeout) = eval_budget(&args)?;
     let program = match crate::parser::Parser::new().parse(&source) {
         Ok(p) => p,
         Err(e) => return Ok(Value::Err(Box::new(s(&format!("{}", e))))),
     };
     let mut interp = crate::interpreter::Interpreter::new();
     interp.set_meta_mode(true);
+    interp.set_eval_budget(max_steps, timeout);
     match interp.eval_program(program) {
         Ok(v) => Ok(Value::Ok(Box::new(v))),
         Err(e) => Ok(Value::Err(Box::new(s(&format!("{}", e))))),

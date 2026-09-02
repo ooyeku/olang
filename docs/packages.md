@@ -45,12 +45,22 @@ otc new dashboard --web   # web app: JSON API + sqlite + wasm frontend
 
 The `--web` shape is one process serving a SQLite-backed JSON API, the
 page, and the frontend's own olang source, which the browser runs
-against the DOM through the wasm runtime — the architecture the tracker
-and ledger examples prove out, trimmed to a working starter where every
-seam a real app grows along appears exactly once. Its README covers the
-one artifact the scaffold cannot write from source (the wasm runtime;
-the scaffold copies one in when it can find it, and the API works
-without it).
+against the DOM through the wasm runtime — built on [the web
+SDK](web-sdk.md), so it is two files: `main.ol` (migrations, rpc
+routes, `serve`) and `client.ol` (`mount`, `action`, `call`). The
+manifest depends on the shelf's `web` and `validate`; `otc install`
+resolves them. Every seam a real app grows along appears exactly once.
+`--web-bare` keeps the previous shape — the raw stdlib with the router,
+static routes, escaping, and schema hand-rolled — for studying what the
+SDK packages. Its README covers the one artifact the scaffold cannot
+write from source (the wasm runtime; the scaffold copies one in when it
+can find it, and the API works without it).
+
+A name may be hyphenated (`otc new open-track-query --lib`): the
+directory keeps it, and the package is imported by the identifier form
+(`use open_track_query`), which the manifest records and the usage hint
+prints. Outside a git repository the scaffold ends with a one-line
+reminder to `git init`.
 
 All shapes come with a README, a `.gitignore`, and a working `test`
 block, and the generated source is parse-checked before it is written.

@@ -51,6 +51,10 @@ const imports = {
       host_dom_post: (ptr, len) => {
         self.postMessage({ olang: readStr(ptr, len) });
       },
+      host_dom_prefers_dark: () => 0,
+      host_dom_active_id: () => 0,
+      host_dom_confirm: () => 0,
+      host_dom_read_file: () => {},
       host_dom_on_message: (id) => {
         messageCb = Number(id);
         while (queued.length) dispatchJson(messageCb, queued.shift());

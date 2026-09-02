@@ -336,8 +336,10 @@ fn output_with_a_trailing_comment_is_refused_at_the_site() {
          println(to_string(@f(2)))\n",
     )
     .expect_err("trailing comment must be refused");
+    // The message leads with the parse error and names the trailing
+    // comment only because one is actually present.
     assert!(
-        err.contains("@f") && err.contains("does not splice"),
+        err.contains("@f") && err.contains("does not parse") && err.contains("// comment"),
         "{err}"
     );
 }

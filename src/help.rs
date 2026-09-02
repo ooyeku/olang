@@ -1529,13 +1529,17 @@ impl HelpSystem {
         self.add_function(FunctionDoc {
             name: "meta.eval".to_string(),
             description: "Evaluate olang source and return the program's final value. At ordinary runtime the source runs in a child interpreter with effects allowed, judged by the run's own capability table and resolving modules from the current file. Inside a meta fn the same call runs in the pure expansion sandbox — no filesystem, network, processes, clock, or randomness — so macro expansion stays a deterministic function of the source; there it is the compute half of compile-time evaluation, paired with meta.lit (docs/macros.md). Takes source text, not meta.parse nodes: nodes are the analysis format and cannot be turned back into a program.".to_string(),
-            syntax: "meta.eval(source)".to_string(),
-            parameters: vec!["source: String - olang source text to evaluate".to_string()],
+            syntax: "meta.eval(source, options?)".to_string(),
+            parameters: vec![
+                "source: String - olang source text to evaluate".to_string(),
+                "options: Map - optional budget for untrusted or user-authored source: `max_steps` (loop iterations and calls, deterministic) and `timeout_ms` (wall clock); exceeding either yields Err(\"budget exceeded ...\") instead of a hung thread".to_string(),
+            ],
             return_type: "Result<value, Error>".to_string(),
             examples: vec![
                 r#"unwrap(meta.eval("2 + 3"))  // 5"#.to_string(),
                 r#"meta.eval(unwrap(fs.read_file("script.ol")))  // run a file's source"#.to_string(),
                 r#"meta fn bake(e) = meta.lit(unwrap(meta.eval(e)))  // pure at expansion time"#.to_string(),
+                r#"meta.eval(rule_src, #{ "max_steps": 100000, "timeout_ms": 50 })  // a sandbox for user-authored rules"#.to_string(),
             ],
             category: "Meta".to_string(),
             see_also: vec!["meta.lit".to_string(), "meta.parse".to_string()],
@@ -1625,6 +1629,15 @@ impl HelpSystem {
                 "skip([1, 2, 3, 4], 2)  // [3, 4]",
             ),
             (
+                "drop",
+                "drop(list, n)",
+                "List",
+                "Lists",
+                "The same as skip: the list without its first n elements. The name most \
+                 languages pair with take, kept as an alias so neither spelling is a guess.",
+                "drop([1, 2, 3, 4], 1)  // [2, 3, 4]",
+            ),
+            (
                 "entries",
                 "entries(map)",
                 "List",
@@ -1639,6 +1652,17 @@ impl HelpSystem {
                 "Maps",
                 "The value under key, or Unit () when the key is absent — a missing key is                  not an error. Reads maps, structs, objects, and parsed JSON uniformly.",
                 "map_get(#{ \"a\": 1 }, \"a\")  // 1",
+            ),
+            (
+                "map_path",
+                "map_path(value, keys)",
+                "Any",
+                "Maps",
+                "A nested read in one call: follow the list of keys through maps, objects, \
+                 structs, and parsed JSON, returning the value at the end or Unit at the \
+                 first missing hop — the same absence-as-Unit rule as map_get, without \
+                 spelling it once per level.",
+                "map_path(event, [\"issue\", \"fields\", \"estimate\"])  // () when any hop is missing",
             ),
             (
                 "map_get_or",
@@ -3124,6 +3148,38 @@ impl HelpSystem {
             "dom",
             "Give an element keyboard focus, as if the user had tabbed to it.",
             &[r##"dom.focus(dom.query("#search"))"##],
+        );
+        self.doc_ex(
+            "dom.prefers_dark",
+            "dom.prefers_dark()",
+            "Bool",
+            "dom",
+            "Does the page prefer a dark color scheme (`prefers-color-scheme: dark`)? The read a themed canvas or SVG chart needs to pick its palette; pair with a CSS `data-theme` override for an explicit toggle.",
+            &[r##"let theme = if dom.prefers_dark() => "dark" else => "light""##],
+        );
+        self.doc_ex(
+            "dom.active_id",
+            "dom.active_id()",
+            "String",
+            "dom",
+            "The id of the element that currently has keyboard focus — the read side of dom.focus — or \"\" when nothing focused carries an id. A repaint that rebuilds inputs can check this first and leave an in-progress edit alone.",
+            &[r##"if dom.active_id() != "search" => rerender() else => ()"##],
+        );
+        self.doc_ex(
+            "dom.confirm",
+            "dom.confirm(message)",
+            "Bool",
+            "dom",
+            "Ask the user a yes/no question with the browser's confirmation dialog; true when they accept. For a destructive action inside a view, `ui.btn_confirm` is the two-click alternative that needs no dialog.",
+            &[r##"if dom.confirm("Delete this issue?") => call("issues.delete", #{ "id": id }, done) else => ()"##],
+        );
+        self.doc_ex(
+            "dom.read_file",
+            "dom.read_file(el, callback)",
+            "Unit",
+            "dom",
+            "Read the first file a file input holds. The callback receives #{ \"name\", \"size\", \"type\", \"base64\" } — the contents base64-encoded, ready for an rpc body — or #{ \"error\": message } when nothing is selected. Asynchronous, like dom.fetch.",
+            &[r##"dom.read_file(dom.query("#attachment"), (f) => call("attach", #{ "name": map_get(f, "name"), "data": map_get(f, "base64") }, done))"##],
         );
         self.doc_ex(
             "dom.set_class",
@@ -4976,6 +5032,28 @@ impl HelpSystem {
             category: "Collections".to_string(),
             see_also: vec![],
         });
+        self.add_function(FunctionDoc {
+            name: "col.index_of".to_string(),
+            description: "The position of the first element equal to the value, or Unit when none is — the same absence convention as map_get and str.index_of.".to_string(),
+            syntax: "col.index_of(list, value)".to_string(),
+            parameters: vec![],
+            return_type: "Int | Unit".to_string(),
+            examples: vec!["col.index_of([\"a\", \"b\", \"c\"], \"b\")  // 1".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["str.index_of".to_string(), "contains".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "col.slice".to_string(),
+            description: "The elements from index from (inclusive) to to (exclusive), clamped to the list like str.substring: an end past the list stops at the end, a start at or past the end is empty, and negative indices count from the end. Replaces take(skip(xs, a), b - a).".to_string(),
+            syntax: "col.slice(list, from, to)".to_string(),
+            parameters: vec![],
+            return_type: "List".to_string(),
+            examples: vec!["col.slice([1, 2, 3, 4, 5], 1, 3)  // [2, 3]".to_string(), "col.slice([1, 2, 3], -2, 99)  // [2, 3]".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["take".to_string(), "skip".to_string(), "str.substring".to_string()],
+        });
+
         self.add_function(FunctionDoc {
             name: "col.unique".to_string(),
             description: "Deduplicate, preserving first-seen order.".to_string(),
@@ -6876,6 +6954,19 @@ impl HelpSystem {
             ],
             category: "Dates".to_string(),
             see_also: vec!["dates.utc_now".to_string(), "dates.today".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "dates.stamp".to_string(),
+            description: "The storage timestamp: the current UTC time at second precision with a Z suffix (2026-08-31T23:40:06Z). Sortable as plain text across machines and offsets, and free of the fractional seconds a UI never wants — the one form to store in created_at/updated_at columns.".to_string(),
+            syntax: "dates.stamp()".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec![
+                r#"insert_row(conn, "issues", #{ "title": t, "created_at": dates.stamp() })"#.to_string(),
+            ],
+            category: "Dates".to_string(),
+            see_also: vec!["dates.utc_now".to_string(), "dates.now".to_string()],
         });
 
         self.add_function(FunctionDoc {

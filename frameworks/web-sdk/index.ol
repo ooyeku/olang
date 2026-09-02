@@ -29,12 +29,17 @@ share use lib.routes { route, rpc, match_path, find }
 
 // the server — the whole backend in one call
 share use lib.server {
-    serve, dispatch, json_response, ok_data, error_response, invalid,
-    body_json, q_str, q_int, q_enum, bundle_client, sdk_dir
+    serve, dispatch, dispatch_with, json_response, ok_data, error_response, invalid,
+    body_json, q_str, q_int, q_enum, bundle_client, bundle_clients, sdk_dir
 }
 
 // data layer
-share use lib.sql { open_db, version, rows, row, exec, insert_row, update_row, tx }
+// `row` here is the single-row query; `lib.ui` has a layout `row` too.
+// Exporting both under one name let the layout one silently win a
+// `use web { row }`, so the query is exported as `one` ("one row, or
+// Unit") and only the layout keeps the short name. The demo still
+// reaches the query form directly (`use lib.sql { row }`).
+share use lib.sql { open_db, version, rows, row as one, exec, try_rows, try_exec, insert_row, update_row, tx }
 
 // forms — declared once, rendered/validated/read from one declaration
 share use lib.forms { field, rules, read, form_fields }
@@ -42,17 +47,14 @@ share use lib.forms { field, rules, read, form_fields }
 // browser side — real in the served bundle; importable everywhere so
 // client code resolves, documents, and type-checks. Calling these
 // natively reaches the dom module's own browser-only error.
-// state before view: view.ol imports lib.state, and a dependency's
-// nested sibling imports only resolve when already in the module
-// cache (resolver limitation — see open-track/olang-improvements.md).
 share use lib.state { init, current, set, update }
 share use lib.store { hydrate, persist, on_restore, default_of, querystring }
-share use lib.view { mount, rerender, apply, action, action_arg, input_value }
+share use lib.view { mount, rerender, apply, patch, action, action_arg, input_value, confirm_armed }
 share use lib.api { call, fetch, unwrap_envelope, err_message, err_details }
 
 // the opinionated components
 share use lib.ui {
     stack, row, spread, grid, card, muted, badge, badge_tone,
     stat, icon_btn, tabs, list_card, list_row,
-    btn, btn_primary, btn_danger, data_table, topbar
+    btn, btn_primary, btn_danger, btn_confirm, data_table, topbar
 }

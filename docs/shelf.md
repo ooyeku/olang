@@ -164,6 +164,23 @@ match check(#{"date": "2026-8-25", "amount": 0, "kind": "loan"}, rules) {
 // kind: must be one of ["expense", "income"]
 ```
 
+`kind` may also be `"date"` — an ISO day the value must parse as, with
+`min`/`max` as ISO days it must not precede or exceed — and any rule may
+carry `"where": (v) => Result`, a predicate whose `Err` message becomes
+the field's problem, so a check that fits no kind still rides the one
+validation pass. Parsed JSON (`JsonObject`) is map-shaped and checks
+like a Map: a request body needs no copy first.
+
+```olang no-run
+use validate { check, ok }
+let rules = [
+    ["due", "date", #{ "required": false, "min": "2026-01-01" }],
+    ["n", "int", #{ "where": (v) => if v % 2 == 0 => Ok(v) else => Err("must be even") }]
+]
+println(show(ok(#{ "due": "2026-08-31", "n": 4 }, rules)))
+println(show(check(#{ "n": 3 }, rules)))
+```
+
 ### markdown — a Markdown renderer
 
 `markdown.to_html(text)` turns a Markdown document into HTML:
@@ -186,6 +203,12 @@ println(to_html("# Notes\n\nShip the **shelf** first."))
 // <h1>Notes</h1>
 // <p>Ship the <strong>shelf</strong> first.</p>
 ```
+
+GitHub-style task lists render as checkboxes: `- [ ] write tests`
+becomes `<li class="task"><input type="checkbox" disabled> write
+tests</li>` (checked and `class="task done"` for `[x]`), kept in source
+order so a click in the rendered page can map back to the n-th task
+line.
 
 ## Pinning and drift
 

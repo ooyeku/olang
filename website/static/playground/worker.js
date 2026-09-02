@@ -64,6 +64,10 @@ async function instantiate() {
         host_dom_worker_close: () => {},
         host_dom_post: () => {},
         host_dom_on_message: () => {},
+        host_dom_prefers_dark: () => 0,
+        host_dom_active_id: () => 0,
+        host_dom_confirm: () => 0,
+        host_dom_read_file: () => {},
       },
     }
   );

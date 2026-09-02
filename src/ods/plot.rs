@@ -139,9 +139,24 @@ fn parse_options(value: &Value) -> Result<PlotOptions, String> {
                     other.type_name()
                 ));
             }
+            ("font_size", Value::Integer(n)) if (6..=48).contains(n) => opts.font_size = *n as f64,
+            ("font_size", Value::Float(f)) if (6.0..=48.0).contains(f) => opts.font_size = *f,
+            ("font_size", other) => {
+                return Err(format!(
+                    "plot: font_size must be a number between 6 and 48, got {}",
+                    other
+                ));
+            }
+            ("font", Value::String(f)) => opts.font = f.as_ref().clone(),
+            ("font", other) => {
+                return Err(format!(
+                    "plot: font must be a CSS font-family String, got {}",
+                    other.type_name()
+                ));
+            }
             _ => {
                 return Err(format!(
-                    "plot: unknown option '{}' (title, x_label, y_label, width, height, theme, responsive, interactive, colors, vary, scale)",
+                    "plot: unknown option '{}' (title, x_label, y_label, width, height, theme, responsive, interactive, colors, vary, scale, font_size, font)",
                     key
                 ));
             }

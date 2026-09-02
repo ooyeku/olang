@@ -36,9 +36,14 @@ enum Commands {
         /// A library package: index.ol at the root, usable as a dependency
         #[arg(long)]
         lib: bool,
-        /// A full-stack web app: JSON API + wasm frontend, one process
+        /// A full-stack web app on the web SDK: JSON API + wasm frontend,
+        /// one process, two files
         #[arg(long)]
         web: bool,
+        /// The web app with every seam hand-rolled on the raw stdlib —
+        /// for studying what the SDK packages
+        #[arg(long = "web-bare")]
+        web_bare: bool,
     },
     /// Add a dependency: a path (otc add ../my-lib) or a name from your
     /// shelf (otc add my-lib). Creates olang.toml if the project has none
@@ -136,7 +141,12 @@ fn main() {
     let verbose = cli.verbose;
 
     let result = match cli.command {
-        Commands::New { name, lib, web } => commands::new::execute(name, lib, web, verbose),
+        Commands::New {
+            name,
+            lib,
+            web,
+            web_bare,
+        } => commands::new::execute(name, lib, web, web_bare, verbose),
         Commands::Add { spec, path, force } => {
             commands::project::add(&spec, path.as_deref(), force)
         }

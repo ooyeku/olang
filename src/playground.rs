@@ -172,6 +172,10 @@ unsafe extern "C" {
     fn host_dom_insert_before(parent: i64, child: i64, before: i64);
     fn host_dom_push_state(ptr: *const u8, len: usize);
     fn host_dom_location() -> *const u8;
+    fn host_dom_prefers_dark() -> i32;
+    fn host_dom_active_id() -> *const u8;
+    fn host_dom_confirm(ptr: *const u8, len: usize) -> i32;
+    fn host_dom_read_file(handle: i64, id: i64);
     fn host_dom_on_route(callback_id: i64);
     fn host_dom_storage_get(ptr: *const u8, len: usize) -> *const u8;
     fn host_dom_storage_set(kp: *const u8, kl: usize, vp: *const u8, vl: usize);
@@ -657,6 +661,33 @@ pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::erro
                 (h.len() - 1) as i64
             });
             unsafe { host_dom_request_frame(id) };
+            Ok(Value::Unit)
+        }
+        // `prefers-color-scheme: dark`, so a themed canvas or SVG can
+        // pick its palette without guessing.
+        ("prefers_dark", []) => Ok(Value::Boolean(unsafe { host_dom_prefers_dark() } != 0)),
+        // The id of the focused element ("" when none, or it has no id):
+        // the read side of `dom.focus`, so a repaint can leave an
+        // in-progress edit alone.
+        ("active_id", []) => Ok(Value::String(std::sync::Arc::new(read_host_string(
+            unsafe { host_dom_active_id() },
+        )))),
+        ("confirm", [message]) => {
+            let m = text(message)?;
+            Ok(Value::Boolean(
+                unsafe { host_dom_confirm(m.as_ptr(), m.len()) } != 0,
+            ))
+        }
+        // Read a file input's first file: the callback receives
+        // #{ "name", "size", "type", "base64" }, or #{ "error": ... }
+        // when nothing is selected.
+        ("read_file", [el, callback]) => {
+            let id = HANDLERS.with(|h| {
+                let mut h = h.borrow_mut();
+                h.push(callback.clone());
+                (h.len() - 1) as i64
+            });
+            unsafe { host_dom_read_file(handle(el)?, id) };
             Ok(Value::Unit)
         }
         _ => Err(format!("dom.{}: unknown function or wrong arity", name).into()),

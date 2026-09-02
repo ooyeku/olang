@@ -52,8 +52,10 @@ Statements are one of: a declaration (`let`, `fn`, `type`, `trait`, `impl`,
 Expressions evaluated at the top level are allowed and their value is
 discarded (the last one is the program's result in the REPL).
 
-Identifiers start with a letter and continue with letters, digits, and
-underscores: `total`, `user_name`, `isValid2`. Identifiers cannot be
+Identifiers start with a letter or an underscore and continue with
+letters, digits, and underscores: `total`, `user_name`, `isValid2`,
+`_unused`. A bare `_` is not a name but the discard pattern (`let _ =
+...`, `for _ in ...`, a `match` arm). Identifiers cannot be
 [keywords](#appendix-keywords-and-grammar).
 
 olang is expression-oriented: `if`, `match`, blocks, and function bodies all
@@ -1293,13 +1295,22 @@ let result = [1, 2, 3, 4, 5, 6]
 println(to_string(result))   // 4 + 16 + 36
 ```
 
-The right side may be a bare function name (called with one argument) or a
-call with extra arguments (the piped value is prepended):
+The right side may be a bare function name (called with one argument), a
+call with extra arguments (the piped value is prepended), or any other
+expression that evaluates to a function — a lambda in parentheses, or an
+element of a list or map of handlers:
 
 ```olang
 fn add(a, b) = a + b
 println(to_string(5 |> add(3)))
+println(to_string(5 |> ((x) => x * 2)))
+let steps = [(x) => x + 1, (x) => x * 10]
+println(to_string(5 |> steps[1]))
 ```
+
+Note the asymmetry: `x |> f(a)` is `f(x, a)`, a call with the piped value
+prepended — so to pipe into the *result* of a call, bind it first
+(`let f = pick(mode)` then `x |> f`).
 
 ## User-defined types
 
@@ -1722,6 +1733,50 @@ See [`par for`](#par-for--parallel-iteration) for the loop form.
 | A handful of distinct jobs, results at the end | `spawn` + `task.join` |
 | Results as they arrive, or tasks talking to each other | `chan` |
 | Mutable state within one thread | [`cell`](#cells-the-one-mutable-location) |
+
+### Sharing state under `http.serve`
+
+Cells are pinned to the thread that created them, and every request
+`http.serve` handles runs on a worker thread. The natural first draft —
+a module-level cell as a cache, read and written from handlers — is
+therefore refused at run time ("cell escaped its thread"), correctly and
+with a hint pointing at channels. The pattern that replaces it is a
+**channel service**: one task owns the state, the workers talk to it
+over channels, and every rebuild becomes single-flight because only the
+owner performs it.
+
+```olang no-run
+// One owner. Requests arrive on `asks`; each carries its own reply channel.
+let asks = chan.new()
+spawn(() => {
+    let state = cell(#{ "built_at": 0, "value": () })
+    loop {
+        let ask = chan.recv(asks)
+        match map_get(ask, "kind") {
+            "get" => chan.send(map_get(ask, "reply"), map_get(cell.get(state), "value")),
+            "rebuild" => {
+                cell.set(state, #{ "built_at": time.monotonic_ms(), "value": expensive() })
+                chan.send(map_get(ask, "reply"), true)
+            }
+        }
+    }
+})
+
+// Workers never touch the cell; they ask.
+fn cached_value() = {
+    let reply = chan.new()
+    chan.send(asks, #{ "kind": "get", "reply": reply })
+    chan.recv(reply)
+}
+
+http.serve(8080, (req) => http.response(200, show(cached_value())))
+```
+
+The owner task is the only place the state changes, so no two workers
+ever rebuild it at once, and a slow rebuild queues the askers rather
+than duplicating the work. The same shape serves a rate limiter, a
+session table, or an in-memory index — anything that would be a
+module-level mutable in a single-threaded server.
 
 ## Modules and sharing
 

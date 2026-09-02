@@ -8,12 +8,20 @@
 //!
 //! A rule is a list: `[field, kind]` or `[field, kind, opts]`, where
 //! `kind` is one of "str", "int", "float", "num", "bool", "list",
-//! "map", "any", and `opts` is a map of any of:
+//! "map", "date", "any", and `opts` is a map of any of:
 //!
 //!   required: false     absent field is fine (present still checks)
-//!   min / max: Int      numeric bound, or length bound for str/list
+//!   min / max: Int      numeric bound, or length bound for str/list;
+//!                       for "date", an ISO day the value must not
+//!                       precede / exceed
 //!   one_of: List        value must be one of these
 //!   pattern: String     regex the whole string must match
+//!   where: fn           any predicate: (value) => Result — an Err
+//!                       message becomes the field's problem
+//!
+//! A "date" is an ISO day string (`2026-08-31`) that `dates.parse`
+//! accepts. Parsed JSON (`JsonObject`) is map-shaped and checks like a
+//! Map, so a request body needs no copy first.
 
 /// Does `value` have the olang type `kind` names?
 fn kind_ok(kind, value) = {
@@ -25,7 +33,8 @@ fn kind_ok(kind, value) = {
     else if kind == "num" => t == "Int" || t == "Float"
     else if kind == "bool" => t == "Bool"
     else if kind == "list" => t == "List"
-    else if kind == "map" => t == "Map"
+    else if kind == "map" => t == "Map" || t == "JsonObject"
+    else if kind == "date" => t == "String" && is_ok(dates.parse(value))
     else => false
 }
 
@@ -53,7 +62,7 @@ fn field_problems(m, rule) = {
         if !kind_ok(kind, value) => [`${field}: expected ${kind}, got ${typeof(value)}`]
         else => {
             let mut problems = []
-            let size = measure(value)
+            let size = if kind == "date" => () else => measure(value)
             if map_has_key(opts, "min") && size != () && size < map_get(opts, "min") => {
                 problems = problems + [`${field}: below minimum ${map_get(opts, "min")}`]
             }
@@ -72,6 +81,21 @@ fn field_problems(m, rule) = {
                     problems = problems + [`${field}: does not match ${map_get(opts, "pattern")}`]
                 }
             }
+            // Dates compare as ISO day strings, which order lexically.
+            if kind == "date" => {
+                if map_has_key(opts, "min") && value < map_get(opts, "min") => {
+                    problems = problems + [`${field}: before ${map_get(opts, "min")}`]
+                }
+                if map_has_key(opts, "max") && value > map_get(opts, "max") => {
+                    problems = problems + [`${field}: after ${map_get(opts, "max")}`]
+                }
+            }
+            if map_has_key(opts, "where") => {
+                match map_get(opts, "where")(value) {
+                    Ok(v) => (),
+                    Err(message) => { problems = problems + [`${field}: ${message}`] }
+                }
+            }
             problems
         }
     }
@@ -82,7 +106,7 @@ fn field_problems(m, rule) = {
 /// failure, in rule order — when any fails. A non-map value fails
 /// immediately with a single problem naming its type.
 share fn check(m, rules) = {
-    if typeof(m) != "Map" => Err([`expected a map, got ${typeof(m)}`])
+    if typeof(m) != "Map" && typeof(m) != "JsonObject" => Err([`expected a map, got ${typeof(m)}`])
     else => {
         let problems = fold(rules, [], (acc, rule) => acc + field_problems(m, rule))
         if len(problems) == 0 => Ok(m) else => Err(problems)
@@ -92,6 +116,22 @@ share fn check(m, rules) = {
 /// True when `m` passes every rule — `check` for code that only needs
 /// the verdict.
 share fn ok(m, rules) = is_ok(check(m, rules))
+
+test "dates, predicates, and parsed JSON" {
+    let rules = [["due", "date", #{ "required": false, "min": "2026-01-01" }]]
+    assert_eq(ok(#{ "due": "2026-08-31" }, rules), true)
+    assert_eq(ok(#{}, rules), true)
+    assert_eq(ok(#{ "due": "not a day" }, rules), false)
+    assert_eq(ok(#{ "due": "2025-12-31" }, rules), false)
+    let even = [["n", "int", #{ "where": (v) => if v % 2 == 0 => Ok(v) else => Err("must be even") }]]
+    assert_eq(ok(#{ "n": 4 }, even), true)
+    match check(#{ "n": 3 }, even) {
+        Err(problems) => assert_eq(problems, ["n: must be even"]),
+        Ok(v) => assert_eq("passed", "should have failed")
+    }
+    let body = unwrap(json.parse("{\"name\": \"ada\", \"age\": 36}"))
+    assert_eq(ok(body, [["name", "str"], ["age", "int"]]), true)
+}
 
 test "kinds and requirement" {
     let rules = [["name", "str"], ["age", "int"]]

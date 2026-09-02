@@ -24,8 +24,10 @@ fn show_renders_strings_bare_and_others_like_to_string() {
     assert_eq!(s(eval(r#"show("hi")"#)), "hi");
     assert_eq!(s(eval("show(42)")), "42");
     assert_eq!(s(eval("show(3.5)")), "3.5");
-    // to_string keeps its repr form: strings stay quoted there.
-    assert_eq!(s(eval(r#"to_string("hi")"#)), "\"hi\"");
+    // to_string agrees: a string is already its own text (the quoted
+    // form was a trap for generic code; meta.lit renders the literal).
+    assert_eq!(s(eval(r#"to_string("hi")"#)), "hi");
+    assert_eq!(s(eval(r#"to_string(["hi"])"#)), "[\"hi\"]");
 }
 
 // ── entries ────────────────────────────────────────────────────────────

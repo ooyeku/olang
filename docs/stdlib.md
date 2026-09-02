@@ -149,11 +149,14 @@ println(to_string(map_get_or(m, "z", 0)))   // 0 — absent, so the default
 | `len(v)` | length of a list, string, tuple, or map |
 | `implements(v, "Trait")` | does the value's type implement the trait? |
 
-`show` is for building output for people; `to_string` shows a value's shape
-(so `to_string("hi")` is `"hi"` with quotes, `show("hi")` is bare `hi`):
+`to_string` and `show` render the same text: a string is returned as
+itself (`to_string("hi")` is `hi`, never `"hi"`), and every other value
+takes its printed form — the form `println` and template interpolation
+use. Strings *inside* a container keep their quotes in that form, so
+`to_string(["hi"])` is `["hi"]`:
 
 ```olang
-println(show("hi") + " vs " + to_string("hi"))
+println(to_string("hi") + " " + show("hi") + " " + to_string(["hi"]))
 println(typeof(3.5) + " " + show(to_int(3.9)) + " " + show(to_float("2.5")))
 println(show(len([1, 2, 3])) + " " + show(len("abcd")))
 ```
@@ -164,7 +167,7 @@ println(show(len([1, 2, 3])) + " " + show(len("abcd")))
 |---|---|
 | `range(a, b)` | list of integers `a` up to (excluding) `b` |
 | `head(xs)` / `tail(xs)` | first element / all but the first |
-| `take(xs, n)` / `skip(xs, n)` | first `n` / all but the first `n` |
+| `take(xs, n)` / `skip(xs, n)` | first `n` / all but the first `n` (`drop` is `skip` under the name most languages pair with `take`) |
 | `reverse(xs)` / `sort(xs)` | reversed / ascending copy |
 | `contains(xs, v)` | membership test |
 | `concat(a, b)` | join two lists (or use `a + b`) |
@@ -183,11 +186,24 @@ println(to_string(zip([1, 2], ["a", "b"])))
 println(to_string(group_by([1, 2, 3, 4], (x) => x % 2)))
 ```
 
+Every list helper here is also reachable under `col.` (`col.take`,
+`col.drop`, `col.contains`, `col.map`, `col.fold`, …), so there is one
+rule to remember rather than two namespaces to guess between: the
+global spelling is the short form, `col.` always works. Two helpers
+exist only there — `col.index_of(xs, v)` (position, or Unit) and
+`col.slice(xs, from, to)` (a half-open, clamped sub-list, the shape of
+`str.substring`):
+
+```olang
+let xs = [10, 20, 30, 40]
+println(`${col.index_of(xs, 30)} ${col.slice(xs, 1, 3)} ${drop(xs, 3)}`)
+```
+
 ### Aggregates
 
 | Function | Description |
 |---|---|
-| `sum(xs)` / `min(xs)` / `max(xs)` | numeric aggregates |
+| `sum(xs)` / `min(xs)` / `max(xs)` | numeric aggregates over a list — `min` and `max` also take two or more scalars (`max(0, n - 1)`, the clamp idiom) |
 | `average(xs)` | mean of a numeric list |
 | `clamp(v, lo, hi)` | bound a number to a range |
 
@@ -274,6 +290,7 @@ value.
 |---|---|
 | `map_get(m, k)` | value, or `Unit` when absent |
 | `map_get_or(m, k, default)` | value, or `default` when absent (or stored Unit) |
+| `map_path(m, [k1, k2, …])` | a nested read in one call — the value at the end of the key path, or Unit at the first missing hop; every hop reads like `map_get` |
 | `map_has_key(m, k)` | presence test (distinguishes absent from null) |
 | `map_keys(m)` / `map_values(m)` | key/value lists (unordered) |
 | `entries(m)` | `(key, value)` tuples, sorted by key — for `for (k, v) in` |
@@ -383,6 +400,8 @@ by its own standard library.
 | Function | Description |
 |---|---|
 | `col.all(xs, p)` / `col.any(xs, p)` | quantifiers (short-circuit) |
+| `col.index_of(xs, v)` / `col.slice(xs, from, to)` | position of a value (or Unit) / a half-open, clamped sub-list |
+| `col.take`, `col.drop`, `col.map`, … | every global list helper, mirrored here — one namespace that always works |
 | `col.unique(xs)` | dedupe, first-seen order |
 | `col.partition(xs, p)` | `([matching], [rest])` |
 | `col.sum_by(xs, f)` | total of a projection |
@@ -661,7 +680,7 @@ ISO-8601 strings in, ISO-8601 strings out; fallible operations return
 
 | Group | Functions |
 |---|---|
-| Now | `now` `utc_now` `today` |
+| Now | `now` `utc_now` `today` · `stamp` — the storage form: UTC, second precision, `Z` suffix (`2026-08-31T23:40:06Z`), sortable as text |
 | Build | `date(y, m, d)` → `Date` · `datetime(y, m, d, h, mi, s)` `time(h, mi, s)` |
 | Parse/format | `parse(s)` → `Date` · `parse_date` `parse_datetime` `parse_time` `format_date` `format_datetime` `format_time` |
 | Fields | `year` `month` `day` `hour` `minute` `second` `weekday` |
@@ -1025,6 +1044,7 @@ olang scripts, not compiler changes.
 | Function | Result |
 |---|---|
 | `meta.parse(source)` | `Ok(list of node maps)` \| `Err(message)` — a syntax error is a normal `Err`, never a crash |
+| `meta.eval(source, options?)` | evaluate source; `options` bounds untrusted code — `#{ "max_steps": n }` (loop iterations and calls, deterministic) and `#{ "timeout_ms": ms }` (wall clock) — returning `Err("budget exceeded …")` instead of a hung thread |
 
 Nodes are discriminated-union maps. Top-level statements carry `line` and
 `column`; expressions nest (a `call`'s `callee` and `args` are themselves
@@ -1434,6 +1454,10 @@ with timers and animation frames; everything else is ordinary olang.
 | `dom.set_html(el, html)` | replace an element's inner HTML — the render primitive |
 | `dom.value(el)` / `dom.set_value(el, s)` | read / write a form control's value |
 | `dom.focus(el)` | focus an element |
+| `dom.active_id()` | the id of the focused element, or `""` — the read side of `focus`, so a repaint can leave an in-progress edit alone |
+| `dom.prefers_dark()` | does the page prefer a dark color scheme — what a themed canvas or SVG needs to pick its palette |
+| `dom.confirm(message)` | the browser's yes/no dialog, `true` on accept |
+| `dom.read_file(el, callback)` | the first file a file input holds, delivered to the callback as `#{ "name", "size", "type", "base64" }` (or `#{ "error": … }`) |
 | `dom.on(el, event, handler)` | attach an event handler (see below) |
 | `dom.fetch(method, path, body, callback)` | asynchronous HTTP from the page — the callback receives the response text |
 | `dom.fetch_json(method, path, body, callback)` | `dom.fetch`, but the callback receives the parsed value directly |
@@ -1701,8 +1725,10 @@ shared scales), `plot.bar`, `plot.bars` (grouped), `plot.stacked`,
 `plot.hist`, `plot.heatmap`, and `plot.box` take Series data plus one
 options map (`title`, `x_label`, `y_label`, `width`, `height`, `theme`
 — `"dark"` re-tunes every color for a dark surface — `responsive`,
-which sizes the SVG to its container, plus the color system below;
-unknown keys are errors). Defaults follow a colorblind-validated
+which sizes the SVG to its container, `font_size` and `font` for the
+text — the default 12.5 suits a 720×440 document, a chart drawn into a
+narrow column wants less — plus the color system below; unknown keys
+are errors). Defaults follow a colorblind-validated
 ten-hue palette, so a chart is presentable with `#{}` — and color is
 an option, not a fate: `colors` gives a chart its own palette, `vary`
 colors bar categories individually, `scale` picks a heatmap ramp
@@ -1715,7 +1741,10 @@ One level up, **`use viz`** (an embedded olang package) makes a chart
 a *value*: a spec map with data (records or a Frame), a mark, and
 column-name encodings — `color` splits series, `layers` composes
 marks, and `viz.draw` compiles the same specs to canvas draw-lists in
-the browser. With `"interactive": true` marks carry their datum as
+the browser. A spec's keys are checked: `w` and `h` are accepted as the
+short forms of `width` and `height`, and any key the grammar does not
+know is an error naming it, so a misspelled option never renders
+silently at the default. With `"interactive": true` marks carry their datum as
 `data-*` attributes, and `viz.tooltip` / `viz.on_mark` / `viz.brush`
 turn hover, click-to-filter, and brush-to-zoom into one-liners. See
 [the Data Stack](ods.md#the-viz-grammar).

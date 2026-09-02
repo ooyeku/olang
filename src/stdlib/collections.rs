@@ -45,6 +45,22 @@ pub fn create_collections_module() -> Value {
         module.insert(name.to_string(), create_builtin_function(name, 1));
     }
 
+    // index_of(xs, v) and slice(xs, from, to) — the two list helpers
+    // every session hand-wrote (`take(skip(xs, a), b - a)`).
+    module.insert(
+        "index_of".to_string(),
+        create_builtin_function("index_of", 2),
+    );
+    module.insert("slice".to_string(), create_builtin_function("slice", 3));
+
+    // The global collection helpers, reachable here too, so a reader
+    // never has to guess which spelling a name has: `col.take` is
+    // `take`, `col.drop` and `drop` are `skip`. The dispatcher forwards
+    // these to the global builtin of the same name.
+    for (name, arity) in GLOBAL_ALIASES {
+        module.insert(name.to_string(), create_builtin_function(name, *arity));
+    }
+
     // The mutation primitives behind the olang-source collections
     // (Campaign 6): indexed write, swap, and preallocation. Their copy
     // semantics live here; the O(1) story is the assignment fusion —
@@ -65,6 +81,27 @@ pub fn create_collections_module() -> Value {
         fields: std::sync::Arc::new(module),
     }
 }
+
+/// Global collection builtins mirrored under `col.` (name, arity).
+/// `drop` is `skip` under the name most languages pair with `take`.
+const GLOBAL_ALIASES: &[(&str, usize)] = &[
+    ("take", 2),
+    ("skip", 2),
+    ("drop", 2),
+    ("contains", 2),
+    ("filter", 2),
+    ("map", 2),
+    ("fold", 3),
+    ("reverse", 1),
+    ("sort", 1),
+    ("sum", 1),
+    ("min", 1),
+    ("max", 1),
+    ("head", 1),
+    ("tail", 1),
+    ("zip", 2),
+    ("flatten", 1),
+];
 
 fn create_builtin_function(name: &str, arity: usize) -> Value {
     Value::Builtin(crate::ast::BuiltinFunction {
@@ -100,10 +137,62 @@ pub fn call_collections_function(
         "set" => col_set(args),
         "swap" => col_swap(args),
         "filled" => col_filled(args),
+        "index_of" => index_of(args),
+        "slice" => slice(args),
+        name if GLOBAL_ALIASES.iter().any(|(n, _)| *n == name) => {
+            interpreter.call_global_builtin(name, args)
+        }
         _ => Err(InterpreterError::RuntimeError {
             message: format!("Unknown col function: {}", name),
         }),
     }
+}
+
+/// `col.index_of(xs, v)` — the position of the first element equal to
+/// `v`, or Unit when none is (the same absence convention as `map_get`
+/// and `str.index_of`).
+fn index_of(args: Vec<Value>) -> Result<Value, InterpreterError> {
+    let list = list_arg(&args, 0, "index_of")?;
+    let needle = args.get(1).ok_or_else(|| InterpreterError::RuntimeError {
+        message: "col.index_of: missing value to find".to_string(),
+    })?;
+    Ok(match list.iter().position(|item| item == needle) {
+        Some(i) => Value::Integer(i as i64),
+        None => Value::Unit,
+    })
+}
+
+/// `col.slice(xs, from, to)` — the elements from index `from` (inclusive)
+/// to `to` (exclusive), clamped to the list like `str.substring`: a `to`
+/// past the end stops at the end, a `from` past `to` is empty, and
+/// negative indices count from the end.
+fn slice(args: Vec<Value>) -> Result<Value, InterpreterError> {
+    let list = list_arg(&args, 0, "slice")?;
+    let bound = |i: usize, what: &str| -> Result<usize, InterpreterError> {
+        match args.get(i) {
+            Some(Value::Integer(n)) => {
+                let len = list.len() as i64;
+                let idx = if *n < 0 { len + *n } else { *n };
+                Ok(idx.clamp(0, len) as usize)
+            }
+            Some(other) => Err(InterpreterError::TypeError {
+                message: format!(
+                    "col.slice: {} must be an Int, got {}",
+                    what,
+                    other.type_name()
+                ),
+            }),
+            None => Err(InterpreterError::RuntimeError {
+                message: format!("col.slice: missing {}", what),
+            }),
+        }
+    };
+    let from = bound(1, "from")?;
+    let to = bound(2, "to")?;
+    if from >= to {
+        return Ok(Value::List(Vec::new().into()));
+    }
+    Ok(Value::List(list[from..to].to_vec().into()))
 }
 
 // ── helpers ─────────────────────────────────────────────────────────

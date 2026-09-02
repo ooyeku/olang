@@ -165,6 +165,15 @@ enum Commands {
         rules: Option<PathBuf>,
     },
 
+    /// Evaluate source text and print its value — a one-liner probe
+    /// with the REPL's semantics, resolving shelf libraries from the
+    /// current directory's project
+    Eval {
+        /// olang source: the last expression's value is printed
+        #[arg(value_name = "SOURCE")]
+        source: String,
+    },
+
     /// Run a program under the sampling profiler
     Profile {
         /// Program to execute
@@ -555,6 +564,8 @@ fn run() -> i32 {
             olang::tools::check::run(&paths, rules.as_deref())
         }
 
+        Some(Commands::Eval { source }) => run_eval(&cli, &source),
+
         Some(Commands::Fmt { mut paths, check }) => {
             if paths.is_empty() {
                 paths.push(PathBuf::from("."));
@@ -672,6 +683,62 @@ fn run() -> i32 {
 
 /// Run a program file with the given run options (`olang <file>` and `olang
 /// run <file>` both land here). `args` is the program's argv after the file.
+/// `olang eval '<source>'`: parse, run with the default execution model,
+/// print the final value unless it is Unit. Modules resolve as they would
+/// for a file in the working directory's project — the shelf libraries a
+/// project depends on are reachable from a probe typed at its root, which
+/// a scratch file elsewhere could never see.
+fn run_eval(cli: &Cli, source: &str) -> i32 {
+    let program = match OlangParser::new().parse(source) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("olang eval: {}", e);
+            return 1;
+        }
+    };
+    let mut interpreter = olang::Interpreter::new();
+    if !cli.no_ovm {
+        interpreter.enable_bytecode_tier(1, false);
+    }
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let probe = cwd.join("<eval>.ol");
+    interpreter.set_current_file(&probe);
+    if let Some(root) = olang::pkg::manifest::Manifest::find_root(&cwd) {
+        let opts = olang::pkg::InstallOptions {
+            registry: std::env::var("OLANG_REGISTRY")
+                .ok()
+                .map(std::path::PathBuf::from),
+            ..Default::default()
+        };
+        if let Ok(map) = olang::pkg::install(&root, &opts) {
+            let mut map: std::collections::HashMap<_, _> = map.into_iter().collect();
+            if let Ok(m) = olang::pkg::manifest::Manifest::load(&root) {
+                map.entry(m.package.name.clone()).or_insert(root.clone());
+            }
+            interpreter.set_dependency_map(map);
+        }
+    }
+    // REPL semantics: the value of a trailing *expression* is printed;
+    // a declaration (`let x = 1`) evaluates to its value internally but
+    // is not an answer to show.
+    let ends_in_expression = matches!(
+        program.statements.last().map(|st| st.unwrapped()),
+        Some(olang::ast::Statement::Expression(_))
+    );
+    match interpreter.eval_program(program) {
+        Ok(value) if ends_in_expression && !matches!(value, olang::Value::Unit) => {
+            println!("{}", value);
+            0
+        }
+        Ok(_) => 0,
+        Err(e) => {
+            let location = interpreter.take_error_location();
+            show_classic_interpreter_error(&e, &probe, &interpreter, location, source);
+            1
+        }
+    }
+}
+
 fn run_program(
     cli: &Cli,
     file_path: PathBuf,
@@ -916,8 +983,19 @@ fn show_classic_interpreter_error(
 
     if let Some(loc) = location {
         // Located: render the source line with a caret through miette so
-        // the error points at where it happened, then the call stack.
-        let offset = byte_offset_of(source, loc.line as usize, loc.column as usize);
+        // the error points at where it happened, then the call stack. An
+        // error raised inside an imported module names that module's
+        // file and shows its line — not the importer's `use` statement.
+        let module_source = loc.file.as_deref().and_then(|f| {
+            std::fs::read_to_string(f)
+                .ok()
+                .map(|src| (f.to_string(), src))
+        });
+        let (display_name, display_source): (String, &str) = match &module_source {
+            Some((name, src)) => (name.clone(), src.as_str()),
+            None => (file_path.display().to_string(), source),
+        };
+        let offset = byte_offset_of(display_source, loc.line as usize, loc.column as usize);
         let mut diagnostic = miette::MietteDiagnostic::new(formatted_error.clone()).with_label(
             miette::LabeledSpan::at_offset(offset, "error occurred here"),
         );
@@ -925,8 +1003,8 @@ fn show_classic_interpreter_error(
             diagnostic = diagnostic.with_help(hint.clone());
         }
         let report = miette::Report::new(diagnostic).with_source_code(miette::NamedSource::new(
-            file_path.display().to_string(),
-            source.to_string(),
+            display_name,
+            display_source.to_string(),
         ));
         eprintln!("{:?}", report);
         if !loc.call_stack.is_empty() {
@@ -2337,7 +2415,15 @@ fn execute_program(
     // resolve its dependencies and hand the interpreter the dependency map so
     // `use <dep>` paths resolve. Path and cached-git deps are cheap; a missing
     // dependency surfaces when the `use` is evaluated, not here.
-    if let Some(root) = olang::pkg::manifest::Manifest::find_root(&absolute_path) {
+    // The file's own project first; failing that, the working directory's
+    // — so a scratch script outside any project still reaches the shelf
+    // libraries the project it is run from depends on.
+    let project_root = olang::pkg::manifest::Manifest::find_root(&absolute_path).or_else(|| {
+        std::env::current_dir()
+            .ok()
+            .and_then(|cwd| olang::pkg::manifest::Manifest::find_root(&cwd))
+    });
+    if let Some(root) = project_root {
         let opts = olang::pkg::InstallOptions {
             registry: std::env::var("OLANG_REGISTRY")
                 .ok()
@@ -2502,7 +2588,9 @@ fn execute_program(
             // line (identical content, exact column); a generated line
             // points at the @ site that produced it, with the macro
             // named and `olang expand` offered for the generated text.
-            if let (Some((original, map)), Some(loc)) = (expansion, location.as_mut()) {
+            if let (Some((original, map)), Some(loc)) = (expansion, location.as_mut())
+                && loc.file.is_none()
+            {
                 match map.get(loc.line as usize - 1) {
                     Some(olang::expand::LineOrigin::Original(m)) => {
                         loc.line = *m as u32;

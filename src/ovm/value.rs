@@ -223,6 +223,11 @@ pub struct ClosureObject {
     pub capture_names: Vec<String>,
     pub captured: Vec<OvmValue>,
     pub func_id: crate::ovm::FunctionId,
+    /// The interpreter-side closure map this object converts to, built
+    /// once. The bridge's HOF cache keys a lambda on its closure Arc, so
+    /// a fresh Arc per boundary crossing recompiled the same lambda on
+    /// every callback a builtin made into it.
+    pub ast_closure: std::sync::OnceLock<Arc<im::HashMap<String, crate::ast::Value>>>,
 }
 
 /// A struct's layout, interned globally: one shape per (type name, field
@@ -1266,10 +1271,18 @@ impl OvmValue {
                         c.template.closure.keys().collect::<Vec<_>>()
                     );
                 }
-                let mut closure_map = (*c.template.closure).clone();
-                for (name, val) in c.capture_names.iter().zip(c.captured.iter()) {
-                    closure_map.insert(name.clone(), val.to_ast()?);
-                }
+                let closure = match c.ast_closure.get() {
+                    Some(existing) => existing.clone(),
+                    None => {
+                        let mut closure_map = (*c.template.closure).clone();
+                        for (name, val) in c.capture_names.iter().zip(c.captured.iter()) {
+                            closure_map.insert(name.clone(), val.to_ast()?);
+                        }
+                        let built = Arc::new(closure_map);
+                        let _ = c.ast_closure.set(built.clone());
+                        built
+                    }
+                };
                 Ok(Value::Function(crate::ast::Function {
                     // The template's name survives the round trip: a
                     // nested fn's self-recursion binds through its name
@@ -1280,7 +1293,7 @@ impl OvmValue {
                     return_check: None,
                     parameters: c.template.parameters.clone(),
                     body: c.template.body.clone(),
-                    closure: Arc::new(closure_map),
+                    closure,
                     param_bounds: Vec::new(),
                     def_file: c.template.def_file.clone(),
                 }))

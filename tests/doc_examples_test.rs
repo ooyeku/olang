@@ -151,7 +151,24 @@ fn ods_chapter_examples_work() {
 fn wasm_chapter_examples_work() {
     run_doc_file("docs/wasm.md", include_str!("../docs/wasm.md"));
     run_doc_file("docs/shelf.md", include_str!("../docs/shelf.md"));
+    // The web SDK's `@store` reaches its chapter through `use web`, which
+    // the expander resolves via the shelf. Register this checkout's copy
+    // on a private shelf so the test does not depend on the developer's.
+    let shelf_dir = std::env::temp_dir().join(format!("olang_doc_shelf_{}", std::process::id()));
+    std::fs::create_dir_all(&shelf_dir).expect("mkdir");
+    std::fs::write(
+        shelf_dir.join("shelf.toml"),
+        format!(
+            "[libraries]\nweb = \"{}/frameworks/web-sdk\"\n",
+            env!("CARGO_MANIFEST_DIR")
+        ),
+    )
+    .expect("write shelf");
+    // SAFETY: test-only env mutation; the shelf is read at parse time
+    // within this call and the variable is cleared right after.
+    unsafe { std::env::set_var("OLANG_SHELF", shelf_dir.join("shelf.toml")) };
     run_doc_file("docs/web-sdk.md", include_str!("../docs/web-sdk.md"));
+    unsafe { std::env::remove_var("OLANG_SHELF") };
 }
 
 #[test]

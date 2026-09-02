@@ -27,6 +27,10 @@ keyword = { "fn" | "let" | "if" | "else" | "match" | "for" | "while" | "loop" | 
 // boundary check.
 kw_end      = _{ !(ASCII_ALPHANUMERIC | "_") }
 fn_kw       = @{ "fn" ~ kw_end }
+// `spawn`/`meta` as bare literals matched the prefix of `spawn_cost` /
+// `meta_data` once `_` could begin a name; the boundary makes them words.
+spawn_kw    = @{ "spawn" ~ kw_end }
+meta_kw     = @{ "meta" ~ kw_end }
 let_kw      = @{ "let" ~ kw_end }
 if_kw       = @{ "if" ~ kw_end }
 else_kw     = @{ "else" ~ kw_end }
@@ -50,7 +54,10 @@ error_kw    = @{ "error" ~ kw_end }
 par_kw      = @{ "par" ~ kw_end }
 
 // Identifiers and literals - exclude keywords
-identifier  = @{ !(keyword ~ !(ASCII_ALPHANUMERIC | "_")) ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+// A name may begin with `_` when more follows (`_tmp`, `__gen0` — the
+// convention for deliberately unused bindings and macro-introduced
+// temporaries); a bare `_` is the wildcard pattern, never a name.
+identifier  = @{ !(keyword ~ !(ASCII_ALPHANUMERIC | "_")) ~ (ASCII_ALPHA | ("_" ~ &(ASCII_ALPHANUMERIC | "_"))) ~ (ASCII_ALPHANUMERIC | "_")* }
 integer     = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ !(ASCII_ALPHA | "_") }
 // A float is digits with a decimal point, an exponent, or both — `1.5`,
 // `1e20`, `2.5e-3`, `1E+6`. The exponent-only form matters because the
@@ -108,7 +115,7 @@ statement   = { meta_fn_decl | share_decl | use_decl | test_decl | error_type_de
 // above a type, fn, or let declaration (`@json`, `@trace`). `meta` and `@` are additive: `meta`
 // stays an ordinary identifier everywhere else, and `@` was previously
 // unused, so no existing program changes meaning. See docs/macros.md.
-meta_fn_decl = { "meta" ~ function_decl }
+meta_fn_decl = { meta_kw ~ function_decl }
 // A decorator is a BARE `@name` — never with parentheses. That is the
 // whole disambiguation between the two invocation forms: `@f(args)` is
 // an expression macro wherever it appears, including as a statement on
@@ -253,7 +260,7 @@ primary     = { lambda | spawn_expr | match_expr | if_expr | struct_literal | an
 lambda      = { "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=>" ~ NL* ~ (block | expr) }
 
 // Background execution
-spawn_expr  = { "spawn" ~ call_expr }
+spawn_expr  = { spawn_kw ~ call_expr }
 
 // Pattern matching
 match_expr  = { match_kw ~ expr ~ "{" ~ NL* ~ match_arm+ ~ "}" }
@@ -275,7 +282,10 @@ rest_pattern = { "..." ~ identifier }
 list_pattern = { "[" ~ NL* ~ list_pattern_inner? ~ NL* ~ "]" }
 list_pattern_inner = { (pattern ~ ("," ~ pattern)* ~ ("," ~ rest_pattern)?) | rest_pattern }
 tuple_pattern = { "(" ~ pattern ~ "," ~ pattern ~ ("," ~ pattern)* ~ ")" }
-pattern_wildcard    = { "_" }
+// Atomic: the lookahead must see the character right after `_`. In a
+// non-atomic rule pest skips whitespace first, and `_ if guard => ...`
+// would see the `i` of `if` and refuse the wildcard.
+pattern_wildcard    = @{ "_" ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // Blocks and control flow
 block       = { "{" ~ NL* ~ (statement ~ (";" | NL)* )* ~ "}" }

@@ -55,11 +55,59 @@ fn click_on_form_control(ev) =
     map_get(ev, "type") == "click"
         && contains(["input", "select", "textarea"], map_get(ev, "tag"))
 
+// An input's action fires on Enter (the keydown delegation) and again
+// on the `change` event the same Enter produces — two invocations for
+// one intent, milliseconds apart, which doubled every non-idempotent
+// handler (a create, an append). The Enter dispatch records the input;
+// the change that follows within the same beat is the same intent and
+// is skipped.
+let last_enter = cell(#{ "id": "", "at": 0 })
+
+fn is_repeat_of_enter(ev) = {
+    if map_get(ev, "type") != "change" => false
+    else => {
+        let seen = cell.get(last_enter)
+        map_get(seen, "id") != "" && map_get(seen, "id") == map_get(ev, "id")
+            && time.monotonic_ms() - map_get(seen, "at") < 100
+    }
+}
+
+// Two-step confirmation for destructive actions: a `confirm:<name>`
+// action arms itself on the first click (the view repaints, and
+// `confirm_armed(name)` lets `btn_confirm` change its label) and fires
+// `<name>` on the second within a few seconds; anything else disarms
+// it. The state lives here so every app does not reinvent the
+// two-click button.
+let armed_confirm = cell(#{ "name": "", "at": 0 })
+
+/// Is this action awaiting its confirming second click?
+share fn confirm_armed(name) = {
+    let a = cell.get(armed_confirm)
+    map_get(a, "name") == name && time.monotonic_ms() - map_get(a, "at") < 4000
+}
+
+fn resolve_confirm(name) =
+    if str.starts_with(name, "confirm:") => {
+        let target = str.substring(name, 8, str.length(name))
+        if confirm_armed(target) => {
+            cell.set(armed_confirm, #{ "name": "", "at": 0 })
+            target
+        } else => {
+            cell.set(armed_confirm, #{ "name": target, "at": time.monotonic_ms() })
+            rerender()
+            ""
+        }
+    } else => name
+
 fn dispatch_action(ev) = {
     let data = map_get(ev, "data")
-    let name = if data == () || click_on_form_control(ev) => "" else => {
+    let raw_name = if data == () || click_on_form_control(ev) || is_repeat_of_enter(ev) => "" else => {
         let a = map_get(data, "action")
         if a == () => "" else => a
+    }
+    let name = if raw_name == "" => "" else => resolve_confirm(raw_name)
+    if map_get(ev, "type") == "keydown" && map_get(ev, "id") != () && map_get(ev, "id") != "" => {
+        cell.set(last_enter, #{ "id": map_get(ev, "id"), "at": time.monotonic_ms() })
     }
     if name != "" => {
         let handlers = cell.get(mount_actions)
@@ -86,6 +134,14 @@ fn dispatch_action(ev) = {
         }
     }
 }
+
+/// Repaint one subtree in place: render `node` into the element with
+/// this id, leaving the rest of the page — and its focused input —
+/// untouched. For the toast, the counter, the chart that should not
+/// cost a whole-page render on every store write. `apply` remains the
+/// whole-view repaint.
+share fn patch(id, node) =
+    if dom.available() => dom.set_html(dom.query("#" + id), render(node)) else => ()
 
 /// The full `data-action` string from an event — how a prefix handler
 /// reads its argument: `action_arg(ev)` on "toggle:7" is "7".

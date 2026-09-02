@@ -52,16 +52,42 @@ fn groups(records, name) = {
     seen
 }
 
-// The plot options that pass straight through from the spec.
+// The plot options that pass straight through from the spec. `w` and
+// `h` are accepted as the short spellings of `width` and `height`.
 fn plot_opts(spec) = {
     let mut o = #{}
     for k in ["title", "x_label", "y_label", "width", "height", "theme",
-              "responsive", "interactive", "colors", "vary", "scale"] {
+              "responsive", "interactive", "colors", "vary", "scale",
+              "font_size", "font"] {
         if map_has_key(spec, k) => {
             o = map_set(o, k, map_get(spec, k))
         }
     }
+    if map_has_key(spec, "w") && !map_has_key(spec, "width") => { o = map_set(o, "width", map_get(spec, "w")) }
+    if map_has_key(spec, "h") && !map_has_key(spec, "height") => { o = map_set(o, "height", map_get(spec, "h")) }
     o
+}
+
+// Every key a spec (or one of its layers) may carry. An unknown key is
+// an error, not a silent default: a spec written with `size` renders
+// at the default size and nothing says why — the Open AST philosophy
+// applied to chart specs.
+let spec_keys = ["data", "layers", "mark", "x", "y", "color", "color_by",
+                 "label", "scale", "stack", "bins", "title", "x_label",
+                 "y_label", "width", "height", "w", "h", "theme",
+                 "responsive", "interactive", "colors", "vary",
+                 "font_size", "font"]
+
+fn check_spec_keys(spec, where_) = {
+    for k in map_keys(spec) {
+        if contains(spec_keys, k) == false => {
+            unwrap(Err("viz: unknown key '" + k + "' in " + where_
+                + " — the spec keys are " + join(spec_keys, ", ")))
+        }
+    }
+    if map_has_key(spec, "layers") => {
+        for layer in map_get(spec, "layers") { check_spec_keys(layer, "a layer") }
+    }
 }
 
 fn norm_mark(m) = if m == "point" => "scatter" else => m
@@ -143,6 +169,7 @@ fn vmax(v) = if typeof(v) == "List" => to_float(max(v)) else => ods.max(v)
 // ── the SVG target ─────────────────────────────────────────────────────
 
 share fn chart(spec) = {
+    check_spec_keys(spec, "the chart spec")
     let mark = norm_mark(opt(spec, "mark", "line"))
     let mut o = plot_opts(spec)
     if map_has_key(spec, "layers") || mark == "line" || mark == "area" || mark == "scatter" => {
@@ -312,9 +339,9 @@ share fn tooltip(el) = {
     let tip = dom.create("div")
     for (k, v) in entries(#{
         "position": "fixed", "display": "none", "pointer-events": "none",
-        "background": "#131c27", "border": "1px solid #1d2937",
-        "border-radius": "6px", "padding": "3px 8px", "font": "12px monospace",
-        "color": "#d9e6ef", "z-index": "50"
+        "background": "var(--surface, #131c27)", "border": "1px solid var(--line, #1d2937)",
+        "border-radius": "6px", "padding": "3px 8px", "font": "12px var(--mono, monospace)",
+        "color": "var(--ink, #d9e6ef)", "z-index": "50", "box-shadow": "var(--shadow, none)"
     }) {
         dom.set_style(tip, k, v)
     }

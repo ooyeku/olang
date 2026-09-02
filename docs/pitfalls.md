@@ -244,30 +244,28 @@ let smallest = if len(xs) > 0 => show(min(xs)) else => "none"
 println(smallest)   // 1
 ```
 
-## `to_string` quotes a string; `show` and `${}` do not
+## `to_string` and `show` agree — a string is already its text
 
-`to_string(v)` renders a value's *shape* — a string comes back **with its
-quotes**, so `to_string("ada")` is `"ada"`, not `ada`. This surprises
-people arriving from languages where the `to_string`/`toString`/`str`
-name means the bare human form (Rust's `"ada".to_string()` is bare `ada`).
-In olang that bare form is `show`, and template interpolation uses it:
+`to_string("ada")` is `ada`, exactly what `show("ada")` and `${...}`
+interpolation produce. Until 0.81 it was `"ada"` *with quotes* — the
+printed shape rather than the value — and generic code that stringified
+values read from maps (query matching, key building, sort keys) grew
+quotes and silently stopped comparing equal. Strings inside a container
+still print quoted in every form, because that is the container's
+printed shape: `to_string(["a", "b"])` and `show(["a", "b"])` are both
+`["a", "b"]`.
 
 ```olang
 let name = "ada"
-println(to_string(name))     // "ada"   — quoted (repr form)
-println(show(name))          // ada     — bare (display form)
-println(`hi, ${name}`)       // hi, ada — interpolation is bare too
+println(to_string(name) == show(name))   // true
+println(to_string(["a", "b"]))           // ["a", "b"]
 ```
 
-The rule of thumb: build human output with a template (`` `hi, ${name}` ``)
-or `show`; reach for `to_string` when you *want* the quotes — a debug dump
-or an error message, where `"ada"` reads more clearly than a bare word
-that might be empty or contain spaces. The two differ only on a top-level
-string: on numbers, bools, lists, and maps they are identical (and a list
-of strings quotes its elements either way, so `show(["a", "b"])` is still
-`["a", "b"]`).
+When the quoted, escaped literal form of a string is wanted — a debug
+dump, generated source — `meta.lit` renders it (`meta.lit("ada")` is
+`"ada"`), and `json.stringify` does the same in JSON terms.
 
-## `_` discards; it never binds, and no name may start with it
+## `_` discards; it never binds
 
 `_` is the discard everywhere it is accepted — `for _ in ...`, `let _ =
 ...`, and a `match` arm — and in every case it means *there is no name
@@ -277,16 +275,14 @@ lookup of some anonymous value:
 ```olang
 for _ in range(0, 3) { print("x") }   // fine: the element is discarded
 println("")
+let _unused = 41                       // a name: bound, and readable
+println(show(_unused + 1))
 ```
 
-The rule that catches people is next to it: **an identifier cannot begin
-with an underscore.** `_unused`, `_tmp`, and `_name` are all parse
-errors, so the convention many languages use to mark a deliberately
-unused binding is unavailable here. Worse, the error reads `expected the
-end of the file` rather than naming the underscore, because the parser
-has stopped seeing a statement at all. If a `let` line draws that error,
-check whether the name starts with `_`; drop the underscore, or use a
-bare `_` if the value really is unwanted.
+A name that *begins* with an underscore and continues (`_unused`,
+`_tmp`, `__gen0`) is an ordinary identifier — the convention for a
+deliberately unused binding, and the namespace macro-introduced
+temporaries use. Only the lone `_` is the wildcard.
 
 ## A bare name in a `match` pattern is a binding
 

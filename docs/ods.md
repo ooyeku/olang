@@ -1234,6 +1234,11 @@ pieces, every one rendered by `plot`. See
 
 ### The `viz` grammar
 
+A spec's keys are checked before anything renders: `w`/`h` are
+accepted as the short forms of `width`/`height`, `font_size` and
+`font` pass through to the plot text, and an unknown key is an error
+naming it — never a chart quietly drawn at the default size.
+
 One level up from the chart functions sits `use viz` — an embedded
 olang package where a chart is a *value*: a spec map holding data,
 a mark, and column-name encodings. Data is records (a list of maps —

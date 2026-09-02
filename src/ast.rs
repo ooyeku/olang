@@ -18,6 +18,10 @@ pub struct Program {
 pub struct ErrorLocation {
     pub line: u32,
     pub column: u32,
+    /// The file the line belongs to, when the error was raised while
+    /// executing a module other than the entry program (a dependency's
+    /// top level failing at import). None means the entry file.
+    pub file: Option<String>,
     pub call_stack: Vec<String>,
     /// A one-line remediation hint (e.g. did-you-mean candidates),
     /// computed where the error was raised.

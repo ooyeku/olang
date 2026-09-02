@@ -191,6 +191,12 @@ pub struct PlotOptions {
     pub vary: bool,
     /// The heatmap's color ramp.
     pub scale: HeatScale,
+    /// Tick, legend, and label text size in SVG units. 12.5 suits a
+    /// 720×440 document; a chart drawn responsive into a 300px-wide
+    /// column wants less, and a slide wants more.
+    pub font_size: f64,
+    /// The CSS font-family for every text in the document.
+    pub font: String,
 }
 
 impl Default for PlotOptions {
@@ -207,6 +213,8 @@ impl Default for PlotOptions {
             colors: Vec::new(),
             vary: false,
             scale: HeatScale::default(),
+            font_size: 12.5,
+            font: FONT.to_string(),
         }
     }
 }
@@ -815,6 +823,7 @@ impl Geometry {
 struct Svg {
     body: String,
     theme: Theme,
+    font_size: f64,
 }
 
 impl Svg {
@@ -832,12 +841,13 @@ impl Svg {
              <rect width=\"{w}\" height=\"{h}\" fill=\"{surface}\"/>",
             w = opts.width,
             h = opts.height,
-            font = FONT,
+            font = opts.font,
             surface = opts.theme.surface(),
         );
         Self {
             body,
             theme: opts.theme,
+            font_size: opts.font_size,
         }
     }
 
@@ -936,11 +946,16 @@ impl Svg {
     }
 
     fn close(mut self, opts: &PlotOptions, geo: &Geometry) -> String {
+        // The title and axis labels scale with the tick text: at the
+        // default 12.5 they are the long-standing 16.5 and 13.
+        let title_size = opts.font_size * 1.32;
+        let label_size = opts.font_size * 1.04;
         if !opts.title.is_empty() {
             let _ = write!(
                 self.body,
-                "<text x=\"{:.2}\" y=\"25\" font-size=\"16.5\" font-weight=\"600\" fill=\"{}\">{}</text>",
+                "<text x=\"{:.2}\" y=\"25\" font-size=\"{:.1}\" font-weight=\"600\" fill=\"{}\">{}</text>",
                 geo.left,
+                title_size,
                 self.theme.ink(),
                 escape(&opts.title)
             );
@@ -948,9 +963,10 @@ impl Svg {
         if !opts.x_label.is_empty() {
             let _ = write!(
                 self.body,
-                "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"middle\" font-size=\"13\" fill=\"{}\">{}</text>",
+                "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"middle\" font-size=\"{:.1}\" fill=\"{}\">{}</text>",
                 geo.left + geo.plot_w / 2.0,
                 opts.height as f64 - 12.0,
+                label_size,
                 self.theme.ink2(),
                 escape(&opts.x_label)
             );
@@ -958,15 +974,26 @@ impl Svg {
         if !opts.y_label.is_empty() {
             let _ = write!(
                 self.body,
-                "<text x=\"16\" y=\"{:.2}\" text-anchor=\"middle\" font-size=\"13\" fill=\"{}\" \
+                "<text x=\"16\" y=\"{:.2}\" text-anchor=\"middle\" font-size=\"{:.1}\" fill=\"{}\" \
                  transform=\"rotate(-90 16 {:.2})\">{}</text>",
                 geo.top + geo.plot_h / 2.0,
+                label_size,
                 self.theme.ink2(),
                 geo.top + geo.plot_h / 2.0,
                 escape(&opts.y_label)
             );
         }
         self.body.push_str("</svg>");
+        // Tick and legend text is written at the default size by every
+        // renderer; one substitution at the end applies the configured
+        // size to all of it without threading the option through each
+        // format string.
+        if (self.font_size - 12.5).abs() > f64::EPSILON {
+            self.body = self.body.replace(
+                "font-size=\"12.5\"",
+                &format!("font-size=\"{:.1}\"", self.font_size),
+            );
+        }
         self.body
     }
 }

@@ -179,6 +179,7 @@ pub fn create_dates_module() -> Value {
     // Current date/time functions
     module.insert("now".to_string(), create_builtin_function("now", 0));
     module.insert("utc_now".to_string(), create_builtin_function("utc_now", 0));
+    module.insert("stamp".to_string(), create_builtin_function("stamp", 0));
     module.insert("today".to_string(), create_builtin_function("today", 0));
 
     // Date creation functions
@@ -288,7 +289,7 @@ fn create_builtin_function(name: &str, arity: usize) -> Value {
 fn is_total(name: &str) -> bool {
     matches!(
         name,
-        "now" | "utc_now" | "today" | "is_leap_year" | "days_in_month"
+        "now" | "utc_now" | "stamp" | "today" | "is_leap_year" | "days_in_month"
     )
 }
 
@@ -325,6 +326,7 @@ fn dispatch_dates(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
     match name {
         "now" => dates_now(args),
         "utc_now" => dates_utc_now(args),
+        "stamp" => dates_stamp(args),
         "today" => dates_today(args),
         "date" => dates_date(args),
         "datetime" => dates_datetime(args),
@@ -410,6 +412,23 @@ fn dates_utc_now(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 
     let now = crate::clock::utc_now();
     Ok(Value::String(now.to_rfc3339().into()))
+}
+
+/// The storage timestamp: UTC, second precision, `Z` suffix —
+/// `2026-08-31T23:40:06Z`. Sortable as text across machines and
+/// offsets, and free of the fractional seconds a UI never wants.
+/// Usage: dates.stamp() -> "2026-08-31T23:40:06Z"
+fn dates_stamp(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if !args.is_empty() {
+        return Err(misuse(format!(
+            "stamp expects 0 arguments, got {}",
+            args.len()
+        )));
+    }
+    let now = crate::clock::utc_now();
+    Ok(Value::String(
+        now.format("%Y-%m-%dT%H:%M:%SZ").to_string().into(),
+    ))
 }
 
 /// Current local date

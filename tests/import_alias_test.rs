@@ -158,3 +158,32 @@ fn check_warns_on_wildcard_shadowing_an_explicit_import() {
         "aliased import must not warn:\n{out}"
     );
 }
+
+#[test]
+fn check_warns_when_a_module_re_exports_one_name_twice() {
+    // The web SDK's incident: `lib.sql.row` and `lib.ui.row` both
+    // re-exported from index.ol; the later silently won for every
+    // importer, and `use web { row }` failed far away as an arity
+    // mismatch.
+    let dir = project(&[
+        ("lib/sql.ol", "share fn row(conn, q, params) = 1\n"),
+        ("lib/ui.ol", "share fn row(children) = 2\n"),
+        (
+            "index.ol",
+            "share use lib.sql { row }\nshare use lib.ui { row }\n",
+        ),
+        (
+            "fixed.ol",
+            "share use lib.sql { row as one }\nshare use lib.ui { row }\n",
+        ),
+    ]);
+    let (out, rc) = run_in(&dir, &["check", "index.ol"]);
+    assert_eq!(rc, 0, "{out}");
+    assert!(
+        out.contains("re-exports 'row', already re-exported on line 1"),
+        "{out}"
+    );
+    let (out, rc) = run_in(&dir, &["check", "fixed.ol"]);
+    assert_eq!(rc, 0, "{out}");
+    assert!(!out.contains("already re-exported"), "{out}");
+}

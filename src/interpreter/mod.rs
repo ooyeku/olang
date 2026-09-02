@@ -93,12 +93,19 @@ pub use environment::{Environment, ModuleDebugConfig};
 /// Olang interpreter with optional type checking
 pub struct Interpreter {
     environment: Environment,
-    builtin_functions: BuiltinFunctions,
+    /// Shared, not owned: every builtin call hands the registry to
+    /// `BuiltinFunctions::call` alongside `&mut self`, and cloning a
+    /// registry of a few hundred entries per call was a real cost.
+    builtin_functions: Arc<BuiltinFunctions>,
     safepoint_manager: Arc<SafepointManager>,
     pub module_debug_config: ModuleDebugConfig,
 
     // Enhanced module system
     module_cache: HashMap<String, ModuleCacheEntry>,
+    /// Dotted import name → the file it resolved to, first resolution
+    /// wins. The cache itself is keyed by file; this is the name view
+    /// the REPL's `:help` needs (`geometry.point` → its index.ol).
+    module_name_index: HashMap<String, std::path::PathBuf>,
     dependency_tracker: ModuleDependencyTracker,
     current_module_path: Option<String>, // For tracking current module during loading
     module_loading_stack: Vec<String>, // Feature 7: Track modules currently being loaded for circular detection
@@ -113,6 +120,13 @@ pub struct Interpreter {
     // MEMORY PROTECTION: Prevent exponential memory growth
     call_depth: usize,
     max_call_depth: usize,
+
+    /// The evaluation budget of a sandboxed run (`meta.eval` with
+    /// options): steps left — a step is a loop iteration or a call —
+    /// and a wall-clock deadline. Both None for an ordinary run, which
+    /// costs one branch per step.
+    step_budget: Option<u64>,
+    deadline: Option<(crate::clock::Instant, std::time::Duration)>,
 
     /// Stack of source positions of the statements currently being
     /// evaluated (innermost last). Maintained by eval_statement's
@@ -130,6 +144,10 @@ pub struct Interpreter {
     /// an error is consumed (caught) so a later error can't inherit a
     /// stale position.
     pending_error_location: Option<crate::ast::ErrorLocation>,
+    /// The program's entry file as `set_current_file` recorded it —
+    /// what `error_file` compares against to decide whether a location
+    /// needs a file name at all.
+    entry_file: Option<String>,
     /// The call stack as it stood in the deepest frame when an error
     /// began propagating — captured before unwinding pops the frames,
     /// so the located-statement report can name the whole chain (the
@@ -276,12 +294,13 @@ impl Interpreter {
 
         let mut interpreter = Self {
             environment: Environment::new(),
-            builtin_functions: BuiltinFunctions::new(),
+            builtin_functions: Arc::new(BuiltinFunctions::new()),
             safepoint_manager: Arc::new(SafepointManager::new()),
             module_debug_config: ModuleDebugConfig::default(),
 
             // Enhanced module system
             module_cache: HashMap::new(),
+            module_name_index: HashMap::new(),
             dependency_tracker: ModuleDependencyTracker::new(),
             current_module_path: None, // For tracking current module during loading
             module_loading_stack: Vec::new(), // Feature 7: Track modules currently being loaded for circular detection
@@ -294,9 +313,12 @@ impl Interpreter {
             // MEMORY PROTECTION: Initialize recursion depth tracking
             call_depth: 0,
             max_call_depth: DEFAULT_MAX_CALL_DEPTH,
+            step_budget: None,
+            deadline: None,
             stmt_span_stack: Vec::new(),
             call_stack_names: Vec::new(),
             pending_error_location: None,
+            entry_file: None,
             pending_error_frames: None,
             pending_error_hint: None,
             scope_bindings: crate::scoping::Predefined::new(),
@@ -334,6 +356,7 @@ impl Interpreter {
         // Store the file path as the current module context
         if let Some(path_str) = file_path.to_str() {
             self.current_module_path = Some(path_str.to_string());
+            self.entry_file = Some(path_str.to_string());
 
             // Calculate content hash if the file exists (to prevent cache invalidation)
             let content_hash = if file_path.exists() {
@@ -393,6 +416,7 @@ impl Interpreter {
             self.pending_error_location = Some(crate::ast::ErrorLocation {
                 line: first.line,
                 column: first.column,
+                file: self.error_file(),
                 call_stack: Vec::new(),
                 hint: None,
             });
@@ -581,7 +605,9 @@ impl Interpreter {
         {
             return None;
         }
+        let globals = self.global_bindings();
         let mut tier = self.bytecode_tier.take()?;
+        tier.set_host_globals(globals);
         let out = tier.try_hof(name, f, items, init);
         self.bytecode_tier = Some(tier);
         match out? {
@@ -602,6 +628,7 @@ impl Interpreter {
                         self.pending_error_location = Some(crate::ast::ErrorLocation {
                             line,
                             column,
+                            file: self.error_file(),
                             call_stack: self.splice_tier_stack(frames),
                             hint: self.pending_error_hint.take(),
                         });
@@ -646,6 +673,23 @@ impl Interpreter {
     /// Take (and clear) the location captured for the error currently
     /// propagating, if any. Top-level reporters call this after a failed
     /// run to render "where" alongside the error's own "what".
+    /// The file a raised error belongs to: the module whose statements are
+    /// executing, or None when that is the entry program itself. A module
+    /// loaded at import runs with `current_module_path` set to its own
+    /// file, so an error inside it names that file rather than the `use`
+    /// line that triggered the load.
+    fn error_file(&self) -> Option<String> {
+        let current = self.current_module_path.as_deref()?;
+        if current.starts_with("__") {
+            return None;
+        }
+        match self.entry_file.as_deref() {
+            Some(entry) if entry == current => None,
+            None => None,
+            _ => Some(current.to_string()),
+        }
+    }
+
     pub fn take_error_location(&mut self) -> Option<crate::ast::ErrorLocation> {
         self.pending_error_frames = None;
         self.pending_error_location.take()
@@ -700,6 +744,7 @@ impl Interpreter {
                     self.pending_error_location = Some(crate::ast::ErrorLocation {
                         line: *line,
                         column: *column,
+                        file: self.error_file(),
                         call_stack: self
                             .pending_error_frames
                             .take()
@@ -1323,11 +1368,16 @@ impl Interpreter {
                         })?;
                         self.call_function(function_value, vec![left_value])
                     }
-                    _ => Err(InterpreterError::RuntimeError {
-                        message:
-                            "Pipeline right side must be a function call or function identifier"
-                                .to_string(),
-                    }),
+                    // Any other expression is evaluated to a callable and
+                    // applied to the piped value: `x |> ((a) => a + 1)`,
+                    // `x |> handlers[i]`, `x |> pick(mode)`. The bytecode
+                    // tier has always desugared these to a call; the
+                    // interpreter used to refuse them, so the same program
+                    // ran in the browser and failed natively.
+                    other => {
+                        let function_value = self.eval_expr(other)?;
+                        self.call_function(function_value, vec![left_value])
+                    }
                 }
             }
             Expr::Match { value, arms } => {
@@ -1842,6 +1892,51 @@ impl Interpreter {
     /// Set the logical call-depth cap (`--max-depth`). Applied to the
     /// bytecode tier too, present or future, so both tiers raise the
     /// same "Maximum call depth" error at the same depth.
+    /// Bound a run: `max_steps` loop iterations and calls (deterministic),
+    /// and/or a wall-clock `timeout`. Exceeding either raises a runtime
+    /// error naming the bound — `meta.eval`'s sandbox for user-authored
+    /// source, where a `while true {}` must cost one failure, not a thread.
+    pub fn set_eval_budget(
+        &mut self,
+        max_steps: Option<u64>,
+        timeout: Option<std::time::Duration>,
+    ) {
+        self.step_budget = max_steps;
+        self.deadline = timeout.map(|t| (crate::clock::Instant::now(), t));
+    }
+
+    /// Is this run bounded? A bounded run stays on the interpreter —
+    /// promotion would move iterations and calls where they are not
+    /// charged.
+    #[inline]
+    fn budgeted(&self) -> bool {
+        self.step_budget.is_some() || self.deadline.is_some()
+    }
+
+    /// Charge one step against the evaluation budget, if one is set.
+    #[inline]
+    fn spend_step(&mut self) -> Result<(), InterpreterError> {
+        if let Some(left) = self.step_budget.as_mut() {
+            if *left == 0 {
+                return Err(InterpreterError::RuntimeError {
+                    message: "budget exceeded: the evaluation used up its max_steps".to_string(),
+                });
+            }
+            *left -= 1;
+        }
+        if let Some((started, limit)) = &self.deadline
+            && started.elapsed() >= *limit
+        {
+            return Err(InterpreterError::RuntimeError {
+                message: format!(
+                    "budget exceeded: the evaluation ran past its timeout_ms ({} ms)",
+                    limit.as_millis()
+                ),
+            });
+        }
+        Ok(())
+    }
+
     pub fn set_max_call_depth(&mut self, depth: usize) {
         self.max_call_depth = depth.max(1);
         if let Some(tier) = self.bytecode_tier.as_mut() {
@@ -1901,9 +1996,10 @@ impl Interpreter {
     /// file stem cannot do (a package's entry file is `index.ol`).
     pub fn loaded_modules(&self) -> Vec<(String, std::path::PathBuf)> {
         let mut out: Vec<(String, std::path::PathBuf)> = self
-            .module_cache
+            .module_name_index
             .iter()
-            .filter_map(|(k, e)| e.file_path.clone().map(|p| (k.clone(), p)))
+            .filter(|(_, p)| !p.to_string_lossy().starts_with("__"))
+            .map(|(k, p)| (k.clone(), p.clone()))
             .collect();
         out.sort();
         out.dedup();
@@ -2494,6 +2590,7 @@ impl Interpreter {
         mut arguments: Vec<Value>,
     ) -> Result<Value, InterpreterError> {
         {
+            self.spend_step()?;
             // Increment call depth for user functions
             self.call_depth += 1;
             self.call_stack_names
@@ -2503,14 +2600,21 @@ impl Interpreter {
 
             // Hot-function promotion: run on the bytecode tier when the
             // function is eligible, otherwise fall through to the AST walk
-            if self.bytecode_tier.is_some() && arguments.len() == func.parameters.len() {
+            if self.bytecode_tier.is_some()
+                && arguments.len() == func.parameters.len()
+                && !self.budgeted()
+            {
+                let globals = self.global_bindings();
                 let mut tier = self.bytecode_tier.take();
                 // The interpreter's frames (this one included) count
                 // against the same budget the VM spends from.
                 let depth = self.call_depth as u32;
                 let outcome = tier
                     .as_mut()
-                    .map(|t| t.try_call_at_depth(func, &mut arguments, depth))
+                    .map(|t| {
+                        t.set_host_globals(globals);
+                        t.try_call_at_depth(func, &mut arguments, depth)
+                    })
                     .unwrap_or(crate::ovm::tier::TierOutcome::Fallback);
                 self.bytecode_tier = tier;
 
@@ -2539,6 +2643,7 @@ impl Interpreter {
                                     self.pending_error_location = Some(crate::ast::ErrorLocation {
                                         line,
                                         column,
+                                        file: self.error_file(),
                                         call_stack: self.splice_tier_stack(frames),
                                         hint: self.pending_error_hint.take(),
                                     });
@@ -2636,6 +2741,11 @@ impl Interpreter {
                     Ok(TailFlow::Value(v)) => break Ok(v),
                     Ok(TailFlow::SelfCall(args)) => {
                         if let Err(e) = self.check_call_boundary(func, &args) {
+                            break Err(e);
+                        }
+                        // A trampolined self-call is a call: it spends a
+                        // step like the frames it elides would have.
+                        if let Err(e) = self.spend_step() {
                             break Err(e);
                         }
                         arguments = args;
@@ -2760,6 +2870,28 @@ impl Interpreter {
         }
     }
 
+    /// The program's top-level bindings — the root of the scope chain —
+    /// as the persistent map they live in. Cheap to clone (an Arc), and
+    /// its pointer moves exactly when a top-level binding does.
+    fn global_bindings(&self) -> Arc<ImHashMap<String, Value>> {
+        let mut env = &self.environment;
+        while let Some(parent) = env.parent.as_deref() {
+            env = parent;
+        }
+        env.variables.clone()
+    }
+
+    /// Call a global builtin by name — how a module mirrors a global
+    /// (`col.take` forwarding to `take`) without re-implementing it.
+    pub fn call_global_builtin(
+        &mut self,
+        name: &str,
+        arguments: Vec<Value>,
+    ) -> Result<Value, InterpreterError> {
+        let builtin_functions = self.builtin_functions.clone();
+        BuiltinFunctions::call(&builtin_functions, name, arguments, self)
+    }
+
     /// Feature 9: Get the intuitive error formatter
     pub fn get_error_formatter(&self) -> &IntuitiveErrorFormatter {
         &self.error_formatter
@@ -2776,6 +2908,7 @@ impl Interpreter {
             stmt_span_stack: Vec::new(),
             call_stack_names: Vec::new(),
             pending_error_location: None,
+            entry_file: None,
             pending_error_frames: None,
             pending_error_hint: None,
             scope_bindings: self.scope_bindings.clone(),
@@ -2786,6 +2919,7 @@ impl Interpreter {
 
             // Enhanced module system
             module_cache: self.module_cache.clone(),
+            module_name_index: self.module_name_index.clone(),
             dependency_tracker: self.dependency_tracker.clone(),
             current_module_path: self.current_module_path.clone(), // For tracking current module during loading
             module_loading_stack: Vec::new(), // Feature 7: Each thread gets its own loading stack
@@ -2800,6 +2934,8 @@ impl Interpreter {
             // MEMORY PROTECTION: Initialize fresh recursion tracking for each thread
             call_depth: 0,
             max_call_depth: self.max_call_depth,
+            step_budget: self.step_budget,
+            deadline: self.deadline,
 
             // Each thread profiles independently; the VM is not shared, so
             // the clone gets a fresh, quiet tier with the same promotion
@@ -3074,6 +3210,7 @@ impl Interpreter {
                     self.pending_error_location = Some(crate::ast::ErrorLocation {
                         line: *line,
                         column: *column,
+                        file: self.error_file(),
                         call_stack: self
                             .pending_error_frames
                             .take()
@@ -3739,7 +3876,7 @@ impl Interpreter {
         let mut last_value = Value::Unit;
         let mut i = start;
         let mut iters: i64 = 0;
-        let mut try_promotion = self.bytecode_tier.is_some();
+        let mut try_promotion = self.bytecode_tier.is_some() && !self.budgeted();
         loop {
             let done = if inclusive { i > end } else { i >= end };
             if done {
@@ -3869,10 +4006,14 @@ impl Interpreter {
         }
         args.extend(live_values);
 
+        let globals = self.global_bindings();
         let mut tier = self.bytecode_tier.take();
         let outcome = tier
             .as_mut()
-            .map(|t| t.try_call_function_value(&func, &mut args))
+            .map(|t| {
+                t.set_host_globals(globals);
+                t.try_call_function_value(&func, &mut args)
+            })
             .unwrap_or(crate::ovm::tier::TierOutcome::Fallback);
         self.bytecode_tier = tier;
 
@@ -3916,6 +4057,7 @@ impl Interpreter {
                         self.pending_error_location = Some(crate::ast::ErrorLocation {
                             line,
                             column,
+                            file: self.error_file(),
                             call_stack: self.splice_tier_stack(frames),
                             hint: self.pending_error_hint.take(),
                         });
@@ -4084,6 +4226,7 @@ impl Interpreter {
         for item in items {
             // Safepoint poll for GC coordination during iteration
             self.safepoint_poll()?;
+            self.spend_step()?;
 
             if let Some(name) = variable {
                 self.environment.define(name.to_string(), item);
@@ -4110,11 +4253,12 @@ impl Interpreter {
         // are discarded rather than retained.
         let mut last_value = Value::Unit;
         let mut iters: i64 = 0;
-        let mut try_promotion = self.bytecode_tier.is_some();
+        let mut try_promotion = self.bytecode_tier.is_some() && !self.budgeted();
 
         loop {
             // Safepoint poll for GC coordination at start of each iteration
             self.safepoint_poll()?;
+            self.spend_step()?;
 
             if iters == Self::LOOP_PROMOTE_AFTER && try_promotion {
                 try_promotion = false;
@@ -4151,6 +4295,7 @@ impl Interpreter {
         loop {
             // Safepoint poll for GC coordination at start of each iteration
             self.safepoint_poll()?;
+            self.spend_step()?;
 
             match self.eval_expr(body) {
                 Ok(_) => {}
@@ -4442,19 +4587,34 @@ impl Interpreter {
     ///
     /// A run being recorded or replayed does not extend into the child:
     /// the timeline covers the main program's own dispatch only.
-    pub fn eval_source_at_runtime(&self, source: &str) -> Value {
+    ///
+    /// A budget (`max_steps`, `timeout`) bounds the child: it then runs
+    /// interpreted, where every loop iteration and call is charged, so a
+    /// runaway rule costs one `Err("budget exceeded ...")` rather than a
+    /// thread.
+    pub fn eval_source_at_runtime(
+        &self,
+        source: &str,
+        budget: (Option<u64>, Option<std::time::Duration>),
+    ) -> Value {
         let err = |m: String| Value::Err(Box::new(Value::String(std::sync::Arc::new(m))));
         let program = match crate::parser::Parser::new().parse(source) {
             Ok(p) => p,
             Err(e) => return err(format!("{}", e)),
         };
         let mut child = Interpreter::new();
+        let (max_steps, timeout) = budget;
+        let budgeted = max_steps.is_some() || timeout.is_some();
         // The child runs with the caller's execution model: without
         // this, evaluated source tree-walks everything — the tier and
-        // the JIT exist only where a tier was enabled.
-        if let Some(tier) = self.bytecode_tier.as_ref() {
+        // the JIT exist only where a tier was enabled. A budgeted child
+        // stays on the interpreter, the tier that meters steps.
+        if let Some(tier) = self.bytecode_tier.as_ref()
+            && !budgeted
+        {
             child.enable_bytecode_tier(tier.threshold(), false);
         }
+        child.set_eval_budget(max_steps, timeout);
         child.caps = self.caps.clone();
         child.caps_trace = self.caps_trace.clone();
         child.dependency_map = self.dependency_map.clone();

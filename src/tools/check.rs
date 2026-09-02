@@ -407,6 +407,43 @@ pub fn use_shadow_warnings(
     }
 
     let mut out = Vec::new();
+    // A module's `share use` re-exports must bind each name once: two
+    // re-exports of one name (the web SDK's `lib.sql.row` and
+    // `lib.ui.row`) let the later silently win, and a consumer's
+    // `use pkg { row }` failed far away with an arity mismatch.
+    let mut reexported: Vec<(String, u32)> = Vec::new();
+    for stmt in &program.statements {
+        let (line, column) = match stmt {
+            Statement::Located { line, column, .. } => (*line, *column),
+            _ => (0, 0),
+        };
+        let Statement::ShareDecl(crate::ast::ShareDecl::Use(u)) = stmt.unwrapped() else {
+            continue;
+        };
+        for item in &u.items {
+            let Some(n) = item.bound_name() else { continue };
+            if let Some((_, first_line)) = reexported.iter().find(|(name, _)| name == n) {
+                out.push(CheckDiagnostic {
+                    line,
+                    column,
+                    message: format!(
+                        "`share use {}` re-exports '{}', already re-exported on line {} — \
+the later binding wins silently for every importer; alias one of them \
+(`{} as other_name`)",
+                        u.path.join("."),
+                        n,
+                        first_line,
+                        n
+                    ),
+                    runtime: false,
+                    warning: true,
+                    scope: false,
+                });
+            } else {
+                reexported.push((n.to_string(), line));
+            }
+        }
+    }
     // Explicit imports seen so far: bound name -> declaration line.
     let mut explicit: Vec<(String, u32)> = Vec::new();
     for stmt in &program.statements {

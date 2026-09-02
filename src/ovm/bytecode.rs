@@ -76,6 +76,14 @@ pub struct BytecodeVm {
     /// Interpreter -> BytecodeTier -> BytecodeVm -> Interpreter type cycle,
     /// and created on first use since most functions call no builtins.
     builtin_interpreter: Option<Box<crate::interpreter::Interpreter>>,
+    /// The owning program's top-level bindings, handed over before each
+    /// tier entry (an O(1) Arc clone), and the snapshot the bridge was
+    /// last seeded from. A function value the tier declines runs on the
+    /// bridge, which must resolve the same globals the interpreter would
+    /// — including a `let` declared after the closure was created, which
+    /// the closure's own snapshot cannot hold.
+    host_globals: Option<std::sync::Arc<im::HashMap<String, crate::ast::Value>>>,
+    seeded_globals: Option<std::sync::Arc<im::HashMap<String, crate::ast::Value>>>,
     /// Bumped whenever the function/type landscape the bridge is seeded
     /// from changes (a declaration, a trait impl, a struct, a variant).
     /// The bridge is rebuilt when its seeding falls behind — a bridge
@@ -1190,6 +1198,8 @@ impl BytecodeVm {
             builtin_names,
             builtins: BuiltinFunctions::new(),
             builtin_interpreter: None,
+            host_globals: None,
+            seeded_globals: None,
             bridge_landscape_version: 0,
             bridge_seeded_version: 0,
             caps: None,
@@ -4381,6 +4391,7 @@ impl BytecodeVm {
                         capture_names: template.capture_names.clone(),
                         captured,
                         func_id: template.func_id,
+                        ast_closure: Default::default(),
                     };
                     self.execution_state
                         .set_register(*dst, OvmValue::new_closure(Arc::new(closure)))?;
@@ -5440,6 +5451,14 @@ impl BytecodeVm {
         }
     }
 
+    /// Record the owning program's globals for the bridge (see the field).
+    pub fn set_host_globals(
+        &mut self,
+        globals: std::sync::Arc<im::HashMap<String, crate::ast::Value>>,
+    ) {
+        self.host_globals = Some(globals);
+    }
+
     fn ensure_bridge_interpreter(&mut self) {
         // A bridge seeded before later declarations answers for a stale
         // world: rebuild it whenever the landscape has moved. Changes
@@ -5449,7 +5468,41 @@ impl BytecodeVm {
             && self.bridge_seeded_version != self.bridge_landscape_version
         {
             self.builtin_interpreter = None;
+            self.seeded_globals = None;
         }
+        self.build_bridge_if_missing();
+        // The host's top-level bindings, whenever they moved since the
+        // last seeding: a function value declined by the tier and run on
+        // the bridge then resolves `later`-declared globals exactly as
+        // the interpreter does through its live scope chain.
+        let stale = match (&self.host_globals, &self.seeded_globals) {
+            (Some(host), Some(seeded)) => !std::sync::Arc::ptr_eq(host, seeded),
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+        if stale
+            && let Some(host) = self.host_globals.clone()
+            && let Some(interp) = self.builtin_interpreter.as_mut()
+        {
+            // Values only. Functions the bridge already resolves through
+            // closures and the registry, and a host builtin binding
+            // (`find`, `map`) must never shadow a module's own import of
+            // the same name inside the bridge.
+            for (name, value) in host.iter() {
+                if matches!(
+                    value,
+                    crate::ast::Value::Builtin(_) | crate::ast::Value::Function(_)
+                ) || matches!(value, crate::ast::Value::Struct { type_name, .. } if type_name == "Module")
+                {
+                    continue;
+                }
+                interp.define_global(name, value.clone());
+            }
+            self.seeded_globals = Some(host);
+        }
+    }
+
+    fn build_bridge_if_missing(&mut self) {
         if self.builtin_interpreter.is_none() {
             self.bridge_seeded_version = self.bridge_landscape_version;
             let mut interp = Box::new(crate::interpreter::Interpreter::new());
@@ -5888,6 +5941,52 @@ impl BytecodeVm {
                         }
                     }
                     Ok(OvmValue::new_list(out))
+                };
+                Some(run())
+            }
+            // `col.any` / `col.all` loop natively for the same reason map
+            // and filter do: bridged, every callback crossed the boundary
+            // into a lambda whose closure Arc was fresh per crossing, so
+            // the bridge recompiled it on each element — a hot function
+            // using col.any ran 3.5× slower with the tier on than off.
+            "col.any" | "col.all" if args.len() == 2 => {
+                let items = match &args[0].data {
+                    ValueData::List(items) => items.clone(),
+                    _ => return None,
+                };
+                let (func_id, captures) = match &args[1].data {
+                    ValueData::AstFunction(f) => {
+                        let f = f.clone();
+                        (self.hof_function_id(&f, 1)?, Vec::new())
+                    }
+                    ValueData::Closure(c) if c.template.parameters.len() == 1 => {
+                        (c.func_id, c.captured.clone())
+                    }
+                    _ => return None,
+                };
+                let want_all = name == "col.all";
+                // The interpreter's truthiness for these two: a Boolean
+                // decides, Unit is false, anything else is true.
+                let truthy = |v: &OvmValue| match &v.data {
+                    ValueData::Boolean(b) => *b,
+                    ValueData::Unit => false,
+                    _ => true,
+                };
+                let mut call_args = Vec::with_capacity(1 + captures.len());
+                let mut run = || -> Result<OvmValue, BytecodeError> {
+                    for item in items.iter() {
+                        call_args.clear();
+                        call_args.push(item.clone());
+                        call_args.extend(captures.iter().cloned());
+                        let hit = truthy(&self.execute(func_id, &call_args)?);
+                        if want_all && !hit {
+                            return Ok(OvmValue::new_boolean(false));
+                        }
+                        if !want_all && hit {
+                            return Ok(OvmValue::new_boolean(true));
+                        }
+                    }
+                    Ok(OvmValue::new_boolean(want_all))
                 };
                 Some(run())
             }
@@ -8783,6 +8882,7 @@ impl BytecodeCompiler {
             capture_names,
             captured: Vec::new(),
             func_id: lambda_id,
+            ast_closure: Default::default(),
         };
         let template_const = self
             .emitter

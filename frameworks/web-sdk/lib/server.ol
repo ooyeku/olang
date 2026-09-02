@@ -84,7 +84,13 @@ fn is_response(v) = {
 /// response, `Err(message)` (a clean 500 envelope), or any plain
 /// value — wrapped as `{ "data": value }`, which is what makes rpc
 /// handlers one-liners.
-share fn dispatch(routes, req) = {
+share fn dispatch(routes, req) = dispatch_with(routes, req, ())
+
+/// `dispatch` with the request line under the app's control: `log` is
+/// `(req, response, ms) => ...` — or Unit for the default line. Passed
+/// as a value (never a cell: handlers run on worker threads), so an app
+/// with its own structured logging owns every line of its output.
+share fn dispatch_with(routes, req, log) = {
     let started = time.monotonic_ms()
     let outcome = find(routes, req.method, req.path)
     let hit = map_get(outcome, "hit")
@@ -106,7 +112,9 @@ share fn dispatch(routes, req) = {
     else =>
         error_response(404, "not_found", "no route for " + req.method + " " + req.path)
     let ms = time.monotonic_ms() - started
-    println(req.method + " " + req.path + " -> " + show(response.status) + " (" + show(ms) + "ms)")
+    if log == () =>
+        println(req.method + " " + req.path + " -> " + show(response.status) + " (" + show(ms) + "ms)")
+    else => log(req, response, ms)
     response
 }
 
@@ -196,11 +204,19 @@ fn strip_module_lines(source) = {
 /// `use web { ... }` line removed (the bundle makes it true). The
 /// result is parse-checked — a broken bundle fails loudly at the
 /// server, never as a blank page.
-share fn bundle_client(client_source) = {
+share fn bundle_client(client_source) = bundle_clients([client_source])
+
+/// Several client modules, one bundle: each source is stripped the same
+/// way (its `use` lines, `share`, and test blocks) and spliced in list
+/// order after the SDK's modules — so a browser helper can live in a
+/// tested lib module and be imported by server code too.
+share fn bundle_clients(client_sources) = {
     let sdk = browser_modules()
         |> map((m) => strip_module_lines(sdk_file(m)))
         |> join("\n\n")
-    let app_src = strip_module_lines(client_source)
+    let app_src = client_sources
+        |> map((src) => strip_module_lines(src))
+        |> join("\n\n// ── module ──\n")
     let bundled = sdk + "\n\n// ── application ──\n" + app_src
     match meta.parse(bundled) {
         Err(e) => unwrap(Err("client bundle does not parse: " + e)),
@@ -247,13 +263,23 @@ share fn static_response(req, body, ctype, tag) =
 ///
 ///   title    the page title (default "olang app")
 ///   routes   the route table (route(...) and rpc(...) entries)
-///   client   path of the app's client source (default "client.ol";
-///            "" for an API-only server)
+///   client   path of the app's client source (default "client.ol"),
+///            or a list of paths bundled in order; "" for an API-only
+///            server
 ///   port     default 7500
 ///   head     extra HTML for <head> (default "")
+///   log      (req, response, ms) => ... to own the request line
+///            (default: the SDK's `METHOD /path -> status (ms)`)
 ///
 /// Serves `/` (the shell), `/web.css`, `/olang-dom.js`, `/app.ol`
-/// (the bundled client), `/olang.wasm`, and every route in the table.
+/// (the bundled client), the wasm runtime, and every route in the
+/// table. The runtime is served two ways: `/olang.<hash>.wasm`, the
+/// content-addressed URL the shell references (immutable, cached for
+/// a year — a new build is a new URL), and `/olang.wasm` (revalidated
+/// each load). Both negotiate `Accept-Encoding`: a pre-compressed
+/// sibling on disk (`olang_playground.wasm.br` or `.gz`, next to the
+/// wasm) is served with the matching `Content-Encoding` — a 6.7 MB
+/// runtime is 1.9 MB gzipped, and less with brotli.
 /// Blocks serving; returns only on failure to bind.
 share fn serve(config) = {
     let title = get_or(config, "title", "olang app")
@@ -261,35 +287,61 @@ share fn serve(config) = {
     let client_path = get_or(config, "client", "client.ol")
     let port = get_or(config, "port", 7500)
     let head = get_or(config, "head", "")
+    let log = get_or(config, "log", ())
 
     // Read once at boot: assets, the bundle, and the wasm's location.
     let css = sdk_file("static/web.css")
     let shim = sdk_file("static/olang-dom.js")
-    let bundle = if client_path == "" => ""
-        else => bundle_client(unwrap(fs.read_file(client_path)))
+    let client_paths = if typeof(client_path) == "List" => client_path
+        else if client_path == "" => []
+        else => [client_path]
+    let bundle = if len(client_paths) == 0 => ""
+        else => bundle_clients(map(client_paths, (p) => unwrap(fs.read_file(p))))
     let wasm_path = if fs.exists("static/olang_playground.wasm") =>
         "static/olang_playground.wasm"
     else => sdk_dir() + "/static/olang_playground.wasm"
-    if client_path != "" && !fs.exists(wasm_path) => {
+    if len(client_paths) > 0 && !fs.exists(wasm_path) => {
         println("WARNING: olang_playground.wasm not found — the frontend cannot boot.")
         println("Build and copy it:")
         println("  cargo build -p olang-playground --target wasm32-unknown-unknown --release")
         println("  cp target/wasm32-unknown-unknown/release/olang_playground.wasm static/")
     }
 
-    let shell = page(title,
-        "<link rel=\"stylesheet\" href=\"/web.css\">" + head,
-        raw("<main id=\"app\"></main>"
-            + "<script type=\"module\" src=\"/olang-dom.js\" data-src=\"/app.ol\"></script>"))
-
     let css_tag = etag_of(css)
     let shim_tag = etag_of(shim)
     let bundle_tag = etag_of(bundle)
-    // The wasm's ETag comes from its bytes, hashed once at boot
-    // (crypto hashes accept Bytes directly).
-    let wasm_tag = match fs.read_bytes(wasm_path) {
-        Ok(b) => "\"" + str.substring(crypto.sha256(b), 0, 16) + "\"",
+    // The wasm's hash comes from its bytes, computed once at boot
+    // (crypto hashes accept Bytes directly); it is both the ETag and
+    // the content-addressed URL's name.
+    let wasm_hash = match fs.read_bytes(wasm_path) {
+        Ok(b) => str.substring(crypto.sha256(b), 0, 16),
         Err(e) => ""
+    }
+    let wasm_tag = if wasm_hash == "" => "" else => "\"" + wasm_hash + "\""
+    let hashed_wasm_url = if wasm_hash == "" => "/olang.wasm" else => "/olang." + wasm_hash + ".wasm"
+
+    let shell = page(title,
+        "<link rel=\"stylesheet\" href=\"/web.css\">" + head,
+        raw("<main id=\"app\"></main>"
+            + "<script type=\"module\" src=\"/olang-dom.js\" data-src=\"/app.ol\""
+            + " data-wasm=\"" + hashed_wasm_url + "\"></script>"))
+
+    // The wasm response: a pre-compressed sibling when the client
+    // accepts its encoding, the raw file otherwise. `cache` is the
+    // Cache-Control the URL wants.
+    fn wasm_response(req, cache) = {
+        let accepts = if map_has_key(req.headers, "accept-encoding") =>
+            map_get(req.headers, "accept-encoding") else => ""
+        let encoded = if str.contains(accepts, "br") && fs.exists(wasm_path + ".br") =>
+            ["br", wasm_path + ".br"]
+        else if str.contains(accepts, "gzip") && fs.exists(wasm_path + ".gz") =>
+            ["gzip", wasm_path + ".gz"]
+        else => ()
+        let base = #{ "Content-Type": "application/wasm", "ETag": wasm_tag,
+                      "Cache-Control": cache, "Vary": "Accept-Encoding" }
+        if encoded == () => { status: 200, body_file: wasm_path, headers: base }
+        else => { status: 200, body_file: encoded[1],
+                  headers: map_set(base, "Content-Encoding", encoded[0]) }
     }
 
     let static_routes = [
@@ -308,17 +360,15 @@ share fn serve(config) = {
                if wasm_tag != "" && if_none_match(req) == wasm_tag =>
                    http.response_with_headers(304, "",
                        #{ "ETag": wasm_tag, "Cache-Control": "no-cache" })
-               else => {
-                   status: 200,
-                   body_file: wasm_path,
-                   headers: #{ "Content-Type": "application/wasm",
-                               "ETag": wasm_tag, "Cache-Control": "no-cache" }
-               } }
+               else => wasm_response(req, "no-cache") },
+        #{ "method": "GET", "pattern": hashed_wasm_url, "name": "",
+           "handler": (req, p) =>
+               wasm_response(req, "public, max-age=31536000, immutable") }
     ]
     let table = static_routes + user_routes
 
     println(title + " listening on http://127.0.0.1:" + to_string(port))
-    match http.serve(port, (req) => dispatch(table, req)) {
+    match http.serve(port, (req) => dispatch_with(table, req, log)) {
         Err(e) => {
             println("could not start on port " + show(port) + ": " + show(e))
             Err(e)

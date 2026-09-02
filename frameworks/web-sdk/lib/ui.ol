@@ -8,6 +8,7 @@
 use lib.html {
     el, div, span, button, table, thead, tbody, tr, th, td, a, header, text
 }
+use lib.view { confirm_armed }
 
 /// A vertical stack with the standard gap.
 share fn stack(children) = div(#{ "class": "stack" }, children)
@@ -70,6 +71,17 @@ share fn btn_primary(label_text, action) =
 /// A destructive action.
 share fn btn_danger(label_text, action) =
     button(#{ "class": "btn btn-danger", "data-action": action }, [label_text])
+
+/// A destructive action behind a second click: the first press arms
+/// the button (its label becomes "Confirm <label>"), the second within
+/// a few seconds fires `action`; clicking anything else disarms it.
+/// The armed state is the view layer's, so the button needs nothing
+/// from the app.
+share fn btn_confirm(label_text, action) =
+    if confirm_armed(action) =>
+        button(#{ "class": "btn btn-danger armed", "data-action": "confirm:" + action },
+            ["Confirm " + label_text])
+    else => button(#{ "class": "btn btn-danger", "data-action": "confirm:" + action }, [label_text])
 
 /// A data table from headers and rows of cells (cells are nodes or
 /// strings): `data_table(["Title", "Points"], rows)`.

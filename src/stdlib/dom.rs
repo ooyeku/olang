@@ -64,6 +64,12 @@ pub fn create_dom_module() -> Value {
         ("post", 1),
         ("on_message", 1),
         ("fetch_json", 4),
+        // The page's own state: its color scheme, what has focus, a
+        // confirmation, and a picked file's contents.
+        ("prefers_dark", 0),
+        ("active_id", 0),
+        ("confirm", 1),
+        ("read_file", 2),
     ] {
         module.insert(
             name.to_string(),

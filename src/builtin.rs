@@ -376,6 +376,15 @@ impl BuiltinFunctions {
                 arity: 2,
             },
         );
+        // `drop` is `skip` under the name most languages pair with
+        // `take`; it was "Undefined variable" for every arrival.
+        functions.insert(
+            "drop".to_string(),
+            BuiltinFunction {
+                name: "drop".to_string(),
+                arity: 2,
+            },
+        );
 
         functions.insert(
             "force".to_string(),
@@ -441,6 +450,13 @@ impl BuiltinFunctions {
             BuiltinFunction {
                 name: "map_get_or".to_string(),
                 arity: 3,
+            },
+        );
+        functions.insert(
+            "map_path".to_string(),
+            BuiltinFunction {
+                name: "map_path".to_string(),
+                arity: 2,
             },
         );
 
@@ -795,7 +811,12 @@ impl BuiltinFunctions {
                 && let Some(Value::String(src)) = arguments.first()
             {
                 let src = src.clone();
-                return Ok(interpreter.eval_source_at_runtime(&src));
+                let budget = crate::stdlib::meta::eval_budget(&arguments).map_err(|e| {
+                    InterpreterError::RuntimeError {
+                        message: e.to_string(),
+                    }
+                })?;
+                return Ok(interpreter.eval_source_at_runtime(&src, budget));
             }
             return crate::stdlib::meta::call_meta_function(meta_function, arguments).map_err(
                 |e| InterpreterError::RuntimeError {
@@ -1103,6 +1124,7 @@ impl BuiltinFunctions {
             "set_parallel" => builtins.set_parallel(arguments),
             "take" => builtins.take_lazy(arguments, interpreter),
             "skip" => builtins.skip_lazy(arguments, interpreter),
+            "drop" => builtins.skip_lazy(arguments, interpreter),
             "force" => builtins.force_value(arguments, interpreter),
             "lazy" => builtins.make_lazy(arguments, interpreter),
             "concat" => builtins.concat_lazy(arguments, interpreter),
@@ -1111,6 +1133,7 @@ impl BuiltinFunctions {
             "entries" => builtins.entries(arguments),
             "map_get" => builtins.map_get(arguments),
             "map_get_or" => builtins.map_get_or(arguments),
+            "map_path" => builtins.map_path(arguments),
             "map_set" => builtins.map_set(arguments),
             "map_has_key" => builtins.map_has_key(arguments),
             "map_keys" => builtins.map_keys(arguments),
@@ -1526,6 +1549,7 @@ impl BuiltinFunctions {
         "clamp",
         "map_get",
         "map_get_or",
+        "map_path",
         "map_has_key",
         "map_keys",
         "map_values",
@@ -1955,7 +1979,7 @@ impl BuiltinFunctions {
         Ok(Value::List(new_list.into()))
     }
 
-    fn to_string(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+    fn to_string(&self, mut args: Vec<Value>) -> Result<Value, InterpreterError> {
         if args.len() != 1 {
             return Err(InterpreterError::ArityMismatch {
                 expected: 1,
@@ -1963,7 +1987,14 @@ impl BuiltinFunctions {
             });
         }
 
-        Ok(Value::String(args[0].to_string().into()))
+        // A string is already its own text: `to_string("open")` is
+        // `open`, not `"open"`. The quoted, escaped form is `show`'s job;
+        // generic code that stringified values read from maps grew
+        // quotes and stopped comparing equal.
+        match args.swap_remove(0) {
+            text @ Value::String(_) => Ok(text),
+            other => Ok(Value::String(other.to_string().into())),
+        }
     }
 
     fn to_int(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
@@ -2577,17 +2608,31 @@ impl BuiltinFunctions {
     }
 
     fn min_value(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
-        if args.len() != 1 {
-            return Err(InterpreterError::ArityMismatch {
-                expected: 1,
-                got: args.len(),
-            });
-        }
-        let list_rc = match &args[0] {
-            Value::List(items) => items,
+        // One list, or two-plus scalars (`min(a, b)` — the clamp idiom
+        // every other language accepts). A lone scalar is still an error:
+        // there is nothing to compare it against.
+        let scalars;
+        let list_rc = match args.as_slice() {
+            [Value::List(items)] => items,
+            [_, _, ..] if !args.iter().any(|a| matches!(a, Value::List(_))) => {
+                scalars = std::sync::Arc::new(args.clone());
+                &scalars
+            }
+            [_] => {
+                return Err(InterpreterError::TypeError {
+                    message: "min: pass a list (min([a, b])) or two or more values (min(a, b))"
+                        .to_string(),
+                });
+            }
+            [] => {
+                return Err(InterpreterError::ArityMismatch {
+                    expected: 1,
+                    got: 0,
+                });
+            }
             _ => {
                 return Err(InterpreterError::TypeError {
-                    message: "min: argument must be a list".to_string(),
+                    message: "min: pass one list, or scalars — not a mix".to_string(),
                 });
             }
         };
@@ -2609,17 +2654,31 @@ impl BuiltinFunctions {
     }
 
     fn max_value(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
-        if args.len() != 1 {
-            return Err(InterpreterError::ArityMismatch {
-                expected: 1,
-                got: args.len(),
-            });
-        }
-        let list_rc = match &args[0] {
-            Value::List(items) => items,
+        // One list, or two-plus scalars (`max(a, b)` — the clamp idiom
+        // every other language accepts). A lone scalar is still an error:
+        // there is nothing to compare it against.
+        let scalars;
+        let list_rc = match args.as_slice() {
+            [Value::List(items)] => items,
+            [_, _, ..] if !args.iter().any(|a| matches!(a, Value::List(_))) => {
+                scalars = std::sync::Arc::new(args.clone());
+                &scalars
+            }
+            [_] => {
+                return Err(InterpreterError::TypeError {
+                    message: "max: pass a list (max([a, b])) or two or more values (max(a, b))"
+                        .to_string(),
+                });
+            }
+            [] => {
+                return Err(InterpreterError::ArityMismatch {
+                    expected: 1,
+                    got: 0,
+                });
+            }
             _ => {
                 return Err(InterpreterError::TypeError {
-                    message: "max: argument must be a list".to_string(),
+                    message: "max: pass one list, or scalars — not a mix".to_string(),
                 });
             }
         };
@@ -3234,6 +3293,68 @@ impl BuiltinFunctions {
             None | Some(Value::Unit) => default,
             Some(present) => present.clone(),
         })
+    }
+
+    /// `map_path(m, [k1, k2, ...])` — a nested read in one call: the
+    /// value at the end of the key path, Unit at the first missing hop.
+    /// Every hop reads like `map_get` (maps, objects, structs, parsed
+    /// JSON), so `map_get(map_get(map_get(e, "issue"), "fields"),
+    /// "estimate")` is `map_path(e, ["issue", "fields", "estimate"])`,
+    /// with the same absence-as-Unit safety at each level.
+    fn map_path(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 2 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 2,
+                got: args.len(),
+            });
+        }
+        let keys = match &args[1] {
+            Value::List(keys) => keys.clone(),
+            other => {
+                return Err(InterpreterError::TypeError {
+                    message: format!(
+                        "map_path: the path must be a list of keys, got {}",
+                        other.type_name()
+                    ),
+                });
+            }
+        };
+        let mut current = args[0].clone();
+        for key in keys.iter() {
+            let key_text = match key {
+                Value::String(s) => s.as_ref().clone(),
+                Value::Integer(n) => n.to_string(),
+                Value::Float(f) => f.to_string(),
+                Value::Boolean(b) => b.to_string(),
+                other => {
+                    return Err(InterpreterError::TypeError {
+                        message: format!(
+                            "map_path: keys must be strings, integers, floats, or booleans, got {}",
+                            other.type_name()
+                        ),
+                    });
+                }
+            };
+            current = match &current {
+                Value::Map(m) => m.get(&key_text).cloned().unwrap_or(Value::Unit),
+                // Objects, structs, and parsed JSON objects are all
+                // struct-shaped values.
+                Value::Struct { fields, .. } => {
+                    fields.get(&key_text).cloned().unwrap_or(Value::Unit)
+                }
+                Value::Unit => return Ok(Value::Unit),
+                other => {
+                    return Err(InterpreterError::TypeError {
+                        message: format!(
+                            "map_path: cannot read key '{}' from {}",
+                            key_text,
+                            other.type_name()
+                        ),
+                    });
+                }
+            };
+        }
+        Ok(current)
     }
 
     fn map_set(&self, mut args: Vec<Value>) -> Result<Value, InterpreterError> {

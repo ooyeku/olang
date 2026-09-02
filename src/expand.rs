@@ -228,51 +228,61 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
                 candidates.extend(names.iter().map(|n| dir.join(n)));
             }
             candidates.extend(names.iter().map(std::path::PathBuf::from));
-            // Package imports resolve through the shelf exactly as the
-            // runtime resolves them — without this, a LIBRARY could
-            // never export a macro: `use web` finds the package's
+            // Package imports resolve as the runtime resolves them —
+            // without this, a LIBRARY could never export a macro. The
+            // nearest manifest's path and shelf dependencies come first,
+            // then the shelf by bare name: `use web` finds the package's
             // index.ol, `use web.lib.store` a module inside it.
-            if let Ok(shelf) = crate::pkg::shelf::Shelf::load() {
-                if let Some(dir) = shelf.libraries.get(&u[0]) {
-                    if u.len() == 1 {
-                        candidates.push(dir.join("index.ol"));
-                    } else {
-                        let rest = u[1..].join("/");
-                        candidates.push(dir.join(format!("{rest}.ol")));
-                        candidates.push(dir.join(format!("{rest}/index.ol")));
-                    }
+            if let Some(dir) = package_dir(&u[0], base_dir) {
+                if u.len() == 1 {
+                    candidates.push(dir.join("index.ol"));
+                } else {
+                    let rest = u[1..].join("/");
+                    candidates.push(dir.join(format!("{rest}.ol")));
+                    candidates.push(dir.join(format!("{rest}/index.ol")));
                 }
             }
-            let Some(module_src) = candidates
+            let Some((module_path, module_src)) = candidates
                 .iter()
-                .find_map(|c| std::fs::read_to_string(c).ok())
+                .find_map(|c| std::fs::read_to_string(c).ok().map(|src| (c.clone(), src)))
             else {
                 continue;
             };
-            let module_prog = parser.parse_raw(&module_src).map_err(|e| {
-                format!(
-                    "use {}: the imported module does not parse: {e}",
-                    u.join(".")
-                )
-            })?;
+            let label = u.join(".");
+            let module_prog =
+                load_module_macros(&parser, &mut interp, &mut known_macros, &module_src, &label)?;
+            // A package's macros travel through its index.ol re-exports:
+            // `share use lib.store { ... }` in the index brings lib/store.ol's
+            // meta fns along, so `use web` reaches `@store` without the
+            // consumer naming the declaring module's path. One level, and
+            // resolved against the index's own directory.
+            let module_dir = module_path.parent().map(|d| d.to_path_buf());
             for st in &module_prog.statements {
-                if let crate::ast::Statement::MetaFnDecl { span, .. } = st.unwrapped() {
-                    let fn_src = module_src[span.0..span.1]
-                        .trim_start()
-                        .strip_prefix("meta")
-                        .unwrap_or(&module_src[span.0..span.1])
-                        .trim_start()
-                        .to_string();
-                    let prog = parser.parse_raw(&fn_src).map_err(|e| {
-                        format!("use {}: imported meta fn does not parse: {e}", u.join("."))
-                    })?;
-                    interp.eval_program(prog).map_err(|e| {
-                        format!("use {}: imported meta fn failed to load: {e}", u.join("."))
-                    })?;
-                    if let Some(name) = meta_fn_name(&fn_src) {
-                        known_macros.insert(name);
-                    }
-                }
+                let crate::ast::Statement::ShareDecl(crate::ast::ShareDecl::Use(su)) =
+                    st.unwrapped()
+                else {
+                    continue;
+                };
+                let Some(dir) = &module_dir else { continue };
+                let sub = su.path.join("/");
+                let sub_candidates = [
+                    dir.join(format!("{sub}.ol")),
+                    dir.join(format!("{sub}/index.ol")),
+                ];
+                let Some(sub_src) = sub_candidates
+                    .iter()
+                    .find_map(|c| std::fs::read_to_string(c).ok())
+                else {
+                    continue;
+                };
+                let sub_label = format!("{label} (re-export of {})", su.path.join("."));
+                load_module_macros(
+                    &parser,
+                    &mut interp,
+                    &mut known_macros,
+                    &sub_src,
+                    &sub_label,
+                )?;
             }
         }
 
@@ -347,10 +357,12 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
             // an unattributed whole-file error next round.
             parser.parse_raw(&format!("({})\n", out)).map_err(|e| {
                 format!(
-                    "@{} (line {}) generated source that does not splice as an \
-                     expression (a trailing // comment in the output is the usual \
-                     cause):\n{}\n── generated ──\n{}",
-                    c.name, c.line, e, out
+                    "@{} (line {}): generated source does not parse: {}{}\n── generated ──\n{}",
+                    c.name,
+                    c.line,
+                    e,
+                    trailing_comment_hint(&out),
+                    out
                 )
             })?;
             splices.push((c.span.0, c.span.1, out, c.name.clone()));
@@ -465,8 +477,11 @@ fn expand_fragment(
                 .map_err(|e| format!("@{}: {}", c.name, e))?;
             parser.parse_raw(&format!("({})\n", out)).map_err(|e| {
                 format!(
-                    "@{} generated source that does not splice as an expression:\n{}\n── generated ──\n{}",
-                    c.name, e, out
+                    "@{}: generated source does not parse: {}{}\n── generated ──\n{}",
+                    c.name,
+                    e,
+                    trailing_comment_hint(&out),
+                    out
                 )
             })?;
             splices.push((c.span.0, c.span.1, out));
@@ -576,6 +591,87 @@ fn collect_sites(
 }
 
 /// Top-level `use` paths, for imported-macro resolution.
+/// The directory a package import resolves to, or None for a plain
+/// relative module. The nearest manifest (from `base_dir`, else the
+/// working directory) is consulted first: a `{ path = ... }` dependency
+/// points at its directory, a `{ shelf = ... }` one at the shelf entry it
+/// names. Failing that, the bare name is looked up on the shelf directly.
+fn package_dir(name: &str, base_dir: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+    use crate::pkg::manifest::{Dependency, Manifest};
+    let start = base_dir
+        .map(|d| d.to_path_buf())
+        .or_else(|| std::env::current_dir().ok());
+    if let Some(start) = start
+        && let Some(root) = Manifest::find_root(&start)
+        && let Ok(manifest) = Manifest::load(&root)
+        && let Some(dep) = manifest.dependencies.get(name)
+    {
+        match dep {
+            Dependency::Path { path } => return Some(root.join(path)),
+            Dependency::Shelf { shelf } => {
+                return crate::pkg::shelf::Shelf::load()
+                    .ok()
+                    .and_then(|s| s.libraries.get(shelf).cloned());
+            }
+            _ => {}
+        }
+    }
+    crate::pkg::shelf::Shelf::load()
+        .ok()
+        .and_then(|s| s.libraries.get(name).cloned())
+}
+
+/// Load every top-level meta fn of a module's source into the expansion
+/// interpreter and record its name as a known macro. The module file's
+/// content is an expansion input exactly like the source itself; an
+/// unparseable one is an error. Returns the parsed module for callers
+/// that walk its re-exports.
+fn load_module_macros(
+    parser: &Parser,
+    interp: &mut crate::interpreter::Interpreter,
+    known_macros: &mut std::collections::HashSet<String>,
+    module_src: &str,
+    label: &str,
+) -> Result<Program, String> {
+    let module_prog = parser
+        .parse_raw(module_src)
+        .map_err(|e| format!("use {label}: the imported module does not parse: {e}"))?;
+    for st in &module_prog.statements {
+        if let crate::ast::Statement::MetaFnDecl { span, .. } = st.unwrapped() {
+            let fn_src = module_src[span.0..span.1]
+                .trim_start()
+                .strip_prefix("meta")
+                .unwrap_or(&module_src[span.0..span.1])
+                .trim_start()
+                .to_string();
+            let prog = parser
+                .parse_raw(&fn_src)
+                .map_err(|e| format!("use {label}: imported meta fn does not parse: {e}"))?;
+            interp
+                .eval_program(prog)
+                .map_err(|e| format!("use {label}: imported meta fn failed to load: {e}"))?;
+            if let Some(name) = meta_fn_name(&fn_src) {
+                known_macros.insert(name);
+            }
+        }
+    }
+    Ok(module_prog)
+}
+
+/// The one splice failure with a non-obvious cause: output whose last
+/// line ends in a `//` comment parses alone but swallows the call site's
+/// closing token when spliced inline. Name it only when it is present —
+/// a guess offered for every failure pointed authors away from the real
+/// parse error (a leading-underscore name, in the incident behind this).
+fn trailing_comment_hint(out: &str) -> &'static str {
+    let last = out.trim_end().rsplit('\n').next().unwrap_or("");
+    if last.contains("//") {
+        " (the output ends in a // comment, which swallows the call site's closing token when spliced inline)"
+    } else {
+        ""
+    }
+}
+
 fn collect_imports(program: &Program) -> Vec<Vec<String>> {
     program
         .statements

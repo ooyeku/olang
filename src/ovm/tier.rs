@@ -538,6 +538,12 @@ impl BytecodeTier {
     /// Try to execute `func(args)` on the bytecode VM. `depth_base` is
     /// the interpreter's current call depth, seeded into the VM so both
     /// tiers spend from the one shared budget (see `set_depth_base`).
+    /// The owning program's top-level bindings, for the bridge interpreter
+    /// (an O(1) Arc clone; the VM reseeds only when the pointer moves).
+    pub fn set_host_globals(&mut self, globals: std::sync::Arc<im::HashMap<String, Value>>) {
+        self.vm.set_host_globals(globals);
+    }
+
     pub fn try_call_at_depth(
         &mut self,
         func: &Function,

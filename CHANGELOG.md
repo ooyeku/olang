@@ -5,6 +5,85 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **W9 — what building open-track asked for.** The first large program
+  written against olang's packages from outside the repository produced
+  forty-six rows (docs/roadmap.md, W9); this release lands them.
+
+  *Wrong answers and divergence.* The module cache is keyed by the
+  resolved file, not the dotted name, and a module inside a dependency
+  resolves its own `use lib.x` against its package: two packages that
+  each have a `lib.util` never hand one another's module out, and a
+  dependency's internal imports no longer depend on the order its
+  `index.ol` happened to import them (tests/module_resolution_test.rs).
+  `x |> <any callable expression>` works in the interpreter as it
+  always did in the bytecode tier — the same program no longer ran in
+  the browser and failed natively. `to_string` is the identity on
+  strings (the quoted form was the show/debug shape; generic code that
+  stringified map values grew quotes and stopped comparing equal;
+  `meta.lit` renders the literal form). `col.any`/`col.all` from a hot
+  function ran 3.5× slower with the tier on than off: a lambda crossing
+  the bridge got a fresh closure Arc per crossing, so the bridge
+  recompiled it on every callback — both `col.any`/`col.all` now loop
+  natively like `map`/`filter`, and a closure's interpreter form is
+  built once; the shared builtin registry is an `Arc` instead of a
+  per-call clone. `meta.eval(src, #{ "max_steps": n, "timeout_ms": ms
+  })` bounds untrusted source; a runaway rule is one
+  `Err("budget exceeded …")`, not a hung thread. And a closure that
+  referenced a top-level `let` declared after it failed "Undefined
+  variable" only with the tier on (so, only in the browser): a function
+  value the compiler declined ran on the bridge interpreter, which knew
+  the program's functions but not its globals — the bridge is now seeded
+  with the host program's top-level values.
+
+  *Errors that point the wrong way.* An error raised inside an imported
+  module reports the module's own file and line (the importer's `use`
+  line was blamed); a bare `share` — `share meta fn` — is a parse error
+  naming the six declarations it may precede and that a meta fn is
+  exported by being declared; macro splice failures lead with the parse
+  error and mention a trailing `//` comment only when one is present;
+  identifiers may begin with `_` (`_tmp`, `__gen0` — a lone `_` stays
+  the wildcard, and `spawn`/`meta` are bounded so `spawn_cost` is a name); `max`/`min` accept two or more scalars; `olang test`
+  names the top-level statement that failed outside any test block.
+
+  *Modules, macros, and the project tool.* A package's macros travel
+  through its `index.ol` re-exports, and the expander resolves manifest
+  path and shelf dependencies (`use web` reaches `@store`). `olang eval
+  '<source>'` evaluates a one-liner with the working directory's project
+  libraries in scope, and `olang <file>` outside any project falls back
+  to the working directory's for shelf lookups. `otc new` derives the
+  import identifier from a hyphenated name and prints it, refuses names
+  that cannot be identifiers, scaffolds `--web` on the web SDK (two
+  files; `--web-bare` keeps the raw shape), and says `git init` when
+  the new project is outside a repository.
+
+  *Standard library.* `map_path(m, keys)` for nested reads; `drop` as
+  `skip`'s alias and every list helper mirrored under `col.` (`col.take`,
+  …) with `col.index_of` and `col.slice`; `dates.stamp()` as the storage
+  timestamp (UTC, second precision, `Z`); `validate` accepts parsed JSON
+  objects, a `"date"` kind, and `"where": (v) => Result`; `viz` accepts
+  `w`/`h`, passes `font_size`/`font` to plot, and refuses unknown spec
+  keys; `dom.prefers_dark()`, `dom.active_id()`, `dom.confirm(msg)`, and
+  `dom.read_file(el, k)`; the shelf's markdown renders task lists as
+  checkboxes.
+
+  *The web SDK.* An input's Enter no longer double-fires through the
+  `change` it produces; `lib.sql.row` is exported as `one` (and `olang
+  check` warns when a module re-exports one name twice); `try_rows`/
+  `try_exec`; `patch(id, node)` repaints one subtree; `btn_confirm`
+  two-step buttons; `serve` takes `"log"` and a list of client files,
+  serves the runtime at a content-addressed immutable URL with
+  `Accept-Encoding` negotiation over pre-compressed siblings, and the
+  shim paints the shell before running the bundle and reports boot
+  phases in `window.olangBoot`; web.css supports `data-theme`; the viz
+  tooltip reads the design tokens.
+
+  *Documentation.* "Sharing state under `http.serve`": the channel-
+  service recipe that replaces a module-level cell.
+
 ## [0.80.0] - 2026-08-31
 
 ### Added

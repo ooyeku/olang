@@ -15,23 +15,29 @@
 //! `index.ol` what it should be: the list of what the package exports.
 
 use anyhow::{Context, Result};
-use olang::pkg::manifest::{Manifest, PackageMeta};
+use olang::pkg::manifest::{Dependency, Manifest, PackageMeta};
 use semver::Version;
 use std::fs;
 use std::path::Path;
 
-pub fn execute(name: String, lib: bool, web: bool, verbose: bool) -> Result<()> {
+pub fn execute(name: String, lib: bool, web: bool, web_bare: bool, verbose: bool) -> Result<()> {
     if name.is_empty() || name.contains(['/', '\\']) {
         return Err(anyhow::anyhow!(
             "Project name must be a plain directory name, got '{}'",
             name
         ));
     }
-    if lib && web {
+    if [lib, web, web_bare].iter().filter(|b| **b).count() > 1 {
         return Err(anyhow::anyhow!(
-            "--lib and --web are different shapes; pick one"
+            "--lib, --web, and --web-bare are different shapes; pick one"
         ));
     }
+    // The directory keeps the name as typed; the package is imported by
+    // an identifier, so hyphens become underscores in the manifest and in
+    // every `use` line printed below (Rust's crate convention). A name
+    // that cannot be made into an identifier is refused up front rather
+    // than scaffolding a package nothing can import.
+    let ident = import_identifier(&name)?;
     let root = Path::new(&name);
     if root.exists() {
         return Err(anyhow::anyhow!("Directory '{}' already exists", name));
@@ -39,34 +45,48 @@ pub fn execute(name: String, lib: bool, web: bool, verbose: bool) -> Result<()> 
 
     fs::create_dir(root).with_context(|| format!("Failed to create directory '{}'", name))?;
 
+    // The SDK-shaped web app depends on the shelf's `web` and `validate`;
+    // the manifest records only the names, and the shelf supplies the
+    // directories at install time.
+    let mut dependencies = std::collections::BTreeMap::new();
+    if web {
+        for dep in ["web", "validate"] {
+            dependencies.insert(
+                dep.to_string(),
+                Dependency::Shelf {
+                    shelf: dep.to_string(),
+                },
+            );
+        }
+    }
     let manifest = Manifest {
         package: PackageMeta {
-            name: name.clone(),
+            name: ident.clone(),
             version: Version::new(0, 1, 0),
             description: None,
             authors: Vec::new(),
             license: None,
         },
-        dependencies: Default::default(),
+        dependencies,
         capabilities: None,
     };
     manifest
         .save(root)
         .map_err(|e| anyhow::anyhow!("Failed to write olang.toml: {}", e))?;
 
-    if web {
-        return scaffold_web(root, &name, verbose);
+    if web || web_bare {
+        return scaffold_web(root, &ident, web_bare, verbose);
     }
 
     let sources: Vec<(&str, String)> = if lib {
         fs::create_dir(root.join("lib")).context("Failed to create lib directory")?;
         vec![
-            ("index.ol", lib_index_source(&name)),
-            ("lib/greet.ol", lib_module_source(&name)),
+            ("index.ol", lib_index_source(&ident)),
+            ("lib/greet.ol", lib_module_source(&ident)),
         ]
     } else {
         fs::create_dir(root.join("src")).context("Failed to create src directory")?;
-        vec![("src/main.ol", app_main_source(&name))]
+        vec![("src/main.ol", app_main_source(&ident))]
     };
 
     // The scaffold's promise is that it always generates working code —
@@ -84,9 +104,9 @@ pub fn execute(name: String, lib: bool, web: bool, verbose: bool) -> Result<()> 
         .join(", ");
 
     let readme = if lib {
-        lib_readme_source(&name)
+        lib_readme_source(&ident)
     } else {
-        app_readme_source(&name)
+        app_readme_source(&ident)
     };
     fs::write(root.join("README.md"), readme).context("Failed to write README.md")?;
     fs::write(root.join(".gitignore"), GITIGNORE).context("Failed to write .gitignore")?;
@@ -100,6 +120,12 @@ pub fn execute(name: String, lib: bool, web: bool, verbose: bool) -> Result<()> 
         if lib { "library" } else { "project" },
         name
     );
+    if ident != name {
+        println!(
+            "   (imported as `use {}` — the package name is an identifier)",
+            ident
+        );
+    }
     println!();
     println!("Get started:");
     println!("   cd {}", name);
@@ -111,17 +137,56 @@ pub fn execute(name: String, lib: bool, web: bool, verbose: bool) -> Result<()> 
             "   otc add ../{}  # or: otc lib add ../{} then otc add by name",
             name, name
         );
+        println!("   use {} {{ hello }}", ident);
     } else {
         println!("   olang src/main.ol");
     }
+    git_hint(root);
     Ok(())
+}
+
+/// The identifier a package is imported by: the directory name with `-`
+/// as `_`. Anything else that is not identifier-shaped is refused.
+fn import_identifier(name: &str) -> Result<String> {
+    let ident = name.replace('-', "_");
+    let mut chars = ident.chars();
+    let head_ok = chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
+    let rest_ok = ident.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !head_ok || !rest_ok || ident == "_" {
+        return Err(anyhow::anyhow!(
+            "'{}' cannot be a package name: it is imported as an identifier, so use letters, \
+             digits, `_`, and `-` (hyphens become underscores), starting with a letter",
+            name
+        ));
+    }
+    Ok(ident)
+}
+
+/// The tool narrates next steps; version control is one of them. A new
+/// project outside any repository gets one line saying so.
+fn git_hint(root: &Path) {
+    let inside_repo = root
+        .canonicalize()
+        .ok()
+        .map(|p| p.ancestors().any(|a| a.join(".git").exists()))
+        .unwrap_or(false);
+    if !inside_repo {
+        println!("   git init             # not a git repository yet");
+    }
 }
 
 /// The `--web` shape: the full-stack starter (see `super::web`). Every
 /// generated `.ol` file is parse-checked before writing, same promise
 /// as the other shapes.
-fn scaffold_web(root: &Path, name: &str, verbose: bool) -> Result<()> {
-    for (rel, contents) in super::web::files(name) {
+fn scaffold_web(root: &Path, name: &str, bare: bool, verbose: bool) -> Result<()> {
+    let files = if bare {
+        super::web::bare_files(name)
+    } else {
+        super::web::files(name)
+    };
+    for (rel, contents) in files {
         let path = root.join(&rel);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
@@ -148,6 +213,7 @@ static/olang_playground.wasm
     )
     .context("Failed to write .gitignore")?;
 
+    fs::create_dir_all(root.join("static")).context("Failed to create static directory")?;
     let wasm_note = match super::web::wasm_runtime() {
         Some(found) => {
             fs::copy(&found, root.join("static/olang_playground.wasm"))
@@ -159,12 +225,24 @@ static/olang_playground.wasm
             .to_string(),
     };
 
-    println!("Created new olang web app: {}", name);
+    println!(
+        "Created new olang web app{}: {}",
+        if bare {
+            " (bare stdlib shape)"
+        } else {
+            " on the web SDK"
+        },
+        name
+    );
     println!();
     println!("Get started:");
     println!("   cd {}", name);
+    if !bare {
+        println!("   otc install          # resolve `web` and `validate` from your shelf");
+    }
     println!("   olang main.ol        # http://127.0.0.1:7500");
     println!("{}", wasm_note);
+    git_hint(root);
     Ok(())
 }
 

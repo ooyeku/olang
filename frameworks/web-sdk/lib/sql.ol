@@ -53,6 +53,15 @@ share fn version(conn) = {
 /// All rows for a parameterized query.
 share fn rows(conn, query, params) = unwrap(db.query(conn, query, params))
 
+/// `rows` for a query that may legitimately fail — one built from user
+/// text, an FTS5 `MATCH` that may not parse. The same row shape and
+/// parameter binding, as a Result instead of a raise.
+share fn try_rows(conn, query, params) = db.query(conn, query, params)
+
+/// `exec` as a Result, for statements whose failure is an answer rather
+/// than a bug.
+share fn try_exec(conn, statement, params) = db.execute(conn, statement, params)
+
 /// One row or Unit — absence is a value, not an error.
 share fn row(conn, query, params) = {
     let rows = unwrap(db.query(conn, query, params))

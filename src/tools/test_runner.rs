@@ -128,6 +128,26 @@ pub fn run(path: &Path, coverage: bool, show_missing: bool) -> i32 {
             file_errors += 1;
             println!("  {} {}", "✗".red().bold(), "file error".bold());
             println!("      {}", e.to_string().red());
+            // Name the statement that ran: a top-level effect the module
+            // author did not expect `olang test` to execute (a `mount`, a
+            // timer) is the usual cause, and "file error" alone sends them
+            // looking at the test blocks instead.
+            if let Some(loc) = interpreter.take_error_location() {
+                let where_ = match &loc.file {
+                    Some(f) => format!("{}:{}:{}", f, loc.line, loc.column),
+                    None => format!("{}:{}:{}", file.display(), loc.line, loc.column),
+                };
+                println!(
+                    "      {}",
+                    format!(
+                        "at {} — a top-level statement outside any test block; guard \
+                         effects that only make sense when run (`if dom.available()`, a \
+                         `main` the runner never calls), or move them below the tests",
+                        where_
+                    )
+                    .dimmed()
+                );
+            }
         }
     }
 

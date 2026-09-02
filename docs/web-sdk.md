@@ -127,6 +127,36 @@ which reads its argument with `action_arg(ev)`. `api.call(name,
 payload, k)` posts to the rpc route and hands `k` the unwrapped
 `Result`.
 
+The event contract, stated once: a click resolves its action from the
+nearest `data-action` ancestor, so styled children of a button still
+name it; a click *on* a form control (input, select, textarea) is a
+focus or open gesture, never an action — controls fire on `change`, and
+text inputs also on Enter, with the `change` that follows an Enter
+within the same beat recognized as the same intent and not dispatched
+twice; and a handled event repaints only when the store changed, so a
+click into an action-carrying input never wipes its own text.
+
+Repainting is `apply` (the whole view) or `patch(id, node)` — one
+subtree rendered into the element with that id, leaving the rest of
+the page and its focused input alone: the toast, the counter, the
+chart that should not cost a full render on every store write.
+
+Destructive actions have a component: `btn_confirm(label, action)` arms
+on the first click (its label becomes "Confirm …") and fires `action`
+on the second within a few seconds; any other click disarms it. The
+armed state is the view layer's, so the app registers only the real
+action. `dom.confirm(message)` is the dialog alternative.
+
+The page's own state is readable: `dom.active_id()` says what has
+focus (a liveness poll re-syncing the store can leave an in-progress
+edit alone), `dom.prefers_dark()` says which palette a themed chart
+should pick, and `dom.read_file(el, k)` hands a file input's first
+file to `k` as `#{ "name", "size", "type", "base64" }` — browser-side
+uploads over an ordinary rpc body. The design system's tokens follow
+the system scheme and also an explicit `data-theme="light"` or
+`"dark"` on `<html>`, so a light/dark/system toggle is one attribute
+write.
+
 ## Forms
 
 Fields are declared once and used three ways:
@@ -145,9 +175,13 @@ truth.
 
 `open_db(path, migrations)` applies versioned migrations exactly once,
 each inside a transaction, recording `schema_version` — appending a
-migration is how capability arrives. `rows`/`row`/`exec`/`insert_row`/
-`update_row` keep parameters positional, and `row` returns Unit for
-absence. `tx(conn, f)` commits on Ok and rolls back on Err.
+migration is how capability arrives. `rows`/`one`/`exec`/`insert_row`/
+`update_row` keep parameters positional, and `one` (the single-row
+query — exported under that name because `row` is the layout helper)
+returns Unit for absence. `tx(conn, f)` commits on Ok and rolls back on
+Err. `try_rows` and `try_exec` are the same calls as `Result`s, for a
+query built from user text — an FTS5 `MATCH` that may not parse — where
+failure is an answer rather than a bug.
 
 ## The store
 
@@ -157,6 +191,8 @@ declaration — a prefix and a field table — validated and normalized
 while the program loads:
 
 ```olang no-run
+use web { mount, hydrate }
+
 let SPEC = @store("app", [
     ["mode",  "url",   "list"],
     ["query", "url",   "state: open"],
@@ -193,7 +229,21 @@ The browser loads one source file. `serve` builds it: the SDK's
 browser modules spliced ahead of the app's client code, `use` lines
 and `share` markers stripped, test blocks removed, and the result
 parse-checked at boot — a broken client fails loudly at the server,
-never as a blank page.
+never as a blank page. `"client"` may be a list of paths, bundled in
+order, so browser helpers live in tested lib modules that server code
+can import too.
+
+`serve` also takes `"log": (req, response, ms) => …` to own the
+request line, and serves the runtime two ways: `/olang.<hash>.wasm`,
+the content-addressed URL the shell references (immutable, cached for
+a year — a new build is a new URL), and `/olang.wasm`, revalidated by
+ETag. Both negotiate `Accept-Encoding`: a pre-compressed sibling on
+disk next to the wasm (`olang_playground.wasm.br` or `.gz`) is served
+with its `Content-Encoding` — the 6.7 MB runtime is 1.9 MB gzipped.
+The shim yields to the browser between instantiating the runtime and
+running the bundle, so the shell paints first, and records the boot
+phases in `window.olangBoot` (`fetch_instantiate_ms`,
+`session_start_ms`, `total_ms`).
 
 The playground wasm the demo serves (`static/olang_playground.wasm`)
 is a build artifact, not a committed file: `make wasm` builds it and

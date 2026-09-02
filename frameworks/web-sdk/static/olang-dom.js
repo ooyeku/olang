@@ -7,6 +7,11 @@
   // currentScript is only valid during synchronous execution — capture
   // the page's chosen program before the first await.
   const src = document.currentScript?.dataset?.src ?? "/app.ol";
+  // The runtime's URL: the shell passes the content-addressed form
+  // (`/olang.<hash>.wasm`, immutable) so a repeat visit never asks the
+  // server about it; the plain path is the fallback.
+  const wasmUrl = document.currentScript?.dataset?.wasm ?? "/olang.wasm";
+  const bootMarks = { start: performance.now() };
   let ex; // wasm exports
   const mem = () => new Uint8Array(ex.memory.buffer);
   const readStr = (ptr, len) => new TextDecoder().decode(mem().slice(ptr, ptr + len));
@@ -199,6 +204,26 @@
         }
       },
       host_dom_focus: (h) => { elements[Number(h)].focus(); },
+      host_dom_prefers_dark: () =>
+        (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? 1 : 0,
+      host_dom_active_id: () => giveStr((document.activeElement && document.activeElement.id) || ""),
+      host_dom_confirm: (ptr, len) => (window.confirm(readStr(ptr, len)) ? 1 : 0),
+      // A file input's first file, delivered as JSON through the same
+      // dispatch a fetch_json callback uses: { name, size, type, base64 }.
+      host_dom_read_file: (h, id) => {
+        const el = elements[Number(h)];
+        const file = el && el.files && el.files[0];
+        const cb = Number(id);
+        if (!file) { dispatchRawJson(cb, JSON.stringify({ error: "no file selected" })); return; }
+        const reader = new FileReader();
+        reader.onload = () => {
+          const url = String(reader.result);
+          const base64 = url.slice(url.indexOf(",") + 1);
+          dispatchRawJson(cb, JSON.stringify({ name: file.name, size: file.size, type: file.type, base64 }));
+        };
+        reader.onerror = () => dispatchRawJson(cb, JSON.stringify({ error: String(reader.error) }));
+        reader.readAsDataURL(file);
+      },
       host_dom_set_class: (h, ptr, len) => { elements[Number(h)].className = readStr(ptr, len); },
       host_dom_fetch: (mp, ml, pp, pl, bp, bl, id) => {
         const method = readStr(mp, ml);
@@ -344,7 +369,7 @@
         fetch(path)
           .then((r) => (r.ok ? r.text() : Promise.reject(r.status)))
           .then((source) =>
-            w.postMessage({ boot: { wasmUrl: "/olang.wasm", source } }))
+            w.postMessage({ boot: { wasmUrl, source } }))
           .catch((e) => console.error("olang worker boot:", path, e));
         return BigInt(workers.push(entry) - 1);
       },
@@ -473,10 +498,10 @@
   async function instantiateWasm() {
     if (WebAssembly.instantiateStreaming) {
       try {
-        return await WebAssembly.instantiateStreaming(fetch("/olang.wasm"), imports);
+        return await WebAssembly.instantiateStreaming(fetch(wasmUrl), imports);
       } catch (e) { /* buffered fallback below */ }
     }
-    const wasmBytes = await fetch("/olang.wasm").then((r) => r.arrayBuffer());
+    const wasmBytes = await fetch(wasmUrl).then((r) => r.arrayBuffer());
     if (wasmBytes.byteLength < 8) {
       document.body.insertAdjacentHTML(
         "beforeend",
@@ -497,12 +522,27 @@ Two known causes:
     fetch(src).then((r) => r.text()),
   ]);
   ({ instance: { exports: ex } } = wasmModule);
+  bootMarks.instantiated = performance.now();
+
+  // Yield once between instantiation and the session start: the
+  // parse-and-run of the bundle is one synchronous call, and without
+  // this frame nothing paints — not even the shell — until it ends.
+  await new Promise((resolve) => setTimeout(resolve, 0));
 
   const enc = new TextEncoder().encode(source);
   const ptr = ex.olang_alloc(enc.length);
   mem().set(enc, ptr);
   const boot = readResult(ex.olang_session_start(ptr, enc.length));
   ex.olang_dealloc(ptr, enc.length);
+  bootMarks.started = performance.now();
+  // Boot-phase timings, so an app can see what it pays for:
+  // window.olangBoot = { fetch_instantiate_ms, session_start_ms, total_ms }.
+  window.olangBoot = {
+    fetch_instantiate_ms: Math.round(bootMarks.instantiated - bootMarks.start),
+    session_start_ms: Math.round(bootMarks.started - bootMarks.instantiated),
+    total_ms: Math.round(bootMarks.started - bootMarks.start),
+  };
+  console.debug("olang boot", window.olangBoot);
   if (boot.error) {
     document.body.insertAdjacentHTML(
       "beforeend",

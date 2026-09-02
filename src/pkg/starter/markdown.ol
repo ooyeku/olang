@@ -96,6 +96,20 @@ fn ordered_prefix(line) = {
 
 fn is_blank(line) = str.length(str.trim(line)) == 0
 fn is_quote(line) = str.starts_with(line, "> ") || (str.trim(line) == ">")
+/// One bullet's `<li>`. GitHub-style task items — `[ ]` / `[x]` at the
+/// start — render as a disabled checkbox inside `<li class="task">`,
+/// kept in source order so a click can map back to the n-th task line.
+fn list_item(text) = {
+    let t = str.trim_start(text)
+    if str.starts_with(t, "[ ] ") || t == "[ ]" =>
+        "<li class=\"task\"><input type=\"checkbox\" disabled> "
+            + render_inline(str.trim_start(str.substring(t, 3, str.length(t)))) + "</li>"
+    else if str.starts_with(t, "[x] ") || str.starts_with(t, "[X] ") || t == "[x]" =>
+        "<li class=\"task done\"><input type=\"checkbox\" disabled checked> "
+            + render_inline(str.trim_start(str.substring(t, 3, str.length(t)))) + "</li>"
+    else => "<li>" + render_inline(text) + "</li>"
+}
+
 fn is_bullet(line) = str.starts_with(line, "- ")
 fn is_rule(line) = {
     let t = str.trim(line)
@@ -152,7 +166,7 @@ share fn to_html(md) = {
             let mut items = []
             while (i < n) && is_bullet(lines[i]) {
                 let text = str.substring(lines[i], 2, str.length(lines[i]))
-                items = items + ["<li>" + render_inline(text) + "</li>"]
+                items = items + [list_item(text)]
                 i = i + 1
             }
             out = out + ["<ul>" + join(items, "") + "</ul>"]
@@ -204,6 +218,9 @@ test "escaping keeps untrusted input textual" {
 test "blocks" {
     assert_eq(to_html("# Title"), "<h1>Title</h1>")
     assert_eq(to_html("- a\n- b"), "<ul><li>a</li><li>b</li></ul>")
+    assert_eq(to_html("- [ ] write tests\n- [x] ship"),
+        "<ul><li class=\"task\"><input type=\"checkbox\" disabled> write tests</li>"
+        + "<li class=\"task done\"><input type=\"checkbox\" disabled checked> ship</li></ul>")
     assert_eq(to_html("1. a\n2. b"), "<ol><li>a</li><li>b</li></ol>")
     assert_eq(to_html("> quoted\n> words"), "<blockquote><p>quoted words</p></blockquote>")
     assert_eq(to_html("---"), "<hr>")

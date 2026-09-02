@@ -1,20 +1,24 @@
-//! The `--web` template: a full-stack starter in the architecture the
-//! tracker and ledger examples proved out — one olang process serves a
-//! SQLite-backed JSON API, the page, and the frontend's own olang
-//! source; the browser runs that source against the DOM through the
-//! wasm runtime.
+//! The `--web` template: a full-stack starter on the web SDK — one
+//! olang process serves a SQLite-backed JSON API, the page, and the
+//! browser's own olang source; the browser runs that source against
+//! the DOM through the wasm runtime. Two files carry the whole app:
+//! `main.ol` (routes over `serve`) and `client.ol` (`mount`, `action`,
+//! `call`). Everything else — the route table, the JSON envelope,
+//! static assets, the design system, the dom shim, form validation,
+//! migrations — is the SDK's, imported with `use web`.
 //!
 //! The scaffold is a working notes app, deliberately small: one
-//! resource, three endpoints, a frontend that lists/adds/deletes. Every
-//! seam a real app grows along (another table, another route, another
-//! frontend section) is present exactly once, so extending it is
+//! resource, three rpc endpoints, a frontend that lists/adds/deletes.
+//! Every seam a real app grows along (another table, another rpc,
+//! another view) is present exactly once, so extending it is
 //! repetition rather than research.
 //!
 //! The wasm runtime is the one artifact the scaffold cannot write from
 //! source. `wasm_runtime()` looks in the places an installation puts it
 //! and copies it in; when it is nowhere, the app still scaffolds and the
 //! server still runs — the README and a boot-time warning say how to
-//! supply it.
+//! supply it. `--web-bare` keeps the previous shape, the raw stdlib with
+//! every seam hand-rolled, for people studying what the SDK packages.
 
 use std::path::PathBuf;
 
@@ -23,8 +27,18 @@ use std::path::PathBuf;
 const ROUTER_OL: &str = include_str!("../../../examples/web/ledger/lib/router.ol");
 const DOM_SHIM_JS: &str = include_str!("../../../examples/web/app/static/olang-dom.js");
 
-/// (relative path, contents) for every file the template writes.
+/// (relative path, contents) for every file the SDK-shaped template
+/// writes.
 pub fn files(name: &str) -> Vec<(String, String)> {
+    vec![
+        ("main.ol".to_string(), sdk_main_ol(name)),
+        ("client.ol".to_string(), sdk_client_ol(name)),
+        ("README.md".to_string(), sdk_readme(name)),
+    ]
+}
+
+/// The `--web-bare` shape: the raw stdlib with every seam written out.
+pub fn bare_files(name: &str) -> Vec<(String, String)> {
     let token_var = format!("{}_TOKEN", name.to_uppercase().replace('-', "_"));
     vec![
         ("main.ol".to_string(), main_ol(name)),
@@ -38,6 +52,176 @@ pub fn files(name: &str) -> Vec<(String, String)> {
         ("static/style.css".to_string(), STYLE_CSS.to_string()),
         ("README.md".to_string(), readme(name)),
     ]
+}
+
+fn sdk_main_ol(name: &str) -> String {
+    format!(
+        r##"// {name} — a full-stack olang app on the web SDK: this one process
+// serves a SQLite-backed JSON API, the page, and the browser's own
+// olang source (client.ol), which the browser runs against the DOM
+// through the wasm runtime. `serve` supplies the shell, the design
+// system, the dom shim, the bundled client, and the JSON envelope.
+//
+//   olang main.ol [port] [db_path]     (defaults: 7500, {name}.db)
+
+use web {{ rpc, serve, invalid, open_db, rows, one, insert_row, exec,
+          field, rules, read }}
+use validate {{ check }}
+
+let args = os.args()
+let port = if len(args) > 1 => unwrap(str.parse_int(args[1])) else => 7500
+let db_path = if len(args) > 2 => args[2] else => "{name}.db"
+
+// Versioned migrations, applied exactly once each. Appending one is
+// how the schema grows.
+let conn = open_db(db_path, [
+    ["CREATE TABLE notes (
+        id         INTEGER PRIMARY KEY,
+        text       TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )"]
+])
+
+// One declaration: the form's markup, its validation, and its reader.
+let note_fields = [
+    field("text", "Note", "text", #{{ "min": 1, "max": 500 }})
+]
+
+let routes = [
+    rpc("notes.list", (req, p) =>
+        rows(conn, "SELECT * FROM notes ORDER BY id DESC", [])),
+
+    rpc("notes.create", (req, p) => {{
+        let payload = match json.parse(req.body) {{ Ok(v) => v, Err(e) => #{{}} }}
+        let fields = read(payload, note_fields)
+        match check(fields, rules(note_fields)) {{
+            Err(problems) => invalid(problems),
+            Ok(valid) => {{
+                let id = insert_row(conn, "notes",
+                    map_set(valid, "created_at", dates.stamp()))
+                one(conn, "SELECT * FROM notes WHERE id = ?", [id])
+            }}
+        }}
+    }}),
+
+    rpc("notes.delete", (req, p) => {{
+        let payload = match json.parse(req.body) {{ Ok(v) => v, Err(e) => #{{}} }}
+        let n = exec(conn, "DELETE FROM notes WHERE id = ?", [map_get(payload, "id")])
+        #{{ "deleted": n }}
+    }})
+]
+
+serve(#{{
+    "title": "{name}",
+    "routes": routes,
+    "client": "client.ol",
+    "port": port
+}})
+"##
+    )
+}
+
+fn sdk_client_ol(name: &str) -> String {
+    format!(
+        r##"// {name}'s browser half — served bundled with the SDK's browser
+// modules, one file to the browser. The view is plain data over the
+// store; actions call the server and apply the result.
+use web {{ mount, action, action_arg, apply, input_value, call, err_details,
+          field, form_fields, stack, row, spread, card, muted, list_card,
+          list_row, btn_primary, btn_confirm, topbar, span, text }}
+
+let note_fields = [field("text", "Note", "text", #{{}})]
+
+fn note_row(n) = list_row([
+    span(#{{ "class": "grow" }}, [map_get(n, "text")]),
+    muted(map_get(n, "created_at")),
+    btn_confirm("Delete", "del:" + to_string(map_get(n, "id")))
+])
+
+fn view(s) = stack([
+    topbar("{name}", [muted(to_string(len(map_get(s, "notes"))) + " notes")]),
+    card([row([
+        span(#{{ "class": "grow", "style": "flex: 1" }},
+            [form_fields(note_fields, #{{}}, map_get(s, "errors"))]),
+        btn_primary("Add", "add")
+    ])]),
+    if len(map_get(s, "notes")) == 0 => card([muted("Nothing yet — add the first note above.")])
+    else => list_card(map(map_get(s, "notes"), (n) => note_row(n)))
+])
+
+fn refresh() =
+    call("notes.list", #{{}}, (r) => {{
+        match r {{
+            Ok(notes) => {{ apply((s) => map_set(s, "notes", notes)) }},
+            Err(e) => ()
+        }}
+    }})
+
+action("add", (ev) =>
+    call("notes.create", #{{ "text": input_value("text") }}, (r) => {{
+        match r {{
+            Ok(n) => {{
+                let cleared = apply((s) => map_set(s, "errors", []))
+                refresh()
+            }},
+            Err(e) => {{ apply((s) => map_set(s, "errors", err_details(e))) }}
+        }}
+    }}))
+
+action("del", (ev) =>
+    call("notes.delete", #{{ "id": unwrap(str.parse_int(action_arg(ev))) }},
+        (r) => refresh()))
+
+mount("#app", view, #{{ "notes": [], "errors": [] }})
+refresh()
+"##
+    )
+}
+
+fn sdk_readme(name: &str) -> String {
+    format!(
+        r##"# {name}
+
+A full-stack olang app on the web SDK: one process serves a
+SQLite-backed JSON API, the page, and the browser's own olang source,
+which the browser runs against the DOM through the wasm runtime.
+
+```bash
+olang main.ol              # http://127.0.0.1:7500
+olang main.ol 8080 my.db   # port and database path
+olang test .               # the SDK's and your test blocks
+```
+
+```text
+main.ol      server: migrations, the rpc route table, serve(...)
+client.ol    browser: the view over the store, actions calling the rpcs
+static/      olang_playground.wasm (copied in when found — see below)
+```
+
+The SDK (`use web`) supplies the shell, the design system (web.css,
+with a `data-theme` override for light/dark toggles), the dom shim, the
+bundled client, the JSON envelope, form validation, and migrations.
+Grow the app by adding a table (a migration), an rpc (a route), and a
+view (a function returning nodes) — each seam appears once here.
+
+## The wasm runtime
+
+The browser runs olang through `olang_playground.wasm`. The scaffold
+copies it into `static/` when it can find one (`$OLANG_WASM`, next to
+the `olang` executable, or `~/.olang/`); otherwise build it from the
+olang repository:
+
+```bash
+cargo build -p olang-playground --target wasm32-unknown-unknown --release
+cp target/wasm32-unknown-unknown/release/olang_playground.wasm static/
+```
+
+The server runs and the API works without it; only the browser frontend
+needs it. Drop a pre-compressed sibling next to it
+(`olang_playground.wasm.br` or `.gz`) and `serve` sends that to browsers
+that accept the encoding.
+"##
+    )
 }
 
 /// The `.ol` files the scaffold must refuse to write unless they parse.

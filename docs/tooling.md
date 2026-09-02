@@ -25,6 +25,7 @@ language server has [its own chapter](editors.md).
 | `olang <file> [args]` | Run a program (`olang run <file>` is the explicit form) |
 | `olang` | Start the REPL (`olang repl`) |
 | `olang check [path]` | Type-check without running; `--rules FILE` adds project lints |
+| `olang eval SOURCE` | Evaluate one expression and print its value, with the working directory's project libraries in scope |
 | `olang fmt [path]` | Format sources in place; `--check` reports instead of writing |
 | `olang test [path]` | Discover and run `test` blocks; `--coverage` reports coverage |
 | `olang build <file>` | Compile to a self-contained executable; `-o OUT` names it |
@@ -300,6 +301,27 @@ The command applies the following behaviors:
 
 - A rule that raises an error is reported with its name.
 - A rules file that defines no `rule_*` functions is an error.
+
+## `olang eval`
+
+`olang eval '<source>'` parses and runs the text with the REPL's
+semantics — the last expression's value is printed unless it is Unit —
+and no file is written. It is the probe for checking a stdlib behavior
+or a library call without a scratch file:
+
+```bash
+olang eval 'fs.ext("a.PNG")'
+olang eval 'use markdown { to_html }
+to_html("- [ ] one")'
+```
+
+Modules resolve as they would for a file in the working directory's
+project, so a probe typed at a project root reaches the shelf libraries
+that project depends on. The same rule applies to `olang <file>`: a
+script whose own directory has no `olang.toml` falls back to the working
+directory's project for dependency and shelf lookups, so a scratch
+script kept outside the repository can still `use` what the repository
+does.
 
 ## `olang bench`
 
