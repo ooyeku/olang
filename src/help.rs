@@ -1558,6 +1558,20 @@ impl HelpSystem {
             see_also: vec!["meta.eval".to_string(), "show".to_string()],
         });
         self.add_function(FunctionDoc {
+            name: "meta.expand".to_string(),
+            description: "The program after macro expansion, as source text: every meta fn declaration removed and every @ site replaced by what it generated — what `olang expand FILE` prints, as a value. Ok(text) or Err(message). Expanding once on a server and serving the result lets a browser's wasm parser read a bundle in one pass instead of running the expansion rounds itself.".to_string(),
+            syntax: "meta.expand(source)".to_string(),
+            parameters: vec!["source: String - olang source text, possibly declaring and invoking macros".to_string()],
+            return_type: "Result<String, String>".to_string(),
+            examples: vec![
+                r#"unwrap(meta.expand("meta fn twice(e) = `${e} * 2`
+println(@twice(21))"))  // "println(21 * 2)""#.to_string(),
+            ],
+            category: "Meta".to_string(),
+            see_also: vec!["meta.parse".to_string(), "meta.eval".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
             name: "meta.fresh".to_string(),
             description: "A name no program writes by hand, for macro-generated temporaries that must not collide with call-site bindings (docs/macros.md). Each call yields a distinct name built from the prefix.".to_string(),
             syntax: "meta.fresh(prefix)".to_string(),

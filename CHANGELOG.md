@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **The content-addressed wasm URL now serves someone.** The shim read
+  its `data-src`/`data-wasm` attributes off `document.currentScript`,
+  which is null inside a module script — so every attribute silently
+  fell back: the program path happened to match the default, and the
+  hashed runtime URL was never fetched (a preload for it downloaded the
+  runtime twice). The shim now finds its own `<script>` element by src,
+  and the shell preloads exactly the URL the shim fetches.
+
+- **The browser parses the bundle once.** `serve` pre-expands the client
+  bundle on the server (the new `meta.expand(source)`, `olang expand`
+  as a value), so a bundle carrying `meta fn` declarations and `@` sites
+  no longer costs the wasm parser the expansion pipeline's repeated
+  complete passes at boot — parsing had become the whole of a 4.5 s
+  session start once the download was solved. Independently, `Parser`
+  flags macro constructs as it builds the tree instead of serializing
+  the whole program to JSON to look for them, and a program that
+  declares macros but never invokes one skips the expansion round.
+
 ## [0.81.0] - 2026-09-02
 
 ### Added

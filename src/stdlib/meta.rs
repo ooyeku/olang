@@ -37,6 +37,7 @@ pub fn create_meta_module() -> Value {
     module.insert("parse".to_string(), builtin("parse", 1));
     module.insert("eval".to_string(), builtin("eval", 1));
     module.insert("lit".to_string(), builtin("lit", 1));
+    module.insert("expand".to_string(), builtin("expand", 1));
     module.insert("fresh".to_string(), builtin("fresh", 1));
     Value::Struct {
         type_name: "Module".to_string(),
@@ -59,6 +60,7 @@ pub fn call_meta_function(
         "parse" => meta_parse(args),
         "eval" => meta_eval(args),
         "lit" => meta_lit(args),
+        "expand" => meta_expand(args),
         "fresh" => meta_fresh(args),
         _ => Err(format!("Unknown meta function: {}", name).into()),
     }
@@ -734,6 +736,28 @@ fn meta_eval(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Ok(v) => Ok(Value::Ok(Box::new(v))),
         Err(e) => Ok(Value::Err(Box::new(s(&format!("{}", e))))),
     }
+}
+
+/// `meta.expand(source)` — the program after macro expansion, as text:
+/// `Ok(expanded)` with every `meta fn` gone and every `@` site replaced,
+/// or `Err(message)`. What `olang expand FILE` prints, as a value, so a
+/// server can hand a browser the expanded bundle and the wasm parser
+/// reads it once instead of running the expansion rounds itself.
+fn meta_expand(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let source = match args.first() {
+        Some(Value::String(text)) => text.as_str(),
+        other => {
+            return Err(format!(
+                "meta.expand: expected a source string, got {}",
+                other.map(|v| v.type_name()).unwrap_or_default()
+            )
+            .into());
+        }
+    };
+    Ok(match crate::expand::expand_source(source) {
+        Ok(text) => Value::Ok(Box::new(s(&text))),
+        Err(message) => Value::Err(Box::new(s(&message))),
+    })
 }
 
 /// `meta.lit(value)` — render a value as olang source that evaluates

@@ -218,10 +218,26 @@ share fn bundle_clients(client_sources) = {
         |> map((src) => strip_module_lines(src))
         |> join("\n\n// ── module ──\n")
     let bundled = sdk + "\n\n// ── application ──\n" + app_src
-    match meta.parse(bundled) {
-        Err(e) => unwrap(Err("client bundle does not parse: " + e)),
-        Ok(tree) => bundled
+    // Expanded here, once, so the browser parses the bundle exactly once:
+    // a bundle carrying `meta fn` declarations and `@` sites otherwise
+    // costs the wasm parser several complete passes at boot — parsing
+    // was the whole of a 4.5 s session start once the download was
+    // solved.
+    let expanded = match meta.expand(bundled) {
+        Err(e) => unwrap(Err("client bundle does not expand: " + e)),
+        Ok(text) => text
     }
+    match meta.parse(expanded) {
+        Err(e) => unwrap(Err("client bundle does not parse: " + e)),
+        Ok(tree) => expanded
+    }
+}
+
+test "the served bundle is pre-expanded: no meta fn, no @ sites" {
+    let bundle = bundle_client("use web { mount }\nlet SPEC = @store(\"t\", [[\"n\", \"mem\", 0]])\nprintln(\"x\")")
+    assert_eq(str.contains(bundle, "@store"), false)
+    assert_eq(str.contains(bundle, "meta fn"), false)
+    assert_eq(str.contains(bundle, "println(\"x\")"), true)
 }
 
 // ── the app ──────────────────────────────────────────────────────────
@@ -320,8 +336,13 @@ share fn serve(config) = {
     let wasm_tag = if wasm_hash == "" => "" else => "\"" + wasm_hash + "\""
     let hashed_wasm_url = if wasm_hash == "" => "/olang.wasm" else => "/olang." + wasm_hash + ".wasm"
 
+    // The preload names the URL the shim will actually fetch — the same
+    // credentials mode as fetch()'s default, so the browser reuses it
+    // rather than downloading the runtime twice.
     let shell = page(title,
-        "<link rel=\"stylesheet\" href=\"/web.css\">" + head,
+        "<link rel=\"stylesheet\" href=\"/web.css\">"
+            + "<link rel=\"preload\" href=\"" + hashed_wasm_url
+            + "\" as=\"fetch\" type=\"application/wasm\" crossorigin>" + head,
         raw("<main id=\"app\"></main>"
             + "<script type=\"module\" src=\"/olang-dom.js\" data-src=\"/app.ol\""
             + " data-wasm=\"" + hashed_wasm_url + "\"></script>"))

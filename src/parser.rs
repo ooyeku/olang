@@ -353,6 +353,18 @@ impl ParseError {
 
 pub struct Parser {
     suggestion_engine: ErrorSuggestionEngine,
+    /// Which macro constructs the last `parse_raw` built. Recorded as the
+    /// tree is built so `parse` can decide about expansion in O(1) —
+    /// the AST-wide search it replaces serialized the whole program to
+    /// JSON to look for three keys, a real cost in the browser on a
+    /// large bundle whose text merely contains an `@` in a string.
+    saw_macro_call: std::cell::Cell<bool>,
+    saw_meta_fn: std::cell::Cell<bool>,
+    saw_decorated: std::cell::Cell<bool>,
+    /// How many `meta fn` declarations the tree holds, at any depth — the
+    /// declarations-only shortcut applies only when all of them are top
+    /// level (a nested one is a placement error the expander reports).
+    meta_fn_count: std::cell::Cell<usize>,
 }
 
 impl Default for Parser {
@@ -365,6 +377,10 @@ impl Parser {
     pub fn new() -> Self {
         Self {
             suggestion_engine: ErrorSuggestionEngine::new(),
+            saw_macro_call: std::cell::Cell::new(false),
+            saw_meta_fn: std::cell::Cell::new(false),
+            saw_decorated: std::cell::Cell::new(false),
+            meta_fn_count: std::cell::Cell::new(0),
         }
     }
 
@@ -405,18 +421,39 @@ impl Parser {
     /// case) pays a substring scan and nothing else.
     pub fn parse(&self, input: &str) -> Result<Program, ParseError> {
         let program = self.parse_raw(input)?;
-        // Cheap pre-filter before the authoritative AST check: no `@` and
-        // no `meta` token means no macro constructs can exist.
-        if !(input.contains('@') || crate::expand::has_meta_fn_token(input)) {
+        // The tree-build recorded which macro constructs exist; no `@`
+        // site, no decorator, no `meta fn` means nothing to expand.
+        let (calls, metas, decorated) = (
+            self.saw_macro_call.get(),
+            self.saw_meta_fn.get(),
+            self.saw_decorated.get(),
+        );
+        if !(calls || metas || decorated) {
             return Ok(program);
         }
-        if !crate::expand::program_uses_macros(&program) {
-            return Ok(program);
+        // Declarations only — a library that ships macros, parsed as a
+        // program that never invokes them (the bundled SDK modules in a
+        // browser client): drop the declarations and skip the text
+        // round trip, which would re-parse the whole program.
+        if metas && !calls && !decorated {
+            let top_level = program
+                .statements
+                .iter()
+                .filter(|st| matches!(st.unwrapped(), Statement::MetaFnDecl { .. }))
+                .count();
+            if top_level == self.meta_fn_count.get() {
+                let statements = program
+                    .statements
+                    .into_iter()
+                    .filter(|st| !matches!(st.unwrapped(), Statement::MetaFnDecl { .. }))
+                    .collect();
+                return Ok(Program { statements });
+            }
         }
         let expanded = crate::expand::expand_source(input)
             .map_err(|message| ParseError::InvalidSyntax { message })?;
         let program = self.parse_raw(&expanded)?;
-        if crate::expand::program_uses_macros(&program) {
+        if self.saw_macro_call.get() || self.saw_meta_fn.get() || self.saw_decorated.get() {
             return Err(ParseError::InvalidSyntax {
                 message: "macro expansion left unexpanded macro constructs (internal error)"
                     .to_string(),
@@ -430,6 +467,10 @@ impl Parser {
     /// author wrote it, `@` sites and all) and what the expander itself
     /// uses between rounds.
     pub fn parse_raw(&self, input: &str) -> Result<Program, ParseError> {
+        self.saw_macro_call.set(false);
+        self.saw_meta_fn.set(false);
+        self.saw_decorated.set(false);
+        self.meta_fn_count.set(0);
         // A UTF-8 BOM (files from Windows editors) is invisible in every
         // editor but fails the grammar at 1:1 with a baffling caret at
         // nothing. Strip it before parsing.
@@ -534,6 +575,8 @@ impl Parser {
             // Macros: both carry byte spans so the expander
             // can splice over exactly the text this parse saw.
             Rule::meta_fn_decl => {
+                self.saw_meta_fn.set(true);
+                self.meta_fn_count.set(self.meta_fn_count.get() + 1);
                 let span = (pair.as_span().start(), pair.as_span().end());
                 let inner = pair
                     .into_inner()
@@ -547,6 +590,7 @@ impl Parser {
                 })
             }
             Rule::decorated_decl => {
+                self.saw_decorated.set(true);
                 let span = (pair.as_span().start(), pair.as_span().end());
                 let line = pair.as_span().start_pos().line_col().0 as u32;
                 let mut decorators = Vec::new();
@@ -1275,6 +1319,7 @@ impl Parser {
             Rule::literal => self.build_literal(pair.into_inner()),
             Rule::identifier => Ok(Expr::Identifier(pair.as_str().to_string())),
             Rule::macro_call => {
+                self.saw_macro_call.set(true);
                 let span = (pair.as_span().start(), pair.as_span().end());
                 let line = pair.as_span().start_pos().line_col().0 as u32;
                 let mut inner = pair.into_inner();

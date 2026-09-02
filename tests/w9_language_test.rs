@@ -345,3 +345,20 @@ fn a_closure_sees_a_top_level_binding_declared_after_it_on_every_tier() {
     assert_eq!(rc, 0, "{out}");
     assert_eq!(out, "3 3\n5\n7\n");
 }
+
+#[test]
+fn meta_expand_returns_the_expanded_program_text() {
+    let (out, rc) = agree(
+        "let src = \"meta fn twice(e) = `${e} * 2`\\nprintln(@twice(21))\"\n\
+         let expanded = unwrap(meta.expand(src))\n\
+         println(expanded)\n\
+         println(show(str.contains(expanded, \"meta fn\")))\n\
+         match meta.expand(\"println(@nope(1))\") { Ok(t) => println(\"ok\"), Err(e) => println(\"err\") }",
+    );
+    assert_eq!(rc, 0, "{out}");
+    // Expansion leaves a blank line where the declaration was.
+    let lines: Vec<&str> = out.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert_eq!(lines[0].trim(), "println(21 * 2)");
+    assert_eq!(lines[1], "false");
+    assert_eq!(lines[2], "err");
+}

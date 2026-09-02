@@ -4,13 +4,20 @@
 // fetch responses back into the live interpreter.
 
 (async function () {
-  // currentScript is only valid during synchronous execution — capture
-  // the page's chosen program before the first await.
-  const src = document.currentScript?.dataset?.src ?? "/app.ol";
+  // The shim runs as a module script, where `document.currentScript` is
+  // always null — so the page's choices are read off the shim's own
+  // <script> element, found by its src. (Reading currentScript silently
+  // fell back for every attribute: the program path happened to match
+  // the default, and the content-addressed wasm URL served no one.)
+  const me =
+    document.querySelector('script[src$="/olang-dom.js"]') ??
+    document.querySelector("script[data-src], script[data-wasm]") ??
+    document.currentScript;
+  const src = me?.dataset?.src ?? "/app.ol";
   // The runtime's URL: the shell passes the content-addressed form
   // (`/olang.<hash>.wasm`, immutable) so a repeat visit never asks the
   // server about it; the plain path is the fallback.
-  const wasmUrl = document.currentScript?.dataset?.wasm ?? "/olang.wasm";
+  const wasmUrl = me?.dataset?.wasm ?? "/olang.wasm";
   const bootMarks = { start: performance.now() };
   let ex; // wasm exports
   const mem = () => new Uint8Array(ex.memory.buffer);
