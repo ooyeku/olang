@@ -17,7 +17,7 @@
 //! the body must carry the whole truth.
 
 use lib.routes { find }
-use lib.html { page, raw }
+use lib.html { page, raw, render, div }
 
 // ── responses ────────────────────────────────────────────────────────
 
@@ -275,6 +275,60 @@ share fn static_response(req, body, ctype, tag) =
     else => http.response_with_headers(200, body,
         #{ "Content-Type": ctype, "ETag": tag, "Cache-Control": "no-cache" })
 
+// ── the shell ────────────────────────────────────────────────────────
+
+/// The HTML shell. `wasm_url` is the runtime the shim fetches (the
+/// content-addressed form); `has_image` says whether `/app.olb`, the
+/// program image, is served. With a `first_paint` node tree and its
+/// `state`, the mount point arrives already rendered — the first paint
+/// needs no runtime — and the state travels beside it in a JSON
+/// `<script>`, named by the mount point's `data-olang-state`, so the
+/// browser's `mount` starts from exactly what the page shows.
+share fn shell(title, head, wasm_url, has_image, first_paint, state) = {
+    let app = if first_paint == () => "<main id=\"app\"></main>"
+        else => "<main id=\"app\" data-olang-state=\"olang-state\">"
+            + render(first_paint) + "</main>"
+            + "<script type=\"application/json\" id=\"olang-state\">"
+            + state_json(state) + "</script>"
+    // The preload names the URL the shim will actually fetch — the same
+    // credentials mode as fetch()'s default, so the browser reuses it
+    // rather than downloading the runtime twice.
+    page(title,
+        "<link rel=\"stylesheet\" href=\"/web.css\">"
+            + "<link rel=\"preload\" href=\"" + wasm_url
+            + "\" as=\"fetch\" type=\"application/wasm\" crossorigin>" + head,
+        raw(app
+            + "<script type=\"module\" src=\"/olang-dom.js\" data-src=\"/app.ol\""
+            + (if has_image => " data-bin=\"/app.olb\"" else => "")
+            + " data-wasm=\"" + wasm_url + "\"></script>"))
+}
+
+/// The state as JSON that is safe inside a `<script>` element: `<` is
+/// escaped, so no string value can close the element early.
+fn state_json(state) = match json.stringify(state) {
+    Ok(text) => str.replace(text, "<", "\\u003c"),
+    Err(e) => unwrap(Err("first paint: the initial state must be JSON data "
+        + "(maps, lists, strings, numbers, booleans): " + show(e)))
+}
+
+test "the shell carries the first paint and its state when given a view" {
+    let s = shell("t", "", "/olang.abc.wasm", true,
+        div(#{ "class": "x" }, ["hello"]), #{ "n": 1, "s": "</script><" })
+    assert_eq(str.contains(s,
+        "<main id=\"app\" data-olang-state=\"olang-state\"><div class=\"x\">hello</div></main>"), true)
+    assert_eq(str.contains(s,
+        "<script type=\"application/json\" id=\"olang-state\">{\"n\":1,\"s\":\"\\u003c/script>\\u003c\"}</script>"), true)
+    assert_eq(str.contains(s, "data-bin=\"/app.olb\""), true)
+    assert_eq(str.contains(s, "data-wasm=\"/olang.abc.wasm\""), true)
+    assert_eq(str.contains(s, "href=\"/olang.abc.wasm\" as=\"fetch\""), true)
+    // No view: an empty mount point, no state, and no image offered.
+    let bare = shell("t", "<meta name=\"x\">", "/olang.wasm", false, (), ())
+    assert_eq(str.contains(bare, "<main id=\"app\"></main>"), true)
+    assert_eq(str.contains(bare, "olang-state"), false)
+    assert_eq(str.contains(bare, "data-bin"), false)
+    assert_eq(str.contains(bare, "<meta name=\"x\"></head>"), true)
+}
+
 /// The full stack, one call. Config keys:
 ///
 ///   title    the page title (default "olang app")
@@ -286,10 +340,17 @@ share fn static_response(req, body, ctype, tag) =
 ///   head     extra HTML for <head> (default "")
 ///   log      (req, response, ms) => ... to own the request line
 ///            (default: the SDK's `METHOD /path -> status (ms)`)
+///   view     the client's view function, for a server-rendered first
+///            paint: the shell arrives with the mount point already
+///            rendered, so the page shows before the runtime loads
+///   initial  the state that first paint renders — a value, or a
+///            `() => state` function evaluated per request (fresh data
+///            on every load). The browser's `mount` starts from it.
 ///
 /// Serves `/` (the shell), `/web.css`, `/olang-dom.js`, `/app.ol`
-/// (the bundled client), the wasm runtime, and every route in the
-/// table. The runtime is served two ways: `/olang.<hash>.wasm`, the
+/// (the bundled client), `/app.olb` (the client as a program image the
+/// runtime loads without parsing), the wasm runtime, and every route in
+/// the table. The runtime is served two ways: `/olang.<hash>.wasm`, the
 /// content-addressed URL the shell references (immutable, cached for
 /// a year — a new build is a new URL), and `/olang.wasm` (revalidated
 /// each load). Both negotiate `Accept-Encoding`: a pre-compressed
@@ -304,6 +365,8 @@ share fn serve(config) = {
     let port = get_or(config, "port", 7500)
     let head = get_or(config, "head", "")
     let log = get_or(config, "log", ())
+    let view_fn = get_or(config, "view", ())
+    let initial = get_or(config, "initial", ())
 
     // Read once at boot: assets, the bundle, and the wasm's location.
     let css = sdk_file("static/web.css")
@@ -313,6 +376,15 @@ share fn serve(config) = {
         else => [client_path]
     let bundle = if len(client_paths) == 0 => ""
         else => bundle_clients(map(client_paths, (p) => unwrap(fs.read_file(p))))
+    // The program image: the bundle parsed here, once, and handed to the
+    // browser as bytes its runtime loads without parsing (meta.encode,
+    // src/olb.rs). The source stays at /app.ol — the shim's fallback
+    // when the runtime in the browser is another olang version than
+    // this server.
+    let image = if bundle == "" => () else => match meta.encode(bundle) {
+        Err(e) => unwrap(Err("client bundle does not encode: " + e)),
+        Ok(bytes) => bytes
+    }
     let wasm_path = if fs.exists("static/olang_playground.wasm") =>
         "static/olang_playground.wasm"
     else => sdk_dir() + "/static/olang_playground.wasm"
@@ -326,6 +398,7 @@ share fn serve(config) = {
     let css_tag = etag_of(css)
     let shim_tag = etag_of(shim)
     let bundle_tag = etag_of(bundle)
+    let image_tag = if image == () => "" else => etag_of(image)
     // The wasm's hash comes from its bytes, computed once at boot
     // (crypto hashes accept Bytes directly); it is both the ETag and
     // the content-addressed URL's name.
@@ -336,16 +409,24 @@ share fn serve(config) = {
     let wasm_tag = if wasm_hash == "" => "" else => "\"" + wasm_hash + "\""
     let hashed_wasm_url = if wasm_hash == "" => "/olang.wasm" else => "/olang." + wasm_hash + ".wasm"
 
-    // The preload names the URL the shim will actually fetch — the same
-    // credentials mode as fetch()'s default, so the browser reuses it
-    // rather than downloading the runtime twice.
-    let shell = page(title,
-        "<link rel=\"stylesheet\" href=\"/web.css\">"
-            + "<link rel=\"preload\" href=\"" + hashed_wasm_url
-            + "\" as=\"fetch\" type=\"application/wasm\" crossorigin>" + head,
-        raw("<main id=\"app\"></main>"
-            + "<script type=\"module\" src=\"/olang-dom.js\" data-src=\"/app.ol\""
-            + " data-wasm=\"" + hashed_wasm_url + "\"></script>"))
+    // The shell: built once when nothing is server-rendered; per request
+    // when a view is given, so a first paint from a `() => state`
+    // function shows fresh data on every load.
+    fn first_state() = if typeof(initial) == "Function" => initial() else => initial
+    fn shell_for() =
+        if view_fn == () => shell(title, head, hashed_wasm_url, image != (), (), ())
+        else => {
+            let state = first_state()
+            shell(title, head, hashed_wasm_url, image != (), view_fn(state), state)
+        }
+    let static_shell = if view_fn == () => shell_for() else => ""
+    fn image_response(req) =
+        if if_none_match(req) == image_tag =>
+            http.response_with_headers(304, "",
+                #{ "ETag": image_tag, "Cache-Control": "no-cache" })
+        else => { status: 200, body: image,
+                  headers: #{ "Content-Type": "application/octet-stream",
+                              "ETag": image_tag, "Cache-Control": "no-cache" } }
 
     // The wasm response: a pre-compressed sibling when the client
     // accepts its encoding, the raw file otherwise. `cache` is the
@@ -367,7 +448,9 @@ share fn serve(config) = {
 
     let static_routes = [
         #{ "method": "GET", "pattern": "/", "name": "",
-           "handler": (req, p) => text_response(shell, "text/html; charset=utf-8") },
+           "handler": (req, p) => text_response(
+               if view_fn == () => static_shell else => shell_for(),
+               "text/html; charset=utf-8") },
         #{ "method": "GET", "pattern": "/web.css", "name": "",
            "handler": (req, p) => static_response(req, css, "text/css", css_tag) },
         #{ "method": "GET", "pattern": "/olang-dom.js", "name": "",
@@ -376,6 +459,10 @@ share fn serve(config) = {
         #{ "method": "GET", "pattern": "/app.ol", "name": "",
            "handler": (req, p) =>
                static_response(req, bundle, "text/plain; charset=utf-8", bundle_tag) },
+        #{ "method": "GET", "pattern": "/app.olb", "name": "",
+           "handler": (req, p) =>
+               if image == () => error_response(404, "not_found", "no client program")
+               else => image_response(req) },
         #{ "method": "GET", "pattern": "/olang.wasm", "name": "",
            "handler": (req, p) =>
                if wasm_tag != "" && if_none_match(req) == wasm_tag =>

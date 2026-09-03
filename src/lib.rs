@@ -22,6 +22,7 @@ pub mod interpreter;
 pub mod log;
 pub mod native;
 pub mod ods;
+pub mod olb; // The program image: a parsed Program as bytes
 pub mod output;
 pub mod ovm; // Bytecode execution tier
 pub mod parallel;

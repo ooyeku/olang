@@ -1045,6 +1045,8 @@ olang scripts, not compiler changes.
 |---|---|
 | `meta.parse(source)` | `Ok(list of node maps)` \| `Err(message)` — a syntax error is a normal `Err`, never a crash |
 | `meta.eval(source, options?)` | evaluate source; `options` bounds untrusted code — `#{ "max_steps": n }` (loop iterations and calls, deterministic) and `#{ "timeout_ms": ms }` (wall clock) — returning `Err("budget exceeded …")` instead of a hung thread |
+| `meta.expand(source)` | `Ok(text)` \| `Err(message)` — the program after macro expansion, as source: every `meta fn` removed and every `@` site replaced by what it generated (what `olang expand FILE` prints) |
+| `meta.encode(source)` | `Ok(bytes)` \| `Err(message)` — the parsed program (macros expanded) as a program image: bytes the runtime loads without parsing, behind a header naming the olang version that wrote it, which is the only version that loads it. What the web SDK's `serve` hands the browser in place of the source bundle |
 
 Nodes are discriminated-union maps. Top-level statements carry `line` and
 `column`; expressions nest (a `call`'s `callee` and `args` are themselves

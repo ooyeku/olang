@@ -1572,6 +1572,20 @@ println(@twice(21))"))  // "println(21 * 2)""#.to_string(),
         });
 
         self.add_function(FunctionDoc {
+            name: "meta.encode".to_string(),
+            description: "The parsed program as bytes: a program image the runtime loads without parsing (the AST in postcard form behind a header naming the olang version that wrote it). Macros are expanded first. The web SDK's `serve` hands the browser this image instead of the source bundle — decoding an image costs a fraction of parsing — and only the same olang version loads one, so the browser shim falls back to the source when the versions differ. Ok(bytes) or Err(message).".to_string(),
+            syntax: "meta.encode(source)".to_string(),
+            parameters: vec!["source: String - olang source text".to_string()],
+            return_type: "Result<Bytes, String>".to_string(),
+            examples: vec![
+                r#"let image = unwrap(meta.encode("println(1 + 1)"))
+bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
+            ],
+            category: "Meta".to_string(),
+            see_also: vec!["meta.parse".to_string(), "meta.expand".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
             name: "meta.fresh".to_string(),
             description: "A name no program writes by hand, for macro-generated temporaries that must not collide with call-site bindings (docs/macros.md). Each call yields a distinct name built from the prefix.".to_string(),
             syntax: "meta.fresh(prefix)".to_string(),

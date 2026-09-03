@@ -1,7 +1,8 @@
 // olang-dom.js — the page-side shim: makes this browser an olang host.
 // Loads the wasm build, implements the dom host imports over the real
-// DOM, boots a persistent session from /app.ol, and routes events and
-// fetch responses back into the live interpreter.
+// DOM, boots a persistent session from the program image (or, failing
+// that, its source), and routes events and fetch responses back into
+// the live interpreter.
 
 (async function () {
   // The shim runs as a module script, where `document.currentScript` is
@@ -14,6 +15,12 @@
     document.querySelector("script[data-src], script[data-wasm]") ??
     document.currentScript;
   const src = me?.dataset?.src ?? "/app.ol";
+  // The program image (data-bin): the bundle parsed on the server and
+  // loaded here without parsing. The source at data-src is the
+  // fallback — for a shell that offers no image, and for a runtime
+  // whose version differs from the server's (an image names the olang
+  // version that wrote it, and a runtime refuses another's).
+  const bin = me?.dataset?.bin ?? null;
   // The runtime's URL: the shell passes the content-addressed form
   // (`/olang.<hash>.wasm`, immutable) so a repeat visit never asks the
   // server about it; the plain path is the fallback.
@@ -524,30 +531,61 @@ Two known causes:
     return WebAssembly.instantiate(wasmBytes, imports);
   }
 
-  const [wasmModule, source] = await Promise.all([
-    instantiateWasm(),
-    fetch(src).then((r) => r.text()),
-  ]);
+  async function fetchProgram() {
+    if (bin) {
+      try {
+        const r = await fetch(bin);
+        if (r.ok) return { image: new Uint8Array(await r.arrayBuffer()) };
+      } catch (e) { /* the source below */ }
+    }
+    return { source: await fetch(src).then((r) => r.text()) };
+  }
+  const fetchSource = () => fetch(src).then((r) => r.text());
+
+  const [wasmModule, program] = await Promise.all([instantiateWasm(), fetchProgram()]);
   ({ instance: { exports: ex } } = wasmModule);
   bootMarks.instantiated = performance.now();
 
-  // Yield once between instantiation and the session start: the
-  // parse-and-run of the bundle is one synchronous call, and without
-  // this frame nothing paints — not even the shell — until it ends.
+  // Yield once between instantiation and the session start: loading
+  // and running the bundle is one synchronous call, and without this
+  // frame nothing paints — not even the shell — until it ends.
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  const enc = new TextEncoder().encode(source);
-  const ptr = ex.olang_alloc(enc.length);
-  mem().set(enc, ptr);
-  const boot = readResult(ex.olang_session_start(ptr, enc.length));
-  ex.olang_dealloc(ptr, enc.length);
+  function startSession(bytes, entry) {
+    const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
+    mem().set(bytes, ptr);
+    const r = readResult(entry(ptr, bytes.length));
+    ex.olang_dealloc(ptr, Math.max(bytes.length, 1));
+    return r;
+  }
+  let boot, programKind;
+  // A runtime built before images exist has no binary entry; it reads
+  // the source like it always did.
+  if (program.image && ex.olang_session_start_bin) {
+    boot = startSession(program.image, ex.olang_session_start_bin);
+    programKind = "image";
+    if (boot.retry_with_source) {
+      console.warn("olang: the program image is not loadable by this runtime; reading the source instead");
+      boot = startSession(new TextEncoder().encode(await fetchSource()), ex.olang_session_start);
+      programKind = "source";
+    }
+  } else {
+    const source = program.source ?? (await fetchSource());
+    boot = startSession(new TextEncoder().encode(source), ex.olang_session_start);
+    programKind = "source";
+  }
   bootMarks.started = performance.now();
   // Boot-phase timings, so an app can see what it pays for:
-  // window.olangBoot = { fetch_instantiate_ms, session_start_ms, total_ms }.
+  // window.olangBoot = { fetch_instantiate_ms, session_start_ms, total_ms,
+  //   program ("image" | "source"), load_ms (decode or parse), run_ms
+  //   (the bundle's top level, the first render included) }.
   window.olangBoot = {
     fetch_instantiate_ms: Math.round(bootMarks.instantiated - bootMarks.start),
     session_start_ms: Math.round(bootMarks.started - bootMarks.instantiated),
     total_ms: Math.round(bootMarks.started - bootMarks.start),
+    program: programKind,
+    load_ms: boot.load_ms ?? null,
+    run_ms: boot.run_ms ?? null,
   };
   console.debug("olang boot", window.olangBoot);
   if (boot.error) {

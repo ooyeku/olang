@@ -729,6 +729,13 @@ fn render_handler_result(value: &Value, keep_alive: bool, fs: crate::caps::FsCap
                     }
                 };
             }
+            // A Bytes body (`fs.read_bytes`, `meta.encode`) is served raw:
+            // the binary-safe path that needs no file on disk.
+            if let Some(raw @ Value::Native(_)) = fields.get("body")
+                && let Ok(bytes) = crate::stdlib::bytes::bytes_of(raw)
+            {
+                return response_raw_bytes(status, bytes, &headers, keep_alive);
+            }
             response_bytes(status, &body, &headers, keep_alive)
         }
         other => response_bytes(
@@ -1620,6 +1627,29 @@ mod tests {
         .unwrap();
         assert!(text.starts_with("HTTP/1.1 201 Created\r\n"));
         assert!(text.ends_with("made"));
+    }
+
+    #[test]
+    fn test_render_handler_result_bytes_body_is_raw() {
+        let mut fields = HashMap::new();
+        fields.insert("status".to_string(), int_val(200));
+        fields.insert(
+            "body".to_string(),
+            crate::stdlib::bytes::to_value(vec![0, 159, 146, 150]),
+        );
+        let resp = Value::Struct {
+            type_name: "Response".to_string(),
+            fields: std::sync::Arc::new(fields),
+        };
+        let out = render_handler_result(&resp, false, crate::caps::FsCap::Full);
+        assert!(
+            out.ends_with(&[0, 159, 146, 150]),
+            "body bytes must pass through untouched"
+        );
+        let head = String::from_utf8_lossy(&out);
+        assert!(head.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(head.contains("Content-Length: 4\r\n"));
+        assert!(head.contains("Content-Type: application/octet-stream\r\n"));
     }
 
     /// S3: `body_file` reads a file, so `net` (which gates `http`) must not

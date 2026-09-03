@@ -223,15 +223,59 @@ load-time errors naming the `@store` site, and the normalized spec is
 baked as a literal — `olang expand` shows exactly what the runtime
 receives.
 
+## The first paint
+
+The shell can arrive with the page already on it. `serve` takes
+`"view"` (the view function) and `"initial"` (the state it renders: a
+value, or a `() => state` function run per request, so every load
+shows the data as it stands), renders the view into the mount point on
+the server, and places the state beside it in a JSON `<script>` the
+mount point names by `data-olang-state`. The browser shows that HTML
+before the runtime has downloaded. When `mount` runs, it starts the
+store from that state — the server's keys over the caller's defaults,
+so a `url` or `local` field `hydrate` restores keeps its value — and
+the first client render reproduces what is already on screen. No boot
+fetch is needed: the data came with the page.
+
+```olang no-run
+use web { serve, rows }
+use lib.pages { home }        // the view, imported by both halves
+
+serve(#{
+    "routes": routes,
+    "client": ["lib/pages.ol", "client.ol"],
+    "view": home,
+    "initial": () => #{ "notes": rows(conn, "SELECT * FROM notes ORDER BY id DESC", []),
+                        "errors": [] }
+})
+```
+
+Two rules follow. The view is a module both halves import
+(`lib/pages.ol` in `otc new --web`), bundled ahead of the client. And
+the view runs on a server worker thread, so it must be a pure function
+of the state — no cells, no DOM — and the state must be JSON data
+(maps, lists, strings, numbers, booleans).
+
 ## The bundle
 
-The browser loads one source file. `serve` builds it: the SDK's
-browser modules spliced ahead of the app's client code, `use` lines
-and `share` markers stripped, test blocks removed, and the result
-parse-checked at boot — a broken client fails loudly at the server,
-never as a blank page. `"client"` may be a list of paths, bundled in
-order, so browser helpers live in tested lib modules that server code
-can import too.
+The browser loads one program. `serve` builds it: the SDK's browser
+modules spliced ahead of the app's client code, `use` lines and
+`share` markers stripped, test blocks removed, macros expanded, and
+the result parse-checked at boot — a broken client fails loudly at the
+server, never as a blank page. `"client"` may be a list of paths,
+bundled in order, so browser helpers live in tested lib modules that
+server code can import too.
+
+The bundle is served two ways. `/app.ol` is the source. `/app.olb` is
+the program image: the bundle parsed once on the server and encoded
+(`meta.encode`) as bytes the runtime loads without parsing, which the
+shell offers through the shim's `data-bin`. Decoding an image costs a
+fraction of parsing its source (under a millisecond against 22 ms for
+the scaffold app), and the image is smaller than the text. An image
+names the olang version that wrote it; a runtime of another version
+refuses it and the shim reads the source instead, so a browser
+holding a stale runtime still boots. Both revalidate by ETag, so the
+HTTP cache is the cross-visit cache.
 
 `serve` also takes `"log": (req, response, ms) => …` to own the
 request line, and serves the runtime two ways: `/olang.<hash>.wasm`,
@@ -239,11 +283,13 @@ the content-addressed URL the shell references (immutable, cached for
 a year — a new build is a new URL), and `/olang.wasm`, revalidated by
 ETag. Both negotiate `Accept-Encoding`: a pre-compressed sibling on
 disk next to the wasm (`olang_playground.wasm.br` or `.gz`) is served
-with its `Content-Encoding` — the 6.7 MB runtime is 1.9 MB gzipped.
-The shim yields to the browser between instantiating the runtime and
-running the bundle, so the shell paints first, and records the boot
-phases in `window.olangBoot` (`fetch_instantiate_ms`,
-`session_start_ms`, `total_ms`).
+with its `Content-Encoding` — the 6.3 MB runtime is under 2 MB
+gzipped. The shim yields to the browser between instantiating the
+runtime and running the bundle, so the shell paints first, and records
+the boot phases in `window.olangBoot`: `fetch_instantiate_ms`,
+`session_start_ms`, `total_ms`, and the split of the session start —
+`program` ("image" or "source"), `load_ms` (decoding or parsing), and
+`run_ms` (the bundle's top level, the first render included).
 
 The playground wasm the demo serves (`static/olang_playground.wasm`)
 is a build artifact, not a committed file: `make wasm` builds it and
@@ -252,7 +298,7 @@ clone runs `make wasm` once before starting the demo.
 
 ## Testing
 
-The SDK's tests are olang tests — 105 of them, `olang test
+The SDK's tests are olang tests — 133 of them, `olang test
 frameworks/web-sdk`. The route table and envelope are exercised
 in-process by constructing request values and calling `dispatch`
 directly; the data layer runs against `:memory:`; the demo (`demo/`

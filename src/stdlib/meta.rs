@@ -38,6 +38,7 @@ pub fn create_meta_module() -> Value {
     module.insert("eval".to_string(), builtin("eval", 1));
     module.insert("lit".to_string(), builtin("lit", 1));
     module.insert("expand".to_string(), builtin("expand", 1));
+    module.insert("encode".to_string(), builtin("encode", 1));
     module.insert("fresh".to_string(), builtin("fresh", 1));
     Value::Struct {
         type_name: "Module".to_string(),
@@ -61,6 +62,7 @@ pub fn call_meta_function(
         "eval" => meta_eval(args),
         "lit" => meta_lit(args),
         "expand" => meta_expand(args),
+        "encode" => meta_encode(args),
         "fresh" => meta_fresh(args),
         _ => Err(format!("Unknown meta function: {}", name).into()),
     }
@@ -96,6 +98,37 @@ fn meta_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             Ok(Value::Ok(Box::new(list(nodes))))
         }
         Err(e) => Ok(Value::Err(Box::new(s(&format!("{}", e))))),
+    }
+}
+
+/// `meta.encode(source)`: the program as an image (src/olb.rs) — parsed
+/// with its macros expanded, then serialized behind the version header.
+/// `Ok(bytes)`, or `Err(message)` for a syntax error.
+fn meta_encode(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let source = match args.first() {
+        Some(Value::String(src)) => src.as_str().to_string(),
+        Some(Value::Ok(inner)) if matches!(inner.as_ref(), Value::String(_)) => {
+            return Err(
+                "meta.encode: expected a source string, got Ok(String) — unwrap the read first: meta.encode(unwrap(f))"
+                    .into(),
+            );
+        }
+        other => {
+            return Err(format!(
+                "meta.encode: expected a source string, got {}",
+                other
+                    .map(|v| v.type_name())
+                    .unwrap_or_else(|| "no argument".to_string())
+            )
+            .into());
+        }
+    };
+    match crate::parser::Parser::new().parse(&source) {
+        Err(e) => Ok(Value::Err(Box::new(s(&format!("{}", e))))),
+        Ok(program) => match crate::olb::encode(&program) {
+            Ok(bytes) => Ok(Value::Ok(Box::new(crate::stdlib::bytes::to_value(bytes)))),
+            Err(e) => Ok(Value::Err(Box::new(s(&e)))),
+        },
     }
 }
 

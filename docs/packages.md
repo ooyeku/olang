@@ -46,8 +46,10 @@ otc new dashboard --web   # web app: JSON API + sqlite + wasm frontend
 The `--web` shape is one process serving a SQLite-backed JSON API, the
 page, and the frontend's own olang source, which the browser runs
 against the DOM through the wasm runtime — built on [the web
-SDK](web-sdk.md), so it is two files: `main.ol` (migrations, rpc
-routes, `serve`) and `client.ol` (`mount`, `action`, `call`). The
+SDK](web-sdk.md), so it is three files: `main.ol` (migrations, rpc
+routes, `serve` with the server-rendered first paint), `lib/pages.ol`
+(the view, rendered by the server into the shell and by the browser on
+every change), and `client.ol` (`mount`, `action`, `call`). The
 manifest depends on the shelf's `web` and `validate`; `otc install`
 resolves them. Every seam a real app grows along appears exactly once.
 `--web-bare` keeps the previous shape — the raw stdlib with the router,

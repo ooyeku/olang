@@ -206,6 +206,50 @@ packages, `[otc]` the project tool, `[web-sdk]` the web framework.
 |---|---|---|
 | `[olang]` Thread-pinned cells deserve a "shared state" chapter | cells are pinned to their creating thread and `http.serve` workers are separate threads, so the natural module-level-cell-as-cache pattern dies at runtime with "cell escaped its thread" (correctly, with a good message pointing at channels). The channel-service pattern that replaces it — one task owns the state, workers talk over channels, rebuilds become single-flight — worked beautifully, but nothing walks the reader from the failing pattern to the working one | **landed** — language.md's concurrency chapter gains "Sharing state under `http.serve`": the channel-service recipe (one owner task, workers ask over channels, rebuilds single-flight) in full |
 
+## W10 — the boot, and what building ledger asked for
+
+Two sources. The boot rows continue W9's web-SDK thread with the
+numbers `window.olangBoot` made visible once the download was solved
+(2026-09-02): the session start was parsing plus the bundle's top
+level, and nothing painted until both were done. The ledger rows come
+from planning examples/web/ledger, a daily-use finance application,
+against the runtime as it stands — each names an absence met while
+designing, not a preference. Rows already open elsewhere that this
+work touches stay where they are: keyed reconciliation in `mount`
+(W9, partial), the timeline's reach (W6), the W2 number rulings, and
+the W8 data/viz cluster. Tags as in W9.
+
+### The boot
+
+| Item | Observed | Status |
+|---|---|---|
+| `[web-sdk]` The browser parsed the bundle on every visit | after pre-expansion (0.81.0) `session_start_ms` was still parsing plus running; the split on the scaffold app read 22.2 ms parsing against 15.5 ms running the top level — parsing over half of every boot, on every visit, for text that had not changed | **landed** — the program image: `serve` parses the bundle once and encodes it (`meta.encode`; src/olb.rs: the `olb1` header naming the writing version, then the postcard body), serves it at `/app.olb` beside the source, and the shim loads it through `olang_session_start_bin`. Decoding the scaffold's image takes 0.9 ms against 22.2 ms of parsing, and the image is 17.7 KB to the source's 31.4 KB. An image another olang version wrote is refused by name and the shim reads the source instead, so a stale runtime still boots. The image revalidates by ETag like every asset — the HTTP cache is the cross-visit cache, which is why no browser-side store of the parsed program was needed |
+| `[web-sdk]` The first paint waited for the wasm | the mount point was empty until instantiate, load, and the top level had all run — LCP 20.1 s at open-track's scale after the download fix | **landed** — `serve` takes `view` and `initial` (a value, or a `() => state` function evaluated per request), renders the view into the mount point on the server, and places the state in a JSON `<script>` (`<` escaped) that the mount point names by `data-olang-state`; `mount` starts the store from it, the server's keys over the caller's defaults, so the first client render reproduces what is on screen and the boot needs no fetch. The view runs on a server worker thread, so it must be a pure function of the state: `confirm_armed` no longer touches its cell without a DOM — the one SDK component that did, found by the scaffold's Delete button. `otc new --web` is wired this way: `lib/pages.ol` holds the view both halves render |
+| `[olang]` The wasm carried 612 KB of symbol names | measured by section: Code 5.44 MB, Data 0.68 MB, and a `name` custom section of 0.61 MB. Code by crate: the runtime 2.09 MB, core 0.72, regex 0.73, serde_json 0.32, olang-ods 0.20, pest 0.17, the RSA/bignum/argon2 chain 0.27, toml 0.16 | **landed** — wasm32 builds pass `-C strip=symbols` (.cargo/config.toml): 6,746,426 → 6,266,887 bytes, the image entry point included. The next cuts have their sizes: the browser-side crypto surface (RSA, argon2, ~0.27 MB) and toml (~0.16 MB) behind `native` would be a decision about what the playground promises, not an optimization |
+| `[web-sdk]` Boot phases were one number | `session_start_ms` lumped parsing (or decoding) with running the top level and the first render | **landed** — the session result and `window.olangBoot` carry `program` ("image" or "source"), `load_ms`, and `run_ms` |
+| `[stdlib]` An http response could not carry bytes without a file | `body_file` was the only binary-safe path; a Bytes value in `body` was stringified | **landed** — a Bytes `body` is served raw, `application/octet-stream` unless a Content-Type is given |
+| `[web-sdk]` `action_arg` on a confirm-wrapped action returned the wrong argument | `btn_confirm("Delete", "del:7")` renders `data-action="confirm:del:7"`; `action_arg` took everything after the first colon, so the `del` handler received `"del:7"` and its `parse_int` failed — the scaffold's Delete never worked | **landed** — the `confirm:` prefix is dropped before the argument is read; pinned in view.ol's tests |
+| `[olang]` A worker-thread failure said "Runtime error:" three times | the first-paint cell escape printed `Runtime error: Runtime error: Runtime error: cell escaped its thread …` — each layer re-wrapped the message | planned — one prefix, added where the error is reported |
+
+### What building ledger asked for
+
+| Item | Observed | Status |
+|---|---|---|
+| `[stdlib]` No fixed-decimal formatting | money, percentages, and report columns want `"$1,234.56"`; `format_float` drops trailing zeros and flips to exponent form, and the demo prelude's `money()` gets negatives wrong, so every application hand-rolls the same helper | planned — `str.fixed(x, digits)` and a thousands-grouping form, negative-safe, with the pitfalls chapter pointing at them |
+| `[stdlib]` A transaction needs an explicit rollback on every failed branch | with `db.begin`/`db.commit`/`db.rollback`, each `Err` arm of a multi-statement write has to roll back by hand; one forgotten arm leaves the database half-written. The SDK's `tx` already wraps this for its own callers | planned — `db.transaction(conn, fn)`: commit on `Ok`, roll back on `Err` or raise, at the stdlib level where every program reaches it |
+| `[stdlib]` Two copies of a migration runner | examples/web/app and examples/web/ledger each carry one, and the SDK's `open_db` is a third | planned — `db.migrate(conn, steps)` in the stdlib; the copies become callers |
+| `[stdlib]` `db.query_one` answers `Ok(())` for no row | "no row" and "a row whose value is unit" are the same answer | planned — decide the absent shape and state it in the db chapter |
+| `[stdlib]` `dom.fetch_json` hides the status code | the browser cannot tell a 404 from a 500, so API errors travel in the body — the reason the SDK's envelope exists | planned — `dom.fetch(url, opts, k)` handing `k` status, headers, and body as one Result, with `api.call` moving onto it |
+| `[stdlib]` ods and viz raise where the language returns Result | every chart needs a non-empty guard around it; a frame built from mixed-type records raises | planned — Result-returning variants of the frame constructors and `viz.chart`, under the `try_` convention `try_rows` set |
+
+### Tools
+
+| Item | Observed | Status |
+|---|---|---|
+| `[olang]` No snapshot tests | the plot and web-SDK tests compare long HTML and SVG strings inline | planned — `testing.snapshot(name, value)`: written on first run, diffed after, refreshed by a flag |
+| `[olang]` `--watch` reruns programs, not tests | `olang --watch` exists for `run`; the test runner has no watch mode | planned — `olang test --watch` |
+| `[olang]` The template-escape lints have no fixer | `olang check` warns; the rewrites are mechanical | planned — `olang check --fix` for the lints whose rewrite is unambiguous |
+
 ## Process
 
 One lane at a time, each landing with its tests and documentation in

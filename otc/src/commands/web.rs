@@ -1,11 +1,13 @@
 //! The `--web` template: a full-stack starter on the web SDK — one
 //! olang process serves a SQLite-backed JSON API, the page, and the
 //! browser's own olang source; the browser runs that source against
-//! the DOM through the wasm runtime. Two files carry the whole app:
-//! `main.ol` (routes over `serve`) and `client.ol` (`mount`, `action`,
-//! `call`). Everything else — the route table, the JSON envelope,
-//! static assets, the design system, the dom shim, form validation,
-//! migrations — is the SDK's, imported with `use web`.
+//! the DOM through the wasm runtime. Three files carry the whole app:
+//! `main.ol` (routes over `serve`, which also renders the first paint),
+//! `lib/pages.ol` (the view — plain data both halves render), and
+//! `client.ol` (`mount`, `action`, `call`). Everything else — the route
+//! table, the JSON envelope, static assets, the design system, the dom
+//! shim, form validation, migrations — is the SDK's, imported with
+//! `use web`.
 //!
 //! The scaffold is a working notes app, deliberately small: one
 //! resource, three rpc endpoints, a frontend that lists/adds/deletes.
@@ -32,6 +34,7 @@ const DOM_SHIM_JS: &str = include_str!("../../../examples/web/app/static/olang-d
 pub fn files(name: &str) -> Vec<(String, String)> {
     vec![
         ("main.ol".to_string(), sdk_main_ol(name)),
+        ("lib/pages.ol".to_string(), sdk_pages_ol(name)),
         ("client.ol".to_string(), sdk_client_ol(name)),
         ("README.md".to_string(), sdk_readme(name)),
     ]
@@ -58,15 +61,18 @@ fn sdk_main_ol(name: &str) -> String {
     format!(
         r##"// {name} — a full-stack olang app on the web SDK: this one process
 // serves a SQLite-backed JSON API, the page, and the browser's own
-// olang source (client.ol), which the browser runs against the DOM
-// through the wasm runtime. `serve` supplies the shell, the design
-// system, the dom shim, the bundled client, and the JSON envelope.
+// olang program (lib/pages.ol + client.ol), which the browser runs
+// against the DOM through the wasm runtime. `serve` supplies the
+// shell, the design system, the dom shim, the bundled client, and the
+// JSON envelope — and renders the first paint here, so the page shows
+// its data before the runtime has loaded.
 //
 //   olang main.ol [port] [db_path]     (defaults: 7500, {name}.db)
 
 use web {{ rpc, serve, invalid, open_db, rows, one, insert_row, exec,
           field, rules, read }}
 use validate {{ check }}
+use lib.pages {{ home }}
 
 let args = os.args()
 let port = if len(args) > 1 => unwrap(str.parse_int(args[1])) else => 7500
@@ -114,21 +120,29 @@ let routes = [
 serve(#{{
     "title": "{name}",
     "routes": routes,
-    "client": "client.ol",
+    "client": ["lib/pages.ol", "client.ol"],
+    // The first paint: the view over the current rows, rendered into the
+    // shell per request. The browser's store starts from this state.
+    "view": home,
+    "initial": () => #{{
+        "notes": rows(conn, "SELECT * FROM notes ORDER BY id DESC", []),
+        "errors": []
+    }},
     "port": port
 }})
 "##
     )
 }
 
-fn sdk_client_ol(name: &str) -> String {
+fn sdk_pages_ol(name: &str) -> String {
     format!(
-        r##"// {name}'s browser half — served bundled with the SDK's browser
-// modules, one file to the browser. The view is plain data over the
-// store; actions call the server and apply the result.
-use web {{ mount, action, action_arg, apply, input_value, call, err_details,
-          field, form_fields, stack, row, spread, card, muted, list_card,
-          list_row, btn_primary, btn_confirm, topbar, span, text }}
+        r##"// {name}'s view — plain data over the store, rendered by both
+// halves: the server paints it into the shell (main.ol's "view"), and
+// the browser repaints it on every change (client.ol's mount). Views
+// are functions of state and nothing else, which is what lets one
+// module serve both.
+use web {{ field, form_fields, stack, row, card, muted, list_card,
+          list_row, btn_primary, btn_confirm, topbar, span }}
 
 let note_fields = [field("text", "Note", "text", #{{}})]
 
@@ -138,7 +152,7 @@ fn note_row(n) = list_row([
     btn_confirm("Delete", "del:" + to_string(map_get(n, "id")))
 ])
 
-fn view(s) = stack([
+share fn home(s) = stack([
     topbar("{name}", [muted(to_string(len(map_get(s, "notes"))) + " notes")]),
     card([row([
         span(#{{ "class": "grow", "style": "flex: 1" }},
@@ -148,6 +162,17 @@ fn view(s) = stack([
     if len(map_get(s, "notes")) == 0 => card([muted("Nothing yet — add the first note above.")])
     else => list_card(map(map_get(s, "notes"), (n) => note_row(n)))
 ])
+"##
+    )
+}
+
+fn sdk_client_ol(name: &str) -> String {
+    format!(
+        r##"// {name}'s browser half — served bundled with lib/pages.ol and the
+// SDK's browser modules, one program to the browser. Actions call the
+// server and apply the result; the view lives in lib/pages.ol.
+use web {{ mount, action, action_arg, apply, input_value, call, err_details }}
+use lib.pages {{ home }}
 
 fn refresh() =
     call("notes.list", #{{}}, (r) => {{
@@ -172,8 +197,9 @@ action("del", (ev) =>
     call("notes.delete", #{{ "id": unwrap(str.parse_int(action_arg(ev))) }},
         (r) => refresh()))
 
-mount("#app", view, #{{ "notes": [], "errors": [] }})
-refresh()
+// The page arrives already painted, with the state it was rendered
+// from: mount starts the store there, so no fetch is needed at boot.
+mount("#app", home, #{{ "notes": [], "errors": [] }})
 "##
     )
 }
@@ -193,16 +219,23 @@ olang test .               # the SDK's and your test blocks
 ```
 
 ```text
-main.ol      server: migrations, the rpc route table, serve(...)
-client.ol    browser: the view over the store, actions calling the rpcs
-static/      olang_playground.wasm (copied in when found — see below)
+main.ol        server: migrations, the rpc route table, serve(...) with
+               the first paint (the view over the current rows)
+lib/pages.ol   the view — plain data over the store, rendered by the
+               server into the shell and by the browser on every change
+client.ol      browser: mount, and the actions calling the rpcs
+static/        olang_playground.wasm (copied in when found — see below)
 ```
 
 The SDK (`use web`) supplies the shell, the design system (web.css,
 with a `data-theme` override for light/dark toggles), the dom shim, the
-bundled client, the JSON envelope, form validation, and migrations.
-Grow the app by adding a table (a migration), an rpc (a route), and a
-view (a function returning nodes) — each seam appears once here.
+bundled client (served as source and as a program image the runtime
+loads without parsing), the JSON envelope, form validation, and
+migrations. The page shows its data before the runtime has loaded:
+`serve` renders the view on the server and the browser's store starts
+from that same state. Grow the app by adding a table (a migration), an
+rpc (a route), and a view (a function returning nodes) — each seam
+appears once here.
 
 ## The wasm runtime
 

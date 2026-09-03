@@ -63,12 +63,13 @@ fn a_name_that_cannot_be_an_identifier_is_refused() {
 }
 
 #[test]
-fn the_web_shape_is_two_files_on_the_sdk() {
+fn the_web_shape_is_three_files_on_the_sdk() {
     let ws = workspace("web");
     let (out, ok) = otc(&ws, &["new", "notes", "--web"]);
     assert!(ok, "{out}");
     let root = ws.join("notes");
     assert!(root.join("main.ol").exists());
+    assert!(root.join("lib/pages.ol").exists());
     assert!(root.join("client.ol").exists());
     assert!(
         !root.join("lib/router.ol").exists(),
@@ -79,9 +80,24 @@ fn the_web_shape_is_two_files_on_the_sdk() {
         main.contains("use web {") && main.contains("serve(#{"),
         "{main}"
     );
+    // The first paint is wired: the server renders the shared view over
+    // the current rows, and the client bundle carries the view module.
+    assert!(
+        main.contains("\"view\": home") && main.contains("\"initial\": () =>"),
+        "{main}"
+    );
+    assert!(
+        main.contains("\"client\": [\"lib/pages.ol\", \"client.ol\"]"),
+        "{main}"
+    );
+    let pages = std::fs::read_to_string(root.join("lib/pages.ol")).unwrap();
+    assert!(
+        pages.contains("share fn home(s)") && pages.contains("btn_confirm"),
+        "{pages}"
+    );
     let client = std::fs::read_to_string(root.join("client.ol")).unwrap();
     assert!(
-        client.contains("mount(\"#app\"") && client.contains("btn_confirm"),
+        client.contains("mount(\"#app\", home") && client.contains("use lib.pages { home }"),
         "{client}"
     );
     let manifest = std::fs::read_to_string(root.join("olang.toml")).unwrap();

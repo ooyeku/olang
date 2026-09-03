@@ -7,7 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **The program image.** `meta.encode(source)` returns the parsed
+  program (macros expanded) as bytes behind a header naming the olang
+  version that wrote it — an image the runtime loads without parsing
+  (`src/olb.rs`, postcard). The web SDK's `serve` encodes the client
+  bundle once at boot and serves it at `/app.olb` beside the source;
+  the shim loads it through the wasm's new `olang_session_start_bin`
+  entry and falls back to `/app.ol` when the runtime is another version.
+  On the scaffold app the load step drops from 22.2 ms of parsing to
+  0.9 ms, and the image is 17.7 KB to the source's 31.4 KB.
+
+- **A server-rendered first paint.** `serve` takes `view` and `initial`
+  (a value, or a `() => state` function evaluated per request), renders
+  the view into the mount point on the server, and ships the state in a
+  JSON `<script>` the mount point names; `mount` starts the store from
+  that state, the server's keys over the caller's defaults. The page
+  shows its data before the runtime has downloaded, and the boot needs
+  no fetch. `otc new --web` now scaffolds three files — `lib/pages.ol`
+  holds the view both halves render.
+
+- **Boot phases, split.** The session result and `window.olangBoot`
+  carry `program` ("image" or "source"), `load_ms`, and `run_ms`.
+
+- **A Bytes body in an http response** is served raw — the binary-safe
+  path that needs no file on disk (`body_file` remains).
+
+### Changed
+
+- **The wasm ships without symbol names.** wasm32 builds pass
+  `-C strip=symbols`: the `name` section was 612 KB of a 6.7 MB
+  artifact. 6,746,426 → 6,266,887 bytes with the image entry point
+  added.
+
 ### Fixed
+
+- **`action_arg` on a confirm-wrapped action.** `btn_confirm` renders
+  `confirm:<action>`; `action_arg` took everything after the first colon
+  and handed the confirmed handler `"del:7"` instead of `"7"`. The
+  prefix is dropped first.
+
+- **`confirm_armed` without a DOM** read a main-thread cell, which a
+  view rendered on a server worker thread cannot do. Without a DOM
+  nothing is armed.
+
 
 - **The content-addressed wasm URL now serves someone.** The shim read
   its `data-src`/`data-wasm` attributes off `document.currentScript`,

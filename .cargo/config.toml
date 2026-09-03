@@ -13,5 +13,10 @@ RUST_MIN_STACK = "16777216"
 # (getrandom 0.2, still in the graph via the rand_core 0.6 era crypto
 # crates, uses its cargo-feature-based custom registration instead —
 # see the wasm32 dependency block in Cargo.toml.)
+#
+# The wasm ships without its symbol names: the `name` section was 612 KB
+# of a 6.7 MB artifact, useful to nothing but a wasm-level profiler. To
+# read a stack in browser devtools with names, build once without the
+# strip flag.
 [target.wasm32-unknown-unknown]
-rustflags = ['--cfg', 'getrandom_backend="custom"']
+rustflags = ['--cfg', 'getrandom_backend="custom"', '-C', 'strip=symbols']

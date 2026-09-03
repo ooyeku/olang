@@ -80,11 +80,15 @@ fn is_repeat_of_enter(ev) = {
 // two-click button.
 let armed_confirm = cell(#{ "name": "", "at": 0 })
 
-/// Is this action awaiting its confirming second click?
-share fn confirm_armed(name) = {
-    let a = cell.get(armed_confirm)
-    map_get(a, "name") == name && time.monotonic_ms() - map_get(a, "at") < 4000
-}
+/// Is this action awaiting its confirming second click? Without a DOM
+/// — a view rendered on the server, on a worker thread that must not
+/// touch this module's cells — nothing is ever armed.
+share fn confirm_armed(name) =
+    if !dom.available() => false
+    else => {
+        let a = cell.get(armed_confirm)
+        map_get(a, "name") == name && time.monotonic_ms() - map_get(a, "at") < 4000
+    }
 
 fn resolve_confirm(name) =
     if str.starts_with(name, "confirm:") => {
@@ -143,16 +147,27 @@ fn dispatch_action(ev) = {
 share fn patch(id, node) =
     if dom.available() => dom.set_html(dom.query("#" + id), render(node)) else => ()
 
-/// The full `data-action` string from an event — how a prefix handler
-/// reads its argument: `action_arg(ev)` on "toggle:7" is "7".
+/// The argument of the event's `data-action` — how a prefix handler
+/// reads it: `action_arg(ev)` on "toggle:7" is "7". A confirm-wrapped
+/// action ("confirm:del:7", what `btn_confirm` renders) carries the
+/// same argument as the action it confirms.
 share fn action_arg(ev) = {
     let data = map_get(ev, "data")
     let name = if data == () => "" else => {
         let a = map_get(data, "action")
         if a == () => "" else => a
     }
-    let colon = str.index_of(name, ":")
-    if colon == () => "" else => str.substring(name, colon + 1, str.length(name))
+    let bare = if str.starts_with(name, "confirm:") =>
+        str.substring(name, 8, str.length(name)) else => name
+    let colon = str.index_of(bare, ":")
+    if colon == () => "" else => str.substring(bare, colon + 1, str.length(bare))
+}
+
+test "action_arg: the argument after the handler's prefix, confirm or not" {
+    assert_eq(action_arg(#{ "data": #{ "action": "toggle:7" } }), "7")
+    assert_eq(action_arg(#{ "data": #{ "action": "confirm:del:7" } }), "7")
+    assert_eq(action_arg(#{ "data": #{ "action": "add" } }), "")
+    assert_eq(action_arg(#{ "data": () }), "")
 }
 
 /// Wire the app: `mount("#app", view_fn, initial_state)`. In the
@@ -165,8 +180,21 @@ share fn mount(selector, view_fn, initial) = {
     cell.set(mount_view, view_fn)
     init(initial)
     if dom.available() => {
-        rerender()
         let root = dom.query(selector)
+        // A server-rendered first paint travels with the state it was
+        // rendered from (the mount point names the element holding it).
+        // The store starts there — the server's keys over the caller's
+        // defaults — so what the page shows and what the handlers see
+        // are one state. Keys the server did not set (a `url` or
+        // `local` field restored by `hydrate`) keep the caller's value.
+        let state_id = dom.get_attr(root, "data-olang-state")
+        if state_id != "" => {
+            match json.parse(dom.get_text(dom.query("#" + state_id))) {
+                Ok(server_state) => init(merge_state(initial, server_state)),
+                Err(e) => ()
+            }
+        } else => ()
+        rerender()
         dom.on(root, "click", (ev) => dispatch_action(ev))
         dom.on(root, "change", (ev) => dispatch_action(ev))
         dom.on(root, "submit", (ev) => dispatch_action(ev))
@@ -180,6 +208,23 @@ share fn mount(selector, view_fn, initial) = {
         println("── static preview: this is a browser program. Serve it —")
         println("── `olang run server.ol`, then open the printed address.")
     }
+}
+
+/// The caller's initial state under the server's: every key the server
+/// rendered from wins; the rest stay.
+fn merge_state(base, server) =
+    if contains(["Map", "JsonObject", "Object"], typeof(server)) && base != ()
+        && contains(["Map", "JsonObject", "Object"], typeof(base)) =>
+        fold(map_keys(server), base, (acc, k) => map_set(acc, k, map_get(server, k)))
+    else => server
+
+test "merge_state: the server's keys over the caller's defaults" {
+    let merged = merge_state(#{ "notes": [], "errors": [], "theme": "dark" },
+                             unwrap(json.parse("{\"notes\": [1, 2], \"errors\": []}")))
+    assert_eq(len(map_get(merged, "notes")), 2)
+    assert_eq(map_get(merged, "theme"), "dark")
+    // A non-map state is replaced wholesale.
+    assert_eq(merge_state(0, 5), 5)
 }
 
 /// The current value of the input with this id — how handlers read

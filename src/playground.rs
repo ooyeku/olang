@@ -20,7 +20,7 @@
 //! inside a Web Worker it terminates on timeout, which is what bounds
 //! infinite loops.
 
-use crate::ast::Value;
+use crate::ast::{Program, Value};
 use crate::interpreter::Interpreter;
 use crate::parser::Parser as OlangParser;
 
@@ -694,64 +694,96 @@ pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::erro
     }
 }
 
-/// Run a program and KEEP the interpreter alive as the page's session,
-/// so dom.on handlers can re-enter it. Result buffer as olang_run.
+/// Start (or restart) the persistent session from source text: parse,
+/// run the top level, and keep the interpreter alive for events. The
+/// result JSON carries the boot split — `load_ms` (parsing) and
+/// `run_ms` (the top level) — alongside `ms`, their sum.
 ///
 /// # Safety
-/// Same contract as olang_run.
+/// `ptr..ptr+len` must be readable UTF-8 written by the page.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn olang_session_start(ptr: *const u8, len: usize) -> *mut u8 {
     install_panic_hook();
-    unsafe {
-        let source = match std::str::from_utf8(std::slice::from_raw_parts(ptr, len)) {
-            Ok(s) => s.to_string(),
-            Err(_) => {
-                return result_buffer(
-                    r#"{"output":"","value":null,"error":"source was not valid UTF-8","ms":0}"#
-                        .to_string(),
-                );
-            }
-        };
-        SESSION.with(|s| *s.borrow_mut() = None);
-        HANDLERS.with(|h| h.borrow_mut().clear());
-        let started = crate::clock::Instant::now();
-        let parser = OlangParser::new();
-        let (output, value, error) = match parser.parse(&source) {
-            Err(e) => (crate::output::drain_captured(), None, Some(e.to_string())),
-            Ok(program) => {
-                let mut interpreter = Interpreter::new();
-                interpreter.enable_bytecode_tier(1, false);
-                let r = match interpreter.eval_program(program) {
-                    Ok(v) => {
-                        let shown = match v {
-                            Value::Unit => None,
-                            other => Some(format!("{}", other)),
-                        };
-                        (crate::output::drain_captured(), shown, None)
-                    }
-                    Err(e) => (crate::output::drain_captured(), None, Some(e.to_string())),
-                };
-                SESSION.with(|s| *s.borrow_mut() = Some(interpreter));
-                r
-            }
-        };
-        let ms = started.elapsed().as_secs_f64() * 1000.0;
-        let json = format!(
-            r#"{{"output":{},"value":{},"error":{},"ms":{:.1},"version":{}}}"#,
-            json_escape(&output),
-            value
-                .as_deref()
-                .map(json_escape)
-                .unwrap_or_else(|| "null".to_string()),
-            error
-                .as_deref()
-                .map(json_escape)
-                .unwrap_or_else(|| "null".to_string()),
-            ms,
-            json_escape(crate::version::VERSION),
-        );
-        result_buffer(json)
-    }
+    let source = match std::str::from_utf8(unsafe { std::slice::from_raw_parts(ptr, len) }) {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            return result_buffer(
+                r#"{"output":"","value":null,"error":"source was not valid UTF-8","ms":0}"#
+                    .to_string(),
+            );
+        }
+    };
+    let started = crate::clock::Instant::now();
+    let program = OlangParser::new().parse(&source).map_err(|e| e.to_string());
+    let load_ms = started.elapsed().as_secs_f64() * 1000.0;
+    start_session(program, load_ms, false)
+}
+
+/// Start the session from a program image (`meta.encode` on the server,
+/// src/olb.rs): decoding replaces parsing. An image this runtime cannot
+/// load — another olang version wrote it, or the bytes are not an image
+/// — answers with `retry_with_source: true`, and the page falls back to
+/// the source bundle.
+///
+/// # Safety
+/// `ptr..ptr+len` must be readable bytes written by the page.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn olang_session_start_bin(ptr: *const u8, len: usize) -> *mut u8 {
+    install_panic_hook();
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let started = crate::clock::Instant::now();
+    let program = crate::olb::decode(bytes).map_err(|e| e.to_string());
+    let load_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let retry = program.is_err();
+    start_session(program, load_ms, retry)
+}
+
+fn start_session(
+    program: Result<Program, String>,
+    load_ms: f64,
+    retry_with_source: bool,
+) -> *mut u8 {
+    SESSION.with(|s| *s.borrow_mut() = None);
+    HANDLERS.with(|h| h.borrow_mut().clear());
+    let started = crate::clock::Instant::now();
+    let (output, value, error) = match program {
+        Err(e) => (crate::output::drain_captured(), None, Some(e)),
+        Ok(program) => {
+            let mut interpreter = Interpreter::new();
+            interpreter.enable_bytecode_tier(1, false);
+            let r = match interpreter.eval_program(program) {
+                Ok(v) => {
+                    let shown = match v {
+                        Value::Unit => None,
+                        other => Some(format!("{}", other)),
+                    };
+                    (crate::output::drain_captured(), shown, None)
+                }
+                Err(e) => (crate::output::drain_captured(), None, Some(e.to_string())),
+            };
+            SESSION.with(|s| *s.borrow_mut() = Some(interpreter));
+            r
+        }
+    };
+    let run_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let json = format!(
+        r#"{{"output":{},"value":{},"error":{},"ms":{:.1},"load_ms":{:.1},"run_ms":{:.1},"retry_with_source":{},"version":{}}}"#,
+        json_escape(&output),
+        value
+            .as_deref()
+            .map(json_escape)
+            .unwrap_or_else(|| "null".to_string()),
+        error
+            .as_deref()
+            .map(json_escape)
+            .unwrap_or_else(|| "null".to_string()),
+        load_ms + run_ms,
+        load_ms,
+        run_ms,
+        retry_with_source,
+        json_escape(crate::version::VERSION),
+    );
+    result_buffer(json)
 }
 
 /// Re-enter the session for one event. Returns a result buffer whose

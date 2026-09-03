@@ -81,11 +81,11 @@ fn the_local_workflow_end_to_end() {
     assert!(r.ok, "new: {}", r.output);
     parses(&base.join("myapp/src/main.ol"));
 
-    // `--web` is two files on the web SDK; `--web-bare` is the raw shape
+    // `--web` is three files on the web SDK; `--web-bare` is the raw shape
     // with every seam written out.
     let r = run_in(&base, &shelf, &["new", "webby", "--web"]);
     assert!(r.ok, "new --web: {}", r.output);
-    for rel in ["main.ol", "client.ol"] {
+    for rel in ["main.ol", "lib/pages.ol", "client.ol"] {
         parses(&base.join("webby").join(rel));
     }
     assert!(
