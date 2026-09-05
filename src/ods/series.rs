@@ -449,9 +449,7 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
         "try_series" => Ok(match &args[0] {
             Value::List(items) => match series_from_list(items) {
                 Ok(series) => Value::Ok(Box::new(OdsSeries::into_value(series))),
-                Err(e) => Value::Err(Box::new(Value::String(std::sync::Arc::new(
-                    e.to_string(),
-                )))),
+                Err(e) => Value::Err(Box::new(Value::String(std::sync::Arc::new(e.to_string())))),
             },
             other => Value::Err(Box::new(Value::String(std::sync::Arc::new(format!(
                 "ods.try_series expects a list, got {}",
