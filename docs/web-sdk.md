@@ -125,7 +125,11 @@ element's `data-action`, so re-rendered markup never re-binds. An
 action named `"toggle:7"` fires the registered `"toggle"` handler,
 which reads its argument with `action_arg(ev)`. `api.call(name,
 payload, k)` posts to the rpc route and hands `k` the unwrapped
-`Result`.
+`Result`; it rides `dom.request`, which carries the status code, so a
+response that is not the envelope — a proxy's HTML page, a bare
+"internal server error" — arrives as `Err(#{ "message": "HTTP 502:
+…", "status": 502, "details": [] })` rather than as a JSON parse
+failure inside the handler.
 
 The event contract, stated once: a click resolves its action from the
 nearest `data-action` ancestor, so styled children of a button still
@@ -298,7 +302,7 @@ clone runs `make wasm` once before starting the demo.
 
 ## Testing
 
-The SDK's tests are olang tests — 133 of them, `olang test
+The SDK's tests are olang tests — 134 of them, `olang test
 frameworks/web-sdk`. The route table and envelope are exercised
 in-process by constructing request values and calling `dispatch`
 directly; the data layer runs against `:memory:`; the demo (`demo/`

@@ -10,17 +10,13 @@
 
 share fn open_store(path) = {
     let conn = unwrap(db.open(path))
-    unwrap(db.execute(conn, "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"))
-    let rows = unwrap(db.query(conn, "SELECT version FROM schema_version"))
-    let current = if len(rows) == 0 => {
-        unwrap(db.execute(conn, "INSERT INTO schema_version (version) VALUES (0)"))
-        0
-    } else => map_get(rows[0], "version")
-    migrate(conn, current)
+    migrate(conn)
     conn
 }
 
-fn migrate(conn, from) = {
+// `db.migrate` runs each version once, in its own transaction, and
+// records the applied version in schema_version.
+fn migrate(conn) = {
     let migrations = [
         // v1 — the original issues table
         ["CREATE TABLE IF NOT EXISTS issues (
@@ -53,15 +49,7 @@ fn migrate(conn, from) = {
          "CREATE INDEX idx_issues_assignee ON issues(assignee)",
          "CREATE INDEX idx_comments_issue ON comments(issue_id)"]
     ]
-    let mut v = from
-    while v < len(migrations) {
-        unwrap(db.begin(conn))
-        for stmt in migrations[v] { unwrap(db.execute(conn, stmt)) }
-        unwrap(db.execute(conn, "UPDATE schema_version SET version = ?", [v + 1]))
-        unwrap(db.commit(conn))
-        v = v + 1
-    }
-    v
+    unwrap(db.migrate(conn, migrations))
 }
 
 share fn seed_if_empty(conn) = {

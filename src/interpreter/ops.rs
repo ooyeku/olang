@@ -4,6 +4,18 @@
 use super::{Interpreter, InterpreterError};
 use crate::ast::{BinaryOp, UnaryOp, Value};
 
+/// A float result must be finite: overflow raises, like every other
+/// operation whose IEEE result would be `inf` or `NaN`.
+fn float_result(r: f64, op: &str) -> Result<Value, InterpreterError> {
+    if r.is_finite() {
+        Ok(Value::Float(r))
+    } else {
+        Err(InterpreterError::RuntimeError {
+            message: crate::ast::float_overflow_message(op),
+        })
+    }
+}
+
 impl Interpreter {
     pub(crate) fn eval_binary_op(
         &self,
@@ -43,9 +55,13 @@ impl Interpreter {
                     message: "Integer overflow in addition (bigint.of gives arbitrary precision)"
                         .to_string(),
                 }),
-            (Value::Float(a), BinaryOp::Add, Value::Float(b)) => Ok(Value::Float(a + b)),
-            (Value::Integer(a), BinaryOp::Add, Value::Float(b)) => Ok(Value::Float(a as f64 + b)),
-            (Value::Float(a), BinaryOp::Add, Value::Integer(b)) => Ok(Value::Float(a + b as f64)),
+            (Value::Float(a), BinaryOp::Add, Value::Float(b)) => float_result(a + b, "addition"),
+            (Value::Integer(a), BinaryOp::Add, Value::Float(b)) => {
+                float_result(a as f64 + b, "addition")
+            }
+            (Value::Float(a), BinaryOp::Add, Value::Integer(b)) => {
+                float_result(a + b as f64, "addition")
+            }
             (Value::Integer(a), BinaryOp::Subtract, Value::Integer(b)) => a
                 .checked_sub(b)
                 .map(Value::Integer)
@@ -54,12 +70,14 @@ impl Interpreter {
                         "Integer overflow in subtraction (bigint.of gives arbitrary precision)"
                             .to_string(),
                 }),
-            (Value::Float(a), BinaryOp::Subtract, Value::Float(b)) => Ok(Value::Float(a - b)),
+            (Value::Float(a), BinaryOp::Subtract, Value::Float(b)) => {
+                float_result(a - b, "subtraction")
+            }
             (Value::Integer(a), BinaryOp::Subtract, Value::Float(b)) => {
-                Ok(Value::Float(a as f64 - b))
+                float_result(a as f64 - b, "subtraction")
             }
             (Value::Float(a), BinaryOp::Subtract, Value::Integer(b)) => {
-                Ok(Value::Float(a - b as f64))
+                float_result(a - b as f64, "subtraction")
             }
             (Value::Integer(a), BinaryOp::Multiply, Value::Integer(b)) => a
                 .checked_mul(b)
@@ -69,12 +87,14 @@ impl Interpreter {
                         "Integer overflow in multiplication (bigint.of gives arbitrary precision)"
                             .to_string(),
                 }),
-            (Value::Float(a), BinaryOp::Multiply, Value::Float(b)) => Ok(Value::Float(a * b)),
+            (Value::Float(a), BinaryOp::Multiply, Value::Float(b)) => {
+                float_result(a * b, "multiplication")
+            }
             (Value::Integer(a), BinaryOp::Multiply, Value::Float(b)) => {
-                Ok(Value::Float(a as f64 * b))
+                float_result(a as f64 * b, "multiplication")
             }
             (Value::Float(a), BinaryOp::Multiply, Value::Integer(b)) => {
-                Ok(Value::Float(a * b as f64))
+                float_result(a * b as f64, "multiplication")
             }
             (Value::Integer(a), BinaryOp::Divide, Value::Integer(b)) => {
                 if b == 0 {
@@ -98,7 +118,7 @@ impl Interpreter {
                         message: "Division by zero".to_string(),
                     })
                 } else {
-                    Ok(Value::Float(a / b))
+                    float_result(a / b, "division")
                 }
             }
             (Value::Integer(a), BinaryOp::Divide, Value::Float(b)) => {
@@ -107,7 +127,7 @@ impl Interpreter {
                         message: "Division by zero".to_string(),
                     })
                 } else {
-                    Ok(Value::Float(a as f64 / b))
+                    float_result(a as f64 / b, "division")
                 }
             }
             (Value::Float(a), BinaryOp::Divide, Value::Integer(b)) => {
@@ -116,7 +136,7 @@ impl Interpreter {
                         message: "Division by zero".to_string(),
                     })
                 } else {
-                    Ok(Value::Float(a / b as f64))
+                    float_result(a / b as f64, "division")
                 }
             }
             (Value::Integer(a), BinaryOp::Modulo, Value::Integer(b)) => {

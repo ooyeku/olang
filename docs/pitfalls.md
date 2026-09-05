@@ -48,6 +48,34 @@ println(show(7 / 2.0))     // 3.5   (one float is enough)
 println(show(7 % 3))       // 1     (remainder)
 ```
 
+Series are the exception, on purpose: `/` between two Int Series (or
+an Int Series and an Int) is true division and yields a Float Series,
+because a ratio between measure columns is what data code means and a
+truncated one is a silent wrong answer. `ods.cast(s / t, "Int")` when
+the integer quotient is wanted.
+
+Floats never overflow into `inf`: `1e308 * 10.0`, `math.exp(1000.0)`,
+and `str.parse_float("1e999")` are errors (the last an `Err`), so a
+computation that runs off the end of the number line stops where it
+happened rather than printing `inf` three functions later.
+
+## `to_string` prints values, not columns
+
+`to_string` (and `show`) print the shortest text that reads back to
+the same float: `12.5`, not `12.50`; `1e21`, not
+`1000000000000000000000`. That is right for a value and wrong for a
+report, where `12.50` must line up under `3.00` and money wants
+separators. `str.fixed(x, digits)` gives exactly `digits` decimals,
+never in exponent form and never `-0.00`; `str.thousands(x, digits)`
+adds separators.
+
+```olang
+println(str.fixed(12.5, 2))              // 12.50
+println(str.fixed(-0.001, 2))            // 0.00
+println(str.thousands(1234567.891, 2))   // 1,234,567.89
+println("$" + str.thousands(-4.5, 2))    // $-4.50 — put the sign first yourself
+```
+
 ## Falsy values: `false`, `0`, `0.0`, `""`, `[]`, `()`
 
 An `if`/`while` condition is normally a boolean from a comparison, but

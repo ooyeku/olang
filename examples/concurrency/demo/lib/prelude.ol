@@ -90,13 +90,12 @@ share fn round1(x: Float) = to_float(to_int(x * 10.0)) / 10.0
 // Percent share, one decimal.
 share fn pct(part: Float, whole: Float) = if whole == 0.0 => 0.0 else => round1(part / whole * 100.0)
 
-// Money formatting: two decimals, always.
+// Money formatting: two decimals, always — negative-safe, via str.fixed:
+// the sign goes before the currency mark, and an amount that rounds to
+// zero carries no sign.
 share fn money(x: Float) = {
-    let cents = to_int(x * 100.0 + 0.5)
-    let whole = cents / 100
-    let frac = cents % 100
-    let frac_s = if frac < 10 => "0" + show(frac) else => show(frac)
-    `$${whole}.${frac_s}`
+    let text = str.fixed(if x < 0.0 => 0.0 - x else => x, 2)
+    if x < 0.0 && text != "0.00" => "-$" + text else => "$" + text
 }
 
 // ── The cache-threading idiom ───────────────────────────────────────
@@ -137,6 +136,8 @@ test "numeric helpers" {
     testing.assert_eq(clamp(12, 0, 10), 10)
     testing.assert_eq(gcd(48, 36), 12)
     testing.assert_eq(money(1234.5), "$1234.50")
+    testing.assert_eq(money(-3.075), "-$3.08")
+    testing.assert_eq(money(-0.001), "$0.00")
     testing.assert_eq(pct(25.0, 200.0), 12.5)
     testing.assert_eq(memo_fib(30, #{})[0], 832040)
 }

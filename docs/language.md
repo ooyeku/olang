@@ -125,14 +125,18 @@ Printing round-trips: `to_string` of any finite float is itself a valid
 float literal that reads back to the identical value, whether it prints
 in plain form (`1500.0`) or exponent form (`1e301`).
 
-Floats trap rather than produce `NaN`: `0.0 / 0.0`, `math.sqrt(-1.0)`,
-`math.log(-1.0)`, and the other operations whose IEEE result would be
-`NaN` raise a runtime error instead. Division by zero is an error for
-floats exactly as for integers. One edge is currently outside that
-wall: arithmetic that *overflows* — `1e308 * 10.0` — yields `inf`
-rather than trapping, and `inf` values propagate IEEE-style from there
-(the roadmap records this edge; `inf` and `NaN` are printable but are
-not literals).
+A Float is always a finite number. Operations whose IEEE result would
+be `NaN` or infinite raise a runtime error instead: `0.0 / 0.0`,
+`math.sqrt(-1.0)`, `math.log(-1.0)`, division by zero (exactly as for
+integers), and overflow — `1e308 * 10.0` is `Float overflow in
+multiplication`, as `math.exp(1000.0)` and `math.pow(10.0, 400.0)` are
+errors, and `str.parse_float("1e999")` is an `Err` ("out of range").
+A literal beyond the range, `1e400`, is a syntax error. The rule holds
+on all three tiers: the bytecode and JIT tiers check every float
+result and raise the same message. `inf` and `NaN` have printed forms
+(`to_string` renders them for values that arrive from outside — a
+Series computed by the data stack's IEEE kernels, see the ods chapter)
+but no literal and no arithmetic path produces them.
 
 ### Booleans
 

@@ -1398,6 +1398,18 @@ impl From<Vec<Value>> for Value {
 ///
 /// The output still round-trips (the underlying formats are shortest-form),
 /// and it is used by every human-facing path so all three tiers agree.
+/// The error every tier raises when a float operation's result is not
+/// finite. Floats trap rather than produce `inf` or `NaN` (language.md,
+/// "Floats"): division by zero, out-of-domain math, and — since 0.82 —
+/// overflow. Operands are always finite, because nothing produces a
+/// non-finite float, so checking the result is the whole rule.
+pub fn float_overflow_message(op: &str) -> String {
+    format!(
+        "Float overflow in {} (the result is not a finite number)",
+        op
+    )
+}
+
 pub fn format_float(x: f64) -> String {
     if x.is_nan() {
         return "NaN".to_string();

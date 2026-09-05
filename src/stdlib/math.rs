@@ -99,6 +99,22 @@ pub fn call_math_function(
     name: &str,
     args: Vec<Value>,
 ) -> Result<Value, Box<dyn std::error::Error>> {
+    // A Float is never inf or NaN: an overflowing `pow`, `exp`, or
+    // `sinh` errors like an overflowing `*` does (language.md, "Floats").
+    match call_math_function_inner(name, args)? {
+        Value::Float(x) if !x.is_finite() => Err(format!(
+            "math.{}: the result is not a finite number (float overflow)",
+            name
+        )
+        .into()),
+        other => Ok(other),
+    }
+}
+
+fn call_math_function_inner(
+    name: &str,
+    args: Vec<Value>,
+) -> Result<Value, Box<dyn std::error::Error>> {
     match name {
         "abs" => math_abs(args),
         "min" => math_min(args),

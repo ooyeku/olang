@@ -127,6 +127,7 @@
   }
 
   const JSON_CALLBACK_BIT = 2 ** 40;
+  const REQUEST_BIT = 2 ** 41;
   // Session state: dom.state_get/set live here (see the two host imports).
   const sessionState = {};
 
@@ -197,18 +198,36 @@
         const path = readStr(pp, pl);
         const body = readStr(bp, bl);
         // Bit 40 marks a fetch_json callback: deliver the response through
-        // the JSON dispatch so the handler receives a parsed value.
+        // the JSON dispatch so the handler receives a parsed value. Bit 41
+        // marks a dom.request callback: the whole response — status,
+        // headers, body — as one JSON value, so the handler can tell a
+        // 404 from a 500 from a network failure (status 0).
         const raw = Number(id);
-        const wantsJson = raw >= JSON_CALLBACK_BIT;
-        const cb = wantsJson ? raw - JSON_CALLBACK_BIT : raw;
+        const wantsStatus = raw >= REQUEST_BIT;
+        const rest = wantsStatus ? raw - REQUEST_BIT : raw;
+        const wantsJson = rest >= JSON_CALLBACK_BIT;
+        const cb = wantsJson ? rest - JSON_CALLBACK_BIT : rest;
         const deliver = wantsJson
           ? (text) => dispatchRawJson(cb, text)
           : (text) => dispatch(cb, text);
-        fetch(path, {
+        const request = fetch(path, {
           method,
           headers: body ? { "Content-Type": "application/json" } : {},
           body: body || undefined,
-        })
+        });
+        if (wantsStatus) {
+          request
+            .then(async (r) => dispatchRawJson(cb, JSON.stringify({
+              status: r.status,
+              headers: Object.fromEntries(r.headers.entries()),
+              body: await r.text(),
+            })))
+            .catch((e) => dispatchRawJson(cb, JSON.stringify({
+              status: 0, headers: {}, body: "", error: String(e),
+            })));
+          return;
+        }
+        request
           .then((r) => r.text())
           .then(deliver)
           .catch((e) => deliver(JSON.stringify({ error: String(e) })));

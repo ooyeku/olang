@@ -343,6 +343,7 @@ fn par_for(s: &Series) -> bool {
 /// (name, arity) of every series function in the `ods` namespace.
 pub const FUNCTIONS: &[(&str, usize)] = &[
     ("series", 1),
+    ("try_series", 1),
     ("zeros", 1),
     ("linspace", 3),
     ("to_list", 1),
@@ -443,6 +444,20 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
     arity(func, &args, expected)?;
     let e = |err: olang_ods::OdsError| err.to_string();
     match func {
+        // The Result form of `series`: a mixed-type list is an
+        // `Err(message)` to match on, not a raise.
+        "try_series" => Ok(match &args[0] {
+            Value::List(items) => match series_from_list(items) {
+                Ok(series) => Value::Ok(Box::new(OdsSeries::into_value(series))),
+                Err(e) => Value::Err(Box::new(Value::String(std::sync::Arc::new(
+                    e.to_string(),
+                )))),
+            },
+            other => Value::Err(Box::new(Value::String(std::sync::Arc::new(format!(
+                "ods.try_series expects a list, got {}",
+                other.type_name()
+            ))))),
+        }),
         "series" => match &args[0] {
             Value::List(items) => Ok(OdsSeries::into_value(series_from_list(items)?)),
             Value::Range {

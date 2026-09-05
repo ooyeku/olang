@@ -64,6 +64,7 @@ pub fn create_dom_module() -> Value {
         ("post", 1),
         ("on_message", 1),
         ("fetch_json", 4),
+        ("request", 4),
         // The page's own state: its color scheme, what has focus, a
         // confirmation, and a picked file's contents.
         ("prefers_dark", 0),

@@ -78,16 +78,45 @@ let spec_keys = ["data", "layers", "mark", "x", "y", "color", "color_by",
                  "responsive", "interactive", "colors", "vary",
                  "font_size", "font"]
 
-fn check_spec_keys(spec, where_) = {
+// Every problem a spec has before rendering, as messages: unknown keys
+// (in the spec or a layer) and an empty dataset. `check` returns them
+// as an Err; `chart` raises the first.
+fn spec_problems(spec, where_) = {
+    let mut problems = []
     for k in map_keys(spec) {
         if contains(spec_keys, k) == false => {
-            unwrap(Err("viz: unknown key '" + k + "' in " + where_
-                + " — the spec keys are " + join(spec_keys, ", ")))
+            problems = problems + ["viz: unknown key '" + k + "' in " + where_
+                + " — the spec keys are " + join(spec_keys, ", ")]
         }
     }
     if map_has_key(spec, "layers") => {
-        for layer in map_get(spec, "layers") { check_spec_keys(layer, "a layer") }
+        for layer in map_get(spec, "layers") {
+            problems = problems + spec_problems(layer, "a layer")
+        }
     }
+    problems
+}
+
+fn has_data(spec) =
+    if map_has_key(spec, "data") && len(map_get(spec, "data")) > 0 => true
+    else if map_has_key(spec, "layers") =>
+        len(filter(map_get(spec, "layers"), (l) => has_data(l))) > 0
+    else => false
+
+fn check_spec_keys(spec, where_) = {
+    let problems = spec_problems(spec, where_)
+    if len(problems) > 0 => unwrap(Err(problems[0])) else => ()
+}
+
+/// The spec's problems as a Result: `Ok(spec)` when it will render, or
+/// `Err(message)` — an unknown key, or no data points to draw — so a
+/// chart over records from a file, a request, or a user is guarded once:
+/// `match viz.check(spec) { Ok(s) => viz.chart(s), Err(e) => ... }`.
+share fn check(spec) = {
+    let problems = spec_problems(spec, "the chart spec")
+    if len(problems) > 0 => Err(problems[0])
+    else if !has_data(spec) => Err("viz: no data points to draw")
+    else => Ok(spec)
 }
 
 fn norm_mark(m) = if m == "point" => "scatter" else => m

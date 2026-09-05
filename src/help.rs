@@ -2457,6 +2457,22 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             &[r##"ods.frame_from_records([#{ "name": "ann", "score": 91 }])"##],
         );
         self.doc_ex(
+            "ods.try_frame_from_records",
+            "ods.try_frame_from_records(records)",
+            "Result<Frame, String>",
+            "ods",
+            "`frame_from_records` as a Result: a mixed-type column or a non-record element is Err(message) to match on, not a raise — for records from a file, a request, or a user",
+            &[r##"match ods.try_frame_from_records(rows) { Ok(f) => ods.n_rows(f), Err(e) => 0 }"##],
+        );
+        self.doc_ex(
+            "ods.try_series",
+            "ods.try_series(list)",
+            "Result<Series, String>",
+            "ods",
+            "`series` as a Result: a list mixing strings and numbers is Err(message), not a raise",
+            &[r##"ods.try_series([1, "x"])  // Err("ods.series: cannot mix String with other")"##],
+        );
+        self.doc_ex(
             "ods.read_csv",
             "ods.read_csv(text)",
             "Frame",
@@ -3168,6 +3184,16 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "dom",
             "Asynchronous HTTP from the page — the callback receives the response text.",
             &[r##"dom.fetch("GET", "/api/items", "", (text) => render(text))"##],
+        );
+        self.doc_ex(
+            "dom.request",
+            "dom.request(method, path, body, callback)",
+            "Unit",
+            "dom",
+            "Asynchronous HTTP from the page with the whole response: the callback receives #{ \"status\", \"headers\", \"body\" } — status 0 (with an \"error\") when the request never reached a server — so a handler can tell a 404 from a 500 from a network failure. `dom.fetch` and `dom.fetch_json` deliver the body alone.",
+            &[r##"dom.request("GET", "/api/items", "", (r) =>
+    if map_get(r, "status") == 200 => render(unwrap(json.parse(map_get(r, "body"))))
+    else => show_error("HTTP " + to_string(map_get(r, "status"))))"##],
         );
         self.doc_ex(
             "dom.focus",
@@ -4519,7 +4545,7 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
         });
         self.add_function(FunctionDoc {
             name: "db.query_one".to_string(),
-            description: "Like query but returns the first row (a map), or unit if none."
+            description: "Like query but returns the first row (a map), or unit if none — Ok(()) is the absent shape, unambiguous because a row is always a map: `if r == () => ... else => map_get(r, ...)`."
                 .to_string(),
             syntax: "db.query_one(conn, sql[, params])".to_string(),
             parameters: vec![],
@@ -4527,6 +4553,30 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             examples: vec!["unwrap(db.query_one(c, \"SELECT COUNT(*) AS n FROM t\"))".to_string()],
             category: "Database".to_string(),
             see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "db.transaction".to_string(),
+            description: "Run f(conn) inside a transaction: commit when f returns anything but an Err, roll back when it returns an Err or raises — and hand f's result through either way. Replaces begin/commit/rollback by hand, where one forgotten rollback arm leaves the database half-written.".to_string(),
+            syntax: "db.transaction(conn, f)".to_string(),
+            parameters: vec!["conn: Connection".to_string(), "f: (conn) => value | Err".to_string()],
+            return_type: "the value f returned (Err rolls back)".to_string(),
+            examples: vec![
+                "db.transaction(c, (c) => {\n    unwrap(db.execute(c, \"INSERT INTO a VALUES (1)\"))\n    unwrap(db.execute(c, \"INSERT INTO b VALUES (1)\"))\n    Ok(2)\n})".to_string(),
+            ],
+            category: "Database".to_string(),
+            see_also: vec!["db.begin".to_string(), "db.migrate".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "db.migrate".to_string(),
+            description: "Bring the database to the head of `steps` — a list of versions, each a list of SQL statements (or one statement). A schema_version table records the applied version; version N runs only when the recorded version is below N, inside its own transaction, so a failed statement leaves the database at the version before it and the Err names the statement. Returns Ok(version). Appending a version is how a schema grows; editing one never is.".to_string(),
+            syntax: "db.migrate(conn, steps)".to_string(),
+            parameters: vec!["conn: Connection".to_string(), "steps: List of versions, each a List of SQL strings".to_string()],
+            return_type: "Result<Int, String>".to_string(),
+            examples: vec![
+                "unwrap(db.migrate(c, [\n    [\"CREATE TABLE todos (id INTEGER PRIMARY KEY, title TEXT NOT NULL)\"],\n    [\"ALTER TABLE todos ADD COLUMN done INTEGER NOT NULL DEFAULT 0\"]\n]))  // 2".to_string(),
+            ],
+            category: "Database".to_string(),
+            see_also: vec!["db.transaction".to_string(), "db.open".to_string()],
         });
         self.add_function(FunctionDoc {
             name: "db.close".to_string(),
@@ -4792,6 +4842,35 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             examples: vec!["str.words(\"  a b \")  // [\"a\",\"b\"]".to_string()],
             category: "String".to_string(),
             see_also: vec![],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.fixed".to_string(),
+            description: "A number with exactly `digits` decimals, never in exponent form, rounded on the value's binary expansion (2.675 is 2.67) — the column form `to_string` is not: 12.5 prints \"12.50\" beside 3.0's \"3.00\". A rounded negative is never \"-0.00\". Ints with zero digits keep their exact digits.".to_string(),
+            syntax: "str.fixed(x, digits)".to_string(),
+            parameters: vec!["x: Int|Float".to_string(), "digits: Int - 0 to 20".to_string()],
+            return_type: "String".to_string(),
+            examples: vec![
+                "str.fixed(12.5, 2)      // \"12.50\"".to_string(),
+                "str.fixed(-3.075, 2)    // \"-3.08\"".to_string(),
+                "str.fixed(-0.001, 2)    // \"0.00\"".to_string(),
+                "str.fixed(1e21, 0)      // \"1000000000000000000000\"".to_string(),
+            ],
+            category: "String".to_string(),
+            see_also: vec!["str.thousands".to_string(), "to_string".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.thousands".to_string(),
+            description: "`str.fixed` with thousands separators in the integer part: the report-column and money form. Negative-safe.".to_string(),
+            syntax: "str.thousands(x, digits)".to_string(),
+            parameters: vec!["x: Int|Float".to_string(), "digits: Int - 0 to 20".to_string()],
+            return_type: "String".to_string(),
+            examples: vec![
+                "str.thousands(1234567.891, 2)   // \"1,234,567.89\"".to_string(),
+                "str.thousands(-1234, 0)         // \"-1,234\"".to_string(),
+                "\"$\" + str.thousands(cents / 100.0, 2)".to_string(),
+            ],
+            category: "String".to_string(),
+            see_also: vec!["str.fixed".to_string()],
         });
         self.add_function(FunctionDoc {
             name: "str.pad_start".to_string(),

@@ -4804,11 +4804,13 @@ impl BytecodeVm {
                 BinaryOp::GreaterThanEqual => OvmValue::new_boolean(a >= b),
                 _ => return None,
             },
+            // A non-finite result leaves the fast path: the slow path
+            // raises the overflow error.
             (ValueData::Float(a), ValueData::Float(b)) => match op {
-                BinaryOp::Add => OvmValue::new_float(a + b),
-                BinaryOp::Subtract => OvmValue::new_float(a - b),
-                BinaryOp::Multiply => OvmValue::new_float(a * b),
-                BinaryOp::Divide if *b != 0.0 => OvmValue::new_float(a / b),
+                BinaryOp::Add => OvmValue::new_float(Self::finite(a + b)?),
+                BinaryOp::Subtract => OvmValue::new_float(Self::finite(a - b)?),
+                BinaryOp::Multiply => OvmValue::new_float(Self::finite(a * b)?),
+                BinaryOp::Divide if *b != 0.0 => OvmValue::new_float(Self::finite(a / b)?),
                 BinaryOp::Modulo if *b != 0.0 => OvmValue::new_float(a % b),
                 BinaryOp::Equal => OvmValue::new_boolean(a == b),
                 BinaryOp::NotEqual => OvmValue::new_boolean(a != b),
@@ -4820,6 +4822,23 @@ impl BytecodeVm {
             },
             _ => return None,
         })
+    }
+
+    fn finite(x: f64) -> Option<f64> {
+        x.is_finite().then_some(x)
+    }
+
+    /// Floats trap on overflow, as on division by zero: the result of an
+    /// arithmetic operation is finite or the operation errors — the same
+    /// message the interpreter raises.
+    fn finite_or_overflow(r: f64, op: &str) -> Result<f64, BytecodeError> {
+        if r.is_finite() {
+            Ok(r)
+        } else {
+            Err(BytecodeError::RuntimeError(
+                crate::ast::float_overflow_message(op),
+            ))
+        }
     }
 
     /// Invert a comparison's direction (its own inverse); commutative ops
@@ -5218,14 +5237,18 @@ impl BytecodeVm {
         op: BinaryOp,
     ) -> Result<OvmValue, BytecodeError> {
         Ok(match op {
-            BinaryOp::Add => OvmValue::new_float(a + b),
-            BinaryOp::Subtract => OvmValue::new_float(a - b),
-            BinaryOp::Multiply => OvmValue::new_float(a * b),
+            BinaryOp::Add => OvmValue::new_float(Self::finite_or_overflow(a + b, "addition")?),
+            BinaryOp::Subtract => {
+                OvmValue::new_float(Self::finite_or_overflow(a - b, "subtraction")?)
+            }
+            BinaryOp::Multiply => {
+                OvmValue::new_float(Self::finite_or_overflow(a * b, "multiplication")?)
+            }
             BinaryOp::Divide => {
                 if b == 0.0 {
                     return Err(BytecodeError::DivisionByZero);
                 }
-                OvmValue::new_float(a / b)
+                OvmValue::new_float(Self::finite_or_overflow(a / b, "division")?)
             }
             BinaryOp::Modulo => {
                 if b == 0.0 {

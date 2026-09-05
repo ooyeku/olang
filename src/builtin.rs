@@ -891,6 +891,14 @@ impl BuiltinFunctions {
                 });
         }
 
+        // `db.transaction(conn, f)` calls `f` — begin, run, then commit on
+        // anything but an Err, roll back on an Err or a raise. It lives
+        // here because only the interpreter can call a function value.
+        #[cfg(feature = "native")]
+        if name == "db.transaction" {
+            return db_transaction(arguments, interpreter);
+        }
+
         // Handle db (SQLite) functions
         #[cfg(feature = "native")]
         if let Some(db_function) = name.strip_prefix("db.") {
@@ -2046,13 +2054,16 @@ impl BuiltinFunctions {
         match &args[0] {
             Value::Integer(n) => Ok(Value::Float(*n as f64)),
             Value::Float(x) => Ok(Value::Float(*x)),
-            Value::String(s) => {
-                s.parse::<f64>()
-                    .map(Value::Float)
-                    .map_err(|_| InterpreterError::TypeError {
-                        message: format!("Cannot convert string '{}' to float", s),
-                    })
-            }
+            Value::String(s) => match s.parse::<f64>() {
+                // A Float is never inf or NaN: "1e999" is out of range.
+                Ok(x) if !x.is_finite() => Err(InterpreterError::TypeError {
+                    message: format!("to_float: '{}' is out of range for a float", s),
+                }),
+                Ok(x) => Ok(Value::Float(x)),
+                Err(_) => Err(InterpreterError::TypeError {
+                    message: format!("Cannot convert string '{}' to float", s),
+                }),
+            },
             _ => Err(InterpreterError::TypeError {
                 message: "to_float: cannot convert value to float".to_string(),
             }),
@@ -3804,6 +3815,48 @@ impl Clone for BuiltinFunctions {
     fn clone(&self) -> Self {
         Self {
             functions: self.functions.clone(),
+        }
+    }
+}
+
+/// `db.transaction(conn, f)`: `f(conn)` inside BEGIN … COMMIT. An `Err`
+/// returned by `f` rolls back and is handed through; a raise inside `f`
+/// rolls back and propagates; anything else commits and is returned.
+#[cfg(feature = "native")]
+fn db_transaction(
+    arguments: Vec<Value>,
+    interpreter: &mut crate::interpreter::Interpreter,
+) -> Result<Value, InterpreterError> {
+    if arguments.len() != 2 {
+        return Err(InterpreterError::ArityMismatch {
+            expected: 2,
+            got: arguments.len(),
+        });
+    }
+    let conn = arguments[0].clone();
+    let f = arguments[1].clone();
+    let db = |name: &str, args: Vec<Value>| {
+        crate::stdlib::db::call_db_function(name, args).map_err(|e| {
+            InterpreterError::RuntimeError {
+                message: e.to_string(),
+            }
+        })
+    };
+    if let Value::Err(e) = db("begin", vec![conn.clone()])? {
+        return Ok(Value::Err(e));
+    }
+    match interpreter.call_function(f, vec![conn.clone()]) {
+        Ok(Value::Err(e)) => {
+            let _ = db("rollback", vec![conn]);
+            Ok(Value::Err(e))
+        }
+        Ok(value) => match db("commit", vec![conn])? {
+            Value::Err(e) => Ok(Value::Err(e)),
+            _ => Ok(value),
+        },
+        Err(raised) => {
+            let _ = db("rollback", vec![conn]);
+            Err(raised)
         }
     }
 }

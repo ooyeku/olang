@@ -5,25 +5,45 @@
 //! and `call` unwraps it: the callback receives `Ok(data)` or
 //! `Err(#{ "message", "details" })` — never a raw wire shape.
 //!
-//! `dom.fetch_json` is callback-shaped (the browser's event loop), so
-//! the API is too: `call(name, payload, (result) => ...)`.
+//! `dom.request` is callback-shaped (the browser's event loop), so the
+//! API is too: `call(name, payload, (result) => ...)`. It carries the
+//! status code, so a response that is not the envelope — a proxy's
+//! HTML, a bare "internal server error" — is an `Err` naming the
+//! status, never a JSON parse failure in the handler.
 
 /// Call a named endpoint: `call("todos.create", #{ "title": t },
 /// (r) => match r { Ok(todo) => ..., Err(e) => ... })`.
 share fn call(name, payload, k) =
     if dom.available() =>
-        dom.fetch_json("POST", "/api/rpc/" + name,
+        dom.request("POST", "/api/rpc/" + name,
             unwrap(json.stringify(payload)),
-            (resp) => k(unwrap_envelope(resp)))
+            (resp) => k(from_response(resp)))
     else => k(Err(#{ "message": "api.call(\"" + name
         + "\") needs the browser — this is a static preview", "details": [] }))
 
 /// GET a REST route, envelope-unwrapped: `fetch("/api/todos", k)`.
 share fn fetch(path, k) =
     if dom.available() =>
-        dom.fetch_json("GET", path, "", (resp) => k(unwrap_envelope(resp)))
+        dom.request("GET", path, "", (resp) => k(from_response(resp)))
     else => k(Err(#{ "message": "api.fetch(\"" + path
         + "\") needs the browser — this is a static preview", "details": [] }))
+
+/// A `dom.request` response (`#{ "status", "headers", "body" }`) as the
+/// api Result: a JSON body goes through the envelope; a network failure
+/// (status 0) or a body that is not JSON is an `Err` carrying the
+/// status and the text.
+share fn from_response(resp) = {
+    let status = if map_has_key(resp, "status") => map_get(resp, "status") else => 0
+    let body = if map_has_key(resp, "body") => map_get(resp, "body") else => ""
+    if status == 0 => Err(#{ "message": "request failed: " +
+        (if map_has_key(resp, "error") => to_string(map_get(resp, "error")) else => "no response"),
+        "details": [], "status": 0 })
+    else => match json.parse(body) {
+        Ok(v) => unwrap_envelope(v),
+        Err(e) => Err(#{ "message": "HTTP " + to_string(status) + ": " + str.trim(body),
+                         "details": [], "status": status })
+    }
+}
 
 fn maplike(v) = {
     let t = typeof(v)
@@ -74,6 +94,20 @@ test "the envelope unwraps to Result" {
         "details": ["title: required"] } }),
         Err(#{ "message": "invalid", "details": ["title: required"] }))
     assert_eq(unwrap_envelope(#{ "other": 1 }), Ok(#{ "other": 1 }))
+}
+
+test "from_response: the envelope when JSON, the status when not" {
+    let ok = from_response(#{ "status": 200, "headers": #{}, "body": "{\"data\": [1, 2]}" })
+    assert_eq(ok, Ok([1, 2]))
+    let enveloped = from_response(#{ "status": 422, "headers": #{},
+        "body": "{\"error\": {\"code\": \"invalid\", \"message\": \"validation failed\", \"details\": [\"title: required\"]}}" })
+    assert_eq(err_details(match enveloped { Err(e) => e, Ok(v) => #{} }), ["title: required"])
+    let plain = from_response(#{ "status": 500, "headers": #{}, "body": "internal server error" })
+    let e = match plain { Err(x) => x, Ok(v) => #{} }
+    assert_eq(map_get(e, "message"), "HTTP 500: internal server error")
+    assert_eq(map_get(e, "status"), 500)
+    let down = from_response(#{ "status": 0, "headers": #{}, "body": "", "error": "TypeError: Failed to fetch" })
+    assert_eq(str.starts_with(err_message(match down { Err(x) => x, Ok(v) => #{} }), "request failed"), true)
 }
 
 test "err accessors read both halves" {

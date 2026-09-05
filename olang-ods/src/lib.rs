@@ -547,6 +547,17 @@ impl Series {
             (Series::F64 { values: a, .. }, Series::F64 { values: b, .. }) => {
                 f64_arith(a, b, op, validity, par)
             }
+            // Division between Int columns is true division (a Float
+            // result), unlike the scalar `/`: in data work a ratio between
+            // measure columns is the norm, and a truncating quotient hid
+            // "0 countries decoupled" behind an answer that looked right.
+            (Series::I64 { values: a, .. }, Series::I64 { values: b, .. })
+                if matches!(op, ArithOp::Div) =>
+            {
+                let a: Vec<f64> = a.iter().map(|&x| x as f64).collect();
+                let b: Vec<f64> = b.iter().map(|&x| x as f64).collect();
+                f64_arith(&a, &b, op, validity, par)
+            }
             (Series::I64 { values: a, .. }, Series::I64 { values: b, .. }) => {
                 i64_arith(a, b, op, validity)
             }
@@ -589,6 +600,11 @@ impl Series {
             (Series::I64 { values, .. }, Scalar::F64(s)) => {
                 let a: Vec<f64> = values.iter().map(|&x| x as f64).collect();
                 f64_arith_scalar(&a, *s, op, swapped, validity, par)
+            }
+            // True division, as between two Int columns.
+            (Series::I64 { values, .. }, Scalar::I64(s)) if matches!(op, ArithOp::Div) => {
+                let a: Vec<f64> = values.iter().map(|&x| x as f64).collect();
+                f64_arith_scalar(&a, *s as f64, op, swapped, validity, par)
             }
             (Series::I64 { values, .. }, Scalar::I64(s)) => {
                 i64_arith_scalar(values, *s, op, swapped, validity)

@@ -222,6 +222,11 @@ fn read_host_string(ptr: *const u8) -> String {
 /// High bit on a fetch callback id: the page must deliver the response
 /// through the JSON dispatch (parsed value) rather than as raw text.
 pub const JSON_CALLBACK_BIT: i64 = 1 << 40;
+/// Bit 41 marks a `dom.request` callback: the page delivers the whole
+/// response — `#{ "status", "headers", "body" }` — through the JSON
+/// dispatch, so the handler can tell a 404 from a 500 from a network
+/// failure (`status` 0, with an `error`).
+pub const REQUEST_BIT: i64 = 1 << 41;
 
 /// A value as compact JSON, via the same serde bridge as json.stringify.
 #[cfg(target_arch = "wasm32")]
@@ -628,6 +633,26 @@ pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::erro
                 (h.len() - 1) as i64
             });
             unsafe { host_dom_on_message(id) };
+            Ok(Value::Unit)
+        }
+        ("request", [method, path, body, callback]) => {
+            let (m, pa, b) = (text(method)?, text(path)?, text(body)?);
+            let id = HANDLERS.with(|h| {
+                let mut h = h.borrow_mut();
+                h.push(callback.clone());
+                (h.len() - 1) as i64
+            });
+            unsafe {
+                host_dom_fetch(
+                    m.as_ptr(),
+                    m.len(),
+                    pa.as_ptr(),
+                    pa.len(),
+                    b.as_ptr(),
+                    b.len(),
+                    id | REQUEST_BIT,
+                )
+            };
             Ok(Value::Unit)
         }
         ("fetch_json", [method, path, body, callback]) => {

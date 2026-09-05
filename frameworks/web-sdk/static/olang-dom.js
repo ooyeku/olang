@@ -102,14 +102,32 @@
     return json;
   }
 
+  // A trap inside the runtime reaches the page as a bare
+  // "RuntimeError: unreachable". The runtime's panic hook keeps the
+  // message that preceded the trap, so it is read back and printed
+  // before the error propagates — a report can then name the operation.
+  function callRuntime(f) {
+    try {
+      return f();
+    } catch (e) {
+      const p = ex.olang_last_panic ? ex.olang_last_panic() : 0;
+      if (p) {
+        const len = new DataView(ex.memory.buffer).getUint32(p, true);
+        console.error("olang panic:", new TextDecoder().decode(mem().slice(p + 4, p + 4 + len)));
+        ex.olang_result_free(p);
+      }
+      throw e;
+    }
+  }
+
   function dispatch(id, payload) {
     if (payload == null) {
-      readResult(ex.olang_dispatch_event(BigInt(id)));
+      readResult(callRuntime(() => ex.olang_dispatch_event(BigInt(id))));
     } else {
       const bytes = new TextEncoder().encode(payload);
       const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
       mem().set(bytes, ptr);
-      readResult(ex.olang_dispatch_event_with(BigInt(id), ptr, bytes.length));
+      readResult(callRuntime(() => ex.olang_dispatch_event_with(BigInt(id), ptr, bytes.length)));
       ex.olang_dealloc(ptr, Math.max(bytes.length, 1));
     }
   }
@@ -126,7 +144,7 @@
     const bytes = new TextEncoder().encode(text);
     const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
     mem().set(bytes, ptr);
-    readResult(ex.olang_dispatch_event_json(BigInt(id), ptr, bytes.length));
+    readResult(callRuntime(() => ex.olang_dispatch_event_json(BigInt(id), ptr, bytes.length)));
     ex.olang_dealloc(ptr, Math.max(bytes.length, 1));
   }
 
@@ -154,6 +172,7 @@
   }
 
   const JSON_CALLBACK_BIT = 2 ** 40;
+  const REQUEST_BIT = 2 ** 41;
   // Session state: dom.state_get/set live here (see the two host imports).
   const sessionState = {};
 
@@ -244,18 +263,36 @@
         const path = readStr(pp, pl);
         const body = readStr(bp, bl);
         // Bit 40 marks a fetch_json callback: deliver the response through
-        // the JSON dispatch so the handler receives a parsed value.
+        // the JSON dispatch so the handler receives a parsed value. Bit 41
+        // marks a dom.request callback: the whole response — status,
+        // headers, body — as one JSON value, so the handler can tell a
+        // 404 from a 500 from a network failure (status 0).
         const raw = Number(id);
-        const wantsJson = raw >= JSON_CALLBACK_BIT;
-        const cb = wantsJson ? raw - JSON_CALLBACK_BIT : raw;
+        const wantsStatus = raw >= REQUEST_BIT;
+        const rest = wantsStatus ? raw - REQUEST_BIT : raw;
+        const wantsJson = rest >= JSON_CALLBACK_BIT;
+        const cb = wantsJson ? rest - JSON_CALLBACK_BIT : rest;
         const deliver = wantsJson
           ? (text) => dispatchRawJson(cb, text)
           : (text) => dispatch(cb, text);
-        fetch(path, {
+        const request = fetch(path, {
           method,
           headers: body ? { "Content-Type": "application/json" } : {},
           body: body || undefined,
-        })
+        });
+        if (wantsStatus) {
+          request
+            .then(async (r) => dispatchRawJson(cb, JSON.stringify({
+              status: r.status,
+              headers: Object.fromEntries(r.headers.entries()),
+              body: await r.text(),
+            })))
+            .catch((e) => dispatchRawJson(cb, JSON.stringify({
+              status: 0, headers: {}, body: "", error: String(e),
+            })));
+          return;
+        }
+        request
           .then((r) => r.text())
           .then(deliver)
           .catch((e) => deliver(JSON.stringify({ error: String(e) })));
@@ -554,7 +591,7 @@ Two known causes:
   function startSession(bytes, entry) {
     const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
     mem().set(bytes, ptr);
-    const r = readResult(entry(ptr, bytes.length));
+    const r = readResult(callRuntime(() => entry(ptr, bytes.length)));
     ex.olang_dealloc(ptr, Math.max(bytes.length, 1));
     return r;
   }

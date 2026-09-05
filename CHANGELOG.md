@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — two rulings from the roadmap's W2
+
+- **A Float is always finite.** Overflow now raises like division by
+  zero and out-of-domain math already did: `1e308 * 10.0` is
+  `Float overflow in multiplication (the result is not a finite
+  number)` on all three tiers (the bytecode fast path and the JIT check
+  every float result and deopt to the same error), `math.pow`, `math.exp`
+  and the rest error instead of returning `inf`, `str.parse_float("1e999")`
+  and `to_float` report "out of range", and a literal beyond f64's range
+  (`1e400`) is a syntax error. The data stack's Series kernels stay
+  IEEE for throughput and are documented as the one place `inf` can
+  appear.
+
+- **Series division is true division.** `/` between two Int Series, or
+  an Int Series and an Int, yields a Float Series — the scalar `/`
+  still truncates. A ratio between measure columns is what data code
+  means, and the truncating quotient had turned the climate example's
+  growth rates into zeros with no error. `ods.cast(a / b, "int")`
+  recovers the integer quotient; `+ - *` on Int Series stay Int and
+  checked; division by zero still raises.
+
 ### Added
 
 - **The program image.** `meta.encode(source)` returns the parsed
@@ -34,6 +55,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **A Bytes body in an http response** is served raw — the binary-safe
   path that needs no file on disk (`body_file` remains).
 
+- **`str.fixed(x, digits)` and `str.thousands(x, digits)`.** Exactly
+  `digits` decimals, never exponent form, never `-0.00`; the second adds
+  thousands separators. The column and money form `to_string` is not.
+
+- **`db.transaction(conn, f)`.** `f(conn)` inside a transaction: commit
+  unless `f` returns an `Err` or raises, which roll back; `f`'s result
+  is handed through. The web SDK's `tx` now is this call.
+
+- **`db.migrate(conn, steps)`.** The versioned-migration engine the
+  example apps and the web SDK each carried, in the stdlib: a
+  `schema_version` table, one transaction per version, the failing
+  statement named. All three copies became callers.
+
+- **`dom.request(method, path, body, k)`.** The whole response —
+  `status`, `headers`, `body` — so a handler can tell a 404 from a 500
+  from a network failure (status 0). The SDK's `api.call` rides it: a
+  response that is not the envelope is `Err(#{ "message": "HTTP 500:
+  …", "status": 500 })`, not a JSON parse failure.
+
+- **`ods.try_series`, `ods.try_frame_from_records`, `viz.check`.** The
+  Result forms of the constructors that raise on mixed-type data, and
+  a spec check (`Ok(spec)` or `Err`: an unknown key, no data points) to
+  guard a chart over records from a file, a request, or a user.
+
+- **`db.query_one`'s absent shape is stated**: `Ok(())`, unambiguous
+  because a row is always a map.
+
 ### Changed
 
 - **The wasm ships without symbol names.** wasm32 builds pass
@@ -51,6 +99,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`confirm_armed` without a DOM** read a main-thread cell, which a
   view rendered on a server worker thread cannot do. Without a DOM
   nothing is armed.
+
+- **A trap in the wasm names its panic.** The SDK shim reads the
+  runtime's panic message (kept by the panic hook, read through
+  `olang_last_panic`) when a call into the wasm traps and prints it
+  before the bare `RuntimeError: unreachable` propagates.
 
 
 - **The content-addressed wasm URL now serves someone.** The shim read

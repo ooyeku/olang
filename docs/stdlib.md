@@ -376,6 +376,8 @@ every function returns a new string.
 | `str.is_empty(s)` | `""` test |
 | `str.parse_int(s)` / `str.parse_float(s)` | `Result` parses |
 | `str.fmt(template, ...)` | fill `{}` placeholders, display form; `{{`/`}}` escape |
+| `str.fixed(x, digits)` | exactly `digits` decimals, never exponent form, never `-0.00` — the column form `to_string` is not |
+| `str.thousands(x, digits)` | `str.fixed` with thousands separators: `1,234,567.89` |
 
 ```olang
 println(str.pad_start("7", 3, "0"))                 // 007
@@ -1420,8 +1422,10 @@ in-process database — the example below really runs.
 | `db.open(path)` | open or create (`":memory:"` for in-memory) |
 | `db.execute(conn, sql)` / `db.execute(conn, sql, params)` | run a statement; `?` placeholders |
 | `db.query(conn, sql)` / with `params` | rows as a list of maps |
-| `db.query_one(conn, sql)` | exactly one row |
-| `db.begin(conn)` / `db.commit(conn)` / `db.rollback(conn)` | transactions |
+| `db.query_one(conn, sql)` | the first row as a map, or `Ok(())` when there is none — unambiguous, since a row is always a map |
+| `db.transaction(conn, f)` | `f(conn)` inside a transaction: commit unless `f` returns an `Err` or raises, which roll back; `f`'s result is handed through |
+| `db.migrate(conn, steps)` | bring the schema to the head of `steps` (a list of versions, each a list of SQL); a `schema_version` table records progress, each version runs in its own transaction, a failing statement is named — `Ok(version)` |
+| `db.begin(conn)` / `db.commit(conn)` / `db.rollback(conn)` | transactions by hand |
 | `db.close(conn)` | close the handle |
 
 ```olang
@@ -1463,6 +1467,7 @@ with timers and animation frames; everything else is ordinary olang.
 | `dom.on(el, event, handler)` | attach an event handler (see below) |
 | `dom.fetch(method, path, body, callback)` | asynchronous HTTP from the page — the callback receives the response text |
 | `dom.fetch_json(method, path, body, callback)` | `dom.fetch`, but the callback receives the parsed value directly |
+| `dom.request(method, path, body, callback)` | the whole response — `#{ "status", "headers", "body" }`, status `0` with an `"error"` when no server answered — so a handler tells a 404 from a 500 from a network failure |
 | `dom.get_attr(el, name)` / `set_attr(el, name, v)` / `remove_attr(el, name)` | attributes |
 | `dom.class_add(el, c)` / `class_remove(el, c)` / `class_toggle(el, c)` | class list ops (`set_class` replaces wholesale) |
 | `dom.set_style(el, prop, v)` | set one style property |
@@ -1659,7 +1664,7 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 
 | Group | Verbs |
 |---|---|
-| Create | `series(list\|range)` · `zeros(n)` (n float zeros) · `linspace(a, b, n)` (n evenly spaced floats, inclusive) |
+| Create | `series(list\|range)` · `try_series(list)` (the Result form: a mixed-type list is `Err`, not a raise) · `zeros(n)` (n float zeros) · `linspace(a, b, n)` (n evenly spaced floats, inclusive) |
 | Elementwise | `map(s, "sin")` — apply a `math.*` unary fn over the column in one kernel pass |
 | Comparisons | `eq(a, b)` · `ne(a, b)` — elementwise masks between two Series (against a *scalar*, use the `s == v` / `s != v` operators) |
 | Nulls | `is_null(s)` (mask) · `fill_null(s, v)` · `null_count(s)` |
@@ -1674,7 +1679,7 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 
 | Group | Verbs |
 |---|---|
-| Build | `frame(columns)` · `frame_from_records(records)` · `read_csv(text)` |
+| Build | `frame(columns)` · `frame_from_records(records)` · `try_frame_from_records(records)` (the Result form, for records from a file, a request, or a user) · `read_csv(text)` |
 | Files | `read_csv_file(path)` · `write_csv(f, path)` · `to_csv(f)` · `read_jsonl(text)` · `read_jsonl_file(path)` · `write_jsonl(f, path)` · `to_jsonl(f)` |
 | Streaming | `open_csv(path)` · `open_jsonl(path)` — then `next_chunk(r, n)` · `rows_read(r)` · `at_end(r)`, the same verbs for either |
 | Native format | `write_frame(f, path)` · `read_frame(path, columns)` · `frame_info(path)` — exact types, faster loads, one column at a time |

@@ -2546,6 +2546,17 @@ impl Parser {
                         PositionInfo::from_pair(&pair),
                     )
                 })?;
+                // A Float is never inf: a literal beyond f64's range is a
+                // syntax error, not infinity.
+                if !value.is_finite() {
+                    return Err(ParseError::invalid_syntax_at(
+                        format!(
+                            "Float literal {} is out of range (the largest float is about 1.8e308)",
+                            s
+                        ),
+                        PositionInfo::from_pair(&pair),
+                    ));
+                }
                 Ok(Expr::Float(value))
             }
             Rule::binary => {

@@ -15,32 +15,9 @@
 /// inside its own transaction. Returns the connection.
 share fn open_db(path, migrations) = {
     let conn = unwrap(db.open(path))
-    unwrap(db.execute(conn, "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"))
-    let rows = unwrap(db.query(conn, "SELECT version FROM schema_version"))
-    let mut v = if len(rows) == 0 => {
-        unwrap(db.execute(conn, "INSERT INTO schema_version (version) VALUES (0)"))
-        0
-    } else => map_get(rows[0], "version")
-    while v < len(migrations) {
-        unwrap(db.begin(conn))
-        let mut failed = ""
-        for stmt in migrations[v] {
-            if failed == "" => {
-                match db.execute(conn, stmt) {
-                    Err(e) => { failed = show(e) },
-                    Ok(x) => x
-                }
-            }
-        }
-        if failed != "" => {
-            let r = db.rollback(conn)
-            // The failing statement is the bug report — surface it.
-            unwrap(Err("migration v" + to_string(v + 1) + " failed: " + failed))
-        }
-        unwrap(db.execute(conn, "UPDATE schema_version SET version = ?", [v + 1]))
-        unwrap(db.commit(conn))
-        v = v + 1
-    }
+    // The engine is the stdlib's (`db.migrate`): the schema_version
+    // table, one transaction per version, the failing statement named.
+    unwrap(db.migrate(conn, migrations))
     conn
 }
 
@@ -96,22 +73,10 @@ share fn update_row(conn, table_name, id, fields) = {
     }
 }
 
-/// Run `f(conn)` inside a transaction: commit on Ok, roll back on Err,
-/// handing the result through either way.
-share fn tx(conn, f) = {
-    unwrap(db.begin(conn))
-    let result = f(conn)
-    match result {
-        Err(e) => {
-            let r = db.rollback(conn)
-            Err(e)
-        },
-        other => {
-            unwrap(db.commit(conn))
-            result
-        }
-    }
-}
+/// Run `f(conn)` inside a transaction: commit on Ok, roll back on Err
+/// (or on a raise inside `f`), handing the result through either way.
+/// The stdlib's `db.transaction`, under the SDK's name.
+share fn tx(conn, f) = db.transaction(conn, f)
 
 test "migrations apply once, in order, and record the version" {
     let conn = open_db(":memory:", [

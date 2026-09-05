@@ -48,6 +48,8 @@ pub fn create_string_module() -> Value {
         "repeat",
         "count",
         "char_at",
+        "fixed",
+        "thousands",
     ];
     for name in binary {
         module.insert(name.to_string(), create_builtin_function(name, 2));
@@ -117,10 +119,91 @@ pub fn call_string_function(
         "substring" => str_substring(args),
         "pad_start" => str_pad(args, true),
         "pad_end" => str_pad(args, false),
+        "fixed" => str_fixed(args),
+        "thousands" => str_thousands(args),
         "join" => str_join(args),
         "fmt" => str_fmt(args),
         _ => Err(format!("Unknown str function: {}", name).into()),
     }
+}
+
+// ── fixed-decimal formatting ────────────────────────────────────────
+// `to_string` prints the shortest round-tripping form — right for a
+// value, wrong for a column: 12.5 and 12.50 must line up, 1234567.0
+// wants separators, and a rounded negative must not read "-0.00".
+
+/// The number argument of a formatting function, as f64 (Int or Float).
+fn arg_number(args: &[Value], i: usize, func: &str) -> Result<f64, Box<dyn std::error::Error>> {
+    match args.get(i) {
+        Some(Value::Integer(n)) => Ok(*n as f64),
+        Some(Value::Float(x)) => Ok(*x),
+        Some(other) => {
+            Err(format!("str.{}: expected a number, got {}", func, other.type_name()).into())
+        }
+        None => Err(format!("str.{}: expected a number", func).into()),
+    }
+}
+
+fn arg_digits(args: &[Value], func: &str) -> Result<usize, Box<dyn std::error::Error>> {
+    let d = arg_int(args, 1, func)?;
+    if !(0..=20).contains(&d) {
+        return Err(format!("str.{}: digits must be between 0 and 20, got {}", func, d).into());
+    }
+    Ok(d as usize)
+}
+
+/// `x` with exactly `digits` decimals, never in exponent form, and never
+/// a negative zero ("-0.00" rounds to "0.00"). An Int with zero digits
+/// keeps its exact digits (no f64 round trip).
+fn fixed_text(v: &Value, digits: usize) -> String {
+    if let (Value::Integer(n), 0) = (v, digits) {
+        return n.to_string();
+    }
+    let x = match v {
+        Value::Integer(n) => *n as f64,
+        Value::Float(x) => *x,
+        _ => 0.0,
+    };
+    let s = format!("{:.*}", digits, x);
+    if s.starts_with('-') && s[1..].chars().all(|c| c == '0' || c == '.') {
+        s[1..].to_string()
+    } else {
+        s
+    }
+}
+
+/// Thousands separators in the integer part of a fixed-decimal text.
+fn group_thousands(fixed: &str) -> String {
+    let (sign, rest) = match fixed.strip_prefix('-') {
+        Some(r) => ("-", r),
+        None => ("", fixed),
+    };
+    let (int_part, frac) = match rest.find('.') {
+        Some(i) => (&rest[..i], &rest[i..]),
+        None => (rest, ""),
+    };
+    let mut grouped = String::with_capacity(int_part.len() + int_part.len() / 3);
+    for (i, c) in int_part.chars().enumerate() {
+        if i > 0 && (int_part.len() - i) % 3 == 0 {
+            grouped.push(',');
+        }
+        grouped.push(c);
+    }
+    format!("{}{}{}", sign, grouped, frac)
+}
+
+/// str.fixed(x, digits): "1234.50".
+fn str_fixed(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    arg_number(&args, 0, "fixed")?;
+    let digits = arg_digits(&args, "fixed")?;
+    Ok(ok_string(fixed_text(&args[0], digits)))
+}
+
+/// str.thousands(x, digits): "1,234.50".
+fn str_thousands(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    arg_number(&args, 0, "thousands")?;
+    let digits = arg_digits(&args, "thousands")?;
+    Ok(ok_string(group_thousands(&fixed_text(&args[0], digits))))
 }
 
 // ── argument helpers ────────────────────────────────────────────────
@@ -506,6 +589,12 @@ fn str_parse_int(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 fn str_parse_float(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let s = arg_str(&args, 0, "parse_float")?.trim();
     match s.parse::<f64>() {
+        // A Float is never inf or NaN, so text whose value would be one
+        // does not parse: "1e999" is out of range, not infinity.
+        Ok(f) if !f.is_finite() => Ok(Value::Err(Box::new(ok_string(format!(
+            "'{}' is out of range for a float",
+            s
+        ))))),
         Ok(f) => Ok(Value::Ok(Box::new(Value::Float(f)))),
         Err(_) => Ok(Value::Err(Box::new(ok_string(format!(
             "cannot parse '{}' as a float",

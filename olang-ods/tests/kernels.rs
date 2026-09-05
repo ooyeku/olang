@@ -123,9 +123,14 @@ fn i64_arith_is_checked_and_null_aware() {
         big.arith(ArithOp::Add, &one, false).unwrap_err(),
         OdsError::IntegerOverflow("addition")
     );
-    // Int division mirrors the language: truncating, zero errors.
+    // Int division is true division (a ratio between measure columns is
+    // what data code means); zero still errors.
     let d = Series::from_i64(vec![7]).arith(ArithOp::Div, &Series::from_i64(vec![2]), false);
-    assert_eq!(to_options(&d.unwrap()), vec![Scalar::I64(3)]);
+    assert_eq!(to_options(&d.unwrap()), vec![Scalar::F64(3.5)]);
+    let z = Series::from_i64(vec![7]).arith(ArithOp::Div, &Series::from_i64(vec![0]), false);
+    assert_eq!(z.unwrap_err(), OdsError::DivisionByZero);
+    let s = Series::from_i64(vec![7]).arith_scalar(ArithOp::Div, Scalar::I64(2), false, false);
+    assert_eq!(to_options(&s.unwrap()), vec![Scalar::F64(3.5)]);
 }
 
 #[test]

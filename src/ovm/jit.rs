@@ -7297,8 +7297,9 @@ fn imm_float_cc(op: &BinaryOp) -> Option<FloatCC> {
 }
 
 /// Arithmetic matching the VM's semantics exactly. Integer paths carry
-/// overflow/zero guards that branch to deopt; float add/sub/mul are plain
-/// IEEE; float division guards b == 0.0 (olang errors there). Float
+/// overflow/zero guards that branch to deopt; float add/sub/mul/div guard
+/// a non-finite result and division guards b == 0.0 (olang errors on
+/// both — a Float is never inf or NaN). Float
 /// modulo itself is refused — Rust's `%` is fmod, which has no exact IR
 /// equivalent, and guessing is how divergence starts.
 fn emit_arith(
@@ -7337,6 +7338,17 @@ fn emit_arith(
             }
             Arith::Mod => unreachable!(),
         };
+        // olang: a float result must be finite. |r| < inf is false for
+        // inf and for NaN alike, so one compare guards both; the deopt
+        // path re-executes the operation where the error is raised.
+        let abs = builder.ins().fabs(val);
+        let inf = builder.ins().f64const(f64::INFINITY);
+        let finite = builder.ins().fcmp(FloatCC::LessThan, abs, inf);
+        let cont = builder.create_block();
+        builder
+            .ins()
+            .brif(finite, cont, &[], r#gen.deopt_block, &[]);
+        builder.switch_to_block(cont);
         return Some(val);
     }
 

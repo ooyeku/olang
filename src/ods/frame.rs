@@ -127,6 +127,7 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("frame_info", 1),
     ("concat", 1),
     ("frame_from_records", 1),
+    ("try_frame_from_records", 1),
     ("to_records", 1),
     ("columns", 1),
     ("column", 2),
@@ -466,6 +467,19 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
             };
             concat(frames)
         }
+        // The Result form: a mixed-type column or a non-record element is
+        // an `Err(message)` the caller matches, not a raise — for records
+        // from a file, a request, or a user.
+        "try_frame_from_records" => Ok(match &args[0] {
+            Value::List(records) => match frame_from_records(records) {
+                Ok(frame) => Value::Ok(Box::new(frame)),
+                Err(e) => Value::Err(Box::new(Value::String(std::sync::Arc::new(e)))),
+            },
+            other => Value::Err(Box::new(Value::String(std::sync::Arc::new(format!(
+                "ods.try_frame_from_records expects a list of maps, got {}",
+                other.type_name()
+            ))))),
+        }),
         "frame_from_records" => {
             let records = match &args[0] {
                 Value::List(items) => items,

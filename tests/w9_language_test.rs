@@ -80,6 +80,21 @@ fn identifiers_may_begin_with_an_underscore() {
     );
     assert_eq!(rc, 0, "{out}");
     assert_eq!(out, "4 8 42\n");
+    // Every keyword: `return_focus`, `match_q`, `if_any`, `for_each`,
+    // `let_go`, `fn_name` are names (a machine once lexed `return_focus`
+    // as `return` + `_focus`).
+    let (out, rc) = agree(
+        "fn return_focus() = 40\n\
+         fn match_q(x) = x + 1\n\
+         let if_any = 1\n\
+         let for_each = 0\n\
+         let let_go = 0\n\
+         let fn_name = 0\n\
+         let while_x = 0\n\
+         println(to_string(match_q(return_focus()) + if_any + for_each + let_go + fn_name + while_x))",
+    );
+    assert_eq!(rc, 0, "{out}");
+    assert_eq!(out, "42\n");
 }
 
 #[test]

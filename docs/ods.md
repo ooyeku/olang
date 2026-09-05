@@ -126,6 +126,30 @@ println(to_string(ods.mean(taxed)))
 println(to_string(ods.sum(spread) < 0.0000001))   // centered: ~0
 ```
 
+**Division is true division.** `/` between two Int Series, or between
+an Int Series and an Int, yields a Float Series — unlike the scalar
+`/`, where `7 / 2` is `3`. The scalar rule is the language's; the
+column rule is the data stack's, and they differ deliberately: in data
+work a ratio between measure columns is the norm (`(gdp - then) /
+then`, `deaths / population`), and a truncating quotient is a wrong
+answer that looks like a right one — the climate example's growth
+rates all read `0` before this rule, with no error and no hint.
+`ods.cast(a / b, "Int")` recovers the integer quotient when that is
+what is meant. Addition, subtraction, and multiplication of Int Series
+stay Int, and checked. Division by zero raises, as everywhere.
+
+```olang
+let counts = ods.series([1, 2, 3])
+println(to_string(ods.to_list(counts / 2)))                      // [0.5, 1.0, 1.5]
+println(to_string(ods.to_list(counts / ods.series([2, 4, 4]))))  // [0.5, 0.5, 0.75]
+println(to_string(ods.to_list(ods.cast(counts / 2, "Int"))))     // [0, 1, 1]
+```
+
+Series arithmetic runs IEEE kernels for throughput: a Float Series
+can hold `inf` or `NaN` after an overflowing multiply, where the
+scalar language raises (language.md, "Floats"). `ods.to_list` hands
+such values over as they are; `ods.is_null` does not count them.
+
 ### Elementwise math: `ods.map`
 
 Arithmetic covers `+ - * /`; `ods.map(series, name)` covers the rest —

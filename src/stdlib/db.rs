@@ -51,6 +51,11 @@ pub fn create_db_module() -> Value {
         create_builtin_function("query_one", 2),
     );
     module.insert("close".to_string(), create_builtin_function("close", 1));
+    module.insert(
+        "transaction".to_string(),
+        create_builtin_function("transaction", 2),
+    );
+    module.insert("migrate".to_string(), create_builtin_function("migrate", 2));
     module.insert("begin".to_string(), create_builtin_function("begin", 1));
     module.insert("commit".to_string(), create_builtin_function("commit", 1));
     module.insert(
@@ -84,6 +89,11 @@ pub fn call_db_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
         "begin" => db_transaction_statement(args, "BEGIN"),
         "commit" => db_transaction_statement(args, "COMMIT"),
         "rollback" => db_transaction_statement(args, "ROLLBACK"),
+        "migrate" => db_migrate(args),
+        // Reached only when no interpreter intercepted the call.
+        "transaction" => {
+            Err("db.transaction calls your function, which only the interpreter can do".into())
+        }
         _ => Err(format!("Unknown db function: {}", name).into()),
     }
 }
@@ -165,6 +175,112 @@ fn sql_to_value(cell: ValueRef<'_>) -> Value {
 /// database.
 /// Run BEGIN/COMMIT/ROLLBACK on a connection handle.
 /// Usage: db.begin(conn) / db.commit(conn) / db.rollback(conn) -> Result<_, Error>
+/// db.migrate(conn, steps) -> Result<Int>: bring the database to the head
+/// of `steps` — a list of versions, each a list of statements (or one
+/// statement). A `schema_version` table records the applied version;
+/// version N runs only when the recorded version is below N, inside its
+/// own transaction, so a failed step leaves the database at the version
+/// before it. Returns the version now recorded.
+fn db_migrate(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let id = match connection_id(args.first().unwrap_or(&Value::Unit)) {
+        Ok(id) => id,
+        Err(e) => return Ok(e),
+    };
+    let steps: Vec<Vec<String>> = match args.get(1) {
+        Some(Value::List(versions)) => {
+            let mut out = Vec::with_capacity(versions.len());
+            for (i, version) in versions.iter().enumerate() {
+                match version {
+                    Value::String(s) => out.push(vec![s.to_string()]),
+                    Value::List(stmts) => {
+                        let mut v = Vec::with_capacity(stmts.len());
+                        for stmt in stmts.iter() {
+                            match stmt {
+                                Value::String(s) => v.push(s.to_string()),
+                                other => {
+                                    return Ok(err(format!(
+                                        "db.migrate: version {} holds a {}, expected SQL strings",
+                                        i + 1,
+                                        other.type_name()
+                                    )));
+                                }
+                            }
+                        }
+                        out.push(v);
+                    }
+                    other => {
+                        return Ok(err(format!(
+                            "db.migrate: version {} is a {}, expected a list of SQL strings",
+                            i + 1,
+                            other.type_name()
+                        )));
+                    }
+                }
+            }
+            out
+        }
+        _ => {
+            return Ok(err(
+                "db.migrate: steps must be a list of versions, each a list of SQL strings"
+                    .to_string(),
+            ));
+        }
+    };
+
+    let reg = registry().lock().unwrap();
+    let conn = match reg.connections.get(&id) {
+        Some(c) => c,
+        None => return Ok(err("db.migrate: connection is closed".to_string())),
+    };
+    let fail = |what: &str, e: rusqlite::Error| err(format!("db.migrate: {}: {}", what, e));
+    if let Err(e) = conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)",
+        [],
+    ) {
+        return Ok(fail("schema_version", e));
+    }
+    let recorded: Option<i64> =
+        match conn.query_row("SELECT version FROM schema_version", [], |row| row.get(0)) {
+            Ok(v) => Some(v),
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(e) => return Ok(fail("schema_version", e)),
+        };
+    let mut version = match recorded {
+        Some(v) => v,
+        None => {
+            if let Err(e) = conn.execute("INSERT INTO schema_version (version) VALUES (0)", []) {
+                return Ok(fail("schema_version", e));
+            }
+            0
+        }
+    };
+    while (version as usize) < steps.len() {
+        let next = version + 1;
+        if let Err(e) = conn.execute_batch("BEGIN") {
+            return Ok(fail("begin", e));
+        }
+        for stmt in &steps[version as usize] {
+            if let Err(e) = conn.execute_batch(stmt) {
+                let _ = conn.execute_batch("ROLLBACK");
+                // The failing statement is the bug report — surface it.
+                return Ok(err(format!(
+                    "db.migrate: migration v{} failed: {}",
+                    next, e
+                )));
+            }
+        }
+        if let Err(e) = conn.execute("UPDATE schema_version SET version = ?1", [next]) {
+            let _ = conn.execute_batch("ROLLBACK");
+            return Ok(fail("schema_version", e));
+        }
+        if let Err(e) = conn.execute_batch("COMMIT") {
+            return Ok(fail("commit", e));
+        }
+        version = next;
+    }
+    Ok(ok(Value::Integer(version)))
+}
+
 fn db_transaction_statement(
     args: Vec<Value>,
     sql: &str,
