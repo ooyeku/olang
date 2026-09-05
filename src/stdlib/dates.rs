@@ -180,6 +180,10 @@ pub fn create_dates_module() -> Value {
     module.insert("now".to_string(), create_builtin_function("now", 0));
     module.insert("utc_now".to_string(), create_builtin_function("utc_now", 0));
     module.insert("stamp".to_string(), create_builtin_function("stamp", 0));
+    module.insert(
+        "stamp_ms".to_string(),
+        create_builtin_function("stamp_ms", 0),
+    );
     module.insert("today".to_string(), create_builtin_function("today", 0));
 
     // Date creation functions
@@ -289,7 +293,7 @@ fn create_builtin_function(name: &str, arity: usize) -> Value {
 fn is_total(name: &str) -> bool {
     matches!(
         name,
-        "now" | "utc_now" | "stamp" | "today" | "is_leap_year" | "days_in_month"
+        "now" | "utc_now" | "stamp" | "stamp_ms" | "today" | "is_leap_year" | "days_in_month"
     )
 }
 
@@ -327,6 +331,7 @@ fn dispatch_dates(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
         "now" => dates_now(args),
         "utc_now" => dates_utc_now(args),
         "stamp" => dates_stamp(args),
+        "stamp_ms" => dates_stamp_ms(args),
         "today" => dates_today(args),
         "date" => dates_date(args),
         "datetime" => dates_datetime(args),
@@ -418,6 +423,23 @@ fn dates_utc_now(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 /// `2026-08-31T23:40:06Z`. Sortable as text across machines and
 /// offsets, and free of the fractional seconds a UI never wants.
 /// Usage: dates.stamp() -> "2026-08-31T23:40:06Z"
+/// dates.stamp_ms(): the storage stamp at millisecond precision — the
+/// one to key a row's version on. `stamp` (seconds) is the grain a person
+/// reads; two edits inside one second are identical under it, which
+/// makes optimistic concurrency pass a stale write.
+fn dates_stamp_ms(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if !args.is_empty() {
+        return Err(misuse(format!(
+            "stamp_ms expects 0 arguments, got {}",
+            args.len()
+        )));
+    }
+    let now = crate::clock::utc_now();
+    Ok(Value::String(
+        now.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string().into(),
+    ))
+}
+
 fn dates_stamp(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
         return Err(misuse(format!(

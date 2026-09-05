@@ -11,11 +11,31 @@
 //! HTML, a bare "internal server error" — is an `Err` naming the
 //! status, never a JSON parse failure in the handler.
 
+// Request headers every call carries — a bearer token, most often.
+let api_headers = cell.new(#{})
+
+/// Configure the client half: `configure(#{ "headers": #{ "Authorization":
+/// "Bearer " + token } })`. Every later `call` and `fetch` sends them.
+share fn configure(options) = {
+    if map_has_key(options, "headers") => cell.set(api_headers, map_get(options, "headers"))
+    else => ()
+    ()
+}
+
+/// The configured request headers.
+share fn headers() = cell.get(api_headers)
+
+fn request(method, path, body, k) = {
+    let h = headers()
+    if len(map_keys(h)) == 0 => dom.request(method, path, body, k)
+    else => dom.request_with(method, path, body, h, k)
+}
+
 /// Call a named endpoint: `call("todos.create", #{ "title": t },
 /// (r) => match r { Ok(todo) => ..., Err(e) => ... })`.
 share fn call(name, payload, k) =
     if dom.available() =>
-        dom.request("POST", "/api/rpc/" + name,
+        request("POST", "/api/rpc/" + name,
             unwrap(json.stringify(payload)),
             (resp) => k(from_response(resp)))
     else => k(Err(#{ "message": "api.call(\"" + name
@@ -24,7 +44,7 @@ share fn call(name, payload, k) =
 /// GET a REST route, envelope-unwrapped: `fetch("/api/todos", k)`.
 share fn fetch(path, k) =
     if dom.available() =>
-        dom.request("GET", path, "", (resp) => k(from_response(resp)))
+        request("GET", path, "", (resp) => k(from_response(resp)))
     else => k(Err(#{ "message": "api.fetch(\"" + path
         + "\") needs the browser — this is a static preview", "details": [] }))
 
@@ -108,6 +128,13 @@ test "from_response: the envelope when JSON, the status when not" {
     assert_eq(map_get(e, "status"), 500)
     let down = from_response(#{ "status": 0, "headers": #{}, "body": "", "error": "TypeError: Failed to fetch" })
     assert_eq(str.starts_with(err_message(match down { Err(x) => x, Ok(v) => #{} }), "request failed"), true)
+}
+
+test "configure sets the headers every call carries" {
+    assert_eq(len(map_keys(headers())), 0)
+    configure(#{ "headers": #{ "Authorization": "Bearer t0k" } })
+    assert_eq(map_get(headers(), "Authorization"), "Bearer t0k")
+    configure(#{ "headers": #{} })
 }
 
 test "err accessors read both halves" {

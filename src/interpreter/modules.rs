@@ -898,6 +898,14 @@ impl Interpreter {
         // no root module; here is what it does export") with "Module 'foo'
         // not found", which sent readers looking for the wrong problem.
         let head = module_path.split('.').next().unwrap_or("");
+        if let Some(reason) = self.missing_dependencies.get(head) {
+            return Err(InterpreterError::RuntimeError {
+                message: format!(
+                    "dependency '{}' is declared in olang.toml but could not be resolved: {}",
+                    head, reason
+                ),
+            });
+        }
         let head_is_dependency = self.dependency_map.contains_key(head);
         match self.discover_module_dependency(module_path) {
             Ok(path) => {
@@ -963,6 +971,13 @@ impl Interpreter {
 
         // Enhanced error with discovery information
         self.create_module_not_found_error(module_path, &debug_config)
+    }
+
+    /// Dependencies the manifest declares that did not resolve, with the
+    /// reason each failed. A `use` of one names the package and the
+    /// reason instead of "Cannot find module".
+    pub fn set_missing_dependencies(&mut self, missing: HashMap<String, String>) {
+        self.missing_dependencies = missing;
     }
 
     pub fn set_dependency_map(&mut self, map: HashMap<String, std::path::PathBuf>) {
@@ -1350,9 +1365,18 @@ impl Interpreter {
         // module is inspectable and callable as `name.fn(...)` — matching the
         // native stdlib modules (`col`, `math`, ...), which are always bound.
         if let Some(leaf) = use_decl.path.last() {
-            // Don't clobber an existing binding of the same name (e.g. a
-            // native module the user also referenced).
-            if self.environment.get(leaf).is_none() {
+            // A path import names what it means: `use lib.csv` binds `csv`
+            // even when the stdlib module of that name is already bound —
+            // the explicit path wins over the ambient name (it used to
+            // lose silently, and `csv.to_records` reached the stdlib). A
+            // one-segment `use csv` is that stdlib module itself, and any
+            // other existing binding — a value, an earlier import — is
+            // left alone.
+            let existing = self.environment.get(leaf);
+            let shadows_ambient_module = use_decl.path.len() >= 2
+                && matches!(&existing, Some(Value::Struct { type_name, .. }) if type_name == "Module")
+                && crate::stdlib::get_stdlib().contains_key(leaf.as_str());
+            if existing.is_none() || shadows_ambient_module {
                 self.environment.define(leaf.clone(), module.clone());
             }
         }

@@ -66,6 +66,10 @@ pub fn run(path: &Path, coverage: bool, show_missing: bool) -> i32 {
 
         let mut interpreter = Interpreter::new();
         interpreter.enable_test_mode();
+        // Programs can tell: the web SDK's `dispatch` runs handlers on a
+        // task thread under `olang test`, so a captured cell fails in the
+        // test that exercises it instead of in production.
+        unsafe { std::env::set_var("OLANG_TEST", "1") };
         if coverage {
             // Coverage instruments the AST walk (a promoted function would
             // run past the hook unrecorded), so run on the interpreter tier

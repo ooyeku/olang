@@ -1890,6 +1890,10 @@ test "addition works" {
 println("tests passed")
 ```
 
+A test block is its own scope, as a function body is: a `let` inside
+it ends at the closing brace, so a test's `let fs = …` does not replace
+the `fs` module for the blocks that follow.
+
 These assertions (`assert`, `assert_eq`, `assert_ne`, `assert_true`,
 `assert_false`, and `assert_close(actual, expected, tolerance)` for
 numeric comparisons within a tolerance — each with an optional trailing

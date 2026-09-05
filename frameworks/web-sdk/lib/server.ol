@@ -40,6 +40,11 @@ share fn invalid(details) =
     json_response(422, #{ "error": #{ "code": "invalid", "message": "validation failed",
         "details": details } })
 
+/// The row you named is not here: 404 with `what` in the message —
+/// `not_found("issue " + id)`. `Err(message)` from a handler is a 500,
+/// which is for failures; an absent row is an answer.
+share fn not_found(what) = error_response(404, "not_found", what + " not found")
+
 // ── request helpers ──────────────────────────────────────────────────
 
 /// The request body as JSON: `Ok(value)` or `Err(response)` ready to
@@ -96,7 +101,14 @@ share fn dispatch_with(routes, req, log) = {
     let hit = map_get(outcome, "hit")
     let response = if map_get(hit, "found") => {
         let h = map_get(hit, "handler")
-        let result = h(req, map_get(hit, "params"))
+        let params = map_get(hit, "params")
+        // Under `olang test` the handler runs on a task thread, the way
+        // `serve`'s workers run it: a handler that captured a cell then
+        // fails in the test that exercises it ("cell escaped its
+        // thread"), not in production. A raise on the task arrives as
+        // the Err the 500 envelope already handles.
+        let result = if under_test() => task.join(spawn { h(req, params) })
+            else => h(req, params)
         match result {
             Err(message) => error_response(500, "internal", show(message)),
             Ok(v) => if is_response(v) => v else => ok_data(v),
@@ -118,15 +130,66 @@ share fn dispatch_with(routes, req, log) = {
     response
 }
 
+fn under_test() = match os.get_env("OLANG_TEST") { Ok(v) => v != "", Err(e) => false }
+
 // ── the SDK's own files (for bundling and assets) ────────────────────
 
-/// Where the SDK lives on this machine: `WEB_SDK_DIR`, the shelf's
-/// registration, or the in-repo path — the same search order a user's
-/// mental model has.
+/// Where the SDK lives on this machine: `WEB_SDK_DIR`, the project's
+/// own resolution of `web` (its `olang.lock`), the shelf's registration,
+/// or the in-repo path — the project's answer before the machine's.
 share fn sdk_dir() = {
     match os.get_env("WEB_SDK_DIR") {
         Ok(dir) => dir,
         Err(e) => {
+            let from_lock = locked_web_dir()
+            if from_lock != () => from_lock
+            else => sdk_dir_from_machine()
+        }
+    }
+}
+
+/// The directory `olang.lock` (in the working directory) resolved `web`
+/// to — a path entry relative to the manifest, or a shelf entry looked up
+/// on this machine's shelf. Unit when the lock says nothing.
+fn locked_web_dir() = {
+    match fs.read_file("olang.lock") {
+        Err(e) => (),
+        Ok(text) => match toml.parse(text) {
+            Err(e2) => (),
+            Ok(lock) => {
+                let packages = map_get(lock, "package")
+                let entry = if packages == () => () else => map_get(packages, "web")
+                let source = if entry == () => () else => map_get(entry, "source")
+                if source == () => ()
+                else if map_get(source, "kind") == "path" => {
+                    let p = map_get(source, "path")
+                    if fs.exists(p + "/olang.toml") => p else => ()
+                }
+                else if map_get(source, "kind") == "shelf" => shelf_dir(map_get(source, "shelf"))
+                else => ()
+            }
+        }
+    }
+}
+
+/// A shelf library's directory, or Unit.
+fn shelf_dir(name) = {
+    let home = match os.get_env("HOME") { Ok(h) => h, Err(e) => "" }
+    match fs.read_file(home + "/.olang/shelf.toml") {
+        Err(e) => (),
+        Ok(text) => match toml.parse(text) {
+            Err(e2) => (),
+            Ok(t) => {
+                let libs = map_get(t, "libraries")
+                if libs != () && map_has_key(libs, name) => map_get(libs, name) else => ()
+            }
+        }
+    }
+}
+
+fn sdk_dir_from_machine() = {
+    {
+        {
             let home = match os.get_env("HOME") { Ok(h) => h, Err(e2) => "" }
             let from_shelf = match fs.read_file(home + "/.olang/shelf.toml") {
                 Err(e3) => (),
@@ -210,9 +273,13 @@ share fn bundle_client(client_source) = bundle_clients([client_source])
 /// way (its `use` lines, `share`, and test blocks) and spliced in list
 /// order after the SDK's modules — so a browser helper can live in a
 /// tested lib module and be imported by server code too.
-share fn bundle_clients(client_sources) = {
+share fn bundle_clients(client_sources) = bundle_clients_in(sdk_dir(), client_sources)
+
+/// `bundle_clients` with the SDK read from `dir` — what `serve` uses when
+/// its config names an `"sdk_dir"`.
+share fn bundle_clients_in(dir, client_sources) = {
     let sdk = browser_modules()
-        |> map((m) => strip_module_lines(sdk_file(m)))
+        |> map((m) => strip_module_lines(unwrap(fs.read_file(dir + "/" + m))))
         |> join("\n\n")
     let app_src = client_sources
         |> map((src) => strip_module_lines(src))
@@ -346,6 +413,10 @@ test "the shell carries the first paint and its state when given a view" {
 ///   initial  the state that first paint renders — a value, or a
 ///            `() => state` function evaluated per request (fresh data
 ///            on every load). The browser's `mount` starts from it.
+///   bind     the address to listen on (default "127.0.0.1"; "0.0.0.0"
+///            for other machines on the network)
+///   sdk_dir  where the SDK's assets are read from (default: `sdk_dir()`
+///            — WEB_SDK_DIR, the project's lock, the shelf)
 ///
 /// Serves `/` (the shell), `/web.css`, `/olang-dom.js`, `/app.ol`
 /// (the bundled client), `/app.olb` (the client as a program image the
@@ -367,15 +438,17 @@ share fn serve(config) = {
     let log = get_or(config, "log", ())
     let view_fn = get_or(config, "view", ())
     let initial = get_or(config, "initial", ())
+    let bind = get_or(config, "bind", "127.0.0.1")
+    let sdk = get_or(config, "sdk_dir", sdk_dir())
 
     // Read once at boot: assets, the bundle, and the wasm's location.
-    let css = sdk_file("static/web.css")
-    let shim = sdk_file("static/olang-dom.js")
+    let css = unwrap(fs.read_file(sdk + "/static/web.css"))
+    let shim = unwrap(fs.read_file(sdk + "/static/olang-dom.js"))
     let client_paths = if typeof(client_path) == "List" => client_path
         else if client_path == "" => []
         else => [client_path]
     let bundle = if len(client_paths) == 0 => ""
-        else => bundle_clients(map(client_paths, (p) => unwrap(fs.read_file(p))))
+        else => bundle_clients_in(sdk, map(client_paths, (p) => unwrap(fs.read_file(p))))
     // The program image: the bundle parsed here, once, and handed to the
     // browser as bytes its runtime loads without parsing (meta.encode,
     // src/olb.rs). The source stays at /app.ol — the shim's fallback
@@ -387,7 +460,7 @@ share fn serve(config) = {
     }
     let wasm_path = if fs.exists("static/olang_playground.wasm") =>
         "static/olang_playground.wasm"
-    else => sdk_dir() + "/static/olang_playground.wasm"
+    else => sdk + "/static/olang_playground.wasm"
     if len(client_paths) > 0 && !fs.exists(wasm_path) => {
         println("WARNING: olang_playground.wasm not found — the frontend cannot boot.")
         println("Build and copy it:")
@@ -475,8 +548,8 @@ share fn serve(config) = {
     ]
     let table = static_routes + user_routes
 
-    println(title + " listening on http://127.0.0.1:" + to_string(port))
-    match http.serve(port, (req) => dispatch_with(table, req, log)) {
+    println(title + " listening on http://" + bind + ":" + to_string(port))
+    match http.serve(port, (req) => dispatch_with(table, req, log), #{ "bind": bind }) {
         Err(e) => {
             println("could not start on port " + show(port) + ": " + show(e))
             Err(e)
@@ -556,6 +629,27 @@ test "query helpers clamp, fall back, and gate enums" {
     let evil = { method: "GET", path: "/", headers: #{}, body: "",
                  query: #{ "sort": "title; DROP TABLE" } }
     assert_eq(q_enum(evil, "sort", ["title", "id"], "id"), "id")
+}
+
+test "not_found is the 404 with the row named" {
+    let r = not_found("issue OT-9")
+    assert_eq(r.status, 404)
+    assert_eq(str.contains(r.body, "\"not_found\""), true)
+    assert_eq(str.contains(r.body, "issue OT-9 not found"), true)
+}
+
+test "under olang test a handler runs on a task thread, so a captured cell fails here" {
+    let counter = cell.new(0)
+    let table = [
+        #{ "method": "GET", "pattern": "/cell", "name": "",
+           "handler": (req, p) => { cell.set(counter, 1) "touched" } },
+        #{ "method": "GET", "pattern": "/plain", "name": "",
+           "handler": (req, p) => "fine" }
+    ]
+    let r = dispatch(table, fake_req("GET", "/cell"))
+    assert_eq(r.status, 500)
+    assert_eq(str.contains(r.body, "cell escaped its thread"), true)
+    assert_eq(dispatch(table, fake_req("GET", "/plain")).status, 200)
 }
 
 test "the envelope shapes" {

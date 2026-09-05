@@ -132,6 +132,13 @@ fn meta_encode(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     }
 }
 
+/// The program's top-level statements as the node maps `meta.parse`
+/// hands programs — the same shapes, so a tool in Rust and a tool in
+/// olang read one format.
+pub fn program_nodes(program: &crate::ast::Program) -> Vec<Value> {
+    program.statements.iter().map(stmt_to_value).collect()
+}
+
 // ── Value builders ──────────────────────────────────────────────────
 fn s(text: &str) -> Value {
     Value::String(std::sync::Arc::new(text.to_string()))

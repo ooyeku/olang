@@ -388,10 +388,21 @@ This works for the embedded `colx` collections module too (`:help colx`).
 ## The lockfile
 
 `olang.lock` records, for every package in the dependency graph, exactly
-which source produced it: the path for a path dependency; the git URL,
-the resolved commit, and the ref the manifest asked for; the resolved
-version for a registry dependency — plus a checksum of the source tree
-and the package's own direct dependencies. Commit it.
+which source produced it: the path for a path dependency (relative to
+the manifest); the shelf name for a shelf dependency, so another
+machine resolves it through its own shelf rather than a path that only
+existed here; the git URL, the resolved commit, and the ref the
+manifest asked for; the resolved version for a registry dependency —
+plus a checksum of the source tree and the package's own direct
+dependencies. Commit it. A lock that names a path this machine does not
+have is not an error: `otc install` says which entry it is re-resolving
+and rewrites the lock.
+
+One dependency that cannot be resolved does not stop the others: a
+program's modules that never import the missing package run, and the
+`use` that needs it is told which package is missing and why
+(`dependency 'web' is declared in olang.toml but could not be resolved:
+… not on your shelf`).
 
 The mental model has one moving part: **a lockfile either *covers* the
 manifest or it doesn't**, and every install starts by asking which.

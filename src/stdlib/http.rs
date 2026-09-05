@@ -757,7 +757,7 @@ fn header_value_text(v: &Value) -> String {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct ServeConfig {
     workers: usize,
     queue_capacity: usize,
@@ -771,6 +771,9 @@ struct ServeConfig {
     /// Whole-request deadline, head plus body (408 past it) — the
     /// slow-client bound the per-read timeout alone cannot give.
     request_timeout_ms: u64,
+    /// The address to listen on. 127.0.0.1 unless asked: a server that
+    /// should be reachable from another machine says so.
+    bind: String,
 }
 
 fn default_worker_count() -> usize {
@@ -823,6 +826,7 @@ fn serve_config(options: Option<&Value>) -> Result<ServeConfig, String> {
         max_header_bytes: 64 * 1024,
         max_body_bytes: 10 * 1024 * 1024,
         request_timeout_ms: 30_000,
+        bind: "127.0.0.1".to_string(),
     };
     let Some(options) = options else {
         return Ok(defaults);
@@ -846,13 +850,25 @@ fn serve_config(options: Option<&Value>) -> Result<ServeConfig, String> {
         "max_header_bytes",
         "max_body_bytes",
         "request_timeout_ms",
+        "bind",
     ];
     if let Some(unknown) = fields.keys().find(|key| !known.contains(&key.as_str())) {
         return Err(format!("serve: unknown option '{}'", unknown));
     }
 
     let workers = option_usize(fields, "workers", defaults.workers, 1, 256)?;
+    let bind = match fields.get("bind") {
+        None => defaults.bind.clone(),
+        Some(Value::String(s)) if !s.trim().is_empty() => s.trim().to_string(),
+        Some(other) => {
+            return Err(format!(
+                "serve: bind must be an address string such as \"0.0.0.0\", got {}",
+                other.type_name()
+            ));
+        }
+    };
     Ok(ServeConfig {
+        bind,
         workers,
         queue_capacity: option_usize(
             fields,
@@ -910,7 +926,7 @@ fn serve_connection(
     mut stream: std::net::TcpStream,
     interpreter: &mut crate::interpreter::Interpreter,
     handler: &Value,
-    config: ServeConfig,
+    config: &ServeConfig,
 ) {
     use std::io::Write;
 
@@ -926,7 +942,7 @@ fn serve_connection(
     )));
 
     for served in 0..config.max_requests_per_connection {
-        match read_request(&mut stream, &config) {
+        match read_request(&mut stream, config) {
             Ok(None) => break,
             Ok(Some(req)) => {
                 let client_wants_close = req
@@ -1000,9 +1016,14 @@ pub fn serve_blocking(
         Err(message) => return err_val(message),
     };
 
-    let listener = match std::net::TcpListener::bind(("127.0.0.1", port)) {
+    let listener = match std::net::TcpListener::bind((config.bind.as_str(), port)) {
         Ok(l) => l,
-        Err(e) => return err_val(format!("serve: could not bind 127.0.0.1:{}: {}", port, e)),
+        Err(e) => {
+            return err_val(format!(
+                "serve: could not bind {}:{}: {}",
+                config.bind, port, e
+            ));
+        }
     };
     // The OS assigns the port when 0 was requested; report the real one.
     let local = listener.local_addr().map(|a| a.port()).unwrap_or(port);
@@ -1014,7 +1035,7 @@ pub fn serve_blocking(
     // pipe before the second write, and the whole server died at boot.
     {
         let mut out = std::io::stdout().lock();
-        let _ = writeln!(out, "listening on http://127.0.0.1:{}", local);
+        let _ = writeln!(out, "listening on http://{}:{}", config.bind, local);
         let _ = writeln!(
             out,
             "http workers={} queue_capacity={}",
@@ -1029,6 +1050,7 @@ pub fn serve_blocking(
     for worker_id in 0..config.workers {
         let receiver = Arc::clone(&receiver);
         let handler = handler.clone();
+        let worker_config = config.clone();
         let mut worker_interpreter = interpreter.thread_safe_clone();
         let handle = match std::thread::Builder::new()
             .name(format!("olang-http-{}", worker_id + 1))
@@ -1049,7 +1071,7 @@ pub fn serve_blocking(
                             Err(_) => return,
                         }
                     };
-                    serve_connection(stream, &mut worker_interpreter, &handler, config);
+                    serve_connection(stream, &mut worker_interpreter, &handler, &worker_config);
                 }
             }) {
             Ok(handle) => handle,

@@ -249,6 +249,14 @@ judgement about intent rather than a provable contradiction.
   the fallible call is not flagged.
 - **A non-exhaustive `match`** over a known literal-type enum, naming
   the members with no arm.
+- **A parameter that shadows a function its body calls.** `fn row(s,
+  span) = span(s)` with `span` imported: the call reaches the argument,
+  and the runtime can only say so at the call, in the browser, frames
+  away from the parameter. Reported at the function.
+- **A binding that takes a stdlib module's name.** `let fs = …` turns
+  every later `fs.exists(…)` in its scope into a field access on a
+  value; `use lib.csv` binds `csv` over the stdlib module (the path
+  import wins, on purpose) and says so.
 
 ```text
   ⚠ the Result from fs.write_file is discarded, so a failure here is

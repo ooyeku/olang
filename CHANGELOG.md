@@ -82,6 +82,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`db.query_one`'s absent shape is stated**: `Ok(())`, unambiguous
   because a row is always a map.
 
+- **W11, the second reading of open-track.** A test block is its own
+  scope. A path import (`use lib.csv`) wins over a stdlib module of the
+  same name. A manifest dependency that cannot be resolved no longer
+  fails every module: the resolvable ones load, and the `use` that needs
+  the missing one names the package and the reason. A task that dies by
+  raising says so on stderr. `dates.stamp_ms()`. `http.serve` takes
+  `"bind"`. `dom.find` (Unit on a miss), `dom.query_all`, and
+  `dom.request_with` (request headers). `olang check` warns about a
+  parameter that shadows a function its body calls and about a binding
+  that takes a stdlib module's name; an interpreted frame's "is an Int,
+  not a function" names the identifier being called in every call shape. Call-stack frames from
+  another file name it. The lockfile records shelf dependencies by name,
+  and a locked path this machine lacks re-resolves. Web SDK:
+  `not_found(what)`, `void_el(tag, attrs)`, the `@when(cond, node)`
+  macro, `configure(#{ "headers": … })`, `serve`'s `"bind"` and
+  `"sdk_dir"`, `sdk_dir()` reading the project's lock, and `dispatch`
+  running handlers on a task thread under `olang test`.
+
 ### Changed
 
 - **The wasm ships without symbol names.** wasm32 builds pass

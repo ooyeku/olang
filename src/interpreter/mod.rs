@@ -135,6 +135,10 @@ pub struct Interpreter {
     /// Function names currently on the interpreter call stack
     /// (outermost first), for error reports.
     call_stack_names: Vec<String>,
+    /// Manifest dependencies that failed to resolve at startup, by name,
+    /// with the reason — so `use web` says why, and a module that never
+    /// imports the missing package still runs.
+    missing_dependencies: HashMap<String, String>,
     /// A one-line hint computed at error-raise time (e.g. did-you-mean
     /// candidates for an undefined name), folded into the captured
     /// ErrorLocation for top-level reporters.
@@ -317,6 +321,7 @@ impl Interpreter {
             deadline: None,
             stmt_span_stack: Vec::new(),
             call_stack_names: Vec::new(),
+            missing_dependencies: HashMap::new(),
             pending_error_location: None,
             entry_file: None,
             pending_error_frames: None,
@@ -447,6 +452,18 @@ impl Interpreter {
         format!("{} {}", if vowel { "an" } else { "a" }, ty)
     }
 
+    /// A module path for display: relative to the entry file's directory
+    /// when it lies under it, the path as stored otherwise.
+    fn short_file(entry: Option<&str>, file: &str) -> String {
+        if let Some(entry) = entry
+            && let Some(dir_end) = entry.rfind('/')
+            && let Some(rest) = file.strip_prefix(&entry[..=dir_end])
+        {
+            return rest.to_string();
+        }
+        file.to_string()
+    }
+
     /// When a call failed because the callee is not a function, put the
     /// caller's NAME in the message: "'x' is an Int, not a function".
     fn name_uncallable(e: InterpreterError, name: Option<&str>) -> InterpreterError {
@@ -491,6 +508,19 @@ impl Interpreter {
         if message == "Pattern match failed" {
             InterpreterError::PatternMatchFailed
         } else if let Some(rest) = message.strip_prefix("Type error: ") {
+            // A non-function called inside a compiled frame: the VM does
+            // not know the identifier, and the interpreted caller above
+            // must not claim the error as its own callee's — that named a
+            // function frames away from the parameter that shadowed one.
+            if rest.starts_with("cannot call a") {
+                return InterpreterError::TypeError {
+                    message: format!(
+                        "{} — inside a compiled function, a parameter or local named like \
+the function it shadows; `olang check` names the parameter",
+                        rest
+                    ),
+                };
+            }
             InterpreterError::TypeError {
                 message: rest.to_string(),
             }
@@ -1306,13 +1336,18 @@ impl Interpreter {
 
                 let callee_value = self.eval_expr(callee)?;
 
-                // Enhanced named argument resolution
-                let arg_slots = self.resolve_argument_slots(&callee_value, arguments)?;
+                // The name being called, for the "is an Int, not a
+                // function" message — resolving the argument slots is
+                // where a non-function callee is first refused, so it is
+                // named there too.
                 let callee_name = match callee.as_ref() {
                     Expr::Identifier(n) => Some(n.clone()),
                     Expr::LocalRef { name, .. } => Some(name.clone()),
                     _ => None,
                 };
+                let arg_slots = self
+                    .resolve_argument_slots(&callee_value, arguments)
+                    .map_err(|e| Self::name_uncallable(e, callee_name.as_deref()))?;
                 self.call_function_slots(callee_value, arg_slots)
                     .map_err(|e| Self::name_uncallable(e, callee_name.as_deref()))
             }
@@ -1790,7 +1825,17 @@ impl Interpreter {
                         // In the stall detector's census for its whole
                         // life: this thread runs olang code.
                         let _live = crate::stdlib::chan::live_guard();
-                        worker.eval_expr(&expr).map_err(|e| e.to_string())
+                        let outcome = worker.eval_expr(&expr).map_err(|e| e.to_string());
+                        // A task that ends by raising says so, once, on
+                        // stderr — as an uncaught error in main would. The
+                        // Err still reaches `task.join`; what this adds is
+                        // the line for the task nobody joins (a channel
+                        // service whose death otherwise leaves every
+                        // `chan.recv` on it waiting forever, silently).
+                        if let Err(e) = &outcome {
+                            eprintln!("task olang-spawn-{} failed: {}", task_id, e);
+                        }
+                        outcome
                     })
                     .map_err(|e| InterpreterError::RuntimeError {
                         message: format!("spawn: could not start thread: {}", e),
@@ -2593,8 +2638,24 @@ impl Interpreter {
             self.spend_step()?;
             // Increment call depth for user functions
             self.call_depth += 1;
-            self.call_stack_names
-                .push(func.name.clone().unwrap_or_else(|| "<lambda>".to_string()));
+            // A frame from another file names it — "open_db (lib/sql.ol)"
+            // — so an error inside a dependency is placed by the call
+            // stack even when its own location is not known.
+            let frame = func.name.clone().unwrap_or_else(|| "<lambda>".to_string());
+            let frame = match &func.def_file {
+                Some(file)
+                    if !file.starts_with("__")
+                        && self.entry_file.as_deref() != Some(file.as_str()) =>
+                {
+                    format!(
+                        "{} ({})",
+                        frame,
+                        Self::short_file(self.entry_file.as_deref(), file)
+                    )
+                }
+                _ => frame,
+            };
+            self.call_stack_names.push(frame);
 
             self.check_call_boundary(func, &arguments)?;
 
@@ -2907,6 +2968,7 @@ impl Interpreter {
         Self {
             stmt_span_stack: Vec::new(),
             call_stack_names: Vec::new(),
+            missing_dependencies: HashMap::new(),
             pending_error_location: None,
             entry_file: None,
             pending_error_frames: None,
@@ -3143,12 +3205,22 @@ impl Interpreter {
             Expr::Call { callee, arguments }
                 if matches!(callee.as_ref(), Expr::Identifier(_) | Expr::LocalRef { .. }) =>
             {
+                // The name being called, for the "is an Int, not a
+                // function" message: without it a shadowed parameter
+                // (`fn row(s, span) = span(s)`) was blamed on the
+                // enclosing call, frames away from the parameter.
+                let callee_name = match callee.as_ref() {
+                    Expr::Identifier(n) | Expr::LocalRef { name: n, .. } => Some(n.clone()),
+                    _ => None,
+                };
                 let callee_value = self.eval_expr(callee)?;
                 if let Value::Function(target) = &callee_value
                     && Arc::ptr_eq(&target.body, &me.body)
                     && Arc::ptr_eq(&target.closure, &me.closure)
                 {
-                    let slots = self.resolve_argument_slots(&callee_value, arguments)?;
+                    let slots = self
+                        .resolve_argument_slots(&callee_value, arguments)
+                        .map_err(|e| Self::name_uncallable(e, callee_name.as_deref()))?;
                     // Only a fully applied self-call elides; a call with
                     // default holes takes the ordinary path, which fills
                     // them in the callee's scope before binding.
@@ -3166,13 +3238,17 @@ impl Interpreter {
                     }
                     return self
                         .call_function_slots(callee_value, slots)
-                        .map(TailFlow::Value);
+                        .map(TailFlow::Value)
+                        .map_err(|e| Self::name_uncallable(e, callee_name.as_deref()));
                 }
                 // Not a self-call: complete it here — same order as the
                 // normal path (callee, then arguments, then call).
-                let arg_slots = self.resolve_argument_slots(&callee_value, arguments)?;
+                let arg_slots = self
+                    .resolve_argument_slots(&callee_value, arguments)
+                    .map_err(|e| Self::name_uncallable(e, callee_name.as_deref()))?;
                 self.call_function_slots(callee_value, arg_slots)
                     .map(TailFlow::Value)
+                    .map_err(|e| Self::name_uncallable(e, callee_name.as_deref()))
             }
             _ => self.eval_expr(expr).map(TailFlow::Value),
         }
@@ -4478,12 +4554,20 @@ impl Interpreter {
         // it — asserts tally rather than raise, and a runner that only
         // watched for raises reported ✓ over failing assertions.
         let (_, failed_before) = crate::stdlib::testing::tally_snapshot();
+        // A test block is its own scope, as a function body is: a `let`
+        // inside it ends at the closing brace instead of replacing a
+        // module-level name for every later block in the file (a test's
+        // `let fs = …` once shadowed the `fs` module 400 lines down).
+        self.environment = Environment::with_parent(self.environment.clone());
         let mut error = None;
         for statement in &test_decl.body {
             if let Err(e) = self.eval_statement(statement) {
                 error = Some(e.to_string());
                 break;
             }
+        }
+        if let Some(parent) = self.environment.parent.take() {
+            self.environment = Arc::try_unwrap(parent).unwrap_or_else(|arc| (*arc).clone());
         }
         if error.is_none() {
             let (_, failed_after) = crate::stdlib::testing::tally_snapshot();

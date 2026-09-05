@@ -91,6 +91,7 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
         let mut diagnostics = check_program_with_context(&context, &program);
         diagnostics.extend(use_shadow_warnings(&program, file.parent()));
         diagnostics.extend(template_escape_warnings(&source));
+        diagnostics.extend(shadow_warnings(&program));
         for d in diagnostics {
             if d.warning {
                 warnings += 1;
@@ -507,6 +508,163 @@ from line {} — call it as `{}.{}`, or alias the earlier import \
 /// wants the backslash (generated LaTeX, regex source, and the like).
 /// Interpolations are exempt — a double-quoted `"\n"` inside `${...}`
 /// is real string syntax and processes its escapes normally.
+/// Two shadowing pitfalls the runtime cannot report at the right place:
+///
+/// - a parameter (or a path import's leaf) that reuses the name of a
+///   function the same body then calls — `fn row(s, span) = span(…)`
+///   with `span` imported fails at the call, in the browser, three frames
+///   away from the parameter that caused it;
+/// - a `let` that reuses a stdlib module's name (`let fs = …`) and so
+///   turns every later `fs.exists(…)` in its scope into a field access on
+///   a value.
+pub fn shadow_warnings(program: &Program) -> Vec<CheckDiagnostic> {
+    use crate::ast::Value;
+    let nodes = crate::stdlib::meta::program_nodes(program);
+    let stdlib: std::collections::HashSet<String> =
+        crate::stdlib::get_stdlib().keys().cloned().collect();
+    let str_of = |v: &Value| match v {
+        Value::String(s) => Some(s.to_string()),
+        _ => None,
+    };
+    let field = |m: &Value, k: &str| -> Option<Value> {
+        match m {
+            Value::Map(map) => map.get(k).cloned(),
+            Value::Struct { fields, .. } => fields.get(k).cloned(),
+            _ => None,
+        }
+    };
+    let list_of = |v: Option<Value>| -> Vec<Value> {
+        match v {
+            Some(Value::List(items)) => items.as_ref().clone(),
+            _ => Vec::new(),
+        }
+    };
+    let line_of = |m: &Value| -> (u32, u32) {
+        let l = match field(m, "line") {
+            Some(Value::Integer(n)) => n as u32,
+            _ => 0,
+        };
+        let c = match field(m, "column") {
+            Some(Value::Integer(n)) => n as u32,
+            _ => 0,
+        };
+        (l, c)
+    };
+    // Names a body may call that a parameter could shadow: imports and
+    // module-level functions.
+    let mut callable: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for node in &nodes {
+        match field(node, "kind").and_then(|k| str_of(&k)).as_deref() {
+            Some("use") => {
+                for item in list_of(field(node, "items")) {
+                    if let Some(n) = str_of(&item)
+                        .or_else(|| field(&item, "alias").and_then(|a| str_of(&a)))
+                        .or_else(|| field(&item, "name").and_then(|a| str_of(&a)))
+                    {
+                        callable.insert(n);
+                    }
+                }
+            }
+            Some("fn") => {
+                if let Some(n) = field(node, "name").and_then(|n| str_of(&n)) {
+                    callable.insert(n);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for node in &nodes {
+        let kind = field(node, "kind").and_then(|k| str_of(&k));
+        let (line, column) = line_of(node);
+        match kind.as_deref() {
+            Some("fn") => {
+                let name = field(node, "name")
+                    .and_then(|n| str_of(&n))
+                    .unwrap_or_default();
+                let params: Vec<String> = list_of(field(node, "params"))
+                    .iter()
+                    .filter_map(|p| str_of(p).or_else(|| field(p, "name").and_then(|n| str_of(&n))))
+                    .collect();
+                let body = field(node, "body").map(|b| vec![b]).unwrap_or_default();
+                let mut called: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                for n in flatten_ast(&body) {
+                    if field(&n, "kind").and_then(|k| str_of(&k)).as_deref() == Some("call")
+                        && let Some(t) = field(&n, "target").and_then(|t| str_of(&t))
+                    {
+                        called.insert(t);
+                    }
+                }
+                for p in params {
+                    if callable.contains(&p) && called.contains(&p) {
+                        out.push(CheckDiagnostic {
+                            line,
+                            column,
+                            message: format!(
+                                "parameter '{}' of `{}` shadows the function '{}' that this body \
+calls — the call reaches the argument, not the function; rename the parameter",
+                                p, name, p
+                            ),
+                            runtime: false,
+                            warning: true,
+                            scope: false,
+                        });
+                    }
+                }
+            }
+            Some("use") => {
+                let path = match field(node, "path") {
+                    Some(Value::String(p)) => p.split('.').map(str::to_string).collect::<Vec<_>>(),
+                    other => list_of(other).iter().filter_map(str_of).collect::<Vec<_>>(),
+                };
+                if path.len() >= 2
+                    && let Some(leaf) = path.last()
+                    && stdlib.contains(leaf)
+                {
+                    out.push(CheckDiagnostic {
+                        line,
+                        column,
+                        message: format!(
+                            "`use {}` binds `{}`, the name of a stdlib module: `{}.…` now reaches \
+this module, not the standard library — rename the file if that is not intended",
+                            path.join("."),
+                            leaf,
+                            leaf
+                        ),
+                        runtime: false,
+                        warning: true,
+                        scope: false,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    // `let` bindings, at any depth, that take a stdlib module's name.
+    for n in flatten_ast(&nodes) {
+        if field(&n, "kind").and_then(|k| str_of(&k)).as_deref() == Some("let")
+            && let Some(name) = field(&n, "name").and_then(|v| str_of(&v))
+            && stdlib.contains(&name)
+        {
+            let (line, column) = line_of(&n);
+            out.push(CheckDiagnostic {
+                line,
+                column,
+                message: format!(
+                    "`let {}` shadows the stdlib module `{}` for the rest of its scope — a later \
+`{}.…` reaches this binding, not the module",
+                    name, name, name
+                ),
+                runtime: false,
+                warning: true,
+                scope: false,
+            });
+        }
+    }
+    out
+}
+
 pub fn template_escape_warnings(source: &str) -> Vec<CheckDiagnostic> {
     fn advance(c: char, line: &mut u32, col: &mut u32) {
         if c == '\n' {

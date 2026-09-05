@@ -682,7 +682,7 @@ ISO-8601 strings in, ISO-8601 strings out; fallible operations return
 
 | Group | Functions |
 |---|---|
-| Now | `now` `utc_now` `today` · `stamp` — the storage form: UTC, second precision, `Z` suffix (`2026-08-31T23:40:06Z`), sortable as text |
+| Now | `now` `utc_now` `today` · `stamp` — the storage form: UTC, second precision, `Z` suffix (`2026-08-31T23:40:06Z`), sortable as text · `stamp_ms` — the same at millisecond precision (`…06.503Z`), the one to key a row's version on: two edits inside one second are identical under `stamp` |
 | Build | `date(y, m, d)` → `Date` · `datetime(y, m, d, h, mi, s)` `time(h, mi, s)` |
 | Parse/format | `parse(s)` → `Date` · `parse_date` `parse_datetime` `parse_time` `format_date` `format_datetime` `format_time` |
 | Fields | `year` `month` `day` `hour` `minute` `second` `weekday` |
@@ -1346,7 +1346,9 @@ println(data.message)
 ### Serving
 
 `http.serve(port, handler)` binds `127.0.0.1:port` (port `0` picks a free
-one, reported on stdout as `listening on http://127.0.0.1:PORT`) and blocks
+one, reported on stdout as `listening on http://127.0.0.1:PORT`; the
+`bind` option names another address, `"0.0.0.0"` for the machines on
+the network) and blocks
 the calling program while a bounded worker pool handles independent
 connections concurrently. The default worker count is the host's available
 parallelism; `OLANG_HTTP_WORKERS` overrides it. Each worker owns an isolated
@@ -1378,6 +1380,7 @@ An optional map/object configures the bounded server:
 | `max_header_bytes` | `65536` |
 | `max_body_bytes` | `10485760` (10 MB) |
 | `request_timeout_ms` | `30000` |
+| `bind` | `"127.0.0.1"` — the address to listen on |
 
 The handler returns either a bare string (a `200 text/plain`) or a response
 built with `http.response`/`http.response_with_headers` — pass headers as a
@@ -1468,6 +1471,9 @@ with timers and animation frames; everything else is ordinary olang.
 | `dom.fetch(method, path, body, callback)` | asynchronous HTTP from the page — the callback receives the response text |
 | `dom.fetch_json(method, path, body, callback)` | `dom.fetch`, but the callback receives the parsed value directly |
 | `dom.request(method, path, body, callback)` | the whole response — `#{ "status", "headers", "body" }`, status `0` with an `"error"` when no server answered — so a handler tells a 404 from a 500 from a network failure |
+| `dom.request_with(method, path, body, headers, callback)` | `dom.request` with request headers — a bearer token, another content type |
+| `dom.find(selector)` | the first match, or `()` when nothing matches — the lookup for an element that may be absent (`dom.query` raises on a miss, and a raise inside a handler takes the page down) |
+| `dom.query_all(selector)` | every match, as a list of handles |
 | `dom.get_attr(el, name)` / `set_attr(el, name, v)` / `remove_attr(el, name)` | attributes |
 | `dom.class_add(el, c)` / `class_remove(el, c)` / `class_toggle(el, c)` | class list ops (`set_class` replaces wholesale) |
 | `dom.set_style(el, prop, v)` | set one style property |

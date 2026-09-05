@@ -59,6 +59,13 @@ pub enum LockedSource {
     Registry {
         registry: String,
     },
+    /// A shelf library, by the name it is registered under on this
+    /// machine (`~/.olang/shelf.toml`). Recorded by name so the lock is
+    /// portable: another machine resolves the same name through its own
+    /// shelf instead of a path that only existed here.
+    Shelf {
+        shelf: String,
+    },
 }
 
 impl Lockfile {
@@ -115,5 +122,25 @@ mod tests {
         let text = lock.to_toml();
         let reparsed = Lockfile::from_toml(&text).unwrap();
         assert_eq!(lock, reparsed);
+    }
+
+    #[test]
+    fn a_shelf_entry_is_recorded_by_name_not_machine_path() {
+        let mut lock = Lockfile::new();
+        lock.package.insert(
+            "web".to_string(),
+            LockedPackage {
+                version: None,
+                source: LockedSource::Shelf {
+                    shelf: "web".to_string(),
+                },
+                checksum: None,
+                dependencies: vec![],
+            },
+        );
+        let text = lock.to_toml();
+        assert!(text.contains("kind = \"shelf\""), "{text}");
+        assert!(!text.contains("/Users/"), "{text}");
+        assert_eq!(Lockfile::from_toml(&text).unwrap(), lock);
     }
 }

@@ -16,6 +16,17 @@
 share fn el(tag, attrs, children) =
     #{ "tag": tag, "attrs": attrs, "children": flatten_children(children) }
 
+/// An element with no children — `img`, `br`, `hr`, `input`, or any tag
+/// written through `el` that carries none: `void_el("img", #{ "src": s })`.
+share fn void_el(tag, attrs) = el(tag, attrs, [])
+
+/// `@when(cond, node)`: the node when `cond` holds, nothing otherwise —
+/// and the node is built only then. A function `when(cond, node)` would
+/// evaluate its argument first, raising on exactly the case it exists
+/// to skip (`when(t != (), span([map_get(t, "id")]))` with `t` Unit);
+/// the macro expands to the `if`, so the false branch costs nothing.
+meta fn when(cond, node) = `if ${cond} => ${node} else => text("")`
+
 /// A text node — always escaped at render. Non-strings stringify
 /// (numbers, booleans); strings pass through as themselves.
 share fn text(s) = #{ "text": as_text(s) }
@@ -129,6 +140,14 @@ share fn page(title, head_extra, body) =
     + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
     + "<title>" + escape(title) + "</title>" + head_extra
     + "</head><body>" + render(body) + "</body></html>"
+
+test "void_el renders an element with no children; @when builds its node lazily" {
+    assert_eq(render(void_el("img", #{ "src": "a.png" })), "<img src=\"a.png\">")
+    let t = ()
+    assert_eq(render(@when(t != (), span(#{}, [map_get(t, "id")]))), "")
+    let u = #{ "id": "OT-1" }
+    assert_eq(render(@when(u != (), span(#{}, [map_get(u, "id")]))), "<span>OT-1</span>")
+}
 
 test "elements render with escaped text and attrs" {
     assert_eq(render(div(#{ "class": "card" }, ["hi"])), "<div class=\"card\">hi</div>")

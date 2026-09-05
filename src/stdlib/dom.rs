@@ -65,6 +65,10 @@ pub fn create_dom_module() -> Value {
         ("on_message", 1),
         ("fetch_json", 4),
         ("request", 4),
+        ("request_with", 5),
+        // Lookups that may miss: `find` answers Unit, `query_all` a list.
+        ("find", 1),
+        ("query_all", 1),
         // The page's own state: its color scheme, what has focus, a
         // confirmation, and a picked file's contents.
         ("prefers_dark", 0),

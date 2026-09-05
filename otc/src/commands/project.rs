@@ -212,6 +212,11 @@ pub fn list() -> anyhow::Result<()> {
                 let resolved = locked
                     .and_then(|p| match &p.source {
                         LockedSource::Path { path } => Some(path.clone()),
+                        LockedSource::Shelf { shelf } => olang::pkg::shelf::Shelf::load()
+                            .ok()
+                            .and_then(|s| s.resolve(shelf).cloned())
+                            .map(|dir| dir.display().to_string())
+                            .or_else(|| Some("(not on this machine's shelf)".to_string())),
                         _ => None,
                     })
                     .unwrap_or_else(|| "(unresolved — run otc install)".to_string());
@@ -260,6 +265,26 @@ pub fn do_install(frozen: bool, update: bool, verbose: bool) -> anyhow::Result<(
         registry: registry_from_env(),
         refresh: update,
     };
+    // A lock written on another machine can name paths this one does not
+    // have; say so before re-resolving, so the change to the lock is not
+    // a surprise.
+    if let Ok(lock) = Lockfile::load(&root) {
+        for (name, locked) in &lock.package {
+            if let LockedSource::Path { path } = &locked.source {
+                let dir = if std::path::Path::new(path).is_absolute() {
+                    std::path::PathBuf::from(path)
+                } else {
+                    root.join(path)
+                };
+                if !dir.exists() {
+                    println!(
+                        "the lock names a path that is not here ({} -> {}) — re-resolving",
+                        name, path
+                    );
+                }
+            }
+        }
+    }
     let map = install(&root, &opts).map_err(|e| anyhow::anyhow!("{}", e))?;
     println!(
         "Resolved {} dependenc{}",

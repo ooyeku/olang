@@ -127,6 +127,8 @@ fn run_source(source: &str) -> (String, Option<String>, Option<String>) {
 #[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_dom_query(sel: *const u8, len: usize) -> i64;
+    /// Every match, as a JSON list of handles.
+    fn host_dom_query_all(sel: *const u8, len: usize) -> *const u8;
     fn host_dom_set_text(handle: i64, ptr: *const u8, len: usize);
     fn host_dom_get_text(handle: i64) -> *const u8;
     fn host_dom_set_html(handle: i64, ptr: *const u8, len: usize);
@@ -142,6 +144,18 @@ unsafe extern "C" {
         path_len: usize,
         body: *const u8,
         body_len: usize,
+        callback_id: i64,
+    );
+    /// `host_dom_fetch` with a JSON object of request headers.
+    fn host_dom_fetch_with(
+        method: *const u8,
+        method_len: usize,
+        path: *const u8,
+        path_len: usize,
+        body: *const u8,
+        body_len: usize,
+        headers: *const u8,
+        headers_len: usize,
         callback_id: i64,
     );
     fn host_dom_get_attr(handle: i64, ptr: *const u8, len: usize) -> *const u8;
@@ -264,6 +278,26 @@ pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::erro
             } else {
                 Ok(Value::Integer(h))
             }
+        }
+        // `find`: the lookup that may miss — Unit instead of a raise, so
+        // an optional element ("is there a <html data-phone>?") is a
+        // question, not a landmine inside an event handler.
+        ("find", [sel]) => {
+            let s = text(sel)?;
+            let h = unsafe { host_dom_query(s.as_ptr(), s.len()) };
+            Ok(if h == 0 {
+                Value::Unit
+            } else {
+                Value::Integer(h)
+            })
+        }
+        ("query_all", [sel]) => {
+            let s = text(sel)?;
+            let json = read_host_string(unsafe { host_dom_query_all(s.as_ptr(), s.len()) });
+            let handles: Vec<i64> = serde_json::from_str(&json).unwrap_or_default();
+            Ok(Value::List(std::sync::Arc::from(
+                handles.into_iter().map(Value::Integer).collect::<Vec<_>>(),
+            )))
         }
         ("set_text", [el, v]) => {
             let s = text(v)?;
@@ -633,6 +667,51 @@ pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::erro
                 (h.len() - 1) as i64
             });
             unsafe { host_dom_on_message(id) };
+            Ok(Value::Unit)
+        }
+        // `request` with request headers: a bearer token, a content type
+        // other than JSON. The headers travel as one JSON object.
+        ("request_with", [method, path, body, headers, callback]) => {
+            let (m, pa, b) = (text(method)?, text(path)?, text(body)?);
+            let mut hmap = serde_json::Map::new();
+            match headers {
+                Value::Map(map) => {
+                    for (k, v) in map.iter() {
+                        hmap.insert(k.clone(), serde_json::Value::String(text(v)?));
+                    }
+                }
+                Value::Struct { fields, .. } => {
+                    for (k, v) in fields.iter() {
+                        hmap.insert(k.clone(), serde_json::Value::String(text(v)?));
+                    }
+                }
+                other => {
+                    return Err(format!(
+                        "dom.request_with: headers must be a map, got {}",
+                        other.type_name()
+                    )
+                    .into());
+                }
+            }
+            let hjson = serde_json::Value::Object(hmap).to_string();
+            let id = HANDLERS.with(|h| {
+                let mut h = h.borrow_mut();
+                h.push(callback.clone());
+                (h.len() - 1) as i64
+            });
+            unsafe {
+                host_dom_fetch_with(
+                    m.as_ptr(),
+                    m.len(),
+                    pa.as_ptr(),
+                    pa.len(),
+                    b.as_ptr(),
+                    b.len(),
+                    hjson.as_ptr(),
+                    hjson.len(),
+                    id | REQUEST_BIT,
+                )
+            };
             Ok(Value::Unit)
         }
         ("request", [method, path, body, callback]) => {

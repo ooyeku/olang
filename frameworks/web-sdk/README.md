@@ -3,7 +3,7 @@
 The foundation layer for full-stack olang web applications — and the
 proof of concept for what an ideal olang library looks like: `///` on
 every export (so `:help` and editor hovers answer), `//!` module docs,
-134 olang tests including a live-socket integration test the SDK runs
+151 olang tests including a live-socket integration test the SDK runs
 against itself, shelf-distributed, `olang fmt`-clean.
 
 ```bash

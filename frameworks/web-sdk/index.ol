@@ -18,7 +18,7 @@
 
 // markup — views as data
 share use lib.html {
-    el, text, raw, fragment, render, page, escape, escape_attr,
+    el, void_el, when, text, raw, fragment, render, page, escape, escape_attr,
     div, span, p, h1, h2, h3, ul, li, a, form, label, button,
     section, header, footer, nav, pre, code, strong, em,
     input, img, br, hr, select, option, textarea
@@ -29,8 +29,8 @@ share use lib.routes { route, rpc, match_path, find }
 
 // the server — the whole backend in one call
 share use lib.server {
-    serve, dispatch, dispatch_with, json_response, ok_data, error_response, invalid,
-    body_json, q_str, q_int, q_enum, bundle_client, bundle_clients, sdk_dir
+    serve, dispatch, dispatch_with, json_response, ok_data, error_response, invalid, not_found,
+    body_json, q_str, q_int, q_enum, bundle_client, bundle_clients, bundle_clients_in, sdk_dir
 }
 
 // data layer
@@ -50,7 +50,7 @@ share use lib.forms { field, rules, read, form_fields }
 share use lib.state { init, current, set, update }
 share use lib.store { hydrate, persist, on_restore, default_of, querystring }
 share use lib.view { mount, rerender, apply, patch, action, action_arg, input_value, confirm_armed }
-share use lib.api { call, fetch, unwrap_envelope, err_message, err_details }
+share use lib.api { call, fetch, configure, unwrap_envelope, from_response, err_message, err_details }
 
 // the opinionated components
 share use lib.ui {

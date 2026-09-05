@@ -183,6 +183,45 @@
   // dom.on_frame callback ids, all serviced by one shared rAF loop.
   const frameCallbacks = [];
 
+  // The one fetch path behind dom.fetch, dom.fetch_json, dom.request, and
+  // dom.request_with.
+  function doFetch(method, path, body, extra, id) {
+    // Bit 40 marks a fetch_json callback: deliver the response through
+    // the JSON dispatch so the handler receives a parsed value. Bit 41
+    // marks a dom.request callback: the whole response — status,
+    // headers, body — as one JSON value, so the handler can tell a
+    // 404 from a 500 from a network failure (status 0).
+    const raw = Number(id);
+    const wantsStatus = raw >= REQUEST_BIT;
+    const rest = wantsStatus ? raw - REQUEST_BIT : raw;
+    const wantsJson = rest >= JSON_CALLBACK_BIT;
+    const cb = wantsJson ? rest - JSON_CALLBACK_BIT : rest;
+    const deliver = wantsJson
+      ? (text) => dispatchRawJson(cb, text)
+      : (text) => dispatch(cb, text);
+    const request = fetch(path, {
+      method,
+      headers: Object.assign(body ? { "Content-Type": "application/json" } : {}, extra),
+      body: body || undefined,
+    });
+    if (wantsStatus) {
+      request
+        .then(async (r) => dispatchRawJson(cb, JSON.stringify({
+          status: r.status,
+          headers: Object.fromEntries(r.headers.entries()),
+          body: await r.text(),
+        })))
+        .catch((e) => dispatchRawJson(cb, JSON.stringify({
+          status: 0, headers: {}, body: "", error: String(e),
+        })));
+      return;
+    }
+    request
+      .then((r) => r.text())
+      .then(deliver)
+      .catch((e) => deliver(JSON.stringify({ error: String(e) })));
+  }
+
   const imports = {
     env: {
       host_now_ms: () => performance.now(),
@@ -193,6 +232,8 @@
         const el = document.querySelector(readStr(ptr, len));
         return BigInt(el ? handleOf(el) : 0);
       },
+      host_dom_query_all: (ptr, len) =>
+        giveStr(JSON.stringify([...document.querySelectorAll(readStr(ptr, len))].map(handleOf))),
       host_dom_set_text: (h, ptr, len) => { elements[Number(h)].textContent = readStr(ptr, len); },
       host_dom_get_text: (h) => giveStr(elements[Number(h)].textContent ?? ""),
       host_dom_set_html: (h, ptr, len) => { elements[Number(h)].innerHTML = readStr(ptr, len); },
@@ -258,44 +299,14 @@
         reader.readAsDataURL(file);
       },
       host_dom_set_class: (h, ptr, len) => { elements[Number(h)].className = readStr(ptr, len); },
-      host_dom_fetch: (mp, ml, pp, pl, bp, bl, id) => {
-        const method = readStr(mp, ml);
-        const path = readStr(pp, pl);
-        const body = readStr(bp, bl);
-        // Bit 40 marks a fetch_json callback: deliver the response through
-        // the JSON dispatch so the handler receives a parsed value. Bit 41
-        // marks a dom.request callback: the whole response — status,
-        // headers, body — as one JSON value, so the handler can tell a
-        // 404 from a 500 from a network failure (status 0).
-        const raw = Number(id);
-        const wantsStatus = raw >= REQUEST_BIT;
-        const rest = wantsStatus ? raw - REQUEST_BIT : raw;
-        const wantsJson = rest >= JSON_CALLBACK_BIT;
-        const cb = wantsJson ? rest - JSON_CALLBACK_BIT : rest;
-        const deliver = wantsJson
-          ? (text) => dispatchRawJson(cb, text)
-          : (text) => dispatch(cb, text);
-        const request = fetch(path, {
-          method,
-          headers: body ? { "Content-Type": "application/json" } : {},
-          body: body || undefined,
-        });
-        if (wantsStatus) {
-          request
-            .then(async (r) => dispatchRawJson(cb, JSON.stringify({
-              status: r.status,
-              headers: Object.fromEntries(r.headers.entries()),
-              body: await r.text(),
-            })))
-            .catch((e) => dispatchRawJson(cb, JSON.stringify({
-              status: 0, headers: {}, body: "", error: String(e),
-            })));
-          return;
-        }
-        request
-          .then((r) => r.text())
-          .then(deliver)
-          .catch((e) => deliver(JSON.stringify({ error: String(e) })));
+      host_dom_fetch: (mp, ml, pp, pl, bp, bl, id) =>
+        doFetch(readStr(mp, ml), readStr(pp, pl), readStr(bp, bl), {}, id),
+      // dom.request_with: the same request with extra headers (a bearer
+      // token, a content type other than JSON).
+      host_dom_fetch_with: (mp, ml, pp, pl, bp, bl, hp, hl, id) => {
+        let extra = {};
+        try { extra = JSON.parse(readStr(hp, hl)) || {}; } catch (e) { extra = {}; }
+        doFetch(readStr(mp, ml), readStr(pp, pl), readStr(bp, bl), extra, id);
       },
       host_dom_get_attr: (h, ptr, len) =>
         giveStr(elements[Number(h)].getAttribute(readStr(ptr, len)) ?? ""),

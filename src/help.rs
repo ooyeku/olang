@@ -3186,6 +3186,31 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             &[r##"dom.fetch("GET", "/api/items", "", (text) => render(text))"##],
         );
         self.doc_ex(
+            "dom.find",
+            "dom.find(selector)",
+            "Element | Unit",
+            "dom",
+            "The first element matching the selector, or () when nothing matches — the lookup for an element that may be absent. `dom.query` raises on a miss (and a raise inside an event handler takes the page down), so an optional element is a `find`: `let el = dom.find(\"[data-phone]\"); if el != () => …`.",
+            &[r##"let banner = dom.find("#banner")
+if banner != () => dom.set_text(banner, "hello") else => ()"##],
+        );
+        self.doc_ex(
+            "dom.query_all",
+            "dom.query_all(selector)",
+            "List<Element>",
+            "dom",
+            "Every element matching the selector, as a list of handles — empty when none matches.",
+            &[r##"for row in dom.query_all("tr.selected") { dom.class_remove(row, "selected") }"##],
+        );
+        self.doc_ex(
+            "dom.request_with",
+            "dom.request_with(method, path, body, headers, callback)",
+            "Unit",
+            "dom",
+            "`dom.request` with request headers — a bearer token, a content type other than JSON. The callback receives the same #{ \"status\", \"headers\", \"body\" }.",
+            &[r##"dom.request_with("GET", "/api/me", "", #{ "Authorization": "Bearer " + token }, (r) => show_me(r))"##],
+        );
+        self.doc_ex(
             "dom.request",
             "dom.request(method, path, body, callback)",
             "Unit",
@@ -7132,6 +7157,14 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "Dates",
             "Parse a Date value from a date or datetime string — the canonical constructor from text; accepts every format this module emits. Date values compare chronologically, subtract to day counts (d2 - d1), and shift by days (d + 7).",
             &[r##"unwrap(dates.parse("2026-08-25"))"##],
+        );
+        self.doc_ex(
+            "dates.stamp_ms",
+            "dates.stamp_ms()",
+            "String",
+            "dates",
+            "the storage stamp at millisecond precision — `2026-08-31T23:40:06.503Z` — the one to key a row's version on. `stamp` (seconds) is the grain a person reads; two edits inside one second are identical under it, so optimistic concurrency keyed on `stamp` lets a stale write through",
+            &[r##"dates.stamp_ms()  // "2026-08-31T23:40:06.503Z""##],
         );
 
         self.add_function(FunctionDoc {

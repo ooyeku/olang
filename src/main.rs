@@ -710,13 +710,13 @@ fn run_eval(cli: &Cli, source: &str) -> i32 {
                 .map(std::path::PathBuf::from),
             ..Default::default()
         };
-        if let Ok(map) = olang::pkg::install(&root, &opts) {
-            let mut map: std::collections::HashMap<_, _> = map.into_iter().collect();
-            if let Ok(m) = olang::pkg::manifest::Manifest::load(&root) {
-                map.entry(m.package.name.clone()).or_insert(root.clone());
-            }
-            interpreter.set_dependency_map(map);
+        let (map, missing) = olang::pkg::install_lenient(&root, &opts);
+        interpreter.set_missing_dependencies(missing.into_iter().collect());
+        let mut map: std::collections::HashMap<_, _> = map.into_iter().collect();
+        if let Ok(m) = olang::pkg::manifest::Manifest::load(&root) {
+            map.entry(m.package.name.clone()).or_insert(root.clone());
         }
+        interpreter.set_dependency_map(map);
     }
     // REPL semantics: the value of a trailing *expression* is printed;
     // a declaration (`let x = 1`) evaluates to its value internally but
@@ -2430,8 +2430,19 @@ fn execute_program(
                 .map(std::path::PathBuf::from),
             ..Default::default()
         };
-        match olang::pkg::install(&root, &opts) {
-            Ok(map) => {
+        // One dependency that cannot be resolved must not fail every
+        // module: the resolvable ones are handed over, and the missing
+        // ones are named — by package and reason — at the `use` that
+        // needs them.
+        let (map, missing) = olang::pkg::install_lenient(&root, &opts);
+        if verbose {
+            for (name, reason) in &missing {
+                logger.warn("main", &format!("dependency '{}': {}", name, reason));
+            }
+        }
+        interpreter.set_missing_dependencies(missing.into_iter().collect());
+        {
+            {
                 let mut map: std::collections::HashMap<_, _> = map.into_iter().collect();
                 // A package is referable by its own name from within itself,
                 // so a single-file package can `use <own_name> { ... }`.
@@ -2461,11 +2472,6 @@ fn execute_program(
                     }
                 }
                 interpreter.set_dependency_map(map);
-            }
-            Err(e) => {
-                if verbose {
-                    logger.warn("main", &format!("package resolution: {}", e));
-                }
             }
         }
     }

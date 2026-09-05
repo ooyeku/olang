@@ -97,6 +97,12 @@ status codes and the body must carry the whole truth.
 
 ## Views as data
 
+Two small forms beside `el`: `void_el(tag, attrs)` for an element with
+no children (`img`, `br`, `input` written through `el`), and `@when(cond,
+node)`, a macro — the node is built only when the condition holds, so
+`@when(t != (), span([map_get(t, "id")]))` cannot raise on the case it
+exists to skip, which a function `when` would.
+
 ```olang no-run
 use web { div, span, render, escape }
 let node = div(#{ "class": "card" }, ["hello ", span(#{}, ["world"])])
@@ -110,6 +116,11 @@ boolean attributes render bare (`disabled`), `false`/Unit render
 absent.
 
 ## The route table
+
+A handler answers a missing row with `not_found(what)` — the 404 with
+the row named — beside `invalid(problems)` for a 422. `Err(message)` is
+the 500, and it is for failures: an absent row is an answer, not a
+crash.
 
 `route("GET", "/todos/:id", handler)` matches with `:param` capture;
 `rpc("todos.create", handler)` mounts at `POST /api/rpc/todos.create`.
@@ -144,6 +155,12 @@ Repainting is `apply` (the whole view) or `patch(id, node)` — one
 subtree rendered into the element with that id, leaving the rest of
 the page and its focused input alone: the toast, the counter, the
 chart that should not cost a full render on every store write.
+
+A request header rides every call once configured — `configure(#{
+"headers": #{ "Authorization": "Bearer " + token } })` — so a bearer
+token is the same shape in the browser as in the CLI. An element that
+may be absent is a `dom.find(selector)`, which answers `()` on a miss
+where `dom.query` raises; `dom.query_all` lists every match.
 
 Destructive actions have a component: `btn_confirm(label, action)` arms
 on the first click (its label becomes "Confirm …") and fires `action`
@@ -282,7 +299,12 @@ holding a stale runtime still boots. Both revalidate by ETag, so the
 HTTP cache is the cross-visit cache.
 
 `serve` also takes `"log": (req, response, ms) => …` to own the
-request line, and serves the runtime two ways: `/olang.<hash>.wasm`,
+request line, `"bind"` for the address to listen on (`"0.0.0.0"` for
+other machines; the default stays `127.0.0.1`), and `"sdk_dir"` to say
+where the SDK's assets are read from — by default `WEB_SDK_DIR`, then
+the directory the project's own `olang.lock` resolved `web` to (a path
+entry or a shelf entry), then the machine's shelf. It serves the
+runtime two ways: `/olang.<hash>.wasm`,
 the content-addressed URL the shell references (immutable, cached for
 a year — a new build is a new URL), and `/olang.wasm`, revalidated by
 ETag. Both negotiate `Accept-Encoding`: a pre-compressed sibling on
@@ -302,7 +324,13 @@ clone runs `make wasm` once before starting the demo.
 
 ## Testing
 
-The SDK's tests are olang tests — 134 of them, `olang test
+Under `olang test`, `dispatch` runs each handler on a task thread, the
+way `serve`'s workers do — so a handler that captured a cell fails in
+the test that exercises it, with the same "cell escaped its thread"
+the real server would raise, instead of passing every in-process test
+and failing every request.
+
+The SDK's tests are olang tests — 151 of them, `olang test
 frameworks/web-sdk`. The route table and envelope are exercised
 in-process by constructing request values and calling `dispatch`
 directly; the data layer runs against `:memory:`; the demo (`demo/`

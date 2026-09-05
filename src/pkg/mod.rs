@@ -147,6 +147,41 @@ pub fn install(root: &Path, options: &InstallOptions) -> Result<DependencyMap, P
     Ok(dep_map)
 }
 
+/// `install`, but a dependency that cannot be resolved does not take the
+/// others with it: every resolvable manifest dependency is returned, and
+/// the failures come back by name with their reason. For running a
+/// program — a module that never imports the missing package still runs,
+/// and the `use` that does is told which package is missing and why. The
+/// lock is left untouched on this path.
+pub fn install_lenient(
+    root: &Path,
+    options: &InstallOptions,
+) -> (DependencyMap, Vec<(String, String)>) {
+    match install(root, options) {
+        Ok(map) => (map, Vec::new()),
+        Err(first) => {
+            let mut map = DependencyMap::new();
+            let mut missing = Vec::new();
+            let Ok(manifest) = Manifest::load(root) else {
+                return (map, vec![("<manifest>".to_string(), first.to_string())]);
+            };
+            let resolution = Default::default();
+            for (name, dep) in &manifest.dependencies {
+                match resolve_dependency(root, name, dep, &resolution, options) {
+                    Ok((dir, _)) => {
+                        map.insert(name.clone(), dir);
+                    }
+                    Err(e) => missing.push((name.clone(), e.to_string())),
+                }
+            }
+            if missing.is_empty() {
+                missing.push(("<dependencies>".to_string(), first.to_string()));
+            }
+            (map, missing)
+        }
+    }
+}
+
 /// Resolve one manifest dependency to (directory, lock entry).
 fn resolve_dependency(
     root: &Path,
@@ -236,12 +271,14 @@ fn resolve_dependency(
                 dir.clone(),
                 LockedPackage {
                     version: None,
-                    // Locked as the resolved absolute path: replay can
-                    // then work from the lock alone, and `verify` treats
-                    // it with the path-dep leniency (editing your own
-                    // library is development, not tampering).
-                    source: LockedSource::Path {
-                        path: dir.display().to_string(),
+                    // Locked by shelf name, not by the machine path the
+                    // name resolved to: a lock is committed, and a clone
+                    // elsewhere resolves the name through its own shelf.
+                    // `verify` treats it with the path-dep leniency
+                    // (editing your own library is development, not
+                    // tampering).
+                    source: LockedSource::Shelf {
+                        shelf: shelf_name.clone(),
                     },
                     checksum,
                     dependencies: sub_dependency_names(&dir),
@@ -317,6 +354,11 @@ fn replay_lock(
             (Dependency::Path { path }, LockedSource::Path { path: locked_path }) => {
                 path == locked_path
             }
+            (Dependency::Shelf { shelf: sname }, LockedSource::Shelf { shelf: locked }) => {
+                sname == locked
+            }
+            // Older locks pinned a shelf library by the path it resolved
+            // to on the machine that wrote them; honored while it agrees.
             (Dependency::Shelf { shelf: sname }, LockedSource::Path { path: locked_path }) => {
                 shelf::Shelf::load()
                     .ok()
@@ -381,11 +423,26 @@ fn replay_lock(
     // drift off the lock.
     let mut map = DependencyMap::new();
     for (name, locked) in &lock.package {
+        // A lock that names a path this machine does not have (a clone of
+        // a project whose lock was written elsewhere, a moved checkout) is
+        // not a reason to fail: re-resolve from the manifest instead.
+        if matches!(
+            locked.source,
+            LockedSource::Path { .. } | LockedSource::Shelf { .. }
+        ) {
+            match locked_dir(root, name, locked, options) {
+                Ok(dir) if dir.exists() => {}
+                _ => return Ok(None),
+            }
+        }
         let dir = locked_dir(root, name, locked, options)?;
         // Fetched sources must still match the checksum the lock recorded —
         // this is where the trust model's tamper detection actually bites.
-        // Path deps are exempt: editing one is normal development.
-        if !matches!(locked.source, LockedSource::Path { .. }) {
+        // Path and shelf deps are exempt: editing one is normal development.
+        if !matches!(
+            locked.source,
+            LockedSource::Path { .. } | LockedSource::Shelf { .. }
+        ) {
             verify_checksum(name, locked.checksum.as_deref(), &dir)?;
         }
         map.insert(name.clone(), dir);
@@ -402,6 +459,17 @@ fn locked_dir(
 ) -> Result<PathBuf, PkgError> {
     match &locked.source {
         LockedSource::Path { path } => Ok(normalize(root, path)),
+        LockedSource::Shelf { shelf: shelf_name } => {
+            let shelf =
+                shelf::Shelf::load().map_err(|e| PkgError::Resolve(format!("shelf: {}", e)))?;
+            shelf.resolve(shelf_name).cloned().ok_or_else(|| {
+                PkgError::Resolve(format!(
+                    "the lock names shelf library '{}', which is not on this machine's shelf \
+                     (register it: `otc lib add <path>`)",
+                    shelf_name
+                ))
+            })
+        }
         LockedSource::Git { git, rev, .. } => {
             Ok(cache::fetch_git(git, &cache::GitRef::Rev(rev.clone()))
                 .map_err(|e| PkgError::Fetch(e.to_string()))?
