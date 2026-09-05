@@ -120,7 +120,7 @@ fn task_id(value: &Value) -> Result<u64, String> {
 }
 
 fn raise(message: String) -> InterpreterError {
-    InterpreterError::RuntimeError { message }
+    InterpreterError::runtime(message)
 }
 
 /// A task's failure is a *value*, not a crash: one worker falling over

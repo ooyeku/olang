@@ -24,6 +24,7 @@ async function instantiate() {
         // dom stubs: there is no document in the sandbox.
         host_dom_query: () => 0n,
         host_dom_query_all: () => 0,
+        host_dom_morph: () => {},
         host_dom_fetch_with: () => {},
         host_dom_set_text: () => {},
         host_dom_get_text: () => 0,

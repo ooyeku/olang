@@ -187,7 +187,10 @@ The limits are the design, not gaps in it:
 - No effectful or nondeterministic calls at expansion time (law 4); a
   meta fn that tries gets a refusal naming the module.
 - No whole-program view: a macro sees its own arguments and nothing
-  else. Program-wide analysis belongs to
+  else (its own file's declarations and the `share fn`s of the modules
+  the file imports are in scope, so a thin meta fn can delegate to a
+  tested validator; the rest of the program is not). Program-wide
+  analysis belongs to
   [`olang check --rules`](tooling.md#project-rules), which is the
   read-only half of this system.
 - No macro-defined operators, no implicit conversions, no rewriting of
@@ -242,7 +245,9 @@ module is resolved as `m.ol` or `m/index.ol` (dots as directories)
 relative to the working directory; a local meta fn of the same name
 shadows an imported one, and an imported module's own imports are not
 walked. The module file's content is an expansion input exactly like
-the source itself.
+the source itself. The module's `share fn`s come along too: a meta fn
+body may call them, under the same purity rule every meta fn body
+obeys — one that reaches for an effect fails at the call.
 
 ## Decorating functions and lets
 

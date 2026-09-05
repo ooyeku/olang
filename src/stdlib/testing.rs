@@ -50,6 +50,10 @@ pub fn create_testing_module() -> Value {
     // Test control functions
     module.insert("fail".to_string(), create_builtin_function("fail", 1));
     module.insert(
+        "snapshot".to_string(),
+        create_builtin_function("snapshot", 2),
+    );
+    module.insert(
         "run_test".to_string(),
         create_builtin_function("run_test", 2),
     );
@@ -91,6 +95,9 @@ pub fn call_testing_function(
         "assert_ok" => assert_ok(args),
         "assert_err" => assert_err(args),
         "fail" => fail_test(args),
+        // Reached only when no interpreter intercepted the call (it
+        // needs the test file's directory).
+        "snapshot" => Err("testing.snapshot needs the running program's file".into()),
         "run_test" => run_test(args),
         "test_summary" => test_summary(args),
         "reset_tests" => reset_tests(args),
@@ -321,6 +328,17 @@ fn reset_tests(_args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
 /// The raw (passed, failed) tally for this thread — used by the test
 /// runner to charge assertion failures to the block that made them.
+/// One passing outcome into the session tally (for asserts that live
+/// outside this module, such as `testing.snapshot`).
+pub fn record_pass() {
+    TALLY.with(|t| t.borrow_mut().0 += 1);
+}
+
+/// One failing outcome into the session tally.
+pub fn record_fail() {
+    TALLY.with(|t| t.borrow_mut().1 += 1);
+}
+
 pub fn tally_snapshot() -> (i64, i64) {
     TALLY.with(|t| *t.borrow())
 }
@@ -430,6 +448,7 @@ mod tests {
                 "assert_ok",
                 "assert_err",
                 "fail",
+                "snapshot",
                 "run_test",
                 "test_summary",
                 "reset_tests",

@@ -331,6 +331,26 @@ pub fn render_xy(series: &[XySeries], opts: &PlotOptions) -> Result<String> {
                      stroke-linejoin=\"round\" stroke-linecap=\"round\"/>",
                     d, color
                 );
+                // An interactive line has a hover surface of its own: one
+                // small vertex per point carrying the datum, so tooltips
+                // and mark events work without overlaying a scatter.
+                if opts.interactive {
+                    for (j, (x, y)) in pts.iter().enumerate() {
+                        let attrs = data_attrs(
+                            true,
+                            &[
+                                ("s", s.label.clone()),
+                                ("x", format_num(s.xs[j])),
+                                ("y", format_num(s.ys[j])),
+                            ],
+                        );
+                        let _ = write!(
+                            svg.body,
+                            "<circle class=\"vertex\" cx=\"{:.2}\" cy=\"{:.2}\" r=\"3\" fill=\"{}\"{}/>",
+                            x, y, color, attrs
+                        );
+                    }
+                }
             }
             XyKind::Scatter => {
                 for (j, (x, y)) in pts.iter().enumerate() {

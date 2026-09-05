@@ -34,6 +34,7 @@ pub mod task;
 pub mod testing;
 pub mod time;
 pub mod toml_mod;
+pub mod vec;
 
 pub fn get_stdlib() -> HashMap<String, Value> {
     let mut stdlib = HashMap::new();
@@ -47,6 +48,7 @@ pub fn get_stdlib() -> HashMap<String, Value> {
     stdlib.insert("db".to_string(), db::create_db_module());
     stdlib.insert("csv".to_string(), csv::create_csv_module());
     stdlib.insert("dates".to_string(), dates::create_dates_module());
+    stdlib.insert("vec".to_string(), vec::create_vec_module());
     #[cfg(feature = "native")]
     stdlib.insert("fs".to_string(), fs::create_fs_module());
     #[cfg(feature = "native")]

@@ -1195,7 +1195,7 @@ which is also why the whole stack runs in the browser build.
 | `plot.scatter(x, y, opts)` | one point cloud |
 | `plot.area(x, y, opts)` | a line with the region beneath it filled |
 | `plot.lines(x, pairs, opts)` | several lines with a legend; `pairs` is `[[label, y], ...]` (up to 8) |
-| `plot.xy(entries, opts)` | layered marks over shared scales; each entry is `[label, mark, x, y]` with mark `"line"`, `"area"`, or `"scatter"` |
+| `plot.xy(entries, opts)` | layered marks over shared scales; each entry is `[label, mark, x, y]` with mark `"line"`, `"area"`, or `"scatter"` — the multi-series form (shared axes, one legend) |
 | `plot.bar(labels, values, opts)` | one bar per category; `labels` is a Series or list |
 | `plot.bars(labels, pairs, opts)` | grouped (side-by-side) bars, one group per category |
 | `plot.stacked(labels, pairs, opts)` | stacked bars — non-negative values only (a negative part misleads) |
@@ -1304,6 +1304,11 @@ SVG renderer colors each mark individually, and the canvas target
 buckets the 24 quantized ramp steps into at most 24 bulk
 `draw_points` calls, so even a hundred-thousand-point cloud keeps the
 binary path.
+
+An interactive line carries its own hover surface: one small
+`class="vertex"` circle per point, with the same `data-*` datum a
+scatter mark carries, so tooltips and mark events work on a line chart
+without overlaying a scatter of the same series.
 
 **Interactive charts are event delegation.** With `"interactive":
 true`, every mark carries its datum as `data-*` attributes — scatter

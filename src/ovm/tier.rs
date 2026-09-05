@@ -535,6 +535,17 @@ impl BytecodeTier {
         std::mem::take(&mut self.last_error_trace)
     }
 
+    /// The file the last trace's span belongs to, if the VM knew it.
+    pub fn take_error_trace_file(&mut self) -> Option<String> {
+        self.vm.take_error_trace_file()
+    }
+
+    /// The program's entry file, so a trace frame from another file can
+    /// name it the way the interpreter's own frames do.
+    pub fn set_entry_file(&mut self, file: Option<String>) {
+        self.vm.set_entry_file(file);
+    }
+
     /// Try to execute `func(args)` on the bytecode VM. `depth_base` is
     /// the interpreter's current call depth, seeded into the VM so both
     /// tiers spend from the one shared budget (see `set_depth_base`).

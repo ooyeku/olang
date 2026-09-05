@@ -251,6 +251,11 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
             let label = u.join(".");
             let module_prog =
                 load_module_macros(&parser, &mut interp, &mut known_macros, &module_src, &label)?;
+            // The module's shared functions join the expansion scope, so
+            // a thin meta fn can delegate to a tested, shared validator.
+            // They run under meta mode: one that reaches for an effect
+            // fails at the call, exactly like a meta fn body would.
+            load_module_functions(&mut interp, &module_prog);
             // A package's macros travel through its index.ol re-exports:
             // `share use lib.store { ... }` in the index brings lib/store.ol's
             // meta fns along, so `use web` reaches `@store` without the
@@ -276,13 +281,14 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
                     continue;
                 };
                 let sub_label = format!("{label} (re-export of {})", su.path.join("."));
-                load_module_macros(
+                let sub_prog = load_module_macros(
                     &parser,
                     &mut interp,
                     &mut known_macros,
                     &sub_src,
                     &sub_label,
                 )?;
+                load_module_functions(&mut interp, &sub_prog);
             }
         }
 
@@ -663,6 +669,23 @@ fn load_module_macros(
 /// closing token when spliced inline. Name it only when it is present —
 /// a guess offered for every failure pointed authors away from the real
 /// parse error (a leading-underscore name, in the incident behind this).
+/// Define an imported module's `share fn`s in the expansion interpreter.
+/// A definition that fails to load (a body the meta-mode interpreter
+/// refuses, a duplicate) is skipped: the module still loads at runtime
+/// as it always did, and the function is simply not reachable from a
+/// meta fn body.
+fn load_module_functions(interp: &mut crate::interpreter::Interpreter, module: &Program) {
+    for st in &module.statements {
+        if let crate::ast::Statement::ShareDecl(crate::ast::ShareDecl::Function(f)) = st.unwrapped()
+        {
+            let prog = Program {
+                statements: vec![crate::ast::Statement::FunctionDecl(f.clone())],
+            };
+            let _ = interp.eval_program(prog);
+        }
+    }
+}
+
 fn trailing_comment_hint(out: &str) -> &'static str {
     let last = out.trim_end().rsplit('\n').next().unwrap_or("");
     if last.contains("//") {

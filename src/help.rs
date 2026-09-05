@@ -2457,6 +2457,40 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             &[r##"ods.frame_from_records([#{ "name": "ann", "score": 91 }])"##],
         );
         self.doc_ex(
+            "ods.to_matrix",
+            "ods.to_matrix(frame, names)",
+            "List<List<Float>>",
+            "ods",
+            "the named Float or Int columns as a list of Float lists, in the order asked — the feature-matrix convention every numeric kernel wants, blessed once (a column with nulls is an error)",
+            &[r##"let cols = ods.to_matrix(f, ["age", "income"])
+vec.dot(cols[0], cols[1])"##],
+        );
+        self.doc_ex(
+            "ods.split",
+            "ods.split(frame, frac)",
+            "List<Frame>",
+            "ods",
+            "a deterministic holdout under `random.seed`: `frac` of the rows drawn without replacement as the first frame, the rest as the second",
+            &[r##"random.seed(7)
+let parts = ods.split(f, 0.8)   // [train, test]"##],
+        );
+        self.doc_ex(
+            "ods.split_at",
+            "ods.split_at(frame, column, frac)",
+            "List<Frame>",
+            "ods",
+            "the forward-in-time split: rows ordered by `column`, the first `frac` as the first frame — a chronological holdout with no leakage from later rows",
+            &[r##"let parts = ods.split_at(events, "date", 0.8)"##],
+        );
+        self.doc_ex(
+            "ods.date_part",
+            "ods.date_part(series, unit)",
+            "Series",
+            "ods",
+            "the \"year\", \"month\", or \"day\" prefix of an ISO date or timestamp String Series, as a String Series — the derived key for a by-month group_by, in one call",
+            &[r##"ods.group_by(f, ods.date_part(f["date"], "month"), [["amount", "sum"]])"##],
+        );
+        self.doc_ex(
             "ods.try_frame_from_records",
             "ods.try_frame_from_records(records)",
             "Result<Frame, String>",
@@ -3184,6 +3218,14 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "dom",
             "Asynchronous HTTP from the page — the callback receives the response text.",
             &[r##"dom.fetch("GET", "/api/items", "", (text) => render(text))"##],
+        );
+        self.doc_ex(
+            "dom.morph",
+            "dom.morph(el, html)",
+            "Unit",
+            "dom",
+            "Bring the element's children to the markup by editing what is already there: text updated in place, attributes diffed, children matched by data-key (else by position and tag). The nodes that did not change are the nodes the browser keeps — focus, caret, scroll, an open select — where set_html replaces the whole tree. The web SDK repaints with it.",
+            &[r##"dom.morph(dom.query("#list"), render(rows))"##],
         );
         self.doc_ex(
             "dom.find",
@@ -4867,6 +4909,78 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             examples: vec!["str.words(\"  a b \")  // [\"a\",\"b\"]".to_string()],
             category: "String".to_string(),
             see_also: vec![],
+        });
+        for (name, syntax, ret, desc, example) in [
+            (
+                "vec.dot",
+                "vec.dot(a, b)",
+                "Float",
+                "the dot product of two number lists (same length)",
+                "vec.dot([1.0, 2.0], [3.0, 4.0])  // 11.0",
+            ),
+            (
+                "vec.add",
+                "vec.add(a, b)",
+                "List<Float>",
+                "elementwise sum of two number lists",
+                "vec.add([1, 2], [0.5, 0.5])  // [1.5, 2.5]",
+            ),
+            (
+                "vec.sub",
+                "vec.sub(a, b)",
+                "List<Float>",
+                "elementwise difference of two number lists",
+                "vec.sub([1, 2], [0.5, 0.5])  // [0.5, 1.5]",
+            ),
+            (
+                "vec.scale",
+                "vec.scale(a, k)",
+                "List<Float>",
+                "every element times k — the axpy update's other half",
+                "vec.add(x, vec.scale(g, 0.0 - 0.01))",
+            ),
+            (
+                "vec.sum",
+                "vec.sum(a)",
+                "Float",
+                "the sum of a number list, as a Float",
+                "vec.sum([1, 2, 3])  // 6.0",
+            ),
+            (
+                "vec.norm",
+                "vec.norm(a)",
+                "Float",
+                "the Euclidean length of a number list",
+                "vec.norm([3.0, 4.0])  // 5.0",
+            ),
+            (
+                "vec.mean",
+                "vec.mean(a)",
+                "Float",
+                "the mean of a non-empty number list",
+                "vec.mean([1, 2, 3])  // 2.0",
+            ),
+        ] {
+            self.add_function(FunctionDoc {
+                name: name.to_string(),
+                description: format!("{} — the kernels numeric code otherwise spells as index loops (`vec` is the vector layer over Float lists; `ods.to_matrix` hands a frame's columns to it). Lengths must agree; a non-finite result raises like any float overflow.", desc),
+                syntax: syntax.to_string(),
+                parameters: vec![],
+                return_type: ret.to_string(),
+                examples: vec![example.to_string()],
+                category: "Vectors".to_string(),
+                see_also: vec!["ods.to_matrix".to_string()],
+            });
+        }
+        self.add_function(FunctionDoc {
+            name: "testing.snapshot".to_string(),
+            description: "The snapshot test: the value's display form is compared with `__snapshots__/<name>.snap` beside the file under test. The first run writes the file and passes; a later run that differs fails with both texts; OLANG_UPDATE_SNAPSHOTS=1 accepts the new form. For the long HTML and SVG strings a test would otherwise inline.".to_string(),
+            syntax: "testing.snapshot(name, value)".to_string(),
+            parameters: vec!["name: String - letters, digits, _ - . (the file stem)".to_string(), "value: any - compared by its display form".to_string()],
+            return_type: "Unit".to_string(),
+            examples: vec!["testing.snapshot(\"issue_card\", render(card(issue)))".to_string()],
+            category: "Testing".to_string(),
+            see_also: vec!["testing.assert_eq".to_string()],
         });
         self.add_function(FunctionDoc {
             name: "str.fixed".to_string(),

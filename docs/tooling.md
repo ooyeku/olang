@@ -67,7 +67,20 @@ Under the runner, a failing block **records its failure and execution
 continues**, so one red test doesn't hide the rest (in a normal
 `olang <file>` run, a failing assertion still aborts — the runner is what
 changes the policy). Programs see a bare `os.args()`, so a file that
-branches on arguments takes its no-argument path.
+branches on arguments takes its no-argument path, and `OLANG_TEST` is
+set in the environment, so a library can choose test-time behavior
+(the web SDK's `dispatch` runs handlers on a task thread under it).
+
+`olang test --watch` re-runs the tests whenever a `.ol` file under the
+target changes — the edit-test loop, each run a child process so a
+crash ends the run and never the watcher.
+
+**Snapshot tests.** `testing.snapshot(name, value)` compares the value's
+display form with `__snapshots__/<name>.snap` beside the file under
+test: the first run writes the file and passes, a later run that
+differs fails with both texts, and `OLANG_UPDATE_SNAPSHOTS=1` accepts
+the new form. It is for the long HTML and SVG strings a test would
+otherwise inline; commit the directory.
 
 ```text
 examples/language/markdown/main.ol
@@ -173,6 +186,7 @@ tells that story) and now reports three distinct classes of finding.
 ```bash
 olang check               # every .ol file under the current directory
 olang check src/ app/     # specific paths or a single file
+olang check --fix         # apply the unambiguous rewrites first (template escapes)
 ```
 
 ```text

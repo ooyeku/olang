@@ -3,6 +3,20 @@
 use crate::ast::Value;
 use thiserror::Error;
 
+impl InterpreterError {
+    /// A runtime error from a message that may already carry the
+    /// "Runtime error: " prefix — a worker's error re-raised by the thread
+    /// that joined it, a tier's message re-wrapped at the boundary. One
+    /// prefix, added where the error is reported; never three.
+    pub fn runtime(message: impl Into<String>) -> Self {
+        let mut message: String = message.into();
+        while let Some(rest) = message.strip_prefix("Runtime error: ") {
+            message = rest.to_string();
+        }
+        InterpreterError::RuntimeError { message }
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum InterpreterError {
     #[error("Undefined variable: {name}")]

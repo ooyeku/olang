@@ -675,11 +675,8 @@ impl BuiltinFunctions {
         #[cfg(feature = "native")]
         if let Some(fs_function) = name.strip_prefix("fs.") {
             // Remove "fs." prefix
-            return crate::stdlib::fs::call_fs_function(fs_function, arguments).map_err(|e| {
-                InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                }
-            });
+            return crate::stdlib::fs::call_fs_function(fs_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // Handle HTTP functions
@@ -691,11 +688,8 @@ impl BuiltinFunctions {
             if http_function == "serve" {
                 return crate::stdlib::http::serve_blocking(arguments, interpreter);
             }
-            return crate::stdlib::http::call_http_function(http_function, arguments).map_err(
-                |e| InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                },
-            );
+            return crate::stdlib::http::call_http_function(http_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // Without the native feature (the browser playground), whole module
@@ -716,58 +710,47 @@ impl BuiltinFunctions {
         // Handle math functions
         if let Some(math_function) = name.strip_prefix("math.") {
             // Remove "math." prefix
-            return crate::stdlib::math::call_math_function(math_function, arguments).map_err(
-                |e| InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                },
-            );
+            return crate::stdlib::math::call_math_function(math_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // Handle bigint functions
         if let Some(bigint_function) = name.strip_prefix("bigint.") {
             return crate::stdlib::bigint::call_bigint_function(bigint_function, arguments)
-                .map_err(|e| InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                });
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // Handle dates functions
+        if let Some(vec_function) = name.strip_prefix("vec.") {
+            return crate::stdlib::vec::call_vec_function(vec_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
+        }
+
         if let Some(dates_function) = name.strip_prefix("dates.") {
             // Remove "dates." prefix
-            return crate::stdlib::dates::call_dates_function(dates_function, arguments).map_err(
-                |e| InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                },
-            );
+            return crate::stdlib::dates::call_dates_function(dates_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // Handle random functions
         if let Some(random_function) = name.strip_prefix("random.") {
             // Remove "random." prefix
             return crate::stdlib::random::call_random_function(random_function, arguments)
-                .map_err(|e| InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                });
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // Handle csv functions
         if let Some(csv_function) = name.strip_prefix("csv.") {
             // Remove "csv." prefix
-            return crate::stdlib::csv::call_csv_function(csv_function, arguments).map_err(|e| {
-                InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                }
-            });
+            return crate::stdlib::csv::call_csv_function(csv_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // Handle json functions
         if let Some(json_function) = name.strip_prefix("json.") {
             // Remove "json." prefix
-            return crate::stdlib::json::call_json_function(json_function, arguments).map_err(
-                |e| InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                },
-            );
+            return crate::stdlib::json::call_json_function(json_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // Handle task functions
@@ -783,20 +766,14 @@ impl BuiltinFunctions {
 
         // Handle chan functions
         if let Some(chan_function) = name.strip_prefix("chan.") {
-            return crate::stdlib::chan::call_chan_function(chan_function, arguments).map_err(
-                |e| InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                },
-            );
+            return crate::stdlib::chan::call_chan_function(chan_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // Handle toml functions
         if let Some(toml_function) = name.strip_prefix("toml.") {
-            return crate::stdlib::toml_mod::call_toml_function(toml_function, arguments).map_err(
-                |e| InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                },
-            );
+            return crate::stdlib::toml_mod::call_toml_function(toml_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // Handle meta (Open AST) functions
@@ -811,84 +788,59 @@ impl BuiltinFunctions {
                 && let Some(Value::String(src)) = arguments.first()
             {
                 let src = src.clone();
-                let budget = crate::stdlib::meta::eval_budget(&arguments).map_err(|e| {
-                    InterpreterError::RuntimeError {
-                        message: e.to_string(),
-                    }
-                })?;
+                let budget = crate::stdlib::meta::eval_budget(&arguments)
+                    .map_err(|e| InterpreterError::runtime(e.to_string()))?;
                 return Ok(interpreter.eval_source_at_runtime(&src, budget));
             }
-            return crate::stdlib::meta::call_meta_function(meta_function, arguments).map_err(
-                |e| InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                },
-            );
+            return crate::stdlib::meta::call_meta_function(meta_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // Handle bytes functions
         if let Some(bytes_function) = name.strip_prefix("bytes.") {
-            return crate::stdlib::bytes::call_bytes_function(bytes_function, arguments).map_err(
-                |e| InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                },
-            );
+            return crate::stdlib::bytes::call_bytes_function(bytes_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // Handle base64 functions
         if let Some(base64_function) = name.strip_prefix("base64.") {
             // Remove "base64." prefix
             return crate::stdlib::base64::call_base64_function(base64_function, arguments)
-                .map_err(|e| InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                });
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // Handle dom functions (browser-only; native errors clearly)
         if let Some(dom_function) = name.strip_prefix("dom.") {
-            return crate::stdlib::dom::call_dom_function(dom_function, arguments).map_err(|e| {
-                InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                }
-            });
+            return crate::stdlib::dom::call_dom_function(dom_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // Handle time functions
         if let Some(time_function) = name.strip_prefix("time.") {
-            return crate::stdlib::time::call_time_function(time_function, arguments).map_err(
-                |e| InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                },
-            );
+            return crate::stdlib::time::call_time_function(time_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // Handle os functions
         #[cfg(feature = "native")]
         if let Some(os_function) = name.strip_prefix("os.") {
             // Remove "os." prefix
-            return crate::stdlib::os::call_os_function(os_function, arguments).map_err(|e| {
-                InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                }
-            });
+            return crate::stdlib::os::call_os_function(os_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // Handle proc functions (child processes + pipelines)
         #[cfg(feature = "native")]
         if let Some(proc_function) = name.strip_prefix("proc.") {
-            return crate::stdlib::proc::call_proc_function(proc_function, arguments).map_err(
-                |e| InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                },
-            );
+            return crate::stdlib::proc::call_proc_function(proc_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // Handle crypto functions
         if let Some(crypto_function) = name.strip_prefix("crypto.") {
             // Remove "crypto." prefix
             return crate::stdlib::crypto::call_crypto_function(crypto_function, arguments)
-                .map_err(|e| InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                });
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // `db.transaction(conn, f)` calls `f` — begin, run, then commit on
@@ -902,11 +854,8 @@ impl BuiltinFunctions {
         // Handle db (SQLite) functions
         #[cfg(feature = "native")]
         if let Some(db_function) = name.strip_prefix("db.") {
-            return crate::stdlib::db::call_db_function(db_function, arguments).map_err(|e| {
-                InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                }
-            });
+            return crate::stdlib::db::call_db_function(db_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // Handle col (collections) functions — higher-order, so they take
@@ -921,20 +870,14 @@ impl BuiltinFunctions {
 
         // Handle str functions
         if let Some(str_function) = name.strip_prefix("str.") {
-            return crate::stdlib::string::call_string_function(str_function, arguments).map_err(
-                |e| InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                },
-            );
+            return crate::stdlib::string::call_string_function(str_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // Handle re functions
         if let Some(re_function) = name.strip_prefix("re.") {
-            return crate::stdlib::regex_mod::call_regex_function(re_function, arguments).map_err(
-                |e| InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                },
-            );
+            return crate::stdlib::regex_mod::call_regex_function(re_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // `caps` answers from the *caller's* grant, so it resolves
@@ -946,13 +889,19 @@ impl BuiltinFunctions {
                 .map_err(|message| InterpreterError::RuntimeError { message });
         }
 
+        // `testing.snapshot(name, value)`: the value's `show` form against
+        // `__snapshots__/<name>.snap` beside the file under test — written
+        // on the first run, compared after, refreshed when
+        // OLANG_UPDATE_SNAPSHOTS is set. Lives here for the file's path.
+        if name == "testing.snapshot" {
+            return testing_snapshot(arguments, interpreter);
+        }
+
         // Handle testing functions
         if let Some(testing_function) = name.strip_prefix("testing.") {
             // Remove "testing." prefix
             return crate::stdlib::testing::call_testing_function(testing_function, arguments)
-                .map_err(|e| InterpreterError::RuntimeError {
-                    message: e.to_string(),
-                });
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 
         // OVM extension modules (ods, ...): "<module>.<func>" dispatches
@@ -3836,11 +3785,8 @@ fn db_transaction(
     let conn = arguments[0].clone();
     let f = arguments[1].clone();
     let db = |name: &str, args: Vec<Value>| {
-        crate::stdlib::db::call_db_function(name, args).map_err(|e| {
-            InterpreterError::RuntimeError {
-                message: e.to_string(),
-            }
-        })
+        crate::stdlib::db::call_db_function(name, args)
+            .map_err(|e| InterpreterError::runtime(e.to_string()))
     };
     if let Value::Err(e) = db("begin", vec![conn.clone()])? {
         return Ok(Value::Err(e));
@@ -3857,6 +3803,91 @@ fn db_transaction(
         Err(raised) => {
             let _ = db("rollback", vec![conn]);
             Err(raised)
+        }
+    }
+}
+
+/// `testing.snapshot(name, value)`: the snapshot test. The value's display
+/// form is compared with `__snapshots__/<name>.snap` next to the file
+/// being run; a missing file is written and the assertion passes (the
+/// first run records); a mismatch fails the assertion with both texts;
+/// `OLANG_UPDATE_SNAPSHOTS=1` rewrites instead of failing.
+fn testing_snapshot(
+    arguments: Vec<Value>,
+    interpreter: &mut crate::interpreter::Interpreter,
+) -> Result<Value, InterpreterError> {
+    if arguments.len() != 2 {
+        return Err(InterpreterError::ArityMismatch {
+            expected: 2,
+            got: arguments.len(),
+        });
+    }
+    let name = match &arguments[0] {
+        Value::String(s) => s.to_string(),
+        other => {
+            return Err(InterpreterError::TypeError {
+                message: format!(
+                    "testing.snapshot: the name must be a string, got {}",
+                    other.type_name()
+                ),
+            });
+        }
+    };
+    if name.is_empty()
+        || name
+            .chars()
+            .any(|c| !(c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'))
+    {
+        return Err(InterpreterError::RuntimeError {
+            message: format!(
+                "testing.snapshot: '{}' is not a snapshot name (letters, digits, _ - . only)",
+                name
+            ),
+        });
+    }
+    let actual = format!("{}", arguments[1]);
+    let base = interpreter
+        .current_file_for_snapshots()
+        .and_then(|f| f.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let dir = base.join("__snapshots__");
+    let path = dir.join(format!("{}.snap", name));
+    let update = std::env::var("OLANG_UPDATE_SNAPSHOTS").is_ok_and(|v| !v.is_empty() && v != "0");
+    let write = |text: &str| -> Result<(), InterpreterError> {
+        std::fs::create_dir_all(&dir).map_err(|e| InterpreterError::RuntimeError {
+            message: format!("testing.snapshot: cannot create {}: {}", dir.display(), e),
+        })?;
+        std::fs::write(&path, text).map_err(|e| InterpreterError::RuntimeError {
+            message: format!("testing.snapshot: cannot write {}: {}", path.display(), e),
+        })
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(expected) if expected == actual => {
+            crate::stdlib::testing::record_pass();
+            Ok(Value::Unit)
+        }
+        Ok(expected) if update => {
+            write(&actual)?;
+            crate::stdlib::testing::record_pass();
+            let _ = expected;
+            Ok(Value::Unit)
+        }
+        Ok(expected) => {
+            crate::stdlib::testing::record_fail();
+            Err(InterpreterError::RuntimeError {
+                message: format!(
+                    "snapshot '{}' changed ({}):\n── recorded ──\n{}\n── now ──\n{}\nset OLANG_UPDATE_SNAPSHOTS=1 to accept the new form",
+                    name,
+                    path.display(),
+                    expected,
+                    actual
+                ),
+            })
+        }
+        Err(_) => {
+            write(&actual)?;
+            crate::stdlib::testing::record_pass();
+            Ok(Value::Unit)
         }
     }
 }

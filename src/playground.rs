@@ -132,6 +132,7 @@ unsafe extern "C" {
     fn host_dom_set_text(handle: i64, ptr: *const u8, len: usize);
     fn host_dom_get_text(handle: i64) -> *const u8;
     fn host_dom_set_html(handle: i64, ptr: *const u8, len: usize);
+    fn host_dom_morph(handle: i64, ptr: *const u8, len: usize);
     fn host_dom_get_value(handle: i64) -> *const u8;
     fn host_dom_set_value(handle: i64, ptr: *const u8, len: usize);
     fn host_dom_on(handle: i64, event: *const u8, len: usize, callback_id: i64);
@@ -310,6 +311,11 @@ pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::erro
         ("set_html", [el, v]) => {
             let s = text(v)?;
             unsafe { host_dom_set_html(handle(el)?, s.as_ptr(), s.len()) };
+            Ok(Value::Unit)
+        }
+        ("morph", [el, v]) => {
+            let s = text(v)?;
+            unsafe { host_dom_morph(handle(el)?, s.as_ptr(), s.len()) };
             Ok(Value::Unit)
         }
         ("value", [el]) => Ok(Value::String(std::sync::Arc::new(read_host_string(

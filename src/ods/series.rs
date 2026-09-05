@@ -344,6 +344,7 @@ fn par_for(s: &Series) -> bool {
 pub const FUNCTIONS: &[(&str, usize)] = &[
     ("series", 1),
     ("try_series", 1),
+    ("date_part", 2),
     ("zeros", 1),
     ("linspace", 3),
     ("to_list", 1),
@@ -446,6 +447,56 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
     match func {
         // The Result form of `series`: a mixed-type list is an
         // `Err(message)` to match on, not a raise.
+        // The derived group key for dates: the "year", "month", or "day"
+        // prefix of an ISO date or timestamp column, as a String Series —
+        // `ods.group_by(f, ods.date_part(f["date"], "month"), …)` without
+        // a two-key group and two sorts.
+        "date_part" => {
+            let s = want_series(func, &args, 0)?;
+            let unit = match &args[1] {
+                Value::String(u) => u.to_string(),
+                other => {
+                    return Err(format!(
+                        "ods.date_part: unit must be \"year\", \"month\", or \"day\", got {}",
+                        other.type_name()
+                    ));
+                }
+            };
+            let width = match unit.as_str() {
+                "year" => 4,
+                "month" => 7,
+                "day" => 10,
+                other => {
+                    return Err(format!(
+                        "ods.date_part: unit must be \"year\", \"month\", or \"day\", got \"{}\"",
+                        other
+                    ));
+                }
+            };
+            let mut out: Vec<Option<String>> = Vec::with_capacity(s.len());
+            for i in 0..s.len() {
+                match scalar_to_value(s.get(i as i64).map_err(e)?) {
+                    Value::String(text) => {
+                        if text.len() < width {
+                            return Err(format!(
+                                "ods.date_part: {:?} is not an ISO date (row {})",
+                                text.as_str(),
+                                i
+                            ));
+                        }
+                        out.push(Some(text[..width].to_string()));
+                    }
+                    Value::Unit => out.push(None),
+                    other => {
+                        return Err(format!(
+                            "ods.date_part: expects a String Series of ISO dates, got {}",
+                            other.type_name()
+                        ));
+                    }
+                }
+            }
+            Ok(OdsSeries::into_value(Series::from_str_options(out)))
+        }
         "try_series" => Ok(match &args[0] {
             Value::List(items) => match series_from_list(items) {
                 Ok(series) => Value::Ok(Box::new(OdsSeries::into_value(series))),

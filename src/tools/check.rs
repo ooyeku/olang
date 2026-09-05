@@ -665,6 +665,55 @@ this module, not the standard library — rename the file if that is not intende
     out
 }
 
+/// `olang check --fix`: apply the rewrites whose meaning is unambiguous.
+/// Today that is the template-escape lint — `\n`, `\t`, `\r` inside a
+/// backtick template become `${"\n"}` and so on, the control character
+/// taken from a double-quoted string exactly as the warning says.
+/// Returns (file, rewrites) for every file that changed.
+pub fn fix(paths: &[PathBuf]) -> Vec<(PathBuf, usize)> {
+    let mut out = Vec::new();
+    for path in paths {
+        for file in crate::tools::discover_ol_files(path) {
+            let Ok(source) = std::fs::read_to_string(&file) else {
+                continue;
+            };
+            let (fixed, n) = fix_template_escapes(&source);
+            if n > 0 && std::fs::write(&file, fixed).is_ok() {
+                out.push((file, n));
+            }
+        }
+    }
+    out
+}
+
+/// The template-escape rewrite over one source text: every `\n`, `\t`,
+/// `\r` the lint flags becomes `${"\n"}`… Returns the text and how many
+/// rewrites it made. The lint reports one position per escape kind per
+/// template, so the rewrite runs to a fixed point.
+pub fn fix_template_escapes(source: &str) -> (String, usize) {
+    let mut text = source.to_string();
+    let mut total = 0usize;
+    for _ in 0..1000 {
+        let warnings = template_escape_warnings(&text);
+        let Some(first) = warnings.first() else { break };
+        // The message names the escape: "`\n` in a backtick template …".
+        let Some(esc) = first
+            .message
+            .strip_prefix("`\\")
+            .and_then(|r| r.chars().next())
+        else {
+            break;
+        };
+        let at = byte_offset_of(&text, first.line as usize, first.column as usize);
+        if !text[at..].starts_with(&format!("\\{esc}")) {
+            break;
+        }
+        text.replace_range(at..at + 2, &format!("${{\"\\{esc}\"}}"));
+        total += 1;
+    }
+    (text, total)
+}
+
 pub fn template_escape_warnings(source: &str) -> Vec<CheckDiagnostic> {
     fn advance(c: char, line: &mut u32, col: &mut u32) {
         if c == '\n' {

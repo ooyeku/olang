@@ -468,6 +468,23 @@ println(to_string((math.PI > 3.14159) && (math.TAU > 6.28)))
 rounding core (`abs` through `sqrt`, plus `PI`) — smaller in scope than
 `math`, and differential-tested against it.
 
+## `vec` — vectors over lists
+
+The kernels numeric code otherwise spells as index loops, over lists of
+Int or Float: `vec.dot(a, b)`, `vec.add(a, b)`, `vec.sub(a, b)`,
+`vec.scale(a, k)`, `vec.sum(a)`, `vec.norm(a)`, `vec.mean(a)`. Results
+are Float (or Float lists); lengths must agree; a non-finite result
+raises like any float overflow. `ods.to_matrix(frame, names)` hands a
+frame's columns to them as a list of Float lists.
+
+```olang
+let x = [1.0, 2.0, 3.0]
+let g = [0.5, 0.5, 0.5]
+println(to_string(vec.dot(x, g)))                     // 3.0
+println(to_string(vec.add(x, vec.scale(g, -2.0))))    // [0.0, 1.0, 2.0]
+println(to_string(vec.norm([3.0, 4.0])))              // 5.0
+```
+
 ## `bigint` — arbitrary precision
 
 Integers without a ceiling. `bigint.of` takes an Int or a string of
@@ -1597,6 +1614,7 @@ custom harness. A returned `Err` does nothing on its own; `unwrap` it
 | `testing.assert_true(x)` / `assert_false(x)` | boolean checks (non-boolean input is an `Err`) |
 | `testing.assert_ok(r)` / `assert_err(r)` | Result checks |
 | `testing.fail(msg)` | unconditional `Err` |
+| `testing.snapshot(name, value)` | the snapshot test: `value`'s display form against `__snapshots__/<name>.snap` beside the file under test — written on the first run, compared after, refreshed by `OLANG_UPDATE_SNAPSHOTS=1` |
 | `testing.test_summary()` / `testing.reset_tests()` | the session's assertion tally: `#{ "passed", "failed", "total" }` over every `assert_*` outcome on this thread; `reset_tests()` zeroes it |
 | `testing.run_test(name, f)` | deliberately a redirect: a builtin cannot re-enter the interpreter to run `f`, and the error says to use a `test` block instead |
 
@@ -1677,6 +1695,7 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Reductions | `sum` `mean` `var` `std` `min` `max` `median` (skip nulls; `var`/`std` are sample) · `quantile(s, q)` · `cumsum(s)` · `dot(a, b)` |
 | Windows | `shift(s, by)` (nulls at the edge) · `cum_max` · `cum_min` · `rank(s, method = "min")` — min/max/average/ordinal/dense · `rolling(s, window, agg)`, null until the window fills |
 | Distinct | `unique(s)` (first-seen order) · `n_unique(s)` · `value_counts(s)` → a value/count Frame, most frequent first |
+| Dates | `date_part(s, "year"\|"month"\|"day")` — the prefix of an ISO date or timestamp String Series, as a String Series: the derived key for a by-month `group_by` |
 | Convert type | `cast(s, "Float"\|"Int"\|"Bool"\|"String")` — what the target cannot hold becomes null, so `null_count` reports what was lost |
 | Order / select | `sort(s)` (nulls last) · `argsort(s)` (sorting indices) · `take(s, idx)` (gather) · `get(s, i)` (negative counts from end) |
 | Convert | `to_list(s)` (nulls → `()`) · `len(s)` |
@@ -1689,7 +1708,8 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Files | `read_csv_file(path)` · `write_csv(f, path)` · `to_csv(f)` · `read_jsonl(text)` · `read_jsonl_file(path)` · `write_jsonl(f, path)` · `to_jsonl(f)` |
 | Streaming | `open_csv(path)` · `open_jsonl(path)` — then `next_chunk(r, n)` · `rows_read(r)` · `at_end(r)`, the same verbs for either |
 | Native format | `write_frame(f, path)` · `read_frame(path, columns)` · `frame_info(path)` — exact types, faster loads, one column at a time |
-| Inspect | `columns(f)` · `n_rows(f)` · `n_cols(f)` · `head(f, n)` · `tail(f, n)` · `describe(f)` · `schema(f)` · `to_records(f)` |
+| Inspect | `columns(f)` · `n_rows(f)` · `n_cols(f)` · `head(f, n)` · `tail(f, n)` · `describe(f)` · `schema(f)` · `to_records(f)` · `to_matrix(f, names)` — Float/Int columns as a list of Float lists, for `vec` |
+| Splits | `split(f, frac)` — a deterministic holdout under `random.seed`, `[kept, rest]` · `split_at(f, column, frac)` — the forward-in-time split: sorted by `column`, the first `frac` first |
 | Version | `ods.version()` — the engine's version string, worth quoting in a bug report |
 | Subscript | `f["name"]` a column · `f[mask]` the rows a Bool Series keeps · `s[i]` an element (negatives from the end) · `column(f, name)` is the same as `f[name]`, for when a call reads better than a subscript |
 | Shape | `select(f, names)` · `drop(f, names)` · `rename(f, mapping)` · `with_column(f, name, series)` · `filter(f, mask)` · `sort_by(f, name, descending)` |

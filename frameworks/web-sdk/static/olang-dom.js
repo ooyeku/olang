@@ -222,6 +222,67 @@
       .catch((e) => deliver(JSON.stringify({ error: String(e) })));
   }
 
+  // Keyed reconciliation: bring `el`'s children to `html` by editing the
+  // nodes that are already there — text updated in place, attributes
+  // diffed, children matched by data-key (else by position and tag) —
+  // instead of replacing the whole tree. What stays is what the browser
+  // keeps: focus, caret, scroll position, an open dropdown.
+  function morphInto(el, html) {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html;
+    morphChildren(el, tpl.content);
+  }
+  const sameKind = (a, b) =>
+    a.nodeType === b.nodeType && (a.nodeType !== 1 || a.tagName === b.tagName);
+  const keyOf = (n) => (n.nodeType === 1 && n.dataset && n.dataset.key) || null;
+  function morphChildren(from, to) {
+    const keyed = new Map();
+    for (const c of from.childNodes) { const k = keyOf(c); if (k) keyed.set(k, c); }
+    const wanted = [...to.childNodes];
+    for (let i = 0; i < wanted.length; i++) {
+      const t = wanted[i];
+      const at = from.childNodes[i] || null;
+      const k = keyOf(t);
+      let match = null;
+      if (k && keyed.has(k)) match = keyed.get(k);
+      else if (at && !keyOf(at) && !k && sameKind(at, t)) match = at;
+      if (match) {
+        if (match !== at) from.insertBefore(match, at);
+        morphNode(match, t);
+      } else {
+        from.insertBefore(t.cloneNode(true), at);
+      }
+    }
+    while (from.childNodes.length > wanted.length) from.removeChild(from.lastChild);
+  }
+  function morphNode(from, to) {
+    if (from.nodeType === 3 || from.nodeType === 8) {
+      if (from.data !== to.data) from.data = to.data;
+      return;
+    }
+    if (from.nodeType !== 1) return;
+    for (const { name, value } of [...to.attributes]) {
+      if (from.getAttribute(name) !== value) from.setAttribute(name, value);
+    }
+    for (const { name } of [...from.attributes]) {
+      if (!to.hasAttribute(name)) from.removeAttribute(name);
+    }
+    const tag = from.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
+      // The control someone is typing in keeps its live value; every
+      // other control follows the markup.
+      if (document.activeElement !== from) {
+        if (tag === "INPUT" && (to.type === "checkbox" || to.type === "radio")) {
+          from.checked = to.checked;
+        } else if (from.value !== to.value) {
+          from.value = to.value;
+        }
+      }
+    }
+    if (tag === "TEXTAREA" && document.activeElement === from) return;
+    morphChildren(from, to);
+  }
+
   const imports = {
     env: {
       host_now_ms: () => performance.now(),
@@ -237,6 +298,7 @@
       host_dom_set_text: (h, ptr, len) => { elements[Number(h)].textContent = readStr(ptr, len); },
       host_dom_get_text: (h) => giveStr(elements[Number(h)].textContent ?? ""),
       host_dom_set_html: (h, ptr, len) => { elements[Number(h)].innerHTML = readStr(ptr, len); },
+      host_dom_morph: (h, ptr, len) => morphInto(elements[Number(h)], readStr(ptr, len)),
       host_dom_get_value: (h) => giveStr(elements[Number(h)].value ?? ""),
       host_dom_set_value: (h, ptr, len) => { elements[Number(h)].value = readStr(ptr, len); },
       host_dom_on: (h, ptr, len, id) => {

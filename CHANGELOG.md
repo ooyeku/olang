@@ -100,6 +100,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `"sdk_dir"`, `sdk_dir()` reading the project's lock, and `dispatch`
   running handlers on a task thread under `olang test`.
 
+- **The rest of the board.** Repaints reconcile: `dom.morph(el, html)`
+  morphs markup into an element (text in place, attributes diffed,
+  children by `data-key`), and the web SDK's `rerender` and `patch` use
+  it, so focus, caret, and scroll survive a store write. Meta fn bodies
+  reach the `share fn`s of imported modules. Interactive line charts
+  carry vertex circles with their datum. `testing.snapshot(name,
+  value)`, `olang test --watch`, `olang check --fix`. The `vec` module
+  (`dot`, `add`, `sub`, `scale`, `sum`, `norm`, `mean`) and
+  `ods.to_matrix`; `ods.date_part`, `ods.split`, `ods.split_at`. A
+  runtime error carries one "Runtime error:" prefix however many layers
+  wrapped it, and an error inside a compiled function is placed in that
+  function's file.
+
 ### Changed
 
 - **The wasm ships without symbol names.** wasm32 builds pass

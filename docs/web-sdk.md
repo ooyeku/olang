@@ -25,11 +25,14 @@ Everything else is built from these:
    `#{ "tag", "attrs", "children" }` — so a framework can transform,
    inspect, or diff views: the Open AST philosophy applied to markup.
    Rendering escapes by default; `raw` is the one opt-out.
-2. **`mount` + re-render.** One place where data becomes pixels. v1
-   re-renders the mounted tree wholesale with delegated events (a
-   pattern proven by the example apps); the contract is
-   engine-swappable, so keyed diffing can arrive without breaking a
-   caller.
+2. **`mount` + re-render.** One place where data becomes pixels. A
+   repaint reconciles the rendered tree into the mount point
+   (`dom.morph`): text is updated in place, attributes are diffed, and
+   children match by `data-key` (else by position and tag), so the
+   nodes that did not change are the nodes the browser keeps — focus,
+   caret, scroll, an open select. Give list rows a `"data-key"` and
+   reordering moves their elements instead of rebuilding them. Events
+   are delegated, so nothing re-binds either way.
 3. **One store.** `apply(f)` transforms state and repaints. State
    lives in a wasm-side cell — values never cross into JavaScript and
    back, so they keep their olang shapes exactly.

@@ -128,6 +128,9 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("concat", 1),
     ("frame_from_records", 1),
     ("try_frame_from_records", 1),
+    ("to_matrix", 2),
+    ("split", 2),
+    ("split_at", 3),
     ("to_records", 1),
     ("columns", 1),
     ("column", 2),
@@ -480,6 +483,121 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
                 other.type_name()
             ))))),
         }),
+        // The columns convention, blessed once: named Float (or Int)
+        // columns as a list of Float lists, in the order asked — the
+        // feature matrix every numeric kernel wants without repeating
+        // `ods.to_list(ods.cast(f[c], "Float"))` per column.
+        "to_matrix" => {
+            let f = want_frame(func, &args, 0)?;
+            let names: Vec<String> = match &args[1] {
+                Value::List(items) => items
+                    .iter()
+                    .map(|v| match v {
+                        Value::String(s) => Ok(s.to_string()),
+                        other => Err(format!(
+                            "ods.to_matrix: column names must be strings, got {}",
+                            other.type_name()
+                        )),
+                    })
+                    .collect::<Result<_, _>>()?,
+                other => {
+                    return Err(format!(
+                        "ods.to_matrix: expects a list of column names, got {}",
+                        other.type_name()
+                    ));
+                }
+            };
+            let mut cols = Vec::with_capacity(names.len());
+            for name in &names {
+                let s = f.column(name).map_err(e)?;
+                let values: Vec<f64> = match s {
+                    Series::F64 { values, validity } => {
+                        if validity.is_some() {
+                            return Err(format!("ods.to_matrix: column '{}' has nulls", name));
+                        }
+                        values.as_ref().clone()
+                    }
+                    Series::I64 { values, validity } => {
+                        if validity.is_some() {
+                            return Err(format!("ods.to_matrix: column '{}' has nulls", name));
+                        }
+                        values.iter().map(|&x| x as f64).collect()
+                    }
+                    other => {
+                        return Err(format!(
+                            "ods.to_matrix: column '{}' is {}, expected Float or Int",
+                            name,
+                            other.dtype()
+                        ));
+                    }
+                };
+                cols.push(Value::List(Arc::from(
+                    values.into_iter().map(Value::Float).collect::<Vec<_>>(),
+                )));
+            }
+            Ok(Value::List(Arc::from(cols)))
+        }
+        // A deterministic holdout: `frac` of the rows drawn without
+        // replacement (under `random.seed`) as the first frame, the rest
+        // as the second.
+        "split" => {
+            let f = want_frame(func, &args, 0)?;
+            let frac = match &args[1] {
+                Value::Float(x) if *x > 0.0 && *x < 1.0 => *x,
+                other => {
+                    return Err(format!(
+                        "ods.split: frac must be a Float strictly between 0 and 1, got {}",
+                        other
+                    ));
+                }
+            };
+            let n = f.n_rows();
+            let k = ((n as f64) * frac).round() as usize;
+            let chosen = sample_indices(func, n, Some(&Value::Integer(k as i64)))?;
+            let mut in_train = vec![false; n];
+            for i in 0..chosen.len() {
+                if let Ok(Scalar::I64(idx)) = chosen.get(i as i64) {
+                    in_train[idx as usize] = true;
+                }
+            }
+            let train: Vec<i64> = (0..n as i64).filter(|&i| in_train[i as usize]).collect();
+            let test: Vec<i64> = (0..n as i64).filter(|&i| !in_train[i as usize]).collect();
+            let a = f.take(&Series::from_i64(train)).map_err(e)?;
+            let b = f.take(&Series::from_i64(test)).map_err(e)?;
+            Ok(Value::List(Arc::from(vec![
+                OdsFrame::into_value(a),
+                OdsFrame::into_value(b),
+            ])))
+        }
+        // The forward-in-time split: rows ordered by `col`, the first
+        // `frac` of them as the first frame — what a chronological holdout
+        // means, with no leakage from later rows.
+        "split_at" => {
+            let f = want_frame(func, &args, 0)?;
+            let col = want_string(func, &args, 1)?;
+            let frac = match &args[2] {
+                Value::Float(x) if *x > 0.0 && *x < 1.0 => *x,
+                other => {
+                    return Err(format!(
+                        "ods.split_at: frac must be a Float strictly between 0 and 1, got {}",
+                        other
+                    ));
+                }
+            };
+            let sorted = f.sort_by(&col, false).map_err(e)?;
+            let n = sorted.n_rows();
+            let k = ((n as f64) * frac).round() as usize;
+            let a = sorted
+                .take(&Series::from_i64((0..k as i64).collect()))
+                .map_err(e)?;
+            let b = sorted
+                .take(&Series::from_i64((k as i64..n as i64).collect()))
+                .map_err(e)?;
+            Ok(Value::List(Arc::from(vec![
+                OdsFrame::into_value(a),
+                OdsFrame::into_value(b),
+            ])))
+        }
         "frame_from_records" => {
             let records = match &args[0] {
                 Value::List(items) => items,

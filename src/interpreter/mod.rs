@@ -362,6 +362,9 @@ impl Interpreter {
         if let Some(path_str) = file_path.to_str() {
             self.current_module_path = Some(path_str.to_string());
             self.entry_file = Some(path_str.to_string());
+            if let Some(tier) = self.bytecode_tier.as_mut() {
+                tier.set_entry_file(self.entry_file.clone());
+            }
 
             // Calculate content hash if the file exists (to prevent cache invalidation)
             let content_hash = if file_path.exists() {
@@ -515,8 +518,8 @@ impl Interpreter {
             if rest.starts_with("cannot call a") {
                 return InterpreterError::TypeError {
                     message: format!(
-                        "{} — inside a compiled function, a parameter or local named like \
-the function it shadows; `olang check` names the parameter",
+                        "inside a compiled function, {} — a parameter or local named like \
+the function it shadows is the usual cause; `olang check` names the parameter",
                         rest
                     ),
                 };
@@ -541,7 +544,7 @@ the function it shadows; `olang check` names the parameter",
                 _ => InterpreterError::RuntimeError { message },
             }
         } else {
-            InterpreterError::RuntimeError { message }
+            InterpreterError::runtime(message)
         }
     }
 
@@ -655,10 +658,18 @@ the function it shadows; `olang check` names the parameter",
                         .map(|t| t.take_error_trace())
                         .unwrap_or_default();
                     if let Some((line, column)) = span {
+                        let trace_file = self
+                            .bytecode_tier
+                            .as_mut()
+                            .and_then(|t| t.take_error_trace_file())
+                            .filter(|f| {
+                                !f.starts_with("__")
+                                    && self.entry_file.as_deref() != Some(f.as_str())
+                            });
                         self.pending_error_location = Some(crate::ast::ErrorLocation {
                             line,
                             column,
-                            file: self.error_file(),
+                            file: trace_file.or_else(|| self.error_file()),
                             call_stack: self.splice_tier_stack(frames),
                             hint: self.pending_error_hint.take(),
                         });
@@ -1994,6 +2005,7 @@ the function it shadows; `olang check` names the parameter",
         // Order-independent: capabilities may be installed before or after
         // the tier is turned on, and the tier must enforce either way.
         tier.set_capabilities(self.caps.clone());
+        tier.set_entry_file(self.entry_file.clone());
         // The tiers share one logical depth cap; a tier created after
         // --max-depth was applied must inherit it.
         tier.set_max_call_depth(self.max_call_depth as u32);
@@ -2701,10 +2713,18 @@ the function it shadows; `olang check` names the parameter",
                                     .map(|t| t.take_error_trace())
                                     .unwrap_or_default();
                                 if let Some((line, column)) = span {
+                                    let trace_file = self
+                                        .bytecode_tier
+                                        .as_mut()
+                                        .and_then(|t| t.take_error_trace_file())
+                                        .filter(|f| {
+                                            !f.starts_with("__")
+                                                && self.entry_file.as_deref() != Some(f.as_str())
+                                        });
                                     self.pending_error_location = Some(crate::ast::ErrorLocation {
                                         line,
                                         column,
-                                        file: self.error_file(),
+                                        file: trace_file.or_else(|| self.error_file()),
                                         call_stack: self.splice_tier_stack(frames),
                                         hint: self.pending_error_hint.take(),
                                     });
@@ -4130,10 +4150,18 @@ the function it shadows; `olang check` names the parameter",
                     let frames: Vec<String> =
                         frames.into_iter().filter(|f| f != "<hot loop>").collect();
                     if let Some((line, column)) = span {
+                        let trace_file = self
+                            .bytecode_tier
+                            .as_mut()
+                            .and_then(|t| t.take_error_trace_file())
+                            .filter(|f| {
+                                !f.starts_with("__")
+                                    && self.entry_file.as_deref() != Some(f.as_str())
+                            });
                         self.pending_error_location = Some(crate::ast::ErrorLocation {
                             line,
                             column,
-                            file: self.error_file(),
+                            file: trace_file.or_else(|| self.error_file()),
                             call_stack: self.splice_tier_stack(frames),
                             hint: self.pending_error_hint.take(),
                         });
@@ -4935,6 +4963,17 @@ the function it shadows; `olang check` names the parameter",
 
     pub fn enable_test_mode(&mut self) {
         self.test_mode = true;
+    }
+
+    /// The file whose code is running, for artifacts that live beside it
+    /// (`testing.snapshot`): the current module when one is loading, the
+    /// entry file otherwise.
+    pub fn current_file_for_snapshots(&self) -> Option<std::path::PathBuf> {
+        self.current_module_path
+            .as_deref()
+            .filter(|p| !p.starts_with("__"))
+            .or(self.entry_file.as_deref())
+            .map(std::path::PathBuf::from)
     }
 
     /// The outcomes of every `test` block run so far, clearing the record.

@@ -246,3 +246,66 @@ fn option_errors_are_informative() {
     let err = eval(r#"plot.line(ods.series([1.0]), 3, #{})"#).unwrap_err();
     assert!(err.contains("must be a Series"), "got: {}", err);
 }
+
+#[test]
+fn every_label_branch_renders_a_well_formed_transform() {
+    // The y-label once shipped `transform="rotate(-90 16 #5)"` — the
+    // write! arguments in the wrong order. Each label branch is pinned:
+    // the rotate center is two numbers, and the fill is a color.
+    let svg = as_string(
+        eval(
+            r#"
+            plot.line(ods.series([1.0, 2.0]), ods.series([3.0, 4.0]),
+                #{ "title": "T", "x_label": "X", "y_label": "Y" })
+            "#,
+        )
+        .unwrap(),
+    );
+    let rotate = svg
+        .find("rotate(-90")
+        .map(|i| &svg[i..(i + 40).min(svg.len())])
+        .expect("a rotated y label");
+    let inside = rotate.trim_start_matches("rotate(-90").trim_start();
+    let nums: Vec<&str> = inside
+        .split(')')
+        .next()
+        .unwrap()
+        .split_whitespace()
+        .collect();
+    assert_eq!(nums.len(), 2, "rotate center: {rotate}");
+    for n in nums {
+        assert!(n.parse::<f64>().is_ok(), "not a number in {rotate}");
+    }
+    assert!(
+        !svg.contains("fill=\"1"),
+        "a coordinate reached fill: {svg}"
+    );
+    for label in ["T", "X", "Y"] {
+        assert!(
+            svg.contains(&format!(">{label}</text>")),
+            "label {label} missing"
+        );
+    }
+}
+
+#[test]
+fn an_interactive_line_carries_its_vertices() {
+    let svg = as_string(
+        eval(
+            r#"
+            plot.line(ods.series([1.0, 2.0, 3.0]), ods.series([2.0, 4.0, 8.0]),
+                #{ "interactive": true })
+            "#,
+        )
+        .unwrap(),
+    );
+    assert_eq!(svg.matches("class=\"vertex\"").count(), 3, "{svg}");
+    assert!(
+        svg.contains("data-x=\"2\"") && svg.contains("data-y=\"4\""),
+        "{svg}"
+    );
+    let plain = as_string(
+        eval(r#"plot.line(ods.series([1.0, 2.0]), ods.series([2.0, 4.0]), #{})"#).unwrap(),
+    );
+    assert!(!plain.contains("vertex"));
+}

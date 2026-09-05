@@ -16,6 +16,9 @@ pub fn create_dom_module() -> Value {
         ("set_text", 2),
         ("get_text", 1),
         ("set_html", 2),
+        // Reconcile the element's children with new markup, keyed by
+        // `data-key`, preserving the nodes that did not change.
+        ("morph", 2),
         ("value", 1),
         ("set_value", 2),
         ("on", 3),

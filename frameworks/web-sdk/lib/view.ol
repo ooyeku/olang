@@ -7,9 +7,12 @@
 //! dispatching by each element's `data-action` — so re-rendered
 //! markup never re-binds anything.
 //!
-//! v1 renders by `set_html` of the whole tree, the pattern the example
-//! apps proved out; because views are plain data, a diffing engine can
-//! replace this without changing a single caller.
+//! A repaint reconciles: the rendered tree is morphed into the mount
+//! point (`dom.morph`) — text updated in place, attributes diffed,
+//! children matched by `data-key` (else by position and tag) — so the
+//! nodes that did not change are the nodes the browser keeps, focus and
+//! caret and scroll included. Give list rows a `"data-key"` attribute
+//! and reordering moves their elements instead of rebuilding them.
 
 use lib.html { render }
 use lib.state { init, current, update }
@@ -25,7 +28,7 @@ share fn rerender() = {
     let f = cell.get(mount_view)
     let root = cell.get(mount_root)
     if f != () && root != "" && dom.available() => {
-        dom.set_html(dom.query(root), render(f(current())))
+        dom.morph(dom.query(root), render(f(current())))
     }
 }
 
@@ -145,7 +148,7 @@ fn dispatch_action(ev) = {
 /// cost a whole-page render on every store write. `apply` remains the
 /// whole-view repaint.
 share fn patch(id, node) =
-    if dom.available() => dom.set_html(dom.query("#" + id), render(node)) else => ()
+    if dom.available() => dom.morph(dom.query("#" + id), render(node)) else => ()
 
 /// The argument of the event's `data-action` — how a prefix handler
 /// reads it: `action_arg(ev)` on "toggle:7" is "7". A confirm-wrapped

@@ -130,6 +130,10 @@ pub struct BytecodeVm {
     /// frames the interpreter has already popped when it captures at its
     /// innermost Located statement.
     error_trace_span: Option<(u32, u32)>,
+    /// The def_file of the frame that anchored `error_trace_span`.
+    error_trace_file: Option<String>,
+    /// The program's entry file: frames from any other file name it.
+    entry_file: Option<String>,
     error_trace_frames: Vec<String>,
     /// A parameter-check failure keeps exactly one extra frame alive in
     /// the interpreter (the frame is pushed before the check and the
@@ -1227,6 +1231,8 @@ impl BytecodeVm {
             #[cfg(feature = "native")]
             osr_regions: HashMap::new(),
             error_trace_span: None,
+            error_trace_file: None,
+            entry_file: None,
             error_trace_frames: Vec::new(),
             error_trace_leak: None,
         }
@@ -2940,6 +2946,10 @@ impl BytecodeVm {
             {
                 Some(&(_, line, column)) => {
                     self.error_trace_span = Some((line, column));
+                    // The span is this frame's: so is the file it belongs
+                    // to, which is what places an error raised inside a
+                    // dependency's compiled function in that dependency.
+                    self.error_trace_file = bytecode.def_file.as_ref().map(|f| f.to_string());
                     if let Some(leaked) = self.error_trace_leak.take() {
                         self.error_trace_frames.push(leaked);
                     }
@@ -2951,17 +2961,17 @@ impl BytecodeVm {
                     // raise depth, so the trace must carry the same
                     // names. The leak bookkeeping is unchanged.
                     if self.error_trace_leak.is_some() {
-                        self.error_trace_leak = bytecode.debug_info.function_name.clone();
+                        self.error_trace_leak = self.frame_name(bytecode);
                     }
-                    if let Some(name) = &bytecode.debug_info.function_name {
-                        self.error_trace_frames.push(name.clone());
+                    if let Some(name) = self.frame_name(bytecode) {
+                        self.error_trace_frames.push(name);
                     }
                     return;
                 }
             }
         }
-        if let Some(name) = &bytecode.debug_info.function_name {
-            self.error_trace_frames.push(name.clone());
+        if let Some(name) = self.frame_name(bytecode) {
+            self.error_trace_frames.push(name);
         }
     }
 
@@ -2996,11 +3006,42 @@ impl BytecodeVm {
         )
     }
 
+    /// The file of the frame that anchored the last error trace's span,
+    /// when it was known (taken with the trace).
+    pub fn take_error_trace_file(&mut self) -> Option<String> {
+        self.error_trace_file.take()
+    }
+
+    pub fn set_entry_file(&mut self, file: Option<String>) {
+        self.entry_file = file;
+    }
+
+    /// A frame's display name: "open_db (lib/sql.ol)" when the function
+    /// was defined in a file other than the entry — the interpreter's
+    /// own frame naming, so a spliced stack reads as one.
+    fn frame_name(&self, bytecode: &CompiledBytecode) -> Option<String> {
+        let name = bytecode.debug_info.function_name.clone()?;
+        match bytecode.def_file.as_deref() {
+            Some(file) if !file.starts_with("__") && self.entry_file.as_deref() != Some(file) => {
+                let short = match self.entry_file.as_deref().and_then(|e| e.rfind('/')) {
+                    Some(i) => {
+                        let dir = &self.entry_file.as_deref().unwrap()[..=i];
+                        file.strip_prefix(dir).unwrap_or(file).to_string()
+                    }
+                    None => file.to_string(),
+                };
+                Some(format!("{} ({})", name, short))
+            }
+            _ => Some(name),
+        }
+    }
+
     /// Reset any stale trace before a fresh top-level run (the tier may
     /// have consumed an error internally, e.g. an unresolved-callee
     /// compile-and-retry).
     pub fn clear_error_trace(&mut self) {
         self.error_trace_span = None;
+        self.error_trace_file = None;
         self.error_trace_frames.clear();
         self.error_trace_leak = None;
     }

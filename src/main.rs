@@ -163,6 +163,10 @@ enum Commands {
         /// Also run project lints written as olang functions over the meta AST
         #[arg(long, value_name = "RULES.ol")]
         rules: Option<PathBuf>,
+        /// Apply the rewrites whose meaning is unambiguous (today: template
+        /// escapes), then report what remains
+        #[arg(long)]
+        fix: bool,
     },
 
     /// Evaluate source text and print its value — a one-liner probe
@@ -215,6 +219,9 @@ enum Commands {
         /// Report coverage and list each file's uncovered lines (implies --coverage)
         #[arg(long)]
         coverage_lines: bool,
+        /// Re-run the tests whenever a .ol file under the target changes
+        #[arg(long)]
+        watch: bool,
     },
 
     /// Compile a program to a self-contained executable
@@ -525,11 +532,33 @@ fn run() -> i32 {
             path,
             coverage,
             coverage_lines,
+            watch,
         }) => {
             // Files under the runner get a bare argv — a program that branches
             // on os.args() takes its no-argument path.
             olang::stdlib::os::set_script_args(vec!["olang-test".to_string()]);
             let target = path.unwrap_or_else(|| PathBuf::from("."));
+            if watch {
+                // The edit-test loop: each run is a child `olang test` (the
+                // same discipline as `--watch` for programs — a crash ends
+                // the run, never the watcher).
+                let mut argv = vec!["test".to_string(), target.display().to_string()];
+                if coverage_lines {
+                    argv.push("--coverage-lines".to_string());
+                } else if coverage {
+                    argv.push("--coverage".to_string());
+                }
+                let dir = if target.is_dir() {
+                    target.clone()
+                } else {
+                    target
+                        .parent()
+                        .filter(|p| !p.as_os_str().is_empty())
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or_else(|| PathBuf::from("."))
+                };
+                return watch_argv(&dir, &argv);
+            }
             olang::tools::test_runner::run(&target, coverage || coverage_lines, coverage_lines)
         }
 
@@ -557,9 +586,24 @@ fn run() -> i32 {
             code
         }
 
-        Some(Commands::Check { mut paths, rules }) => {
+        Some(Commands::Check {
+            mut paths,
+            rules,
+            fix,
+        }) => {
             if paths.is_empty() {
                 paths.push(PathBuf::from("."));
+            }
+            if fix {
+                let fixed = olang::tools::check::fix(&paths);
+                for (file, n) in &fixed {
+                    println!(
+                        "fixed {} template escape{} in {}",
+                        n,
+                        if *n == 1 { "" } else { "s" },
+                        file.display()
+                    );
+                }
             }
             olang::tools::check::run(&paths, rules.as_deref())
         }
@@ -877,6 +921,51 @@ fn watch_loop(script: &std::path::Path, deny: Option<&str>, script_args: &[Strin
             ),
             Err(e) => {
                 eprintln!("--watch: failed to run {}: {}", script.display(), e);
+                return 1;
+            }
+        }
+        while latest_mtime() <= baseline {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+}
+
+/// `olang test --watch`: re-run `olang <argv>` whenever a .ol file under
+/// `dir` changes. The same loop `--watch` runs for a program, over any
+/// subcommand.
+fn watch_argv(dir: &std::path::Path, argv: &[String]) -> i32 {
+    use std::time::{Duration, SystemTime};
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("--watch: cannot find own executable: {}", e);
+            return 1;
+        }
+    };
+    let latest_mtime = || -> SystemTime {
+        let mut newest = SystemTime::UNIX_EPOCH;
+        for f in olang::tools::discover_ol_files(dir) {
+            if let Ok(meta) = std::fs::metadata(&f)
+                && let Ok(m) = meta.modified()
+                && m > newest
+            {
+                newest = m;
+            }
+        }
+        newest
+    };
+    loop {
+        let baseline = latest_mtime();
+        eprintln!("-- watch: olang {} --", argv.join(" "));
+        match std::process::Command::new(&exe).args(argv).status() {
+            Ok(s) => eprintln!(
+                "-- watch: exited {} -- waiting for changes (Ctrl+C quits) --",
+                s.code()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "by signal".to_string())
+            ),
+            Err(e) => {
+                eprintln!("--watch: failed to run olang {}: {}", argv.join(" "), e);
                 return 1;
             }
         }
