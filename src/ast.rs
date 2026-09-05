@@ -1410,6 +1410,30 @@ pub fn float_overflow_message(op: &str) -> String {
     )
 }
 
+/// The message for calling a value that is not a function, given the
+/// identifier that was called and the value's type name — one builder,
+/// so the interpreter's frames and the VM's agree word for word.
+pub fn uncallable_message(name: &str, ty: &str) -> String {
+    let vowel = matches!(
+        ty.as_bytes().first(),
+        Some(b'A' | b'E' | b'I' | b'O' | b'U')
+    );
+    let hint = match ty {
+        "Map" | "List" => format!(" To index it, write {}[...] instead", name),
+        _ => format!(
+            " If a function named '{}' exists elsewhere, this local binding shadows it",
+            name
+        ),
+    };
+    format!(
+        "'{}' is {} {}, not a function — it cannot be called.{}",
+        name,
+        if vowel { "an" } else { "a" },
+        ty,
+        hint
+    )
+}
+
 pub fn format_float(x: f64) -> String {
     if x.is_nan() {
         return "NaN".to_string();

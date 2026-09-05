@@ -292,6 +292,12 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
             }
         }
 
+        // The file's own functions are in a meta fn's scope (the macros
+        // chapter's first rule): a macro delegates to a helper declared
+        // beside it. Loaded before the meta fns so a meta fn body may call
+        // them; effectful bodies fail at the call, as ever.
+        load_local_functions(&mut interp, &program);
+
         // Define (or redefine) every meta fn for this round. The source
         // still contains them across rounds, so composition works: a
         // macro's output may call other macros. Locals load after imports,
@@ -683,6 +689,24 @@ fn load_module_functions(interp: &mut crate::interpreter::Interpreter, module: &
             };
             let _ = interp.eval_program(prog);
         }
+    }
+}
+
+/// The expanding file's own `fn` declarations (shared or not) join the
+/// expansion interpreter, so a meta fn body can call the helpers written
+/// beside it. A definition the meta-mode interpreter refuses is skipped —
+/// it stays a runtime function only.
+fn load_local_functions(interp: &mut crate::interpreter::Interpreter, program: &Program) {
+    for st in &program.statements {
+        let f = match st.unwrapped() {
+            crate::ast::Statement::FunctionDecl(f) => f,
+            crate::ast::Statement::ShareDecl(crate::ast::ShareDecl::Function(f)) => f,
+            _ => continue,
+        };
+        let prog = Program {
+            statements: vec![crate::ast::Statement::FunctionDecl(f.clone())],
+        };
+        let _ = interp.eval_program(prog);
     }
 }
 

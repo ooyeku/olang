@@ -178,6 +178,30 @@ meta fn retry(times, body) = {
 }
 ```
 
+## The expansion scope
+
+What a meta fn body can see is a closed list, and this is it:
+
+1. **Its own file's functions** — every `fn` and meta fn declared at
+   the top level of the file being expanded (not its `let` bindings:
+   those are runtime values, and evaluating them at expansion time
+   would be an effect).
+2. **The `share fn`s of the modules the file imports** — `use m` brings
+   `m`'s shared functions along with its meta fns, one level (an
+   imported module's own imports are not walked); a package's
+   `index.ol` re-exports count as the package's own.
+3. **The pure standard library** — `str`, `math`, `col`, `json`, `meta`,
+   and the rest of the modules that read nothing and write nothing.
+
+Nothing else: not the importing program's later bindings, not the
+effectful modules (`fs`, `http`, `db`, `os`, `time`, `random`), not
+another file's private functions. An imported function that reaches for
+an effect fails at the call, exactly as a meta fn body would — purity
+is a property of the whole expansion, not of the declaring file. The
+scope is pinned by a conformance test (tests/w12_consolidation_test.rs)
+that enumerates each item, so an extension is measured against this
+list rather than added to it quietly.
+
 ## What macros cannot do
 
 The limits are the design, not gaps in it:

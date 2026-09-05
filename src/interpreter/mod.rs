@@ -481,21 +481,8 @@ impl Interpreter {
                     .next()
                     .unwrap_or("value")
                     .to_string();
-                let hint = match ty.as_str() {
-                    "Map" | "List" => format!(" To index it, write {}[...] instead", n),
-                    _ => format!(
-                        " If a function named '{}' exists elsewhere, this local \
-                         binding shadows it",
-                        n
-                    ),
-                };
                 InterpreterError::TypeError {
-                    message: format!(
-                        "'{}' is {}, not a function — it cannot be called.{}",
-                        n,
-                        Self::with_article(&ty),
-                        hint
-                    ),
+                    message: crate::ast::uncallable_message(n, &ty),
                 }
             }
             _ => e,
@@ -1845,6 +1832,11 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                         // `chan.recv` on it waiting forever, silently).
                         if let Err(e) = &outcome {
                             eprintln!("task olang-spawn-{} failed: {}", task_id, e);
+                        }
+                        // The channels declared to die with this task
+                        // (`task.watch`) close now, whichever way it ended.
+                        for channel in spawn_registry::finish(task_id) {
+                            crate::stdlib::chan::close_value(&channel);
                         }
                         outcome
                     })

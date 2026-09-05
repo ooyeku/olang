@@ -84,6 +84,10 @@ function bootWorker(source) {
         host_dom_query_all: () => 0,
         host_dom_fetch_with: () => {},
         host_dom_morph: () => {},
+        host_dom_active_id: () => 0,
+        host_dom_prefers_dark: () => 0n,
+        host_dom_confirm: () => 1n,
+        host_dom_read_file: () => {},
         host_dom_get_text: () => 0,
         host_dom_get_value: () => 0,
         host_dom_get_attr: () => 0,
@@ -260,12 +264,44 @@ const imports = {
     host_dom_worker_on: (h, id) => { workers[Number(h)].pageCb = Number(id); },
     host_dom_worker_close: (h) => { workers[Number(h)] = null; },
     host_dom_post: () => {},
+    host_dom_active_id: () => giveStr(""),
+    host_dom_prefers_dark: () => 0n,
+    host_dom_confirm: () => 1n,
+    host_dom_read_file: () => {},
     host_dom_on_message: () => {},
   },
 };
 
 const bytes = await readFile(process.argv[2]);
 ({ instance: { exports: ex } } = await WebAssembly.instantiate(bytes, imports));
+
+// `node dom_harness.mjs <wasm> --boot <bundle.ol> <bundle.olb>`: the boot
+// pin. Starts a session from the source and from the program image and
+// prints both load times as JSON — the image must beat the parser.
+if (process.argv[3] === "--boot") {
+  const src = await readFile(process.argv[4]);
+  const img = await readFile(process.argv[5]);
+  const start = (buf, entry) => {
+    const p = ex.olang_alloc(Math.max(buf.length, 1));
+    mem().set(buf, p);
+    const res = entry(p, buf.length);
+    // After the call: the memory may have grown, detaching any earlier view.
+    const view = new DataView(ex.memory.buffer);
+    const len = view.getUint32(res, true);
+    const json = JSON.parse(new TextDecoder().decode(mem().slice(res + 4, res + 4 + len)));
+    ex.olang_result_free(res);
+    ex.olang_dealloc(p, Math.max(buf.length, 1));
+    return json;
+  };
+  const fromSource = start(new Uint8Array(src), ex.olang_session_start);
+  const fromImage = start(new Uint8Array(img), ex.olang_session_start_bin);
+  console.log(JSON.stringify({
+    source_load_ms: fromSource.load_ms,
+    image_load_ms: fromImage.load_ms,
+    image_retry_with_source: fromImage.retry_with_source,
+  }));
+  process.exit(0);
+}
 
 function result(res) {
   const view = new DataView(ex.memory.buffer);

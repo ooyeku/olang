@@ -301,6 +301,7 @@ fn synthesize_region(bytecode: &CompiledBytecode, h: usize, e: usize) -> Option<
     }
     let synth = CompiledBytecode {
         function_id: region_id,
+        callee_names: Vec::new(),
         instructions: out,
         register_count: next,
         local_count: 0,

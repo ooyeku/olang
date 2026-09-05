@@ -3705,9 +3705,17 @@ impl Parser {
             if statement_pair.as_rule() == Rule::test_statement {
                 // `build_statement` handles assertions like any other
                 // statement form now, so there is nothing special left to
-                // do at a test block's top level.
+                // do at a test block's top level — except its position:
+                // a test body's statements are located like every other
+                // statement, so a failure or a lint inside one names its
+                // own line rather than the block's.
+                let (line, column) = statement_pair.line_col();
                 let inner = statement_pair.into_inner().next().unwrap();
-                body.push(self.build_statement(inner)?);
+                body.push(Statement::Located {
+                    line: line as u32,
+                    column: column as u32,
+                    stmt: Box::new(self.build_statement(inner)?),
+                });
             }
         }
 

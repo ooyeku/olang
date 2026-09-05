@@ -1990,6 +1990,16 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             &[r##"task.join_timeout(t, 2000)  // Err("timed out") leaves it running"##],
         );
         self.doc_ex(
+            "task.watch",
+            "task.watch(t, c)",
+            "Unit",
+            "task",
+            "The channel dies with the task: when t ends — by returning or by raising — c is closed, so a chan.recv on it returns Err instead of waiting forever for a sender that no longer exists. Ownership is declared, not inferred: any task may hold either end of a channel, so only the program can say whose death closes it. A task that already ended closes c at once.",
+            &[r##"let inbox = chan.new()
+let service = spawn { serve_requests(inbox) }
+task.watch(service, inbox)   // a dead service is an Err at the next recv, not a hang"##],
+        );
+        self.doc_ex(
             "task.list",
             "task.list()",
             "List",

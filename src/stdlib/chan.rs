@@ -565,6 +565,19 @@ fn chan_stat(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 }
 
 /// Close the sending side. Idempotent; queued messages still drain.
+/// Is this value a channel?
+pub(crate) fn is_channel(value: &Value) -> bool {
+    chan_of(value).is_ok()
+}
+
+/// Close a channel value from outside the module — what a dying task
+/// does to the channels it was watching (`task.watch`).
+pub(crate) fn close_value(value: &Value) {
+    if let Ok(chan) = chan_of(value) {
+        *chan.tx.lock().unwrap() = None;
+    }
+}
+
 fn chan_close(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
         return Err("chan.close expects a channel".into());

@@ -128,6 +128,24 @@ println(to_string(map_get_or(m, "a", 0)))   // 1
 println(to_string(map_get_or(m, "z", 0)))   // 0 — absent, so the default
 ```
 
+**Names follow three rules.** A function that raises on bad input and
+has a legitimate use over data the program does not control gets a
+`try_` twin returning `Result` (`ods.series` / `ods.try_series`,
+`ods.frame_from_records` / `ods.try_frame_from_records`, `chan.recv` /
+`chan.try_recv`); a function that already returns `Result` gets no twin.
+A precision or unit variant carries its unit as a suffix
+(`dates.stamp` / `dates.stamp_ms`, `time.sleep` in milliseconds,
+`_bytes` for the binary form of a text function). And a name lives in
+exactly one module — the `col.` prefixes of the global collection
+helpers are aliases of the same function, never a second definition.
+The 0.82 audit of every documented name against the docs and examples
+found no duplicates beyond those aliases; the names used once or never
+outside their own chapter are the RSA and certificate family in
+`crypto`, the cell-editing family in `csv`, and the component parts of
+`dates` (`hour`, `minute`, `add_weeks`, …) — kept, because each is the
+one place its job is done, and listed here so a future trim starts from
+the evidence rather than from a feeling.
+
 ## Global builtins
 
 ### Output
@@ -760,6 +778,7 @@ The model is covered in
 |---|---|
 | `task.join(t)` | the task's value, or `Err(e)` if it failed — blocks until it finishes |
 | `task.join_timeout(t, ms)` | `Ok(v)` if it finished within `ms`, else `Err("timed out")` |
+| `task.watch(t, c)` | the channel dies with the task: when `t` ends, however it ends, `c` is closed, so a `chan.recv` on it returns `Err` instead of waiting forever. Ownership is declared here, not inferred — any task may hold either end of a channel |
 | `task.list()` | every task a live handle still watches: `#{ id, state, elapsed_ms }` |
 | `task.parked()` | threads blocked on unbounded waits: `#{ thread, on, waited_ms }` |
 

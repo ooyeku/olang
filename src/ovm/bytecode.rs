@@ -354,6 +354,10 @@ pub struct CompiledBytecode {
     /// the failing pc to the last marker at or before it — the same
     /// "innermost located statement" the interpreter reports.
     pub span_table: Vec<(u32, u32, u32)>,
+    /// (instruction index, identifier) for every CallValue whose callee
+    /// was written as a name — so calling a value that is not a function
+    /// says which name, exactly as the interpreter does.
+    pub callee_names: Vec<(u32, String)>,
     pub debug_info: BytecodeDebugInfo,
     pub optimization_level: u8,
     pub entry_point: usize,
@@ -943,6 +947,7 @@ pub struct RegisterAllocator {
 pub struct InstructionEmitter {
     instructions: Vec<Instruction>,
     span_table: Vec<(u32, u32, u32)>,
+    callee_names: Vec<(u32, String)>,
     /// Label id -> instruction offset where the label was placed
     label_positions: HashMap<u32, usize>,
     next_label_id: u32,
@@ -4296,7 +4301,22 @@ impl BytecodeVm {
                         arg_values.push(self.execution_state.get_register(*arg_reg)?);
                     }
                     let callee_value = self.execution_state.get_register(*callee)?;
-                    let result = self.call_function_value(&callee_value, &arg_values);
+                    let result = match self.call_function_value(&callee_value, &arg_values) {
+                        // A value called as a function: the bridge's error
+                        // does not know the identifier; this site does.
+                        Err(BytecodeError::RuntimeError(msg)) if msg.contains("cannot call a") => {
+                            let named = bytecode
+                                .callee_names
+                                .iter()
+                                .find(|(at, _)| *at as usize == pc)
+                                .map(|(_, n)| n.clone());
+                            Err(BytecodeError::RuntimeError(match named {
+                                Some(name) => Self::name_uncallable_message(&msg, &name),
+                                None => msg,
+                            }))
+                        }
+                        other => other,
+                    };
                     arg_values.clear();
                     if self.arg_pool.len() < 64 {
                         self.arg_pool.push(arg_values);
@@ -4867,6 +4887,20 @@ impl BytecodeVm {
 
     fn finite(x: f64) -> Option<f64> {
         x.is_finite().then_some(x)
+    }
+
+    /// "Type error: cannot call an Int: it is a value, not a function"
+    /// with the identifier that was called: the interpreter's exact
+    /// wording, so the report is the same on every tier.
+    fn name_uncallable_message(msg: &str, name: &str) -> String {
+        let rest = msg.strip_prefix("Type error: ").unwrap_or(msg);
+        let ty = rest
+            .trim_start_matches("cannot call an ")
+            .trim_start_matches("cannot call a ")
+            .split(':')
+            .next()
+            .unwrap_or("value");
+        format!("Type error: {}", crate::ast::uncallable_message(name, ty))
     }
 
     /// Floats trap on overflow, as on division by zero: the result of an
@@ -7345,6 +7379,7 @@ impl BytecodeCompiler {
             return_check: self.pending_return_check.clone(),
             constants,
             span_table: self.emitter.take_spans(),
+            callee_names: self.emitter.take_callee_names(),
             debug_info: BytecodeDebugInfo {
                 function_name: Some(func.name.clone()),
                 ..Default::default()
@@ -7914,6 +7949,9 @@ impl BytecodeCompiler {
 
                 if let Some(callee_reg) = callee_reg {
                     let dst_reg = self.register_allocator.allocate_register();
+                    if let Expr::Identifier(name) | Expr::LocalRef { name, .. } = callee.as_ref() {
+                        self.emitter.note_callee(name);
+                    }
                     self.emitter.instructions.push(Instruction::CallValue {
                         dst: dst_reg,
                         callee: callee_reg,
@@ -8018,6 +8056,7 @@ impl BytecodeCompiler {
                                     dst: callee_reg,
                                     const_idx: idx,
                                 });
+                                self.emitter.note_callee(&function_name);
                                 self.emitter.instructions.push(Instruction::CallValue {
                                     dst: dst_reg,
                                     callee: callee_reg,
@@ -8093,6 +8132,7 @@ impl BytecodeCompiler {
                     Some(_) => {
                         let baked =
                             self.compile_expression(&Expr::Identifier(function_name.clone()))?;
+                        self.emitter.note_callee(&function_name);
                         self.emitter.instructions.push(Instruction::CallValue {
                             dst: dst_reg,
                             callee: baked,
@@ -10078,6 +10118,7 @@ impl InstructionEmitter {
         Self {
             instructions: Vec::new(),
             span_table: Vec::new(),
+            callee_names: Vec::new(),
             label_positions: HashMap::new(),
             next_label_id: 0,
             constants: Vec::new(),
@@ -10095,6 +10136,7 @@ impl InstructionEmitter {
         // a different function entirely (the tree_train incident: a
         // division by zero attributed to an unrelated top-level line).
         self.span_table.clear();
+        self.callee_names.clear();
         self.label_positions.clear();
         self.next_label_id = 0;
         self.constants.clear();
@@ -10297,6 +10339,17 @@ impl InstructionEmitter {
 
     pub fn take_spans(&mut self) -> Vec<(u32, u32, u32)> {
         std::mem::take(&mut self.span_table)
+    }
+
+    /// Record that the next instruction emitted calls the value bound to
+    /// `name` (see `CompiledBytecode::callee_names`).
+    pub fn note_callee(&mut self, name: &str) {
+        self.callee_names
+            .push((self.instructions.len() as u32, name.to_string()));
+    }
+
+    pub fn take_callee_names(&mut self) -> Vec<(u32, String)> {
+        std::mem::take(&mut self.callee_names)
     }
 
     pub fn take_constants(&mut self) -> Vec<OvmValue> {

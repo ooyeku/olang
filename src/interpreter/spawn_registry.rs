@@ -19,6 +19,14 @@ enum TaskSlot {
 struct Entry {
     slot: TaskSlot,
     started: std::time::Instant,
+    /// Channels declared to die with this task (`task.watch`): closed
+    /// when the task ends, however it ends.
+    watched: Vec<Value>,
+    /// Set by the task's own thread as its last act, under the lock, so a
+    /// `watch` that arrives after it sees the task as gone and closes the
+    /// channel itself — no window in which a channel is watched by
+    /// nobody.
+    finished: bool,
 }
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -50,6 +58,33 @@ pub(crate) fn list() -> Vec<(u64, &'static str, u64)> {
     out
 }
 
+/// Declare that `channel` dies with task `id`. True when the task is
+/// still running and now holds the channel; false when the task is gone
+/// (or unknown), in which case the caller closes the channel itself.
+pub(crate) fn watch(id: u64, channel: Value) -> bool {
+    let mut map = tasks().lock().unwrap();
+    match map.get_mut(&id) {
+        Some(entry) if !entry.finished => {
+            entry.watched.push(channel);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// The task's own thread, ending: mark it finished and take the channels
+/// it was watching, in one lock acquisition.
+pub(crate) fn finish(id: u64) -> Vec<Value> {
+    let mut map = tasks().lock().unwrap();
+    match map.get_mut(&id) {
+        Some(entry) => {
+            entry.finished = true;
+            std::mem::take(&mut entry.watched)
+        }
+        None => Vec::new(),
+    }
+}
+
 pub(crate) fn next_id() -> u64 {
     NEXT_ID.fetch_add(1, Ordering::Relaxed)
 }
@@ -60,6 +95,8 @@ pub(crate) fn register(id: u64, handle: JoinHandle<Result<Value, String>>) {
         Entry {
             slot: TaskSlot::Running(handle),
             started: std::time::Instant::now(),
+            watched: Vec::new(),
+            finished: false,
         },
     );
 }
@@ -175,9 +212,13 @@ fn join_inner(
                     if h.is_finished() {
                         match map.insert(
                             id,
+                            // The thread is finished, so it has drained
+                            // its watched channels already.
                             Entry {
                                 slot: TaskSlot::Joining,
                                 started,
+                                watched: Vec::new(),
+                                finished: true,
                             },
                         ) {
                             Some(Entry {
@@ -203,6 +244,8 @@ fn join_inner(
                     Entry {
                         slot: TaskSlot::Done(result.clone()),
                         started,
+                        watched: Vec::new(),
+                        finished: true,
                     },
                 );
                 return Some(result);

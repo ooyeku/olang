@@ -89,7 +89,13 @@ pub fn handle(id: u64) -> Value {
 
 pub fn create_task_module() -> Value {
     let mut module = HashMap::new();
-    for (name, arity) in [("join", 1), ("join_timeout", 2), ("list", 0), ("parked", 0)] {
+    for (name, arity) in [
+        ("join", 1),
+        ("join_timeout", 2),
+        ("list", 0),
+        ("parked", 0),
+        ("watch", 2),
+    ] {
         module.insert(
             name.to_string(),
             Value::Builtin(crate::ast::BuiltinFunction {
@@ -137,6 +143,7 @@ pub fn call_task_function(name: &str, args: Vec<Value>) -> Result<Value, Interpr
     match name {
         "join" => task_join(args),
         "join_timeout" => task_join_timeout(args),
+        "watch" => task_watch(args),
         "list" => task_list(args),
         "parked" => task_parked(args),
         _ => Err(raise(format!("Unknown task function: {}", name))),
@@ -185,6 +192,31 @@ fn task_parked(args: Vec<Value>) -> Result<Value, InterpreterError> {
         })
         .collect();
     Ok(Value::List(Arc::new(rows)))
+}
+
+/// `task.watch(t, c)`: the channel dies with the task. When `t` ends —
+/// by returning or by raising — `c` is closed, so a `chan.recv` on it
+/// returns `Err` instead of waiting forever for a sender that no longer
+/// exists. Ownership is declared here, not inferred: any task may hold
+/// either end of a channel, so only the program can say which task's
+/// death should close it. A task that already ended closes `c` at once.
+fn task_watch(args: Vec<Value>) -> Result<Value, InterpreterError> {
+    if args.len() != 2 {
+        return Err(raise(
+            "task.watch expects two arguments: the task and the channel".to_string(),
+        ));
+    }
+    let id = task_id(&args[0]).map_err(raise)?;
+    if !crate::stdlib::chan::is_channel(&args[1]) {
+        return Err(raise(format!(
+            "task.watch: expected a channel, got {}",
+            args[1].type_name()
+        )));
+    }
+    if !spawn_registry::watch(id, args[1].clone()) {
+        crate::stdlib::chan::close_value(&args[1]);
+    }
+    Ok(Value::Unit)
 }
 
 fn task_join(args: Vec<Value>) -> Result<Value, InterpreterError> {

@@ -267,6 +267,10 @@ judgement about intent rather than a provable contradiction.
   span) = span(s)` with `span` imported: the call reaches the argument,
   and the runtime can only say so at the call, in the browser, frames
   away from the parameter. Reported at the function.
+- Every statement carries its own position, at any depth — inside a
+  function body, a block, a test block — so a warning or a failure names
+  its own line, never the enclosing statement's. Expressions are placed
+  by the statement that contains them.
 - **A binding that takes a stdlib module's name.** `let fs = …` turns
   every later `fs.exists(…)` in its scope into a field access on a
   value; `use lib.csv` binds `csv` over the stdlib module (the path

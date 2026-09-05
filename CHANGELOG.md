@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`task.watch(t, c)`.** The channel dies with the task: when `t` ends,
+  however it ends, `c` is closed and the next `chan.recv` returns `Err`
+  instead of waiting forever. Ownership is declared, not inferred.
+
+### Changed
+
+- **The expansion scope is a stated list** (docs/macros.md), pinned by a
+  conformance test: a file's own functions and meta fns, the `share fn`s
+  of the modules it imports, the pure stdlib, nothing else. The file's
+  own functions had been claimed and were not loaded; they are now.
+- **A test block's statements carry their positions**, so a lint or a
+  failure inside one names its own line.
+- **A value called inside a compiled function names the identifier**:
+  `'span' is an Int, not a function`, the interpreter's exact wording,
+  from the VM too.
+- **Naming conventions** for the standard library are written down
+  (`try_` twins, unit suffixes, one definition per name), with the
+  0.82 audit's findings beside them.
+
 ## [0.82.0] - 2026-09-05
 
 ### Changed — two rulings from the roadmap's W2
