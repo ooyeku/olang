@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.82.0] - 2026-09-05
+
 ### Changed — two rulings from the roadmap's W2
 
 - **A Float is always finite.** Overflow now raises like division by
