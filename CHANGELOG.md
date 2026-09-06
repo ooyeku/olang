@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.83.0] - 2026-09-05
+
 ### Added
 
 - **Graceful shutdown.** `os.on_shutdown(handler)` runs on SIGINT or
