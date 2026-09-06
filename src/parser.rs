@@ -361,10 +361,46 @@ pub struct Parser {
     saw_macro_call: std::cell::Cell<bool>,
     saw_meta_fn: std::cell::Cell<bool>,
     saw_decorated: std::cell::Cell<bool>,
+    /// Line starts of the input being parsed, so a span's line and
+    /// column come from a binary search instead of pest's `line_col`,
+    /// which rescans the text from the start on every call — quadratic
+    /// over a program, and the whole of a large bundle's parse time
+    /// (393 KB: 6 s of which 5.9 were this).
+    line_starts: std::cell::RefCell<Vec<usize>>,
+    /// The input being parsed, for the column and snippet math above.
+    source: std::cell::RefCell<String>,
     /// How many `meta fn` declarations the tree holds, at any depth — the
     /// declarations-only shortcut applies only when all of them are top
     /// level (a nested one is a placement error the expander reports).
     meta_fn_count: std::cell::Cell<usize>,
+}
+
+/// Line starts of `input`: byte offsets, the first always 0.
+fn line_starts_of(input: &str) -> Vec<usize> {
+    let mut starts = Vec::with_capacity(input.len() / 32 + 1);
+    starts.push(0);
+    for (i, b) in input.bytes().enumerate() {
+        if b == b'\n' {
+            starts.push(i + 1);
+        }
+    }
+    starts
+}
+
+/// A position's 1-based line and column (the column counts characters,
+/// pest's convention) from a line-start index, in O(log lines). Falls
+/// back to pest's own scan when the index is empty.
+fn line_col_indexed(input: &str, starts: &[usize], offset: usize) -> (usize, usize) {
+    let line_idx = match starts.binary_search(&offset) {
+        Ok(i) => i,
+        Err(i) => i.saturating_sub(1),
+    };
+    let line_start = starts[line_idx];
+    let column = input
+        .get(line_start..offset.min(input.len()))
+        .map(|prefix| prefix.chars().count())
+        .unwrap_or(offset.saturating_sub(line_start));
+    (line_idx + 1, column + 1)
 }
 
 impl Default for Parser {
@@ -381,7 +417,61 @@ impl Parser {
             saw_meta_fn: std::cell::Cell::new(false),
             saw_decorated: std::cell::Cell::new(false),
             meta_fn_count: std::cell::Cell::new(0),
+            line_starts: std::cell::RefCell::new(Vec::new()),
+            source: std::cell::RefCell::new(String::new()),
         }
+    }
+
+    /// A statement's position and snippet from the index — what pest's
+    /// `Position::line_col` and `line_of` compute by scanning the whole
+    /// input each time (quadratic over a program; a 400 KB bundle parsed
+    /// in 6 s, 5.9 of them here).
+    fn position_info(&self, pair: &Pair<Rule>) -> PositionInfo {
+        let starts = self.line_starts.borrow();
+        let source = self.source.borrow();
+        if starts.is_empty() {
+            return PositionInfo::from_pair(pair);
+        }
+        let offset = pair.as_span().start();
+        let (line, column) = line_col_indexed(&source, &starts, offset);
+        let line_start = starts[line - 1];
+        let line_end = starts.get(line).map(|e| e - 1).unwrap_or(source.len());
+        let text = source
+            .get(line_start..line_end.max(line_start))
+            .unwrap_or("")
+            .trim_end_matches('\r');
+        let error_line = sanitize_snippet(text);
+        let mut snippet = String::new();
+        snippet.push_str(&format!("{:4} | {}\n", line, error_line));
+        snippet.push_str(&format!(
+            "{:4} | {}^",
+            "",
+            " ".repeat(column.saturating_sub(1))
+        ));
+        PositionInfo {
+            line,
+            column,
+            offset,
+            input_snippet: snippet,
+        }
+    }
+
+    /// Index the input's line starts for `line_col`.
+    fn index_lines(&self, input: &str) {
+        *self.line_starts.borrow_mut() = line_starts_of(input);
+        *self.source.borrow_mut() = input.to_string();
+    }
+
+    /// A position's 1-based line and column, pest's convention (the
+    /// column counts characters), in O(log lines) from the index built
+    /// by `index_lines`. Falls back to pest's own scan when no index is
+    /// in place.
+    fn line_col(&self, pos: pest::Position) -> (usize, usize) {
+        let starts = self.line_starts.borrow();
+        if starts.is_empty() {
+            return pos.line_col();
+        }
+        line_col_indexed(&self.source.borrow(), &starts, pos.pos())
     }
 
     /// Parse with enhanced error reporting
@@ -488,6 +578,7 @@ impl Parser {
         } else {
             input
         };
+        self.index_lines(input);
         let parsed = <OlangParser as PestParser<Rule>>::parse(Rule::program, input)
             .map_err(|e| humanize_pest_error(e, input))?;
 
@@ -496,7 +587,7 @@ impl Parser {
             if pair.as_rule() == Rule::program {
                 for inner_pair in pair.into_inner() {
                     if inner_pair.as_rule() == Rule::statement {
-                        let position_info = PositionInfo::from_pair(&inner_pair);
+                        let position_info = self.position_info(&inner_pair);
                         let stmt_inner = inner_pair.into_inner().next().ok_or_else(|| {
                             ParseError::invalid_syntax_at(
                                 "Empty statement".to_string(),
@@ -592,13 +683,13 @@ impl Parser {
             Rule::decorated_decl => {
                 self.saw_decorated.set(true);
                 let span = (pair.as_span().start(), pair.as_span().end());
-                let line = pair.as_span().start_pos().line_col().0 as u32;
+                let line = self.line_col(pair.as_span().start_pos()).0 as u32;
                 let mut decorators = Vec::new();
                 let mut decl_src = String::new();
                 for part in pair.into_inner() {
                     match part.as_rule() {
                         Rule::decorator => {
-                            let dline = part.as_span().start_pos().line_col().0 as u32;
+                            let dline = self.line_col(part.as_span().start_pos()).0 as u32;
                             let name = part
                                 .into_inner()
                                 .next()
@@ -785,7 +876,7 @@ impl Parser {
             })?;
         }
 
-        let (span_line, span_col) = pattern_pair.as_span().start_pos().line_col();
+        let (span_line, span_col) = self.line_col(pattern_pair.as_span().start_pos());
         let name_span = Some((span_line as u32, span_col as u32));
         let pattern = self.build_pattern(pattern_pair.into_inner())?;
 
@@ -1321,7 +1412,7 @@ impl Parser {
             Rule::macro_call => {
                 self.saw_macro_call.set(true);
                 let span = (pair.as_span().start(), pair.as_span().end());
-                let line = pair.as_span().start_pos().line_col().0 as u32;
+                let line = self.line_col(pair.as_span().start_pos()).0 as u32;
                 let mut inner = pair.into_inner();
                 let name = inner
                     .next()
@@ -2671,7 +2762,7 @@ impl Parser {
 
         for pair in pairs {
             if pair.as_rule() == Rule::statement {
-                let (line, column) = pair.as_span().start_pos().line_col();
+                let (line, column) = self.line_col(pair.as_span().start_pos());
                 let inner = pair
                     .into_inner()
                     .next()
@@ -2841,7 +2932,7 @@ impl Parser {
         let name_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing name".to_string(),
         })?;
-        let (nl, nc) = name_pair.as_span().start_pos().line_col();
+        let (nl, nc) = self.line_col(name_pair.as_span().start_pos());
         let name_span = Some((nl as u32, nc as u32));
         let name = name_pair.as_str().to_string();
 
@@ -2892,7 +2983,7 @@ impl Parser {
         let name_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing name".to_string(),
         })?;
-        let (nl, nc) = name_pair.as_span().start_pos().line_col();
+        let (nl, nc) = self.line_col(name_pair.as_span().start_pos());
         let name_span = Some((nl as u32, nc as u32));
         let name = name_pair.as_str().to_string();
 
@@ -3409,6 +3500,7 @@ impl Parser {
         } else {
             source
         };
+        let starts = line_starts_of(source);
         let Ok(pairs) = <OlangParser as PestParser<Rule>>::parse(Rule::program, source) else {
             return Vec::new();
         };
@@ -3416,15 +3508,28 @@ impl Parser {
             .flatten()
             .filter(|p| p.as_rule() == Rule::template_raw_content)
             .map(|p| {
-                let (line, col) = p.as_span().start_pos().line_col();
+                let (line, col) = line_col_indexed(source, &starts, p.as_span().start());
                 (line as u32, col as u32, p.as_str().to_string())
             })
             .collect()
     }
 
     fn parse_expression_from_string(&self, expr_str: &str) -> Result<Expr, ParseError> {
+        // A nested parse (a template's interpolation) indexes its own
+        // text and puts the enclosing program's index back afterwards,
+        // whichever way it ends.
+        let saved = std::mem::take(&mut *self.line_starts.borrow_mut());
+        let saved_source = std::mem::take(&mut *self.source.borrow_mut());
+        let result = self.parse_expression_from_string_inner(expr_str);
+        *self.line_starts.borrow_mut() = saved;
+        *self.source.borrow_mut() = saved_source;
+        result
+    }
+
+    fn parse_expression_from_string_inner(&self, expr_str: &str) -> Result<Expr, ParseError> {
         // Use Pest to parse just the expression
         let trimmed = expr_str.trim();
+        self.index_lines(trimmed);
         let pairs = OlangParser::parse(Rule::expr, trimmed).map_err(ParseError::Pest)?;
 
         let expr_pair = pairs
@@ -3709,7 +3814,7 @@ impl Parser {
                 // a test body's statements are located like every other
                 // statement, so a failure or a lint inside one names its
                 // own line rather than the block's.
-                let (line, column) = statement_pair.line_col();
+                let (line, column) = self.line_col(statement_pair.as_span().start_pos());
                 let inner = statement_pair.into_inner().next().unwrap();
                 body.push(Statement::Located {
                     line: line as u32,

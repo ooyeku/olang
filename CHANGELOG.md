@@ -63,6 +63,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Performance
 
+- **Parsing is linear.** The parser asked pest for every span's line and
+  column, and pest rescans the input on each ask: a 400 KB program took
+  6 s to parse. Positions come from a line index now — 0.2 s for the
+  same program, identical positions — which is what `olang check`,
+  `olang test`, the LSP, and a browser's source fallback pay on a large
+  file.
+
 - **A browser profile of the runtime.** The wasm the web SDK and the
   examples ship omits the `re` module and the RSA suite (features
   `regex-module` and `rsa-crypto`, on by default natively): 6.3 → 4.8 MB

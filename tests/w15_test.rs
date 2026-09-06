@@ -218,3 +218,37 @@ fn the_whole_program_can_run_on_a_task_and_bench_measures_it_there() {
     assert!(out.contains("each on a spawned task"), "{out}");
     assert!(out.contains("loop"), "{out}");
 }
+
+#[test]
+fn parsing_a_large_program_costs_linear_time() {
+    // The parser asked pest for every span's line and column, and pest
+    // rescans the input from its ends on each ask: a 400 KB bundle took
+    // six seconds to parse, all of it there. Positions now come from a
+    // line index; doubling the program must not quadruple the time.
+    let ws = workspace("bigparse");
+    let function = |i: usize| {
+        format!(
+            "fn synth_{i}(rec, k) = {{\n    let v = map_get(rec, \"f{}\")\n    if v == () => k + {i}\n    else if typeof(v) == \"String\" => str.length(v) + k\n    else => {{\n        let items = map(range(0, 3), (n) => n * {})\n        fold(items, k, (a, n) => a + n) + len(items)\n    }}\n}}\n",
+            i % 7,
+            i % 11
+        )
+    };
+    let small: String = (0..400).map(function).collect();
+    let large: String = (0..1600).map(function).collect();
+    write(&ws, "small.ol", &format!("{small}println(\"ok\")\n"));
+    write(&ws, "large.ol", &format!("{large}println(\"ok\")\n"));
+    let time = |file: &str| {
+        let t0 = std::time::Instant::now();
+        let (out, err, rc) = olang(&ws, &["run", file]);
+        assert_eq!(rc, 0, "{out}{err}");
+        assert_eq!(out, "ok\n");
+        t0.elapsed().as_secs_f64()
+    };
+    let (small_s, large_s) = (time("small.ol"), time("large.ol"));
+    // Four times the program: linear would be 4×; the quadratic parser
+    // was 16×. Allow 8× with a floor for process startup noise.
+    assert!(
+        large_s <= (small_s * 8.0).max(1.5),
+        "small {small_s:.2}s, large {large_s:.2}s"
+    );
+}

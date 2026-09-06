@@ -303,13 +303,28 @@ if (process.argv[3] === "--boot") {
     ex.olang_dealloc(p, Math.max(buf.length, 1));
     return json;
   };
+  const profile = process.argv.includes("--profile");
   const fromSource = start(new Uint8Array(src), ex.olang_session_start);
+  if (profile) ex.olang_profile_start();
   const fromImage = start(new Uint8Array(img), ex.olang_session_start_bin);
+  const report = profile ? result(ex.olang_profile_stop()) : null;
   console.log(JSON.stringify({
     source_load_ms: fromSource.load_ms,
+    source_run_ms: fromSource.run_ms,
     image_load_ms: fromImage.load_ms,
+    image_run_ms: fromImage.run_ms,
     image_retry_with_source: fromImage.retry_with_source,
+    error: fromImage.error ?? fromSource.error ?? null,
   }));
+  // `--profile`: where the image's run went, by olang function — the
+  // declarations themselves are top-level statements and appear as the
+  // gap between run_ms and the rows' total.
+  if (report) {
+    const shown = report.rows.slice(0, 15).map((r) => `${r.function} [${r.tier}] x${r.calls} self ${r.self_ms}ms total ${r.total_ms}ms`);
+    console.log(shown.join("\n"));
+    const inFunctions = report.rows.filter((r) => r.builtin === false).reduce((a, r) => a + r.self_ms, 0);
+    console.log(`self time inside functions: ${inFunctions.toFixed(1)} ms of run ${fromImage.run_ms} ms`);
+  }
   process.exit(0);
 }
 
