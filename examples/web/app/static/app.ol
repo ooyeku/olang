@@ -51,7 +51,7 @@ fn row_html(issue) = {
     let id = show(map_get(issue, "id"))
     let status = map_get(issue, "status")
     let selected = if st("sel") == id => " selected" else => ""
-    "<tr class=\"status-" + status + selected + "\">"
+    "<tr class=\"status-" + status + selected + "\" data-key=\"" + id + "\">"
         + "<td class=\"id\">" + id + "</td>"
         + "<td class=\"title-cell\" id=\"open-" + id + "\">" + esc(map_get(issue, "title")) + "</td>"
         + "<td>" + pill("st", status, "adv-", id) + "</td>"
@@ -73,7 +73,9 @@ fn update_footer(items, total) = {
 }
 
 fn render_rows(items, total) = {
-    dom.set_html(dom.query("#rows"), items |> map(row_html) |> join(""))
+    // Reconciled, not replaced: rows carry a data-key, so a re-sort moves
+    // the elements and the cell someone is typing in keeps its focus.
+    dom.morph(dom.query("#rows"), items |> map(row_html) |> join(""))
     dom.set_class(dom.query("#empty"), if len(items) == 0 => "show" else => "")
     update_footer(items, total)
 }
@@ -116,7 +118,7 @@ fn event_html(ev) =
 fn render_activity() = {
     dom.fetch("GET", "/api/activity?limit=8", "", (resp) => {
         let events = unwrap(json.parse(resp))
-        dom.set_html(dom.query("#activity"), events |> map(event_html) |> join(""))
+        dom.morph(dom.query("#activity"), events |> map(event_html) |> join(""))
     })
 }
 
@@ -137,7 +139,7 @@ fn render_drawer(issue) = {
         + "<span>" + show(map_get(issue, "points")) + " pts</span>"
         + "<span>updated " + esc(map_get(issue, "updated")) + "</span>")
     let comments = map_get(issue, "comments")
-    dom.set_html(dom.query("#comments"),
+    dom.morph(dom.query("#comments"),
         if len(comments) == 0 => "<div class=\"comment\">no comments yet</div>"
         else => comments |> map(comment_html) |> join(""))
     dom.set_class(dom.query("#drawer"), "open")

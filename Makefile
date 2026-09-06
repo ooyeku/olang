@@ -64,6 +64,13 @@ wasm:
 	cp $(WASM_ARTIFACT) examples/web/app/static/olang_playground.wasm
 	cp $(WASM_ARTIFACT) examples/web/ledger/static/olang_playground.wasm
 	cp $(WASM_ARTIFACT) frameworks/web-sdk/static/olang_playground.wasm
+	# A pre-compressed sibling next to each copy, when brotli is installed:
+	# the servers negotiate Accept-Encoding and send a quarter of the bytes.
+	@if command -v brotli >/dev/null 2>&1; then \
+	  for f in examples/web/app/static/olang_playground.wasm examples/web/ledger/static/olang_playground.wasm frameworks/web-sdk/static/olang_playground.wasm; do \
+	    brotli -f -q 11 $$f -o $$f.br; \
+	  done; \
+	fi
 
 # Local cross-check of everything a release ships: the release binaries,
 # the playground wasm, and the VS Code .vsix, staged into dist/out/

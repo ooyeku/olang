@@ -1,2 +1,4 @@
 static/olang_playground.wasm
 app
+static/olang_playground.wasm.br
+static/olang_playground.wasm.gz

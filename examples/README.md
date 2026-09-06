@@ -227,8 +227,11 @@ you care about.
   cents) behind a validated JSON API for transactions, categories, and
   monthly budgets, with an olang-in-the-browser frontend whose analysis
   and charts run client-side on the ods data stack — Frames, `group_by`,
-  and `viz` SVG rendered inside the wasm runtime. Seeded demo data via
-  `seed.ol`; API contract locked by `tests/ledger_app_test.rs`
+  and `viz` SVG rendered inside the wasm runtime. Every response carries
+  security headers, text goes out gzipped, the wasm from its brotli
+  sibling, the frontend as a program image, and keyed rows repaint
+  through `dom.morph`. Seeded demo data via `seed.ol`; API contract
+  locked by `tests/ledger_app_test.rs`
 - [`app/`](web/app/) — a full-stack issue tracker run entirely by
   `olang main.ol`: a persistent, schema-migrated SQLite backend behind a
   JSON API with request validation (422s that name each field problem),
@@ -238,7 +241,9 @@ you care about.
   per-request logging, and one error envelope — plus its own
   spreadsheet-style frontend, written in olang and run in the browser
   as WebAssembly (the worked example behind
-  [the Browser chapter](../docs/wasm.md)). The API contract is
+  [the Browser chapter](../docs/wasm.md)) — served as a program image,
+  gzipped, behind security headers, with keyed rows that repaint through
+  `dom.morph`, and a drain on SIGTERM. The API contract is
   locked by `tests/tracker_app_test.rs`, which boots the real app.
   Long-running — `run_all.ol` skips it
 - [`survey/`](tools/survey/) — a codebase surveyor and the command-line flagship:

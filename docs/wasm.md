@@ -154,7 +154,7 @@ olang. The full surface, grouped:
 
 | Group | Functions |
 |---|---|
-| Query & content | `query`, `get_text` / `set_text`, `set_html`, `value` / `set_value`, `focus` |
+| Query & content | `query` / `find` / `query_all`, `get_text` / `set_text`, `set_html`, `morph`, `patch`, `value` / `set_value`, `checked`, `selection`, `values`, `focus` |
 | Events | `on(el, event, handler)` — any DOM event name, plus the `enter` alias |
 | Attributes & style | `get_attr` / `set_attr` / `remove_attr`, `set_class`, `class_add` / `class_remove` / `class_toggle`, `set_style`, `measure` |
 | Structure | `create`, `append`, `remove`, `insert_before`, `scroll_into_view` |
@@ -180,6 +180,16 @@ attached to the specific element it named, so a handle taken *before*
 a `set_html` re-render points at a node that no longer exists
 afterwards. The discipline that follows: query fresh handles inside
 handlers, at the moment of use, rather than caching them at startup.
+`dom.query` raises when nothing matches; `dom.find` answers `()`
+instead, for an element that may be absent.
+
+Three ways to land markup. `set_html` replaces the container's
+children. `morph(el, html)` reconciles them with the new markup —
+text updated in place, attributes diffed, children matched by a
+`data-key` attribute (else by position and tag) — so the nodes that did
+not change are the nodes the browser keeps, focus and caret included.
+`patch(el, node)` does the same from a node tree (the web SDK's view
+data) without rendering markup at all.
 
 ```olang no-run
 dom.set_text(dom.query("#title"), "olang was here")
@@ -309,8 +319,8 @@ rebinding and the registry never grows.
 
 ### Escape what you render
 
-`dom.set_html` is the render primitive, and it renders whatever it is
-given — so any user-entered text that reaches it must be escaped, or
+`dom.set_html` and `dom.morph` render whatever markup they are
+given — so any user-entered text that reaches them must be escaped, or
 a title like `<img onerror=...>` becomes code. The discipline is one
 small function applied at every interpolation of untrusted content:
 
@@ -419,9 +429,11 @@ forecast for zoom.
 ## Declarative views: the `ui` module
 
 `dom.set_html` with string building is honest and fine at small scale,
-but it has a cost the tracker pays deliberately: a re-render replaces
-*everything* in the container, so focus and cursor position inside it
-die. The `ui` module — an [embedded package](stdlib.md) written in
+but a re-render replaces *everything* in the container, so focus and
+cursor position inside it die. `dom.morph` with a `data-key` per row is
+the first remedy, and the one the tracker takes: the same markup, but
+the browser keeps the rows that did not change. The `ui` module — an
+[embedded package](stdlib.md) written in
 olang itself, loaded with `use ui` — is the next rung: build the page
 as a *value*, and let reconciliation decide what actually changes.
 
@@ -526,7 +538,9 @@ sorting.
 **Rendering is string building.** `row_html(issue)` renders one issue
 as a `<tr>` — controls carry their prefixed ids (`open-`, `adv-`,
 `pri-`, `asg-`, `pts-`, `del-` plus the issue id), the delegation
-contract in action. `render_rows` lands the list with one `set_html`;
+contract in action. `render_rows` lands the list with one `morph`, each
+row keyed by its id, so a re-sort moves elements and an edit in
+progress keeps its focus;
 `render_stats` renders the `/api/stats` payload (whose quantiles the
 server computes on the ods data stack); `render_activity` draws the
 audit trail as a ticker; `render_drawer` fills the detail panel and

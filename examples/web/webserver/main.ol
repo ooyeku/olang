@@ -158,4 +158,8 @@ println(unwrap(json.stringify({
 // Keep the stable two-argument call so this example also runs with olang
 // binaries from before serve options were added. Current runtimes read the
 // worker override from OLANG_HTTP_WORKERS.
+// SIGINT and SIGTERM drain the server: in-flight requests finish, then
+// `serve` returns Ok(()) and the process ends cleanly.
+let shutdown_hook = os.on_shutdown((why) => http.shutdown())
 unwrap(http.serve(port, app))
+println("notes API: drained, bye")

@@ -161,7 +161,7 @@ fn row_html(t) = {
     let del = if armed() == id
         => "<button class=\"sure\" id=\"del-" + id + "\" title=\"click again to delete\">sure?</button>"
         else => "<button class=\"del\" id=\"del-" + id + "\" title=\"delete\">×</button>"
-    "<tr>"
+    "<tr data-key=\"" + id + "\">"
         + "<td class=\"date\">" + esc(map_get(t, "date")) + "</td>"
         + "<td class=\"cat\">" + esc(map_get(t, "category")) + "</td>"
         + "<td><input class=\"cell\" id=\"note-" + id + "\" value=\"" + esc(map_get(t, "note")) + "\"></td>"
@@ -175,7 +175,9 @@ fn month_rows() = txs() |> filter((t) => month_of(map_get(t, "date")) == cur_mon
 
 fn render_rows() = {
     let rows = month_rows()
-    dom.set_html(dom.query("#rows"),
+    // Reconciled by data-key: the note or amount someone is editing keeps
+    // its focus across the repaints every save triggers.
+    dom.morph(dom.query("#rows"),
         if len(rows) == 0 => "<tr><td colspan=\"5\" class=\"empty\">no transactions this month</td></tr>"
         else => rows |> map(row_html) |> join(""))
     let income = rows |> filter((t) => map_get(t, "amount_cents") > 0)
@@ -241,7 +243,7 @@ fn budget_row_html(c, spent_map) = {
 fn render_budgets() = {
     let expense_cats = cats() |> filter((c) => map_get(c, "kind") == "expense")
     let spent_map = spent_by_category()
-    dom.set_html(dom.query("#budgets"),
+    dom.morph(dom.query("#budgets"),
         if len(expense_cats) == 0 => "<div class=\"empty\">no expense categories</div>"
         else => expense_cats |> map((c) => budget_row_html(c, spent_map)) |> join(""))
 }
@@ -260,7 +262,7 @@ fn cat_row_html(c) = {
     let del = if armed_cat() == id
         => "<button class=\"sure\" id=\"cdel-" + id + "\" title=\"click again to delete\">sure?</button>"
         else => "<button class=\"del\" id=\"cdel-" + id + "\" title=\"delete\">×</button>"
-    "<div class=\"cat-row\">"
+    "<div class=\"cat-row\" data-key=\"" + id + "\">"
         + "<input class=\"cell\" id=\"cname-" + id + "\" value=\"" + esc(map_get(c, "name")) + "\">"
         + "<span class=\"kind " + (if kind == "income" => "income" else => "") + "\">" + esc(kind) + "</span>"
         + "<span class=\"count\" title=\"transactions\">" + show(n) + "</span>"
@@ -269,7 +271,7 @@ fn cat_row_html(c) = {
 }
 
 fn render_cats_manager() =
-    dom.set_html(dom.query("#cats"),
+    dom.morph(dom.query("#cats"),
         if len(cats()) == 0 => "<div class=\"empty\">no categories</div>"
         else => cats() |> map(cat_row_html) |> join(""))
 

@@ -1,12 +1,31 @@
 // olang-dom.js — the page-side shim: makes this browser an olang host.
 // Loads the wasm build, implements the dom host imports over the real
-// DOM, boots a persistent session from /app.ol, and routes events and
-// fetch responses back into the live interpreter.
+// DOM, boots a persistent session from the program image (or, failing
+// that, its source), and routes events and fetch responses back into
+// the live interpreter.
 
 (async function () {
-  // currentScript is only valid during synchronous execution — capture
-  // the page's chosen program before the first await.
-  const src = document.currentScript?.dataset?.src ?? "/app.ol";
+  // The shim runs as a module script, where `document.currentScript` is
+  // always null — so the page's choices are read off the shim's own
+  // <script> element, found by its src. (Reading currentScript silently
+  // fell back for every attribute: the program path happened to match
+  // the default, and the content-addressed wasm URL served no one.)
+  const me =
+    document.querySelector('script[src$="/olang-dom.js"]') ??
+    document.querySelector("script[data-src], script[data-wasm]") ??
+    document.currentScript;
+  const src = me?.dataset?.src ?? "/app.ol";
+  // The program image (data-bin): the bundle parsed on the server and
+  // loaded here without parsing. The source at data-src is the
+  // fallback — for a shell that offers no image, and for a runtime
+  // whose version differs from the server's (an image names the olang
+  // version that wrote it, and a runtime refuses another's).
+  const bin = me?.dataset?.bin ?? null;
+  // The runtime's URL: the shell passes the content-addressed form
+  // (`/olang.<hash>.wasm`, immutable) so a repeat visit never asks the
+  // server about it; the plain path is the fallback.
+  const wasmUrl = me?.dataset?.wasm ?? "/olang.wasm";
+  const bootMarks = { start: performance.now() };
   let ex; // wasm exports
   const mem = () => new Uint8Array(ex.memory.buffer);
   const readStr = (ptr, len) => new TextDecoder().decode(mem().slice(ptr, ptr + len));
@@ -83,14 +102,32 @@
     return json;
   }
 
+  // A trap inside the runtime reaches the page as a bare
+  // "RuntimeError: unreachable". The runtime's panic hook keeps the
+  // message that preceded the trap, so it is read back and printed
+  // before the error propagates — a report can then name the operation.
+  function callRuntime(f) {
+    try {
+      return f();
+    } catch (e) {
+      const p = ex.olang_last_panic ? ex.olang_last_panic() : 0;
+      if (p) {
+        const len = new DataView(ex.memory.buffer).getUint32(p, true);
+        console.error("olang panic:", new TextDecoder().decode(mem().slice(p + 4, p + 4 + len)));
+        ex.olang_result_free(p);
+      }
+      throw e;
+    }
+  }
+
   function dispatch(id, payload) {
     if (payload == null) {
-      readResult(ex.olang_dispatch_event(BigInt(id)));
+      readResult(callRuntime(() => ex.olang_dispatch_event(BigInt(id))));
     } else {
       const bytes = new TextEncoder().encode(payload);
       const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
       mem().set(bytes, ptr);
-      readResult(ex.olang_dispatch_event_with(BigInt(id), ptr, bytes.length));
+      readResult(callRuntime(() => ex.olang_dispatch_event_with(BigInt(id), ptr, bytes.length)));
       ex.olang_dealloc(ptr, Math.max(bytes.length, 1));
     }
   }
@@ -107,22 +144,30 @@
     const bytes = new TextEncoder().encode(text);
     const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
     mem().set(bytes, ptr);
-    readResult(ex.olang_dispatch_event_json(BigInt(id), ptr, bytes.length));
+    readResult(callRuntime(() => ex.olang_dispatch_event_json(BigInt(id), ptr, bytes.length)));
     ex.olang_dealloc(ptr, Math.max(bytes.length, 1));
   }
 
   // Every DOM event delivers the same shape; handlers pick what they use.
+  // `data` walks up to the nearest [data-action] carrier (self first),
+  // so a click landing on a styled child still names its action;
+  // `zone` walks to the nearest [data-zone] container — how a drop (or
+  // any region-scoped handler) learns which region it happened in.
   function eventPayload(e, type) {
     const t = e.target ?? {};
+    const a = (t.closest && t.closest("[data-action]")) || t;
+    const z = (t.closest && t.closest("[data-zone]")) || null;
     return {
       type,
       id: t.id ?? "",
       value: t.value ?? "",
       key: e.key ?? "",
+      tag: (t.tagName ?? "").toLowerCase(),
       x: Math.round(e.clientX ?? 0),
       y: Math.round(e.clientY ?? 0),
       alt: !!e.altKey, ctrl: !!e.ctrlKey, shift: !!e.shiftKey, meta: !!e.metaKey,
-      data: { ...(t.dataset ?? {}) },
+      data: { ...(a.dataset ?? {}) },
+      zone: { ...((z && z.dataset) ?? {}) },
     };
   }
 
@@ -346,21 +391,28 @@
     morphChildren(from, to);
   }
 
-  // Where a repaint's time goes: `olangProfile.start()`, act, then
-  // `olangProfile.table()` — every olang function that ran, with its
-  // tier, calls, and exact self and total milliseconds.
-  function installProfiler() {
-    window.olangProfile = {
-      start: () => ex.olang_profile_start(),
-      report: () => readResult(ex.olang_profile_report()),
-      stop: () => readResult(ex.olang_profile_stop()),
-      table: (top = 25) => {
-        const r = readResult(ex.olang_profile_report());
-        console.table(r.rows.slice(0, top));
-        return r;
-      },
-    };
+  // Read every file of a paste or drop to base64, then hand the payload
+  // on with `files: [{ name, type, size, base64 }]` (empty when none).
+  function withFiles(fileList, payload, k) {
+    const files = fileList ? [...fileList] : [];
+    if (!files.length) { payload.files = []; k(payload); return; }
+    let pending = files.length;
+    const out = new Array(files.length);
+    files.forEach((file, i) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const url = String(reader.result);
+        out[i] = { name: file.name, type: file.type, size: file.size, base64: url.slice(url.indexOf(",") + 1) };
+        if (--pending === 0) { payload.files = out; k(payload); }
+      };
+      reader.onerror = () => {
+        out[i] = { name: file.name, type: file.type, size: file.size, base64: "", error: String(reader.error) };
+        if (--pending === 0) { payload.files = out; k(payload); }
+      };
+      reader.readAsDataURL(file);
+    });
   }
+
   const imports = {
     env: {
       host_now_ms: () => performance.now(),
@@ -411,6 +463,36 @@
               dispatchJson(cb, p);
             }
           });
+        } else if (ev === "drop") {
+          // Subscribing to "drop" makes the element a drop zone: the
+          // browser only permits a drop where dragover is cancelled. The
+          // dropped files travel in the payload as `files`, each read to
+          // base64 — the shape dom.read_file hands back.
+          el.addEventListener("dragover", (e) => e.preventDefault());
+          el.addEventListener("drop", (e) => {
+            e.preventDefault();
+            withFiles(e.dataTransfer && e.dataTransfer.files, eventPayload(e, "drop"), (p) => dispatchJson(cb, p));
+          });
+        } else if (ev === "paste") {
+          // A paste with files (an image from the clipboard) carries them
+          // as `files`; a text paste carries `text` and is not prevented.
+          el.addEventListener("paste", (e) => {
+            const files = e.clipboardData && e.clipboardData.files;
+            const p = eventPayload(e, "paste");
+            p.text = (e.clipboardData && e.clipboardData.getData("text/plain")) || "";
+            if (files && files.length) e.preventDefault();
+            withFiles(files, p, (payload) => dispatchJson(cb, payload));
+          });
+        } else if (ev === "dragstart") {
+          el.addEventListener("dragstart", (e) => {
+            // Firefox refuses to drag until dataTransfer holds data;
+            // the payload itself crosses through the event map.
+            if (e.dataTransfer) {
+              e.dataTransfer.setData("text/plain", "olang-drag");
+              e.dataTransfer.effectAllowed = "move";
+            }
+            dispatchJson(cb, eventPayload(e, "dragstart"));
+          });
         } else {
           el.addEventListener(ev, (e) => dispatchJson(cb, eventPayload(e, ev)));
         }
@@ -420,6 +502,8 @@
         (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? 1 : 0,
       host_dom_active_id: () => giveStr((document.activeElement && document.activeElement.id) || ""),
       host_dom_confirm: (ptr, len) => (window.confirm(readStr(ptr, len)) ? 1 : 0),
+      // A file input's first file, delivered as JSON through the same
+      // dispatch a fetch_json callback uses: { name, size, type, base64 }.
       host_dom_read_file: (h, id) => {
         const el = elements[Number(h)];
         const file = el && el.files && el.files[0];
@@ -567,7 +651,7 @@
         fetch(path)
           .then((r) => (r.ok ? r.text() : Promise.reject(r.status)))
           .then((source) =>
-            w.postMessage({ boot: { wasmUrl: "/olang.wasm", source } }))
+            w.postMessage({ boot: { wasmUrl, source } }))
           .catch((e) => console.error("olang worker boot:", path, e));
         return BigInt(workers.push(entry) - 1);
       },
@@ -689,30 +773,104 @@
     },
   };
 
-  const [wasmBytes, source] = await Promise.all([
-    fetch("/olang.wasm").then((r) => r.arrayBuffer()),
-    fetch(src).then((r) => r.text()),
-  ]);
-  if (wasmBytes.byteLength < 8) {
-    document.body.insertAdjacentHTML(
-      "beforeend",
-      `<pre style="color:#c33;padding:1rem">/olang.wasm came back empty.
+  // Streaming instantiation compiles the module WHILE it downloads —
+  // for a multi-megabyte runtime that overlap is most of the boot.
+  // Fall back to the buffered path (with its diagnostics) when
+  // streaming is unavailable or refuses (wrong MIME, old server).
+  async function instantiateWasm() {
+    if (WebAssembly.instantiateStreaming) {
+      try {
+        return await WebAssembly.instantiateStreaming(fetch(wasmUrl), imports);
+      } catch (e) { /* buffered fallback below */ }
+    }
+    const wasmBytes = await fetch(wasmUrl).then((r) => r.arrayBuffer());
+    if (wasmBytes.byteLength < 8) {
+      document.body.insertAdjacentHTML(
+        "beforeend",
+        `<pre style="color:#c33;padding:1rem">/olang.wasm came back empty.
 Two known causes:
   1. the server binary predates body_file support — reinstall olang (make install)
   2. static/olang_playground.wasm is missing — build it:
      cargo build -p olang-playground --target wasm32-unknown-unknown --release
      cp target/wasm32-unknown-unknown/release/olang_playground.wasm examples/web/app/static/</pre>`
-    );
-    return;
+      );
+      throw new Error("empty wasm");
+    }
+    return WebAssembly.instantiate(wasmBytes, imports);
   }
-  ({ instance: { exports: ex } } = await WebAssembly.instantiate(wasmBytes, imports));
-  installProfiler();
 
-  const enc = new TextEncoder().encode(source);
-  const ptr = ex.olang_alloc(enc.length);
-  mem().set(enc, ptr);
-  const boot = readResult(ex.olang_session_start(ptr, enc.length));
-  ex.olang_dealloc(ptr, enc.length);
+  async function fetchProgram() {
+    if (bin) {
+      try {
+        const r = await fetch(bin);
+        if (r.ok) return { image: new Uint8Array(await r.arrayBuffer()) };
+      } catch (e) { /* the source below */ }
+    }
+    return { source: await fetch(src).then((r) => r.text()) };
+  }
+  const fetchSource = () => fetch(src).then((r) => r.text());
+
+  const [wasmModule, program] = await Promise.all([instantiateWasm(), fetchProgram()]);
+  ({ instance: { exports: ex } } = wasmModule);
+  bootMarks.instantiated = performance.now();
+
+  // Yield once between instantiation and the session start: loading
+  // and running the bundle is one synchronous call, and without this
+  // frame nothing paints — not even the shell — until it ends.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  function startSession(bytes, entry) {
+    const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
+    mem().set(bytes, ptr);
+    const r = readResult(callRuntime(() => entry(ptr, bytes.length)));
+    ex.olang_dealloc(ptr, Math.max(bytes.length, 1));
+    return r;
+  }
+  let boot, programKind;
+  // A runtime built before images exist has no binary entry; it reads
+  // the source like it always did.
+  if (program.image && ex.olang_session_start_bin) {
+    boot = startSession(program.image, ex.olang_session_start_bin);
+    programKind = "image";
+    if (boot.retry_with_source) {
+      console.warn("olang: the program image is not loadable by this runtime; reading the source instead");
+      boot = startSession(new TextEncoder().encode(await fetchSource()), ex.olang_session_start);
+      programKind = "source";
+    }
+  } else {
+    const source = program.source ?? (await fetchSource());
+    boot = startSession(new TextEncoder().encode(source), ex.olang_session_start);
+    programKind = "source";
+  }
+  bootMarks.started = performance.now();
+  // Boot-phase timings, so an app can see what it pays for:
+  // window.olangBoot = { fetch_instantiate_ms, session_start_ms, total_ms,
+  //   program ("image" | "source"), load_ms (decode or parse), run_ms
+  //   (the bundle's top level, the first render included) }.
+  // Where a repaint's time goes: `olangProfile.start()`, act, then
+  // `olangProfile.table()` — every olang function that ran, with its
+  // tier, calls, and exact self and total milliseconds (instrumented,
+  // not sampled). `report()` returns the rows; `stop()` also turns the
+  // instrumentation off.
+  window.olangProfile = {
+    start: () => ex.olang_profile_start(),
+    report: () => readResult(ex.olang_profile_report()),
+    stop: () => readResult(ex.olang_profile_stop()),
+    table: (top = 25) => {
+      const r = readResult(ex.olang_profile_report());
+      console.table(r.rows.slice(0, top));
+      return r;
+    },
+  };
+  window.olangBoot = {
+    fetch_instantiate_ms: Math.round(bootMarks.instantiated - bootMarks.start),
+    session_start_ms: Math.round(bootMarks.started - bootMarks.instantiated),
+    total_ms: Math.round(bootMarks.started - bootMarks.start),
+    program: programKind,
+    load_ms: boot.load_ms ?? null,
+    run_ms: boot.run_ms ?? null,
+  };
+  console.debug("olang boot", window.olangBoot);
   if (boot.error) {
     document.body.insertAdjacentHTML(
       "beforeend",

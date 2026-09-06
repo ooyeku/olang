@@ -46,6 +46,10 @@ let boot_ms = time.monotonic_ms()
 let page_html = unwrap(fs.read_file("static/index.html"))
 let shim_js = unwrap(fs.read_file("static/olang-dom.js"))
 let ledger_ol = unwrap(fs.read_file("static/ledger.ol"))
+// The frontend also travels as a program image — decoded in the browser
+// without parsing; the shim falls back to the source when the runtime
+// that built the image and the one loading it differ.
+let ledger_olb = unwrap(meta.encode(ledger_ol))
 let suite_css = unwrap(fs.read_file("static/suite.css"))
 
 // The wasm artifact is gitignored; warn loudly at boot when missing.
@@ -69,12 +73,23 @@ fn frontend_source(req, params) =
 fn styles(req, params) =
     http.response_with_headers(200, suite_css,
         #{ "Content-Type": "text/css; charset=utf-8", "Cache-Control": "no-store" })
-// The wasm is binary: body_file serves raw bytes straight from disk.
+// The wasm is binary: body_file serves raw bytes straight from disk. A
+// pre-compressed sibling (`make wasm` writes the .br when brotli is
+// installed) goes out with its Content-Encoding when the browser accepts
+// it — a quarter of the bytes on the wire.
 fn wasm_binary(req, params) = {
-    status: 200,
-    body_file: "static/olang_playground.wasm",
-    headers: #{ "Content-Type": "application/wasm" }
+    let accepts = if map_has_key(req.headers, "accept-encoding") =>
+        map_get(req.headers, "accept-encoding") else => ""
+    let base = #{ "Content-Type": "application/wasm", "Cache-Control": "no-cache", "Vary": "Accept-Encoding" }
+    if str.contains(accepts, "br") && fs.exists("static/olang_playground.wasm.br") =>
+        { status: 200, body_file: "static/olang_playground.wasm.br", headers: map_set(base, "Content-Encoding", "br") }
+    else if str.contains(accepts, "gzip") && fs.exists("static/olang_playground.wasm.gz") =>
+        { status: 200, body_file: "static/olang_playground.wasm.gz", headers: map_set(base, "Content-Encoding", "gzip") }
+    else => { status: 200, body_file: "static/olang_playground.wasm", headers: base }
 }
+fn frontend_image(req, params) =
+    { status: 200, body: ledger_olb,
+      headers: #{ "Content-Type": "application/octet-stream", "Cache-Control": "no-store" } }
 
 // ── request plumbing ──
 
@@ -219,6 +234,7 @@ let routes = [
     route("GET", "/ledger.ol", frontend_source),
     route("GET", "/suite.css", styles),
     route("GET", "/olang.wasm", wasm_binary),
+    route("GET", "/ledger.olb", frontend_image),
     route("GET", "/api/health", health),
     route("GET", "/api/transactions", transactions_list),
     route("POST", "/api/transactions", transactions_create),
@@ -232,7 +248,39 @@ let routes = [
     route("PUT", "/api/budgets", budgets_put)
 ]
 
-fn app(req) = dispatch(routes, req)
+// ── every response ───────────────────────────────────────────────────
+// Security headers on all of them, and gzip for text bodies of a
+// kilobyte or more when the client accepts it: a JSON listing is a
+// tenth of its size on the wire. A handler that raises answers the
+// error envelope as a 500 instead of ending the worker's request with
+// a bare message.
+
+let standing_headers = #{ "X-Content-Type-Options": "nosniff", "Referrer-Policy": "same-origin",
+                          "X-Frame-Options": "DENY" }
+
+fn finish(req, response) = {
+    let own = if map_has_key(response, "headers") => map_get(response, "headers") else => #{}
+    let hs = fold(map_keys(standing_headers), own,
+        (acc, k) => map_set(acc, k, map_get(standing_headers, k)))
+    let with_hs = map_set(response, "headers", hs)
+    let accepts = if map_has_key(req.headers, "accept-encoding") =>
+        map_get(req.headers, "accept-encoding") else => ""
+    let body = if map_has_key(with_hs, "body") => map_get(with_hs, "body") else => ()
+    if typeof(body) == "String" && str.length(body) >= 1024 && str.contains(accepts, "gzip")
+        && map_has_key(hs, "Content-Encoding") == false =>
+        map_set(map_set(with_hs, "body", compress.gzip(body)),
+                "headers", map_set(map_set(hs, "Content-Encoding", "gzip"), "Vary", "Accept-Encoding"))
+    else => with_hs
+}
+
+fn app(req) = match attempt(() => dispatch(routes, req)) {
+    Ok(response) => finish(req, response),
+    Err(message) => finish(req, error_response(500, "internal", message))
+}
+
+// SIGINT and SIGTERM drain the server: no new connections, the requests
+// in hand finish, and `serve` returns Ok(()).
+let shutdown_hook = os.on_shutdown((why) => http.shutdown())
 
 println("ledger db=" + db_path + (match os.get_env("LEDGER_TOKEN") { Ok(t) => " auth=on", Err(e) => " auth=off" }))
 match http.serve(port, app) {
@@ -240,5 +288,5 @@ match http.serve(port, app) {
         println("ledger: could not start on port " + show(port) + ": " + show(e))
         os.exit(1)
     },
-    Ok(v) => v
+    other => println("ledger: drained, bye")
 }

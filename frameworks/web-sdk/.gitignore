@@ -5,3 +5,5 @@
 static/olang_playground.wasm
 # Machine-specific (absolute shelf paths); regenerated on first run.
 olang.lock
+static/olang_playground.wasm.br
+static/olang_playground.wasm.gz

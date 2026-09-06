@@ -54,7 +54,23 @@ Failures wear one envelope everywhere:
 | `lib/router.ol` | routing, middleware (auth, logging), the error envelope, query-param helpers |
 | `lib/store.ol` | migrations, queries, transactions, the audit trail |
 | `lib/validate.ol` | request validation → clean fields or field-by-field problems |
-| `static/` | the spreadsheet frontend (plain HTML + JS, no dependencies) |
+| `static/` | the spreadsheet frontend — olang in the browser over the web SDK's shim (`olang-dom.js`, copied verbatim) |
+
+## What the server does for every response
+
+- **Compression** — text bodies of a kilobyte or more go out gzipped
+  when the client accepts it; the wasm is served from its brotli sibling
+  (`make wasm` writes it when `brotli` is installed) — a quarter of the
+  bytes on the wire.
+- **Security headers** — `X-Content-Type-Options`, `Referrer-Policy`,
+  `X-Frame-Options` on all of them, the static routes included.
+- **The program image** — the frontend is served as `/app.olb`, the
+  parsed program as bytes; the browser decodes it without parsing and
+  falls back to `/app.ol` when the runtime versions differ.
+- **A handler that raises** answers the error envelope as a 500
+  (`attempt`) instead of ending the request with a bare message.
+- **Graceful shutdown** — SIGINT or SIGTERM drains: no new connections,
+  the requests in hand finish, `serve` returns.
 
 ## The frontend
 
@@ -68,7 +84,11 @@ and one-click backups, dark mode with a toggle, keyboard shortcuts
 (`/` search, `n` new issue, `Esc` closes), two-step delete, an inline
 create row with all fields, and validation errors surfaced field by
 field as toasts. A 401 prompts once for the bearer token and remembers
-it.
+it. Rows carry a `data-key`, and the list, the comments, and the
+activity feed repaint through `dom.morph`: a re-sort moves the row
+elements instead of rebuilding them, and the cell being edited keeps
+its focus. `window.olangBoot` reports the boot phases and
+`window.olangProfile` profiles a repaint, both from the shim.
 
 The API contract — validation shapes, filter semantics, 404/405/401
 behavior, CSV output, the audit trail — is locked by

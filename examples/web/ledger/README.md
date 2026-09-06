@@ -55,7 +55,17 @@ lib/format.ol     money()/to_cents()/month helpers, with test blocks
 static/ledger.ol  the frontend: dom events, ods Frames, viz charts,
                   budget progress bars, the category manager, toasts,
                   and two-click deletes
-static/index.html the page; static/olang-dom.js the generic wasm shim
+static/index.html the page; static/olang-dom.js the web SDK's shim, copied verbatim
+
+Every response carries security headers; text bodies of a kilobyte or
+more go out gzipped when the client accepts it, and the wasm is served
+from its brotli sibling (`make wasm` writes it when `brotli` is
+installed). The frontend also travels as a program image (`/ledger.olb`),
+decoded in the browser without parsing. Transaction rows, budget rows,
+and the category manager carry a `data-key` and repaint through
+`dom.morph`, so the note or amount being edited keeps its focus across
+the repaint every save triggers. A handler that raises answers the
+error envelope as a 500; SIGINT or SIGTERM drains the server.
 seed.ol           seeded three-month demo data
 ```
 

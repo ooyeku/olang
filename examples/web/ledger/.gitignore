@@ -1,3 +1,5 @@
 static/olang_playground.wasm
 ledger.db
 /ledger
+static/olang_playground.wasm.br
+static/olang_playground.wasm.gz
