@@ -532,6 +532,13 @@ impl BuiltinFunctions {
                 arity: 1,
             },
         );
+        functions.insert(
+            "attempt".to_string(),
+            BuiltinFunction {
+                name: "attempt".to_string(),
+                arity: 1,
+            },
+        );
 
         functions.insert(
             "unwrap_or".to_string(),
@@ -801,6 +808,10 @@ impl BuiltinFunctions {
             return crate::stdlib::bytes::call_bytes_function(bytes_function, arguments)
                 .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
+        if let Some(compress_function) = name.strip_prefix("compress.") {
+            return crate::stdlib::compress::call_compress_function(compress_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
+        }
 
         // Handle base64 functions
         if let Some(base64_function) = name.strip_prefix("base64.") {
@@ -822,6 +833,35 @@ impl BuiltinFunctions {
         }
 
         // Handle os functions
+        #[cfg(feature = "native")]
+        // `os.on_shutdown(handler)`: the handler runs on SIGINT/SIGTERM
+        // against a thread-safe clone of this program — the same worker
+        // pattern `spawn` uses — so a server can drain before it exits.
+        #[cfg(feature = "native")]
+        if name == "os.on_shutdown" {
+            if arguments.len() != 1 {
+                return Err(InterpreterError::ArityMismatch {
+                    expected: 1,
+                    got: arguments.len(),
+                });
+            }
+            if !matches!(arguments[0], Value::Function(_) | Value::Builtin(_)) {
+                return Err(InterpreterError::TypeError {
+                    message: format!(
+                        "os.on_shutdown: expected a function, got {}",
+                        arguments[0].type_name()
+                    ),
+                });
+            }
+            let clone = interpreter.thread_safe_clone();
+            return match crate::stdlib::os::register_shutdown_handler(clone, arguments[0].clone()) {
+                Ok(()) => Ok(Value::Ok(Box::new(Value::Unit))),
+                Err(e) => Ok(Value::Err(Box::new(Value::String(std::sync::Arc::new(
+                    format!("os.on_shutdown: could not install handler: {}", e),
+                ))))),
+            };
+        }
+
         #[cfg(feature = "native")]
         if let Some(os_function) = name.strip_prefix("os.") {
             // Remove "os." prefix
@@ -887,6 +927,38 @@ impl BuiltinFunctions {
             let grant = interpreter.effective_caps();
             return crate::stdlib::caps_mod::call(caps_function, arguments, &grant)
                 .map_err(|message| InterpreterError::RuntimeError { message });
+        }
+
+        // `attempt(f)`: the boundary-recovery form. `f()` runs; a raise
+        // inside it becomes `Err(message)` and any other outcome `Ok(value)`
+        // — so a long-lived loop answers "500" instead of "goodbye". Control
+        // flow (`return`, `break`, `?`) passes through untouched: it is not
+        // a failure, and the enclosing construct owns it.
+        if name == "attempt" {
+            if arguments.len() != 1 {
+                return Err(InterpreterError::ArityMismatch {
+                    expected: 1,
+                    got: arguments.len(),
+                });
+            }
+            if !matches!(arguments[0], Value::Function(_) | Value::Builtin(_)) {
+                return Err(InterpreterError::TypeError {
+                    message: format!(
+                        "attempt: expected a function, got {}",
+                        arguments[0].type_name()
+                    ),
+                });
+            }
+            return match interpreter.call_function(arguments[0].clone(), Vec::new()) {
+                Ok(value) => Ok(Value::Ok(Box::new(value))),
+                Err(e) if crate::interpreter::Interpreter::is_control_signal(&e) => Err(e),
+                Err(e) => {
+                    interpreter.clear_pending_error();
+                    Ok(Value::Err(Box::new(Value::String(std::sync::Arc::new(
+                        strip_error_prefixes(&e.to_string()),
+                    )))))
+                }
+            };
         }
 
         // `testing.snapshot(name, value)`: the value's `show` form against
@@ -3888,6 +3960,22 @@ fn testing_snapshot(
             write(&actual)?;
             crate::stdlib::testing::record_pass();
             Ok(Value::Unit)
+        }
+    }
+}
+
+/// An error's text without the category prefixes the reporter adds
+/// ("Runtime error: ", "Type error: ") — the message an `attempt` hands
+/// back is the cause, as a `raise` would have printed it.
+fn strip_error_prefixes(text: &str) -> String {
+    let mut t = text;
+    loop {
+        let next = ["Runtime error: ", "Type error: "]
+            .iter()
+            .find_map(|p| t.strip_prefix(p));
+        match next {
+            Some(rest) => t = rest,
+            None => return t.to_string(),
         }
     }
 }

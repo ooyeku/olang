@@ -215,7 +215,11 @@ shelf itself is one small TOML file at `~/.olang/shelf.toml`
 
 A fresh shelf arrives stocked with the curated starter libraries —
 `textkit`, `validate`, `markdown` — removable and restorable like
-anything else (`otc lib restore`). The shelf has its own chapter:
+anything else (`otc lib restore`). A shelved starter lags the copy a
+newer toolchain ships — the shelf is seeded once — so `otc install`
+says when one is behind and names the `otc lib restore <name>` that
+refreshes it; a release note that changes a starter names the version
+that carries it. The shelf has its own chapter:
 [The library shelf](shelf.md) covers the model, the commands, the
 starter libraries' full APIs, and pinning in detail.
 

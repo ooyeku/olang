@@ -286,6 +286,34 @@ pub fn do_install(frozen: bool, update: bool, verbose: bool) -> anyhow::Result<(
         }
     }
     let map = install(&root, &opts).map_err(|e| anyhow::anyhow!("{}", e))?;
+    // A starter library shelved by an older toolchain lags the copy this
+    // one ships (the shelf is seeded once): say so, with the command that
+    // refreshes it, so a release note about `validate` reaches the shelf.
+    for (name, dir) in &map {
+        if olang::pkg::starter::get(name).is_none() {
+            continue;
+        }
+        let shelved = std::fs::read_to_string(dir.join("olang.toml"))
+            .ok()
+            .and_then(|t| {
+                t.lines().find_map(|l| {
+                    l.trim()
+                        .strip_prefix("version = ")
+                        .map(|v| v.trim_matches('"').to_string())
+                })
+            });
+        if let Some(v) = shelved
+            && v != olang::VERSION
+        {
+            println!(
+                "shelf library '{}' is {} — this olang ships {}: `otc lib restore {}` refreshes it",
+                name,
+                v,
+                olang::VERSION,
+                name
+            );
+        }
+    }
     println!(
         "Resolved {} dependenc{}",
         map.len(),

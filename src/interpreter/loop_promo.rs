@@ -145,6 +145,7 @@ fn build_continuation(
         closure: Arc::new(im::HashMap::new()),
         param_bounds: Vec::new(),
         def_file,
+        parent_scope: 0,
     }
 }
 

@@ -63,6 +63,13 @@ struct Cli {
     #[arg(long, help_heading = "Run options")]
     no_ovm: bool,
 
+    /// Run the whole program on a spawned task instead of the main
+    /// thread — the execution context every http worker and `spawn`
+    /// body has. `olang bench --in-task` uses it to pin a task's speed
+    /// to the main thread's.
+    #[arg(long, help_heading = "Run options")]
+    in_task: bool,
+
     /// Show OVM performance statistics
     #[arg(long, help_heading = "Run options")]
     ovm_stats: bool,
@@ -796,6 +803,7 @@ fn run_program(
     if cli.watch {
         return watch_loop(&file_path, cli.deny.as_deref(), &args);
     }
+    IN_TASK.store(cli.in_task, std::sync::atomic::Ordering::Relaxed);
     // Program's argv: the script path, then everything after it. Read via
     // os.args() inside the program.
     let mut argv = vec![file_path.to_string_lossy().to_string()];
@@ -2444,6 +2452,10 @@ fn execute_source(
     )
 }
 
+/// `--in-task`: the program body runs on a worker thread against a
+/// thread-safe clone of the interpreter, exactly as a `spawn` body does.
+static IN_TASK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Run an already-parsed program. `source` is retained only for error
 /// snippets (parse is already done). This is the shared tail of running a
 /// file and running a bundle whose AST was embedded by `olang build`, so a
@@ -2620,7 +2632,33 @@ fn execute_program(
         }
     };
 
-    match interpreter.eval_program(program) {
+    let outcome = if IN_TASK.load(std::sync::atomic::Ordering::Relaxed) {
+        // The same worker a `spawn` body gets: a thread-safe clone with
+        // its own tier, replayed from the parent's knowledge. The clone
+        // comes back so the reports below read the run that happened.
+        let mut worker = interpreter.thread_safe_clone();
+        let joined = std::thread::Builder::new()
+            .name("olang-main-task".to_string())
+            .stack_size(64 * 1024 * 1024)
+            .spawn(move || {
+                let result = worker.eval_program(program);
+                (result, worker)
+            })
+            .map_err(|e| anyhow::anyhow!("--in-task: could not start the worker: {}", e))?
+            .join();
+        match joined {
+            Ok((result, worker)) => {
+                interpreter = worker;
+                result
+            }
+            Err(_) => {
+                return Err(anyhow::anyhow!("--in-task: the worker thread panicked"));
+            }
+        }
+    } else {
+        interpreter.eval_program(program)
+    };
+    match outcome {
         Ok(result) => {
             if verbose {
                 logger.info("main", &format!("Result: {:?}", result));

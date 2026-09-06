@@ -3238,6 +3238,38 @@ let parts = ods.split(f, 0.8)   // [train, test]"##],
             &[r##"dom.morph(dom.query("#list"), render(rows))"##],
         );
         self.doc_ex(
+            "dom.checked",
+            "dom.checked(el)",
+            "Bool",
+            "dom",
+            "a checkbox's or radio's checked state — what `value` cannot say",
+            &[r##"if dom.checked(dom.query("#done")) => mark_done() else => ()"##],
+        );
+        self.doc_ex(
+            "dom.selection",
+            "dom.selection(el)",
+            "(Int, Int)",
+            "dom",
+            "a text control's selection as (from, to) — equal when it is a caret",
+            &[r##"let (from, to) = dom.selection(dom.query("#body"))"##],
+        );
+        self.doc_ex(
+            "dom.set_selection",
+            "dom.set_selection(el, from, to)",
+            "Unit",
+            "dom",
+            "select the range in a text control (focusing it) — how text is inserted at the cursor: set the value, then place the caret after the insertion",
+            &[r##"dom.set_selection(ta, at + str.length(inserted), at + str.length(inserted))"##],
+        );
+        self.doc_ex(
+            "dom.values",
+            "dom.values(el)",
+            "List<String>",
+            "dom",
+            "a <select multiple>'s chosen option values",
+            &[r##"let tags = dom.values(dom.query("#tags"))"##],
+        );
+        self.doc_ex(
             "dom.find",
             "dom.find(selector)",
             "Element | Unit",
@@ -3965,6 +3997,14 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             "os",
             "trap Ctrl-C (SIGINT) so it sets a flag instead of terminating — for graceful shutdown",
             &[r##"unwrap(os.on_interrupt())  // Ctrl-C now sets a flag"##],
+        );
+        self.doc_ex(
+            "os.on_shutdown",
+            "os.on_shutdown(handler)",
+            "Result",
+            "os",
+            "run handler(\"shutdown\") when SIGINT or SIGTERM arrives — on its own thread, against a thread-safe copy of the program, so a server can drain (http.shutdown()), flush, or checkpoint before the process ends. Ok(()) once installed; Err when the process's signal handler could not be set",
+            &[r##"unwrap(os.on_shutdown((why) => { checkpoint(conn) http.shutdown() }))"##],
         );
         self.doc_ex(
             "os.interrupted",
@@ -5410,6 +5450,31 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             "The concatenation of two Bytes values.",
             &[r##"bytes.concat(header, payload)"##],
         );
+        // The compress module: gzip and deflate in memory.
+        self.doc_ex(
+            "compress.gzip",
+            "compress.gzip(data)",
+            "Bytes",
+            "Bytes",
+            "The gzip encoding of a string or Bytes value, at the default level (6). `compress.gzip_level(data, n)` picks 0..=9. A dynamic HTTP response is the case: a 90 KB JSON body is about 10 KB on the wire.",
+            &[r##"http.response_with_headers(200, compress.gzip(body), #{ "Content-Encoding": "gzip" })"##],
+        );
+        self.doc_ex(
+            "compress.gunzip",
+            "compress.gunzip(b)",
+            "Result",
+            "Bytes",
+            "Decode gzip data: Ok(Bytes), or Err(message) when the input is not gzip.",
+            &[r##"unwrap(bytes.to_string(unwrap(compress.gunzip(packed))))"##],
+        );
+        self.doc_ex(
+            "compress.deflate",
+            "compress.deflate(data)",
+            "Bytes",
+            "Bytes",
+            "Raw deflate (no gzip header) of a string or Bytes value; `compress.inflate(b)` is its Result-returning inverse.",
+            &[r##"compress.inflate(compress.deflate("hello"))  // Ok(Bytes)"##],
+        );
 
         // File I/O operations
         self.add_function(FunctionDoc {
@@ -5783,6 +5848,16 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
                 "http.response".to_string(),
                 "http.response_with_headers".to_string(),
             ],
+        });
+        self.add_function(FunctionDoc {
+            name: "http.shutdown".to_string(),
+            description: "Ask every running http.serve to stop: no new connections are accepted, the queue drains, workers finish the request in hand and exit, and serve returns Ok. Call it from an os.on_shutdown handler for a graceful stop on SIGINT/SIGTERM.".to_string(),
+            syntax: "http.shutdown()".to_string(),
+            parameters: vec![],
+            return_type: "Unit".to_string(),
+            examples: vec!["os.on_shutdown((why) => http.shutdown())\nhttp.serve(8080, handle)   // returns after the drain".to_string()],
+            category: "HTTP".to_string(),
+            see_also: vec!["http.serve".to_string(), "os.on_shutdown".to_string()],
         });
 
         self.add_function(FunctionDoc {
@@ -9943,6 +10018,18 @@ For function-specific syntax, use: {}:help <function_name>{}",
                 "is_ok".to_string(),
                 "is_err".to_string(),
             ],
+        });
+        self.add_function(FunctionDoc {
+            name: "attempt".to_string(),
+            description: "The boundary-recovery form: f() runs; a raise inside it becomes Err(message) and any other outcome Ok(value). For the one place a long-lived loop or a compute thread must answer \"500\" rather than end — every other error stays a Result or a raise, by the error model. Control flow (`return`, `break`, `?`) passes through untouched.".to_string(),
+            syntax: "attempt(f)".to_string(),
+            parameters: vec!["f: () => value - the call that may raise".to_string()],
+            return_type: "Result<value, String>".to_string(),
+            examples: vec![
+                "match attempt(() => build_report(rows)) {\n    Ok(report) => send(report),\n    Err(message) => log(\"report failed: \" + message)\n}".to_string(),
+            ],
+            category: "Result".to_string(),
+            see_also: vec!["unwrap".to_string(), "task.watch".to_string()],
         });
 
         self.add_function(FunctionDoc {

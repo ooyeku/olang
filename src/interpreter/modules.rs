@@ -242,6 +242,9 @@ impl Interpreter {
                     // Import all shared objects from the module
                     if let Value::Struct { fields, .. } = module {
                         for (name, value) in fields.iter() {
+                            if name.starts_with("__") {
+                                continue;
+                            }
                             self.environment.define(name.clone(), value.clone());
                             crate::log::get_logger().debug(
                                 "interpreter",
@@ -265,6 +268,15 @@ impl Interpreter {
                             crate::ast::UseItem::Aliased { name, alias } => (name, alias),
                             crate::ast::UseItem::Wildcard => continue,
                         };
+                        // A name the module declares (or re-exports) as a
+                        // meta fn has no runtime value: the `@` sites that
+                        // use it were expanded before this program ran.
+                        // The import is satisfied by having happened.
+                        if self.get_module_export(module, item_name).is_none()
+                            && module_declares_macro(module, item_name)
+                        {
+                            continue;
+                        }
                         {
                             match self.get_module_export(module, item_name) {
                                 Some(value) => {
@@ -585,6 +597,7 @@ impl Interpreter {
             .strip_prefix("__embedded__/")
             .map(|s| s.to_string());
 
+        let mut declared_macros: Vec<String> = Vec::new();
         let program = if let Some(name) = &embedded_name {
             match crate::stdlib::embedded::parsed(name).map_err(|e| {
                 InterpreterError::RuntimeError {
@@ -604,6 +617,11 @@ impl Interpreter {
                     message: format!("Failed to read module file {}: {}", file_path.display(), e),
                 }
             })?;
+            // The module's macro names, before expansion strips them: a
+            // `use m { when }` that names a meta fn is satisfied at
+            // expansion time, so the runtime import of that name is not a
+            // miss (see `bind_module_imports`).
+            declared_macros = macro_names_in(&content);
             crate::parser::Parser::new().parse(&content).map_err(|e| {
                 InterpreterError::RuntimeError {
                     message: format!("Failed to parse module {}:\n{}", file_path.display(), e),
@@ -747,6 +765,11 @@ impl Interpreter {
                                             {
                                                 exports.insert(name.clone(), value);
                                                 reexported.insert(name.clone());
+                                            } else if module_declares_macro(&module, name) {
+                                                // A re-exported macro: this
+                                                // module's front door offers
+                                                // it too.
+                                                declared_macros.push(name.clone());
                                             }
                                         }
                                         crate::ast::UseItem::Aliased { name, alias } => {
@@ -792,6 +815,15 @@ impl Interpreter {
             // functions in a single file can call one another regardless of
             // order.
             let module_scope = self.environment.flat_snapshot();
+            // The complete table is also how a frame of this file resolves
+            // a sibling its closure predates (a private helper declared
+            // later, a nested fn's forward reference), on any thread.
+            let scope_table = Arc::new(module_scope.clone());
+            self.module_scopes
+                .insert(file_path_str.clone(), scope_table.clone());
+            if let Some(tier) = self.bytecode_tier.as_mut() {
+                tier.note_module_scope(file_path_str.clone(), scope_table);
+            }
             for (name, value) in exports.iter_mut() {
                 if reexported.contains(name) {
                     // A `share use` re-export keeps the closure its own
@@ -820,6 +852,19 @@ impl Interpreter {
                 }
             }
 
+            if !declared_macros.is_empty() {
+                declared_macros.sort();
+                declared_macros.dedup();
+                exports.insert(
+                    "__macros__".to_string(),
+                    Value::List(std::sync::Arc::from(
+                        declared_macros
+                            .into_iter()
+                            .map(|n| Value::String(std::sync::Arc::new(n)))
+                            .collect::<Vec<_>>(),
+                    )),
+                );
+            }
             let module = Value::Struct {
                 type_name: "Module".to_string(),
                 fields: std::sync::Arc::new(exports),
@@ -1350,6 +1395,9 @@ impl Interpreter {
 
     /// Get an export from a loaded module
     pub(crate) fn get_module_export(&self, module: &Value, export_name: &str) -> Option<Value> {
+        if export_name.starts_with("__") {
+            return None;
+        }
         match module {
             Value::Struct { fields, .. } => fields.get(export_name).cloned(),
             _ => None,
@@ -1382,5 +1430,38 @@ impl Interpreter {
         }
 
         Ok(Value::Unit)
+    }
+}
+
+/// The names of the `meta fn`s a module's source declares — read from the
+/// text, since expansion has stripped them from the parsed program.
+fn macro_names_in(source: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in source.lines() {
+        let t = line.trim_start();
+        let Some(rest) = t.strip_prefix("meta fn ") else {
+            continue;
+        };
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        if !name.is_empty() {
+            out.push(name);
+        }
+    }
+    out
+}
+
+/// Does this module value declare (or re-export) a meta fn of this name?
+fn module_declares_macro(module: &Value, name: &str) -> bool {
+    match module {
+        Value::Struct { fields, .. } => match fields.get("__macros__") {
+            Some(Value::List(items)) => items
+                .iter()
+                .any(|v| matches!(v, Value::String(s) if s.as_str() == name)),
+            _ => false,
+        },
+        _ => false,
     }
 }

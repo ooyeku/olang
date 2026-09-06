@@ -7,6 +7,14 @@ use crate::ast::Value;
 use im::HashMap as ImHashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Call-frame ids: 0 is every root; each function call takes a fresh one.
+static NEXT_SCOPE: AtomicU64 = AtomicU64::new(1);
+
+pub(crate) fn fresh_scope() -> u64 {
+    NEXT_SCOPE.fetch_add(1, Ordering::Relaxed)
+}
 
 /// Configuration for module resolution debugging
 #[derive(Debug, Clone)]
@@ -46,6 +54,25 @@ pub struct Environment {
     /// they persist and are cheap to snapshot into closures.
     pub(crate) is_frame: bool,
     pub(crate) parent: Option<Arc<Environment>>,
+    /// The file whose code this scope belongs to: a call frame takes its
+    /// function's defining file, a block scope inherits its parent's, and
+    /// the root has none. Name resolution is lexical per file: a lookup
+    /// walks the chain but reads only the frames of its own file and the
+    /// root — the frames of whatever *called* into this file are never a
+    /// source of names. (They used to be: a bare name a function did not
+    /// bind fell through to the caller's frame, so an app's `head_for`,
+    /// resolving from inside a library's `serve`, landed on the
+    /// library's like-named local instead of the app's own global.)
+    pub(crate) owner: Option<Arc<str>>,
+    /// Which call frame this scope belongs to: fresh per call, shared by
+    /// the frame's block scopes, 0 at a root.
+    pub(crate) scope_id: u64,
+    /// The scope the running function was *declared* in (its
+    /// `Function::parent_scope`). Resolution climbs from a frame to the
+    /// frame with this id, then to that one's lexical parent, and so on
+    /// to the root — the frames in between are the callers', and a
+    /// caller's bindings are not this function's to see.
+    pub(crate) lexical_parent: u64,
 }
 
 impl Default for Environment {
@@ -61,6 +88,9 @@ impl Environment {
             locals: Vec::new(),
             is_frame: false,
             parent: None,
+            owner: None,
+            scope_id: 0,
+            lexical_parent: 0,
         }
     }
 
@@ -70,6 +100,9 @@ impl Environment {
             variables: Arc::new(ImHashMap::new()),
             locals: Vec::new(),
             is_frame: true,
+            owner: parent.owner.clone(),
+            scope_id: parent.scope_id,
+            lexical_parent: parent.lexical_parent,
             parent: Some(Arc::new(parent)),
         }
     }
@@ -80,7 +113,55 @@ impl Environment {
             variables: Arc::new(ImHashMap::new()),
             locals: Vec::new(),
             is_frame: true,
+            owner: parent.owner.clone(),
+            scope_id: parent.scope_id,
+            lexical_parent: parent.lexical_parent,
             parent: Some(parent),
+        }
+    }
+
+    /// Make this scope a call frame of a function declared in
+    /// `declared_in`: a fresh id of its own, and that as its lexical parent.
+    pub(crate) fn enter_function(&mut self, declared_in: u64) {
+        self.scope_id = fresh_scope();
+        self.lexical_parent = declared_in;
+    }
+
+    /// The scopes a name is resolved through, innermost first: this one,
+    /// the enclosing scopes of the same frame, the frame the function was
+    /// declared in and its own enclosing scopes, and so on up to the root.
+    /// Frames that merely called into this one are skipped.
+    pub(crate) fn lexical_chain(&self) -> Vec<&Environment> {
+        let mut out = vec![self];
+        let (mut target, mut next) = (self.scope_id, self.lexical_parent);
+        let mut env = self;
+        while let Some(parent) = env.parent.as_deref() {
+            if parent.parent.is_none() || parent.scope_id == target {
+                out.push(parent);
+            } else if parent.scope_id == next {
+                out.push(parent);
+                target = next;
+                next = parent.lexical_parent;
+            }
+            env = parent;
+        }
+        out
+    }
+
+    /// The root of this chain.
+    pub(crate) fn root(&self) -> &Environment {
+        let mut env = self;
+        while let Some(parent) = env.parent.as_deref() {
+            env = parent;
+        }
+        env
+    }
+
+    pub(crate) fn get_here(&self, name: &str) -> Option<Value> {
+        if let Some((_, value)) = self.locals.iter().rev().find(|(n, _)| n == name) {
+            Some(value.clone())
+        } else {
+            self.variables.get(name).cloned()
         }
     }
 
@@ -160,15 +241,21 @@ impl Environment {
     }
 
     pub fn get(&self, name: &str) -> Option<Value> {
-        if let Some((_, value)) = self.locals.iter().rev().find(|(n, _)| n == name) {
-            Some(value.clone())
-        } else if let Some(value) = self.variables.get(name) {
-            Some(value.clone())
-        } else if let Some(parent) = &self.parent {
-            parent.get(name)
-        } else {
-            None
+        self.get_lexical(name, true)
+    }
+
+    /// Lexical lookup — this scope, its enclosing scopes, the declaring
+    /// frames — with or without the root at the end.
+    pub(crate) fn get_lexical(&self, name: &str, include_root: bool) -> Option<Value> {
+        for env in self.lexical_chain() {
+            if !include_root && env.parent.is_none() && !std::ptr::eq(env, self) {
+                continue;
+            }
+            if let Some(value) = env.get_here(name) {
+                return Some(value);
+            }
         }
+        None
     }
 
     pub fn set(&mut self, name: &str, value: Value) -> Result<(), InterpreterError> {

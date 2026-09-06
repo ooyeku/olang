@@ -72,6 +72,11 @@ pub fn create_dom_module() -> Value {
         // Lookups that may miss: `find` answers Unit, `query_all` a list.
         ("find", 1),
         ("query_all", 1),
+        // Form-control state `value` cannot express.
+        ("checked", 1),
+        ("selection", 1),
+        ("set_selection", 3),
+        ("values", 1),
         // The page's own state: its color scheme, what has focus, a
         // confirmation, and a picked file's contents.
         ("prefers_dark", 0),

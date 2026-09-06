@@ -108,6 +108,22 @@ pub struct Interpreter {
     module_name_index: HashMap<String, std::path::PathBuf>,
     dependency_tracker: ModuleDependencyTracker,
     current_module_path: Option<String>, // For tracking current module during loading
+    /// Interned frame owners, keyed by defining file (see `Environment::owner`).
+    owners: HashMap<String, Arc<str>>,
+    /// The program's top-level bindings, consulted after the whole scope
+    /// chain misses. Set on a bridge interpreter (the one the bytecode
+    /// tier hands declined function values to) from the host's live root:
+    /// a main-file function resolving a sibling declared after it then
+    /// finds the sibling here — the same answer the program's own root
+    /// gives — instead of "Undefined variable", or worse, a like-named
+    /// function the bridge's by-name table happened to hold.
+    fallback_globals: Option<Arc<ImHashMap<String, Value>>>,
+    /// Every loaded module's complete top-level table, by file. A frame
+    /// whose function belongs to that file resolves a name here after
+    /// its lexical scopes and before the program's root — so a module's
+    /// functions see every sibling, private or shared, however the file
+    /// is ordered, and from any thread or the bridge.
+    module_scopes: HashMap<String, Arc<ImHashMap<String, Value>>>,
     module_loading_stack: Vec<String>, // Feature 7: Track modules currently being loaded for circular detection
 
     // Feature 8: Smart caching system
@@ -307,6 +323,9 @@ impl Interpreter {
             module_name_index: HashMap::new(),
             dependency_tracker: ModuleDependencyTracker::new(),
             current_module_path: None, // For tracking current module during loading
+            owners: HashMap::new(),
+            fallback_globals: None,
+            module_scopes: HashMap::new(),
             module_loading_stack: Vec::new(), // Feature 7: Track modules currently being loaded for circular detection
 
             // Feature 8: Smart caching system
@@ -551,7 +570,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         call_stack
     }
 
-    fn is_control_signal(e: &InterpreterError) -> bool {
+    pub fn is_control_signal(e: &InterpreterError) -> bool {
         matches!(
             e,
             InterpreterError::BreakSignal(_)
@@ -816,6 +835,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     closure: Arc::new(closure.clone()),
                     param_bounds: Vec::new(),
                     def_file: self.current_module_path.clone(),
+                    parent_scope: self.environment.scope_id,
                 };
                 if let Some(tier) = self.bytecode_tier.as_mut() {
                     tier.note_trait_default(
@@ -851,6 +871,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 closure: Arc::new(closure.clone()),
                 param_bounds: Vec::new(),
                 def_file: self.current_module_path.clone(),
+                parent_scope: self.environment.scope_id,
             };
             // Tell the tier this method body exists under its bare name. A
             // method dispatched by receiver type (`s.area()`) reaches the tier
@@ -1164,9 +1185,19 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     }
 
     fn eval_function_decl(&mut self, func_decl: FunctionDecl) -> Result<Value, InterpreterError> {
-        // Convert ImHashMap to regular HashMap for closure storage
-        // O(1): the environment's flat map is persistent, adopt it directly
-        let closure = self.environment.flat_snapshot();
+        // At the top level the closure adopts the persistent map in O(1).
+        // A nested `fn` captures the whole enclosing chain of its file,
+        // as a lambda does: its enclosing function's parameters live in
+        // the frame *above* the block scope it is declared in, and a
+        // snapshot of the block alone missed them — harmless while the
+        // interpreter fell back to the caller's frames, wrong the moment
+        // the function ran compiled or on another thread (a `head`
+        // parameter then resolved to the list builtin `head`).
+        let closure = if self.environment.parent.is_none() {
+            self.environment.flat_snapshot()
+        } else {
+            self.collect_all_accessible_variables()
+        };
 
         // Resolve identifiers to frame slots once, at declaration — the
         // call path then indexes instead of probing names (with per-use
@@ -1200,7 +1231,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             param_bounds,
             param_checks,
             return_check,
-            def_file: self.current_module_path.clone(),
+            def_file: self.defining_file(),
+            parent_scope: self.environment.scope_id,
         };
 
         // Let the bytecode tier know this function exists, so a promoted
@@ -1249,7 +1281,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 }
                 Ok(Value::Tuple(std::sync::Arc::new(values)))
             }
-            Expr::Identifier(name) => match self.environment.get(name) {
+            Expr::Identifier(name) => match self.lookup_name(name) {
                 Some(v) => Ok(v),
                 None => {
                     // The bundled `collections` module is automatically
@@ -1275,7 +1307,11 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 }
             },
             Expr::LocalRef { name, depth, slot } => {
-                match self.environment.get_slot(name, *depth, *slot) {
+                match self
+                    .environment
+                    .get_slot(name, *depth, *slot)
+                    .or_else(|| self.lookup_name(name))
+                {
                     Some(v) => Ok(v),
                     None => {
                         self.pending_error_hint = self.did_you_mean(name);
@@ -1365,7 +1401,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     body: Arc::new(resolved_body),
                     closure: Arc::new(closure),
                     param_bounds: Vec::new(),
-                    def_file: self.current_module_path.clone(),
+                    def_file: self.defining_file(),
+                    parent_scope: self.environment.scope_id,
                 }))
             }
             Expr::Pipeline { left, right } => {
@@ -2530,6 +2567,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         slots: Vec<ArgSlot>,
     ) -> Result<Vec<Value>, InterpreterError> {
         let mut env = Environment::with_parent(self.environment.clone());
+        env.owner = self.owner_of(func.def_file.as_deref());
+        env.enter_function(func.parent_scope);
         if !func.closure.is_empty() {
             env.variables = func.closure.clone();
         }
@@ -2763,6 +2802,11 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             let result = loop {
                 // Create new environment with current environment as parent
                 let mut new_env = Environment::with_parent(self.environment.clone());
+                // The frame belongs to the function's file: lookups from
+                // inside it read this file's frames and the root, never
+                // the caller's.
+                new_env.owner = self.owner_of(func.def_file.as_deref());
+                new_env.enter_function(func.parent_scope);
 
                 // Adopt the closure as the environment's flat map in O(1) —
                 // the persistent map is shared, not copied. This was a loop
@@ -2946,6 +2990,66 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// The program's top-level bindings — the root of the scope chain —
     /// as the persistent map they live in. Cheap to clone (an Arc), and
     /// its pointer moves exactly when a top-level binding does.
+    /// A name through the scope chain, then the host's top-level bindings
+    /// when this interpreter has been given them (see `fallback_globals`).
+    fn lookup_name(&self, name: &str) -> Option<Value> {
+        if let Some(value) = self.environment.get_lexical(name, false) {
+            return Some(value);
+        }
+        if let Some(owner) = self.environment.owner.as_deref()
+            && let Some(scope) = self.module_scopes.get(owner)
+            && let Some(value) = scope.get(name)
+        {
+            return Some(value.clone());
+        }
+        if let Some(value) = self.environment.root().get_here(name) {
+            return Some(value);
+        }
+        self.fallback_globals
+            .as_ref()
+            .and_then(|g| g.get(name).cloned())
+    }
+
+    /// Install the module tables a bridge interpreter resolves through.
+    pub fn set_module_scopes(&mut self, scopes: HashMap<String, Arc<ImHashMap<String, Value>>>) {
+        self.module_scopes = scopes;
+    }
+
+    /// Hand a bridge interpreter the host program's live top-level
+    /// bindings, the last place a name is looked for.
+    pub fn set_fallback_globals(&mut self, globals: Arc<ImHashMap<String, Value>>) {
+        self.fallback_globals = Some(globals);
+    }
+
+    /// The file a definition evaluated right now belongs to. Inside a
+    /// frame that is the frame's own file — a nested `fn` or a lambda
+    /// created while a library function runs belongs to the library,
+    /// whichever file's code called it. At the top level it is the file
+    /// being loaded. (The module path alone was wrong for the nested
+    /// case: it names the file whose *statement* is executing, so a
+    /// helper declared inside a library call made from `main.ol` was
+    /// attributed to `main.ol`, and resolved names as if it were.)
+    fn defining_file(&self) -> Option<String> {
+        if self.environment.parent.is_some()
+            && let Some(owner) = self.environment.owner.as_deref()
+        {
+            return Some(owner.to_string());
+        }
+        self.current_module_path.clone()
+    }
+
+    /// The shared owner tag for a defining file, interned so a call frame
+    /// costs one hash lookup rather than a string allocation.
+    fn owner_of(&mut self, def_file: Option<&str>) -> Option<Arc<str>> {
+        let file = def_file?;
+        if let Some(owner) = self.owners.get(file) {
+            return Some(owner.clone());
+        }
+        let owner: Arc<str> = Arc::from(file);
+        self.owners.insert(file.to_string(), owner.clone());
+        Some(owner)
+    }
+
     fn global_bindings(&self) -> Arc<ImHashMap<String, Value>> {
         let mut env = &self.environment;
         while let Some(parent) = env.parent.as_deref() {
@@ -2982,7 +3086,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             call_stack_names: Vec::new(),
             missing_dependencies: HashMap::new(),
             pending_error_location: None,
-            entry_file: None,
+            // Frames keep their naming rule on a worker: "(lib/x.ol)"
+            // marks the frames from other files, as on the main thread.
+            entry_file: self.entry_file.clone(),
             pending_error_frames: None,
             pending_error_hint: None,
             scope_bindings: self.scope_bindings.clone(),
@@ -2996,6 +3102,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             module_name_index: self.module_name_index.clone(),
             dependency_tracker: self.dependency_tracker.clone(),
             current_module_path: self.current_module_path.clone(), // For tracking current module during loading
+            owners: self.owners.clone(),
+            fallback_globals: self.fallback_globals.clone(),
+            module_scopes: self.module_scopes.clone(),
             module_loading_stack: Vec::new(), // Feature 7: Each thread gets its own loading stack
 
             // Feature 8: Smart caching system
@@ -3050,6 +3159,23 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     if let Value::Function(func) = value {
                         tier.note_function(name, func);
                     }
+                }
+                // The parent's whole function table, module functions
+                // included: the root environment holds only the program's
+                // own globals, so a lib module's functions were unknown to
+                // every worker and ran interpreted there.
+                for name in t.ambiguous_names() {
+                    tier.inherit_ambiguous(&name);
+                }
+                for (name, func) in t.known_functions() {
+                    tier.note_function(name, func);
+                }
+                if t.is_verbose() {
+                    eprintln!(
+                        "[ovm] worker tier: {} function(s) known, {} ambiguous",
+                        tier.known_functions().len(),
+                        tier.ambiguous_names().len()
+                    );
                 }
                 // The gate rides the tier's bridge interpreter, so a fresh
                 // worker tier without it enforces nothing — a promoted
@@ -3822,8 +3948,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // ancestor frame's stale value. Insert explicitly instead: existing
         // entries always win, so inner scopes shadow outer ones.
         let mut all_variables = self.environment.flat_snapshot();
-        let mut current_env = &self.environment;
-        while let Some(parent) = current_env.parent.as_ref() {
+        // The lexical chain only: the enclosing scopes and the declaring
+        // frames, never the frames that happened to call into this one.
+        for parent in self.environment.lexical_chain().into_iter().skip(1) {
             // Within a scope, call-frame locals shadow its flat map
             for (name, value) in parent.locals.iter().rev() {
                 if !all_variables.contains_key(name) {
@@ -3835,7 +3962,6 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     all_variables.insert(name.clone(), value.clone());
                 }
             }
-            current_env = parent;
         }
 
         all_variables
@@ -3852,6 +3978,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         match iterable_value {
             Value::List(items) => {
                 let parent_env = std::mem::take(&mut self.environment);
+                self.environment.owner = parent_env.owner.clone();
+                self.environment.scope_id = parent_env.scope_id;
+                self.environment.lexical_parent = parent_env.lexical_parent;
                 self.environment.parent = Some(Arc::new(parent_env));
                 self.environment.is_frame = true;
 
@@ -3871,6 +4000,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 inclusive,
             } => {
                 let parent_env = std::mem::take(&mut self.environment);
+                self.environment.owner = parent_env.owner.clone();
+                self.environment.scope_id = parent_env.scope_id;
+                self.environment.lexical_parent = parent_env.lexical_parent;
                 self.environment.parent = Some(Arc::new(parent_env));
                 self.environment.is_frame = true;
 
@@ -3889,6 +4021,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             // refusing it was a surprise with no reason behind it.
             Value::Tuple(items) => {
                 let parent_env = std::mem::take(&mut self.environment);
+                self.environment.owner = parent_env.owner.clone();
+                self.environment.scope_id = parent_env.scope_id;
+                self.environment.lexical_parent = parent_env.lexical_parent;
                 self.environment.parent = Some(Arc::new(parent_env));
                 self.environment.is_frame = true;
 
@@ -3905,6 +4040,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             // consistent with 'a' literals being strings.
             Value::String(s) => {
                 let parent_env = std::mem::take(&mut self.environment);
+                self.environment.owner = parent_env.owner.clone();
+                self.environment.scope_id = parent_env.scope_id;
+                self.environment.lexical_parent = parent_env.lexical_parent;
                 self.environment.parent = Some(Arc::new(parent_env));
                 self.environment.is_frame = true;
 
@@ -4574,6 +4712,20 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // it — asserts tally rather than raise, and a runner that only
         // watched for raises reported ✓ over failing assertions.
         let (_, failed_before) = crate::stdlib::testing::tally_snapshot();
+        // A module's tests run once per `olang test`, keyed by the file
+        // they live in: a project whose 22 client modules each `use web`
+        // ran the SDK's suite 22 times. The file under test itself always
+        // runs (the entry), so the key is only consulted for imports.
+        if let Some(module) = self.current_module_path.as_deref()
+            && !module.starts_with("__")
+        {
+            let first_time = tests_ran_once(module, &test_decl.name);
+            // The file under test always runs — its record is what stops a
+            // later importer from running the same block again.
+            if !first_time && self.entry_file.as_deref() != Some(module) {
+                return Ok(Value::Unit);
+            }
+        }
         // A test block is its own scope, as a function body is: a `let`
         // inside it ends at the closing brace instead of replacing a
         // module-level name for every later block in the file (a test's
@@ -4957,6 +5109,14 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         self.test_mode = true;
     }
 
+    /// Forget the location and frames captured for an error that a
+    /// boundary (`attempt`) has just turned into a value.
+    pub fn clear_pending_error(&mut self) {
+        self.pending_error_location = None;
+        self.pending_error_frames = None;
+        self.pending_error_hint = None;
+    }
+
     /// The file whose code is running, for artifacts that live beside it
     /// (`testing.snapshot`): the current module when one is loading, the
     /// entry file otherwise.
@@ -5002,6 +5162,18 @@ mod module_cache;
 pub use module_cache::{
     CacheCleanupStats, CacheStatistics, ModuleCacheEntry, ModuleDependencyTracker, SmartCacheConfig,
 };
+
+/// Process-wide record of (module file, test name) pairs that have run
+/// under `olang test`. True the first time a pair is seen — the block
+/// should run — and false after.
+fn tests_ran_once(module: &str, test: &str) -> bool {
+    static RAN: std::sync::OnceLock<std::sync::Mutex<HashSet<(String, String)>>> =
+        std::sync::OnceLock::new();
+    let set = RAN.get_or_init(|| std::sync::Mutex::new(HashSet::new()));
+    set.lock()
+        .map(|mut s| s.insert((module.to_string(), test.to_string())))
+        .unwrap_or(true)
+}
 
 #[cfg(test)]
 mod tests {

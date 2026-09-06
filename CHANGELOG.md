@@ -9,6 +9,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Graceful shutdown.** `os.on_shutdown(handler)` runs on SIGINT or
+  SIGTERM; `http.shutdown()` drains every running `http.serve` (no new
+  connections, in-flight requests finish, `serve` returns). The SDK's
+  `serve` takes `"drain": true`, `"headers"` added to every response,
+  `"trust_proxy"` for `req.remote_addr` behind a proxy, and a `"head"`
+  that may be a function of the request (per-response CSP nonces).
+
+- **The dom's other reads.** `dom.checked`, `dom.selection`,
+  `dom.set_selection`, `dom.values`; and `"paste"`/`"drop"` events carry
+  `files` read to base64, so paste-to-attach is olang.
+
+- **Macros import from a library's front door.** `use web { when }` works:
+  a module records the meta fns it declares or re-exports, and the
+  runtime import of one is not a miss.
+
+- **`olang test` runs an imported module's tests once per invocation**,
+  and `otc install` says when a shelved starter is behind this toolchain.
+
+- **`attempt(f)`** calls `f()` and answers `Ok(value)` or `Err(message)`
+  for a runtime error, so a long-lived loop can answer 500 instead of
+  ending the process; control flow passes through.
+
+- **`==` across types answers.** Values of different types compare
+  unequal instead of raising, on both tiers; Int and Float still compare
+  numerically. `olang check` warns where the types are provably
+  different.
+
+- **`compress`.** `compress.gzip`, `gunzip`, `deflate`, `inflate`, and
+  `gzip_level`, on every target. The SDK's `serve` gzips text responses
+  of a kilobyte or more when the client accepts it (`"compress": false`
+  turns it off).
+
+- **`olang --in-task run` and `olang bench --in-task`** run a program on a
+  spawned task — the context every http worker has — so a task's speed
+  is pinned to the main thread's.
+
+### Changed
+
+- **Name resolution is lexical.** A function body resolves a name it does
+  not bind in the scopes of its own definition, then in the complete
+  top-level table of its file, then in the program's root; the frames
+  that called it are never consulted. A library's local `head_for` can no
+  longer capture an application function's reference to its own
+  `head_for`, and an unresolved name is an error that names it. A nested
+  `fn` captures its whole enclosing chain, so a parameter named like a
+  builtin reaches the parameter when the function runs compiled or on a
+  task. Module functions see every sibling, private or shared, however
+  the file is ordered — from any thread and from the tier's bridge.
+
+- **`http.serve` returns `Ok(())` on a drained stop**; the SDK's `serve`
+  matches with a catch-all, so an app's "server drained" branch runs.
+
+### Fixed
+
+- **A second definition of a name no longer slows every call to it.** The
+  tier's ambiguity verdict reaches the compiler, which resolves the name
+  through the caller's own closure: 58 ms → 4 ms for 4,000 calls through
+  a by-name import that shared its name with another module's private
+  function.
+
+- **A lib function reached inside a task compiles as it does inline.** A
+  worker's tier inherits the parent's function table and ambiguity
+  verdicts: 20,000 by-name calls cost 18 ms inline and 18 ms in a task
+  (was 2,207 ms).
+
+- **`serve`'s `"headers"` keeps a streamed file response intact**: the
+  merged headers are set on the response as it is, so `body_file` routes
+  (the hashed wasm included) no longer answer 500 when headers are
+  configured.
+
+- **A lib-module call inside a task no longer rebuilds an interpreter per
+  builtin call.** The bridge's capability re-seed dropped its cached
+  interpreter on every dispatch; it is dropped only when the grant
+  changes. 2,402 ms → 546 ms for 20,000 calls through a function value
+  in a spawned task; the residual is the call running interpreted.
+
+- **A captured binding named like a global builtin** (`let head = (r) =>
+  …`, then `head(r)` inside a function) reached the builtin under the
+  bytecode tier; it now shadows it, as the interpreter always did.
+
 - **`task.watch(t, c)`.** The channel dies with the task: when `t` ends,
   however it ends, `c` is closed and the next `chan.recv` returns `Err`
   instead of waiting forever. Ownership is declared, not inferred.

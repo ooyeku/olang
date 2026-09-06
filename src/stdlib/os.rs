@@ -106,6 +106,10 @@ pub fn create_os_module() -> Value {
         create_builtin_function("interrupted", 0),
     );
     module.insert(
+        "on_shutdown".to_string(),
+        create_builtin_function("on_shutdown", 1),
+    );
+    module.insert(
         "reset_interrupt".to_string(),
         create_builtin_function("reset_interrupt", 0),
     );
@@ -154,6 +158,9 @@ pub fn call_os_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
         "flush" => os_flush(args),
         "on_interrupt" => os_on_interrupt(args),
         "interrupted" => os_interrupted(args),
+        // Intercepted by the interpreter (it needs the program to run the
+        // handler on); reaching here means no interpreter did.
+        "on_shutdown" => Err("os.on_shutdown needs the running program".into()),
         "reset_interrupt" => os_reset_interrupt(args),
         _ => Err(format!("Unknown os function: {}", name).into()),
     }
@@ -758,6 +765,63 @@ static INTERRUPTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 /// have, so `on_interrupt` is idempotent.
 static HANDLER_INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Shutdown handlers registered by `os.on_shutdown`: each runs on its own
+/// thread against a thread-safe clone of the registering interpreter when
+/// SIGINT or SIGTERM arrives, with the signal's name ("INT" or "TERM" is
+/// not distinguishable through the handler crate, so "shutdown").
+type ShutdownHandler = (crate::interpreter::Interpreter, Value);
+static SHUTDOWN_HANDLERS: std::sync::Mutex<Vec<ShutdownHandler>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// The one process-wide signal handler: records the interrupt (for
+/// `os.interrupted()`) and runs every registered shutdown handler.
+fn install_signal_handler() -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+    if HANDLER_INSTALLED.swap(true, Ordering::SeqCst) {
+        return Ok(());
+    }
+    let installed = ctrlc::set_handler(|| {
+        INTERRUPTED.store(true, Ordering::SeqCst);
+        // A shutdown is one-shot: the handlers are taken, each with the
+        // interpreter clone it registered, and run on their own threads.
+        let handlers: Vec<ShutdownHandler> = SHUTDOWN_HANDLERS
+            .lock()
+            .map(|mut h| std::mem::take(&mut *h))
+            .unwrap_or_default();
+        for (mut interp, handler) in handlers {
+            let _ = std::thread::Builder::new()
+                .name("olang-shutdown".to_string())
+                .spawn(move || {
+                    if let Err(e) = interp.call_function(
+                        handler,
+                        vec![Value::String(Arc::new("shutdown".to_string()))],
+                    ) {
+                        eprintln!("shutdown handler failed: {}", e);
+                    }
+                });
+        }
+    });
+    if let Err(e) = installed {
+        HANDLER_INSTALLED.store(false, Ordering::SeqCst);
+        return Err(e.to_string());
+    }
+    Ok(())
+}
+
+/// `os.on_shutdown(handler)`, the interpreter-level half: register the
+/// handler with a thread-safe clone of the program to run it on.
+pub fn register_shutdown_handler(
+    interpreter: crate::interpreter::Interpreter,
+    handler: Value,
+) -> Result<(), String> {
+    install_signal_handler()?;
+    SHUTDOWN_HANDLERS
+        .lock()
+        .map_err(|_| "shutdown handlers poisoned".to_string())?
+        .push((interpreter, handler));
+    Ok(())
+}
+
 /// `os.on_interrupt()` — install a Ctrl-C (SIGINT) handler that records
 /// the interrupt instead of terminating the process, and clear any prior
 /// interrupt. After this, `os.interrupted()` reports whether Ctrl-C has
@@ -768,13 +832,10 @@ fn os_on_interrupt(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
         return Err(format!("os.on_interrupt expects 0 arguments, got {}", args.len()).into());
     }
     use std::sync::atomic::Ordering;
-    if !HANDLER_INSTALLED.swap(true, Ordering::SeqCst)
-        && let Err(e) = ctrlc::set_handler(|| INTERRUPTED.store(true, Ordering::SeqCst))
-    {
+    if let Err(e) = install_signal_handler() {
         // Environmental, not misuse — e.g. another handler was installed
         // outside olang. The caller can carry on without interrupt
         // trapping, so this stays a Result rather than raising.
-        HANDLER_INSTALLED.store(false, Ordering::SeqCst);
         return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
             "os.on_interrupt: could not install handler: {}",
             e

@@ -645,6 +645,13 @@ pub struct Function {
     /// another. `None` for reconstructed values and dynamic contexts.
     #[serde(default)]
     pub def_file: Option<String>,
+    /// The scope this function was declared in: the id of the enclosing
+    /// call frame for a nested `fn` or a lambda, 0 at a file's top level.
+    /// A call frame records it as its lexical parent, and name resolution
+    /// climbs the chain through *that* frame and its own lexical parents,
+    /// never through whatever frame happened to make the call.
+    #[serde(default)]
+    pub parent_scope: u64,
 }
 
 impl Function {

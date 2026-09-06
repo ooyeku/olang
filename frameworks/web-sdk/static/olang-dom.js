@@ -283,6 +283,28 @@
     morphChildren(from, to);
   }
 
+  // Read every file of a paste or drop to base64, then hand the payload
+  // on with `files: [{ name, type, size, base64 }]` (empty when none).
+  function withFiles(fileList, payload, k) {
+    const files = fileList ? [...fileList] : [];
+    if (!files.length) { payload.files = []; k(payload); return; }
+    let pending = files.length;
+    const out = new Array(files.length);
+    files.forEach((file, i) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const url = String(reader.result);
+        out[i] = { name: file.name, type: file.type, size: file.size, base64: url.slice(url.indexOf(",") + 1) };
+        if (--pending === 0) { payload.files = out; k(payload); }
+      };
+      reader.onerror = () => {
+        out[i] = { name: file.name, type: file.type, size: file.size, base64: "", error: String(reader.error) };
+        if (--pending === 0) { payload.files = out; k(payload); }
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
   const imports = {
     env: {
       host_now_ms: () => performance.now(),
@@ -299,6 +321,21 @@
       host_dom_get_text: (h) => giveStr(elements[Number(h)].textContent ?? ""),
       host_dom_set_html: (h, ptr, len) => { elements[Number(h)].innerHTML = readStr(ptr, len); },
       host_dom_morph: (h, ptr, len) => morphInto(elements[Number(h)], readStr(ptr, len)),
+      host_dom_checked: (h) => (elements[Number(h)].checked ? 1n : 0n),
+      host_dom_selection: (h) => {
+        const el = elements[Number(h)];
+        const from = el.selectionStart, to = el.selectionEnd;
+        return giveStr(JSON.stringify([from == null ? 0 : from, to == null ? 0 : to]));
+      },
+      host_dom_set_selection: (h, from, to) => {
+        const el = elements[Number(h)];
+        if (el.setSelectionRange) { el.focus(); el.setSelectionRange(Number(from), Number(to)); }
+      },
+      host_dom_values: (h) => {
+        const el = elements[Number(h)];
+        const opts = el.selectedOptions ? [...el.selectedOptions].map((o) => o.value) : [];
+        return giveStr(JSON.stringify(opts));
+      },
       host_dom_get_value: (h) => giveStr(elements[Number(h)].value ?? ""),
       host_dom_set_value: (h, ptr, len) => { elements[Number(h)].value = readStr(ptr, len); },
       host_dom_on: (h, ptr, len, id) => {
@@ -319,11 +356,23 @@
           });
         } else if (ev === "drop") {
           // Subscribing to "drop" makes the element a drop zone: the
-          // browser only permits a drop where dragover is cancelled.
+          // browser only permits a drop where dragover is cancelled. The
+          // dropped files travel in the payload as `files`, each read to
+          // base64 — the shape dom.read_file hands back.
           el.addEventListener("dragover", (e) => e.preventDefault());
           el.addEventListener("drop", (e) => {
             e.preventDefault();
-            dispatchJson(cb, eventPayload(e, "drop"));
+            withFiles(e.dataTransfer && e.dataTransfer.files, eventPayload(e, "drop"), (p) => dispatchJson(cb, p));
+          });
+        } else if (ev === "paste") {
+          // A paste with files (an image from the clipboard) carries them
+          // as `files`; a text paste carries `text` and is not prevented.
+          el.addEventListener("paste", (e) => {
+            const files = e.clipboardData && e.clipboardData.files;
+            const p = eventPayload(e, "paste");
+            p.text = (e.clipboardData && e.clipboardData.getData("text/plain")) || "";
+            if (files && files.length) e.preventDefault();
+            withFiles(files, p, (payload) => dispatchJson(cb, payload));
           });
         } else if (ev === "dragstart") {
           el.addEventListener("dragstart", (e) => {

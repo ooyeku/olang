@@ -61,7 +61,10 @@ A *test file* is any `.ol` file containing a top-level `test "name" { ... }`
 block. Each test file runs in a fresh interpreter, top to bottom — helper
 functions, fixtures, and imports work exactly as they do under
 `olang <file>`, and files inside a package get the package's dependencies.
-Files without test blocks are not executed at all.
+Files without test blocks are not executed at all. An imported module's
+test blocks run once per `olang test` invocation, keyed by the module's
+file — a project whose every client module imports the SDK runs the
+SDK's suite once, not once per importer.
 
 Under the runner, a failing block **records its failure and execution
 continues**, so one red test doesn't hide the rest (in a normal
@@ -275,6 +278,10 @@ judgement about intent rather than a provable contradiction.
   every later `fs.exists(…)` in its scope into a field access on a
   value; `use lib.csv` binds `csv` over the stdlib module (the path
   import wins, on purpose) and says so.
+- **An `==` between values of provably different types** — `"yes" ==
+  true` — is always false (values of different types never compare
+  equal), so the comparison is almost certainly not the one intended.
+  Int and Float compare numerically and are not flagged.
 
 ```text
   ⚠ the Result from fs.write_file is discarded, so a failure here is
@@ -358,7 +365,14 @@ olang bench kernels/                     # every .ol file in the directory
 olang bench fib.ol --runs 10             # more timed runs (default 7)
 olang bench kernels/ --save base.json    # store medians as a baseline
 olang bench kernels/ --against base.json # compare to a stored baseline
+olang bench kernels/ --in-task           # every run on a spawned task
 ```
+
+`--in-task` runs each program on a spawned task instead of the main
+thread — the execution context every `http.serve` worker and `spawn`
+body has — so a task's speed can be pinned to the main thread's with a
+saved baseline. `olang --in-task run file.ol` is the same switch for one
+run.
 
 Each file runs as its own subprocess — a fresh VM and JIT every run,
 measuring the wall-clock a user actually experiences: one discarded

@@ -30,11 +30,15 @@ let server = spawn {
 
 // A second server with a server-rendered first paint and no client
 // program: the shell carries the view over `initial`, and its state.
+// It also carries response headers on every route and a head that is
+// a function of the request.
 let painted = spawn {
     serve(#{ "title": "painted", "client": "", "port": port + 1,
              "view": (s) => div(#{ "class": "count" },
                                 [to_string(map_get(s, "n")) + " notes"]),
-             "initial": () => #{ "n": 3, "tag": "<b>" } })
+             "initial": () => #{ "n": 3, "tag": "<b>" },
+             "headers": #{ "X-Content-Type-Options": "nosniff" },
+             "head": (req) => "<meta name=\"path\" content=\"" + req.path + "\">" })
 }
 
 // Wait for a socket: retry the shell until it answers.
@@ -90,6 +94,12 @@ test "a view renders the first paint into the shell, with its state" {
     // No client program: no image is offered, and /app.olb says so.
     assert_eq(str.contains(shell.body, "data-bin"), false)
     assert_eq(unwrap(http.get(painted_base + "/app.olb")).status, 404)
+    // The configured header rides every response, static routes included,
+    // and the head saw the request.
+    assert_eq(map_get(shell.headers, "x-content-type-options"), "nosniff")
+    let css = unwrap(http.get(painted_base + "/web.css"))
+    assert_eq(map_get(css.headers, "x-content-type-options"), "nosniff")
+    assert_eq(str.contains(shell.body, "<meta name=\"path\" content=\"/\">"), true)
 }
 
 test "rpc round-trips over the wire" {
@@ -110,4 +120,39 @@ test "the error envelope crosses the socket" {
     let gone = unwrap(http.get(base + "/definitely/not/here"))
     assert_eq(gone.status, 404)
     assert_eq(str.contains(gone.body, "not_found"), true)
+}
+
+test "a large text response is gzipped only for a client that accepts it" {
+    // The shim is well over a kilobyte of text; the shell here is under
+    // it and goes out as it is.
+    let small = unwrap(http.get(painted_base + "/",
+        #{ "headers": #{ "Accept-Encoding": "gzip" } }))
+    assert_eq(map_has_key(small.headers, "content-encoding"), false)
+    let plain = unwrap(http.get(painted_base + "/olang-dom.js"))
+    assert_eq(plain.status, 200)
+    assert_eq(map_has_key(plain.headers, "content-encoding"), false)
+    assert_eq(str.length(plain.body) >= 1024, true)
+    let packed = unwrap(http.get(painted_base + "/olang-dom.js",
+        #{ "headers": #{ "Accept-Encoding": "gzip" } }))
+    assert_eq(packed.status, 200)
+    assert_eq(map_get(packed.headers, "content-encoding"), "gzip")
+    assert_eq(map_get(packed.headers, "vary"), "Accept-Encoding")
+    // The configured headers ride the compressed response too.
+    assert_eq(map_get(packed.headers, "x-content-type-options"), "nosniff")
+    assert_eq(str.length(packed.body) < str.length(plain.body), true)
+}
+
+test "configured headers leave a streamed file response intact" {
+    // The hashed wasm is served with `body_file`; with `"headers"` set the
+    // response used to be rebuilt around a `body` it did not have (a 500).
+    let wasm = if fs.exists("static/olang_playground.wasm") => "static/olang_playground.wasm"
+        else if fs.exists("../static/olang_playground.wasm") => "../static/olang_playground.wasm"
+        else => ""
+    if wasm != "" => {
+        let resp = unwrap(http.get(painted_base + "/olang.wasm"))
+        assert_eq(resp.status, 200)
+        assert_eq(map_get(resp.headers, "content-type"), "application/wasm")
+        assert_eq(map_get(resp.headers, "x-content-type-options"), "nosniff")
+    }
+    else => ()
 }

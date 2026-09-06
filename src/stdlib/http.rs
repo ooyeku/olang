@@ -53,6 +53,10 @@ pub fn create_http_module() -> Value {
     // HTTP Server operations
     module.insert("serve".to_string(), create_builtin_function("serve", 2));
     module.insert(
+        "shutdown".to_string(),
+        create_builtin_function("shutdown", 0),
+    );
+    module.insert(
         "response".to_string(),
         create_builtin_function("response", 2),
     );
@@ -101,6 +105,12 @@ pub fn call_http_function(
         "delete" => http_delete(args),
         "request" => http_request(args),
         "serve" => http_serve(args),
+        "shutdown" => {
+            // Ask every running `http.serve` to stop accepting and drain:
+            // in-flight requests finish, workers exit, `serve` returns Ok.
+            SHUTDOWN.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(Value::Unit)
+        }
         "response" => http_response(args),
         "response_with_headers" => http_response_with_headers(args),
         "parse_url" => parse_url(args),
@@ -774,6 +784,10 @@ struct ServeConfig {
     /// The address to listen on. 127.0.0.1 unless asked: a server that
     /// should be reachable from another machine says so.
     bind: String,
+    /// Take the peer address from `X-Forwarded-For` (its first entry)
+    /// when a proxy set it. Off unless asked: a header anyone can send
+    /// must not become the address by default.
+    trust_proxy: bool,
 }
 
 fn default_worker_count() -> usize {
@@ -827,6 +841,7 @@ fn serve_config(options: Option<&Value>) -> Result<ServeConfig, String> {
         max_body_bytes: 10 * 1024 * 1024,
         request_timeout_ms: 30_000,
         bind: "127.0.0.1".to_string(),
+        trust_proxy: false,
     };
     let Some(options) = options else {
         return Ok(defaults);
@@ -851,6 +866,7 @@ fn serve_config(options: Option<&Value>) -> Result<ServeConfig, String> {
         "max_body_bytes",
         "request_timeout_ms",
         "bind",
+        "trust_proxy",
     ];
     if let Some(unknown) = fields.keys().find(|key| !known.contains(&key.as_str())) {
         return Err(format!("serve: unknown option '{}'", unknown));
@@ -867,8 +883,19 @@ fn serve_config(options: Option<&Value>) -> Result<ServeConfig, String> {
             ));
         }
     };
+    let trust_proxy = match fields.get("trust_proxy") {
+        None => false,
+        Some(Value::Boolean(b)) => *b,
+        Some(other) => {
+            return Err(format!(
+                "serve: trust_proxy must be a Bool, got {}",
+                other.type_name()
+            ));
+        }
+    };
     Ok(ServeConfig {
         bind,
+        trust_proxy,
         workers,
         queue_capacity: option_usize(
             fields,
@@ -951,7 +978,20 @@ fn serve_connection(
                     .any(|(key, value)| key == "connection" && value.eq_ignore_ascii_case("close"));
                 let keep_alive =
                     !client_wants_close && served + 1 < config.max_requests_per_connection;
-                let request_value = request_to_value(&req, &remote_addr);
+                // Behind a trusted proxy the peer is the proxy; the
+                // client is the first entry of X-Forwarded-For.
+                let forwarded = if config.trust_proxy {
+                    req.headers
+                        .iter()
+                        .find(|(k, _)| k.eq_ignore_ascii_case("x-forwarded-for"))
+                        .and_then(|(_, v)| v.split(',').next())
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                } else {
+                    None
+                };
+                let request_value =
+                    request_to_value(&req, forwarded.as_deref().unwrap_or(&remote_addr));
                 let fs_grant = interpreter.effective_fs();
                 let bytes = match interpreter.call_function(handler.clone(), vec![request_value]) {
                     Ok(result) => render_handler_result(&result, keep_alive, fs_grant),
@@ -1087,14 +1127,31 @@ pub fn serve_blocking(
     // queue forever.
     drop(receiver);
 
-    for stream in listener.incoming() {
-        let stream = match stream {
-            Ok(s) => s,
+    // The accept loop polls, so `http.shutdown()` (from a shutdown
+    // handler, or any thread) can stop it: no new connections are taken,
+    // the queue drains, workers finish the request in hand and exit, and
+    // `serve` returns Ok — the graceful stop a `kill` never allowed.
+    SHUTDOWN.store(false, std::sync::atomic::Ordering::SeqCst);
+    if let Err(e) = listener.set_nonblocking(true) {
+        return err_val(format!("serve: could not configure the listener: {}", e));
+    }
+    loop {
+        if SHUTDOWN.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
+        let stream = match listener.accept() {
+            Ok((s, _)) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                continue;
+            }
             Err(error) => {
                 crate::log::get_logger().warn("http", &format!("accept failed: {}", error));
                 continue;
             }
         };
+        // Connections were accepted non-blocking; their reads must block.
+        let _ = stream.set_nonblocking(false);
         match sender.try_send(stream) {
             Ok(()) => {}
             Err(std::sync::mpsc::TrySendError::Full(mut stream)) => {
@@ -1117,8 +1174,16 @@ pub fn serve_blocking(
     for handle in worker_handles {
         let _ = handle.join();
     }
-    Ok(Value::Unit)
+    // A drained stop is a success the caller can match on: `Ok(())`,
+    // the shape the failure path's `Err` pairs with. A bare unit here
+    // left `match http.serve(...) { Ok(v) => .., Err(e) => .. }` with
+    // "Pattern match failed" at the very moment the server stopped as
+    // asked.
+    Ok(Value::Ok(Box::new(Value::Unit)))
 }
+
+/// Set by `http.shutdown()`; every running accept loop stops on it.
+static SHUTDOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Create an HTTP response struct
 /// Usage: http.response(200, "Hello World") -> HttpResponse
@@ -1405,6 +1470,7 @@ mod tests {
                 "delete",
                 "request",
                 "serve",
+                "shutdown",
                 "response",
                 "response_with_headers",
                 "parse_url",
@@ -1428,7 +1494,7 @@ mod tests {
                 }
             }
 
-            assert_eq!(fields.len(), 11, "Expected 11 functions in http module");
+            assert_eq!(fields.len(), 12, "Expected 12 functions in http module");
         } else {
             panic!("Expected struct for http module, got: {:?}", module);
         }

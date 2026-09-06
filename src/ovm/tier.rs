@@ -244,6 +244,27 @@ impl BytecodeTier {
     /// Names the tier can never dispatch because two distinct bodies share
     /// them (trait default + override); the interpreter resolves these by
     /// receiver type — correct, and worth *seeing*.
+    /// Every function this tier has been told about, by name — what a
+    /// worker's fresh tier replays so a module function reached through
+    /// a task compiles there as it does on the main thread (without it,
+    /// `count` stayed interpreted in every task: "cannot compile callee
+    /// `as_str`", a name the worker's tier had never heard of).
+    pub fn known_functions(&self) -> Vec<(String, Function)> {
+        self.known_functions
+            .iter()
+            .map(|(n, f)| (n.clone(), f.clone()))
+            .collect()
+    }
+
+    /// The parent's ambiguity verdict, replayed into a worker's tier.
+    pub fn is_verbose(&self) -> bool {
+        self.verbose
+    }
+
+    pub fn inherit_ambiguous(&mut self, name: &str) {
+        self.mark_ambiguous(name);
+    }
+
     pub fn ambiguous_names(&self) -> Vec<String> {
         let mut names: Vec<String> = self.ambiguous.iter().cloned().collect();
         names.sort();
@@ -483,13 +504,10 @@ impl BytecodeTier {
             // it is interpreted from here on. Clearing `compiled` wholesale is
             // deliberate — a previously compiled caller may have resolved the
             // old id, and must recompile without it.
-            self.ambiguous.insert(name.clone());
-            self.known_functions.remove(&name);
-            self.call_counts.remove(&name);
-            self.rejected.remove(&name);
-            self.rejected_reasons.remove(&name);
-            self.vm.unregister_function(&name);
-            self.compiled.clear();
+            // One path for the verdict, so the VM and its compiler hear it
+            // too: a caller of the name then resolves through its closure
+            // and compiles, rather than looping on an unresolvable callee.
+            self.mark_ambiguous(&name);
             return;
         }
 
@@ -542,6 +560,16 @@ impl BytecodeTier {
 
     /// The program's entry file, so a trace frame from another file can
     /// name it the way the interpreter's own frames do.
+    /// A loaded module's complete top-level table, for the bridge: a
+    /// module function that runs there resolves its siblings through it.
+    pub fn note_module_scope(
+        &mut self,
+        file: String,
+        scope: Arc<im::HashMap<String, crate::ast::Value>>,
+    ) {
+        self.vm.note_module_scope(file, scope);
+    }
+
     pub fn set_entry_file(&mut self, file: Option<String>) {
         self.vm.set_entry_file(file);
     }
@@ -851,6 +879,9 @@ impl BytecodeTier {
                 }
                 Err(BytecodeError::UnresolvedCallee(callee)) => {
                     // Resolve the dependency, then retry this function
+                    if self.verbose {
+                        eprintln!("[ovm] '{}' waits on callee '{}'", name, callee);
+                    }
                     if !self.compile_dependency(&callee) {
                         if self.verbose {
                             eprintln!(
@@ -886,13 +917,14 @@ impl BytecodeTier {
     /// Compile a callee so the caller can resolve it. Returns whether the
     /// callee is now available to the VM.
     fn compile_dependency(&mut self, name: &str) -> bool {
+        // Ambiguity first: a compiled artifact under the name may survive
+        // from before the second definition, and reporting it as resolved
+        // sent the caller's compile round the retry loop until it gave up.
+        if self.rejected.contains(name) || self.ambiguous.contains(name) {
+            return false;
+        }
         if self.compiled.contains_key(name) {
             return true;
-        }
-        if self.rejected.contains(name) || self.ambiguous.contains(name) {
-            // An ambiguous callee can't be resolved by name; the caller that
-            // needs it therefore can't be tiered either.
-            return false;
         }
 
         let func = match self.known_functions.get(name) {
@@ -956,7 +988,17 @@ impl BytecodeTier {
     /// `compiled.clear()`, since a previously compiled caller may have baked
     /// the now-withdrawn id).
     fn mark_ambiguous(&mut self, name: &str) {
+        if self.verbose && !self.ambiguous.contains(name) {
+            eprintln!(
+                "[ovm] '{}' is ambiguous: two definitions share the name; calls resolve by scope",
+                name
+            );
+        }
         self.ambiguous.insert(name.to_string());
+        // The VM and its compiler must know too: a call to the name then
+        // resolves through the caller's closure and compiles, instead of
+        // being refused as an unresolvable callee.
+        self.vm.mark_ambiguous(name);
         self.known_functions.remove(name);
         self.call_counts.remove(name);
         self.rejected.remove(name);
@@ -1167,6 +1209,7 @@ let t2 = time.monotonic_ms()
             param_checks: Vec::new(),
             return_check: None,
             def_file: None,
+            parent_scope: 0,
         }
     }
 
@@ -1289,6 +1332,7 @@ let t2 = time.monotonic_ms()
             param_checks: Vec::new(),
             return_check: None,
             def_file: None,
+            parent_scope: 0,
         };
 
         match tier.try_call(&func, &mut [Value::Integer(5)]) {
@@ -1333,6 +1377,7 @@ let t2 = time.monotonic_ms()
             param_checks: Vec::new(),
             return_check: None,
             def_file: None,
+            parent_scope: 0,
         };
 
         for _ in 0..5 {
@@ -1396,6 +1441,7 @@ let t2 = time.monotonic_ms()
             param_checks: Vec::new(),
             return_check: None,
             def_file: None,
+            parent_scope: 0,
         };
 
         match tier.try_call(&func, &mut [Value::Integer(1), Value::Integer(0)]) {

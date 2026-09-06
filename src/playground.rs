@@ -133,6 +133,12 @@ unsafe extern "C" {
     fn host_dom_get_text(handle: i64) -> *const u8;
     fn host_dom_set_html(handle: i64, ptr: *const u8, len: usize);
     fn host_dom_morph(handle: i64, ptr: *const u8, len: usize);
+    fn host_dom_checked(handle: i64) -> i64;
+    /// "[from, to]" as JSON.
+    fn host_dom_selection(handle: i64) -> *const u8;
+    fn host_dom_set_selection(handle: i64, from: i64, to: i64);
+    /// A multi-select's chosen values, as a JSON list of strings.
+    fn host_dom_values(handle: i64) -> *const u8;
     fn host_dom_get_value(handle: i64) -> *const u8;
     fn host_dom_set_value(handle: i64, ptr: *const u8, len: usize);
     fn host_dom_on(handle: i64, event: *const u8, len: usize, callback_id: i64);
@@ -312,6 +318,37 @@ pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::erro
             let s = text(v)?;
             unsafe { host_dom_set_html(handle(el)?, s.as_ptr(), s.len()) };
             Ok(Value::Unit)
+        }
+        ("checked", [el]) => Ok(Value::Boolean(
+            unsafe { host_dom_checked(handle(el)?) } != 0,
+        )),
+        ("selection", [el]) => {
+            let json = read_host_string(unsafe { host_dom_selection(handle(el)?) });
+            let pair: Vec<i64> = serde_json::from_str(&json).unwrap_or_default();
+            let (from, to) = (
+                pair.first().copied().unwrap_or(0),
+                pair.get(1).copied().unwrap_or(0),
+            );
+            Ok(Value::Tuple(std::sync::Arc::new(vec![
+                Value::Integer(from),
+                Value::Integer(to),
+            ])))
+        }
+        ("set_selection", [el, from, to]) => {
+            let (Value::Integer(a), Value::Integer(b)) = (from, to) else {
+                return Err("dom.set_selection: from and to must be Ints".into());
+            };
+            unsafe { host_dom_set_selection(handle(el)?, *a, *b) };
+            Ok(Value::Unit)
+        }
+        ("values", [el]) => {
+            let json = read_host_string(unsafe { host_dom_values(handle(el)?) });
+            let vals: Vec<String> = serde_json::from_str(&json).unwrap_or_default();
+            Ok(Value::List(std::sync::Arc::from(
+                vals.into_iter()
+                    .map(|v| Value::String(std::sync::Arc::new(v)))
+                    .collect::<Vec<_>>(),
+            )))
         }
         ("morph", [el, v]) => {
             let s = text(v)?;

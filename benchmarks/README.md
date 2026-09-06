@@ -47,3 +47,12 @@ Each engine runs as it ships: ods under the language's automatic
 parallelism policy, pandas single-threaded, Polars on its default
 thread pool. Elapsed time is measured inside each process per stage, so
 interpreter and import startup are excluded from every engine equally.
+
+## The record pipeline
+
+[records.ol](records.ol) is the other shape an application's query layer
+runs: `filter → map → sort` over 2,000 record maps, with a few `map_get`s
+and a string compare per row. It prints one `run over 2000: <ms>` line
+and is the benchmark roadmap W15 (collection pipelines) measures against
+Node; `olang bench benchmarks/records.ol --save base.json` pins it, and
+`olang bench --in-task` runs it as an http worker would.

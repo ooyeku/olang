@@ -1296,6 +1296,7 @@ impl OvmValue {
                     closure,
                     param_bounds: Vec::new(),
                     def_file: c.template.def_file.clone(),
+                    parent_scope: 0,
                 }))
             }
             ValueData::Function(_) => {

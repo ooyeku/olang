@@ -100,6 +100,11 @@ status codes and the body must carry the whole truth.
 
 ## Views as data
 
+A library's macros import from its front door like everything else:
+`use web { when }` then `@when(…)` works, because a module records the
+meta fns it declares or re-exports and the runtime import of such a
+name is satisfied by the expansion that already happened.
+
 Two small forms beside `el`: `void_el(tag, attrs)` for an element with
 no children (`img`, `br`, `input` written through `el`), and `@when(cond,
 node)`, a macro — the node is built only when the condition holds, so
@@ -123,7 +128,23 @@ absent.
 A handler answers a missing row with `not_found(what)` — the 404 with
 the row named — beside `invalid(problems)` for a 422. `Err(message)` is
 the 500, and it is for failures: an absent row is an answer, not a
-crash.
+crash. `req.remote_addr` is the peer (`ip:port`); with `"trust_proxy":
+true` in the config it is the first entry of `X-Forwarded-For` instead.
+
+`serve` wraps every response, the static routes included: `"headers"`
+in its config is a map added to each one — the `Content-Security-Policy`,
+`X-Content-Type-Options`, and `Referrer-Policy` a `<meta>` cannot carry —
+and `"head"` may be a function of the request, `(req) => html`, so a
+per-response CSP nonce is possible (the shell is then built per
+request). `"drain": true` registers a shutdown handler: on SIGINT or
+SIGTERM the server stops accepting, finishes the requests in hand, and
+`serve` returns `Ok(())`. The configured headers are set on the response
+as it is, so a route that streams a file (`body_file`) keeps streaming.
+
+Dynamic responses are gzipped on the wire: a text body of a kilobyte or
+more, to a client whose `Accept-Encoding` names gzip, goes out with
+`Content-Encoding: gzip` (files and already-encoded responses pass
+through). `"compress": false` turns it off.
 
 `route("GET", "/todos/:id", handler)` matches with `:param` capture;
 `rpc("todos.create", handler)` mounts at `POST /api/rpc/todos.create`.
@@ -158,6 +179,14 @@ Repainting is `apply` (the whole view) or `patch(id, node)` — one
 subtree rendered into the element with that id, leaving the rest of
 the page and its focused input alone: the toast, the counter, the
 chart that should not cost a full render on every store write.
+
+Two events carry files: a `"drop"` on any element and a `"paste"` on a
+text control deliver `files` as `[#{ "name", "type", "size", "base64" }]`
+(the shape `dom.read_file` hands back; a text paste carries `text`
+instead), so paste-to-attach is olang, not a page script. Form-control
+state beyond `value` is readable: `dom.checked`, `dom.selection` and
+`dom.set_selection` (insert at the cursor), `dom.values` for a
+multi-select.
 
 A request header rides every call once configured — `configure(#{
 "headers": #{ "Authorization": "Bearer " + token } })` — so a bearer
@@ -333,7 +362,7 @@ the test that exercises it, with the same "cell escaped its thread"
 the real server would raise, instead of passing every in-process test
 and failing every request.
 
-The SDK's tests are olang tests — 151 of them, `olang test
+The SDK's tests are olang tests — 63 of them, `olang test
 frameworks/web-sdk`. The route table and envelope are exercised
 in-process by constructing request values and calling `dispatch`
 directly; the data layer runs against `:memory:`; the demo (`demo/`

@@ -38,6 +38,7 @@ pub fn run(args: &[String]) -> i32 {
     let mut save: Option<PathBuf> = None;
     let mut against: Option<PathBuf> = None;
     let mut fail_on_regress = false;
+    let mut in_task = false;
     let mut paths: Vec<PathBuf> = Vec::new();
 
     let mut it = args.iter();
@@ -65,6 +66,9 @@ pub fn run(args: &[String]) -> i32 {
                 }
             },
             "--fail-on-regress" => fail_on_regress = true,
+            // Every run on a spawned task: what an http worker or a `spawn`
+            // body costs, so a task's speed is pinned to the main thread's.
+            "--in-task" => in_task = true,
             other => paths.push(PathBuf::from(other)),
         }
     }
@@ -106,9 +110,14 @@ pub fn run(args: &[String]) -> i32 {
     println!(
         "{}",
         format!(
-            "olang bench — {} file(s), 1 warmup + up to {} runs each",
+            "olang bench — {} file(s), 1 warmup + up to {} runs each{}",
             files.len(),
-            runs
+            runs,
+            if in_task {
+                ", each on a spawned task"
+            } else {
+                ""
+            }
         )
         .bold()
     );
@@ -117,7 +126,7 @@ pub fn run(args: &[String]) -> i32 {
     let mut regressed = false;
     for file in &files {
         let name = display_name(file);
-        let m = match measure(&exe, file, runs) {
+        let m = match measure(&exe, file, runs, in_task) {
             Ok(m) => m,
             Err(msg) => {
                 eprintln!("  {} {}", name.red(), msg);
@@ -206,10 +215,14 @@ fn display_name(p: &Path) -> String {
         .unwrap_or_else(|| p.display().to_string())
 }
 
-fn measure(exe: &Path, file: &Path, max_runs: usize) -> Result<Measurement, String> {
+fn measure(exe: &Path, file: &Path, max_runs: usize, in_task: bool) -> Result<Measurement, String> {
     let once = |_: usize| -> Result<(f64, Vec<u8>), String> {
         let t0 = Instant::now();
-        let out = Command::new(exe)
+        let mut command = Command::new(exe);
+        if in_task {
+            command.arg("--in-task");
+        }
+        let out = command
             .arg(file)
             .output()
             .map_err(|e| format!("failed to run: {e}"))?;

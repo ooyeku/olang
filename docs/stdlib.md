@@ -339,6 +339,7 @@ println("")
 | `is_ok(r)` / `is_err(r)` | tests |
 | `result_map(r, f)` | transform the `Ok` value |
 | `result_map_err(r, f)` | transform the `Err` value |
+| `attempt(f)` | call `f()`: `Ok(value)`, or `Err(message)` when a runtime error ended it |
 
 ```olang
 let r = Ok(10)
@@ -1015,6 +1016,32 @@ println(base64.encode(b))                              // aGkh
 println(show(bytes.from_string("hi!") == b))           // true
 ```
 
+## `compress` — gzip and deflate
+
+In-memory compression for the wire and the disk, on every target: the
+codec is pure Rust, so the browser runtime carries it too. Every
+function takes a string or `Bytes` and answers `Bytes`; the decoders
+return `Result`, since arbitrary input may not be compressed data.
+
+| Function | Description |
+|---|---|
+| `compress.gzip(data)` | gzip at the default level (6) |
+| `compress.gzip_level(data, n)` | gzip at level `n`, 0..=9 |
+| `compress.gunzip(b)` | `Ok(Bytes)` or `Err(message)` |
+| `compress.deflate(data)` / `compress.inflate(b)` | raw deflate, no gzip header, and its inverse |
+
+An `http.serve` handler that compresses a large JSON body sets
+`Content-Encoding` itself; the web SDK's `serve` does this for every
+text response of a kilobyte or more when the client accepts gzip (its
+`compress` option turns it off).
+
+```olang
+let body = str.repeat("- [ ] item\n", 500)
+let packed = compress.gzip(body)
+println(`${str.length(body)} -> ${len(packed)} bytes`)
+println(show(unwrap(bytes.to_string(unwrap(compress.gunzip(packed)))) == body))   // true
+```
+
 ## `base64` — base64
 
 Binary-safe text encoding in its three practical variants — standard,
@@ -1174,6 +1201,14 @@ let r = unwrap(os.exec("git", ["status", "--short"], #{ "cwd": target }))
 if r.code == 0 => print(r.stdout)
 else => println("git failed: " + r.stderr)
 ```
+
+A server that should finish its work when told to stop registers a
+shutdown handler: `os.on_shutdown(handler)` runs `handler("shutdown")`
+on SIGINT or SIGTERM, on its own thread against a thread-safe copy of
+the program, and `http.shutdown()` from inside it asks every running
+`http.serve` to drain — no new connections, in-flight requests finish,
+workers exit, `serve` returns `Ok`. A `kill` is then a request, not an
+interruption.
 
 For a long-running loop or server, `os.on_interrupt()` traps Ctrl-C so it
 sets a flag instead of killing the process; poll it to shut down cleanly:
@@ -1417,6 +1452,7 @@ An optional map/object configures the bounded server:
 | `max_body_bytes` | `10485760` (10 MB) |
 | `request_timeout_ms` | `30000` |
 | `bind` | `"127.0.0.1"` — the address to listen on |
+| `trust_proxy` | `false` — when true, `req.remote_addr` is the first entry of `X-Forwarded-For` (a header anyone can send, so only behind a proxy you control) |
 
 The handler returns either a bare string (a `200 text/plain`) or a response
 built with `http.response`/`http.response_with_headers` — pass headers as a
@@ -1509,6 +1545,9 @@ with timers and animation frames; everything else is ordinary olang.
 | `dom.request(method, path, body, callback)` | the whole response — `#{ "status", "headers", "body" }`, status `0` with an `"error"` when no server answered — so a handler tells a 404 from a 500 from a network failure |
 | `dom.request_with(method, path, body, headers, callback)` | `dom.request` with request headers — a bearer token, another content type |
 | `dom.find(selector)` | the first match, or `()` when nothing matches — the lookup for an element that may be absent (`dom.query` raises on a miss, and a raise inside a handler takes the page down) |
+| `dom.checked(el)` | a checkbox's or radio's state |
+| `dom.selection(el)` / `dom.set_selection(el, from, to)` | a text control's selection as `(from, to)`, and setting it (focusing the control) — inserting at the cursor is set the value, then place the caret |
+| `dom.values(el)` | a `<select multiple>`'s chosen option values |
 | `dom.query_all(selector)` | every match, as a list of handles |
 | `dom.get_attr(el, name)` / `set_attr(el, name, v)` / `remove_attr(el, name)` | attributes |
 | `dom.class_add(el, c)` / `class_remove(el, c)` / `class_toggle(el, c)` | class list ops (`set_class` replaces wholesale) |

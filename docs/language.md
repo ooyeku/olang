@@ -370,6 +370,34 @@ let text = str.to_lower(text)
 println(text)
 ```
 
+### Where a name is looked up
+
+A name a function body does not bind itself is resolved **lexically**:
+in the enclosing scopes of the function's own definition, then in the
+top-level table of the file that defines it, then in the program's
+top-level bindings. The frames that *called* the function are never a
+source of names. So a library's `serve` with a local `head_for`, calling
+an application function that names `head_for`, reaches the
+application's `head_for` — declared before or after the caller, on the
+main thread or on a task — and a name nothing binds is an error that
+names it, not a lookup in whatever frame happened to be active.
+
+Two consequences of the file-level table: a module's functions see every
+sibling in their file, private or shared, however the file is ordered;
+and a nested `fn` sees its sibling nested functions, including those
+declared after it in the same body.
+
+```olang
+fn page_head(req) = head_for(1)          // resolves to the head_for below
+fn head_for(n) = "app " + to_string(n)
+fn serve(head) = {
+    fn head_for(req) = head(req)         // a local of serve: invisible to page_head
+    let t = spawn { head_for(0) }
+    show(task.join(t))
+}
+println(serve(page_head))                // Ok("app 1")
+```
+
 ### Closures capture by value
 
 A lambda (or nested `fn`) closes over the bindings it references, and it
@@ -1511,6 +1539,18 @@ error, a failed assertion, a division by zero. Those are bugs, and olang
 does not offer a way to catch one mid-expression. `try`/`catch` used to
 look like that mechanism and was not (it destructured `Result`s); it was
 removed in 0.65, and `match` and `unwrap_or` say the same thing.
+
+What exists instead is a boundary you place yourself: `attempt(f)` calls
+`f()` and answers `Ok(value)`, or `Err(message)` when a runtime error
+ended the call. Control flow is not failure — a `return` or a `?` inside
+`f` passes through — so `attempt` is for the request handler that must
+answer 500 rather than end the process, and the loop that must survive
+one bad record.
+
+```olang
+println(show(attempt(() => map_get(5, "k"))))   // Err("map_get: first argument must be a map or object")
+println(show(attempt(() => 41 + 1)))            // Ok(42)
+```
 
 What olang does have is **structural boundaries** — places where a
 failing unit is already isolated from the rest of the program, so the

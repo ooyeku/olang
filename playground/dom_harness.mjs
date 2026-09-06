@@ -84,6 +84,10 @@ function bootWorker(source) {
         host_dom_query_all: () => 0,
         host_dom_fetch_with: () => {},
         host_dom_morph: () => {},
+        host_dom_checked: () => 0n,
+        host_dom_selection: () => 0,
+        host_dom_set_selection: () => {},
+        host_dom_values: () => 0,
         host_dom_active_id: () => 0,
         host_dom_prefers_dark: () => 0n,
         host_dom_confirm: () => 1n,
@@ -150,6 +154,10 @@ const imports = {
       crypto.getRandomValues(new Uint8Array(ex.memory.buffer, ptr, len)),
     host_dom_query_all: (ptr, len) => giveStr("[]"),
   host_dom_morph: (h, ptr, len) => { node(h).html = readStr(ptr, len); },
+  host_dom_checked: (h) => (node(h).checked ? 1n : 0n),
+  host_dom_selection: (h) => giveStr("[0,0]"),
+  host_dom_set_selection: () => {},
+  host_dom_values: (h) => giveStr("[]"),
   host_dom_fetch_with: () => {},
   host_dom_query: (ptr, len) => {
       const sel = readStr(ptr, len);

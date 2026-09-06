@@ -415,6 +415,16 @@ test "the shell carries the first paint and its state when given a view" {
 ///            on every load). The browser's `mount` starts from it.
 ///   bind     the address to listen on (default "127.0.0.1"; "0.0.0.0"
 ///            for other machines on the network)
+///   headers  a map added to every response — the security headers
+///            (Content-Security-Policy, X-Content-Type-Options,
+///            Referrer-Policy) that a <meta> cannot carry
+///   drain    true to stop accepting and finish in-flight requests on
+///            SIGINT/SIGTERM instead of dying mid-request (default false)
+///   trust_proxy  take req.remote_addr from X-Forwarded-For (default false)
+///
+/// `head` may be a function of the request — `(req) => html` — so a
+/// per-response value (a CSP nonce) is possible; the shell is then
+/// built per request.
 ///   sdk_dir  where the SDK's assets are read from (default: `sdk_dir()`
 ///            — WEB_SDK_DIR, the project's lock, the shelf)
 ///
@@ -434,12 +444,19 @@ share fn serve(config) = {
     let user_routes = get_or(config, "routes", [])
     let client_path = get_or(config, "client", "client.ol")
     let port = get_or(config, "port", 7500)
-    let head = get_or(config, "head", "")
+    // Named apart from the global `head` builtin: a call through a local
+    // of that name reaches the builtin.
+    let head_html = get_or(config, "head", "")
     let log = get_or(config, "log", ())
     let view_fn = get_or(config, "view", ())
     let initial = get_or(config, "initial", ())
     let bind = get_or(config, "bind", "127.0.0.1")
     let sdk = get_or(config, "sdk_dir", sdk_dir())
+    let extra_headers = get_or(config, "headers", #{})
+    let drain = get_or(config, "drain", false)
+    let trust_proxy = get_or(config, "trust_proxy", false)
+    let compress_responses = get_or(config, "compress", true)
+    let head_is_fn = typeof(head_html) == "Function"
 
     // Read once at boot: assets, the bundle, and the wasm's location.
     let css = unwrap(fs.read_file(sdk + "/static/web.css"))
@@ -486,13 +503,15 @@ share fn serve(config) = {
     // when a view is given, so a first paint from a `() => state`
     // function shows fresh data on every load.
     fn first_state() = if typeof(initial) == "Function" => initial() else => initial
-    fn shell_for() =
-        if view_fn == () => shell(title, head, hashed_wasm_url, image != (), (), ())
+    fn head_for(req) = if head_is_fn => head_html(req) else => head_html
+    fn shell_for(req) =
+        if view_fn == () => shell(title, head_for(req), hashed_wasm_url, image != (), (), ())
         else => {
             let state = first_state()
-            shell(title, head, hashed_wasm_url, image != (), view_fn(state), state)
+            shell(title, head_for(req), hashed_wasm_url, image != (), view_fn(state), state)
         }
-    let static_shell = if view_fn == () => shell_for() else => ""
+    let per_request = view_fn != () || head_is_fn
+    let static_shell = if per_request => "" else => shell_for(())
     fn image_response(req) =
         if if_none_match(req) == image_tag =>
             http.response_with_headers(304, "",
@@ -522,7 +541,7 @@ share fn serve(config) = {
     let static_routes = [
         #{ "method": "GET", "pattern": "/", "name": "",
            "handler": (req, p) => text_response(
-               if view_fn == () => static_shell else => shell_for(),
+               if per_request => shell_for(req) else => static_shell,
                "text/html; charset=utf-8") },
         #{ "method": "GET", "pattern": "/web.css", "name": "",
            "handler": (req, p) => static_response(req, css, "text/css", css_tag) },
@@ -548,13 +567,52 @@ share fn serve(config) = {
     ]
     let table = static_routes + user_routes
 
+    // Every response carries the configured headers — the static routes'
+    // included, which is where a <meta> policy could not reach.
+    // The response keeps whichever body it carries — `body` or a
+    // streamed `body_file` — with the merged headers set on it; a
+    // rebuild that named `body` alone turned every file response (the
+    // hashed wasm included) into a 500.
+    fn with_headers(response) =
+        if len(map_keys(extra_headers)) == 0 => response
+        else => {
+            let own = if map_has_key(response, "headers") => response.headers else => #{}
+            let merged = fold(map_keys(extra_headers), own,
+                (acc, k) => map_set(acc, k, map_get(extra_headers, k)))
+            map_set(response, "headers", merged)
+        }
+    // Dynamic responses gzip on the wire when the client accepts it: a
+    // text body of a kilobyte or more (JSON, HTML, the client bundle)
+    // that carries no encoding of its own. Files and pre-compressed
+    // assets pass through; `"compress": false` turns it off.
+    fn encoded(req, response) =
+        if compress_responses == false => response
+        else if map_has_key(response, "body") == false => response
+        else if typeof(response.body) != "String" => response
+        else if str.length(response.body) < 1024 => response
+        else if map_has_key(req.headers, "accept-encoding") == false => response
+        else if str.contains(map_get(req.headers, "accept-encoding"), "gzip") == false => response
+        else if map_has_key(response.headers, "Content-Encoding") => response
+        else => {
+            let hs = map_set(map_set(response.headers, "Content-Encoding", "gzip"), "Vary", "Accept-Encoding")
+            map_set(map_set(response, "body", compress.gzip(response.body)), "headers", hs)
+        }
+    if drain => {
+        // A graceful stop: the signal asks the server to drain; in-flight
+        // requests finish, then `serve` returns.
+        let r = os.on_shutdown((why) => http.shutdown())
+    }
+
     println(title + " listening on http://" + bind + ":" + to_string(port))
-    match http.serve(port, (req) => dispatch_with(table, req, log), #{ "bind": bind }) {
+    // `Ok(())` on a drained stop, `Err` when the port could not be
+    // taken; anything else the runtime might answer is still a stop.
+    match http.serve(port, (req) => encoded(req, with_headers(dispatch_with(table, req, log))),
+                     #{ "bind": bind, "trust_proxy": trust_proxy }) {
         Err(e) => {
             println("could not start on port " + show(port) + ": " + show(e))
             Err(e)
         },
-        Ok(v) => Ok(v)
+        other => Ok(())
     }
 }
 

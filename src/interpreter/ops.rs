@@ -338,6 +338,14 @@ impl Interpreter {
                 items.extend(b.iter().cloned());
                 Ok(Value::List(std::sync::Arc::from(items)))
             }
+            // Equality across types is an answer, not an error: a String is
+            // never the Boolean true, an Int never a String. (Int and Float
+            // compare numerically above.) A request field that arrived as
+            // the wrong type used to end the handler here.
+            (l, BinaryOp::Equal, r) if l.type_name() != r.type_name() => Ok(Value::Boolean(false)),
+            (l, BinaryOp::NotEqual, r) if l.type_name() != r.type_name() => {
+                Ok(Value::Boolean(true))
+            }
             (l, op, r) => Err(InterpreterError::TypeError {
                 message: format!(
                     "Invalid binary operation: cannot apply '{}' to {} and {}",

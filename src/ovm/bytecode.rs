@@ -83,6 +83,9 @@ pub struct BytecodeVm {
     /// — including a `let` declared after the closure was created, which
     /// the closure's own snapshot cannot hold.
     host_globals: Option<std::sync::Arc<im::HashMap<String, crate::ast::Value>>>,
+    /// Every loaded module's complete top-level table, by file (see
+    /// `Interpreter::module_scopes`); seeded into the bridge.
+    module_scopes: HashMap<String, std::sync::Arc<im::HashMap<String, crate::ast::Value>>>,
     seeded_globals: Option<std::sync::Arc<im::HashMap<String, crate::ast::Value>>>,
     /// Bumped whenever the function/type landscape the bridge is seeded
     /// from changes (a declaration, a trait impl, a struct, a variant).
@@ -222,6 +225,12 @@ pub struct BytecodeVm {
 
 /// Bytecode compiler that transforms AST to bytecode
 pub struct BytecodeCompiler {
+    /// Names that two different functions share somewhere in the program.
+    /// A call to one cannot resolve through the by-name registry; it
+    /// resolves through the calling function's closure instead — the
+    /// scope that knows which one was meant. (A second `as_str` anywhere
+    /// once turned every function calling any `as_str` interpreted.)
+    ambiguous_names: std::collections::HashSet<String>,
     /// The run's capability table, when one is installed — the source of
     /// compile-time verdicts. Kept in sync by `set_capabilities`.
     static_caps: Option<Arc<crate::caps::CapTable>>,
@@ -1208,6 +1217,7 @@ impl BytecodeVm {
             builtins: BuiltinFunctions::new(),
             builtin_interpreter: None,
             host_globals: None,
+            module_scopes: HashMap::new(),
             seeded_globals: None,
             bridge_landscape_version: 0,
             bridge_seeded_version: 0,
@@ -1276,14 +1286,30 @@ impl BytecodeVm {
         }
     }
 
+    /// The tier's verdict that two different functions share `name`.
+    pub fn mark_ambiguous(&mut self, name: &str) {
+        self.ambiguous_function_names.insert(name.to_string());
+        self.compiler.ambiguous_names.insert(name.to_string());
+    }
+
     /// Record a user function's VALUE for lambda-closure attachment.
     /// A name rebound to a different body is marked ambiguous — the
     /// bridge must not resolve it bare.
+    pub fn note_module_scope(
+        &mut self,
+        file: String,
+        scope: std::sync::Arc<im::HashMap<String, crate::ast::Value>>,
+    ) {
+        self.module_scopes.insert(file, scope);
+        self.bridge_landscape_version += 1;
+    }
+
     pub fn note_function_value(&mut self, name: String, func: crate::ast::Function) {
         if let Some(existing) = self.known_function_values.get(&name)
             && !std::sync::Arc::ptr_eq(&existing.body, &func.body)
         {
             self.ambiguous_function_names.insert(name.clone());
+            self.compiler.ambiguous_names.insert(name.clone());
         }
         self.bridge_landscape_version += 1;
         self.known_function_values.insert(name, func);
@@ -1553,13 +1579,26 @@ impl BytecodeVm {
     pub(crate) fn warm_specialize(&mut self, _func_id: FunctionId, _kinds: &[()]) {}
 
     pub fn set_capabilities(&mut self, caps: Option<Arc<crate::caps::CapTable>>) {
+        // Only a *changed* grant invalidates the bridge. The bridge's own
+        // caller re-seeds capabilities on every dispatch (seed_bridge_caps
+        // forwards them into this tier), and dropping the bridge each
+        // time rebuilt a whole Interpreter per nested builtin call —
+        // ~100 µs, 50× the main thread, for every lib-module call made
+        // through a function value inside a task.
+        let changed = match (&self.caps, &caps) {
+            (None, None) => false,
+            (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
+            _ => true,
+        };
         self.caps = caps.clone();
         // The compiler folds capability queries and pre-grants gated
         // calls against this same table, so it must see every change.
         self.compiler.static_caps = caps;
-        // The bridge caches its state; drop it so the next dispatch
-        // rebuilds one that carries the table.
-        self.builtin_interpreter = None;
+        // The bridge caches its state; a changed table means the next
+        // dispatch rebuilds one that carries it.
+        if changed {
+            self.builtin_interpreter = None;
+        }
     }
 
     /// Share the `--trace-caps` set, so a promoted function's effects land
@@ -1568,8 +1607,14 @@ impl BytecodeVm {
         &mut self,
         trace: Arc<std::sync::Mutex<std::collections::BTreeSet<crate::caps::CapUse>>>,
     ) {
+        let changed = match &self.caps_trace {
+            Some(current) => !Arc::ptr_eq(current, &trace),
+            None => true,
+        };
         self.caps_trace = Some(trace);
-        self.builtin_interpreter = None;
+        if changed {
+            self.builtin_interpreter = None;
+        }
     }
 
     pub fn compile_function_with_closure(
@@ -4954,6 +4999,20 @@ impl BytecodeVm {
             }
         }
 
+        // `==` and `!=` between values of different types answer, they do
+        // not raise: a String is never the Boolean true, so a request
+        // field that arrived as the wrong type compares false instead of
+        // ending the handler (0.83). Int and Float compare numerically,
+        // as ever; the Native hook above kept its own say.
+        if matches!(op, BinaryOp::Equal | BinaryOp::NotEqual) {
+            let numeric = |d: &ValueData| matches!(d, ValueData::Integer(_) | ValueData::Float(_));
+            let same_kind =
+                std::mem::discriminant(&left.data) == std::mem::discriminant(&right.data);
+            if !same_kind && !(numeric(&left.data) && numeric(&right.data)) {
+                return Ok(OvmValue::new_boolean(matches!(op, BinaryOp::NotEqual)));
+            }
+        }
+
         // `x == ()` / `x != ()` is the presence test and is total (0.68),
         // mirroring the interpreter's rule in eval_binary_op: Unit is the
         // absence value, so equality against it answers for every value.
@@ -5596,6 +5655,12 @@ impl BytecodeVm {
                 }
                 interp.define_global(name, value.clone());
             }
+            // The functions too, but last: after the bridge's whole scope
+            // chain misses. A main-file function declared before a
+            // sibling it calls finds the sibling here — its program's
+            // root — rather than a like-named function the by-name table
+            // kept, or nothing.
+            interp.set_fallback_globals(host.clone());
             self.seeded_globals = Some(host);
         }
     }
@@ -5607,7 +5672,9 @@ impl BytecodeVm {
             // Tier first: seed_bridge_state forwards the declaration
             // tables into an existing tier, so order matters here.
             if std::env::var_os("OLANG_BRIDGE_TIER_OFF").is_none() {
-                interp.enable_bytecode_tier(1, false);
+                // OLANG_TIER_VERBOSE also narrates the bridge's tier, so a
+                // function value that runs interpreted here says why.
+                interp.enable_bytecode_tier(1, std::env::var_os("OLANG_TIER_VERBOSE").is_some());
             }
             // The bridge must see the same function landscape the VM
             // does: a module's mutually recursive functions resolve
@@ -5628,6 +5695,18 @@ impl BytecodeVm {
                     tier.note_function(name, func);
                 }
             }
+            // The verdict travels with the table: a name two definitions
+            // share is ambiguous in the bridge's tier too, or the one
+            // value the table kept for it would compile by name there —
+            // and in every worker the bridge spawns.
+            if let Some(tier) = interp.bytecode_tier_mut() {
+                for name in self.ambiguous_function_names.clone() {
+                    tier.inherit_ambiguous(&name);
+                }
+            }
+            // A module function run here resolves its file's siblings
+            // through the module's complete table, as it does on the host.
+            interp.set_module_scopes(self.module_scopes.clone());
             interp.seed_bridge_state(
                 self.trait_impls.clone(),
                 self.trait_defaults.clone(),
@@ -7223,6 +7302,7 @@ impl BytecodeCompiler {
     pub fn new() -> Self {
         Self {
             static_caps: None,
+            ambiguous_names: std::collections::HashSet::new(),
             current_def_file: None,
             pending_param_checks: std::sync::Arc::from(Vec::new()),
             pending_return_check: None,
@@ -8074,7 +8154,17 @@ impl BytecodeCompiler {
                     });
                     return Ok(dst_reg);
                 }
-                if self.builtin_names.contains(&function_name) {
+                // A closure binding of this name that is not the builtin
+                // itself shadows the builtin — lexical scope is the runtime
+                // rule: `let head = (x) => …` at the top level, then
+                // `head(r)` inside a function, reached the list builtin
+                // `head` here and raised "argument must be a list".
+                let closure_shadows_builtin = match self.enclosing_closure.get(&function_name) {
+                    None => false,
+                    Some(Value::Builtin(b)) => b.name != function_name,
+                    Some(_) => true,
+                };
+                if self.builtin_names.contains(&function_name) && !closure_shadows_builtin {
                     if let Some(builtin_id) =
                         BytecodeVm::float_math_id(&function_name, arg_regs.len())
                     {
@@ -8124,8 +8214,14 @@ impl BytecodeCompiler {
                 // calls through CallValue, whose interpreter fallback owns
                 // the error semantics.
                 match self.enclosing_closure.get(&function_name) {
+                    // A same-named function the registry could still learn
+                    // by name: report it unresolved so the tier compiles it
+                    // and retries. Not when the name is ambiguous — then the
+                    // closure's own binding is the only honest answer, and
+                    // it bakes as a value below.
                     Some(Value::Function(f))
-                        if f.name.as_deref() == Some(function_name.as_str()) =>
+                        if f.name.as_deref() == Some(function_name.as_str())
+                            && !self.ambiguous_names.contains(&function_name) =>
                     {
                         Err(BytecodeError::UnresolvedCallee(function_name))
                     }
@@ -8938,6 +9034,7 @@ impl BytecodeCompiler {
             // The bytecode tier isn't instrumented for coverage (that runs
             // on the interpreter), so no def_file is threaded here.
             def_file: None,
+            parent_scope: 0,
         };
 
         if runtime_captures.is_empty() && self_name.is_none() {

@@ -9,6 +9,7 @@ pub mod caps_mod;
 pub mod cell;
 pub mod chan;
 pub mod collections;
+pub mod compress;
 pub mod crypto;
 pub mod csv;
 pub mod dates;
@@ -41,6 +42,7 @@ pub fn get_stdlib() -> HashMap<String, Value> {
     stdlib.insert("base64".to_string(), base64::create_base64_module());
     stdlib.insert("bigint".to_string(), bigint::create_bigint_module());
     stdlib.insert("bytes".to_string(), bytes::create_bytes_module());
+    stdlib.insert("compress".to_string(), compress::create_compress_module());
     stdlib.insert("meta".to_string(), meta::create_meta_module());
     stdlib.insert("col".to_string(), collections::create_collections_module());
     stdlib.insert("crypto".to_string(), crypto::create_crypto_module());

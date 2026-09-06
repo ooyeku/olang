@@ -2187,9 +2187,34 @@ impl Checker {
                     self.check_expr(&fv.value, span);
                 }
             }
-            Expr::BinaryOp { left, right, .. } => {
+            Expr::BinaryOp { left, op, right } => {
                 self.check_expr(left, span);
                 self.check_expr(right, span);
+                // `==` across two provably different types is an answer the
+                // program cannot want: always false (`!=` always true). Int
+                // and Float compare numerically, so they are one kind here.
+                use crate::ast::BinaryOp as B;
+                if matches!(op, B::Equal | B::NotEqual)
+                    && let (Some(a), Some(b)) =
+                        (self.infer(left).base_name(), self.infer(right).base_name())
+                    && a != b
+                    && !(matches!(a, "Int" | "Float") && matches!(b, "Int" | "Float"))
+                {
+                    self.out.push(CheckDiagnostic {
+                        line: span.0,
+                        column: span.1,
+                        message: format!(
+                            "`{}` between {} and {} is always {}: values of different types never compare equal",
+                            if matches!(op, B::Equal) { "==" } else { "!=" },
+                            a,
+                            b,
+                            if matches!(op, B::Equal) { "false" } else { "true" }
+                        ),
+                        runtime: false,
+                        warning: true,
+                        scope: false,
+                    });
+                }
             }
             Expr::Pipeline { left, right } => {
                 self.check_expr(left, span);

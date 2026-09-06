@@ -154,9 +154,9 @@ fn lookups_return_unit_for_absence() {
 #[test]
 fn unit_equality_is_total() {
     // The presence test must be askable about present values: `x != ()`
-    // answers true for an Int rather than raising. Cross-kind equality
-    // between two present kinds still raises, and ordering against Unit
-    // still raises — only the presence question is total.
+    // answers true for an Int rather than raising. Since W14 equality is
+    // total across every kind — values of different types compare
+    // unequal — while ordering against Unit still raises.
     assert_eq!(
         run("show(str.index_of(\"abc\", \"a\") != ())").unwrap(),
         "true"
@@ -166,8 +166,8 @@ fn unit_equality_is_total() {
     assert_eq!(run("show(() == ())").unwrap(), "true");
     let e = err("show(1 < ())");
     assert!(e.contains("cannot apply"), "{e}");
-    let e = err("show(1 == \"1\")");
-    assert!(e.contains("cannot apply"), "{e}");
+    assert_eq!(run("show(1 == \"1\")").unwrap(), "false");
+    assert_eq!(run("show(\"yes\" != true)").unwrap(), "true");
 }
 
 #[test]

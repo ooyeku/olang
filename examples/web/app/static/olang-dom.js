@@ -254,6 +254,21 @@
       host_dom_get_text: (h) => giveStr(elements[Number(h)].textContent ?? ""),
       host_dom_set_html: (h, ptr, len) => { elements[Number(h)].innerHTML = readStr(ptr, len); },
       host_dom_morph: (h, ptr, len) => morphInto(elements[Number(h)], readStr(ptr, len)),
+      host_dom_checked: (h) => (elements[Number(h)].checked ? 1n : 0n),
+      host_dom_selection: (h) => {
+        const el = elements[Number(h)];
+        const from = el.selectionStart, to = el.selectionEnd;
+        return giveStr(JSON.stringify([from == null ? 0 : from, to == null ? 0 : to]));
+      },
+      host_dom_set_selection: (h, from, to) => {
+        const el = elements[Number(h)];
+        if (el.setSelectionRange) { el.focus(); el.setSelectionRange(Number(from), Number(to)); }
+      },
+      host_dom_values: (h) => {
+        const el = elements[Number(h)];
+        const opts = el.selectedOptions ? [...el.selectedOptions].map((o) => o.value) : [];
+        return giveStr(JSON.stringify(opts));
+      },
       host_dom_get_value: (h) => giveStr(elements[Number(h)].value ?? ""),
       host_dom_set_value: (h, ptr, len) => { elements[Number(h)].value = readStr(ptr, len); },
       host_dom_on: (h, ptr, len, id) => {
