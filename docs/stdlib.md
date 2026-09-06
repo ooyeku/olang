@@ -1457,6 +1457,7 @@ An optional map/object configures the bounded server:
 | `request_timeout_ms` | `30000` |
 | `bind` | `"127.0.0.1"` — the address to listen on |
 | `trust_proxy` | `false` — when true, `req.remote_addr` is the first entry of `X-Forwarded-For` (a header anyone can send, so only behind a proxy you control) |
+| `drain_ms` | `5000` — how long a drain (`http.shutdown()`) waits for the requests in flight before the rest are cut. While draining, every response says `Connection: close` and no further request is read off a kept-alive connection |
 
 The handler returns either a bare string (a `200 text/plain`) or a response
 built with `http.response`/`http.response_with_headers` — pass headers as a

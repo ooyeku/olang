@@ -120,16 +120,35 @@
     }
   }
 
-  function dispatch(id, payload) {
-    if (payload == null) {
-      readResult(callRuntime(() => ex.olang_dispatch_event(BigInt(id))));
-    } else {
-      const bytes = new TextEncoder().encode(payload);
-      const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
-      mem().set(bytes, ptr);
-      readResult(callRuntime(() => ex.olang_dispatch_event_with(BigInt(id), ptr, bytes.length)));
-      ex.olang_dealloc(ptr, Math.max(bytes.length, 1));
+  // One dispatch at a time. A host call inside a handler can fire a DOM
+  // event synchronously (focus → focusin, blur → change, click()), and
+  // re-entering the runtime while the first dispatch is still on the
+  // stack borrowed the session twice and killed the page. A dispatch
+  // that arrives while one is running is queued and runs when the outer
+  // one returns, in a microtask — never nested.
+  let dispatching = false;
+  const dispatchQueue = [];
+  function enter(run) {
+    if (dispatching) { dispatchQueue.push(run); return; }
+    dispatching = true;
+    try { run(); } finally {
+      dispatching = false;
+      if (dispatchQueue.length) { const next = dispatchQueue.shift(); queueMicrotask(() => enter(next)); }
     }
+  }
+  function dispatch(id, payload) {
+    enter(() => {
+      if (payload == null) {
+        readResult(callRuntime(() => ex.olang_dispatch_event(BigInt(id))));
+      } else {
+        const bytes = new TextEncoder().encode(payload);
+        const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
+        mem().set(bytes, ptr);
+        readResult(callRuntime(() => ex.olang_dispatch_event_with(BigInt(id), ptr, bytes.length)));
+        ex.olang_dealloc(ptr, Math.max(bytes.length, 1));
+      }
+
+    });
   }
 
   // Structured events: the payload is a JSON object the wasm side parses
@@ -141,11 +160,14 @@
   // Same dispatch, but the payload is already JSON text (worker messages,
   // fetch_json responses) — no stringify round-trip.
   function dispatchRawJson(id, text) {
-    const bytes = new TextEncoder().encode(text);
-    const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
-    mem().set(bytes, ptr);
-    readResult(callRuntime(() => ex.olang_dispatch_event_json(BigInt(id), ptr, bytes.length)));
-    ex.olang_dealloc(ptr, Math.max(bytes.length, 1));
+    enter(() => {
+      const bytes = new TextEncoder().encode(text);
+      const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
+      mem().set(bytes, ptr);
+      readResult(callRuntime(() => ex.olang_dispatch_event_json(BigInt(id), ptr, bytes.length)));
+      ex.olang_dealloc(ptr, Math.max(bytes.length, 1));
+
+    });
   }
 
   // Every DOM event delivers the same shape; handlers pick what they use.
@@ -777,6 +799,36 @@
   // for a multi-megabyte runtime that overlap is most of the boot.
   // Fall back to the buffered path (with its diagnostics) when
   // streaming is unavailable or refuses (wrong MIME, old server).
+  // Every host_dom_* import runs its JavaScript under try/catch: an
+  // exception there (an invalid selector, a selection range on an element
+  // that has none) used to unwind through the runtime with the session
+  // still borrowed. The message waits in `hostError`; the runtime reads it
+  // through host_take_error after each dom call and raises it as an olang
+  // error the handler can `attempt`.
+  let hostError = null;
+  const HANDLE_IMPORTS = new Set(["host_dom_query", "host_dom_create", "host_dom_set_interval",
+    "host_dom_worker_spawn", "host_dom_prefers_dark", "host_dom_confirm", "host_dom_checked"]);
+  const STRING_IMPORTS = new Set(["host_dom_query_all", "host_dom_get_text", "host_dom_get_value",
+    "host_dom_get_attr", "host_dom_measure", "host_dom_location", "host_dom_storage_get",
+    "host_dom_state_get", "host_dom_active_id", "host_dom_selection", "host_dom_values"]);
+  for (const name of Object.keys(imports.env)) {
+    if (!name.startsWith("host_dom_")) continue;
+    const f = imports.env[name];
+    imports.env[name] = (...a) => {
+      try { return f(...a); }
+      catch (e) {
+        hostError = e && e.message ? e.message : String(e);
+        return HANDLE_IMPORTS.has(name) ? 0n : STRING_IMPORTS.has(name) ? giveStr("") : undefined;
+      }
+    };
+  }
+  imports.env.host_take_error = () => {
+    if (hostError == null) return 0;
+    const m = hostError;
+    hostError = null;
+    return giveStr(m);
+  };
+
   async function instantiateWasm() {
     if (WebAssembly.instantiateStreaming) {
       try {

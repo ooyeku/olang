@@ -788,6 +788,10 @@ struct ServeConfig {
     /// when a proxy set it. Off unless asked: a header anyone can send
     /// must not become the address by default.
     trust_proxy: bool,
+    /// How long a drain waits for the requests in flight before the rest
+    /// are cut — a long poll re-issued on a kept-alive connection would
+    /// otherwise hold the process open for as long as a tab stays up.
+    drain_ms: u64,
 }
 
 fn default_worker_count() -> usize {
@@ -842,6 +846,7 @@ fn serve_config(options: Option<&Value>) -> Result<ServeConfig, String> {
         request_timeout_ms: 30_000,
         bind: "127.0.0.1".to_string(),
         trust_proxy: false,
+        drain_ms: 5000,
     };
     let Some(options) = options else {
         return Ok(defaults);
@@ -867,6 +872,7 @@ fn serve_config(options: Option<&Value>) -> Result<ServeConfig, String> {
         "request_timeout_ms",
         "bind",
         "trust_proxy",
+        "drain_ms",
     ];
     if let Some(unknown) = fields.keys().find(|key| !known.contains(&key.as_str())) {
         return Err(format!("serve: unknown option '{}'", unknown));
@@ -896,6 +902,8 @@ fn serve_config(options: Option<&Value>) -> Result<ServeConfig, String> {
     Ok(ServeConfig {
         bind,
         trust_proxy,
+        drain_ms: option_usize(fields, "drain_ms", defaults.drain_ms as usize, 0, 3_600_000)?
+            as u64,
         workers,
         queue_capacity: option_usize(
             fields,
@@ -969,6 +977,11 @@ fn serve_connection(
     )));
 
     for served in 0..config.max_requests_per_connection {
+        // A draining server reads no further request off a kept-alive
+        // connection: the one in hand (if any) is the last.
+        if served > 0 && SHUTDOWN.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
         match read_request(&mut stream, config) {
             Ok(None) => break,
             Ok(Some(req)) => {
@@ -976,8 +989,15 @@ fn serve_connection(
                     .headers
                     .iter()
                     .any(|(key, value)| key == "connection" && value.eq_ignore_ascii_case("close"));
-                let keep_alive =
-                    !client_wants_close && served + 1 < config.max_requests_per_connection;
+                // While draining every response says `Connection: close`,
+                // so a client that would re-issue its long poll on this
+                // connection opens a new one — which the server no longer
+                // accepts — and the drain completes when the requests in
+                // flight do.
+                let draining = SHUTDOWN.load(std::sync::atomic::Ordering::SeqCst);
+                let keep_alive = !client_wants_close
+                    && !draining
+                    && served + 1 < config.max_requests_per_connection;
                 // Behind a trusted proxy the peer is the proxy; the
                 // client is the first entry of X-Forwarded-For.
                 let forwarded = if config.trust_proxy {
@@ -1171,8 +1191,28 @@ pub fn serve_blocking(
     }
 
     drop(sender);
-    for handle in worker_handles {
-        let _ = handle.join();
+    // Idle workers exit as the queue disconnects; busy ones finish the
+    // request in hand. Wait for them up to `drain_ms`, then cut: a long
+    // poll that never returns must not hold the process open.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(config.drain_ms);
+    let mut pending = worker_handles;
+    loop {
+        pending.retain(|handle| !handle.is_finished());
+        if pending.is_empty() {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            crate::log::get_logger().warn(
+                "http",
+                &format!(
+                    "drain: {} request(s) still in flight after {} ms; cut",
+                    pending.len(),
+                    config.drain_ms
+                ),
+            );
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
     // A drained stop is a success the caller can match on: `Ok(())`,
     // the shape the failure path's `Err` pairs with. A bare unit here

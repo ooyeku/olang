@@ -456,6 +456,7 @@ share fn serve(config) = {
     let drain = get_or(config, "drain", false)
     let trust_proxy = get_or(config, "trust_proxy", false)
     let compress_responses = get_or(config, "compress", true)
+    let drain_ms = get_or(config, "drain_ms", 5000)
     let head_is_fn = typeof(head_html) == "Function"
 
     // Read once at boot: assets, the bundle, and the wasm's location.
@@ -607,7 +608,7 @@ share fn serve(config) = {
     // `Ok(())` on a drained stop, `Err` when the port could not be
     // taken; anything else the runtime might answer is still a stop.
     match http.serve(port, (req) => encoded(req, with_headers(dispatch_with(table, req, log))),
-                     #{ "bind": bind, "trust_proxy": trust_proxy }) {
+                     #{ "bind": bind, "trust_proxy": trust_proxy, "drain_ms": drain_ms }) {
         Err(e) => {
             println("could not start on port " + show(port) + ": " + show(e))
             Err(e)

@@ -119,7 +119,9 @@ bounded by fuel (16 rounds), so a macro that produces itself is an error
 naming the loop rather than a hang.
 
 Macro names are a closed set: only names declared `meta fn` — in the
-file itself, or in a module imported with `use` — are invocable with
+file itself, in a module imported with `use`, or in a module a package's
+`index.ol` itself imports (so `use shuttle` reaches the `@resource` the
+index brought in with `use lib.decl { resource }`) — are invocable with
 `@`. Any other name, including one that happens to be bound in the
 program (a stdlib module, a builtin, an ordinary function), is refused
 with `no meta fn named 'x'`. An `@` site can therefore never reach

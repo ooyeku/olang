@@ -263,13 +263,18 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
             // resolved against the index's own directory.
             let module_dir = module_path.parent().map(|d| d.to_path_buf());
             for st in &module_prog.statements {
-                let crate::ast::Statement::ShareDecl(crate::ast::ShareDecl::Use(su)) =
-                    st.unwrapped()
-                else {
-                    continue;
+                // `share use` and plain `use` alike: an index that imports
+                // `lib/decl.ol { resource }` makes `@resource` a macro of
+                // the package's front door, so `use shuttle` reaches it.
+                let sub_path = match st.unwrapped() {
+                    crate::ast::Statement::ShareDecl(crate::ast::ShareDecl::Use(su)) => {
+                        su.path.clone()
+                    }
+                    crate::ast::Statement::UseDecl(u2) => u2.path.clone(),
+                    _ => continue,
                 };
                 let Some(dir) = &module_dir else { continue };
-                let sub = su.path.join("/");
+                let sub = sub_path.join("/");
                 let sub_candidates = [
                     dir.join(format!("{sub}.ol")),
                     dir.join(format!("{sub}/index.ol")),
@@ -280,7 +285,7 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
                 else {
                     continue;
                 };
-                let sub_label = format!("{label} (re-export of {})", su.path.join("."));
+                let sub_label = format!("{label} (re-export of {})", sub_path.join("."));
                 let sub_prog = load_module_macros(
                     &parser,
                     &mut interp,

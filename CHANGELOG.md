@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`actions(table)`** registers many actions in one update; **`drain_ms`**
+  (an `http.serve` option and a `serve` key, default 5000) caps how long a
+  drain waits before cutting the requests in flight.
+
+### Changed
+
+- **A draining server closes connections.** Every response it still
+  answers says `Connection: close`, and it reads nothing more off a
+  kept-alive connection, so a re-issued long poll cannot hold the drain.
+- **`mount` adopts a server first paint** when the merged state is what
+  the server rendered from: no render runs at boot.
+- **A package's front door carries the macros its index imports** with a
+  plain `use`, so `use shuttle` reaches `@resource`.
+
+### Fixed
+
+- **A host DOM call that throws no longer kills the session.** The shim
+  catches it and the runtime raises it as an olang error the handler can
+  `attempt` (`dom.query: '#wip-[]' is not a valid selector`).
+- **A DOM event fired synchronously from inside a handler** (`dom.focus`
+  → `focusin`, a blur's `change`) is queued and runs after the handler,
+  never nested; a re-entered session is refused with a message instead
+  of a panic.
+
 ## [0.83.0] - 2026-09-05
 
 ### Added

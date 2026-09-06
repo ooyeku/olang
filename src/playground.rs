@@ -134,6 +134,12 @@ unsafe extern "C" {
     fn host_dom_set_html(handle: i64, ptr: *const u8, len: usize);
     fn host_dom_morph(handle: i64, ptr: *const u8, len: usize);
     fn host_dom_patch(handle: i64, ptr: *const u8, len: usize);
+    /// The message of a JavaScript exception the last host call caught
+    /// (the shim wraps every `host_dom_*` import), or null. Read after
+    /// every dom call so the failure is an olang error the handler can
+    /// `attempt`, not a trap that unwinds through the runtime with the
+    /// session still borrowed.
+    fn host_take_error() -> *const u8;
     fn host_dom_checked(handle: i64) -> i64;
     /// "[from, to]" as JSON.
     fn host_dom_selection(handle: i64) -> *const u8;
@@ -265,6 +271,19 @@ fn value_to_json(value: &Value) -> Result<String, Box<dyn std::error::Error>> {
 /// Dispatch for dom.* builtins on the wasm build.
 #[cfg(target_arch = "wasm32")]
 pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let result = dom_call_inner(name, args);
+    // A host function whose JavaScript threw (an invalid selector, a
+    // selection range on an element without one) reports here; the
+    // call's own result is whatever fallback the shim returned and is
+    // discarded in favour of the error.
+    let failure = read_host_string(unsafe { host_take_error() });
+    if !failure.is_empty() {
+        return Err(format!("dom.{}: {}", name, failure).into());
+    }
+    result
+}
+
+fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let handle = |v: &Value| -> Result<i64, Box<dyn std::error::Error>> {
         match v {
             Value::Integer(h) => Ok(*h),
@@ -972,7 +991,17 @@ pub unsafe extern "C" fn olang_dispatch_event_with(
 ) -> *mut u8 {
     let handler = HANDLERS.with(|h| h.borrow().get(callback_id as usize).cloned());
     let outcome = SESSION.with(|s| {
-        let mut s = s.borrow_mut();
+        // A dispatch that arrives while another is on the stack (a host
+        // call that fired a DOM event synchronously) must not panic the
+        // runtime and leave the session dead: it is refused with a
+        // message. The shim queues such dispatches, so this is the
+        // backstop.
+        let Ok(mut s) = s.try_borrow_mut() else {
+            return Err(
+                "the session is busy: a handler was still running when this event arrived                  (a host call fired it synchronously); the event was dropped"
+                    .to_string(),
+            );
+        };
         let Some(interpreter) = s.as_mut() else {
             return Err("no active session".to_string());
         };
@@ -1031,7 +1060,17 @@ pub unsafe extern "C" fn olang_dispatch_event_json(
 ) -> *mut u8 {
     let handler = HANDLERS.with(|h| h.borrow().get(callback_id as usize).cloned());
     let outcome = SESSION.with(|s| {
-        let mut s = s.borrow_mut();
+        // A dispatch that arrives while another is on the stack (a host
+        // call that fired a DOM event synchronously) must not panic the
+        // runtime and leave the session dead: it is refused with a
+        // message. The shim queues such dispatches, so this is the
+        // backstop.
+        let Ok(mut s) = s.try_borrow_mut() else {
+            return Err(
+                "the session is busy: a handler was still running when this event arrived                  (a host call fired it synchronously); the event was dropped"
+                    .to_string(),
+            );
+        };
         let Some(interpreter) = s.as_mut() else {
             return Err("no active session".to_string());
         };

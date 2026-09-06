@@ -26,6 +26,7 @@ async function instantiate() {
         host_dom_query_all: () => 0,
         host_dom_morph: () => {},
         host_dom_patch: () => {},
+        host_take_error: () => 0,
         host_dom_fetch_with: () => {},
         host_dom_set_text: () => {},
         host_dom_get_text: () => 0,

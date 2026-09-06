@@ -140,9 +140,12 @@ in its config is a map added to each one — the `Content-Security-Policy`,
 and `"head"` may be a function of the request, `(req) => html`, so a
 per-response CSP nonce is possible (the shell is then built per
 request). `"drain": true` registers a shutdown handler: on SIGINT or
-SIGTERM the server stops accepting, finishes the requests in hand, and
-`serve` returns `Ok(())`. The configured headers are set on the response
-as it is, so a route that streams a file (`body_file`) keeps streaming.
+SIGTERM the server stops accepting, answers what is in flight with
+`Connection: close`, reads nothing more off a kept-alive connection, and
+after `"drain_ms"` (5000) cuts the rest — a long poll a tab keeps
+re-issuing cannot hold the process open. `serve` then returns `Ok(())`.
+The configured headers are set on the response as it is, so a route that
+streams a file (`body_file`) keeps streaming.
 
 Dynamic responses are gzipped on the wire: a text body of a kilobyte or
 more, to a client whose `Accept-Encoding` names gzip, goes out with
@@ -157,11 +160,22 @@ envelope, 405 with an `Allow` header, and `HEAD` rides `GET`.
 
 ## The browser side
 
-`mount(selector, view_fn, initial)` wires the loop. Events use
+`mount(selector, view_fn, initial)` wires the loop. A first paint the
+server rendered with its state is adopted as it stands — the state is
+what the page shows, so no render runs at boot — unless the caller's
+defaults add keys the server did not render from. Events use
 delegation — one set of listeners on the root, dispatching by each
 element's `data-action`, so re-rendered markup never re-binds. An
 action named `"toggle:7"` fires the registered `"toggle"` handler,
-which reads its argument with `action_arg(ev)`. `api.call(name,
+which reads its argument with `action_arg(ev)`; `actions(#{ name:
+handler, … })` registers a table of them in one step.
+
+One event is dispatched at a time. A host call inside a handler that
+fires a DOM event synchronously (`dom.focus` → `focusin`, a blur's
+`change`, `click()`) queues that event and runs it when the handler
+returns, never nested inside it. A host call whose JavaScript throws (a
+malformed selector) raises an olang error the handler can `attempt`;
+the session lives on either way. `api.call(name,
 payload, k)` posts to the rpc route and hands `k` the unwrapped
 `Result`; it rides `dom.request`, which carries the status code, so a
 response that is not the envelope — a proxy's HTML page, a bare

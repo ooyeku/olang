@@ -50,6 +50,21 @@ share fn apply(f) = {
 share fn action(name, handler) =
     cell.update(mount_actions, (m) => map_set(m, name, handler))
 
+/// Register many actions at once: `actions(#{ "todo.add": add, "todo.toggle":
+/// toggle })` updates the handler table in one step where an app the
+/// size of a product registers a hundred and more at load — each
+/// `action` call is a cell update of its own, and they added up to a
+/// measurable slice of the boot.
+share fn actions(table) =
+    cell.update(mount_actions, (m) =>
+        fold(map_keys(table), m, (acc, k) => map_set(acc, k, map_get(table, k))))
+
+test "actions registers a table in one update" {
+    actions(#{ "t.a": (ev) => 1, "t.b": (ev) => 2 })
+    let m = cell.get(mount_actions)
+    assert_eq(map_has_key(m, "t.a") && map_has_key(m, "t.b"), true)
+}
+
 /// A click on a form control is a focus/open gesture (a select opening
 /// its dropdown, a caret landing in an input) — never an action. The
 /// control's action fires on change (and Enter, via the keydown
@@ -193,13 +208,23 @@ share fn mount(selector, view_fn, initial) = {
         // are one state. Keys the server did not set (a `url` or
         // `local` field restored by `hydrate`) keep the caller's value.
         let state_id = dom.get_attr(root, "data-olang-state")
-        if state_id != "" => {
+        // A first paint that arrived with its state is adopted: the page
+        // already shows exactly that state, so the first render would be
+        // an interpreted pass whose diff changes nothing — 200 ms of a
+        // large app's boot. When the caller's defaults add keys the
+        // server did not render from, the render runs, since the page
+        // may not show them.
+        let adopted = if state_id != "" => {
             match json.parse(dom.get_text(dom.query("#" + state_id))) {
-                Ok(server_state) => init(merge_state(initial, server_state)),
-                Err(e) => ()
+                Ok(server_state) => {
+                    let merged = merge_state(initial, server_state)
+                    init(merged)
+                    adopts_first_paint(merged, server_state)
+                },
+                Err(e) => false
             }
-        } else => ()
-        rerender()
+        } else => false
+        if adopted == false => rerender() else => ()
         dom.on(root, "click", (ev) => dispatch_action(ev))
         dom.on(root, "change", (ev) => dispatch_action(ev))
         dom.on(root, "submit", (ev) => dispatch_action(ev))
@@ -222,6 +247,23 @@ fn merge_state(base, server) =
         && contains(["Map", "JsonObject", "Object"], typeof(base)) =>
         fold(map_keys(server), base, (acc, k) => map_set(acc, k, map_get(server, k)))
     else => server
+
+/// Whether the merged state is what the server rendered from — then the
+/// first paint stands as it is. Compared key by key: the server's state
+/// arrives as parsed JSON and the merged one is a map, and values of
+/// different kinds never compare equal as wholes.
+fn adopts_first_paint(merged, server_state) =
+    contains(["Map", "JsonObject", "Object"], typeof(server_state))
+        && contains(["Map", "JsonObject", "Object"], typeof(merged))
+        && sort(map_keys(merged)) == sort(map_keys(server_state))
+        && fold(map_keys(server_state), true,
+                (ok, k) => ok && map_get(merged, k) == map_get(server_state, k))
+
+test "the first paint is adopted only when the state is the server's" {
+    let server = unwrap(json.parse("{\"notes\": [1], \"errors\": []}"))
+    assert_eq(adopts_first_paint(merge_state(#{ "notes": [], "errors": [] }, server), server), true)
+    assert_eq(adopts_first_paint(merge_state(#{ "notes": [], "theme": "dark" }, server), server), false)
+}
 
 test "merge_state: the server's keys over the caller's defaults" {
     let merged = merge_state(#{ "notes": [], "errors": [], "theme": "dark" },

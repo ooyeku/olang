@@ -27,6 +27,17 @@ const fakeState = {};
 const fakeHistory = ["/"];
 const routeHandlers = [];
 let created = 0;
+// The shim's rule, mirrored: one dispatch at a time; a nested one waits.
+let dispatching = false;
+const dispatchQueue = [];
+function enter(run) {
+  if (dispatching) { dispatchQueue.push(run); return; }
+  dispatching = true;
+  try { run(); } finally {
+    dispatching = false;
+    if (dispatchQueue.length) { const next = dispatchQueue.shift(); queueMicrotask(() => enter(next)); }
+  }
+}
 function dispatchWith(cb, payload) {
   const bytes = new TextEncoder().encode(payload);
   const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
@@ -39,11 +50,14 @@ function dispatchJson(cb, obj) {
   return dispatchRaw(cb, JSON.stringify(obj));
 }
 function dispatchRaw(cb, payload) {
-  const bytes = new TextEncoder().encode(payload);
-  const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
-  mem().set(bytes, ptr);
-  const r = result(ex.olang_dispatch_event_json(BigInt(cb), ptr, bytes.length));
-  ex.olang_dealloc(ptr, Math.max(bytes.length, 1));
+  let r = null;
+  enter(() => {
+    const bytes = new TextEncoder().encode(payload);
+    const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
+    mem().set(bytes, ptr);
+    r = result(ex.olang_dispatch_event_json(BigInt(cb), ptr, bytes.length));
+    ex.olang_dealloc(ptr, Math.max(bytes.length, 1));
+  });
   return r;
 }
 
@@ -85,6 +99,7 @@ function bootWorker(source) {
         host_dom_fetch_with: () => {},
         host_dom_morph: () => {},
         host_dom_patch: () => {},
+        host_take_error: () => 0,
         host_dom_checked: () => 0n,
         host_dom_selection: () => 0,
         host_dom_set_selection: () => {},
@@ -156,6 +171,12 @@ const imports = {
     host_dom_query_all: (ptr, len) => giveStr("[]"),
   host_dom_morph: (h, ptr, len) => { node(h).html = readStr(ptr, len); },
   host_dom_patch: (h, ptr, len) => { node(h).tree = JSON.parse(readStr(ptr, len)); },
+  host_take_error: () => {
+    if (hostError == null) return 0;
+    const m = hostError;
+    hostError = null;
+    return giveStr(m);
+  },
   host_dom_checked: (h) => (node(h).checked ? 1n : 0n),
   host_dom_selection: (h) => giveStr("[0,0]"),
   host_dom_set_selection: () => {},
@@ -163,6 +184,8 @@ const imports = {
   host_dom_fetch_with: () => {},
   host_dom_query: (ptr, len) => {
       const sel = readStr(ptr, len);
+      // What document.querySelector does with a malformed selector.
+      if (sel.includes("[]")) throw new SyntaxError(`'${sel}' is not a valid selector`);
       let h = handles.indexOf(sel);
       // Created elements are findable by their id attribute, like a
       // real querySelector.
@@ -180,7 +203,12 @@ const imports = {
     host_dom_on: (h, ptr, len, id) => {
       (listeners[Number(h)] ??= {})[readStr(ptr, len)] = Number(id);
     },
-    host_dom_focus: (_h) => {},
+    // A focus fires the element's focusin listener synchronously, as a
+    // browser does — the nested dispatch the shim's queue exists for.
+    host_dom_focus: (h) => {
+      const l = listeners[Number(h)];
+      if (l && l.focusin != null) dispatchJson(l.focusin, { type: "focusin", id: handles[Number(h)] });
+    },
     host_dom_set_class: (h, ptr, len) => { fakeDom[handles[Number(h)]].className = readStr(ptr, len); },
     host_dom_fetch: (mp, ml, pp, pl, bp, bl, id) => {
       fetchLog.push({ method: readStr(mp, ml), path: readStr(pp, pl), body: readStr(bp, bl), cb: Number(id) });
@@ -281,6 +309,28 @@ const imports = {
     host_dom_on_message: () => {},
   },
 };
+
+// The shim's rule, mirrored: a host import that throws reports through
+// host_take_error instead of unwinding through the runtime.
+let hostError = null;
+{
+  const HANDLE = new Set(["host_dom_query", "host_dom_create", "host_dom_set_interval", "host_dom_worker_spawn",
+    "host_dom_prefers_dark", "host_dom_confirm", "host_dom_checked"]);
+  const STRING = new Set(["host_dom_query_all", "host_dom_get_text", "host_dom_get_value", "host_dom_get_attr",
+    "host_dom_measure", "host_dom_location", "host_dom_storage_get", "host_dom_state_get", "host_dom_active_id",
+    "host_dom_selection", "host_dom_values"]);
+  for (const name of Object.keys(imports.env)) {
+    if (!name.startsWith("host_dom_")) continue;
+    const f = imports.env[name];
+    imports.env[name] = (...a) => {
+      try { return f(...a); }
+      catch (e) {
+        hostError = e && e.message ? e.message : String(e);
+        return HANDLE.has(name) ? 0n : STRING.has(name) ? giveStr("") : undefined;
+      }
+    };
+  }
+}
 
 const bytes = await readFile(process.argv[2]);
 ({ instance: { exports: ex } } = await WebAssembly.instantiate(bytes, imports));
@@ -789,6 +839,53 @@ println("repaint of 100 rows, wasm side: " + to_string(per) + " ms each")
     throw new Error("profile did not see the view functions: " + JSON.stringify(rep.rows.slice(0, 5)));
   console.log("stage 9: browser profiler ok —", rep.rows.slice(0, 3).map((x) => `${x.function} ${x.self_ms}ms/${x.calls}`).join(", "));
   if (fakeDom["#log"].tree.children.length !== 100) throw new Error("repaint tree lost rows");
+}
+// ── stage 10: a focus inside a handler nests a dispatch — queued, not re-entered ──
+const prog14 = `
+let input = dom.query("#btn")
+let log = dom.query("#log")
+dom.on(input, "focusin", (ev) => dom.set_text(log, dom.get_text(log) + " focusin"))
+dom.on(dom.query("#count"), "click", (ev) => {
+    dom.focus(input)
+    dom.set_text(log, dom.get_text(log) + " clicked")
+})
+dom.set_text(log, "start")
+`;
+{
+  const enc14 = new TextEncoder().encode(prog14);
+  const p14 = ex.olang_alloc(enc14.length);
+  mem().set(enc14, p14);
+  const r = result(ex.olang_session_start(p14, enc14.length));
+  ex.olang_dealloc(p14, enc14.length);
+  if (r.error) throw new Error("stage10 session: " + r.error);
+  const click = listeners[handles.indexOf("#count")].click;
+  const outer = dispatchJson(click, { type: "click", id: "count" });
+  if (outer.error) throw new Error("stage10 outer dispatch: " + outer.error);
+  // The focusin ran after the click handler finished, not inside it.
+  if (fakeDom["#log"].text !== "start clicked") throw new Error("nested dispatch ran inline: " + fakeDom["#log"].text);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  if (fakeDom["#log"].text !== "start clicked focusin") throw new Error("queued dispatch lost: " + fakeDom["#log"].text);
+  console.log("stage 10: nested dispatch queued ok");
+}
+// ── stage 11: a host call that throws is an olang error, and the session lives on ──
+const prog15 = `
+let r = attempt(() => dom.query("#wip-[]"))
+dom.set_text(dom.query("#log"), show(r))
+let again = dom.query("#count")
+dom.set_text(dom.query("#count"), "still here")
+`;
+{
+  const enc15 = new TextEncoder().encode(prog15);
+  const p15 = ex.olang_alloc(enc15.length);
+  mem().set(enc15, p15);
+  const r = result(ex.olang_session_start(p15, enc15.length));
+  ex.olang_dealloc(p15, enc15.length);
+  if (r.error) throw new Error("stage11 session: " + r.error);
+  const shown = fakeDom["#log"].text;
+  if (!shown.startsWith("Err(") || !shown.includes("dom.query") || !shown.includes("not a valid selector"))
+    throw new Error("host throw not raised as an olang error: " + shown);
+  if (fakeDom["#count"].text !== "still here") throw new Error("session did not survive the host throw");
+  console.log("stage 11: host throw raised, session alive ok");
 }
 console.log("final dom:", JSON.stringify(fakeDom));
 console.log("DOM BRIDGE END-TO-END PASSED (incl. fetch payloads + random)");
