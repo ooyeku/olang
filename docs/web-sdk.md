@@ -26,13 +26,16 @@ Everything else is built from these:
    inspect, or diff views: the Open AST philosophy applied to markup.
    Rendering escapes by default; `raw` is the one opt-out.
 2. **`mount` + re-render.** One place where data becomes pixels. A
-   repaint reconciles the rendered tree into the mount point
-   (`dom.morph`): text is updated in place, attributes are diffed, and
-   children match by `data-key` (else by position and tag), so the
-   nodes that did not change are the nodes the browser keeps — focus,
-   caret, scroll, an open select. Give list rows a `"data-key"` and
-   reordering moves their elements instead of rebuilding them. Events
-   are delegated, so nothing re-binds either way.
+   repaint hands the node tree to the host as data (`dom.patch`) and the
+   host diffs it against the live DOM — no markup is rendered on the
+   wasm side or parsed on the page: text is updated in place,
+   attributes are diffed, and children match by `data-key` (else by
+   position and tag), so the nodes that did not change are the nodes
+   the browser keeps — focus, caret, scroll, an open select. Give list
+   rows a `"data-key"` and reordering moves their elements instead of
+   rebuilding them; wrap a subtree in `memo(key, inputs, build)` and it
+   is neither rebuilt nor diffed while its inputs stand. Events are
+   delegated, so nothing re-binds either way.
 3. **One store.** `apply(f)` transforms state and repaints. State
    lives in a wasm-side cell — values never cross into JavaScript and
    back, so they keep their olang shapes exactly.
@@ -341,13 +344,19 @@ the content-addressed URL the shell references (immutable, cached for
 a year — a new build is a new URL), and `/olang.wasm`, revalidated by
 ETag. Both negotiate `Accept-Encoding`: a pre-compressed sibling on
 disk next to the wasm (`olang_playground.wasm.br` or `.gz`) is served
-with its `Content-Encoding` — the 6.3 MB runtime is under 2 MB
-gzipped. The shim yields to the browser between instantiating the
+with its `Content-Encoding`. The runtime the SDK ships is the browser
+profile — no `re` module and no RSA, which a page never calls and
+which were a third of the code: 4.8 MB, 1.4 MB gzipped, under 1 MB
+brotli. The website's playground carries the whole stdlib (`make wasm`
+builds both). The shim yields to the browser between instantiating the
 runtime and running the bundle, so the shell paints first, and records
 the boot phases in `window.olangBoot`: `fetch_instantiate_ms`,
 `session_start_ms`, `total_ms`, and the split of the session start —
 `program` ("image" or "source"), `load_ms` (decoding or parsing), and
-`run_ms` (the bundle's top level, the first render included).
+`run_ms` (the bundle's top level, the first render included). Where a
+repaint spends its time is `window.olangProfile`: `start()`, act,
+`table()` — every olang function that ran, with its tier and exact
+self and total milliseconds (see the tooling chapter's `olang profile`).
 
 The playground wasm the demo serves (`static/olang_playground.wasm`)
 is a build artifact, not a committed file: `make wasm` builds it and

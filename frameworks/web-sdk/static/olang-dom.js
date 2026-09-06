@@ -227,6 +227,114 @@
   // diffed, children matched by data-key (else by position and tag) —
   // instead of replacing the whole tree. What stays is what the browser
   // keeps: focus, caret, scroll position, an open dropdown.
+  // dom.patch: the node tree as data, reconciled straight into the live
+  // DOM — no markup to render on the wasm side, none to parse here.
+  // Vnodes: { tag, attrs, children } | { text } | { raw } | { keep }.
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  function patchInto(el, tree) {
+    patchChildren(el, flatVNodes(tree.tag === "" ? tree.children : [tree]));
+  }
+  function flatVNodes(list, out = []) {
+    for (const v of list) {
+      if (v == null) continue;
+      if (typeof v === "string") out.push({ text: v });
+      else if (Array.isArray(v)) flatVNodes(v, out);
+      else if (v.tag === "") flatVNodes(v.children || [], out);
+      else if (v.raw !== undefined) {
+        const tpl = document.createElement("template");
+        tpl.innerHTML = String(v.raw);
+        for (const n of tpl.content.childNodes) out.push({ dom: n });
+      } else out.push(v);
+    }
+    return out;
+  }
+  const vkey = (v) => (v.attrs && v.attrs["data-key"] != null ? String(v.attrs["data-key"]) : null);
+  function sameVKind(n, v) {
+    if (v.text !== undefined) return n.nodeType === 3;
+    if (v.dom) return false;
+    return n.nodeType === 1 && n.tagName.toLowerCase() === String(v.tag).toLowerCase();
+  }
+  function patchChildren(from, wanted) {
+    const keyed = new Map();
+    for (const c of from.childNodes) { const k = keyOf(c); if (k) keyed.set(k, c); }
+    let i = 0;
+    for (const v of wanted) {
+      const at = from.childNodes[i] || null;
+      if (v.keep !== undefined) {
+        // An unchanged memo subtree: the element it rendered last time
+        // stays as it is, moved into place if the order changed.
+        const m = keyed.get(String(v.keep));
+        if (m) { if (m !== at) from.insertBefore(m, at); i++; }
+        continue;
+      }
+      if (v.dom) {
+        // Trusted markup: replaced wholesale, never diffed.
+        if (at) from.replaceChild(v.dom.cloneNode(true), at); else from.appendChild(v.dom.cloneNode(true));
+        i++;
+        continue;
+      }
+      const k = vkey(v);
+      let match = null;
+      if (k && keyed.has(k)) match = keyed.get(k);
+      else if (at && !keyOf(at) && !k && sameVKind(at, v)) match = at;
+      if (match) {
+        if (match !== at) from.insertBefore(match, at);
+        patchNode(match, v);
+      } else {
+        from.insertBefore(createVNode(v, from), at);
+      }
+      i++;
+    }
+    while (from.childNodes.length > i) from.removeChild(from.lastChild);
+  }
+  function createVNode(v, parent) {
+    if (v.text !== undefined) return document.createTextNode(String(v.text));
+    const ns = v.tag === "svg" || (parent && parent.namespaceURI === SVG_NS) ? SVG_NS : null;
+    const el = ns ? document.createElementNS(ns, v.tag) : document.createElement(v.tag);
+    patchNode(el, v);
+    return el;
+  }
+  function patchNode(from, v) {
+    if (from.nodeType === 3) {
+      const s = String(v.text);
+      if (from.data !== s) from.data = s;
+      return;
+    }
+    const attrs = v.attrs || {};
+    const tag = from.tagName;
+    const control = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+    for (const name of Object.keys(attrs)) {
+      const raw = attrs[name];
+      if (raw === false || raw === null || raw === undefined) {
+        if (from.hasAttribute(name)) from.removeAttribute(name);
+        continue;
+      }
+      const value = raw === true ? "" : String(raw);
+      if (from.getAttribute(name) !== value) from.setAttribute(name, value);
+    }
+    for (const { name } of [...from.attributes]) {
+      if (!(name in attrs) || attrs[name] === false || attrs[name] == null) from.removeAttribute(name);
+    }
+    if (control) {
+      // The control someone is typing in keeps its live value; every
+      // other control follows the data.
+      if (document.activeElement !== from) {
+        if (tag === "INPUT" && (attrs.type === "checkbox" || attrs.type === "radio")) {
+          from.checked = attrs.checked === true || (attrs.checked != null && attrs.checked !== false);
+        } else if (attrs.value !== undefined) {
+          const value = attrs.value == null || attrs.value === false ? "" : String(attrs.value);
+          if (from.value !== value) from.value = value;
+        }
+      }
+    }
+    if (tag === "TEXTAREA") {
+      if (document.activeElement === from) return;
+      const inner = flatVNodes(v.children || []).map((c) => c.text ?? "").join("");
+      if (from.value !== inner) from.value = inner;
+      return;
+    }
+    patchChildren(from, flatVNodes(v.children || []));
+  }
   function morphInto(el, html) {
     const tpl = document.createElement("template");
     tpl.innerHTML = html;
@@ -321,6 +429,7 @@
       host_dom_get_text: (h) => giveStr(elements[Number(h)].textContent ?? ""),
       host_dom_set_html: (h, ptr, len) => { elements[Number(h)].innerHTML = readStr(ptr, len); },
       host_dom_morph: (h, ptr, len) => morphInto(elements[Number(h)], readStr(ptr, len)),
+      host_dom_patch: (h, ptr, len) => patchInto(elements[Number(h)], JSON.parse(readStr(ptr, len))),
       host_dom_checked: (h) => (elements[Number(h)].checked ? 1n : 0n),
       host_dom_selection: (h) => {
         const el = elements[Number(h)];
@@ -738,6 +847,21 @@ Two known causes:
   // window.olangBoot = { fetch_instantiate_ms, session_start_ms, total_ms,
   //   program ("image" | "source"), load_ms (decode or parse), run_ms
   //   (the bundle's top level, the first render included) }.
+  // Where a repaint's time goes: `olangProfile.start()`, act, then
+  // `olangProfile.table()` — every olang function that ran, with its
+  // tier, calls, and exact self and total milliseconds (instrumented,
+  // not sampled). `report()` returns the rows; `stop()` also turns the
+  // instrumentation off.
+  window.olangProfile = {
+    start: () => ex.olang_profile_start(),
+    report: () => readResult(ex.olang_profile_report()),
+    stop: () => readResult(ex.olang_profile_stop()),
+    table: (top = 25) => {
+      const r = readResult(ex.olang_profile_report());
+      console.table(r.rows.slice(0, top));
+      return r;
+    },
+  };
   window.olangBoot = {
     fetch_instantiate_ms: Math.round(bootMarks.instantiated - bootMarks.start),
     session_start_ms: Math.round(bootMarks.started - bootMarks.instantiated),

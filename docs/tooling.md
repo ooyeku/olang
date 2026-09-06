@@ -460,6 +460,23 @@ no longer exists as a frame: its time is attributed to the caller,
 which is where the machine code actually is. If a function you expected
 is missing entirely and its caller shows `native`, inlining is why.
 
+### In the browser
+
+A page has no second thread to sample from, so the web SDK's shim
+exposes the same shadow stack in an instrumented form: every frame is
+timed on entry and exit, which is exact rather than statistical.
+
+```js
+olangProfile.start()      // in the devtools console
+// act: click, type, let a repaint happen
+olangProfile.table()      // every olang function that ran: tier, calls, self ms, total ms
+olangProfile.stop()       // the final report, and the instrumentation off
+```
+
+The rows say which view helper a repaint spends its time in and on
+which tier it ran — the answer a wasm-level profiler cannot give,
+since it sees Rust symbols, not olang functions.
+
 ## `olang build`
 
 Bundle a program into a **standalone executable** — a single file that

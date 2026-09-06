@@ -138,6 +138,129 @@ pub fn enabled() -> bool {
     registry().enabled.load(Ordering::Relaxed)
 }
 
+// ── the instrumented mode ─────────────────────────────────────────────
+//
+// The sampler needs a second thread, and a browser session has none.
+// The instrumented mode answers the same question — which olang
+// function is hot, and on which tier — from the same shadow stack, by
+// timing every push/pop pair: exact self and total time per function,
+// with a clock read per call instead of a tick. It is what
+// `window.olangProfile` in the web SDK's shim reports; a repaint that
+// spends its time in one view helper shows that helper at the top.
+
+static INSTRUMENT: AtomicBool = AtomicBool::new(false);
+
+/// (frame id, tier bits): one row of the instrumented report.
+type InstrKey = (u32, u8);
+/// (calls, self ms, total ms).
+type InstrTotals = (u64, f64, f64);
+
+thread_local! {
+    /// The open frames: (frame id, tier bits, entered at, children's ms).
+    static INSTR_STACK: std::cell::RefCell<Vec<(u32, u8, crate::clock::Instant, f64)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    /// (frame id, tier bits) → (calls, self ms, total ms).
+    static INSTR_TOTALS: std::cell::RefCell<HashMap<InstrKey, InstrTotals>> =
+        std::cell::RefCell::new(HashMap::new());
+    static INSTR_STARTED: std::cell::Cell<Option<crate::clock::Instant>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[inline(always)]
+fn instrumenting() -> bool {
+    INSTRUMENT.load(Ordering::Relaxed)
+}
+
+/// Begin timing every frame on this thread. Turns the shadow stack on;
+/// a report is available at any time and `instrument_stop` turns it
+/// off again.
+pub fn instrument_start() {
+    INSTR_TOTALS.with(|t| t.borrow_mut().clear());
+    INSTR_STACK.with(|s| s.borrow_mut().clear());
+    INSTR_STARTED.with(|s| s.set(Some(crate::clock::Instant::now())));
+    INSTRUMENT.store(true, Ordering::Relaxed);
+    registry().enabled.store(true, Ordering::Relaxed);
+}
+
+/// The report so far, as JSON: `{ "elapsed_ms", "rows": [{ "function",
+/// "tier", "builtin", "calls", "self_ms", "total_ms" }] }`, rows by
+/// self time descending.
+pub fn instrument_report() -> String {
+    let elapsed_ms = INSTR_STARTED
+        .with(|s| s.get())
+        .map(|t| t.elapsed().as_secs_f64() * 1000.0)
+        .unwrap_or(0.0);
+    let mut rows: Vec<serde_json::Value> = INSTR_TOTALS.with(|t| {
+        let mut entries: Vec<(InstrKey, InstrTotals)> =
+            t.borrow().iter().map(|(k, v)| (*k, *v)).collect();
+        entries.sort_by(|a, b| {
+            b.1.1
+                .partial_cmp(&a.1.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        entries
+            .into_iter()
+            .map(|((id, bits), (calls, self_ms, total_ms))| {
+                serde_json::json!({
+                    "function": name_of(id),
+                    "tier": Tier::from_u8(bits).label(),
+                    "builtin": bits & BUILTIN_BIT != 0,
+                    "calls": calls,
+                    "self_ms": (self_ms * 1000.0).round() / 1000.0,
+                    "total_ms": (total_ms * 1000.0).round() / 1000.0,
+                })
+            })
+            .collect()
+    });
+    rows.truncate(200);
+    serde_json::json!({ "elapsed_ms": (elapsed_ms * 1000.0).round() / 1000.0, "rows": rows })
+        .to_string()
+}
+
+/// Stop timing and return the final report.
+pub fn instrument_stop() -> String {
+    let report = instrument_report();
+    INSTRUMENT.store(false, Ordering::Relaxed);
+    registry().enabled.store(false, Ordering::Relaxed);
+    INSTR_STACK.with(|s| s.borrow_mut().clear());
+    report
+}
+
+#[inline]
+fn instrument_push(id: u32, bits: u8) {
+    if instrumenting() {
+        INSTR_STACK.with(|s| {
+            s.borrow_mut()
+                .push((id, bits, crate::clock::Instant::now(), 0.0))
+        });
+    }
+}
+
+#[inline]
+fn instrument_pop() {
+    if !instrumenting() {
+        return;
+    }
+    INSTR_STACK.with(|s| {
+        let mut s = s.borrow_mut();
+        let Some((id, bits, start, children_ms)) = s.pop() else {
+            return;
+        };
+        let total_ms = start.elapsed().as_secs_f64() * 1000.0;
+        let self_ms = (total_ms - children_ms).max(0.0);
+        if let Some(parent) = s.last_mut() {
+            parent.3 += total_ms;
+        }
+        INSTR_TOTALS.with(|t| {
+            let mut t = t.borrow_mut();
+            let e = t.entry((id, bits)).or_insert((0, 0.0, 0.0));
+            e.0 += 1;
+            e.1 += self_ms;
+            e.2 += total_ms;
+        });
+    });
+}
+
 fn intern(name: &str) -> u32 {
     let mut guard = match registry().names.lock() {
         Ok(g) => g,
@@ -257,6 +380,7 @@ pub fn push(name: &str, tier: Tier) -> bool {
         // Depth counts past the array so pops stay balanced; frames
         // beyond MAX_FRAMES simply are not recorded.
         stack.depth.store(depth + 1, Ordering::Relaxed);
+        instrument_push(id, bits);
     });
     true
 }
@@ -278,6 +402,7 @@ pub fn push_builtin(name: &str) -> bool {
             stack.tiers[depth].store(Tier::Interpreter as u8 | BUILTIN_BIT, Ordering::Relaxed);
         }
         stack.depth.store(depth + 1, Ordering::Relaxed);
+        instrument_push(id, Tier::Interpreter as u8 | BUILTIN_BIT);
     });
     true
 }
@@ -290,6 +415,7 @@ pub fn pop() {
             .depth
             .store(depth.saturating_sub(1), Ordering::Relaxed);
     });
+    instrument_pop();
 }
 
 /// A running profile: the sampler thread plus what it has collected.

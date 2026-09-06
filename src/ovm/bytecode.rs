@@ -61,13 +61,13 @@ pub struct BytecodeVm {
     stats: VmStatistics,
 
     // Function registry for dynamic calls
-    function_registry: HashMap<String, FunctionId>,
+    function_registry: rustc_hash::FxHashMap<String, FunctionId>,
 
     // Builtin function registry
     /// Builtins the VM will execute, by name. Kept to a curated set: each
     /// takes only value arguments and returns a value that round-trips
     /// losslessly through the OVM value model.
-    builtin_names: std::collections::HashSet<String>,
+    builtin_names: rustc_hash::FxHashSet<String>,
     /// The interpreter's builtin implementations, used directly rather than
     /// reimplemented — reimplementation would drift from the semantics the
     /// differential tests hold the VM to.
@@ -127,6 +127,10 @@ pub struct BytecodeVm {
     /// `None` records a refusal so a head is judged once.
     #[cfg(feature = "native")]
     osr_regions: HashMap<(FunctionId, usize), Option<std::sync::Arc<crate::ovm::osr::OsrRegion>>>,
+    /// For a head whose region is the inner loop alone: the enclosing
+    /// region's head, offered at its back edge once the inner loop has
+    /// run natively — so the whole nest ends up native.
+    osr_enclosing: HashMap<(FunctionId, usize), usize>,
     /// Trace of the error currently unwinding: the innermost located
     /// statement's span, and function names innermost-first. Frames
     /// deeper than the first span-owning frame are dropped — exactly the
@@ -260,7 +264,7 @@ pub struct BytecodeCompiler {
     /// rather than a LoadLocal that clones out of a separate array)
     local_variables: HashMap<String, Register>,
     /// Builtin names the VM implements (for compile-time callee validation)
-    builtin_names: std::collections::HashSet<String>,
+    builtin_names: rustc_hash::FxHashSet<String>,
     /// Enclosing loops, innermost last: (continue target, break target)
     loop_targets: Vec<(Label, Label)>,
     /// Enclosing Located statements, innermost last, for span markers.
@@ -279,7 +283,7 @@ pub struct BytecodeCompiler {
     _label_counter: u32,
 
     // Function registry for calls
-    function_registry: HashMap<String, FunctionId>,
+    function_registry: rustc_hash::FxHashMap<String, FunctionId>,
 
     /// Declared struct shapes for compile-time literal validation
     /// (mirrored from the interpreter; poisoned types are absent).
@@ -1053,7 +1057,7 @@ impl BytecodeVm {
         // builtins are all in the list below, each with a note at its group.
         // `group_by` is the one still held out, because it returns a Map keyed
         // by arbitrary values.
-        let builtin_names: std::collections::HashSet<String> = [
+        let builtin_names: rustc_hash::FxHashSet<String> = [
             // conversion and inspection
             "to_string",
             "to_int",
@@ -1212,7 +1216,7 @@ impl BytecodeVm {
             bytecode_hot: Vec::new(),
             execution_state: ExecutionState::new(),
             stats: VmStatistics::default(),
-            function_registry: HashMap::new(),
+            function_registry: rustc_hash::FxHashMap::default(),
             builtin_names,
             builtins: BuiltinFunctions::new(),
             builtin_interpreter: None,
@@ -1245,6 +1249,7 @@ impl BytecodeVm {
             jit: crate::ovm::jit::JitCache::new(),
             #[cfg(feature = "native")]
             osr_regions: HashMap::new(),
+            osr_enclosing: HashMap::new(),
             error_trace_span: None,
             error_trace_file: None,
             entry_file: None,
@@ -2228,7 +2233,9 @@ impl BytecodeVm {
             return None;
         }
         if let Some(resume) = self.try_osr(bytecode, t) {
-            *osr_wait = None;
+            // The inner loop ran natively; if an enclosing region exists,
+            // its own back edge is the next offer.
+            *osr_wait = self.osr_enclosing.get(&(bytecode.function_id, t)).copied();
             if !osr_ready.contains(&t) {
                 osr_ready.push(t);
             }
@@ -2270,16 +2277,33 @@ impl BytecodeVm {
         let fid = bytecode.function_id;
         if !self.osr_regions.contains_key(&(fid, head)) {
             let region = crate::ovm::osr::synthesize(bytecode, head).map(std::sync::Arc::new);
-            if let Some(r) = &region {
-                self.jit.try_compile(r.region_id, &r.synth);
-                // A region anchored at an enclosing loop's head is also
-                // filed under that head, so the re-offer there finds it
-                // without synthesizing again.
-                if r.head != head {
-                    self.osr_regions.insert((fid, r.head), Some(r.clone()));
+            match &region {
+                // The widest region anchors at an enclosing loop's head:
+                // file it there for the re-offer at that back edge, and
+                // give THIS head the inner loop alone, so the iterations
+                // being spun right now go native rather than waiting for
+                // the outer loop to come round.
+                Some(r) if r.head != head => {
+                    self.jit.try_compile(r.region_id, &r.synth);
+                    self.osr_regions
+                        .entry((fid, r.head))
+                        .or_insert_with(|| Some(r.clone()));
+                    self.osr_enclosing.insert((fid, head), r.head);
+                    let inner =
+                        crate::ovm::osr::synthesize_at(bytecode, head).map(std::sync::Arc::new);
+                    if let Some(ir) = &inner {
+                        self.jit.try_compile(ir.region_id, &ir.synth);
+                    }
+                    self.osr_regions.insert((fid, head), inner);
+                }
+                Some(r) => {
+                    self.jit.try_compile(r.region_id, &r.synth);
+                    self.osr_regions.insert((fid, head), region.clone());
+                }
+                None => {
+                    self.osr_regions.insert((fid, head), None);
                 }
             }
-            self.osr_regions.insert((fid, head), region);
         }
         let region = self.osr_regions.get(&(fid, head))?.clone()?;
         let osr_debug = std::env::var_os("OLANG_OSR_DEBUG").is_some();
@@ -2495,9 +2519,7 @@ impl BytecodeVm {
         let mut str_args: Vec<std::sync::Arc<String>> = Vec::new();
         let mut result_args: Vec<std::sync::Arc<crate::ovm::value::ResultObject>> = Vec::new();
         let mut list_args: Vec<std::sync::Arc<Vec<crate::ovm::value::OvmValue>>> = Vec::new();
-        let mut map_args: Vec<
-            std::sync::Arc<std::collections::HashMap<String, crate::ovm::value::OvmValue>>,
-        > = Vec::new();
+        let mut map_args: Vec<std::sync::Arc<crate::ovm::value::OvmMap>> = Vec::new();
         let mut float_list_args: Vec<std::sync::Arc<Vec<f64>>> = Vec::new();
         let mut int_list_args: Vec<std::sync::Arc<Vec<i64>>> = Vec::new();
         list_args.extend(converted_lists.iter().cloned());
@@ -2814,9 +2836,7 @@ impl BytecodeVm {
                     Vec::new();
                 let mut float_list_args: Vec<std::sync::Arc<Vec<f64>>> = Vec::new();
                 let mut int_list_args: Vec<std::sync::Arc<Vec<i64>>> = Vec::new();
-                let mut map_args: Vec<
-                    std::sync::Arc<std::collections::HashMap<String, crate::ovm::value::OvmValue>>,
-                > = Vec::new();
+                let mut map_args: Vec<std::sync::Arc<crate::ovm::value::OvmMap>> = Vec::new();
                 // The per-family sweep only matters when a reference-kind
                 // argument exists; all-scalar calls (the common boundary)
                 // skip it whole.
@@ -3600,11 +3620,23 @@ impl BytecodeVm {
                     // Key coercion first, then the receiver — the native
                     // map_set's own order and messages.
                     let key_val = self.execution_state.get_register(*key)?;
-                    let key_str = match &key_val.data {
-                        ValueData::String(st) => st.as_ref().clone(),
-                        ValueData::Integer(i) => i.to_string(),
-                        ValueData::Float(f) => crate::ast::format_float(*f),
-                        ValueData::Boolean(b) => b.to_string(),
+                    // Borrow a string key; only a brand-new key is copied
+                    // into the map (an update overwrites the slot in place).
+                    let key_owned: String;
+                    let key_str: &str = match &key_val.data {
+                        ValueData::String(st) => st.as_str(),
+                        ValueData::Integer(i) => {
+                            key_owned = i.to_string();
+                            &key_owned
+                        }
+                        ValueData::Float(f) => {
+                            key_owned = crate::ast::format_float(*f);
+                            &key_owned
+                        }
+                        ValueData::Boolean(b) => {
+                            key_owned = b.to_string();
+                            &key_owned
+                        }
                         _ => {
                             return Err(BytecodeError::TypeError(
                                 "map_set: key must be string, integer, float, or boolean"
@@ -3620,12 +3652,15 @@ impl BytecodeVm {
                     match target_val.data {
                         ValueData::Map(mut arc) => {
                             match std::sync::Arc::get_mut(&mut arc) {
-                                Some(m) => {
-                                    m.insert(key_str, v);
-                                }
+                                Some(m) => match m.get_mut(key_str) {
+                                    Some(slot) => *slot = v,
+                                    None => {
+                                        m.insert(key_str.to_string(), v);
+                                    }
+                                },
                                 None => {
                                     let mut m = (*arc).clone();
-                                    m.insert(key_str, v);
+                                    m.insert(key_str.to_string(), v);
                                     arc = std::sync::Arc::new(m);
                                 }
                             }
@@ -3639,10 +3674,10 @@ impl BytecodeVm {
                         ValueData::Struct(st) => {
                             let mut pairs: Vec<(String, OvmValue)> = st
                                 .iter()
-                                .filter(|(name, _)| **name != key_str)
+                                .filter(|(name, _)| name.as_str() != key_str)
                                 .map(|(name, val)| (name.clone(), val.clone()))
                                 .collect();
-                            pairs.push((key_str, v));
+                            pairs.push((key_str.to_string(), v));
                             self.execution_state.set_register(
                                 *target,
                                 OvmValue::new_struct(std::sync::Arc::new(
@@ -4230,7 +4265,10 @@ impl BytecodeVm {
 
                 Instruction::MakeMap { dst, entries } => {
                     use crate::ovm::value::ValueData;
-                    let mut map = std::collections::HashMap::with_capacity(entries.len());
+                    let mut map = crate::ovm::value::OvmMap::with_capacity_and_hasher(
+                        entries.len(),
+                        Default::default(),
+                    );
                     for (key_reg, value_reg) in entries {
                         let key = match &self.execution_state.register_ref(*key_reg)?.data {
                             ValueData::String(s) => s.as_ref().clone(),
@@ -5286,12 +5324,10 @@ impl BytecodeVm {
                 ValueData::List(_) | ValueData::AstList(_),
                 ValueData::FloatList(_) | ValueData::IntList(_),
             ) => match op {
-                BinaryOp::Add => {
-                    let mut items =
-                        (*left.to_boxed_list().expect("matched a list")).clone();
-                    items.extend(right.to_boxed_list().expect("matched a list").iter().cloned());
-                    OvmValue::new_list(items)
-                }
+                // A typed side stays typed when the other side's elements
+                // fit its layout — `zeros + [0]` is still an IntList, and
+                // the loop that writes it next stays on the native path.
+                BinaryOp::Add => Self::concat_lists(left, right),
                 BinaryOp::Equal => OvmValue::new_boolean(left == right),
                 BinaryOp::NotEqual => OvmValue::new_boolean(left != right),
                 _ => {
@@ -5801,6 +5837,67 @@ impl BytecodeVm {
     /// map_get with the interpreter's exact semantics and check order:
     /// receiver must be a map or struct-like first, then the key coerces
     /// (String raw, Int/Float/Bool via to_string); a missing key is Unit.
+    /// `left + right` for two list-shaped values, at least one typed or
+    /// wrapped: the typed layout survives when every element fits it,
+    /// otherwise the boxed form.
+    fn concat_lists(left: &OvmValue, right: &OvmValue) -> OvmValue {
+        use crate::ovm::value::ValueData;
+        fn ints_of(v: &OvmValue) -> Option<Vec<i64>> {
+            match &v.data {
+                ValueData::IntList(a) => Some((**a).clone()),
+                ValueData::List(items) => items
+                    .iter()
+                    .map(|x| match &x.data {
+                        ValueData::Integer(i) => Some(*i),
+                        _ => None,
+                    })
+                    .collect(),
+                ValueData::AstList(items) => items
+                    .iter()
+                    .map(|x| match x {
+                        Value::Integer(i) => Some(*i),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => None,
+            }
+        }
+        fn floats_of(v: &OvmValue) -> Option<Vec<f64>> {
+            match &v.data {
+                ValueData::FloatList(a) => Some((**a).clone()),
+                ValueData::List(items) => items
+                    .iter()
+                    .map(|x| match &x.data {
+                        ValueData::Float(f) => Some(*f),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => None,
+            }
+        }
+        let int_side = matches!(left.data, ValueData::IntList(_))
+            || matches!(right.data, ValueData::IntList(_));
+        if int_side && let (Some(mut a), Some(b)) = (ints_of(left), ints_of(right)) {
+            a.extend_from_slice(&b);
+            return OvmValue::new_int_list(a);
+        }
+        let float_side = matches!(left.data, ValueData::FloatList(_))
+            || matches!(right.data, ValueData::FloatList(_));
+        if float_side && let (Some(mut a), Some(b)) = (floats_of(left), floats_of(right)) {
+            a.extend_from_slice(&b);
+            return OvmValue::new_float_list(a);
+        }
+        let mut items = (*left.to_boxed_list().expect("matched a list")).clone();
+        items.extend(
+            right
+                .to_boxed_list()
+                .expect("matched a list")
+                .iter()
+                .cloned(),
+        );
+        OvmValue::new_list(items)
+    }
+
     fn native_map_get(
         receiver: &OvmValue,
         key: &OvmValue,
@@ -5808,7 +5905,7 @@ impl BytecodeVm {
     ) -> Result<OvmValue, BytecodeError> {
         use crate::ovm::value::ValueData;
         enum Recv<'a> {
-            Map(&'a std::collections::HashMap<String, OvmValue>),
+            Map(&'a crate::ovm::value::OvmMap),
             Struct(&'a crate::ovm::value::StructObject),
         }
         let recv = match &receiver.data {
@@ -5854,14 +5951,22 @@ impl BytecodeVm {
 
     fn native_map_has_key(receiver: &OvmValue, key: &OvmValue) -> Result<OvmValue, BytecodeError> {
         use crate::ovm::value::ValueData;
-        let contains: Box<dyn Fn(&str) -> bool> = match &receiver.data {
-            ValueData::Map(m) => Box::new(move |k| m.contains_key(k)),
-            ValueData::Struct(st) => Box::new(move |k| st.shape.field_index(k).is_some()),
+        enum Recv<'a> {
+            Map(&'a crate::ovm::value::OvmMap),
+            Struct(&'a crate::ovm::value::StructObject),
+        }
+        let recv = match &receiver.data {
+            ValueData::Map(m) => Recv::Map(m),
+            ValueData::Struct(st) => Recv::Struct(st),
             _ => {
                 return Err(BytecodeError::TypeError(
                     "map_has_key: first argument must be a map or object".to_string(),
                 ));
             }
+        };
+        let contains = |k: &str| match recv {
+            Recv::Map(m) => m.contains_key(k),
+            Recv::Struct(st) => st.shape.field_index(k).is_some(),
         };
         let key_string;
         let key_str: &str = match &key.data {
@@ -6019,6 +6124,165 @@ impl BytecodeVm {
             args
         };
         match name {
+            // `to_string` on a scalar is the hottest thing a string-keyed
+            // loop does (`"w" + to_string(n)`); bridging it to the
+            // interpreter cost a value conversion each way and the
+            // builtin table walk, per call. Compound values still bridge,
+            // so their rendering has one implementation.
+            // `str.length` counts chars, as the interpreter does; the
+            // module-prefixed name otherwise bridged every call.
+            "str.length" if args.len() == 1 => Some(match &args[0].data {
+                ValueData::String(st) => Ok(OvmValue::new_integer(st.chars().count() as i64)),
+                _ => Err(BytecodeError::TypeError(format!(
+                    "str.length: argument 1 must be a string, got {}",
+                    args[0].type_name()
+                ))),
+            }),
+            "to_string" if args.len() == 1 => Some(Ok(match &args[0].data {
+                ValueData::Integer(i) => OvmValue::new_string(i.to_string()),
+                ValueData::Float(f) => OvmValue::new_string(Value::Float(*f).to_string()),
+                ValueData::Boolean(b) => OvmValue::new_string(b.to_string()),
+                ValueData::String(_) => args[0].clone(),
+                _ => return None,
+            })),
+            // `map`/`filter` over a range iterate the integers without
+            // materializing them, and a map whose kernel answers integers
+            // for every element lands in the typed layout directly — the
+            // list a sieve or a histogram then writes in place natively.
+            "map" | "filter" if args.len() == 2 && matches!(args[0].data, ValueData::Range(_)) => {
+                let range = match &args[0].data {
+                    ValueData::Range(r) => r.clone(),
+                    _ => return None,
+                };
+                let (func_id, captures) = match &args[1].data {
+                    ValueData::AstFunction(f) => {
+                        let f = f.clone();
+                        (self.hof_function_id(&f, 1)?, Vec::new())
+                    }
+                    ValueData::Closure(c) if c.template.parameters.len() == 1 => {
+                        (c.func_id, c.captured.clone())
+                    }
+                    _ => return None,
+                };
+                let is_map = name == "map";
+                let end = if range.inclusive {
+                    range.end + 1
+                } else {
+                    range.end
+                };
+                let count = (end - range.start).max(0) as usize;
+                // A native kernel over a plain range: call its raw entry
+                // per integer, no register file in between. Any element
+                // the native code declines restarts the whole map on the
+                // general path below (the kernel is pure, so nothing was
+                // observed).
+                #[cfg(feature = "native")]
+                if captures.is_empty()
+                    && self.jit.has(func_id)
+                    && let Ok(bytecode) = self.get_bytecode(func_id)
+                {
+                    use crate::ovm::jit::Kind as JitKind;
+                    let remaining = self
+                        .max_call_depth
+                        .saturating_sub(self.call_depth + 1)
+                        .min(JIT_NATIVE_DEPTH_BUDGET);
+                    let hot = &self.bytecode_hot;
+                    let cache = &self.bytecode_cache;
+                    let lookup = |id: FunctionId| -> Option<Arc<CompiledBytecode>> {
+                        hot.get(id.index())
+                            .and_then(|s| s.clone())
+                            .or_else(|| cache.read().ok().and_then(|c| c.get(&id).cloned()))
+                    };
+                    let mut ints: Vec<i64> = Vec::with_capacity(if is_map { count } else { 0 });
+                    let mut boxed: Vec<OvmValue> = Vec::new();
+                    let mut all_int = true;
+                    let mut complete = true;
+                    let mut n = range.start;
+                    while n < end {
+                        let Some(result) = self.jit.try_call_raw(
+                            func_id,
+                            &bytecode,
+                            &[n],
+                            &[JitKind::Int],
+                            remaining,
+                            &lookup,
+                        ) else {
+                            complete = false;
+                            break;
+                        };
+                        if is_map {
+                            match &result.data {
+                                ValueData::Integer(i) if all_int => ints.push(*i),
+                                _ => {
+                                    if all_int {
+                                        boxed = ints
+                                            .iter()
+                                            .map(|&i| OvmValue::new_integer(i))
+                                            .collect();
+                                        all_int = false;
+                                    }
+                                    boxed.push(result);
+                                }
+                            }
+                        } else if matches!(result.data, ValueData::Boolean(true)) {
+                            ints.push(n);
+                        }
+                        n += 1;
+                    }
+                    if complete {
+                        return Some(Ok(if is_map && !all_int {
+                            OvmValue::new_list(boxed)
+                        } else {
+                            OvmValue::new_int_list(ints)
+                        }));
+                    }
+                }
+                let mut call_args = Vec::with_capacity(1 + captures.len());
+                call_args.push(OvmValue::new_unit());
+                call_args.extend(captures.iter().cloned());
+                let mut ints: Option<Vec<i64>> = if is_map {
+                    Some(Vec::with_capacity(count))
+                } else {
+                    None
+                };
+                let mut out: Vec<OvmValue> = Vec::new();
+                let mut n = range.start;
+                while n < end {
+                    call_args[0] = OvmValue::new_integer(n);
+                    let result = match self.execute(func_id, &call_args) {
+                        Ok(r) => r,
+                        Err(e) => return Some(Err(e)),
+                    };
+                    if is_map {
+                        match (&mut ints, &result.data) {
+                            (Some(v), ValueData::Integer(i)) => v.push(*i),
+                            (Some(v), _) => {
+                                // The first non-integer result: box what
+                                // was collected and continue boxed.
+                                out = v.iter().map(|&i| OvmValue::new_integer(i)).collect();
+                                out.push(result);
+                                ints = None;
+                            }
+                            (None, _) => out.push(result),
+                        }
+                    } else if matches!(result.data, ValueData::Boolean(true)) {
+                        out.push(OvmValue::new_integer(n));
+                    }
+                    n += 1;
+                }
+                Some(Ok(match ints {
+                    Some(v) => OvmValue::new_int_list(v),
+                    None if is_map => OvmValue::new_list(out),
+                    None => OvmValue::new_int_list(
+                        out.iter()
+                            .map(|v| match &v.data {
+                                ValueData::Integer(i) => *i,
+                                _ => unreachable!("filter over a range keeps integers"),
+                            })
+                            .collect(),
+                    ),
+                }))
+            }
             "map" | "filter" if args.len() == 2 => {
                 let items = match &args[0].data {
                     ValueData::List(items) => items.clone(),
@@ -7311,13 +7575,13 @@ impl BytecodeCompiler {
             emitter: InstructionEmitter::new(),
             optimizer: BytecodeOptimizer::new(),
             local_variables: HashMap::new(),
-            builtin_names: std::collections::HashSet::new(),
+            builtin_names: rustc_hash::FxHashSet::default(),
             loop_targets: Vec::new(),
             span_stack: Vec::new(),
             enclosing_closure: std::sync::Arc::new(im::HashMap::new()),
             enclosing_bound_names: std::collections::HashSet::new(),
             _label_counter: 0,
-            function_registry: HashMap::new(),
+            function_registry: rustc_hash::FxHashMap::default(),
             struct_defs: HashMap::new(),
             struct_field_checks: HashMap::new(),
             unit_variant_names: std::collections::HashSet::new(),

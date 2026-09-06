@@ -19,6 +19,10 @@ pub fn create_dom_module() -> Value {
         // Reconcile the element's children with new markup, keyed by
         // `data-key`, preserving the nodes that did not change.
         ("morph", 2),
+        // Reconcile the element's children with a node tree — the view
+        // data itself, no markup in between: the host walks the tree and
+        // diffs it against the live DOM by `data-key`.
+        ("patch", 2),
         ("value", 1),
         ("set_value", 2),
         ("on", 3),

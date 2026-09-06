@@ -2,6 +2,7 @@ use crate::ast::Value;
 use aes_gcm::aead::{Aead, AeadCore};
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use argon2::Argon2;
+#[cfg(feature = "rsa-crypto")]
 use base64::{Engine as _, engine::general_purpose};
 use bcrypt;
 use hex;
@@ -15,12 +16,17 @@ use rand::Rng as _;
 // bridges that era (on wasm it routes through getrandom 0.2's registered
 // custom backend, see src/playground.rs).
 use aes_gcm::aead::OsRng as AeadOsRng;
+#[cfg(feature = "rsa-crypto")]
 use rsa::Pkcs1v15Encrypt;
+#[cfg(feature = "rsa-crypto")]
 use rsa::pkcs1v15::{
     Signature as RsaSignature, SigningKey as RsaSigningKey, VerifyingKey as RsaVerifyingKey,
 };
+#[cfg(feature = "rsa-crypto")]
 use rsa::rand_core::OsRng as RsaOsRng;
+#[cfg(feature = "rsa-crypto")]
 use rsa::signature::{SignatureEncoding, Signer, Verifier};
+#[cfg(feature = "rsa-crypto")]
 use rsa::{
     RsaPrivateKey, RsaPublicKey,
     pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey, LineEnding},
@@ -184,14 +190,31 @@ pub fn call_crypto_function(
         "secure_compare" => crypto_secure_compare(args),
         "encrypt_aes" => crypto_encrypt_aes(args),
         "decrypt_aes" => crypto_decrypt_aes(args),
+        #[cfg(feature = "rsa-crypto")]
         "encrypt_rsa" => crypto_encrypt_rsa(args),
+        #[cfg(feature = "rsa-crypto")]
         "decrypt_rsa" => crypto_decrypt_rsa(args),
         "derive_key" => crypto_derive_key(args),
+        #[cfg(feature = "rsa-crypto")]
         "generate_key_pair" => crypto_generate_key_pair(args),
+        #[cfg(feature = "rsa-crypto")]
         "export_public_key" => crypto_export_public_key(args),
+        #[cfg(feature = "rsa-crypto")]
         "import_public_key" => crypto_import_public_key(args),
+        #[cfg(feature = "rsa-crypto")]
         "sign_data" => crypto_sign_data(args),
+        #[cfg(feature = "rsa-crypto")]
         "verify_signature" => crypto_verify_signature(args),
+        // The browser profile omits the RSA suite (a third of a megabyte
+        // of code a page never calls); the names still exist, so a
+        // program that reaches one hears why.
+        #[cfg(not(feature = "rsa-crypto"))]
+        "encrypt_rsa" | "decrypt_rsa" | "generate_key_pair" | "export_public_key"
+        | "import_public_key" | "sign_data" | "verify_signature" => Err(format!(
+            "crypto.{}: RSA is not in this build (the browser runtime omits it)",
+            name
+        )
+        .into()),
         _ => Err(format!("Unknown crypto function: {}", name).into()),
     }
 }
@@ -764,6 +787,7 @@ fn crypto_decrypt_aes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
 
 /// Encrypt data using RSA
 /// Usage: crypto.encrypt_rsa(data, public_key) -> Result<String, Error>
+#[cfg(feature = "rsa-crypto")]
 fn crypto_encrypt_rsa(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
         return Err(format!("encrypt_rsa expects 2 arguments, got {}", args.len()).into());
@@ -813,6 +837,7 @@ fn crypto_encrypt_rsa(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
 
 /// Decrypt data using RSA
 /// Usage: crypto.decrypt_rsa(encrypted_data, private_key) -> Result<String, Error>
+#[cfg(feature = "rsa-crypto")]
 fn crypto_decrypt_rsa(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
         return Err(format!("decrypt_rsa expects 2 arguments, got {}", args.len()).into());
@@ -946,6 +971,7 @@ fn crypto_derive_key(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
 
 /// Generate a new RSA key pair
 /// Usage: crypto.generate_key_pair() -> Result<{private_key: String, public_key: String}, Error>
+#[cfg(feature = "rsa-crypto")]
 fn crypto_generate_key_pair(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
         return Err(format!("generate_key_pair expects 0 arguments, got {}", args.len()).into());
@@ -1001,6 +1027,7 @@ fn crypto_generate_key_pair(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
 
 /// Export a public key to PEM format
 /// Usage: crypto.export_public_key(public_key) -> Result<String, Error>
+#[cfg(feature = "rsa-crypto")]
 fn crypto_export_public_key(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
         return Err(format!("export_public_key expects 1 argument, got {}", args.len()).into());
@@ -1035,6 +1062,7 @@ fn crypto_export_public_key(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
 
 /// Import a public key from PEM format
 /// Usage: crypto.import_public_key(pem_string) -> Result<PublicKey, Error>
+#[cfg(feature = "rsa-crypto")]
 fn crypto_import_public_key(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
         return Err(format!("import_public_key expects 1 argument, got {}", args.len()).into());
@@ -1072,6 +1100,7 @@ fn crypto_import_public_key(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
 
 /// Sign data using RSA private key (PKCS#1 v1.5 over SHA-256)
 /// Usage: crypto.sign_data(data, private_key) -> Result<String, Error>
+#[cfg(feature = "rsa-crypto")]
 fn crypto_sign_data(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
         return Err(format!("sign_data expects 2 arguments, got {}", args.len()).into());
@@ -1116,6 +1145,7 @@ fn crypto_sign_data(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
 
 /// Verify a signature using RSA public key (PKCS#1 v1.5 over SHA-256)
 /// Usage: crypto.verify_signature(data, signature, public_key) -> Result<Bool, Error>
+#[cfg(feature = "rsa-crypto")]
 fn crypto_verify_signature(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 3 {
         return Err(format!("verify_signature expects 3 arguments, got {}", args.len()).into());

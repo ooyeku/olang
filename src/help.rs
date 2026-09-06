@@ -3238,6 +3238,14 @@ let parts = ods.split(f, 0.8)   // [train, test]"##],
             &[r##"dom.morph(dom.query("#list"), render(rows))"##],
         );
         self.doc_ex(
+            "dom.patch",
+            "dom.patch(el, node)",
+            "Unit",
+            "Dom",
+            "Reconcile the element's children with a `web.html` node tree — the view data itself. The host walks the tree and diffs it against the live DOM: text updated in place, attributes diffed, children matched by `data-key` (else by position and tag); a `memo` subtree whose inputs did not change is kept as it is. No markup is rendered or parsed, which is what makes a repaint cheap. Browser only.",
+            &[r##"dom.patch(dom.query("#app"), view(state))"##],
+        );
+        self.doc_ex(
             "dom.checked",
             "dom.checked(el)",
             "Bool",

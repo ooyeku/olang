@@ -61,6 +61,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`http.serve` returns `Ok(())` on a drained stop**; the SDK's `serve`
   matches with a catch-all, so an app's "server drained" branch runs.
 
+### Performance
+
+- **A browser profile of the runtime.** The wasm the web SDK and the
+  examples ship omits the `re` module and the RSA suite (features
+  `regex-module` and `rsa-crypto`, on by default natively): 6.3 → 4.8 MB
+  raw, 1.84 → 1.38 MB gzip, 1.26 → 0.97 MB brotli. Calling one of the
+  omitted functions says so. The website's playground keeps them.
+
+- **The browser profiler.** `window.olangProfile.start()`, act,
+  `table()`: every olang function that ran during a repaint, with its
+  tier, calls, and exact self and total milliseconds, from the same
+  shadow stack `olang profile` samples natively.
+
+- **A repaint is a DOM diff, not markup.** `dom.patch(el, node)` hands the
+  host the node tree as data and the host diffs it against the live DOM
+  by `data-key`; the SDK's `mount`, `apply`, and `patch` use it, so a
+  repaint renders, escapes, and parses no HTML. `memo(key, inputs,
+  build)` keeps a subtree untouched while its inputs stand.
+
+- **The VM's maps hash with FxHash**, as do its function and builtin name
+  tables; `map_has_key` allocates nothing per call and `map_set` on a
+  uniquely owned map overwrites in place. `to_string` on a scalar and
+  `str.length` run natively instead of bridging to the interpreter.
+  `wordfreq` 1,108 → 650 ms, `strbuild` 266 → 116 ms, the record
+  pipeline 13 → 4 ms.
+
+- **A hot inner loop enters the native tier at its own head** instead of
+  waiting for the enclosing loop's back edge; `map`/`filter` over a
+  range run the compiled kernel's raw entry per integer and land in the
+  typed list layout, and `+` keeps a typed list typed. `sieve` 1,098 →
+  550 ms.
+
 ### Fixed
 
 - **A second definition of a name no longer slows every call to it.** The

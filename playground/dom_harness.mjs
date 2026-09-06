@@ -84,6 +84,7 @@ function bootWorker(source) {
         host_dom_query_all: () => 0,
         host_dom_fetch_with: () => {},
         host_dom_morph: () => {},
+        host_dom_patch: () => {},
         host_dom_checked: () => 0n,
         host_dom_selection: () => 0,
         host_dom_set_selection: () => {},
@@ -154,6 +155,7 @@ const imports = {
       crypto.getRandomValues(new Uint8Array(ex.memory.buffer, ptr, len)),
     host_dom_query_all: (ptr, len) => giveStr("[]"),
   host_dom_morph: (h, ptr, len) => { node(h).html = readStr(ptr, len); },
+  host_dom_patch: (h, ptr, len) => { node(h).tree = JSON.parse(readStr(ptr, len)); },
   host_dom_checked: (h) => (node(h).checked ? 1n : 0n),
   host_dom_selection: (h) => giveStr("[0,0]"),
   host_dom_set_selection: () => {},
@@ -717,6 +719,61 @@ println("state ok")
   if (fakeDom["#log"].text !== "4 open 2 true")
     throw new Error("state round-trip wrong: " + fakeDom["#log"].text);
   console.log("stage 7: session state ok");
+}
+// ── stage 8: dom.patch — the node tree crosses as data ──
+const prog12 = `
+let rows = map([3, 1, 2], (n) => #{ "tag": "li", "attrs": #{ "data-key": "r" + to_string(n) }, "children": [#{ "text": "row " + to_string(n) }] })
+dom.patch(dom.query("#log"), #{ "tag": "ul", "attrs": #{ "class": "rows", "hidden": false }, "children": rows })
+println("patched")
+`;
+{
+  const enc12 = new TextEncoder().encode(prog12);
+  const p12 = ex.olang_alloc(enc12.length);
+  mem().set(enc12, p12);
+  const r = result(ex.olang_session_start(p12, enc12.length));
+  ex.olang_dealloc(p12, enc12.length);
+  if (r.error) throw new Error("stage8 session: " + r.error);
+  const tree = fakeDom["#log"].tree;
+  // The tree arrives typed: attrs keep their booleans, children their
+  // order and keys, text nodes their text — nothing was rendered to
+  // markup on the way.
+  if (!tree || tree.tag !== "ul" || tree.attrs.class !== "rows" || tree.attrs.hidden !== false)
+    throw new Error("patch tree wrong: " + JSON.stringify(tree));
+  const keys = tree.children.map((c) => c.attrs["data-key"]).join(",");
+  if (keys !== "r3,r1,r2" || tree.children[0].children[0].text !== "row 3")
+    throw new Error("patch children wrong: " + JSON.stringify(tree.children));
+  console.log("stage 8: dom.patch tree ok");
+}
+// ── stage 9: the browser profiler, over a 100-row repaint loop ──
+const prog13 = `
+fn row(i) = #{ "tag": "tr", "attrs": #{ "data-key": "r" + to_string(i), "class": if i % 2 == 0 => "even" else => "odd" },
+    "children": [#{ "tag": "td", "attrs": #{}, "children": [#{ "text": "Issue " + to_string(i) }] },
+                 #{ "tag": "td", "attrs": #{ "title": "priority" }, "children": [#{ "text": to_string(i % 5) }] }] }
+fn table(n, tick) = #{ "tag": "table", "attrs": #{ "data-tick": to_string(tick) }, "children": map(range(0, n), row) }
+let root = dom.query("#log")
+let t0 = time.monotonic_ms()
+for tick in range(0, 20) { dom.patch(root, table(100, tick)) }
+let per = (time.monotonic_ms() - t0) / 20
+println("repaint of 100 rows, wasm side: " + to_string(per) + " ms each")
+`;
+{
+  ex.olang_profile_start();
+  const enc13 = new TextEncoder().encode(prog13);
+  const p13 = ex.olang_alloc(enc13.length);
+  mem().set(enc13, p13);
+  const r = result(ex.olang_session_start(p13, enc13.length));
+  ex.olang_dealloc(p13, enc13.length);
+  if (r.error) throw new Error("stage9 session: " + r.error);
+  const rep = result(ex.olang_profile_stop());
+  if (!Array.isArray(rep.rows) || rep.rows.length === 0)
+    throw new Error("profile report empty: " + JSON.stringify(rep));
+  const top = rep.rows[0];
+  if (typeof top.function !== "string" || typeof top.self_ms !== "number" || typeof top.tier !== "string")
+    throw new Error("profile row shape wrong: " + JSON.stringify(top));
+  if (!rep.rows.some((row) => row.function === "row" || row.function === "table"))
+    throw new Error("profile did not see the view functions: " + JSON.stringify(rep.rows.slice(0, 5)));
+  console.log("stage 9: browser profiler ok —", rep.rows.slice(0, 3).map((x) => `${x.function} ${x.self_ms}ms/${x.calls}`).join(", "));
+  if (fakeDom["#log"].tree.children.length !== 100) throw new Error("repaint tree lost rows");
 }
 console.log("final dom:", JSON.stringify(fakeDom));
 console.log("DOM BRIDGE END-TO-END PASSED (incl. fetch payloads + random)");

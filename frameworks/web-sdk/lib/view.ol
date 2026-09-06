@@ -7,12 +7,14 @@
 //! dispatching by each element's `data-action` — so re-rendered
 //! markup never re-binds anything.
 //!
-//! A repaint reconciles: the rendered tree is morphed into the mount
-//! point (`dom.morph`) — text updated in place, attributes diffed,
-//! children matched by `data-key` (else by position and tag) — so the
-//! nodes that did not change are the nodes the browser keeps, focus and
-//! caret and scroll included. Give list rows a `"data-key"` attribute
-//! and reordering moves their elements instead of rebuilding them.
+//! A repaint reconciles: the node tree is handed to the host as data
+//! (`dom.patch`) and diffed against the live DOM — text updated in
+//! place, attributes diffed, children matched by `data-key` (else by
+//! position and tag) — so the nodes that did not change are the nodes
+//! the browser keeps, focus and caret and scroll included. Give list
+//! rows a `"data-key"` attribute and reordering moves their elements
+//! instead of rebuilding them; wrap a subtree in `memo` and it is not
+//! even rebuilt while its inputs stand.
 
 use lib.html { render }
 use lib.state { init, current, update }
@@ -28,7 +30,7 @@ share fn rerender() = {
     let f = cell.get(mount_view)
     let root = cell.get(mount_root)
     if f != () && root != "" && dom.available() => {
-        dom.morph(dom.query(root), render(f(current())))
+        dom.patch(dom.query(root), f(current()))
     }
 }
 
@@ -148,7 +150,7 @@ fn dispatch_action(ev) = {
 /// cost a whole-page render on every store write. `apply` remains the
 /// whole-view repaint.
 share fn patch(id, node) =
-    if dom.available() => dom.morph(dom.query("#" + id), render(node)) else => ()
+    if dom.available() => dom.patch(dom.query("#" + id), node) else => ()
 
 /// The argument of the event's `data-action` — how a prefix handler
 /// reads it: `action_arg(ev)` on "toggle:7" is "7". A confirm-wrapped

@@ -14,5 +14,11 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+# `full`: the website's playground, with the `re` module and RSA. The
+# default is the browser profile the web SDK and the examples ship.
+default = []
+full = ["olang/regex-module", "olang/rsa-crypto"]
+
 [dependencies]
 olang = { path = "..", default-features = false }

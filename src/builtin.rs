@@ -915,9 +915,17 @@ impl BuiltinFunctions {
         }
 
         // Handle re functions
+        #[cfg(feature = "regex-module")]
         if let Some(re_function) = name.strip_prefix("re.") {
             return crate::stdlib::regex_mod::call_regex_function(re_function, arguments)
                 .map_err(|e| InterpreterError::runtime(e.to_string()));
+        }
+        #[cfg(not(feature = "regex-module"))]
+        if let Some(re_function) = name.strip_prefix("re.") {
+            return Err(InterpreterError::runtime(format!(
+                "re.{}: regular expressions are not in this build (the browser runtime omits the `re` module)",
+                re_function
+            )));
         }
 
         // `caps` answers from the *caller's* grant, so it resolves

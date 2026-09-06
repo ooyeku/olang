@@ -98,9 +98,9 @@ pub struct ScratchCtx {
     int_list_args: Vec<Arc<Vec<i64>>>,
     int_list_allocs: Vec<Arc<Vec<i64>>>,
     retained_int_list: Option<Arc<Vec<i64>>>,
-    map_allocs: Vec<Arc<HashMap<String, OvmValue>>>,
-    map_args: Vec<Arc<HashMap<String, OvmValue>>>,
-    retained_map: Option<Arc<HashMap<String, OvmValue>>>,
+    map_allocs: Vec<Arc<crate::ovm::value::OvmMap>>,
+    map_args: Vec<Arc<crate::ovm::value::OvmMap>>,
+    retained_map: Option<Arc<crate::ovm::value::OvmMap>>,
     /// Scratch lengths at loop entry. Each back-edge truncates every
     /// family back to this mark, freeing the iteration's allocations —
     /// codegen only permits it when every heap value born in the loop
@@ -191,7 +191,7 @@ pub fn classify_result(r: &crate::ovm::value::ResultObject) -> Option<Kind> {
 /// Classify a map argument by its values: a uniform scalar or string
 /// payload specializes; an empty map is Map(Absent) — its guarded reads
 /// all deopt, but construction and presence tests still compile.
-pub fn classify_map(m: &HashMap<String, OvmValue>) -> Option<Kind> {
+pub fn classify_map(m: &crate::ovm::value::OvmMap) -> Option<Kind> {
     let mut payload = Payload::Absent;
     for v in m.values() {
         let pv = match &v.data {
@@ -1032,7 +1032,7 @@ unsafe extern "C" fn olang_jit_make_list_strs(
 /// # Safety
 /// Called only from JIT code with pointers extracted from live slots.
 unsafe extern "C" fn olang_jit_map_get(
-    map: *const HashMap<String, OvmValue>,
+    map: *const crate::ovm::value::OvmMap,
     key: *const String,
     expect: u64,
     out: *mut i64,
@@ -1067,7 +1067,7 @@ unsafe extern "C" fn olang_jit_map_get(
 /// # Safety
 /// Called only from JIT code with pointers extracted from live slots.
 unsafe extern "C" fn olang_jit_map_has(
-    map: *const HashMap<String, OvmValue>,
+    map: *const crate::ovm::value::OvmMap,
     key: *const String,
 ) -> i64 {
     unsafe { (*map).contains_key((*key).as_str()) as i64 }
@@ -1082,7 +1082,7 @@ unsafe extern "C" fn olang_jit_map_has(
 /// Called only from JIT code with the call's own ctx and live pointers.
 unsafe extern "C" fn olang_jit_map_set(
     ctx: *mut ScratchCtx,
-    map: *const HashMap<String, OvmValue>,
+    map: *const crate::ovm::value::OvmMap,
     key: *const String,
     kind: i64,
     bits: i64,
@@ -1121,7 +1121,8 @@ unsafe extern "C" fn olang_jit_make_map(
         if ctx.map_allocs.len() >= 1_000_000 {
             return 0;
         }
-        let mut map = HashMap::with_capacity(n as usize);
+        let mut map =
+            crate::ovm::value::OvmMap::with_capacity_and_hasher(n as usize, Default::default());
         for i in 0..n as usize {
             let key = (*(*keys.add(i) as *const String)).clone();
             map.insert(key, scalar_from_bits(kind, *vals.add(i)));
@@ -1862,7 +1863,7 @@ impl JitCache {
         let mut list_args: Vec<Arc<Vec<OvmValue>>> = Vec::new();
         let mut float_list_args: Vec<Arc<Vec<f64>>> = Vec::new();
         let mut int_list_args: Vec<Arc<Vec<i64>>> = Vec::new();
-        let mut map_args: Vec<Arc<HashMap<String, OvmValue>>> = Vec::new();
+        let mut map_args: Vec<Arc<crate::ovm::value::OvmMap>> = Vec::new();
         // The per-family sweep only matters when a reference-kind argument
         // exists; all-scalar calls (the common boundary) skip it whole.
         if any_ref {
@@ -2025,7 +2026,7 @@ impl JitCache {
         list_args_for_ctx: &[Arc<Vec<OvmValue>>],
         float_list_args_for_ctx: &[Arc<Vec<f64>>],
         int_list_args_for_ctx: &[Arc<Vec<i64>>],
-        map_args_for_ctx: &[Arc<HashMap<String, OvmValue>>],
+        map_args_for_ctx: &[Arc<crate::ovm::value::OvmMap>],
     ) -> Option<OvmValue> {
         let idx = func_id.index();
         match self.table.get(idx)? {
@@ -3481,7 +3482,7 @@ const K_STR: u16 = 128;
 /// Result values ride borrowed `Arc<ResultObject>` pointers, like
 /// structs — the ninth kind, and the reason the masks are u16.
 const K_RESULT: u16 = 256;
-/// Maps ride borrowed `Arc<HashMap<String, OvmValue>>` pointers.
+/// Maps ride borrowed `Arc<crate::ovm::value::OvmMap>` pointers.
 const K_MAP: u16 = 512;
 /// Largest tuple the JIT returns natively (multi-value return slots).
 /// Raised from 8 alongside MAX_PARAMS: an OSR region returns its

@@ -29,6 +29,7 @@ pub mod os;
 #[cfg(feature = "native")]
 pub mod proc;
 pub mod random;
+#[cfg(feature = "regex-module")]
 pub mod regex_mod;
 pub mod string;
 pub mod task;
@@ -69,6 +70,7 @@ pub fn get_stdlib() -> HashMap<String, Value> {
     stdlib.insert("random".to_string(), random::create_random_module());
     stdlib.insert("testing".to_string(), testing::create_testing_module());
     stdlib.insert("str".to_string(), string::create_string_module());
+    #[cfg(feature = "regex-module")]
     stdlib.insert("re".to_string(), regex_mod::create_regex_module());
     stdlib.insert("time".to_string(), time::create_time_module());
     stdlib.insert("dom".to_string(), dom::create_dom_module());

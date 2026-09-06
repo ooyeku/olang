@@ -15,7 +15,15 @@ categories = ["development-tools"]
 members = [".", "otc", "playground", "olang-ods"]
 
 [features]
-default = ["native"]
+default = ["native", "full"]
+# The whole stdlib. The browser profile the web SDK ships omits these
+# (`cargo build -p olang-playground` without `--features full`): the
+# regex engine and its Unicode tables, and the RSA suite, are a third of
+# the runtime's code and nothing a page needs. The website's playground
+# keeps them.
+full = ["regex-module", "rsa-crypto"]
+regex-module = ["dep:regex"]
+rsa-crypto = ["dep:rsa"]
 # Everything that cannot exist in a browser: sockets, SQLite's C library,
 # terminals, mmap, process/host introspection, thread pools. The playground
 # (wasm32) build compiles with --no-default-features; gated code falls back
@@ -57,10 +65,13 @@ postcard = { version = "1.1", features = ["use-std"] }
 # gzip/deflate for `compress` and the web SDK's response encoding. The
 # default pure-Rust backend (miniz_oxide) builds for wasm too.
 flate2 = "1.1"
+# The VM's string-keyed maps and its function/builtin name tables hash
+# with FxHash: short keys, no DoS exposure, a fraction of SipHash's cost.
+rustc-hash = "2"
 unicode-segmentation = "1.13"
 memchr = "2"
 csv = "1.4"
-regex = "1.13"
+regex = { version = "1.13", optional = true }
 rusqlite = { version = "0.40", features = ["bundled"], optional = true }
 toml = "0.8"
 semver = { version = "1.0", features = ["serde"] }
@@ -77,7 +88,7 @@ hmac = "0.12"
 bcrypt = "0.19"
 hex = "0.4"
 aes-gcm = "0.10"
-rsa = "0.9"
+rsa = { version = "0.9", optional = true }
 argon2 = "0.5"
 
 # REPL and CLI

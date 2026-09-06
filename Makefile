@@ -55,12 +55,15 @@ prepush:
 # (website/scripts/sync-playground.mjs does the same staging at site
 # build time). Needs `rustup target add wasm32-unknown-unknown` once.
 wasm:
+	# The website's playground carries the whole stdlib (`re`, RSA).
+	cargo build -p olang-playground --features full --target $(WASM_TARGET) --release
+	mkdir -p website/static/playground
+	cp $(WASM_ARTIFACT) website/static/playground/olang.wasm
+	# The browser profile the SDK and the examples ship: no `re`, no RSA.
 	cargo build -p olang-playground --target $(WASM_TARGET) --release
 	cp $(WASM_ARTIFACT) examples/web/app/static/olang_playground.wasm
 	cp $(WASM_ARTIFACT) examples/web/ledger/static/olang_playground.wasm
 	cp $(WASM_ARTIFACT) frameworks/web-sdk/static/olang_playground.wasm
-	mkdir -p website/static/playground
-	cp $(WASM_ARTIFACT) website/static/playground/olang.wasm
 
 # Local cross-check of everything a release ships: the release binaries,
 # the playground wasm, and the VS Code .vsix, staged into dist/out/

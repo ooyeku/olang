@@ -36,6 +36,30 @@ fn as_text(v) = if typeof(v) == "String" => v else => to_string(v)
 /// Trusted, pre-rendered markup — the explicit escaping opt-out.
 share fn raw(s) = #{ "raw": s }
 
+/// A subtree that is rebuilt only when its inputs change:
+/// `memo("chart", [rows, width], () => chart(rows, width))`. The key
+/// names the element (it becomes its `data-key`); the inputs are
+/// compared by value against the last repaint's. While they stand and
+/// the element is on the page, the repaint hands the host a `keep`
+/// marker and the browser leaves that subtree exactly as it is — the
+/// view function does not even run `build`. Rendered to markup (the
+/// server, a static preview) it always builds.
+let memo_stamps = cell.new(#{})
+share fn memo(key, inputs, build) = {
+    let stamp = show(inputs)
+    let stamps = cell.get(memo_stamps)
+    let unchanged = map_has_key(stamps, key) && map_get(stamps, key) == stamp
+    if unchanged && dom.available() && dom.find("[data-key=\"" + key + "\"]") != () =>
+        #{ "keep": key }
+    else => {
+        cell.set(memo_stamps, map_set(stamps, key, stamp))
+        let node = build()
+        if contains(["Map", "JsonObject"], typeof(node)) && map_has_key(node, "tag") && map_get(node, "tag") != "" =>
+            map_set(node, "attrs", map_set(map_get(node, "attrs"), "data-key", key))
+        else => node
+    }
+}
+
 /// A fragment: children rendered with no wrapping element.
 share fn fragment(children) =
     #{ "tag": "", "attrs": #{}, "children": flatten_children(children) }
@@ -124,6 +148,9 @@ share fn render(node) = {
     if typeof(node) == "String" => escape(node)
     else if map_has_key(node, "text") => escape(map_get(node, "text"))
     else if map_has_key(node, "raw") => map_get(node, "raw")
+    // A memo's keep marker only exists for the browser's patch; markup
+    // has nothing to keep.
+    else if map_has_key(node, "keep") => ""
     else => {
         let tag = map_get(node, "tag")
         let inner = map_get(node, "children") |> map((c) => render(c)) |> join("")
@@ -167,6 +194,14 @@ test "void elements, boolean and absent attributes" {
         "<input disabled type=\"text\">")
     assert_eq(render(input(#{ "value": () })), "<input>")
     assert_eq(render(br()), "<br>")
+}
+
+test "memo builds where there is no dom, and stamps its key on the element" {
+    let n = memo("panel", [1, "a"], () => div(#{ "class": "p" }, ["x"]))
+    assert_eq(render(n), "<div class=\"p\" data-key=\"panel\">x</div>")
+    // Same inputs again: still built here (no page to keep it on).
+    assert_eq(render(memo("panel", [1, "a"], () => div(#{}, ["y"]))), "<div data-key=\"panel\">y</div>")
+    assert_eq(render(#{ "keep": "panel" }), "")
 }
 
 test "attribute order is deterministic" {

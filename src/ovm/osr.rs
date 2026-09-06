@@ -94,6 +94,27 @@ pub fn synthesize(bytecode: &CompiledBytecode, head: usize) -> Option<OsrRegion>
     None
 }
 
+/// The region whose head IS the hot back edge's target — the innermost
+/// loop being spun right now. When the enclosing region anchors at an
+/// outer head, this is what the frame can enter immediately, instead
+/// of spinning the inner loop on the VM until the outer back edge comes
+/// round (for a sieve's first pass, five million iterations later).
+pub fn synthesize_at(bytecode: &CompiledBytecode, head: usize) -> Option<OsrRegion> {
+    let mut candidates: Vec<(usize, usize)> = raw_intervals_containing(bytecode, head)
+        .into_iter()
+        .filter(|(h, _)| *h == head)
+        .collect();
+    candidates.sort_by_key(|(s, e)| std::cmp::Reverse(e - s));
+    for (h, e) in candidates {
+        if let Some(r) = synthesize_region(bytecode, h, e)
+            && crate::ovm::jit::whitelist_ok(&r.synth)
+        {
+            return Some(r);
+        }
+    }
+    None
+}
+
 /// Every raw back-edge interval containing `head`, unmerged — the
 /// nesting levels around the hot loop.
 fn raw_intervals_containing(bytecode: &CompiledBytecode, head: usize) -> Vec<(usize, usize)> {

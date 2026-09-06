@@ -695,6 +695,10 @@ because the *pattern* can be malformed — the usual shape is one
 `unwrap` around a pattern you wrote yourself, or `re.is_valid` first
 for a pattern that arrives at runtime.
 
+The browser runtime the web SDK ships omits this module (the engine and
+its Unicode tables are a fifth of the runtime's code); a page that calls
+`re.*` hears so. The website's playground carries it.
+
 | Function | Description |
 |---|---|
 | `re.is_match(pat, s)` | boolean test |
@@ -980,7 +984,7 @@ secrets, because `==` can leak information through its timing.
 | MACs | `hmac_sha256` `hmac_sha512` |
 | Passwords | `hash_password` `verify_password` `derive_key` |
 | Symmetric | `encrypt_aes` `decrypt_aes` |
-| Asymmetric | `generate_key_pair` `encrypt_rsa` `decrypt_rsa` `sign_data` `verify_signature` `export_public_key` `import_public_key` |
+| Asymmetric | `generate_key_pair` `encrypt_rsa` `decrypt_rsa` `sign_data` `verify_signature` `export_public_key` `import_public_key` — not in the browser runtime the web SDK ships, which says so when one is called |
 | Utilities | `random_bytes` `random_hex` `hex_encode` `hex_decode` `secure_compare` |
 
 ```olang
@@ -1545,6 +1549,8 @@ with timers and animation frames; everything else is ordinary olang.
 | `dom.request(method, path, body, callback)` | the whole response — `#{ "status", "headers", "body" }`, status `0` with an `"error"` when no server answered — so a handler tells a 404 from a 500 from a network failure |
 | `dom.request_with(method, path, body, headers, callback)` | `dom.request` with request headers — a bearer token, another content type |
 | `dom.find(selector)` | the first match, or `()` when nothing matches — the lookup for an element that may be absent (`dom.query` raises on a miss, and a raise inside a handler takes the page down) |
+| `dom.patch(el, node)` | reconcile the element's children with a `web.html` node tree: the host diffs the data against the live DOM by `data-key`, no markup rendered or parsed; a `memo` subtree whose inputs stand is kept as it is |
+| `dom.morph(el, html)` | the same reconciliation from markup, for code that renders its own HTML |
 | `dom.checked(el)` | a checkbox's or radio's state |
 | `dom.selection(el)` / `dom.set_selection(el, from, to)` | a text control's selection as `(from, to)`, and setting it (focusing the control) — inserting at the cursor is set the value, then place the caret |
 | `dom.values(el)` | a `<select multiple>`'s chosen option values |

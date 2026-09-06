@@ -2165,6 +2165,7 @@ dependencies = [
  "reqwest",
  "rsa",
  "rusqlite",
+ "rustc-hash",
  "rustyline",
  "semver",
  "serde",

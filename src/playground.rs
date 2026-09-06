@@ -133,6 +133,7 @@ unsafe extern "C" {
     fn host_dom_get_text(handle: i64) -> *const u8;
     fn host_dom_set_html(handle: i64, ptr: *const u8, len: usize);
     fn host_dom_morph(handle: i64, ptr: *const u8, len: usize);
+    fn host_dom_patch(handle: i64, ptr: *const u8, len: usize);
     fn host_dom_checked(handle: i64) -> i64;
     /// "[from, to]" as JSON.
     fn host_dom_selection(handle: i64) -> *const u8;
@@ -353,6 +354,19 @@ pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::erro
         ("morph", [el, v]) => {
             let s = text(v)?;
             unsafe { host_dom_morph(handle(el)?, s.as_ptr(), s.len()) };
+            Ok(Value::Unit)
+        }
+        // The node tree crosses as JSON — serde on this side, JSON.parse
+        // on the host's, both native — and the host diffs it against the
+        // live children. No markup is rendered, escaped, or parsed.
+        ("patch", [el, v]) => {
+            let json = crate::stdlib::json::olang_value_to_json(v).map_err(|e| {
+                crate::interpreter::InterpreterError::runtime(format!("dom.patch: {}", e))
+            })?;
+            let s = serde_json::to_string(&json).map_err(|e| {
+                crate::interpreter::InterpreterError::runtime(format!("dom.patch: {}", e))
+            })?;
+            unsafe { host_dom_patch(handle(el)?, s.as_ptr(), s.len()) };
             Ok(Value::Unit)
         }
         ("value", [el]) => Ok(Value::String(std::sync::Arc::new(read_host_string(
@@ -1079,6 +1093,24 @@ fn result_buffer(json: String) -> *mut u8 {
     out.extend_from_slice(&bytes);
     let boxed = out.into_boxed_slice();
     Box::into_raw(boxed) as *mut u8
+}
+
+/// The browser profiler (see `profile::instrument_start`): the page
+/// starts it, acts, and reads a per-function report — self and total
+/// milliseconds with the tier — through `window.olangProfile`.
+#[unsafe(no_mangle)]
+pub extern "C" fn olang_profile_start() {
+    crate::profile::instrument_start();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn olang_profile_report() -> *mut u8 {
+    result_buffer(crate::profile::instrument_report())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn olang_profile_stop() -> *mut u8 {
+    result_buffer(crate::profile::instrument_stop())
 }
 
 #[unsafe(no_mangle)]

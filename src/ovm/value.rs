@@ -18,6 +18,12 @@ pub struct ResultObject {
     pub err: Option<OvmValue>,
 }
 
+/// The VM's map: string keys under FxHash. A program's maps are never an
+/// attacker's hash-flooding surface, and a `map_get` in a hot loop spends
+/// most of its time hashing the key — SipHash cost three times what the
+/// lookup itself did.
+pub type OvmMap = std::collections::HashMap<String, OvmValue, rustc_hash::FxBuildHasher>;
+
 /// Unified value representation for the OVM
 #[derive(Debug)]
 #[repr(C)]
@@ -154,7 +160,7 @@ pub enum ValueData {
     /// crushed into a struct shape that could not convert back, which
     /// kept every map-touching function and every map-returning builtin
     /// off the tier.
-    Map(Arc<HashMap<String, OvmValue>>),
+    Map(Arc<OvmMap>),
     /// A proper enum value: type, variant, and payload, converting to and
     /// from the interpreter's `Value::Enum` losslessly. (Enums used to be
     /// crushed into a struct shape with a `__variant` field, which could
@@ -1137,7 +1143,7 @@ impl OvmValue {
     }
 
     /// Wrap a map value.
-    pub fn new_map(map: Arc<HashMap<String, OvmValue>>) -> Self {
+    pub fn new_map(map: Arc<OvmMap>) -> Self {
         Self {
             data: ValueData::Map(map),
         }
