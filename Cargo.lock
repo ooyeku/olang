@@ -2117,7 +2117,7 @@ dependencies = [
 
 [[package]]
 name = "olang"
-version = "0.83.0"
+version = "0.84.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2195,7 +2195,7 @@ dependencies = [
 
 [[package]]
 name = "olang-playground"
-version = "0.83.0"
+version = "0.84.0"
 dependencies = [
  "olang",
 ]
