@@ -85,6 +85,7 @@ fn time_sleep(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             .into());
         }
     };
+    let _parked = crate::profile::blocked();
     crate::clock::sleep_ms(ms);
     Ok(Value::Unit)
 }

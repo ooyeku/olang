@@ -220,6 +220,7 @@ fn task_watch(args: Vec<Value>) -> Result<Value, InterpreterError> {
 }
 
 fn task_join(args: Vec<Value>) -> Result<Value, InterpreterError> {
+    let _parked = crate::profile::blocked();
     if args.len() != 1 {
         return Err(raise(
             "task.join expects one argument: the task".to_string(),

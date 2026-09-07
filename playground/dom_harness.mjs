@@ -177,7 +177,7 @@ const imports = {
     hostError = null;
     return giveStr(m);
   },
-  host_dom_checked: (h) => (node(h).checked ? 1n : 0n),
+  host_dom_checked: (h) => (node(h).checked == null ? 2n : node(h).checked ? 1n : 0n),
   host_dom_selection: (h) => giveStr("[0,0]"),
   host_dom_set_selection: () => {},
   host_dom_values: (h) => giveStr("[]"),

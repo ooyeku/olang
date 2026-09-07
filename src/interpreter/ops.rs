@@ -198,29 +198,31 @@ impl Interpreter {
             // same shape, equal elements. Value's derived PartialEq is the
             // natural recursive equality.
             (left @ Value::List(_), BinaryOp::Equal, right @ Value::List(_)) => {
-                Ok(Value::Boolean(left == right))
+                Ok(Value::Boolean(loose_eq(&left, &right)))
             }
             (left @ Value::List(_), BinaryOp::NotEqual, right @ Value::List(_)) => {
-                Ok(Value::Boolean(left != right))
+                Ok(Value::Boolean(!loose_eq(&left, &right)))
             }
             (left @ Value::Tuple(_), BinaryOp::Equal, right @ Value::Tuple(_)) => {
-                Ok(Value::Boolean(left == right))
+                Ok(Value::Boolean(loose_eq(&left, &right)))
             }
             (left @ Value::Tuple(_), BinaryOp::NotEqual, right @ Value::Tuple(_)) => {
-                Ok(Value::Boolean(left != right))
+                Ok(Value::Boolean(!loose_eq(&left, &right)))
             }
-            (left @ Value::Map(_), BinaryOp::Equal, right @ Value::Map(_)) => {
-                Ok(Value::Boolean(left == right))
-            }
-            (left @ Value::Map(_), BinaryOp::NotEqual, right @ Value::Map(_)) => {
-                Ok(Value::Boolean(left != right))
-            }
-            (left @ Value::Struct { .. }, BinaryOp::Equal, right @ Value::Struct { .. }) => {
-                Ok(Value::Boolean(left == right))
-            }
-            (left @ Value::Struct { .. }, BinaryOp::NotEqual, right @ Value::Struct { .. }) => {
-                Ok(Value::Boolean(left != right))
-            }
+            // The map kinds compare by contents with one another: a parsed
+            // JSON object, an anonymous record, and a `#{}` map holding the
+            // same keys and values are equal, as every map function already
+            // treats them alike. `typeof` keeps telling them apart.
+            (
+                left @ (Value::Map(_) | Value::Struct { .. }),
+                BinaryOp::Equal,
+                right @ (Value::Map(_) | Value::Struct { .. }),
+            ) => Ok(Value::Boolean(loose_eq(&left, &right))),
+            (
+                left @ (Value::Map(_) | Value::Struct { .. }),
+                BinaryOp::NotEqual,
+                right @ (Value::Map(_) | Value::Struct { .. }),
+            ) => Ok(Value::Boolean(!loose_eq(&left, &right))),
             (Value::Unit, BinaryOp::Equal, Value::Unit) => Ok(Value::Boolean(true)),
             (Value::Unit, BinaryOp::NotEqual, Value::Unit) => Ok(Value::Boolean(false)),
             (Value::Integer(a), BinaryOp::NotEqual, Value::Integer(b)) => {
@@ -438,5 +440,59 @@ impl Interpreter {
             end: end_int,
             inclusive,
         })
+    }
+}
+
+/// The map kinds a value may be compared as: a `#{}` map, a parsed JSON
+/// object, or an anonymous `{ ... }` record. A declared struct is not one:
+/// its name is part of its identity.
+fn map_like(v: &Value) -> Option<&std::collections::HashMap<String, Value>> {
+    match v {
+        Value::Map(m) => Some(m),
+        Value::Struct { type_name, fields }
+            if type_name == "JsonObject" || type_name == "Object" =>
+        {
+            Some(fields)
+        }
+        _ => None,
+    }
+}
+
+/// Structural equality that treats the map kinds alike and compares Int
+/// with Float numerically, at every depth. What `==` means for maps,
+/// lists, tuples, and records on both tiers.
+pub fn loose_eq(a: &Value, b: &Value) -> bool {
+    if let (Some(x), Some(y)) = (map_like(a), map_like(b)) {
+        return x.len() == y.len()
+            && x.iter()
+                .all(|(k, v)| y.get(k).is_some_and(|w| loose_eq(v, w)));
+    }
+    match (a, b) {
+        (Value::List(x), Value::List(y)) => {
+            x.len() == y.len() && x.iter().zip(y.iter()).all(|(v, w)| loose_eq(v, w))
+        }
+        (Value::Tuple(x), Value::Tuple(y)) => {
+            x.len() == y.len() && x.iter().zip(y.iter()).all(|(v, w)| loose_eq(v, w))
+        }
+        // Inside a collection an Int and a Float stay distinct ([1] and
+        // [1.0] are different lists), as they always were; only the
+        // top-level `1 == 1.0` compares numerically, in the Equal arms.
+        (
+            Value::Struct {
+                type_name: tn,
+                fields: fx,
+            },
+            Value::Struct {
+                type_name: tm,
+                fields: fy,
+            },
+        ) => {
+            tn == tm
+                && fx.len() == fy.len()
+                && fx
+                    .iter()
+                    .all(|(k, v)| fy.get(k).is_some_and(|w| loose_eq(v, w)))
+        }
+        _ => a == b,
     }
 }

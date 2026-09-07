@@ -163,7 +163,11 @@ Expansion does no invisible renaming. A binding a macro introduces is
 visible to the spliced code, and 0.61's block scoping keeps a generated
 `let` from leaking past its block — which covers most cases. For a
 temporary that must not collide with anything at the call site, ask for
-a name no program writes by hand:
+a name no program writes by hand. `meta.fresh(prefix)` answers
+`prefix__m<N>`, numbered from zero in each expansion, and the form is
+reserved: a program that uses macros and spells a name ending in `__m`
+and digits is refused before expansion begins, naming the line, so the
+guarantee is not a convention.
 
 ```olang no-run
 meta fn retry(times, body) = {
@@ -194,6 +198,13 @@ What a meta fn body can see is a closed list, and this is it:
    `index.ol` re-exports count as the package's own.
 3. **The pure standard library** — `str`, `math`, `col`, `json`, `meta`,
    and the rest of the modules that read nothing and write nothing.
+4. **The literal declarations of the modules the file imports**, through
+   `meta.exports(path)`: a `let` or `share let` whose value is a literal
+   (a number, string, list, map, or tuple of literals) in a module the
+   file `use`s — or in a module the package's `index.ol` re-exports — is
+   readable by name at expansion time, so `@page` in one file can act
+   on what `@resource` declared in another. Computed bindings are not
+   declarations and are not exported.
 
 Nothing else: not the importing program's later bindings, not the
 effectful modules (`fs`, `http`, `db`, `os`, `time`, `random`), not

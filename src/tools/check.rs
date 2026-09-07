@@ -921,6 +921,11 @@ enum SType {
     /// annotation reduces to Unknown, silent like the runtime.
     Union(Vec<SType>),
     Named(std::string::String),
+    /// `{ name: Type, ... }`: the keys a map or record is declared to
+    /// carry. Checker-only — the runtime does not enforce a shape — so
+    /// it never claims a base and never proves a violation; it answers
+    /// at `map_get`/field/index sites with a literal key.
+    Record(Vec<(std::string::String, SType)>),
 }
 
 impl SType {
@@ -992,6 +997,17 @@ impl SType {
             TypeAnnotation::Custom(name) if !type_params.iter().any(|p| p == name) => {
                 SType::Named(name.clone())
             }
+            TypeAnnotation::Record { fields } => SType::Record(
+                fields
+                    .iter()
+                    .map(|f| {
+                        (
+                            f.name.clone(),
+                            SType::from_annotation(&f.field_type, type_params),
+                        )
+                    })
+                    .collect(),
+            ),
             TypeAnnotation::Generic {
                 base_type,
                 type_args,
@@ -1058,6 +1074,9 @@ impl SType {
             // A union has no single base; violation() handles it directly.
             SType::Union(_) => None,
             SType::Named(n) => Some(n),
+            // A shape is a promise about keys, not about the value's kind
+            // (a `#{}` map and a `{ }` record both carry keys).
+            SType::Record(_) => None,
         }
     }
 
@@ -1097,9 +1116,33 @@ impl SType {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+            SType::Record(fields) => format!(
+                "{{ {} }}",
+                fields
+                    .iter()
+                    .map(|(n, t)| format!("{}: {}", n, t.display()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             other => other.base_name().unwrap_or("?").to_string(),
         }
     }
+}
+
+/// Levenshtein distance, for the "did you mean" on a shape key.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut cur = vec![i + 1];
+        for (j, cb) in b.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            cur.push((prev[j] + cost).min(prev[j + 1] + 1).min(cur[j] + 1));
+        }
+        prev = cur;
+    }
+    prev[b.len()]
 }
 
 /// The most specific type both sides agree on; Unknown on any conflict.
@@ -1317,6 +1360,10 @@ pub fn hover_types(program: &Program) -> HashMap<String, String> {
 struct Checker {
     sigs: HashMap<String, FnSig>,
     structs: HashMap<String, Vec<(String, SType)>>,
+    /// Declared enums: type name → its constructors, in declaration
+    /// order, and the reverse map from a constructor to its enum.
+    enums: HashMap<String, Vec<String>>,
+    variant_owner: HashMap<String, String>,
     scopes: Vec<HashMap<String, SType>>,
     /// Names that leaked out of a popped block, per remaining scope frame
     /// (parallel to `scopes`). The runtime lets a bare block's `let`s
@@ -1433,6 +1480,13 @@ impl Checker {
                                 .collect(),
                         );
                     }
+                    if let TypeDefinition::Enum { variants } = &t.definition {
+                        let names: Vec<String> = variants.iter().map(|v| v.name.clone()).collect();
+                        for v in &names {
+                            self.variant_owner.insert(v.clone(), t.name.clone());
+                        }
+                        self.enums.insert(t.name.clone(), names);
+                    }
                 }
                 _ => {}
             }
@@ -1505,6 +1559,12 @@ impl Checker {
         span: (u32, u32),
     ) {
         use crate::ast::LitCheck;
+        if let SType::Named(type_name) = scrutinee
+            && let Some(variants) = self.enums.get(type_name).cloned()
+        {
+            self.check_enum_exhaustiveness(type_name, &variants, arms, span);
+            return;
+        }
         let members: Vec<LitCheck> = match scrutinee {
             SType::Lit(l) => vec![l.clone()],
             SType::Union(bs) if bs.iter().all(|b| matches!(b, SType::Lit(_))) => bs
@@ -1562,6 +1622,94 @@ impl Checker {
         }
     }
 
+    /// A `match` over a value of a declared enum type: every constructor
+    /// needs an arm, or a catch-all. A bare name that is one of the
+    /// enum's constructors is that constructor (the runtime reads it
+    /// so), not a binding; a constructor pattern proves its constructor
+    /// covered only when its sub-patterns are irrefutable; a guarded arm
+    /// proves nothing. Missing constructors are a warning — a project's
+    /// rules promote it — because the scrutinee's type is inferred, and
+    /// an inference is a strong hint rather than a proof.
+    fn check_enum_exhaustiveness(
+        &mut self,
+        type_name: &str,
+        variants: &[String],
+        arms: &[crate::ast::MatchArm],
+        span: (u32, u32),
+    ) {
+        let mut covered = vec![false; variants.len()];
+        for arm in arms {
+            if arm.guard.is_some() {
+                continue;
+            }
+            if Self::enum_arm_covers(&arm.pattern, variants, &mut covered) {
+                return;
+            }
+        }
+        let missing: Vec<&str> = variants
+            .iter()
+            .zip(&covered)
+            .filter(|(_, c)| !**c)
+            .map(|(v, _)| v.as_str())
+            .collect();
+        if missing.is_empty() {
+            return;
+        }
+        self.warn(
+            span,
+            format!(
+                "match over `{}` is not exhaustive: {} {} no arm — add {} or a catch-all",
+                type_name,
+                missing.join(", "),
+                if missing.len() == 1 { "has" } else { "have" },
+                if missing.len() == 1 { "it" } else { "them" },
+            ),
+        );
+    }
+
+    /// Mark the constructors this arm covers; true when the arm is a
+    /// catch-all (a wildcard, or a binding that is not a constructor).
+    fn enum_arm_covers(
+        pattern: &crate::ast::Pattern,
+        variants: &[String],
+        covered: &mut [bool],
+    ) -> bool {
+        use crate::ast::Pattern as P;
+        match pattern {
+            P::Wildcard => true,
+            P::Identifier(name) => match variants.iter().position(|v| v == name) {
+                Some(i) => {
+                    covered[i] = true;
+                    false
+                }
+                None => true,
+            },
+            P::EnumVariant {
+                variant_name,
+                patterns,
+            } => {
+                if let Some(i) = variants.iter().position(|v| v == variant_name)
+                    && patterns.iter().all(Self::pattern_covers_all)
+                {
+                    covered[i] = true;
+                }
+                false
+            }
+            P::Or { alternatives } => {
+                // Every alternative marks what it covers; the arm is a
+                // catch-all when any alternative is.
+                let mut catch_all = false;
+                for alt in alternatives {
+                    if Self::enum_arm_covers(alt, variants, covered) {
+                        catch_all = true;
+                    }
+                }
+                catch_all
+            }
+            _ => false,
+        }
+    }
+
     /// Does this pattern match every possible value, unconditionally?
     fn pattern_covers_all(pattern: &crate::ast::Pattern) -> bool {
         use crate::ast::Pattern as P;
@@ -1602,6 +1750,43 @@ impl Checker {
             // here (bindings are handled as catch-alls above).
             _ => {}
         }
+    }
+
+    /// A literal key read off a value whose declared shape (`{ a: Int,
+    /// b: String }`) does not carry it: a typo the runtime answers with
+    /// Unit (or a missing-field error), and a shape the author wrote to
+    /// be checked. The shape reaches here from an annotation — on a
+    /// parameter, a `let`, or a function's return — whichever file or
+    /// macro output wrote it.
+    fn check_shape_key(&mut self, object: &Expr, key: &str, via: &str, span: (u32, u32)) {
+        let SType::Record(fields) = self.infer(object) else {
+            return;
+        };
+        if fields.iter().any(|(n, _)| n == key) {
+            return;
+        }
+        let shape = SType::Record(fields.clone()).display();
+        let nearest = fields
+            .iter()
+            .map(|(n, _)| n.as_str())
+            .filter(|n| edit_distance(n, key) <= 2.max(key.len() / 3))
+            .min_by_key(|n| edit_distance(n, key));
+        let hint = match nearest {
+            Some(n) => format!(" — did you mean `{}`?", n),
+            None => String::new(),
+        };
+        let read = match via {
+            "map_get" => "map_get reads Unit for it at runtime".to_string(),
+            "index" => "the index reads Unit for it at runtime".to_string(),
+            _ => "the field is missing at runtime".to_string(),
+        };
+        self.warn(
+            span,
+            format!(
+                "`{}` is not a key of the declared shape {}: {}{}",
+                key, shape, read, hint
+            ),
+        );
     }
 
     fn diag(&mut self, span: (u32, u32), runtime: bool, message: String) {
@@ -1780,15 +1965,63 @@ impl Checker {
                 SType::Result(ok, _) => *ok,
                 _ => SType::Unknown,
             },
-            Expr::Identifier(name) | Expr::LocalRef { name, .. } => self.lookup(name),
-            Expr::Call { callee, .. } => {
-                if let Expr::Identifier(name) = callee.as_ref()
-                    && let Some(sig) = self.sigs.get(name)
+            Expr::Identifier(name) | Expr::LocalRef { name, .. } => {
+                let found = self.lookup(name);
+                // A bare constructor of a declared enum (a unit variant)
+                // is a value of that enum, unless a binding shadows it.
+                if found == SType::Unknown
+                    && !self.bound(name)
+                    && let Some(owner) = self.variant_owner.get(name)
                 {
-                    return sig.ret.clone();
+                    return SType::Named(owner.clone());
+                }
+                found
+            }
+            Expr::Call { callee, arguments } => {
+                if let Expr::Identifier(name) = callee.as_ref() {
+                    if let Some(sig) = self.sigs.get(name) {
+                        return sig.ret.clone();
+                    }
+                    // `Circle(1.0)`: a payload constructor builds its enum.
+                    if !self.bound(name)
+                        && let Some(owner) = self.variant_owner.get(name)
+                    {
+                        return SType::Named(owner.clone());
+                    }
+                    // `map_get(record, "key")` on a declared shape reads
+                    // the key's declared type.
+                    if name == "map_get"
+                        && let [
+                            Argument::Positional(object),
+                            Argument::Positional(Expr::String(key)),
+                        ] = arguments.as_slice()
+                        && let SType::Record(fields) = self.infer(object)
+                    {
+                        return fields
+                            .iter()
+                            .find(|(n, _)| n.as_str() == key.as_ref())
+                            .map(|(_, t)| t.clone())
+                            .unwrap_or(SType::Unknown);
+                    }
                 }
                 SType::Unknown
             }
+            Expr::FieldAccess { object, field } => match self.infer(object) {
+                SType::Record(fields) => fields
+                    .iter()
+                    .find(|(n, _)| n == field)
+                    .map(|(_, t)| t.clone())
+                    .unwrap_or(SType::Unknown),
+                _ => SType::Unknown,
+            },
+            Expr::Index { object, index } => match (self.infer(object), index.as_ref()) {
+                (SType::Record(fields), Expr::String(key)) => fields
+                    .iter()
+                    .find(|(n, _)| n.as_str() == key.as_ref())
+                    .map(|(_, t)| t.clone())
+                    .unwrap_or(SType::Unknown),
+                _ => SType::Unknown,
+            },
             Expr::If {
                 then_branch,
                 else_branch: Some(else_branch),
@@ -2165,6 +2398,16 @@ impl Checker {
                         Argument::Named { value, .. } => self.check_expr(value, span),
                     }
                 }
+                if let Expr::Identifier(name) = callee.as_ref()
+                    && name == "map_get"
+                    && !self.bound("map_get")
+                    && let [
+                        Argument::Positional(object),
+                        Argument::Positional(Expr::String(key)),
+                    ] = arguments.as_slice()
+                {
+                    self.check_shape_key(object, key, "map_get", span);
+                }
             }
             Expr::List(elems) => {
                 for e in elems.iter() {
@@ -2355,7 +2598,17 @@ impl Checker {
                     );
                 }
             }
-            Expr::FieldAccess { object, .. } => self.check_expr(object, span),
+            Expr::FieldAccess { object, field } => {
+                self.check_expr(object, span);
+                self.check_shape_key(object, field, "field", span);
+            }
+            Expr::Index { object, index } => {
+                self.check_expr(object, span);
+                self.check_expr(index, span);
+                if let Expr::String(key) = index.as_ref() {
+                    self.check_shape_key(object, key, "index", span);
+                }
+            }
             Expr::ResultOk(e) | Expr::ResultErr(e) | Expr::Try(e) => self.check_expr(e, span),
             Expr::Range { start, end, .. } => {
                 self.check_expr(start, span);

@@ -1987,8 +1987,16 @@ println(to_string(apply((n) => n + count, 39)))
 Annotation forms: `Int`, `Float`, `String`, `Bool`, `Map`, custom type
 names, `[T]` lists, `(A, B)` tuples, `Map<K, V>`, `(A, B) -> R` functions,
 `Result<T, E>`, `A | B` unions, scalar literals
-(`"open" | "done"` is a lightweight enum), generic applications
-`Name<T>`, `()` unit, and (reserved) intersection forms.
+(`"open" | "done"` is a lightweight enum), record shapes
+`{ name: Type, ... }`, generic applications `Name<T>`, `()` unit, and
+(reserved) intersection forms.
+
+A record shape names the keys a map or anonymous record carries. The
+runtime does not enforce it — a map's keys are data — but
+[`olang check`](tooling.md#olang-check) reads it at every `map_get`,
+field, and index site with a literal key, so `map_get(r, "summry")`
+against `r: { summary: String, count: Int }` is reported with the key
+it resembles rather than answering Unit at runtime.
 
 ## Appendix: keywords and grammar
 

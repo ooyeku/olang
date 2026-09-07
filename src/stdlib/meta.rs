@@ -40,6 +40,7 @@ pub fn create_meta_module() -> Value {
     module.insert("expand".to_string(), builtin("expand", 1));
     module.insert("encode".to_string(), builtin("encode", 1));
     module.insert("fresh".to_string(), builtin("fresh", 1));
+    module.insert("exports".to_string(), builtin("exports", 1));
     Value::Struct {
         type_name: "Module".to_string(),
         fields: std::sync::Arc::new(module),
@@ -64,6 +65,7 @@ pub fn call_meta_function(
         "expand" => meta_expand(args),
         "encode" => meta_encode(args),
         "fresh" => meta_fresh(args),
+        "exports" => meta_exports(args),
         _ => Err(format!("Unknown meta function: {}", name).into()),
     }
 }
@@ -123,9 +125,58 @@ fn meta_encode(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             .into());
         }
     };
+    // Options: `#{ "hot": ["view", "update"] }` names the functions the
+    // loading runtime should compile at declaration rather than at their
+    // first call — the functions a page runs once, at boot, whose one
+    // call would otherwise be the tree-walker's.
+    let mut hot: Vec<String> = Vec::new();
+    match args.get(1) {
+        None => {}
+        Some(Value::Map(options)) => {
+            for (key, value) in options.iter() {
+                match (key.as_str(), value) {
+                    ("hot", Value::List(names)) => {
+                        for name in names.iter() {
+                            match name {
+                                Value::String(n) => hot.push(n.as_str().to_string()),
+                                other => {
+                                    return Err(format!(
+                                        "meta.encode: hot must be a list of function names (Strings), got {}",
+                                        other.type_name()
+                                    )
+                                    .into());
+                                }
+                            }
+                        }
+                    }
+                    ("hot", other) => {
+                        return Err(format!(
+                            "meta.encode: hot must be a list of function names, got {}",
+                            other.type_name()
+                        )
+                        .into());
+                    }
+                    (other, _) => {
+                        return Err(format!(
+                            "meta.encode: unknown option '{}' — the option is hot",
+                            other
+                        )
+                        .into());
+                    }
+                }
+            }
+        }
+        Some(other) => {
+            return Err(format!(
+                "meta.encode: options must be a map, got {}",
+                other.type_name()
+            )
+            .into());
+        }
+    }
     match crate::parser::Parser::new().parse(&source) {
         Err(e) => Ok(Value::Err(Box::new(s(&format!("{}", e))))),
-        Ok(program) => match crate::olb::encode(&program) {
+        Ok(program) => match crate::olb::encode_with(&program, &hot) {
             Ok(bytes) => Ok(Value::Ok(Box::new(crate::stdlib::bytes::to_value(bytes)))),
             Err(e) => Ok(Value::Err(Box::new(s(&e)))),
         },
@@ -914,7 +965,83 @@ fn meta_fresh(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         c.set(n + 1);
         n
     });
-    Ok(s(&format!("{}_m{}", prefix, n)))
+    Ok(s(&format!("{}__m{}", prefix, n)))
+}
+
+// The `meta.exports` table: the literal top-level bindings of every
+// module the expanding file imports, by import path, installed by
+// `expand::expand_impl` for the duration of one expansion. Thread-local
+// for the same reason the fresh counter is: expansion is single-threaded
+// and per-thread state is exactly per-expansion state.
+thread_local! {
+    static EXPORTS: std::cell::RefCell<Option<std::collections::HashMap<String, Value>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+pub fn set_exports(table: std::collections::HashMap<String, Value>) {
+    EXPORTS.with(|e| *e.borrow_mut() = Some(table));
+}
+
+/// Clears the exports table when the expansion that installed it ends,
+/// whichever way it ends.
+pub struct ExportsGuard;
+
+impl ExportsGuard {
+    pub fn new() -> Self {
+        EXPORTS.with(|e| *e.borrow_mut() = Some(std::collections::HashMap::new()));
+        ExportsGuard
+    }
+}
+
+impl Default for ExportsGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for ExportsGuard {
+    fn drop(&mut self) {
+        EXPORTS.with(|e| *e.borrow_mut() = None);
+    }
+}
+
+/// `meta.exports(path)` — the literal values the module at `path` (as
+/// the expanding file imports it: `"lib.decl"`, `"shuttle"`) binds at
+/// its top level, as a map from name to value. `Err` when the module is
+/// not one the file imports, and outside expansion, where there is no
+/// importing file to read from.
+fn meta_exports(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let path = match args.first() {
+        Some(Value::String(text)) => text.replace('/', "."),
+        other => {
+            return Err(format!(
+                "meta.exports: expected a module path as a String, got {}",
+                other.map(|v| v.type_name()).unwrap_or_default()
+            )
+            .into());
+        }
+    };
+    EXPORTS.with(|e| match e.borrow().as_ref() {
+        None => Ok(Value::Err(Box::new(s(
+            "meta.exports is answered at expansion time, inside a meta fn: at runtime a module's bindings are reached by importing them",
+        )))),
+        Some(table) => match table.get(&path) {
+            Some(v) => Ok(Value::Ok(Box::new(v.clone()))),
+            None => {
+                let mut known: Vec<&str> = table.keys().map(|k| k.as_str()).collect();
+                known.sort_unstable();
+                Ok(Value::Err(Box::new(s(&format!(
+                    "meta.exports: '{}' is not a module this file imports{}",
+                    path,
+                    if known.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" (imported: {})", known.join(", "))
+                    }
+                )))))
+            }
+        },
+    })
 }
 
 #[cfg(test)]

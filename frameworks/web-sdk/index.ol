@@ -25,7 +25,7 @@ share use lib.html {
 }
 
 // the route table — one source of truth
-share use lib.routes { route, rpc, match_path, find }
+share use lib.routes { route, rpc, match_path, find, index_routes }
 
 // the server — the whole backend in one call
 share use lib.server {

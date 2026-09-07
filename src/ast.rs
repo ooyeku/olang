@@ -706,6 +706,13 @@ pub enum TypeAnnotation {
     },
     // Custom types
     Custom(String), // User-defined type by name
+    /// `{ name: Type, ... }` — a record shape: the keys a map or
+    /// anonymous record is declared to carry. The runtime does not
+    /// enforce it (a map's keys are data); the checker reads it at
+    /// `map_get`, field, and index sites with a literal key.
+    Record {
+        fields: Vec<StructField>,
+    },
     // Generic types
     Generic {
         base_type: String,              // Base type name (e.g., "List", "Tree")
@@ -788,6 +795,14 @@ impl TypeAnnotation {
                 err_type.display_source()
             ),
             TypeAnnotation::Custom(n) | TypeAnnotation::TypeVariable(n) => n.clone(),
+            TypeAnnotation::Record { fields } => format!(
+                "{{ {} }}",
+                fields
+                    .iter()
+                    .map(|f| format!("{}: {}", f.name, f.field_type.display_source()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             TypeAnnotation::Generic {
                 base_type,
                 type_args,

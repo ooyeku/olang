@@ -9,6 +9,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`chan.ask(service, request)`**: the reply pattern in one call, spinning
+  briefly before it parks. **`index_routes`** and an indexed `serve` table:
+  an exact path is one lookup however many routes there are.
+- **`data-on`** names the events an element's action fires on; the event
+  payload carries `input_type`, and `checked` only for a checkbox or radio;
+  `dom.checked` answers Unit for an element without a checked state.
+- **`OLANG_ACCESS_LOG`** (all, errors, off) levels `serve`'s access line,
+  and `"log": ()` silences it.
+- The profiler reports threads parked in a channel receive, a sleep, a
+  join, or an accept loop as blocked instead of charging the wait to the
+  function that parked them.
+- **`http.defer()` / `http.respond(ticket, response)`**: a handler that
+  waits parks its connection and returns a ticket; the answer completes
+  it from any thread. A long poll costs a socket, not a worker.
+- **`olang check` knows declared enums and record shapes**: a `match`
+  over a value of an `enum` type that misses a constructor is reported
+  with the constructor's name; `{ name: Type }` annotations declare the
+  keys a map or record carries, and a literal key the shape lacks is
+  reported at `map_get`, field, and index sites with the nearest key.
+- **`meta.exports(path)`** reads an imported module's literal top-level
+  bindings at expansion time; **`meta.fresh`** names (`stem__m<N>`) are
+  reserved — a program that spells one is refused before expansion.
+- **Record/replay reaches the database and the other threads**: every
+  `db.` call, every channel receive, `chan.ask`, `chan.send`, and
+  `task.join` is in the trace; a replay opens no database and starts no
+  worker.
+- **The program image carries hot hints** (`meta.encode(src, #{ "hot":
+  [...] })`): the browser runtime compiles the named functions at
+  declaration, so the boot render runs on the VM. The web SDK's `serve`
+  sends the app's client functions by default (`"hot"` overrides).
+- **JIT raw int-list reads and writes are inline** for the list a region
+  touched last: `sieve` 562 → 230 ms. **`text + to_string(n)` is one
+  allocation** (`wordfreq` 615 → 508 ms), a constant range kernel is a
+  fill, and a top-level `map`/`filter` over a range runs on the VM's
+  range kernel instead of materializing the range (10 M elements: 1.6 s
+  → 0.1 s).
+
+### Changed
+
+- **A function declared below its caller resolves at the entry file's top
+  level**: declared on first use, one value ever. A module's code no
+  longer captures the program root, so a package's private function is
+  never shadowed by an app's same-named export, on any thread.
+- **The map kinds compare by contents**: a parsed JSON object, an
+  anonymous record, and a `#{}` map with the same keys and values are
+  equal, at every depth.
+- **The client bundler strips every package and project `use`** and keeps
+  the browser's own modules; **the app's routes come before `serve`'s**, so
+  a page at `/` is the app's; **a map is never a response** — only what
+  `http.response` builds or a `{ status, body }` record is.
+- A link carrying `data-action` no longer follows its `href` after the
+  action (`data-follow` opts back in); a text box's `change` no longer
+  fires its action — Enter and buttons do, `change` is for controls whose
+  value is the argument.
+- `attempt` runs its function on the VM's own tiers rather than bridging
+  it to the interpreter; `term`'s color decision (`os.color_enabled()`,
+  new) is made once and re-made only after the program changes its
+  environment, `os.is_tty` once per process.
 - **`actions(table)`** registers many actions in one update; **`drain_ms`**
   (an `http.serve` option and a `serve` key, default 5000) caps how long a
   drain waits before cutting the requests in flight.

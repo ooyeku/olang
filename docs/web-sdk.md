@@ -144,6 +144,15 @@ SIGTERM the server stops accepting, answers what is in flight with
 `Connection: close`, reads nothing more off a kept-alive connection, and
 after `"drain_ms"` (5000) cuts the rest — a long poll a tab keeps
 re-issuing cannot hold the process open. `serve` then returns `Ok(())`.
+
+A long poll should not hold a worker either: a handler that waits
+returns `http.defer()` — a ticket — and the worker moves on, the parked
+connection costing a socket rather than an interpreter. Whatever
+produces the answer calls `http.respond(ticket, response)`, from a
+spawned task or a channel service, with the same values a handler
+returns (`http.response(...)`, a `{ status, body }` record, `json(...)`).
+With sixty tabs polling, the server needs sixty sockets, not sixty
+workers.
 The configured headers are set on the response as it is, so a route that
 streams a file (`body_file`) keeps streaming.
 
@@ -152,10 +161,17 @@ more, to a client whose `Accept-Encoding` names gzip, goes out with
 `Content-Encoding: gzip` (files and already-encoded responses pass
 through). `"compress": false` turns it off.
 
-`route("GET", "/todos/:id", handler)` matches with `:param` capture;
+The app's routes come before `serve`'s own: a page declared at `/`, or
+an asset the app serves itself, wins over the SDK's static route for
+that path, and the table is indexed once at start — an exact path is
+one lookup however many routes there are; only `:param` routes are
+walked. `route("GET", "/todos/:id", handler)` matches with `:param` capture;
 `rpc("todos.create", handler)` mounts at `POST /api/rpc/todos.create`.
-Handlers return a response, a plain value (wrapped in the envelope),
-or `Err(message)` (a clean 500). Dispatch answers 404 with the
+Handlers return a response — what `http.response` builds, or a
+`{ status, body }` / `{ status, body_file }` record — a plain value
+(wrapped in the envelope; a map is data whatever its keys, so a ticket
+whose `status` field is "new" is an answer, not a response), or
+`Err(message)` (a clean 500). Dispatch answers 404 with the
 envelope, 405 with an `Allow` header, and `HEAD` rides `GET`.
 
 ## The browser side
@@ -169,6 +185,15 @@ element's `data-action`, so re-rendered markup never re-binds. An
 action named `"toggle:7"` fires the registered `"toggle"` handler,
 which reads its argument with `action_arg(ev)`; `actions(#{ name:
 handler, … })` registers a table of them in one step.
+
+Which events fire an action: a click on a button or a link (a link
+carrying an action is prevented from following its `href` — the action
+was the intent; `data-follow` on the anchor opts back in); Enter in a
+text box; `change` on a control whose value is the argument — a select,
+checkbox, radio, date, number, range, color, or file — but not on a text
+box, so leaving the first of two boxes does not submit the form.
+`data-on="change enter click"` names the events explicitly. The event
+carries `input_type`, and `checked` only for a checkbox or radio.
 
 One event is dispatched at a time. A host call inside a handler that
 fires a DOM event synchronously (`dom.focus` → `focusin`, a blur's
@@ -347,8 +372,18 @@ refuses it and the shim reads the source instead, so a browser
 holding a stale runtime still boots. Both revalidate by ETag, so the
 HTTP cache is the cross-visit cache.
 
+The image also carries a hot list: the functions the browser's
+runtime compiles at declaration instead of at their first call, so the
+boot render — the one call of `view` and its actions a page makes
+before anything is hot — runs on the VM rather than the tree-walker.
+By default the list is every function the app's own client files
+declare; `"hot": [names]` names them explicitly, and `"hot": []` sends
+no hint.
+
 `serve` also takes `"log": (req, response, ms) => …` to own the
-request line, `"bind"` for the address to listen on (`"0.0.0.0"` for
+access line — `"log": ()` silences it, and absent the option the
+environment levels it: `OLANG_ACCESS_LOG` is `all` (the default),
+`errors` (400 and up), or `off` — `"bind"` for the address to listen on (`"0.0.0.0"` for
 other machines; the default stays `127.0.0.1`), and `"sdk_dir"` to say
 where the SDK's assets are read from — by default `WEB_SDK_DIR`, then
 the directory the project's own `olang.lock` resolved `web` to (a path

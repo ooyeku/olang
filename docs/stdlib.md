@@ -883,6 +883,7 @@ boundary like anything else.
 | `chan.recv(c)` | blocks; `Ok(value)`, or `Err` when closed and drained |
 | `chan.try_recv(c)` | `Ok(value)`, `Err("channel is empty")`, or `Err("channel is closed")` |
 | `chan.recv_timeout(c, ms)` | like `recv`, plus `Err("timed out")` |
+| `chan.ask(service, request)` | the reply pattern in one call: sends `#{ "req": request, "reply": r }` on a fresh reply channel and answers `Ok(reply)` — spinning briefly before it parks, so a service that answers in microseconds costs no thread wake-up |
 | `chan.stat(c)` | a snapshot map: `id`, `queued`, `closed`, `recv_waiting`, `send_waiting` |
 | `chan.close(c)` | closes the sending side (idempotent) |
 
@@ -1115,7 +1116,8 @@ olang scripts, not compiler changes.
 | `meta.parse(source)` | `Ok(list of node maps)` \| `Err(message)` — a syntax error is a normal `Err`, never a crash |
 | `meta.eval(source, options?)` | evaluate source; `options` bounds untrusted code — `#{ "max_steps": n }` (loop iterations and calls, deterministic) and `#{ "timeout_ms": ms }` (wall clock) — returning `Err("budget exceeded …")` instead of a hung thread |
 | `meta.expand(source)` | `Ok(text)` \| `Err(message)` — the program after macro expansion, as source: every `meta fn` removed and every `@` site replaced by what it generated (what `olang expand FILE` prints) |
-| `meta.encode(source)` | `Ok(bytes)` \| `Err(message)` — the parsed program (macros expanded) as a program image: bytes the runtime loads without parsing, behind a header naming the olang version that wrote it, which is the only version that loads it. What the web SDK's `serve` hands the browser in place of the source bundle |
+| `meta.encode(source, options?)` | `Ok(bytes)` \| `Err(message)` — the parsed program (macros expanded) as a program image: bytes the runtime loads without parsing, behind a header naming the olang version that wrote it, which is the only version that loads it. `#{ "hot": [names] }` names the functions the loading runtime compiles at declaration rather than at their first call. What the web SDK's `serve` hands the browser in place of the source bundle |
+| `meta.exports(path)` | at expansion time, `Ok(map)` of the literal values the module the expanding file imports as `path` binds at its top level (`let`/`share let` of a number, string, list, map, or tuple literal), by name; `Err` for a path the file does not import, and at runtime |
 
 Nodes are discriminated-union maps. Top-level statements carry `line` and
 `column`; expressions nest (a `call`'s `callee` and `args` are themselves
@@ -1157,7 +1159,13 @@ nodes summarize patterns and types and cannot be turned back into a
 program. `meta.lit(value)` renders a
 value as source text that evaluates back to it, with strings escaped and
 map keys sorted so the output is reproducible; and `meta.fresh(prefix)`
-yields a name no program writes by hand, for generated temporaries.
+yields a name no program writes by hand, for generated temporaries: the
+form is `prefix__m<N>`, numbered per expansion, and the expander refuses
+a macro-using program that spells a name of that form, so a generated
+temporary cannot collide with a hand-written binding. Inside a meta fn,
+`meta.exports("lib.decl")` reads the literal top-level bindings of a
+module the expanding file imports, so a macro in one file can act on a
+declaration written in another.
 
 ```olang
 println(to_string(unwrap(meta.eval("2 + 3"))))     // 5
@@ -1175,7 +1183,7 @@ else.
 | Group | Functions |
 |---|---|
 | Process | `args` `exit(code)` `pid` `exe_path` `exec(program, args)` |
-| Terminal | `is_tty()` — is stdout a terminal? (`Bool`); `flush()` — flush buffered stdout, for progress bars |
+| Terminal | `is_tty()` — is stdout a terminal? (`Bool`); `color_enabled()` — will ANSI styling render? (`CLICOLOR_FORCE` set, or a terminal with `NO_COLOR` unset; decided once, re-decided after the program's own `set_env`/`remove_env`); `flush()` — flush buffered stdout, for progress bars |
 | Input | `read_line()` — one line from stdin as `Ok(line)`, `Err("eof")` at end; `stdin()` — everything to end-of-file as one string; `stdin_lines()` — everything as a list of lines, endings stripped. The stdin pair is what makes olang pipe-friendly: `cat access.log \| olang analyze.ol` |
 | Environment | `get_env` `set_env` `remove_env` `has_env` `list_env` |
 | Directories | `cwd` `chdir` `home_dir` `temp_dir` |
@@ -1190,7 +1198,7 @@ all. An optional third argument configures the child:
 
 Most of `os` cannot fail, and as of 0.64 says so: `args`, `arch`,
 `os_type`, `family`, `pid`, `path_separator`, `temp_dir`, `username`,
-`is_tty`, `flush`, `has_env`, `list_env`, `set_env`, `remove_env`,
+`is_tty`, `color_enabled`, `flush`, `has_env`, `list_env`, `set_env`, `remove_env`,
 `interrupted`, and `reset_interrupt` all return their value directly.
 The ones that keep `Result` are the ones that genuinely can fail:
 `get_env` (the variable may be absent), `cwd`, `chdir`, `home_dir`,
@@ -1213,6 +1221,24 @@ the program, and `http.shutdown()` from inside it asks every running
 `http.serve` to drain — no new connections, in-flight requests finish,
 workers exit, `serve` returns `Ok`. A `kill` is then a request, not an
 interruption.
+
+A handler that must wait — a long poll, a job whose answer arrives on a
+channel — need not hold its worker while it does. `http.defer()` inside
+a handler answers a ticket; the handler returns that ticket, the worker
+moves to the next connection, and the parked connection costs a socket.
+`http.respond(ticket, response)` completes it from wherever the answer
+turns up — a spawned task, a channel service, a later request on
+another worker — with any value a handler could have returned; it is
+`Ok(())`, or `Err` when nothing holds the ticket (answered already, or
+the client left). The connection closes after the deferred answer.
+
+```olang no-run
+fn handle(req) = if req.path == "/wait" => {
+    let ticket = http.defer()
+    spawn { let answer = chan.recv(updates); http.respond(ticket, http.response(200, show(answer))) }
+    ticket
+} else => "quick"
+```
 
 For a long-running loop or server, `os.on_interrupt()` traps Ctrl-C so it
 sets a flag instead of killing the process; poll it to shut down cleanly:
@@ -1342,7 +1368,7 @@ with no extra logic.
 |---|---|
 | Color | `red` `green` `yellow` `blue` `magenta` `cyan` `white` `black` `gray` — each wraps a string |
 | Attributes | `bold` `dim` `italic` `underline` |
-| General | `style(s, opts)` — `opts` is `#{ "fg": ..., "bg": ..., "bold": ..., "dim": ..., "italic": ..., "underline": ... }`; `color()` — is styling active right now? |
+| General | `style(s, opts)` — `opts` is `#{ "fg": ..., "bg": ..., "bold": ..., "dim": ..., "italic": ..., "underline": ... }`; `color()` — is styling active (decided once, when the module loads: a TTY without `NO_COLOR`, or `CLICOLOR_FORCE`) |
 | Structure | `rule(width)` — a horizontal line; `table(headers, rows)` — columns aligned to their widest plain cell, header bold |
 | Progress | `bar(fraction, width)` — a `[████░░░░]  50%` bar string; print it with a leading `\r` and `os.flush()` to redraw in place |
 | Input | `prompt(question)` — a line from stdin; `confirm(question)` — yes/no → bool; `select(question, options)` — a numbered menu → `Ok(chosen)` \| `Err` |
@@ -1392,6 +1418,7 @@ true for 2xx):
 | `http.encode_query(map)` / `http.decode_query(s)` | query strings |
 | `http.serve(port, handler[, options])` | serve `handler(request)` on a bounded worker pool; blocks the calling program |
 | `http.response(status, body)` / `http.response_with_headers(status, body, headers)` | build responses |
+| `http.defer()` / `http.respond(ticket, response)` | park the connection a handler is answering and complete it later, from any thread |
 
 Every client verb takes an optional trailing **options map** — this is
 how a request carries headers, a timeout, and authentication:
@@ -1552,7 +1579,7 @@ with timers and animation frames; everything else is ordinary olang.
 | `dom.find(selector)` | the first match, or `()` when nothing matches — the lookup for an element that may be absent (`dom.query` raises on a miss, and a raise inside a handler takes the page down) |
 | `dom.patch(el, node)` | reconcile the element's children with a `web.html` node tree: the host diffs the data against the live DOM by `data-key`, no markup rendered or parsed; a `memo` subtree whose inputs stand is kept as it is |
 | `dom.morph(el, html)` | the same reconciliation from markup, for code that renders its own HTML |
-| `dom.checked(el)` | a checkbox's or radio's state |
+| `dom.checked(el)` | a checkbox's or radio's state; `()` for an element that has no checked state (a select, a div) |
 | `dom.selection(el)` / `dom.set_selection(el, from, to)` | a text control's selection as `(from, to)`, and setting it (focusing the control) — inserting at the cursor is set the value, then place the caret |
 | `dom.values(el)` | a `<select multiple>`'s chosen option values |
 | `dom.query_all(selector)` | every match, as a list of handles |

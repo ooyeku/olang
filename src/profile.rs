@@ -91,12 +91,19 @@ struct ThreadStack {
     /// `map` takes) runs with its caller on *another* thread, so its
     /// frames legitimately appear with no ancestors at all.
     worker: bool,
+    /// Set while the thread is parked — in `chan.recv`, `chan.send` on a
+    /// full channel, `time.sleep`, `task.join`, a server's accept loop.
+    /// A parked thread does no work, and charging its wall time to the
+    /// function that parked it made every actor loop the hottest row of
+    /// a profile whose CPU was idle.
+    blocked: AtomicBool,
 }
 
 impl ThreadStack {
     fn new(worker: bool) -> Self {
         ThreadStack {
             depth: AtomicUsize::new(0),
+            blocked: AtomicBool::new(false),
             frames: std::array::from_fn(|_| AtomicU32::new(0)),
             tiers: std::array::from_fn(|_| AtomicU8::new(0)),
             worker,
@@ -284,6 +291,21 @@ fn name_of(id: u32) -> String {
         .unwrap_or_else(|| "<unknown>".to_string())
 }
 
+/// Mark this thread parked for the guard's lifetime: the sampler counts
+/// the ticks as blocked instead of charging them to the frame on top.
+pub struct Blocked(());
+
+pub fn blocked() -> Blocked {
+    LOCAL.with(|stack| stack.blocked.store(true, Ordering::Relaxed));
+    Blocked(())
+}
+
+impl Drop for Blocked {
+    fn drop(&mut self) {
+        LOCAL.with(|stack| stack.blocked.store(false, Ordering::Relaxed));
+    }
+}
+
 /// Push a frame. Returns false when profiling is off, so callers can
 /// skip the matching `pop` — the pattern is:
 ///
@@ -439,6 +461,9 @@ struct Collected {
     idle: u64,
     /// Samples taken on parallel worker threads.
     worker_samples: u64,
+    /// Ticks on which a thread was parked (a channel receive, a sleep, a
+    /// join) — waiting, not working; reported apart from the functions.
+    blocked: u64,
 }
 
 /// Start sampling. The returned session must be stopped to collect.
@@ -481,6 +506,11 @@ fn sample_once(out: &mut Collected) {
     for stack in stacks.iter() {
         let depth = stack.depth.load(Ordering::Relaxed).min(MAX_FRAMES);
         if depth == 0 {
+            continue;
+        }
+        if stack.blocked.load(Ordering::Relaxed) {
+            out.blocked += 1;
+            saw_any = true;
             continue;
         }
         saw_any = true;
@@ -752,6 +782,14 @@ fn render(
              with no call path above them — that is the parallelism working, not\n      \
              a gap in the profile.",
             pct(data.worker_samples, active)
+        ));
+    }
+    if data.blocked > 0 {
+        notes.push(format!(
+            "{} thread-tick(s) were parked in a channel receive, a sleep, a join, or an
+                   accept loop — waiting, not working — and are not charged to any function.
+                   (Before 0.84 an actor loop parked in chan.recv read as the hottest row.)",
+            data.blocked
         ));
     }
     if data.idle > 0 && pct(data.idle, data.total) >= 10.0 {

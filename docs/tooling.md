@@ -265,7 +265,20 @@ judgement about intent rather than a provable contradiction.
   block's final statement is its *value*, so a function whose body is
   the fallible call is not flagged.
 - **A non-exhaustive `match`** over a known literal-type enum, naming
-  the members with no arm.
+  the members with no arm; and over a value of a declared `enum` type
+  (a parameter or `let` annotated with the type, or a constructor call
+  or bare unit variant matched directly), naming the constructors with
+  no arm: `match over \`Shape\` is not exhaustive: Rect has no arm`. A
+  wildcard or a plain binding covers everything; a guarded arm proves
+  nothing; a constructor pattern covers its constructor only when its
+  sub-patterns are irrefutable.
+- **A literal key a declared shape does not carry.** A parameter, `let`,
+  or return annotated `{ summary: String, count: Int }` declares the
+  keys a map or record carries, and `map_get(r, "summry")`, `r.summry`,
+  and `r["summry"]` are then reported with the nearest key; the runtime
+  answers such a read with Unit. The shape reaches the checker from
+  wherever it was written — a macro's output included — and the runtime
+  does not enforce it (a map's keys are data).
 - **A parameter that shadows a function its body calls.** `fn row(s,
   span) = span(s)` with `span` imported: the call reaches the argument,
   and the runtime can only say so at the call, in the browser, frames
@@ -662,17 +675,27 @@ map iteration order is deterministic (sorted by key), so the two never
 disagree by accident. A clean replay is a proof that the recorded inputs
 fully determined the run.
 
-Two boundaries worth knowing. Record/replay runs on the interpreter tier
-(the one dispatch point that sees every builtin), so a recorded run
-forgoes the bytecode tier — a debugging tool, not a hot path. And v1
-records a single thread of effects: a program using `spawn`/`par` for
-observable concurrency is outside the model, and a recorded or replayed
-run that starts a task or worker thread says so — a one-time warning on
-stderr, in both record and replay mode — rather than letting a trace
-that silently missed worker effects present itself as a clean,
-fully-determined run. (Roadmap: `replay --why`,
-which carries value provenance during replay to answer "where did this
-number come from?" — a chain back to the recorded inputs.)
+The database and the other threads are in the model. Every `db.` call
+is recorded — the connection handle `db.open` answers included, so a
+replay never opens the database: the handle replays, and every query
+and statement on it replays after it. The trace is the main thread's
+view of the program: what it receives from other threads — a
+`chan.recv`, `chan.recv_timeout`, `chan.try_recv`, or `chan.ask`
+answer, a `task.join` result — is logged in the order it arrived, and
+`chan.send` is logged too, so a replay fills no channel. A worker's own
+effects run live during recording and are not logged; under replay
+`spawn` starts no thread at all, and its handle joins from the trace.
+A recorded run that starts a worker says so once on stderr, so the
+reader knows which side of that line the worker's effects fall on.
+
+Two boundaries remain. Record/replay runs on the interpreter tier (the
+one dispatch point that sees every builtin), so a recorded run forgoes
+the bytecode tier — a debugging tool, not a hot path. And the worker's
+own side is not traced: a replay reproduces what the main thread saw,
+not what the worker did to a file or a database of its own. (Roadmap:
+`replay --why`, which carries value provenance during replay to answer
+"where did this number come from?" — a chain back to the recorded
+inputs.)
 
 ## `--verify-tiers` — live tier verification
 

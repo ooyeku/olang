@@ -1591,9 +1591,19 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             syntax: "meta.fresh(prefix)".to_string(),
             parameters: vec!["prefix: String - a readable stem for the generated name".to_string()],
             return_type: "String".to_string(),
-            examples: vec![r#"meta.fresh("tmp")  // "tmp_m0", then "tmp_m1", ..."#.to_string()],
+            examples: vec![r#"meta.fresh("tmp")  // "tmp__m0", then "tmp__m1", ..."#.to_string()],
             category: "Meta".to_string(),
-            see_also: vec!["meta.eval".to_string()],
+            see_also: vec!["meta.eval".to_string(), "meta.exports".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "meta.exports".to_string(),
+            description: "At expansion time, the literal values a module the expanding file imports binds at its top level (`let`/`share let` of a number, string, list, map, or tuple literal), as Ok(map) from name to value — so a macro in one file can read what a declaration in another file wrote. Err when the path is not an import of the file, or outside expansion.".to_string(),
+            syntax: "meta.exports(path)".to_string(),
+            parameters: vec!["path: String - the module as the file imports it, e.g. \"lib.decl\"".to_string()],
+            return_type: "Result<Map, String>".to_string(),
+            examples: vec!["meta fn pages() = {\n    let decl = unwrap(meta.exports(\"lib.decl\"))\n    meta.lit(map_get(decl, \"RESOURCES\"))\n}".to_string()],
+            category: "Meta".to_string(),
+            see_also: vec!["meta.fresh".to_string(), "meta.lit".to_string()],
         });
         self.add_function(FunctionDoc {
             name: "meta.parse".to_string(),
@@ -3250,7 +3260,7 @@ let parts = ods.split(f, 0.8)   // [train, test]"##],
             "dom.checked(el)",
             "Bool",
             "dom",
-            "a checkbox's or radio's checked state — what `value` cannot say",
+            "a checkbox's or radio's checked state — what `value` cannot say; Unit for an element that has no checked state (a select, a div), never a false that reads as unchecked",
             &[r##"if dom.checked(dom.query("#done")) => mark_done() else => ()"##],
         );
         self.doc_ex(
@@ -3994,6 +4004,14 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             "os",
             "whether standard output is a terminal (Ok(bool))",
             &[r##"if os.is_tty() == Ok(true) => term.green("ok") else => "ok""##],
+        );
+        self.doc_ex(
+            "os.color_enabled",
+            "os.color_enabled()",
+            "Bool",
+            "os",
+            "whether ANSI styling will render: CLICOLOR_FORCE set, or stdout a terminal with NO_COLOR unset — decided once, re-decided after the program's own os.set_env/os.remove_env (what term.color() answers)",
+            &[r##"if os.color_enabled() => "\x1b[32mok\x1b[0m" else => "ok""##],
         );
         self.doc_ex("os.flush", "os.flush()", "Unit", "os", "flush buffered standard output — needed to show a progress bar drawn with a leading carriage return",
             &[r##"os.flush()  // show a progress line drawn with print"##],
@@ -5868,6 +5886,26 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             see_also: vec!["http.serve".to_string(), "os.on_shutdown".to_string()],
         });
 
+        self.add_function(FunctionDoc {
+            name: "http.defer".to_string(),
+            description: "Inside an http.serve handler: park the connection being answered and return a ticket the handler hands back as its response. The worker moves on; the parked connection costs a socket. http.respond completes it later, from any thread.".to_string(),
+            syntax: "http.defer()".to_string(),
+            parameters: vec![],
+            return_type: "HttpDeferred (the ticket; return it from the handler)".to_string(),
+            examples: vec!["fn handle(req) = {\n    let ticket = http.defer()\n    spawn { time.sleep(300); http.respond(ticket, http.response(200, \"late\")) }\n    ticket\n}".to_string()],
+            category: "HTTP".to_string(),
+            see_also: vec!["http.respond".to_string(), "http.serve".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "http.respond".to_string(),
+            description: "Complete a deferred request: write `response` (anything a handler returns — an http.response, a string, a { status, body } record) to the connection http.defer parked under `ticket`, and close it. Ok(()) on success; Err when nothing holds the ticket (answered already, or the client left). Callable from any thread.".to_string(),
+            syntax: "http.respond(ticket, response)".to_string(),
+            parameters: vec!["ticket: HttpDeferred - what http.defer answered".to_string(), "response: the handler-shaped response".to_string()],
+            return_type: "Result<Unit, String>".to_string(),
+            examples: vec!["http.respond(ticket, json(#{ \"events\": pending }))".to_string()],
+            category: "HTTP".to_string(),
+            see_also: vec!["http.defer".to_string(), "http.serve".to_string()],
+        });
         self.add_function(FunctionDoc {
             name: "http.response".to_string(),
             description: "Create an HTTP response with status code and body".to_string(),

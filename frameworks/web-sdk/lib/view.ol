@@ -123,9 +123,46 @@ fn resolve_confirm(name) =
         }
     } else => name
 
+/// The events an input's `data-action` fires on. A text-like box fires
+/// on Enter and on a button, never on `change` — leaving the first of
+/// two boxes must not submit the form with the second still empty; a
+/// control whose value IS the argument (select, checkbox, radio, date,
+/// number, range, color, file) fires on `change`. `data-on="change enter
+/// click"` names the events explicitly and overrides the default.
+fn event_fires(ev, data) = {
+    let ty = map_get(ev, "type")
+    let on = if data == () => () else => map_get(data, "on")
+    if on != () => {
+        let wanted = " " + on + " "
+        let name = if ty == "keydown" => "enter" else => ty
+        str.contains(wanted, " " + name + " ")
+    }
+    else if ty == "change" && map_get(ev, "tag") == "input" => {
+        let kind = map_get(ev, "input_type")
+        !contains(["", "text", "search", "email", "url", "tel", "password"], if kind == () => "" else => kind)
+    }
+    else => true
+}
+
+test "a text box's change does not fire its action; a select's does; data-on decides" {
+    let text_change = #{ "type": "change", "tag": "input", "input_type": "text", "data": #{ "action": "a" } }
+    assert_eq(event_fires(text_change, map_get(text_change, "data")), false)
+    let select_change = #{ "type": "change", "tag": "select", "input_type": (), "data": #{ "action": "a" } }
+    assert_eq(event_fires(select_change, map_get(select_change, "data")), true)
+    let checkbox = #{ "type": "change", "tag": "input", "input_type": "checkbox", "data": #{ "action": "a" } }
+    assert_eq(event_fires(checkbox, map_get(checkbox, "data")), true)
+    let opted = #{ "type": "change", "tag": "input", "input_type": "text", "data": #{ "action": "a", "on": "change enter" } }
+    assert_eq(event_fires(opted, map_get(opted, "data")), true)
+    let enter = #{ "type": "keydown", "tag": "input", "input_type": "text", "data": #{ "action": "a", "on": "change enter" } }
+    assert_eq(event_fires(enter, map_get(enter, "data")), true)
+    let click_off = #{ "type": "click", "tag": "button", "input_type": (), "data": #{ "action": "a", "on": "enter" } }
+    assert_eq(event_fires(click_off, map_get(click_off, "data")), false)
+}
+
 fn dispatch_action(ev) = {
     let data = map_get(ev, "data")
-    let raw_name = if data == () || click_on_form_control(ev) || is_repeat_of_enter(ev) => "" else => {
+    let raw_name = if data == () || click_on_form_control(ev) || is_repeat_of_enter(ev)
+        || !event_fires(ev, data) => "" else => {
         let a = map_get(data, "action")
         if a == () => "" else => a
     }

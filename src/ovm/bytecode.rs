@@ -478,6 +478,19 @@ pub enum Instruction {
         key: Register,
         value: Register,
     },
+    /// `text + to_string(n)` (or `to_string(n) + text`), fused: the
+    /// number is formatted straight into the concatenation's buffer, so
+    /// building a key or a label from a number costs one string
+    /// allocation instead of two strings and their two buffers. When
+    /// `text` is not a String, or `arg` is not a number the fast path
+    /// formats, the arm computes `to_string(arg)` and adds in source
+    /// order — the unfused semantics exactly.
+    ConcatToString {
+        dst: Register,
+        text: Register,
+        arg: Register,
+        text_first: bool,
+    },
     /// `x = x + [v]`, fused one step further than AddAssign: append the
     /// scalar in `value` to the list in `target`, in place under the
     /// sole-owner discipline. The optimizer rewrites the one-element
@@ -3593,6 +3606,44 @@ impl BytecodeVm {
                     };
                     self.execution_state.set_register(*target, out)?;
                 }
+                Instruction::ConcatToString {
+                    dst,
+                    text,
+                    arg,
+                    text_first,
+                } => {
+                    use crate::ovm::value::ValueData;
+                    let text_val = self.execution_state.get_register(*text)?;
+                    let arg_val = self.execution_state.get_register(*arg)?;
+                    let result = match (&text_val.data, &arg_val.data) {
+                        (ValueData::String(t), ValueData::Integer(i)) => {
+                            use std::fmt::Write as _;
+                            let mut out = String::with_capacity(t.len() + 20);
+                            if *text_first {
+                                out.push_str(t);
+                                let _ = write!(out, "{}", i);
+                            } else {
+                                let _ = write!(out, "{}", i);
+                                out.push_str(t);
+                            }
+                            OvmValue::new_string(out)
+                        }
+                        _ => {
+                            let rendered = self.execute_builtin_call(
+                                "to_string",
+                                std::slice::from_ref(&arg_val),
+                                false,
+                            )?;
+                            if *text_first {
+                                self.execute_binary_op(&text_val, &rendered, BinaryOp::Add)?
+                            } else {
+                                self.execute_binary_op(&rendered, &text_val, BinaryOp::Add)?
+                            }
+                        }
+                    };
+                    self.execution_state.set_register(*dst, result)?;
+                }
+
                 Instruction::MapSetAssign { target, key, value } => {
                     use crate::ovm::value::ValueData;
                     // A user-defined map_set shadows the builtin: resolve
@@ -5044,9 +5095,14 @@ impl BytecodeVm {
         // as ever; the Native hook above kept its own say.
         if matches!(op, BinaryOp::Equal | BinaryOp::NotEqual) {
             let numeric = |d: &ValueData| matches!(d, ValueData::Integer(_) | ValueData::Float(_));
+            // The map kinds compare with one another by contents.
+            let map_like = |d: &ValueData| matches!(d, ValueData::Map(_) | ValueData::Struct(_));
             let same_kind =
                 std::mem::discriminant(&left.data) == std::mem::discriminant(&right.data);
-            if !same_kind && !(numeric(&left.data) && numeric(&right.data)) {
+            if !same_kind
+                && !(numeric(&left.data) && numeric(&right.data))
+                && !(map_like(&left.data) && map_like(&right.data))
+            {
                 return Ok(OvmValue::new_boolean(matches!(op, BinaryOp::NotEqual)));
             }
         }
@@ -5182,7 +5238,9 @@ impl BytecodeVm {
             }
             (ValueData::Enum(_), ValueData::Enum(_))
             | (ValueData::Struct(_), ValueData::Struct(_))
-            | (ValueData::Map(_), ValueData::Map(_)) => match op {
+            | (ValueData::Map(_), ValueData::Map(_))
+            | (ValueData::Struct(_), ValueData::Map(_))
+            | (ValueData::Map(_), ValueData::Struct(_)) => match op {
                 BinaryOp::Equal => OvmValue::new_boolean(Self::pattern_eq(left, right)),
                 BinaryOp::NotEqual => OvmValue::new_boolean(!Self::pattern_eq(left, right)),
                 _ => {
@@ -6124,6 +6182,28 @@ impl BytecodeVm {
             args
         };
         match name {
+            // `attempt` runs its function on this VM, the tiers it would run
+            // on bare — bridging it to the interpreter put everything under
+            // it on a tree-walk. A runtime error inside becomes the Err;
+            // the message loses its "Runtime error:" dressing as the
+            // interpreter's `attempt` strips it.
+            "attempt"
+                if args.len() == 1
+                    && matches!(
+                        args[0].data,
+                        ValueData::AstFunction(_) | ValueData::Closure(_)
+                    ) =>
+            {
+                Some(match self.call_function_value(&args[0], &[]) {
+                    Ok(v) => Ok(OvmValue::new_result(v, true)),
+                    Err(BytecodeError::RuntimeError(message))
+                    | Err(BytecodeError::TypeError(message)) => Ok(OvmValue::new_result(
+                        OvmValue::new_string(crate::builtin::strip_error_prefixes(&message)),
+                        false,
+                    )),
+                    Err(e) => Err(e),
+                })
+            }
             // `to_string` on a scalar is the hottest thing a string-keyed
             // loop does (`"w" + to_string(n)`); bridging it to the
             // interpreter cost a value conversion each way and the
@@ -6171,6 +6251,24 @@ impl BytecodeVm {
                     range.end
                 };
                 let count = (end - range.start).max(0) as usize;
+                // A kernel whose whole body is one constant — `(i) => 0`,
+                // the zeroed table a sieve or a histogram starts from — is
+                // a fill: the constant repeated, no call per element.
+                if is_map
+                    && captures.is_empty()
+                    && let Ok(bytecode) = self.get_bytecode(func_id)
+                    && let [
+                        Instruction::LoadConst { dst, const_idx },
+                        Instruction::Return { value: Some(ret) },
+                    ] = bytecode.instructions.as_slice()
+                    && dst == ret
+                    && let Some(constant) = bytecode.constants.get(*const_idx as usize)
+                {
+                    return Some(Ok(match &constant.data {
+                        ValueData::Integer(i) => OvmValue::new_int_list(vec![*i; count]),
+                        _ => OvmValue::new_list(vec![constant.clone(); count]),
+                    }));
+                }
                 // A native kernel over a plain range: call its raw entry
                 // per integer, no register file in between. Any element
                 // the native code declines restarts the whole map on the
@@ -7004,6 +7102,8 @@ impl BytecodeVm {
             (ValueData::Enum(_), ValueData::Enum(_))
             | (ValueData::Struct(_), ValueData::Struct(_))
             | (ValueData::Map(_), ValueData::Map(_))
+            | (ValueData::Struct(_), ValueData::Map(_))
+            | (ValueData::Map(_), ValueData::Struct(_))
             | (ValueData::List(_), ValueData::List(_))
             | (ValueData::AstList(_), ValueData::AstList(_))
             | (ValueData::AstList(_), ValueData::List(_))
@@ -7020,7 +7120,7 @@ impl BytecodeVm {
                 ValueData::FloatList(_) | ValueData::IntList(_),
             )
             | (ValueData::Tuple(_), ValueData::Tuple(_)) => match (a.to_ast(), b.to_ast()) {
-                (Ok(x), Ok(y)) => x == y,
+                (Ok(x), Ok(y)) => crate::interpreter::ops::loose_eq(&x, &y),
                 _ => false,
             },
             _ => false,
@@ -8007,6 +8107,36 @@ impl BytecodeCompiler {
                     self.emitter.instructions.push(combine);
                     self.emitter.place_label(end_label);
                     return Ok(dst_reg);
+                }
+
+                // `text + to_string(n)`: one allocation, the number
+                // formatted into the concatenation. Operands still compile
+                // in source order (left, then right).
+                if matches!(op, BinaryOp::Add)
+                    && let Some((text_expr, arg_expr, text_first)) =
+                        self.to_string_concat_shape(left, right)
+                {
+                    let (first, second) = if text_first {
+                        (text_expr, arg_expr)
+                    } else {
+                        (arg_expr, text_expr)
+                    };
+                    let first_reg = self.compile_expression(first)?;
+                    let first_reg = self.shield_operand(first_reg, !Self::assignment_free(second));
+                    let second_reg = self.compile_expression(second)?;
+                    let (text, arg) = if text_first {
+                        (first_reg, second_reg)
+                    } else {
+                        (second_reg, first_reg)
+                    };
+                    let dst = self.register_allocator.allocate_register();
+                    self.emitter.instructions.push(Instruction::ConcatToString {
+                        dst,
+                        text,
+                        arg,
+                        text_first,
+                    });
+                    return Ok(dst);
                 }
 
                 // A numeric literal operand rides in the instruction as an
@@ -10114,6 +10244,49 @@ impl BytecodeCompiler {
     /// registers, and lambdas that assign captured names are rejected by
     /// the lambda compiler — but a block or match arm can assign
     /// directly, so those decline.
+    /// `a + to_string(b)` or `to_string(b) + a`, when `to_string` is the
+    /// builtin here (no local, user function, or closure binding of the
+    /// name shadows it): the text operand, the number operand, and
+    /// whether the text comes first.
+    fn to_string_concat_shape<'e>(
+        &self,
+        left: &'e Expr,
+        right: &'e Expr,
+    ) -> Option<(&'e Expr, &'e Expr, bool)> {
+        let is_builtin_to_string = |e: &'e Expr| -> Option<&'e Expr> {
+            let Expr::Call { callee, arguments } = e else {
+                return None;
+            };
+            let Expr::Identifier(name) = callee.as_ref() else {
+                return None;
+            };
+            if name != "to_string"
+                || arguments.len() != 1
+                || self.local_variables.contains_key(name)
+                || self.function_registry.contains_key(name)
+                || !self.builtin_names.contains(name)
+            {
+                return None;
+            }
+            match self.enclosing_closure.get(name) {
+                None => {}
+                Some(Value::Builtin(b)) if b.name == "to_string" => {}
+                Some(_) => return None,
+            }
+            match &arguments[0] {
+                crate::ast::Argument::Positional(a) => Some(a),
+                _ => None,
+            }
+        };
+        if let Some(arg) = is_builtin_to_string(right) {
+            return Some((left, arg, true));
+        }
+        if let Some(arg) = is_builtin_to_string(left) {
+            return Some((right, arg, false));
+        }
+        None
+    }
+
     pub(crate) fn assignment_free(e: &crate::ast::Expr) -> bool {
         use crate::ast::Expr as E;
         match e {
@@ -11124,6 +11297,11 @@ impl BytecodeOptimizer {
                 uses.push(key.0);
                 uses.push(value.0);
                 defs.push(target.0);
+            }
+            I::ConcatToString { dst, text, arg, .. } => {
+                uses.push(text.0);
+                uses.push(arg.0);
+                defs.push(dst.0);
             }
             I::ListAppendAssign { target, value } => {
                 uses.push(target.0);

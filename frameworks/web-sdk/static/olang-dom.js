@@ -179,12 +179,19 @@
     const t = e.target ?? {};
     const a = (t.closest && t.closest("[data-action]")) || t;
     const z = (t.closest && t.closest("[data-zone]")) || null;
+    const inputType = (t.type ?? "").toLowerCase();
+    const checkable = inputType === "checkbox" || inputType === "radio";
     return {
       type,
       id: t.id ?? "",
       value: t.value ?? "",
       key: e.key ?? "",
       tag: (t.tagName ?? "").toLowerCase(),
+      // The control's kind, so the runtime can tell a text box (Enter
+      // and buttons) from a select (change); `checked` only where the
+      // element has a checked state, so a select never reads as false.
+      input_type: inputType,
+      ...(checkable ? { checked: !!t.checked } : {}),
       x: Math.round(e.clientX ?? 0),
       y: Math.round(e.clientY ?? 0),
       alt: !!e.altKey, ctrl: !!e.ctrlKey, shift: !!e.shiftKey, meta: !!e.metaKey,
@@ -452,7 +459,13 @@
       host_dom_set_html: (h, ptr, len) => { elements[Number(h)].innerHTML = readStr(ptr, len); },
       host_dom_morph: (h, ptr, len) => morphInto(elements[Number(h)], readStr(ptr, len)),
       host_dom_patch: (h, ptr, len) => patchInto(elements[Number(h)], JSON.parse(readStr(ptr, len))),
-      host_dom_checked: (h) => (elements[Number(h)].checked ? 1n : 0n),
+      // 2 says the element has no checked state (a select, a div): the
+      // runtime answers Unit rather than a false that reads as unchecked.
+      host_dom_checked: (h) => {
+        const el = elements[Number(h)];
+        const kind = (el.type ?? "").toLowerCase();
+        return kind === "checkbox" || kind === "radio" ? (el.checked ? 1n : 0n) : 2n;
+      },
       host_dom_selection: (h) => {
         const el = elements[Number(h)];
         const from = el.selectionStart, to = el.selectionEnd;
@@ -516,7 +529,16 @@
             dispatchJson(cb, eventPayload(e, "dragstart"));
           });
         } else {
-          el.addEventListener(ev, (e) => dispatchJson(cb, eventPayload(e, ev)));
+          el.addEventListener(ev, (e) => {
+            // A link that carries an action means the action: the href is
+            // the no-JS fallback, not a second navigation on top of the
+            // app's own. `data-follow` on the anchor opts back in.
+            if (ev === "click" && e.target && e.target.closest) {
+              const carrier = e.target.closest("[data-action]");
+              if (carrier && carrier.tagName === "A" && !carrier.hasAttribute("data-follow")) e.preventDefault();
+            }
+            dispatchJson(cb, eventPayload(e, ev));
+          });
         }
       },
       host_dom_focus: (h) => { elements[Number(h)].focus(); },

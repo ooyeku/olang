@@ -56,6 +56,10 @@ pub fn create_os_module() -> Value {
 
     // Terminal
     module.insert("is_tty".to_string(), create_builtin_function("is_tty", 0));
+    module.insert(
+        "color_enabled".to_string(),
+        create_builtin_function("color_enabled", 0),
+    );
     module.insert("flush".to_string(), create_builtin_function("flush", 0));
 
     // Process information
@@ -155,6 +159,7 @@ pub fn call_os_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
         "exec" => os_exec(args),
         "read_line" => os_read_line(args),
         "is_tty" => os_is_tty(args),
+        "color_enabled" => os_color_enabled(args),
         "flush" => os_flush(args),
         "on_interrupt" => os_on_interrupt(args),
         "interrupted" => os_interrupted(args),
@@ -229,7 +234,36 @@ fn os_set_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     // effect, and a program that calls os.set_env while worker threads
     // read the environment races exactly as the same C program would.
     unsafe { env::set_var(var_name, var_value) };
+    ENV_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     Ok(Value::Unit)
+}
+
+/// Bumped by every environment write the program makes, so a decision
+/// cached from the environment (`os.color_enabled`) knows to re-read.
+static ENV_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Whether ANSI styling will render: `CLICOLOR_FORCE` set, or standard
+/// output a terminal with `NO_COLOR` unset. Decided once and remembered
+/// until the program changes its environment (`os.set_env`,
+/// `os.remove_env`), so a color helper asking on every fragment pays
+/// two atomic loads, not an isatty and two environment reads.
+fn os_color_enabled(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if !args.is_empty() {
+        return Err(format!("os.color_enabled expects 0 arguments, got {}", args.len()).into());
+    }
+    use std::sync::atomic::{AtomicU64, Ordering};
+    // Packed as generation << 1 | decision; 0 means undecided.
+    static DECIDED: AtomicU64 = AtomicU64::new(0);
+    let generation = ENV_GENERATION.load(Ordering::Relaxed);
+    let packed = DECIDED.load(Ordering::Relaxed);
+    if packed != 0 && packed >> 1 == generation {
+        return Ok(Value::Boolean(packed & 1 == 1));
+    }
+    let on = env::var_os("CLICOLOR_FORCE").is_some()
+        || (matches!(os_is_tty(Vec::new())?, Value::Boolean(true))
+            && env::var_os("NO_COLOR").is_none());
+    DECIDED.store((generation << 1) | on as u64, Ordering::Relaxed);
+    Ok(Value::Boolean(on))
 }
 
 /// Remove an environment variable
@@ -250,6 +284,7 @@ fn os_remove_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 
     // SAFETY: same contract as os.set_env above.
     unsafe { env::remove_var(var_name) };
+    ENV_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     Ok(Value::Unit)
 }
 
@@ -741,8 +776,13 @@ fn os_is_tty(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
         return Err(format!("os.is_tty expects 0 arguments, got {}", args.len()).into());
     }
-    use std::io::IsTerminal;
-    Ok(Value::Boolean(std::io::stdout().is_terminal()))
+    // Decided once per process: stdout's nature does not change under a
+    // running program, and a color helper asks on every fragment.
+    static TTY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    Ok(Value::Boolean(*TTY.get_or_init(|| {
+        use std::io::IsTerminal;
+        std::io::stdout().is_terminal()
+    })))
 }
 
 /// Flush standard output. `print` without a newline is buffered, so a

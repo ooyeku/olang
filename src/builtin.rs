@@ -1267,6 +1267,13 @@ impl BuiltinFunctions {
                     });
                 }
 
+                // The VM iterates a range itself: no boxed materialization,
+                // a typed result, and a constant kernel is a fill.
+                if let Some(result) =
+                    interpreter.tier_hof_range("map", function, *start, *end, *inclusive)
+                {
+                    return result;
+                }
                 let range_vec: Vec<Value> = (*start..end_val).map(Value::Integer).collect();
 
                 return Self::process_map_range(range_vec, function, interpreter);
@@ -1389,6 +1396,11 @@ impl BuiltinFunctions {
                     });
                 }
 
+                if let Some(result) =
+                    interpreter.tier_hof_range("filter", function, *start, *end, *inclusive)
+                {
+                    return result;
+                }
                 let range_vec: Vec<Value> = (*start..end_val).map(Value::Integer).collect();
                 return Self::process_filter_range(range_vec, function, interpreter);
             }
@@ -3975,7 +3987,7 @@ fn testing_snapshot(
 /// An error's text without the category prefixes the reporter adds
 /// ("Runtime error: ", "Type error: ") — the message an `attempt` hands
 /// back is the cause, as a `raise` would have printed it.
-fn strip_error_prefixes(text: &str) -> String {
+pub(crate) fn strip_error_prefixes(text: &str) -> String {
     let mut t = text;
     loop {
         let next = ["Runtime error: ", "Type error: "]

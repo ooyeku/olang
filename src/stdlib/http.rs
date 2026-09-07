@@ -60,6 +60,12 @@ pub fn create_http_module() -> Value {
         "response".to_string(),
         create_builtin_function("response", 2),
     );
+    // A handler that must wait gives its worker back: `http.defer()`
+    // answers a ticket the handler returns instead of a response; the
+    // connection parks (a socket, not an interpreter) until
+    // `http.respond(ticket, response)` completes it from any thread.
+    module.insert("defer".to_string(), create_builtin_function("defer", 0));
+    module.insert("respond".to_string(), create_builtin_function("respond", 2));
     module.insert(
         "response_with_headers".to_string(),
         create_builtin_function("response_with_headers", 3),
@@ -112,6 +118,8 @@ pub fn call_http_function(
             Ok(Value::Unit)
         }
         "response" => http_response(args),
+        "defer" => http_defer(args),
+        "respond" => http_respond(args),
         "response_with_headers" => http_response_with_headers(args),
         "parse_url" => parse_url(args),
         "encode_query" => encode_query(args),
@@ -957,6 +965,73 @@ fn serve_config(options: Option<&Value>) -> Result<ServeConfig, String> {
     })
 }
 
+thread_local! {
+    /// The connection the handler on this worker is answering — what
+    /// `http.defer()` names its ticket after.
+    static CURRENT_CONN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+static CONN_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+/// Connections a handler deferred, waiting for `http.respond`.
+static DEFERRED: std::sync::Mutex<Option<HashMap<u64, (std::net::TcpStream, crate::caps::FsCap)>>> =
+    std::sync::Mutex::new(None);
+
+fn http_defer(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if !args.is_empty() {
+        return Err("http.defer takes no arguments".into());
+    }
+    let id = CURRENT_CONN.with(|c| c.get());
+    if id == 0 {
+        return Err("http.defer: no request is being handled on this thread".into());
+    }
+    let mut fields = HashMap::new();
+    fields.insert("ticket".to_string(), Value::Integer(id as i64));
+    Ok(Value::Struct {
+        type_name: "HttpDeferred".to_string(),
+        fields: Arc::new(fields),
+    })
+}
+
+fn http_respond(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    use std::io::Write;
+    let ticket = match args.first() {
+        Some(Value::Struct { type_name, fields }) if type_name == "HttpDeferred" => {
+            match fields.get("ticket") {
+                Some(Value::Integer(id)) => *id as u64,
+                _ => return Err("http.respond: malformed ticket".into()),
+            }
+        }
+        Some(Value::Integer(id)) => *id as u64,
+        _ => {
+            return Err(
+                "http.respond expects the ticket http.defer answered and a response".into(),
+            );
+        }
+    };
+    let Some(response) = args.get(1) else {
+        return Err("http.respond expects the ticket and a response".into());
+    };
+    let parked = DEFERRED
+        .lock()
+        .map_err(|_| "http.respond: the deferred table is poisoned")?
+        .as_mut()
+        .and_then(|table| table.remove(&ticket));
+    let Some((mut stream, fs)) = parked else {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(
+            "http.respond: no deferred request holds this ticket (answered already, or the client left)"
+                .to_string(),
+        )))));
+    };
+    // The deferred connection is done after this answer.
+    let bytes = render_handler_result(response, false, fs);
+    match stream.write_all(&bytes).and_then(|_| stream.flush()) {
+        Ok(()) => Ok(Value::Ok(Box::new(Value::Unit))),
+        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "http.respond: {}",
+            e
+        )))))),
+    }
+}
+
 fn serve_connection(
     mut stream: std::net::TcpStream,
     interpreter: &mut crate::interpreter::Interpreter,
@@ -1013,7 +1088,25 @@ fn serve_connection(
                 let request_value =
                     request_to_value(&req, forwarded.as_deref().unwrap_or(&remote_addr));
                 let fs_grant = interpreter.effective_fs();
-                let bytes = match interpreter.call_function(handler.clone(), vec![request_value]) {
+                let conn_id = CONN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                CURRENT_CONN.with(|c| c.set(conn_id));
+                let outcome = interpreter.call_function(handler.clone(), vec![request_value]);
+                CURRENT_CONN.with(|c| c.set(0));
+                // A deferred answer: the connection parks under its ticket
+                // and this worker moves on; `http.respond` writes to it later.
+                if let Ok(Value::Struct { type_name, fields }) = &outcome
+                    && type_name == "HttpDeferred"
+                    && matches!(fields.get("ticket"), Some(Value::Integer(id)) if *id as u64 == conn_id)
+                {
+                    let _ = stream.set_read_timeout(None);
+                    if let Ok(mut table) = DEFERRED.lock() {
+                        table
+                            .get_or_insert_with(HashMap::new)
+                            .insert(conn_id, (stream, fs_grant));
+                    }
+                    return;
+                }
+                let bytes = match outcome {
                     Ok(result) => render_handler_result(&result, keep_alive, fs_grant),
                     Err(error) => {
                         crate::log::get_logger().error(
@@ -1516,6 +1609,8 @@ mod tests {
                 "parse_url",
                 "encode_query",
                 "decode_query",
+                "defer",
+                "respond",
             ];
 
             for func_name in expected_functions {
@@ -1534,7 +1629,7 @@ mod tests {
                 }
             }
 
-            assert_eq!(fields.len(), 12, "Expected 12 functions in http module");
+            assert_eq!(fields.len(), 14, "Expected 14 functions in http module");
         } else {
             panic!("Expected struct for http module, got: {:?}", module);
         }

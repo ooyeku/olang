@@ -128,6 +128,33 @@ fn recorded_of(op: &str) -> bool {
     if let Some(f) = op.strip_prefix("random.") {
         return !matches!(f, "seed"); // seed is a deterministic state-set
     }
+    // The database: every call's answer depends on state outside the
+    // program (the file, other writers), and every answer is plain data
+    // — rows as maps, counts, and the connection handle itself, a struct
+    // of an id and a path. Recording `db.open` too is what lets a replay
+    // run without the database: the handle replays, and every call on it
+    // replays after it.
+    if op.starts_with("db.") {
+        return true;
+    }
+    // What the main thread receives from other threads. A worker's own
+    // effects are its business; what the program observed of the worker
+    // — the message a channel delivered, the value a join returned — is
+    // the main thread's input, and it is logged in the order it arrived.
+    // `chan.send` is recorded so a replay, which runs no workers, does
+    // not fill a channel nobody drains.
+    if matches!(
+        op,
+        "chan.recv"
+            | "chan.recv_timeout"
+            | "chan.try_recv"
+            | "chan.ask"
+            | "chan.send"
+            | "task.join"
+            | "task.join_timeout"
+    ) {
+        return true;
+    }
     // clocks: wall-clock and monotonic time.
     matches!(
         op,

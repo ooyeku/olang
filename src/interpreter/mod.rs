@@ -11,7 +11,7 @@ use std::sync::Arc;
 mod errors;
 pub(crate) mod loop_promo;
 mod modules;
-mod ops;
+pub(crate) mod ops;
 
 /// The recursion limit that turns runaway recursion into a clean
 /// "maximum call depth exceeded" error. It is a *logical* cap, not a
@@ -118,6 +118,12 @@ pub struct Interpreter {
     /// gives — instead of "Undefined variable", or worse, a like-named
     /// function the bridge's by-name table happened to hold.
     fallback_globals: Option<Arc<ImHashMap<String, Value>>>,
+    /// The program file's top-level function declarations not yet
+    /// reached, by name — declared on first use (see `lookup_name`).
+    pending_top_level: HashMap<String, Statement>,
+    /// Functions `lookup_name` declared ahead of their statement; the
+    /// statement binds this very value instead of building another.
+    declared_early: HashMap<String, Value>,
     /// Every loaded module's complete top-level table, by file. A frame
     /// whose function belongs to that file resolves a name here after
     /// its lexical scopes and before the program's root — so a module's
@@ -325,6 +331,8 @@ impl Interpreter {
             current_module_path: None, // For tracking current module during loading
             owners: HashMap::new(),
             fallback_globals: None,
+            pending_top_level: HashMap::new(),
+            declared_early: HashMap::new(),
             module_scopes: HashMap::new(),
             module_loading_stack: Vec::new(), // Feature 7: Track modules currently being loaded for circular detection
 
@@ -452,8 +460,42 @@ impl Interpreter {
             });
         }
 
+        // The program file's top-level functions exist before its first
+        // statement runs — the module rule, applied to the entry file: a
+        // function may call one declared below it, whatever runs between.
+        // Declaring is pure (a closure over the root, which resolves live),
+        // and the statement re-declares the same body in its place.
+        // The program file's top-level functions are reachable before
+        // their declaration runs: a call above the declaration declares
+        // it then (see `lookup_name`), and the statement in its place is
+        // skipped for a function already declared that way.
+        for statement in &program.statements {
+            let name = match statement.unwrapped() {
+                Statement::FunctionDecl(f) | Statement::ShareDecl(ShareDecl::Function(f)) => {
+                    Some(f.name.clone())
+                }
+                _ => None,
+            };
+            if let Some(name) = name {
+                self.pending_top_level
+                    .entry(name)
+                    .or_insert_with(|| statement.clone());
+            }
+        }
+
         let mut last_value = Value::Unit;
         for statement in &program.statements {
+            if let Statement::FunctionDecl(f) | Statement::ShareDecl(ShareDecl::Function(f)) =
+                statement.unwrapped()
+            {
+                self.pending_top_level.remove(&f.name);
+                // Declared on first use already: bind that same value
+                // here rather than building a second one.
+                if let Some(value) = self.declared_early.remove(&f.name) {
+                    self.environment.define(f.name.clone(), value);
+                    continue;
+                }
+            }
             // A fresh top-level statement gets a clean slate: any location
             // captured for an earlier (recovered) failure must not be
             // inherited by a later error.
@@ -624,6 +666,40 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         items: &[Value],
     ) -> Option<Result<Value, InterpreterError>> {
         self.tier_hof_with(name, function, items, None)
+    }
+
+    /// `map`/`filter` over a range: the VM iterates the integers itself,
+    /// so a ten-million-element range is never materialized as boxed
+    /// values on this side (and a constant kernel is a fill).
+    pub fn tier_hof_range(
+        &mut self,
+        name: &str,
+        function: &Value,
+        start: i64,
+        end: i64,
+        inclusive: bool,
+    ) -> Option<Result<Value, InterpreterError>> {
+        let Value::Function(f) = function else {
+            return None;
+        };
+        if f.parameters.len() != 1
+            || f.parameters.iter().any(|p| p.default_value.is_some())
+            || !f.param_bounds.is_empty()
+        {
+            return None;
+        }
+        let globals = self.global_bindings();
+        let mut tier = self.bytecode_tier.take()?;
+        tier.set_host_globals(globals);
+        let out = tier.try_hof_range(name, f, start, end, inclusive);
+        self.bytecode_tier = Some(tier);
+        match out? {
+            Ok(v) => Some(Ok(v)),
+            Err(message) => {
+                let err = Self::map_tier_error_message(message);
+                Some(Err(err))
+            }
+        }
     }
 
     /// The fold shape: same door, with the initial accumulator.
@@ -1185,6 +1261,23 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     }
 
     fn eval_function_decl(&mut self, func_decl: FunctionDecl) -> Result<Value, InterpreterError> {
+        let name = func_decl.name.clone();
+        let function_value = self.build_function_value(func_decl, None)?;
+        // Define the function in the current environment so it can be called recursively
+        self.environment.define(name, function_value.clone());
+        Ok(function_value)
+    }
+
+    /// The function value a declaration denotes, noted to the tier but not
+    /// yet bound. `early` carries the closure and scope for a top-level
+    /// function declared on first use, before its statement ran (see
+    /// `lookup_name`): the program root's bindings, scope 0.
+    fn build_function_value(
+        &mut self,
+        func_decl: FunctionDecl,
+        early: Option<ImHashMap<String, Value>>,
+    ) -> Result<Value, InterpreterError> {
+        let early_root = early.is_some();
         // At the top level the closure adopts the persistent map in O(1).
         // A nested `fn` captures the whole enclosing chain of its file,
         // as a lambda does: its enclosing function's parameters live in
@@ -1193,10 +1286,10 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // interpreter fell back to the caller's frames, wrong the moment
         // the function ran compiled or on another thread (a `head`
         // parameter then resolved to the list builtin `head`).
-        let closure = if self.environment.parent.is_none() {
-            self.environment.flat_snapshot()
-        } else {
-            self.collect_all_accessible_variables()
+        let closure = match early {
+            Some(root) => root,
+            None if self.environment.parent.is_none() => self.environment.flat_snapshot(),
+            None => self.collect_all_accessible_variables(),
         };
 
         // Resolve identifiers to frame slots once, at declaration — the
@@ -1231,8 +1324,16 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             param_bounds,
             param_checks,
             return_check,
-            def_file: self.defining_file(),
-            parent_scope: self.environment.scope_id,
+            def_file: if early_root {
+                self.current_module_path.clone()
+            } else {
+                self.defining_file()
+            },
+            parent_scope: if early_root {
+                0
+            } else {
+                self.environment.scope_id
+            },
         };
 
         // Let the bytecode tier know this function exists, so a promoted
@@ -1241,16 +1342,10 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             tier.note_function(func_decl.name.clone(), function.clone());
         }
 
-        let function_value = Value::Function(function);
-
-        // Define the function in the current environment so it can be called recursively
-        self.environment
-            .define(func_decl.name, function_value.clone());
-
-        Ok(function_value)
+        Ok(Value::Function(function))
     }
 
-    fn eval_expr(&mut self, expr: &Expr) -> Result<Value, InterpreterError> {
+    pub(crate) fn eval_expr(&mut self, expr: &Expr) -> Result<Value, InterpreterError> {
         match expr {
             Expr::MacroCall { name, .. } => Err(InterpreterError::RuntimeError {
                 message: format!(
@@ -1842,6 +1937,15 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                                   pure function of its arguments (docs/macros.md)"
                             .to_string(),
                     });
+                }
+                // Under replay the task does not run: what the main
+                // thread received from it — every `chan.recv`, every
+                // `task.join` — is in the trace and replays from there,
+                // so the worker's effects are not repeated. The handle is
+                // a real one with no thread behind it; a join on it
+                // replays its recorded answer before it is ever consulted.
+                if self.timeline_replaying() {
+                    return Ok(crate::stdlib::task::handle(spawn_registry::next_id()));
                 }
                 // Real background execution: the expression evaluates on its
                 // own OS thread against a thread-safe clone of this
@@ -2992,7 +3096,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// its pointer moves exactly when a top-level binding does.
     /// A name through the scope chain, then the host's top-level bindings
     /// when this interpreter has been given them (see `fallback_globals`).
-    fn lookup_name(&self, name: &str) -> Option<Value> {
+    fn lookup_name(&mut self, name: &str) -> Option<Value> {
         if let Some(value) = self.environment.get_lexical(name, false) {
             return Some(value);
         }
@@ -3005,9 +3109,33 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         if let Some(value) = self.environment.root().get_here(name) {
             return Some(value);
         }
-        self.fallback_globals
+        if let Some(value) = self
+            .fallback_globals
             .as_ref()
             .and_then(|g| g.get(name).cloned())
+        {
+            return Some(value);
+        }
+        // A top-level function of the program file declared below this
+        // point in the source: declared now, on first use, so a call
+        // above its declaration resolves (the module rule, applied to the
+        // entry file). One value ever exists — the statement in its place
+        // then skips — so the tier's body-keyed caches never meet two
+        // closures for one body.
+        if let Some(statement) = self.pending_top_level.remove(name) {
+            let decl = match statement.unwrapped() {
+                Statement::FunctionDecl(f) | Statement::ShareDecl(ShareDecl::Function(f)) => {
+                    f.clone()
+                }
+                _ => return None,
+            };
+            let root = self.environment.root().flat_snapshot();
+            if let Ok(value) = self.build_function_value(decl, Some(root)) {
+                self.declared_early.insert(name.to_string(), value.clone());
+                return Some(value);
+            }
+        }
+        None
     }
 
     /// Install the module tables a bridge interpreter resolves through.
@@ -3104,6 +3232,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             current_module_path: self.current_module_path.clone(), // For tracking current module during loading
             owners: self.owners.clone(),
             fallback_globals: self.fallback_globals.clone(),
+            pending_top_level: HashMap::new(),
+            declared_early: HashMap::new(),
             module_scopes: self.module_scopes.clone(),
             module_loading_stack: Vec::new(), // Feature 7: Each thread gets its own loading stack
 
@@ -3129,7 +3259,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             // None — worker threads ran the pure tree-walker and silently
             // lost the tier's speed.)
             bytecode_tier: self.bytecode_tier.as_ref().map(|t| {
-                let mut tier = crate::ovm::tier::BytecodeTier::new(t.threshold());
+                let mut tier =
+                    crate::ovm::tier::BytecodeTier::new(t.threshold()).with_verbose(t.is_verbose());
                 for (name, fields) in &self.struct_defs {
                     tier.note_struct(
                         name.clone(),
@@ -3216,20 +3347,21 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             caps_path_cache: HashMap::new(),
             cap_pregranted: false,
             warm_profile: None,
-            // The timeline does not span worker threads (v1 records a
-            // single thread of effects); workers run live. That silently
-            // breaks the "clean replay is proof" property, so crossing a
-            // thread boundary under an attached timeline warns — loudly,
-            // once — instead of letting a non-reproducing trace look clean.
+            // The timeline is the main thread's view. A worker's own
+            // effects run live and are not logged; what the main thread
+            // receives from the worker (`chan.recv`, `task.join`) is, and
+            // under replay the worker is not started at all. A recorded
+            // run that starts a worker says so once, so the reader knows
+            // which side of that line the worker's effects fall on.
             timeline: {
-                if self.timeline.is_some() {
+                if self.timeline_recording() {
                     static TIMELINE_THREAD_WARNING: std::sync::Once = std::sync::Once::new();
                     TIMELINE_THREAD_WARNING.call_once(|| {
                         eprintln!(
-                            "warning: this run is being recorded or replayed, but it started a \
-                             task or worker thread. The timeline covers the main thread only: \
-                             effects on other threads run live, are not captured, and will not \
-                             replay (docs/tooling.md)."
+                            "note: this recorded run started a task or worker thread. The trace \
+                             logs what the main thread received from it (channel messages, join \
+                             results), not the worker's own effects; replay serves those \
+                             messages and starts no worker (docs/tooling.md)."
                         );
                     });
                 }
@@ -3948,9 +4080,24 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // ancestor frame's stale value. Insert explicitly instead: existing
         // entries always win, so inner scopes shadow outer ones.
         let mut all_variables = self.environment.flat_snapshot();
+        // A module's code does not capture the program's root: the root
+        // belongs to the entry file, and a name it binds — an import of
+        // some other module's `compute_here` — must never be what a
+        // lambda in this module means by that name. The module's own
+        // table answers at lookup time instead. While the module is still
+        // loading, the root in the chain IS the module's environment, and
+        // that one is captured as ever.
+        let skip_root = self
+            .environment
+            .owner
+            .as_deref()
+            .is_some_and(|owner| self.module_scopes.contains_key(owner));
         // The lexical chain only: the enclosing scopes and the declaring
         // frames, never the frames that happened to call into this one.
         for parent in self.environment.lexical_chain().into_iter().skip(1) {
+            if skip_root && parent.parent.is_none() {
+                continue;
+            }
             // Within a scope, call-frame locals shadow its flat map
             for (name, value) in parent.locals.iter().rev() {
                 if !all_variables.contains_key(name) {
@@ -4805,6 +4952,14 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         {
             timeline.record_result(op, args_fp, result);
         }
+    }
+
+    /// Whether a timeline is attached in replay mode.
+    pub fn timeline_replaying(&self) -> bool {
+        self.timeline
+            .as_ref()
+            .map(|t| t.mode() == crate::timeline::Mode::Replay)
+            .unwrap_or(false)
     }
 
     /// Whether a timeline is attached in record mode.

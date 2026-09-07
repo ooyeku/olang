@@ -48,10 +48,41 @@ share fn match_path(pattern, path) = {
 
 /// The routes matching a path, whatever their method — dispatch uses
 /// this for 405-with-Allow; `{ hit, allowed }`.
+/// A route table indexed once: exact patterns (no `:param`) keyed by
+/// "METHOD /path" for one lookup, the parameterized ones kept for the
+/// walk. `find` takes either the list or the index; `serve` builds the
+/// index at start, so a hundred rpc routes cost one map lookup per
+/// request instead of a hundred pattern matches.
+share fn index_routes(routes) = {
+    let is_exact = (r) => !str.contains(map_get(r, "pattern"), ":")
+    let exact = fold(filter(routes, is_exact), #{}, (acc, r) =>
+        map_set(acc, map_get(r, "method") + " " + map_get(r, "pattern"), r))
+    #{ "exact": exact, "dynamic": filter(routes, (r) => !is_exact(r)), "routes": routes }
+}
+
+fn is_index(routes) = contains(["Map", "JsonObject"], typeof(routes)) && map_has_key(routes, "exact")
+
 share fn find(routes, method, path) = {
     // HEAD rides GET routes — probes and load balancers send it, and a
     // 405 there reads as "down".
     let m = if method == "HEAD" => "GET" else => method
+    if is_index(routes) => {
+        let exact = map_get(routes, "exact")
+        let key = m + " " + path
+        if map_has_key(exact, key) => {
+            let r = map_get(exact, key)
+            #{ "hit": #{ "found": true, "handler": map_get(r, "handler"), "params": #{}, "name": map_get(r, "name") },
+               "allowed": [map_get(r, "method")] }
+        }
+        // A miss on the exact table: the parameterized routes may match,
+        // and a 405 needs every method the path answers to, so the walk
+        // runs over the whole list as before.
+        else => find(map_get(routes, "routes"), method, path)
+    }
+    else => find_by_walk(routes, m)(path)
+}
+
+fn find_by_walk(routes, m) = (path) => {
     let mut hit = #{ "found": false, "handler": 0, "params": #{}, "name": "" }
     let mut allowed = []
     for r in routes {
@@ -65,6 +96,24 @@ share fn find(routes, method, path) = {
         }
     }
     #{ "hit": hit, "allowed": allowed }
+}
+
+test "an indexed table answers exact paths in one lookup and walks the rest" {
+    let table = index_routes([
+        route("GET", "/a", (req, p) => "a"),
+        route("POST", "/a", (req, p) => "posted"),
+        route("GET", "/t/:id", (req, p) => map_get(p, "id"))
+    ])
+    let hit = map_get(find(table, "GET", "/a"), "hit")
+    assert_eq(map_get(hit, "found"), true)
+    assert_eq(map_get(hit, "handler")((), #{}), "a")
+    let dyn = find(table, "GET", "/t/9")
+    assert_eq(map_get(map_get(dyn, "hit"), "params"), #{ "id": "9" })
+    // A method miss on an exact path still reports every allowed method.
+    let miss = find(table, "DELETE", "/a")
+    assert_eq(map_get(map_get(miss, "hit"), "found"), false)
+    assert_eq(sort(map_get(miss, "allowed")), ["GET", "POST"])
+    assert_eq(map_get(map_get(find(table, "HEAD", "/a"), "hit"), "found"), true)
 }
 
 test "patterns capture :params and reject shape mismatches" {

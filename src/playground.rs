@@ -339,9 +339,12 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
             unsafe { host_dom_set_html(handle(el)?, s.as_ptr(), s.len()) };
             Ok(Value::Unit)
         }
-        ("checked", [el]) => Ok(Value::Boolean(
-            unsafe { host_dom_checked(handle(el)?) } != 0,
-        )),
+        // 0/1 for a checkbox or radio; 2 from the host for an element
+        // that has no checked state, which is Unit here, not false.
+        ("checked", [el]) => Ok(match unsafe { host_dom_checked(handle(el)?) } {
+            2 => Value::Unit,
+            n => Value::Boolean(n != 0),
+        }),
         ("selection", [el]) => {
             let json = read_host_string(unsafe { host_dom_selection(handle(el)?) });
             let pair: Vec<i64> = serde_json::from_str(&json).unwrap_or_default();
@@ -896,7 +899,7 @@ pub unsafe extern "C" fn olang_session_start(ptr: *const u8, len: usize) -> *mut
     let started = crate::clock::Instant::now();
     let program = OlangParser::new().parse(&source).map_err(|e| e.to_string());
     let load_ms = started.elapsed().as_secs_f64() * 1000.0;
-    start_session(program, load_ms, false)
+    start_session(program, Vec::new(), load_ms, false)
 }
 
 /// Start the session from a program image (`meta.encode` on the server,
@@ -912,14 +915,19 @@ pub unsafe extern "C" fn olang_session_start_bin(ptr: *const u8, len: usize) -> 
     install_panic_hook();
     let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
     let started = crate::clock::Instant::now();
-    let program = crate::olb::decode(bytes).map_err(|e| e.to_string());
+    let image = crate::olb::decode_image(bytes).map_err(|e| e.to_string());
     let load_ms = started.elapsed().as_secs_f64() * 1000.0;
-    let retry = program.is_err();
-    start_session(program, load_ms, retry)
+    let retry = image.is_err();
+    let (program, hot) = match image {
+        Ok(image) => (Ok(image.program), image.hot),
+        Err(e) => (Err(e), Vec::new()),
+    };
+    start_session(program, hot, load_ms, retry)
 }
 
 fn start_session(
     program: Result<Program, String>,
+    hot: Vec<String>,
     load_ms: f64,
     retry_with_source: bool,
 ) -> *mut u8 {
@@ -930,6 +938,21 @@ fn start_session(
         Err(e) => (crate::output::drain_captured(), None, Some(e)),
         Ok(program) => {
             let mut interpreter = Interpreter::new();
+            // The image's hot hints: those functions compile at
+            // declaration, so the boot render — their one call — runs on
+            // the VM rather than the tree-walker.
+            if !hot.is_empty() {
+                interpreter.set_warm_profile(crate::ovm::warm::WarmProfile {
+                    functions: hot
+                        .into_iter()
+                        .map(|name| crate::ovm::warm::WarmFn {
+                            name,
+                            kinds: Vec::new(),
+                            native_calls: crate::ovm::warm::WARM_MIN_CALLS,
+                        })
+                        .collect(),
+                });
+            }
             interpreter.enable_bytecode_tier(1, false);
             let r = match interpreter.eval_program(program) {
                 Ok(v) => {

@@ -156,8 +156,22 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
     // Same source, same program: gensym names restart at zero for every
     // expansion, so re-parsing a file yields byte-identical output.
     crate::stdlib::meta::reset_fresh_counter();
+    // A name of the form `meta.fresh` produces (`stem__mN`) belongs to
+    // the expander alone: a program that spells one is refused here, so
+    // a generated temporary can never collide with a hand-written name.
+    if let Some((name, line)) = reserved_name_in(source) {
+        return Err(format!(
+            "line {line}: `{name}` is a name reserved for macro-generated temporaries \
+             (the `__m<N>` suffix is what meta.fresh appends); rename it"
+        ));
+    }
     let parser = Parser::new();
     let mut interp = expansion_interpreter();
+    // What `meta.exports(path)` answers this expansion: the literal
+    // top-level bindings of each imported module, by import path. The
+    // table lives for this expansion and is cleared when it ends.
+    let _exports_guard = crate::stdlib::meta::ExportsGuard::new();
+    let mut exports: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
     // Only names declared `meta fn` — locally or in an imported module —
     // are invocable as macros. Without this registry, an `@` call would
     // fall through to ANY global binding: `@json` found the stdlib json
@@ -256,6 +270,11 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
             // They run under meta mode: one that reaches for an effect
             // fails at the call, exactly like a meta fn body would.
             load_module_functions(&mut interp, &module_prog);
+            // Its literal top-level bindings are what `meta.exports`
+            // reads: a `let` or `share let` whose value is a literal (a
+            // number, string, list, map, tuple of literals) is a
+            // declaration a macro in another file may consult.
+            let mut literals = collect_literal_bindings(&mut interp, &module_prog);
             // A package's macros travel through its index.ol re-exports:
             // `share use lib.store { ... }` in the index brings lib/store.ol's
             // meta fns along, so `use web` reaches `@store` without the
@@ -294,8 +313,14 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
                     &sub_label,
                 )?;
                 load_module_functions(&mut interp, &sub_prog);
+                // A re-exported module's literals are the package's too.
+                for (k, v) in collect_literal_bindings(&mut interp, &sub_prog) {
+                    literals.entry(k).or_insert(v);
+                }
             }
+            exports.insert(label.clone(), Value::Map(std::sync::Arc::new(literals)));
         }
+        crate::stdlib::meta::set_exports(exports.clone());
 
         // The file's own functions are in a meta fn's scope (the macros
         // chapter's first rule): a macro delegates to a helper declared
@@ -722,6 +747,101 @@ fn trailing_comment_hint(out: &str) -> &'static str {
     } else {
         ""
     }
+}
+
+/// The top-level `let`/`share let` bindings of a module whose value is a
+/// literal, evaluated in the expansion interpreter (pure by
+/// construction: a literal has no effects). Anything computed is not a
+/// declaration a macro can read and is left out.
+fn collect_literal_bindings(
+    interp: &mut crate::interpreter::Interpreter,
+    module: &Program,
+) -> std::collections::HashMap<String, Value> {
+    let mut out = std::collections::HashMap::new();
+    for st in &module.statements {
+        let decl = match st.unwrapped() {
+            crate::ast::Statement::LetDecl(l) => l,
+            crate::ast::Statement::ShareDecl(crate::ast::ShareDecl::Let(l)) => l,
+            _ => continue,
+        };
+        let crate::ast::Pattern::Identifier(name) = &decl.pattern else {
+            continue;
+        };
+        let Some(value) = &decl.value else { continue };
+        if !is_literal_expr(value) {
+            continue;
+        }
+        if let Ok(v) = interp.eval_expr(value) {
+            out.insert(name.clone(), v);
+        }
+    }
+    out
+}
+
+fn is_literal_expr(expr: &crate::ast::Expr) -> bool {
+    use crate::ast::Expr as E;
+    match expr {
+        E::Integer(_) | E::Float(_) | E::String(_) | E::Boolean(_) => true,
+        E::List(items) => items.iter().all(is_literal_expr),
+        E::Tuple(items) => items.iter().all(is_literal_expr),
+        E::MapLiteral { entries } => entries
+            .iter()
+            .all(|e| is_literal_expr(&e.key) && is_literal_expr(&e.value)),
+        E::UnaryOp { operand, .. } => is_literal_expr(operand),
+        _ => false,
+    }
+}
+
+/// The first identifier in `source` that spells a macro-generated name
+/// (`stem__m<digits>`), with its line — outside strings and comments.
+fn reserved_name_in(source: &str) -> Option<(String, usize)> {
+    let bytes = source.as_bytes();
+    let mut i = 0;
+    let mut line = 1;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == b'\n' {
+            line += 1;
+            i += 1;
+        } else if c == b'/' && bytes.get(i + 1) == Some(&b'/') {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+        } else if c == b'"' || c == b'`' {
+            let quote = c;
+            i += 1;
+            while i < bytes.len() && bytes[i] != quote {
+                if bytes[i] == b'\\' {
+                    i += 1;
+                } else if bytes[i] == b'\n' {
+                    line += 1;
+                }
+                i += 1;
+            }
+            i += 1;
+        } else if c.is_ascii_alphabetic() || c == b'_' {
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            let word = &source[start..i];
+            if is_reserved_name(word) {
+                return Some((word.to_string(), line));
+            }
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+/// `stem__m<digits>` with a non-empty stem.
+fn is_reserved_name(word: &str) -> bool {
+    let Some(at) = word.rfind("__m") else {
+        return false;
+    };
+    let digits = &word[at + 3..];
+    at > 0 && !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
 }
 
 fn collect_imports(program: &Program) -> Vec<Vec<String>> {

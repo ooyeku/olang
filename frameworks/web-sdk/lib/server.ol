@@ -16,7 +16,7 @@
 //! failure — because the browser's fetch surfaces no status codes,
 //! the body must carry the whole truth.
 
-use lib.routes { find }
+use lib.routes { find, index_routes }
 use lib.html { page, raw, render, div }
 
 // ── responses ────────────────────────────────────────────────────────
@@ -77,12 +77,15 @@ share fn q_enum(req, key, allowed, fallback) = {
 // ── dispatch ─────────────────────────────────────────────────────────
 
 fn is_response(v) = {
-    // A response is the struct http.response builds (or a map wearing
-    // its shape); every plain data kind — parsed JSON included — wraps
-    // in the envelope instead.
+    // A response is what http.response builds (an HttpResponse) or a
+    // response literal a handler wrote — an anonymous `{ status, body }`
+    // or `{ status, body_file }` record. A map is data, whatever its keys:
+    // a ticket whose `status` field is "new" is an answer to wrap, not a
+    // response to send.
     let t = typeof(v)
-    if t == "Map" || t == "JsonObject" => map_has_key(v, "status")
-    else => !contains(["Int", "Float", "String", "Bool", "List", "Unit", "Tuple"], t)
+    if t == "HttpResponse" || t == "HttpDeferred" => true
+    else if t == "Object" => map_has_key(v, "status") && (map_has_key(v, "body") || map_has_key(v, "body_file"))
+    else => false
 }
 
 /// Dispatch a request against a route table. A handler may return a
@@ -90,6 +93,13 @@ fn is_response(v) = {
 /// value — wrapped as `{ "data": value }`, which is what makes rpc
 /// handlers one-liners.
 share fn dispatch(routes, req) = dispatch_with(routes, req, ())
+
+/// The access-line level from the environment: OLANG_ACCESS_LOG is
+/// `all` (the default), `errors` (status 400 and up), or `off`.
+fn access_level() = match os.get_env("OLANG_ACCESS_LOG") {
+    Ok(v) => { let l = str.to_lower(str.trim(v)); if contains(["all", "errors", "off"], l) => l else => "all" },
+    Err(e) => "all"
+}
 
 /// `dispatch` with the request line under the app's control: `log` is
 /// `(req, response, ms) => ...` — or Unit for the default line. Passed
@@ -124,9 +134,11 @@ share fn dispatch_with(routes, req, log) = {
     else =>
         error_response(404, "not_found", "no route for " + req.method + " " + req.path)
     let ms = time.monotonic_ms() - started
-    if log == () =>
-        println(req.method + " " + req.path + " -> " + show(response.status) + " (" + show(ms) + "ms)")
-    else => log(req, response, ms)
+    let level = if log == () => "all" else => log
+    if typeof(level) == "Function" => level(req, response, ms)
+    else if level == "off" => ()
+    else if level == "errors" && response.status < 400 => ()
+    else => println(req.method + " " + req.path + " -> " + show(response.status) + " (" + show(ms) + "ms)")
     response
 }
 
@@ -222,6 +234,31 @@ fn browser_modules() = ["lib/html.ol", "lib/forms.ol", "lib/ui.ol",
                         "lib/state.ol", "lib/view.ol", "lib/api.ol",
                         "lib/store.ol"]
 
+/// The first path segment of a `use` line: "shuttle" for `use shuttle {
+/// msg }`, "lib" for `use lib.store`.
+fn use_root(t) = {
+    let rest = str.trim(str.substring(t, 4, str.length(t)))
+    let end = fold(["{", " ", "."], str.length(rest), (acc, sep) => {
+        let i = str.index_of(rest, sep)
+        if i == () => acc else if i < acc => i else => acc
+    })
+    str.trim(str.substring(rest, 0, end))
+}
+
+/// The modules the browser runtime resolves by itself: the stdlib's and
+/// the bundled olang-source packages. Everything else in a client file's
+/// `use` is bundle-internal.
+fn browser_resolves(name) =
+    contains(["str", "json", "dates", "time", "math", "random", "crypto", "base64", "bytes", "col",
+              "chan", "cell", "dom", "testing", "meta", "caps", "vec", "task", "bigint", "compress",
+              "re", "toml", "csv", "ods", "plot", "viz", "ui", "dash", "term", "collections", "heap",
+              "deque", "bitset", "dsu", "table", "alg", "colx", "mathx", "cli"], name)
+
+test "the bundler strips package and project imports and keeps the browser's" {
+    let src = "use shuttle { msg, rpc_fx }\nuse lib.store\nuse web { div }\nuse viz\nuse shuttle.lib.decl {\n  resource\n}\nlet x = 1\n"
+    assert_eq(strip_module_lines(src), "use viz\nlet x = 1")
+}
+
 fn strip_module_lines(source) = {
     let mut out = []
     let mut in_use = false
@@ -244,8 +281,12 @@ fn strip_module_lines(source) = {
             // closing brace.
             if str.contains(t, "}") => { in_use = false }
         }
-        else if str.starts_with(t, "use lib.") || str.starts_with(t, "use web")
+        else if (str.starts_with(t, "use ") && !browser_resolves(use_root(t)))
             || str.starts_with(t, "share use ") => {
+            // A project module, the SDK, or a package: already spliced
+            // into the bundle (or not available in a browser at all), so
+            // the line that named it goes; the bundled stdlib modules
+            // (`use viz`) the browser runtime resolves, and they stay.
             if str.contains(t, "{") && !str.contains(t, "}") => { in_use = true }
         }
         else if str.starts_with(t, "//!") => ()
@@ -298,6 +339,30 @@ share fn bundle_clients_in(dir, client_sources) = {
         Err(e) => unwrap(Err("client bundle does not parse: " + e)),
         Ok(tree) => expanded
     }
+}
+
+/// The names of the functions the app's client files declare at their
+/// top level — the default hot list an image carries. A file that does
+/// not parse contributes nothing here; the bundler reports it.
+share fn client_fn_names(client_sources) = {
+    let mut names = []
+    for src in client_sources {
+        match meta.parse(src) {
+            Ok(nodes) => {
+                for node in nodes {
+                    if map_get(node, "kind") == "fn" => { names = names + [map_get(node, "name")] }
+                }
+            },
+            Err(e) => ()
+        }
+    }
+    names
+}
+
+test "the hot list is the client files' own functions" {
+    let names = client_fn_names(["use web { mount }\nfn view(s) = \"x\"\nlet n = 1\nfn update(s, a) = s"])
+    assert_eq(names, ["view", "update"])
+    assert_eq(client_fn_names(["fn ("]), [])
 }
 
 test "the served bundle is pre-expanded: no meta fn, no @ sites" {
@@ -447,7 +512,13 @@ share fn serve(config) = {
     // Named apart from the global `head` builtin: a call through a local
     // of that name reaches the builtin.
     let head_html = get_or(config, "head", "")
-    let log = get_or(config, "log", ())
+    // `"log"`: a function owns every access line; `()` given explicitly
+    // silences them; absent, OLANG_ACCESS_LOG (all, errors, off) levels
+    // the default line.
+    let log = if map_has_key(config, "log") => {
+        let given = map_get(config, "log")
+        if given == () => "off" else => given
+    } else => access_level()
     let view_fn = get_or(config, "view", ())
     let initial = get_or(config, "initial", ())
     let bind = get_or(config, "bind", "127.0.0.1")
@@ -457,6 +528,11 @@ share fn serve(config) = {
     let trust_proxy = get_or(config, "trust_proxy", false)
     let compress_responses = get_or(config, "compress", true)
     let drain_ms = get_or(config, "drain_ms", 5000)
+    // `"hot"`: the client functions the image tells the browser to
+    // compile at declaration, so the boot render runs on the VM. Absent,
+    // every function the app's own client files declare — the view and
+    // its actions — is the list; `[]` sends no hint.
+    let hot_config = get_or(config, "hot", ())
     let head_is_fn = typeof(head_html) == "Function"
 
     // Read once at boot: assets, the bundle, and the wasm's location.
@@ -465,14 +541,16 @@ share fn serve(config) = {
     let client_paths = if typeof(client_path) == "List" => client_path
         else if client_path == "" => []
         else => [client_path]
+    let client_sources = map(client_paths, (p) => unwrap(fs.read_file(p)))
     let bundle = if len(client_paths) == 0 => ""
-        else => bundle_clients_in(sdk, map(client_paths, (p) => unwrap(fs.read_file(p))))
+        else => bundle_clients_in(sdk, client_sources)
+    let hot = if hot_config == () => client_fn_names(client_sources) else => hot_config
     // The program image: the bundle parsed here, once, and handed to the
     // browser as bytes its runtime loads without parsing (meta.encode,
-    // src/olb.rs). The source stays at /app.ol — the shim's fallback
-    // when the runtime in the browser is another olang version than
-    // this server.
-    let image = if bundle == "" => () else => match meta.encode(bundle) {
+    // src/olb.rs), carrying the hot list. The source stays at /app.ol —
+    // the shim's fallback when the runtime in the browser is another
+    // olang version than this server.
+    let image = if bundle == "" => () else => match meta.encode(bundle, #{ "hot": hot }) {
         Err(e) => unwrap(Err("client bundle does not encode: " + e)),
         Ok(bytes) => bytes
     }
@@ -566,7 +644,9 @@ share fn serve(config) = {
            "handler": (req, p) =>
                wasm_response(req, "public, max-age=31536000, immutable") }
     ]
-    let table = static_routes + user_routes
+    // The app's routes first: a page it declares at `/` (or an asset it
+    // serves itself) wins over the SDK's own static route for the path.
+    let table = index_routes(user_routes + static_routes)
 
     // Every response carries the configured headers — the static routes'
     // included, which is where a <meta> policy could not reach.

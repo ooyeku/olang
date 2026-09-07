@@ -754,6 +754,41 @@ impl BytecodeTier {
         })
     }
 
+    /// `map`/`filter` over a range without materializing it: the VM's
+    /// range kernel iterates the integers and lands an all-integer answer
+    /// in the typed layout. None when the VM declines (the caller's
+    /// materializing path is the unchanged fallback).
+    pub fn try_hof_range(
+        &mut self,
+        name: &str,
+        kernel: &crate::ast::Function,
+        start: i64,
+        end: i64,
+        inclusive: bool,
+    ) -> Option<Result<Value, String>> {
+        let args = vec![
+            crate::ovm::value::OvmValue::from_ast(Value::Range {
+                start,
+                end,
+                inclusive,
+            }),
+            crate::ovm::value::OvmValue::from_ast(Value::Function(kernel.clone())),
+        ];
+        self.vm.clear_error_trace();
+        let out = self.vm.native_hof(name, &args)?;
+        self.stats.bytecode_calls += 1;
+        Some(match out {
+            Ok(value) => match value.to_ast() {
+                Ok(ast) => Ok(ast),
+                Err(_) => return None,
+            },
+            Err(e) => {
+                self.last_error_trace = self.vm.take_error_trace();
+                Err(format!("{}", e))
+            }
+        })
+    }
+
     /// Convert the arguments, run the compiled body on the VM, and convert
     /// the result back — the shared tail of every tiered call, whether the
     /// callee was resolved by name or (for an ambiguous name) by identity.

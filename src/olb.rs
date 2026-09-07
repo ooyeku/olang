@@ -14,10 +14,31 @@ use crate::ast::Program;
 
 const MAGIC: &[u8; 4] = b"olb1";
 
+/// What an image carries besides the program: the names of the
+/// functions the writer knows are hot — a view, its actions — which the
+/// loading runtime compiles at declaration instead of at first call, so
+/// the first render never runs on the tree-walker (the browser's
+/// counterpart of the native warm profile, `ovm::warm`).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Image {
+    pub program: Program,
+    #[serde(default)]
+    pub hot: Vec<String>,
+}
+
 /// Encode a program as an image this runtime version can load.
 pub fn encode(program: &Program) -> Result<Vec<u8>, String> {
+    encode_with(program, &[])
+}
+
+/// `encode`, with the hot-function hints the image carries.
+pub fn encode_with(program: &Program, hot: &[String]) -> Result<Vec<u8>, String> {
+    let image = Image {
+        program: program.clone(),
+        hot: hot.to_vec(),
+    };
     let body =
-        postcard::to_stdvec(program).map_err(|e| format!("could not encode the program: {}", e))?;
+        postcard::to_stdvec(&image).map_err(|e| format!("could not encode the program: {}", e))?;
     let version = crate::version::VERSION.as_bytes();
     let mut out = Vec::with_capacity(5 + version.len() + body.len());
     out.extend_from_slice(MAGIC);
@@ -54,8 +75,13 @@ impl std::fmt::Display for DecodeError {
 
 impl std::error::Error for DecodeError {}
 
-/// Decode an image written by this runtime version.
+/// Decode an image written by this runtime version, program only.
 pub fn decode(bytes: &[u8]) -> Result<Program, DecodeError> {
+    decode_image(bytes).map(|image| image.program)
+}
+
+/// Decode an image written by this runtime version, hints included.
+pub fn decode_image(bytes: &[u8]) -> Result<Image, DecodeError> {
     if bytes.len() < 5 || &bytes[..4] != MAGIC {
         return Err(DecodeError::NotAnImage);
     }
@@ -129,5 +155,18 @@ mod tests {
         let image = encode(&program).unwrap();
         let cut = &image[..image.len() - 3];
         assert!(matches!(decode(cut), Err(DecodeError::Corrupt(_))));
+    }
+
+    #[test]
+    fn hot_hints_ride_in_the_image_and_a_plain_image_has_none() {
+        let program = parse("fn view(s) = s\nfn update(s, a) = s\n");
+        let plain = encode(&program).unwrap();
+        let hinted = encode_with(&program, &["view".to_string(), "update".to_string()]).unwrap();
+        assert!(hinted.len() > plain.len());
+        let image = decode_image(&hinted).unwrap();
+        assert_eq!(image.hot, vec!["view".to_string(), "update".to_string()]);
+        assert_eq!(image.program, program);
+        assert!(decode_image(&plain).unwrap().hot.is_empty());
+        assert_eq!(decode(&hinted).unwrap(), program);
     }
 }

@@ -98,6 +98,16 @@ pub struct ScratchCtx {
     int_list_args: Vec<Arc<Vec<i64>>>,
     int_list_allocs: Vec<Arc<Vec<i64>>>,
     retained_int_list: Option<Arc<Vec<i64>>>,
+    /// The raw int list the region touched last, for the inline
+    /// read/write fast path: the Arc's data pointer (its identity), the
+    /// element buffer, its length, and whether a write may go straight
+    /// to the buffer (set only by the write helpers after a write that
+    /// proved the region the sole owner). Every helper that hands an
+    /// Arc to anything else clears it; `clear` clears it with the rest.
+    int_cache_arc: i64,
+    int_cache_data: i64,
+    int_cache_len: i64,
+    int_cache_writable: i64,
     map_allocs: Vec<Arc<crate::ovm::value::OvmMap>>,
     map_args: Vec<Arc<crate::ovm::value::OvmMap>>,
     retained_map: Option<Arc<crate::ovm::value::OvmMap>>,
@@ -134,6 +144,10 @@ impl ScratchCtx {
         self.int_list_args.clear();
         self.int_list_allocs.clear();
         self.retained_int_list = None;
+        self.int_cache_arc = 0;
+        self.int_cache_data = 0;
+        self.int_cache_len = 0;
+        self.int_cache_writable = 0;
         self.map_allocs.clear();
         self.map_args.clear();
         self.retained_map = None;
@@ -1184,9 +1198,24 @@ unsafe extern "C" fn olang_jit_int_list_retain(ctx: *mut ScratchCtx, ptr: i64) -
             .find(|l| Arc::as_ptr(l) as i64 == ptr)
         {
             ctx.retained_int_list = Some(l.clone());
+            // A second reference exists now: no more in-place writes
+            // without the helper's ownership check.
+            ctx.int_cache_arc = 0;
             return 0;
         }
         1
+    }
+}
+
+impl ScratchCtx {
+    /// Remember the list the region just touched, so the next read or
+    /// write of the same list can skip the helper. `writable` only after
+    /// a write that found the region the sole owner.
+    fn cache_int_list(&mut self, arc_ptr: i64, items: &[i64], writable: bool) {
+        self.int_cache_arc = arc_ptr;
+        self.int_cache_data = items.as_ptr() as i64;
+        self.int_cache_len = items.len() as i64;
+        self.int_cache_writable = writable as i64;
     }
 }
 
@@ -1293,6 +1322,11 @@ unsafe extern "C" fn olang_jit_set_rawi(
                         return 0;
                     }
                     items[at as usize] = value;
+                    let (data, len) = (items.as_ptr() as i64, items.len() as i64);
+                    ctx.int_cache_arc = list;
+                    ctx.int_cache_data = data;
+                    ctx.int_cache_len = len;
+                    ctx.int_cache_writable = 1;
                     return list;
                 }
                 None => {
@@ -1306,6 +1340,7 @@ unsafe extern "C" fn olang_jit_set_rawi(
                     items[at as usize] = value;
                     let fresh = Arc::new(items);
                     let ptr = Arc::as_ptr(&fresh) as i64;
+                    ctx.cache_int_list(ptr, &fresh, true);
                     ctx.int_list_allocs.push(fresh);
                     return ptr;
                 }
@@ -1325,6 +1360,7 @@ unsafe extern "C" fn olang_jit_set_rawi(
             items[at as usize] = value;
             let arc = Arc::new(items);
             let ptr = Arc::as_ptr(&arc) as i64;
+            ctx.cache_int_list(ptr, &arc, true);
             ctx.int_list_allocs.push(arc);
             return ptr;
         }
@@ -1397,6 +1433,13 @@ unsafe extern "C" fn olang_jit_append_rawi(ctx: *mut ScratchCtx, list: i64, valu
             match Arc::get_mut(arc) {
                 Some(items) => {
                     items.push(value);
+                    // The push may have moved the buffer: refresh the
+                    // cache for the list the region keeps writing.
+                    let (data, len) = (items.as_ptr() as i64, items.len() as i64);
+                    ctx.int_cache_arc = list;
+                    ctx.int_cache_data = data;
+                    ctx.int_cache_len = len;
+                    ctx.int_cache_writable = 1;
                     return list;
                 }
                 None => {
@@ -1404,6 +1447,7 @@ unsafe extern "C" fn olang_jit_append_rawi(ctx: *mut ScratchCtx, list: i64, valu
                     items.push(value);
                     let fresh = Arc::new(items);
                     let ptr = Arc::as_ptr(&fresh) as i64;
+                    ctx.cache_int_list(ptr, &fresh, true);
                     ctx.int_list_allocs.push(fresh);
                     return ptr;
                 }
@@ -1418,10 +1462,39 @@ unsafe extern "C" fn olang_jit_append_rawi(ctx: *mut ScratchCtx, list: i64, valu
             items.push(value);
             let arc = Arc::new(items);
             let ptr = Arc::as_ptr(&arc) as i64;
+            ctx.cache_int_list(ptr, &arc, true);
             ctx.int_list_allocs.push(arc);
             return ptr;
         }
         0
+    }
+}
+
+/// `olang_jit_index_rawi` with the call's ctx: the same read, and the
+/// list becomes the cached one (read-only — a write must still prove
+/// ownership through its helper) so the region's next reads of it are
+/// inline loads.
+///
+/// # Safety
+/// Called only from JIT code with the call's own ctx and a live list.
+unsafe extern "C" fn olang_jit_index_rawi_cached(
+    ctx: *mut ScratchCtx,
+    list: *const Vec<i64>,
+    idx: i64,
+    wrap: i64,
+    out: *mut i64,
+) -> i64 {
+    unsafe {
+        let status = olang_jit_index_rawi(list, idx, wrap, out);
+        if status == 0 {
+            let ctx = &mut *ctx;
+            let arc_ptr = list as i64;
+            if ctx.int_cache_arc != arc_ptr {
+                let items = &*list;
+                ctx.cache_int_list(arc_ptr, items, false);
+            }
+        }
+        status
     }
 }
 
@@ -1670,6 +1743,10 @@ impl JitCache {
             );
             builder.symbol("olang_jit_index_rawf", olang_jit_index_rawf as *const u8);
             builder.symbol("olang_jit_index_rawi", olang_jit_index_rawi as *const u8);
+            builder.symbol(
+                "olang_jit_index_rawi_cached",
+                olang_jit_index_rawi_cached as *const u8,
+            );
             builder.symbol("olang_jit_len_rawf", olang_jit_len_rawf as *const u8);
             builder.symbol("olang_jit_len_rawi", olang_jit_len_rawi as *const u8);
             builder.symbol("olang_jit_set_rawf", olang_jit_set_rawf as *const u8);
@@ -2843,6 +2920,16 @@ impl JitCache {
                 .declare_function("olang_jit_index_rawi", Linkage::Import, &sig)
                 .ok()?
         };
+        let index_rawi_cached_helper = {
+            let mut sig = module.make_signature();
+            for _ in 0..5 {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            module
+                .declare_function("olang_jit_index_rawi_cached", Linkage::Import, &sig)
+                .ok()?
+        };
         let len_rawf_helper = {
             let mut sig = module.make_signature();
             sig.params.push(AbiParam::new(types::I64));
@@ -2977,6 +3064,7 @@ impl JitCache {
                         len: len_helper,
                         index_rawf: index_rawf_helper,
                         index_rawi: index_rawi_helper,
+                        index_rawi_cached: index_rawi_cached_helper,
                         len_rawf: len_rawf_helper,
                         len_rawi: len_rawi_helper,
                         set_rawf: set_rawf_helper,
@@ -5718,6 +5806,7 @@ pub(crate) fn instruction_name(inst: &Instruction) -> &'static str {
         Instruction::MakeList { .. } => "MakeList",
         Instruction::MakeMap { .. } => "MakeMap",
         Instruction::MapSetAssign { .. } => "MapSetAssign",
+        Instruction::ConcatToString { .. } => "ConcatToString",
         Instruction::ListSetAssign { .. } => "ListSetAssign",
         Instruction::ListAppendAssign { .. } => "ListAppendAssign",
         _ => "other",
@@ -5735,6 +5824,7 @@ struct Helpers {
     len: cranelift_module::FuncId,
     index_rawf: cranelift_module::FuncId,
     index_rawi: cranelift_module::FuncId,
+    index_rawi_cached: cranelift_module::FuncId,
     len_rawf: cranelift_module::FuncId,
     len_rawi: cranelift_module::FuncId,
     set_rawf: cranelift_module::FuncId,
@@ -5811,6 +5901,7 @@ fn translate_body(
         len: len_helper,
         index_rawf: index_rawf_helper,
         index_rawi: index_rawi_helper,
+        index_rawi_cached: index_rawi_cached_helper,
         len_rawf: len_rawf_helper,
         len_rawi: len_rawi_helper,
         set_rawf: set_rawf_helper,
@@ -6848,6 +6939,58 @@ fn translate_body(
                 } else {
                     raw_val
                 };
+                let slow_block = builder.create_block();
+                let join_block = builder.create_block();
+                if !val_is_float {
+                    // Inline fast path: the list the region wrote last,
+                    // proved uniquely owned by that write, takes the
+                    // store directly when the index is in bounds (an
+                    // unsigned compare folds the negative-index case into
+                    // the helper's wrap handling).
+                    let fast_block = builder.create_block();
+                    let store_block = builder.create_block();
+                    let cache_arc = builder.ins().load(
+                        types::I64,
+                        MemFlagsData::trusted(),
+                        ctx,
+                        std::mem::offset_of!(ScratchCtx, int_cache_arc) as i32,
+                    );
+                    let same = builder.ins().icmp(IntCC::Equal, list_ptr, cache_arc);
+                    builder.ins().brif(same, fast_block, &[], slow_block, &[]);
+                    builder.switch_to_block(fast_block);
+                    let writable = builder.ins().load(
+                        types::I64,
+                        MemFlagsData::trusted(),
+                        ctx,
+                        std::mem::offset_of!(ScratchCtx, int_cache_writable) as i32,
+                    );
+                    let len = builder.ins().load(
+                        types::I64,
+                        MemFlagsData::trusted(),
+                        ctx,
+                        std::mem::offset_of!(ScratchCtx, int_cache_len) as i32,
+                    );
+                    let in_bounds = builder.ins().icmp(IntCC::UnsignedLessThan, idx_v, len);
+                    let in_bounds = builder.ins().uextend(types::I64, in_bounds);
+                    let ok = builder.ins().band(writable, in_bounds);
+                    builder.ins().brif(ok, store_block, &[], slow_block, &[]);
+                    builder.switch_to_block(store_block);
+                    let data = builder.ins().load(
+                        types::I64,
+                        MemFlagsData::trusted(),
+                        ctx,
+                        std::mem::offset_of!(ScratchCtx, int_cache_data) as i32,
+                    );
+                    let offset = builder.ins().imul_imm_s(idx_v, 8);
+                    let addr = builder.ins().iadd(data, offset);
+                    builder
+                        .ins()
+                        .store(MemFlagsData::trusted(), val_bits, addr, 0);
+                    builder.ins().jump(join_block, &[]);
+                } else {
+                    builder.ins().jump(slow_block, &[]);
+                }
+                builder.switch_to_block(slow_block);
                 let helper_ref = module.declare_func_in_func(which, builder.func);
                 let call = builder
                     .ins()
@@ -6861,6 +7004,8 @@ fn translate_body(
                 // The write may have copied: rebind the register to the
                 // pointer the helper settled on.
                 builder.def_var(Variable::from_u32(target.0), new_ptr);
+                builder.ins().jump(join_block, &[]);
+                builder.switch_to_block(join_block);
             }
             Instruction::ListAppendAssign { target, value } => {
                 let (which, val_is_float) = match r#gen.kind(target.0)? {
@@ -6916,7 +7061,7 @@ fn translate_body(
                 if matches!(obj_kind, Kind::ListFloatRaw | Kind::ListIntRaw) {
                     let (which, load_ty) = match obj_kind {
                         Kind::ListFloatRaw => (index_rawf_helper, types::F64),
-                        _ => (index_rawi_helper, types::I64),
+                        _ => (index_rawi_cached_helper, types::I64),
                     };
                     let list_ptr = builder.use_var(Variable::from_u32(object.0));
                     let idx_v = r#gen.read(builder, index.0)?;
@@ -6928,16 +7073,71 @@ fn translate_body(
                             3,
                         ));
                     let out_ptr = builder.ins().stack_addr(types::I64, slot, 0);
+                    let slow_block = builder.create_block();
+                    let join_block = builder.create_block();
+                    if matches!(obj_kind, Kind::ListIntRaw) {
+                        // Inline fast path: the cached list, in bounds,
+                        // is a load; anything else asks the helper, which
+                        // caches the list for the reads that follow.
+                        let ctx = builder.use_var(ctx_var);
+                        let fast_block = builder.create_block();
+                        let load_block = builder.create_block();
+                        let cache_arc = builder.ins().load(
+                            types::I64,
+                            MemFlagsData::trusted(),
+                            ctx,
+                            std::mem::offset_of!(ScratchCtx, int_cache_arc) as i32,
+                        );
+                        let same = builder.ins().icmp(IntCC::Equal, list_ptr, cache_arc);
+                        builder.ins().brif(same, fast_block, &[], slow_block, &[]);
+                        builder.switch_to_block(fast_block);
+                        let len = builder.ins().load(
+                            types::I64,
+                            MemFlagsData::trusted(),
+                            ctx,
+                            std::mem::offset_of!(ScratchCtx, int_cache_len) as i32,
+                        );
+                        let in_bounds = builder.ins().icmp(IntCC::UnsignedLessThan, idx_v, len);
+                        builder
+                            .ins()
+                            .brif(in_bounds, load_block, &[], slow_block, &[]);
+                        builder.switch_to_block(load_block);
+                        let data = builder.ins().load(
+                            types::I64,
+                            MemFlagsData::trusted(),
+                            ctx,
+                            std::mem::offset_of!(ScratchCtx, int_cache_data) as i32,
+                        );
+                        let offset = builder.ins().imul_imm_s(idx_v, 8);
+                        let addr = builder.ins().iadd(data, offset);
+                        let val = builder
+                            .ins()
+                            .load(types::I64, MemFlagsData::trusted(), addr, 0);
+                        r#gen.write(builder, dst.0, val);
+                        builder.ins().jump(join_block, &[]);
+                    } else {
+                        builder.ins().jump(slow_block, &[]);
+                    }
+                    builder.switch_to_block(slow_block);
                     let helper_ref = module.declare_func_in_func(which, builder.func);
-                    let call = builder
-                        .ins()
-                        .call(helper_ref, &[list_ptr, idx_v, wrap_v, out_ptr]);
+                    let call = if matches!(obj_kind, Kind::ListIntRaw) {
+                        let ctx = builder.use_var(ctx_var);
+                        builder
+                            .ins()
+                            .call(helper_ref, &[ctx, list_ptr, idx_v, wrap_v, out_ptr])
+                    } else {
+                        builder
+                            .ins()
+                            .call(helper_ref, &[list_ptr, idx_v, wrap_v, out_ptr])
+                    };
                     let status = builder.inst_results(call)[0];
                     let ok_block = builder.create_block();
                     builder.ins().brif(status, deopt_block, &[], ok_block, &[]);
                     builder.switch_to_block(ok_block);
                     let val = builder.ins().stack_load(ptr_ty, load_ty, slot, 0);
                     r#gen.write(builder, dst.0, val);
+                    builder.ins().jump(join_block, &[]);
+                    builder.switch_to_block(join_block);
                     continue;
                 }
                 let (expect, expect_shape, load_ty) = match obj_kind {

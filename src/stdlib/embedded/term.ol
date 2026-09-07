@@ -5,19 +5,20 @@
 // prompts. Styling is emitted only when it will actually render —
 // standard output is a TTY and `NO_COLOR` is unset — or when
 // `CLICOLOR_FORCE` is set (the convention that also makes styled
-// output testable through a pipe). The check is per call, so
-// redirecting output after import adapts.
+// output testable through a pipe). The decision is made once and
+// remembered until the program changes its environment: a color call
+// is then a concatenation, and a request path that colors three
+// fragments per log line pays nothing for the TTY and environment
+// checks (they were 4 % of a request-heavy run).
 //
 //   use term
 //   println(term.green("ok") + " built in " + term.bold("1.2s"))
 //   println(term.table(["name", "age"], [["ada", "36"], ["eve", "41"]]))
 //   print(term.bar(0.6, 20)); os.flush()
 
-fn has(name) = os.has_env(name)
-
-/// Whether styled output should be emitted right now.
-share fn color() =
-    has("CLICOLOR_FORCE") || (os.is_tty() && has("NO_COLOR") == false)
+/// Whether styled output is emitted — decided once, re-decided only
+/// after the program's own `os.set_env`/`os.remove_env`.
+share fn color() = os.color_enabled()
 
 let ESC = "\x1b["
 let RESET = "\x1b[0m"

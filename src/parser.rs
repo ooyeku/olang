@@ -1819,13 +1819,7 @@ impl Parser {
                 } else {
                     Vec::new()
                 };
-                // For anonymous struct types, we create a synthetic Custom type
-                // This is a simplified approach - in a full implementation, we might need
-                // a separate TypeAnnotation variant for anonymous structs
-                Ok(TypeAnnotation::Custom(format!(
-                    "{{anonymous_struct_{}}}",
-                    fields.len()
-                )))
+                Ok(TypeAnnotation::Record { fields })
             }
             _ => Err(ParseError::InvalidSyntax {
                 message: format!("Invalid type annotation rule: {:?}", pair.as_rule()),

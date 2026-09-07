@@ -288,6 +288,7 @@ pub fn create_chan_module() -> Value {
         ("recv", 1),
         ("try_recv", 1),
         ("recv_timeout", 2),
+        ("ask", 2),
         ("close", 1),
         ("stat", 1),
     ] {
@@ -316,6 +317,7 @@ pub fn call_chan_function(
         "recv" => chan_recv(args),
         "try_recv" => chan_try_recv(args),
         "recv_timeout" => chan_recv_timeout(args),
+        "ask" => chan_ask(args),
         "close" => chan_close(args),
         "stat" => chan_stat(args),
         _ => Err(format!("Unknown chan function: {}", name).into()),
@@ -430,6 +432,7 @@ fn chan_send(mut args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         Tx::Bounded(t) => {
             use std::sync::mpsc::TrySendError;
             let mut value = value;
+            let mut parked_mark: Option<crate::profile::Blocked> = None;
             let mut token: Option<u64> = None;
             let mut last_gen: Option<u64> = None;
             let mut last_tick = std::time::Instant::now();
@@ -443,6 +446,7 @@ fn chan_send(mut args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
                     Err(TrySendError::Full(v)) => {
                         value = v;
                         if token.is_none() {
+                            parked_mark = Some(crate::profile::blocked());
                             token = Some(park(format!("chan.send on full channel #{}", chan.id)));
                             chan.send_waiting.fetch_add(1, Ordering::Relaxed);
                         }
@@ -458,8 +462,78 @@ fn chan_send(mut args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
                 unpark(t);
                 chan.send_waiting.fetch_sub(1, Ordering::Relaxed);
             }
+            drop(parked_mark);
             Ok(outcome)
         }
+    }
+}
+
+/// `chan.ask(service, request)`: the reply pattern in one call — a fresh
+/// reply channel, `#{ "req": request, "reply": <it> }` sent to the
+/// service, and the answer awaited. The wait spins briefly before it
+/// parks: a service that answers in microseconds is met without paying
+/// a thread wake-up on the way back.
+fn chan_ask(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 2 {
+        return Err("chan.ask expects a service channel and a request".into());
+    }
+    let service = chan_of(&args[0])?;
+    let request = args[1].clone();
+    if let Some(kind) = crate::stdlib::cell::confined_within(&request) {
+        return Err(format!(
+            "chan.ask: a {} cannot be sent through a channel — send what it holds instead",
+            kind
+        )
+        .into());
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let reply = register(Tx::Unbounded(tx), rx);
+    let reply_chan = chan_of(&reply)?;
+    let mut message = HashMap::new();
+    message.insert("req".to_string(), request);
+    message.insert("reply".to_string(), reply.clone());
+    let envelope = Value::Map(Arc::new(message));
+    if let Value::Err(e) = chan_send(vec![args[0].clone(), envelope])? {
+        return Ok(Value::Err(e));
+    }
+    let _ = service;
+    // Spin for the fast answer, then park for the slow one.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let rx = reply_chan.rx.lock().unwrap();
+        for _ in 0..2000 {
+            match rx.try_recv() {
+                Ok(v) => {
+                    reply_chan.depth.fetch_sub(1, Ordering::Relaxed);
+                    return Ok(ok(v));
+                }
+                Err(TryRecvError::Empty) => std::hint::spin_loop(),
+                Err(TryRecvError::Disconnected) => return Ok(err("channel is closed")),
+            }
+        }
+        let _parked = crate::profile::blocked();
+        let token = park(format!("chan.ask waiting on channel #{}", reply_chan.id));
+        let mut last_gen: Option<u64> = None;
+        let outcome = loop {
+            match rx.recv_timeout(std::time::Duration::from_millis(STALL_TICK_MS)) {
+                Ok(v) => {
+                    reply_chan.depth.fetch_sub(1, Ordering::Relaxed);
+                    break ok(v);
+                }
+                Err(RecvTimeoutError::Timeout) => stall_tick(&mut last_gen),
+                Err(RecvTimeoutError::Disconnected) => break err("channel is closed"),
+            }
+        };
+        unpark(token);
+        Ok(outcome)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let rx = reply_chan.rx.lock().unwrap();
+        Ok(match rx.recv() {
+            Ok(v) => ok(v),
+            Err(_) => err("channel is closed"),
+        })
     }
 }
 
@@ -473,6 +547,7 @@ fn chan_recv(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     // unbounded — the stall detector must see either.
     #[cfg(not(target_arch = "wasm32"))]
     {
+        let _parked = crate::profile::blocked();
         let token = park(format!("chan.recv on channel #{}", chan.id));
         chan.recv_waiting.fetch_add(1, Ordering::Relaxed);
         let rx = chan.rx.lock().unwrap();
@@ -523,6 +598,7 @@ fn chan_recv_timeout(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
         _ => return Err("chan.recv_timeout expects a channel and a non-negative Int ms".into()),
     };
     let chan = chan_of(&args[0])?;
+    let _parked = crate::profile::blocked();
     let rx = chan.rx.lock().unwrap();
     Ok(
         match rx.recv_timeout(std::time::Duration::from_millis(ms)) {
