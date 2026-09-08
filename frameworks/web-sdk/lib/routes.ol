@@ -55,8 +55,13 @@ share fn match_path(pattern, path) = {
 /// request instead of a hundred pattern matches.
 share fn index_routes(routes) = {
     let is_exact = (r) => !str.contains(map_get(r, "pattern"), ":")
-    let exact = fold(filter(routes, is_exact), #{}, (acc, r) =>
-        map_set(acc, map_get(r, "method") + " " + map_get(r, "pattern"), r))
+    // The first route at a method and path wins, as the walk's first
+    // match does: `serve` lists the app's routes before its own, so an
+    // app's page at `/` is the one the index answers with.
+    let exact = fold(filter(routes, is_exact), #{}, (acc, r) => {
+        let key = map_get(r, "method") + " " + map_get(r, "pattern")
+        if map_has_key(acc, key) => acc else => map_set(acc, key, r)
+    })
     #{ "exact": exact, "dynamic": filter(routes, (r) => !is_exact(r)), "routes": routes }
 }
 
@@ -114,6 +119,18 @@ test "an indexed table answers exact paths in one lookup and walks the rest" {
     assert_eq(map_get(map_get(miss, "hit"), "found"), false)
     assert_eq(sort(map_get(miss, "allowed")), ["GET", "POST"])
     assert_eq(map_get(map_get(find(table, "HEAD", "/a"), "hit"), "found"), true)
+}
+
+test "the index keeps the first route at a path, as the walk does" {
+    let table = index_routes([
+        route("GET", "/", (req, p) => "the app's page"),
+        route("GET", "/", (req, p) => "serve's shell")
+    ])
+    let hit = map_get(find(table, "GET", "/"), "hit")
+    assert_eq(map_get(hit, "handler")((), #{}), "the app's page")
+    // The unindexed walk agrees.
+    let walk = map_get(find(map_get(table, "routes"), "GET", "/"), "hit")
+    assert_eq(map_get(walk, "handler")((), #{}), "the app's page")
 }
 
 test "patterns capture :params and reject shape mismatches" {

@@ -105,19 +105,24 @@ fn access_level() = match os.get_env("OLANG_ACCESS_LOG") {
 /// `(req, response, ms) => ...` — or Unit for the default line. Passed
 /// as a value (never a cell: handlers run on worker threads), so an app
 /// with its own structured logging owns every line of its output.
-share fn dispatch_with(routes, req, log) = {
+share fn dispatch_with(routes, req, log) = dispatch_in(routes, req, log, under_test())
+
+/// `hop`: run the handler on a task thread. Under `olang test` a direct
+/// `dispatch` does, the way `serve`'s workers run it: a handler that
+/// captured a cell then fails in the test that exercises it ("cell
+/// escaped its thread"), not in production. A raise on the task arrives
+/// as the Err the 500 envelope already handles. `serve` itself never
+/// hops — its worker is already the thread, and a handler that defers
+/// (`http.defer`) must run on the connection's own thread — so a served
+/// test needs no OLANG_TEST juggling.
+fn dispatch_in(routes, req, log, hop) = {
     let started = time.monotonic_ms()
     let outcome = find(routes, req.method, req.path)
     let hit = map_get(outcome, "hit")
     let response = if map_get(hit, "found") => {
         let h = map_get(hit, "handler")
         let params = map_get(hit, "params")
-        // Under `olang test` the handler runs on a task thread, the way
-        // `serve`'s workers run it: a handler that captured a cell then
-        // fails in the test that exercises it ("cell escaped its
-        // thread"), not in production. A raise on the task arrives as
-        // the Err the 500 envelope already handles.
-        let result = if under_test() => task.join(spawn { h(req, params) })
+        let result = if hop => task.join(spawn { h(req, params) })
             else => h(req, params)
         match result {
             Err(message) => error_response(500, "internal", show(message)),
@@ -135,7 +140,10 @@ share fn dispatch_with(routes, req, log) = {
         error_response(404, "not_found", "no route for " + req.method + " " + req.path)
     let ms = time.monotonic_ms() - started
     let level = if log == () => "all" else => log
-    if typeof(level) == "Function" => level(req, response, ms)
+    // A deferred answer has no status yet: the ticket passes through and
+    // the line, when one is wanted, is the responder's to write.
+    if typeof(response) == "HttpDeferred" => ()
+    else if typeof(level) == "Function" => level(req, response, ms)
     else if level == "off" => ()
     else if level == "errors" && response.status < 400 => ()
     else => println(req.method + " " + req.path + " -> " + show(response.status) + " (" + show(ms) + "ms)")
@@ -655,7 +663,8 @@ share fn serve(config) = {
     // rebuild that named `body` alone turned every file response (the
     // hashed wasm included) into a 500.
     fn with_headers(response) =
-        if len(map_keys(extra_headers)) == 0 => response
+        if typeof(response) == "HttpDeferred" => response
+        else if len(map_keys(extra_headers)) == 0 => response
         else => {
             let own = if map_has_key(response, "headers") => response.headers else => #{}
             let merged = fold(map_keys(extra_headers), own,
@@ -667,7 +676,8 @@ share fn serve(config) = {
     // that carries no encoding of its own. Files and pre-compressed
     // assets pass through; `"compress": false` turns it off.
     fn encoded(req, response) =
-        if compress_responses == false => response
+        if typeof(response) == "HttpDeferred" => response
+        else if compress_responses == false => response
         else if map_has_key(response, "body") == false => response
         else if typeof(response.body) != "String" => response
         else if str.length(response.body) < 1024 => response
@@ -687,7 +697,7 @@ share fn serve(config) = {
     println(title + " listening on http://" + bind + ":" + to_string(port))
     // `Ok(())` on a drained stop, `Err` when the port could not be
     // taken; anything else the runtime might answer is still a stop.
-    match http.serve(port, (req) => encoded(req, with_headers(dispatch_with(table, req, log))),
+    match http.serve(port, (req) => encoded(req, with_headers(dispatch_in(table, req, log, false))),
                      #{ "bind": bind, "trust_proxy": trust_proxy, "drain_ms": drain_ms }) {
         Err(e) => {
             println("could not start on port " + show(port) + ": " + show(e))

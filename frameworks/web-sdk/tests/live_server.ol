@@ -2,7 +2,7 @@
 // server on a task thread, then drives it with the http client —
 // shell, assets, bundle, rpc round-trips, and the error envelope, all
 // through a real socket.
-use lib.routes { rpc }
+use lib.routes { rpc, route }
 use lib.server { serve }
 use lib.sql { open_db, rows, row, insert_row }
 use lib.html { div }
@@ -20,6 +20,15 @@ let routes = [
         let payload = unwrap(json.parse(req.body))
         let id = insert_row(conn, "todos", #{ "title": map_get(payload, "title"), "done": 0 })
         row(conn, "SELECT * FROM todos WHERE id = ?", [id])
+    }),
+    // A long poll: the handler parks its connection and a task answers
+    // it later. `serve` runs the handler on the connection's own worker
+    // — no task hop under `olang test` — so the deferral holds a ticket
+    // for a real request.
+    route("GET", "/wait", (req, p) => {
+        let ticket = http.defer()
+        spawn { time.sleep(150); http.respond(ticket, http.response(200, "late")) }
+        ticket
     })
 ]
 
@@ -111,6 +120,14 @@ test "rpc round-trips over the wire" {
 
     let listed = unwrap(http.post(base + "/api/rpc/todos.list", "{}"))
     assert_eq(len(map_get(unwrap(json.parse(listed.body)), "data")), 1)
+}
+
+test "a deferred handler answers over the wire under olang test" {
+    let started = time.monotonic_ms()
+    let late = unwrap(http.get(base + "/wait"))
+    assert_eq(late.status, 200)
+    assert_eq(late.body, "late")
+    assert_eq(time.monotonic_ms() - started >= 100, true)
 }
 
 test "the error envelope crosses the socket" {

@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **The route index keeps the first route at a path**, as the walk does:
+  an app's page at `/` now answers under `serve` instead of the SDK's
+  own shell, and sits in the app's table where a wrapper can gate it.
+- **An imported module's shared functions and meta fns reach their
+  private helpers at expansion time**: each module is loaded as a module
+  of its own in the expansion interpreter, so a macro library's helpers
+  no longer need to be shared under unique names. **A package module can
+  use a sibling's macro** — its `use lib.x` resolves against the
+  package root at expansion, from any working directory.
+- **`serve` never hops a handler to a task under `olang test`**; only a
+  direct `dispatch` does. A served test runs handlers on the worker, so
+  `http.defer` holds a ticket for a real connection without clearing
+  `OLANG_TEST`.
+
 ## [0.84.0] - 2026-09-07
 
 ### Added

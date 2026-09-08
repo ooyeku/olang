@@ -414,11 +414,15 @@ clone runs `make wasm` once before starting the demo.
 
 ## Testing
 
-Under `olang test`, `dispatch` runs each handler on a task thread, the
-way `serve`'s workers do — so a handler that captured a cell fails in
-the test that exercises it, with the same "cell escaped its thread"
-the real server would raise, instead of passing every in-process test
-and failing every request.
+Under `olang test`, a direct `dispatch` runs each handler on a task
+thread, the way `serve`'s workers do — so a handler that captured a
+cell fails in the test that exercises it, with the same "cell escaped
+its thread" the real server would raise, instead of passing every
+in-process test and failing every request. `serve` itself never hops:
+its worker is already the thread, so a served test — the real server
+on a task, driven over a socket — runs handlers where production runs
+them, and a handler that defers (`http.defer`) holds a ticket for a
+real connection without any `OLANG_TEST` juggling.
 
 The SDK's tests are olang tests — 63 of them, `olang test
 frameworks/web-sdk`. The route table and envelope are exercised

@@ -195,7 +195,13 @@ What a meta fn body can see is a closed list, and this is it:
 2. **The `share fn`s of the modules the file imports** — `use m` brings
    `m`'s shared functions along with its meta fns, one level (an
    imported module's own imports are not walked); a package's
-   `index.ol` re-exports count as the package's own.
+   `index.ol` re-exports count as the package's own. Each imported
+   module is loaded as a module: its shared functions and meta fns
+   reach the private helpers declared beside them, exactly as at
+   runtime, while the importing file cannot name those helpers. A
+   module inside a package resolves its own `use lib.x` against the
+   package's root, so a sibling's macro is reachable from a package
+   module as from the package's consumers.
 3. **The pure standard library** — `str`, `math`, `col`, `json`, `meta`,
    and the rest of the modules that read nothing and write nothing.
 4. **The literal declarations of the modules the file imports**, through

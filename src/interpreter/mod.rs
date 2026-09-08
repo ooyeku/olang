@@ -648,6 +648,52 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         self.environment.define(name.to_string(), value);
     }
 
+    /// Load a module's function declarations the way the module loader
+    /// does, without running the module: each `fn` is declared in a
+    /// module environment of its own under `path`, the complete table is
+    /// recorded as the module's scope (so a frame of this module resolves
+    /// a sibling on any thread), and the functions marked for export come
+    /// back re-closed over that table — a shared function or a meta fn
+    /// that calls a private helper beside it finds it. The expander uses
+    /// this for the modules a file imports: declarations only, so a
+    /// module with effects at its top level still lends its functions.
+    pub fn load_declarations_as_module(
+        &mut self,
+        path: &str,
+        declarations: &[(crate::ast::FunctionDecl, bool)],
+    ) -> Vec<(String, Value)> {
+        let mut module_env = Environment::new();
+        for (name, func) in self.builtin_functions.get_functions() {
+            module_env.define(name.clone(), Value::Builtin(func.clone()));
+        }
+        for (name, module) in crate::stdlib::get_stdlib() {
+            module_env.define(name, module);
+        }
+        let saved_env = std::mem::replace(&mut self.environment, module_env);
+        let saved_path = self.current_module_path.replace(path.to_string());
+        for (decl, _) in declarations {
+            let _ = self.eval_statement(&Statement::FunctionDecl(decl.clone()));
+        }
+        let scope = self.environment.flat_snapshot();
+        self.module_scopes
+            .insert(path.to_string(), Arc::new(scope.clone()));
+        let mut exported = Vec::new();
+        for (decl, export) in declarations {
+            if !*export {
+                continue;
+            }
+            if let Some(mut value) = self.environment.get(&decl.name) {
+                if let Value::Function(func) = &mut value {
+                    func.closure = Arc::new(scope.clone());
+                }
+                exported.push((decl.name.clone(), value));
+            }
+        }
+        self.environment = saved_env;
+        self.current_module_path = saved_path;
+        exported
+    }
+
     /// The bytecode tier, when one is enabled — the VM's bridge seeds
     /// its registry through this.
     /// Whether this interpreter carries a bytecode tier (diagnostics).

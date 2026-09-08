@@ -242,6 +242,23 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
                 candidates.extend(names.iter().map(|n| dir.join(n)));
             }
             candidates.extend(names.iter().map(std::path::PathBuf::from));
+            // A module inside a package resolves `use lib.decl` against
+            // its package's root, as the runtime does: a sibling's macro
+            // is reachable from a package module, not only from the
+            // package's consumers.
+            // (`base_dir` is the file's directory as the caller named it —
+            // empty for a bare `olang run sample.ol` — so the walk up
+            // starts from its absolute form.)
+            if let Some(dir) = base_dir
+                && let Ok(absolute) = std::path::absolute(if dir.as_os_str().is_empty() {
+                    std::path::Path::new(".")
+                } else {
+                    dir
+                })
+                && let Some(root) = crate::pkg::manifest::Manifest::find_root(&absolute)
+            {
+                candidates.extend(names.iter().map(|n| root.join(n)));
+            }
             // Package imports resolve as the runtime resolves them —
             // without this, a LIBRARY could never export a macro. The
             // nearest manifest's path and shelf dependencies come first,
@@ -263,13 +280,20 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
                 continue;
             };
             let label = u.join(".");
-            let module_prog =
-                load_module_macros(&parser, &mut interp, &mut known_macros, &module_src, &label)?;
-            // The module's shared functions join the expansion scope, so
-            // a thin meta fn can delegate to a tested, shared validator.
-            // They run under meta mode: one that reaches for an effect
-            // fails at the call, exactly like a meta fn body would.
-            load_module_functions(&mut interp, &module_prog);
+            // The module's meta fns and shared functions join the
+            // expansion scope — declared in a module scope of their own,
+            // so a shared function or a meta fn reaches the private
+            // helpers beside it, as it does at runtime. They run under
+            // meta mode: one that reaches for an effect fails at the
+            // call, exactly like a meta fn body would.
+            let module_prog = load_module_scope(
+                &parser,
+                &mut interp,
+                &mut known_macros,
+                &module_src,
+                &label,
+                &module_path.to_string_lossy(),
+            )?;
             // Its literal top-level bindings are what `meta.exports`
             // reads: a `let` or `share let` whose value is a literal (a
             // number, string, list, map, tuple of literals) is a
@@ -305,14 +329,19 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
                     continue;
                 };
                 let sub_label = format!("{label} (re-export of {})", sub_path.join("."));
-                let sub_prog = load_module_macros(
+                let sub_file = sub_candidates
+                    .iter()
+                    .find(|c| c.exists())
+                    .map(|c| c.to_string_lossy().to_string())
+                    .unwrap_or_else(|| sub_label.clone());
+                let sub_prog = load_module_scope(
                     &parser,
                     &mut interp,
                     &mut known_macros,
                     &sub_src,
                     &sub_label,
+                    &sub_file,
                 )?;
-                load_module_functions(&mut interp, &sub_prog);
                 // A re-exported module's literals are the package's too.
                 for (k, v) in collect_literal_bindings(&mut interp, &sub_prog) {
                     literals.entry(k).or_insert(v);
@@ -663,63 +692,50 @@ fn package_dir(name: &str, base_dir: Option<&std::path::Path>) -> Option<std::pa
         .and_then(|s| s.libraries.get(name).cloned())
 }
 
-/// Load every top-level meta fn of a module's source into the expansion
-/// interpreter and record its name as a known macro. The module file's
-/// content is an expansion input exactly like the source itself; an
-/// unparseable one is an error. Returns the parsed module for callers
-/// that walk its re-exports.
-fn load_module_macros(
-    parser: &Parser,
-    interp: &mut crate::interpreter::Interpreter,
-    known_macros: &mut std::collections::HashSet<String>,
-    module_src: &str,
-    label: &str,
-) -> Result<Program, String> {
-    let module_prog = parser
-        .parse_raw(module_src)
-        .map_err(|e| format!("use {label}: the imported module does not parse: {e}"))?;
-    for st in &module_prog.statements {
-        if let crate::ast::Statement::MetaFnDecl { span, .. } = st.unwrapped() {
-            let fn_src = module_src[span.0..span.1]
-                .trim_start()
-                .strip_prefix("meta")
-                .unwrap_or(&module_src[span.0..span.1])
-                .trim_start()
-                .to_string();
-            let prog = parser
-                .parse_raw(&fn_src)
-                .map_err(|e| format!("use {label}: imported meta fn does not parse: {e}"))?;
-            interp
-                .eval_program(prog)
-                .map_err(|e| format!("use {label}: imported meta fn failed to load: {e}"))?;
-            if let Some(name) = meta_fn_name(&fn_src) {
-                known_macros.insert(name);
-            }
-        }
-    }
-    Ok(module_prog)
-}
-
 /// The one splice failure with a non-obvious cause: output whose last
 /// line ends in a `//` comment parses alone but swallows the call site's
 /// closing token when spliced inline. Name it only when it is present —
 /// a guess offered for every failure pointed authors away from the real
 /// parse error (a leading-underscore name, in the incident behind this).
-/// Define an imported module's `share fn`s in the expansion interpreter.
-/// A definition that fails to load (a body the meta-mode interpreter
-/// refuses, a duplicate) is skipped: the module still loads at runtime
-/// as it always did, and the function is simply not reachable from a
-/// meta fn body.
-fn load_module_functions(interp: &mut crate::interpreter::Interpreter, module: &Program) {
-    for st in &module.statements {
-        if let crate::ast::Statement::ShareDecl(crate::ast::ShareDecl::Function(f)) = st.unwrapped()
-        {
-            let prog = Program {
-                statements: vec![crate::ast::Statement::FunctionDecl(f.clone())],
-            };
-            let _ = interp.eval_program(prog);
+/// Load an imported module into the expansion interpreter as a module:
+/// every `fn` (shared or private) and every meta fn is declared in a
+/// scope of its own under the module's file path, and the shared
+/// functions and meta fns are then bound at the expansion's top level.
+/// A private helper is reachable from the module's own functions and
+/// macros and from nothing else — the runtime's rule. The meta fn names
+/// are recorded as known macros. An unparseable module is an error (its
+/// content is an expansion input like the source itself).
+fn load_module_scope(
+    parser: &Parser,
+    interp: &mut crate::interpreter::Interpreter,
+    known_macros: &mut std::collections::HashSet<String>,
+    module_src: &str,
+    label: &str,
+    file: &str,
+) -> Result<Program, String> {
+    let module_prog = parser
+        .parse_raw(module_src)
+        .map_err(|e| format!("use {label}: the imported module does not parse: {e}"))?;
+    let mut declarations: Vec<(crate::ast::FunctionDecl, bool)> = Vec::new();
+    let mut macros: Vec<String> = Vec::new();
+    for st in &module_prog.statements {
+        match st.unwrapped() {
+            crate::ast::Statement::FunctionDecl(f) => declarations.push((f.clone(), false)),
+            crate::ast::Statement::ShareDecl(crate::ast::ShareDecl::Function(f)) => {
+                declarations.push((f.clone(), true))
+            }
+            crate::ast::Statement::MetaFnDecl { decl, .. } => {
+                macros.push(decl.name.clone());
+                declarations.push((decl.clone(), true))
+            }
+            _ => {}
         }
     }
+    for (name, value) in interp.load_declarations_as_module(file, &declarations) {
+        interp.define_global(&name, value);
+    }
+    known_macros.extend(macros);
+    Ok(module_prog)
 }
 
 /// The expanding file's own `fn` declarations (shared or not) join the

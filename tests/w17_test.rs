@@ -155,7 +155,11 @@ fn a_parsed_json_object_equals_a_map_with_the_same_contents() {
     );
     // Nested, an Int and a Float stay distinct ([1, 2.0] is not [1, 2]),
     // as they always were; the map kinds compare by contents.
-    in_every_mode(&ws, "e.ol", "true\ntrue\nfalse\nfalse\ntrue\ntrue\nJsonObject\n");
+    in_every_mode(
+        &ws,
+        "e.ol",
+        "true\ntrue\nfalse\nfalse\ntrue\ntrue\nJsonObject\n",
+    );
 }
 
 #[test]
