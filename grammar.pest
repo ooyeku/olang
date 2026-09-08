@@ -124,7 +124,7 @@ meta_fn_decl = { meta_kw ~ function_decl }
 // statement-position `@unless(cond, body)` followed by a `let` parsed
 // as a decorated let and swallowed the declaration as an argument.
 decorator = { "@" ~ identifier ~ !"(" }
-decorated_decl = { (decorator ~ NL*)+ ~ (type_decl | function_decl | let_decl) }
+decorated_decl = { (decorator ~ NL*)+ ~ share_kw? ~ (type_decl | function_decl | let_decl) }
 macro_call = { "@" ~ identifier ~ "(" ~ arg_list? ~ ")" }
 function_decl = { fn_kw ~ identifier ~ type_params? ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_annotation)? ~ "=" ~ NL* ~ expr }
 

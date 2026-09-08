@@ -510,6 +510,20 @@ impl Parser {
     /// same everywhere. Macro-free source (the overwhelmingly common
     /// case) pays a substring scan and nothing else.
     pub fn parse(&self, input: &str) -> Result<Program, ParseError> {
+        self.parse_with_dir(input, None)
+    }
+
+    /// `parse`, resolving the `use` imports macro expansion follows
+    /// relative to `base_dir` — the directory of the file being parsed —
+    /// before the working directory and the package root. The module
+    /// loader knows the file's directory; a module inside a package that
+    /// imports a sibling's macro resolves it from here whatever the
+    /// working directory is.
+    pub fn parse_with_dir(
+        &self,
+        input: &str,
+        base_dir: Option<&std::path::Path>,
+    ) -> Result<Program, ParseError> {
         let program = self.parse_raw(input)?;
         // The tree-build recorded which macro constructs exist; no `@`
         // site, no decorator, no `meta fn` means nothing to expand.
@@ -540,7 +554,8 @@ impl Parser {
                 return Ok(Program { statements });
             }
         }
-        let expanded = crate::expand::expand_source(input)
+        let expanded = crate::expand::expand_source_mapped_with_dir(input, base_dir)
+            .map(|e| e.text)
             .map_err(|message| ParseError::InvalidSyntax { message })?;
         let program = self.parse_raw(&expanded)?;
         if self.saw_macro_call.get() || self.saw_meta_fn.get() || self.saw_decorated.get() {
@@ -703,8 +718,13 @@ impl Parser {
                                 line: dline,
                             });
                         }
+                        // `@name` above `share let`/`share fn`/`share type`:
+                        // the declaration reaches the macro with its
+                        // `share`, so what the macro emits is exported as
+                        // the author wrote it.
+                        Rule::share_kw => decl_src = "share ".to_string(),
                         Rule::type_decl | Rule::function_decl | Rule::let_decl => {
-                            decl_src = part.as_str().to_string()
+                            decl_src.push_str(part.as_str())
                         }
                         _ => {}
                     }

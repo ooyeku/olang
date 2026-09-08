@@ -16,9 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   aliased annotation as it would the annotation itself.
 - **`http.encode_query` takes a `#{}` map** as well as a record, keys in
   sorted order.
+- **`meta.parse` emits patterns and type annotations as nodes**: an arm's
+  or `let`'s `pattern` with its `form`, a `fn`'s and `lambda`'s
+  `parameters` with their `type`, a `fn`'s `return_type`, a `let`'s
+  `type` — so exhaustiveness and shape checks are project rules.
 
 ### Fixed
 
+- **A decorator sits above a `share` declaration** (`@shaped` over
+  `share let SPEC = ...`); the macro receives the declaration with its
+  `share`.
+- **A module expands its own imports from its directory**: a module a
+  test file imports reaches a sibling's macro (`use lib.decl { resource
+  }` inside a package) whatever the working directory.
 - **A module's test blocks run after the module's declarations**, not in
   statement order: a test above the function it calls no longer fails
   with "Undefined variable" when the module is imported under

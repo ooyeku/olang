@@ -131,6 +131,11 @@ declarations plus its imports.
 
 ## Decorators: deriving from declarations
 
+A decorator sits above a `type`, `fn`, or `let` — `share`d or not: over
+`share let SPEC = ...` the macro receives the declaration with its
+`share`, and what it emits is exported as the author wrote it, so a
+shaped resource is one declaration, not two.
+
 `@name` above a `type` declaration passes the declaration's source to
 the macro and replaces the declaration with what it returns — usually
 the declaration itself plus generated functions. This is the derive

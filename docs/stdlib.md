@@ -1140,10 +1140,22 @@ for node in program |> filter((n) => map_get(n, "kind") == "use") {
 Every sub-expression is emitted — a `match`'s `arms`, a map's `entries`, a
 struct's `fields`, a template's `parts`, and the `spawn`/`assert` interiors
 are all walkable node maps — so a tool that filters the node tree cannot
-silently miss a call hidden in a subtree. What is summarized (not dropped)
-is non-expression detail: patterns collapse to their bound names, type
-annotations to source text. Enough to *analyze* a program, not to perfectly
-reconstruct one. See
+silently miss a call hidden in a subtree. Patterns and type annotations
+are nodes too. An arm's `pattern` (and a `let`'s) is `kind: "pattern"`
+with a `form` — `ident`, `wildcard`, `literal` (`value`), `enum`
+(`variant`, `patterns`), `struct` (`type`, `fields`), `record`
+(`fields`), `list` (`items`, `rest`), `tuple` (`items`), `ok`/`err`
+(`inner`), `range`, `or` (`alternatives`), `guarded` (`pattern`,
+`guard`), `rest` — and its source as `text`. A `fn` or `lambda` carries
+`parameters` (each `name`, `type`, `has_default`) beside the bare
+`params` names, and a `fn` its `return_type`; a `let` its `type`. A type
+node is `kind: "type"` with `text` and a `form` — `basic`/`named`
+(`name`), `record` (`fields` of `name` and `type`), `list` (`element`),
+`map` (`key`, `value`), `tuple`/`union` (`types`), `result` (`ok`,
+`err`), `function` (`params`, `returns`), `generic` (`base`, `args`),
+`literal` (`value`) — so an exhaustiveness or shape rule is an olang
+program over `meta.parse`. Enough to *analyze* a program, not to
+perfectly reconstruct one. See
 [`examples/language/metatool`](../examples/language/metatool/main.ol) for a linter that
 counts bare `unwrap()` calls per function.
 

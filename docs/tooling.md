@@ -327,7 +327,11 @@ olang check --rules rules.ol .
 
 Define a rule as a top-level function whose name begins with `rule_`. The
 function takes one argument: the file's AST, flattened to a list of nodes.
-Each node is a map with at least a `kind` field and a `line` field. The
+Each node is a map with at least a `kind` field and a `line` field; a
+`match` arm's `pattern` and a function's `parameters` are nodes too (a
+pattern's `form` and `variant`, a parameter's `type` with its `form` and
+`fields`), so an exhaustiveness or a record-shape rule is written here
+rather than in a tool of its own. The
 function returns a list of findings. A finding is a message string or a
 map with `message` and `line` fields.
 

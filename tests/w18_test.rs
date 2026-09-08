@@ -205,3 +205,101 @@ fn a_modules_test_block_above_its_callee_runs_after_the_declarations() {
     assert_eq!(rc, 0, "{out}{err}");
     assert!(out.contains("2 passed, 0 failed"), "{out}{err}");
 }
+
+#[test]
+fn a_decorator_sits_above_a_share_declaration() {
+    let ws = workspace("sharedeco");
+    write(
+        &ws,
+        "olang.toml",
+        "[package]\nname = \"deco\"\nversion = \"0.1.0\"\n",
+    );
+    write(
+        &ws,
+        "lib/shaped.ol",
+        "meta fn shaped(decl) = \"type Row = { title: String }\\n\" + decl\n\
+         @shaped\n\
+         share let ROW = #{ \"title\": \"x\" }\n\
+         share fn row_title(r: Row) = map_get(r, \"title\")\n",
+    );
+    write(
+        &ws,
+        "main.ol",
+        "use lib.shaped { ROW, row_title }\nprintln(row_title(ROW))\n",
+    );
+    let (out, err, rc) = olang(&ws, &["run", "main.ol"]);
+    assert_eq!(rc, 0, "{out}{err}");
+    assert_eq!(out, "x\n");
+    let (out, err, rc) = olang(&ws, &["expand", "lib/shaped.ol"]);
+    assert_eq!(rc, 0, "{out}{err}");
+    assert!(out.contains("share let ROW"), "{out}");
+}
+
+#[test]
+fn a_tests_imported_module_reaches_a_siblings_macro_from_any_directory() {
+    let ws = workspace("testsibling");
+    write(
+        &ws,
+        "olang.toml",
+        "[package]\nname = \"shuttle\"\nversion = \"0.1.0\"\n",
+    );
+    write(
+        &ws,
+        "index.ol",
+        "share use lib.sample { SAMPLE, sample_name }\n",
+    );
+    write(
+        &ws,
+        "lib/decl.ol",
+        "fn quote(s) = \"\\\"\" + s + \"\\\"\"\n\
+         meta fn resource(name) = \"#{ \\\"resource\\\": \" + quote(unwrap(meta.eval(name))) + \" }\"\n",
+    );
+    write(
+        &ws,
+        "lib/sample.ol",
+        "use lib.decl { resource }\n\
+         share let SAMPLE = @resource(\"issues\")\n\
+         share fn sample_name() = map_get(SAMPLE, \"resource\")\n",
+    );
+    write(
+        &ws,
+        "tests/t.ol",
+        "use lib.sample { sample_name }\n\
+         test \"a test's import reaches the sibling macro\" { assert_eq(sample_name(), \"issues\") }\n",
+    );
+    for (dir, file) in [(ws.clone(), "tests/t.ol"), (ws.join("tests"), "t.ol")] {
+        let (out, err, rc) = olang(&dir, &["test", file]);
+        assert_eq!(rc, 0, "{file}: {out}{err}");
+        assert!(out.contains("1 passed, 0 failed"), "{file}: {out}{err}");
+    }
+}
+
+#[test]
+fn meta_parse_emits_patterns_and_annotations_as_nodes() {
+    let ws = workspace("metanodes");
+    write(
+        &ws,
+        "m.ol",
+        "let src = \"fn area(s: Shape, t: { title: String, n: [Int] }) -> Float = match s { Circle(r) => 1.0, Rect(w, h) if w > 0.0 => w * h, 1 | 2 => 0.5, _ => 0.0 }\\nlet p: Task = (x: Int) => x\"\n\
+         let nodes = unwrap(meta.parse(src))\n\
+         let f = nodes[0]\n\
+         let t = nodes[1]\n\
+         let ps = map_get(f, \"parameters\")\n\
+         println(map_get(map_get(ps[0], \"type\"), \"form\") + \" \" + map_get(map_get(ps[0], \"type\"), \"name\"))\n\
+         let shape = map_get(ps[1], \"type\")\n\
+         println(map_get(shape, \"form\") + \" \" + join(map(map_get(shape, \"fields\"), (fl) => map_get(fl, \"name\") + \":\" + map_get(map_get(fl, \"type\"), \"text\")), \",\"))\n\
+         println(map_get(map_get(f, \"return_type\"), \"text\"))\n\
+         let arms = map_get(map_get(f, \"body\"), \"arms\")\n\
+         for a in arms { let pt = map_get(a, \"pattern\"); println(map_get(pt, \"form\") + \" \" + map_get(pt, \"text\")) }\n\
+         println(map_get(arms[1], \"pattern\") |> map_get(\"variant\"))\n\
+         println(show(map_has_key(arms[1], \"guard\")))\n\
+         println(map_get(map_get(t, \"type\"), \"text\") + \" \" + map_get(map_get(t, \"pattern\"), \"form\"))\n\
+         println(map_get(head(map_get(map_get(t, \"value\"), \"parameters\")), \"type\") |> map_get(\"name\"))\n",
+    );
+    let (out, err, rc) = olang(&ws, &["run", "m.ol"]);
+    assert_eq!(rc, 0, "{out}{err}");
+    assert_eq!(
+        out,
+        "named Shape\nrecord title:String,n:[Int]\nFloat\nenum Circle(r)\nenum Rect(w, h)\nor 1 | 2\nwildcard _\nRect\ntrue\nTask ident\nInt\n"
+    );
+}

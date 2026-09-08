@@ -622,11 +622,13 @@ impl Interpreter {
             // expansion time, so the runtime import of that name is not a
             // miss (see `bind_module_imports`).
             declared_macros = macro_names_in(&content);
-            crate::parser::Parser::new().parse(&content).map_err(|e| {
-                InterpreterError::RuntimeError {
+            // Expansion resolves the module's own imports from its
+            // directory (and its package root), not the working directory.
+            crate::parser::Parser::new()
+                .parse_with_dir(&content, file_path.parent())
+                .map_err(|e| InterpreterError::RuntimeError {
                     message: format!("Failed to parse module {}:\n{}", file_path.display(), e),
-                }
-            })?
+                })?
         };
 
         // Create a new environment for the module with builtins

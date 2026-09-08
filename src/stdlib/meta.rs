@@ -328,6 +328,14 @@ fn let_to_value(d: &LetDecl, shared: bool) -> Value {
     let mut pairs = vec![
         ("kind", s("let")),
         ("name", s(&pattern_name(&d.pattern))),
+        ("pattern", pattern_to_value(&d.pattern)),
+        (
+            "type",
+            d.type_annotation
+                .as_ref()
+                .map(type_to_value)
+                .unwrap_or(Value::Unit),
+        ),
         ("shared", Value::Boolean(shared)),
         // `let mut` — a lint that reasons about mutability needs this.
         ("mutable", Value::Boolean(d.mutable)),
@@ -343,6 +351,16 @@ fn fn_to_value(d: &FunctionDecl, shared: bool) -> Value {
         ("kind", s("fn")),
         ("name", s(&d.name)),
         ("params", params_to_value(&d.parameters)),
+        // The parameters with their annotations, and the return type:
+        // what a shape rule reads.
+        ("parameters", parameters_to_value(&d.parameters)),
+        (
+            "return_type",
+            d.return_type
+                .as_ref()
+                .map(type_to_value)
+                .unwrap_or(Value::Unit),
+        ),
         ("type_params", names(&d.type_params)),
         ("shared", Value::Boolean(shared)),
         ("body", expr_to_value(&d.body)),
@@ -400,6 +418,281 @@ fn use_to_value(d: &UseDecl) -> Value {
 
 fn params_to_value(params: &[Parameter]) -> Value {
     list(params.iter().map(|p| s(&p.name)).collect())
+}
+
+/// Each parameter as a node: its name, its annotation as a type node
+/// (Unit when unannotated), and whether it has a default.
+fn parameters_to_value(params: &[Parameter]) -> Value {
+    list(
+        params
+            .iter()
+            .map(|p| {
+                map(vec![
+                    ("name", s(&p.name)),
+                    (
+                        "type",
+                        p.type_annotation
+                            .as_ref()
+                            .map(type_to_value)
+                            .unwrap_or(Value::Unit),
+                    ),
+                    ("has_default", Value::Boolean(p.default_value.is_some())),
+                ])
+            })
+            .collect(),
+    )
+}
+
+/// A type annotation as a node: `kind: "type"`, its source text, and a
+/// `form` with the structure a rule needs — `record` carries `fields`
+/// (name and type), `list` an `element`, `map` a `key` and `value`,
+/// `tuple`/`union` `types`, `result` `ok` and `err`, `function` `params`
+/// and `returns`, `generic` a `base` and `args`, `named` and `basic` a
+/// `name`, `literal` a `value`.
+fn type_to_value(t: &crate::ast::TypeAnnotation) -> Value {
+    use crate::ast::TypeAnnotation as T;
+    let mut pairs = vec![("kind", s("type")), ("text", s(&t.display_source()))];
+    match t {
+        T::Int | T::Float | T::Bool | T::String | T::Unit => {
+            pairs.push(("form", s("basic")));
+            pairs.push(("name", s(&t.display_source())));
+        }
+        T::List(e) => {
+            pairs.push(("form", s("list")));
+            pairs.push(("element", type_to_value(e)));
+        }
+        T::Map {
+            key_type,
+            value_type,
+        } => {
+            pairs.push(("form", s("map")));
+            pairs.push(("key", type_to_value(key_type)));
+            pairs.push(("value", type_to_value(value_type)));
+        }
+        T::Tuple(ts) => {
+            pairs.push(("form", s("tuple")));
+            pairs.push(("types", list(ts.iter().map(type_to_value).collect())));
+        }
+        T::Result { ok_type, err_type } => {
+            pairs.push(("form", s("result")));
+            pairs.push(("ok", type_to_value(ok_type)));
+            pairs.push(("err", type_to_value(err_type)));
+        }
+        T::Function {
+            params,
+            return_type,
+        } => {
+            pairs.push(("form", s("function")));
+            pairs.push(("params", list(params.iter().map(type_to_value).collect())));
+            pairs.push(("returns", type_to_value(return_type)));
+        }
+        T::Record { fields } => {
+            pairs.push(("form", s("record")));
+            pairs.push((
+                "fields",
+                list(
+                    fields
+                        .iter()
+                        .map(|f| {
+                            map(vec![
+                                ("name", s(&f.name)),
+                                ("type", type_to_value(&f.field_type)),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ));
+        }
+        T::Union { types } => {
+            pairs.push(("form", s("union")));
+            pairs.push(("types", list(types.iter().map(type_to_value).collect())));
+        }
+        T::Generic {
+            base_type,
+            type_args,
+        } => {
+            pairs.push(("form", s("generic")));
+            pairs.push(("base", s(base_type)));
+            pairs.push(("args", list(type_args.iter().map(type_to_value).collect())));
+        }
+        T::Literal { value } => {
+            pairs.push(("form", s("literal")));
+            pairs.push(("value", value.as_ref().clone()));
+        }
+        T::Custom(name) | T::TypeVariable(name) => {
+            pairs.push(("form", s("named")));
+            pairs.push(("name", s(name)));
+        }
+        _ => pairs.push(("form", s("other"))),
+    }
+    map(pairs)
+}
+
+/// A match (or let) pattern as a node: `kind: "pattern"`, its bound
+/// names as `text`, and a `form` with the structure an exhaustiveness
+/// rule needs — `enum` carries the `variant` and its sub-`patterns`,
+/// `literal` a `value`, `ident` and `rest` a `name`, `struct` its `type`
+/// and `fields` (name and pattern), `record` its `fields`, `list` its
+/// `items` and `rest`, `tuple` its `items`, `ok`/`err` an `inner`,
+/// `range` `start`/`end`/`inclusive`, `or` its `alternatives`, and
+/// `guarded` the `pattern` with its `guard` expression.
+fn pattern_to_value(p: &Pattern) -> Value {
+    let mut pairs = vec![("kind", s("pattern")), ("text", s(&pattern_text(p)))];
+    match p {
+        Pattern::Identifier(n) => {
+            pairs.push(("form", s("ident")));
+            pairs.push(("name", s(n)));
+        }
+        Pattern::Wildcard => pairs.push(("form", s("wildcard"))),
+        Pattern::Literal(v) => {
+            pairs.push(("form", s("literal")));
+            pairs.push(("value", v.clone()));
+        }
+        Pattern::EnumVariant {
+            variant_name,
+            patterns,
+        } => {
+            pairs.push(("form", s("enum")));
+            pairs.push(("variant", s(variant_name)));
+            pairs.push((
+                "patterns",
+                list(patterns.iter().map(pattern_to_value).collect()),
+            ));
+        }
+        Pattern::Struct {
+            type_name,
+            field_patterns,
+        } => {
+            pairs.push(("form", s("struct")));
+            pairs.push(("type", s(type_name)));
+            pairs.push(("fields", field_patterns_to_value(field_patterns)));
+        }
+        Pattern::AnonymousStruct { field_patterns } => {
+            pairs.push(("form", s("record")));
+            pairs.push(("fields", field_patterns_to_value(field_patterns)));
+        }
+        Pattern::List { patterns, rest } => {
+            pairs.push(("form", s("list")));
+            pairs.push((
+                "items",
+                list(patterns.iter().map(pattern_to_value).collect()),
+            ));
+            pairs.push(("rest", rest.as_ref().map(|r| s(r)).unwrap_or(Value::Unit)));
+        }
+        Pattern::Tuple(ps) => {
+            pairs.push(("form", s("tuple")));
+            pairs.push(("items", list(ps.iter().map(pattern_to_value).collect())));
+        }
+        Pattern::Ok(inner) => {
+            pairs.push(("form", s("ok")));
+            pairs.push(("inner", pattern_to_value(inner)));
+        }
+        Pattern::Err(inner) => {
+            pairs.push(("form", s("err")));
+            pairs.push(("inner", pattern_to_value(inner)));
+        }
+        Pattern::Range {
+            start,
+            end,
+            inclusive,
+        } => {
+            pairs.push(("form", s("range")));
+            pairs.push(("start", pattern_to_value(start)));
+            pairs.push(("end", pattern_to_value(end)));
+            pairs.push(("inclusive", Value::Boolean(*inclusive)));
+        }
+        Pattern::Or { alternatives } => {
+            pairs.push(("form", s("or")));
+            pairs.push((
+                "alternatives",
+                list(alternatives.iter().map(pattern_to_value).collect()),
+            ));
+        }
+        Pattern::Guarded { pattern, guard } => {
+            pairs.push(("form", s("guarded")));
+            pairs.push(("pattern", pattern_to_value(pattern)));
+            pairs.push(("guard", expr_to_value(guard)));
+        }
+        Pattern::Rest(n) => {
+            pairs.push(("form", s("rest")));
+            pairs.push(("name", s(n)));
+        }
+    }
+    map(pairs)
+}
+
+/// A pattern rendered as source, every form included (`pattern_name`
+/// keeps the bound-names summary a `let` node's `name` is).
+fn pattern_text(p: &Pattern) -> String {
+    let joined = |ps: &[Pattern]| ps.iter().map(pattern_text).collect::<Vec<_>>().join(", ");
+    match p {
+        Pattern::Identifier(n) | Pattern::Rest(n) => n.clone(),
+        Pattern::Wildcard => "_".to_string(),
+        Pattern::Literal(v) => format!("{}", v),
+        Pattern::EnumVariant {
+            variant_name,
+            patterns,
+        } if patterns.is_empty() => variant_name.clone(),
+        Pattern::EnumVariant {
+            variant_name,
+            patterns,
+        } => format!("{}({})", variant_name, joined(patterns)),
+        Pattern::Struct {
+            type_name,
+            field_patterns,
+        } => format!(
+            "{} {{ {} }}",
+            type_name,
+            field_patterns
+                .iter()
+                .map(|(n, p)| format!("{}: {}", n, pattern_text(p)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Pattern::AnonymousStruct { field_patterns } => format!(
+            "{{ {} }}",
+            field_patterns
+                .iter()
+                .map(|(n, p)| format!("{}: {}", n, pattern_text(p)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Pattern::List { patterns, rest } => {
+            let mut parts: Vec<String> = patterns.iter().map(pattern_text).collect();
+            if let Some(r) = rest {
+                parts.push(format!("...{}", r));
+            }
+            format!("[{}]", parts.join(", "))
+        }
+        Pattern::Tuple(ps) => format!("({})", joined(ps)),
+        Pattern::Ok(inner) => format!("Ok({})", pattern_text(inner)),
+        Pattern::Err(inner) => format!("Err({})", pattern_text(inner)),
+        Pattern::Range {
+            start,
+            end,
+            inclusive,
+        } => format!(
+            "{}{}{}",
+            pattern_text(start),
+            if *inclusive { "..=" } else { ".." },
+            pattern_text(end)
+        ),
+        Pattern::Or { alternatives } => alternatives
+            .iter()
+            .map(pattern_text)
+            .collect::<Vec<_>>()
+            .join(" | "),
+        Pattern::Guarded { pattern, .. } => format!("{} if …", pattern_text(pattern)),
+    }
+}
+
+fn field_patterns_to_value(fields: &[(String, Pattern)]) -> Value {
+    list(
+        fields
+            .iter()
+            .map(|(name, p)| map(vec![("name", s(name)), ("pattern", pattern_to_value(p))]))
+            .collect(),
+    )
 }
 
 fn pattern_name(p: &Pattern) -> String {
@@ -486,6 +779,7 @@ fn expr_to_value(e: &Expr) -> Value {
         } => map(vec![
             ("kind", s("lambda")),
             ("params", params_to_value(parameters)),
+            ("parameters", parameters_to_value(parameters)),
             ("body", expr_to_value(body)),
         ]),
         Expr::Pipeline { left, right } => map(vec![
@@ -681,7 +975,9 @@ fn arg_to_value(a: &Argument) -> Value {
 fn arm_to_value(a: &MatchArm) -> Value {
     let mut pairs = vec![
         ("kind", s("arm")),
-        ("pattern", s(&pattern_name(&a.pattern))),
+        // The pattern as a node (its `text` is the bound-names summary
+        // this field used to be).
+        ("pattern", pattern_to_value(&a.pattern)),
         ("body", expr_to_value(&a.expression)),
     ];
     if let Some(g) = &a.guard {
