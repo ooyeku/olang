@@ -995,6 +995,18 @@ impl SType {
                 }
             }
             TypeAnnotation::Custom(name) if !type_params.iter().any(|p| p == name) => {
+                // A `type Name = <annotation>` alias reduces to what it
+                // names (the aliases of the program under check are
+                // installed for the run by `check_program_with_context`).
+                if let Some(target) = CHECK_ALIASES.with(|a| {
+                    a.borrow().as_ref().and_then(|table| {
+                        table
+                            .get(name)
+                            .map(|t| crate::ast::resolve_type_aliases(t, table, 16))
+                    })
+                }) {
+                    return SType::from_annotation(&target, type_params);
+                }
                 SType::Named(name.clone())
             }
             TypeAnnotation::Record { fields } => SType::Record(
@@ -1275,12 +1287,29 @@ pub fn check_program(program: &Program) -> Vec<CheckDiagnostic> {
     check_program_with_context(&[], program)
 }
 
+thread_local! {
+    /// The `type Name = <annotation>` aliases of the program under check
+    /// (its context modules included), read by `SType::from_annotation`.
+    static CHECK_ALIASES: std::cell::RefCell<
+        Option<HashMap<String, crate::ast::TypeAnnotation>>,
+    > = const { std::cell::RefCell::new(None) };
+}
+
 /// Check `program` with signatures collected from `context` first — the
 /// modules a file `use`s, resolved and parsed by the caller (the LSP).
 /// Only `program`'s statements are walked; context contributes function
 /// signatures and struct shapes.
 pub fn check_program_with_context(context: &[&Program], program: &Program) -> Vec<CheckDiagnostic> {
     let mut checker = Checker::default();
+    // Aliases first, so a signature collected below reduces through them
+    // whatever the declaration order.
+    let mut aliases: HashMap<String, crate::ast::TypeAnnotation> = HashMap::new();
+    for p in context.iter().copied().chain(std::iter::once(program)) {
+        for (name, target) in crate::ast::alias_declarations(&p.statements) {
+            aliases.insert(name, target);
+        }
+    }
+    CHECK_ALIASES.with(|a| *a.borrow_mut() = Some(aliases));
     for p in context {
         checker.collect(p);
     }
@@ -1309,6 +1338,7 @@ pub fn check_program_with_context(context: &[&Program], program: &Program) -> Ve
         });
     }
 
+    CHECK_ALIASES.with(|a| *a.borrow_mut() = None);
     checker.out
 }
 

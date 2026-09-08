@@ -107,3 +107,101 @@ fn a_package_module_uses_a_siblings_macro_from_anywhere() {
     let (out, err, rc) = olang(&ws.join("lib"), &["run", "sample.ol"]);
     assert_eq!(rc, 0, "{out}{err}");
 }
+
+#[test]
+fn a_record_shape_alias_is_usable_wherever_an_annotation_goes() {
+    let ws = workspace("alias");
+    write(
+        &ws,
+        "a.ol",
+        "fn title_of(t: Task) = map_get(t, \"title\")\n\
+         type Task = { title: String, done: Bool }\n\
+         type Tasks = [Task]\n\
+         fn first_title(ts: Tasks) -> String = title_of(head(ts))\n\
+         let t: Task = #{ \"title\": \"ship\", \"done\": false }\n\
+         println(title_of(t))\n\
+         println(first_title([t]))\n\
+         let f = (x: Task) => map_get(x, \"done\")\n\
+         println(show(f(t)))\n\
+         println(show(attempt(() => first_title(3))))\n\
+         meta fn shaped(decl) = str.replace(decl, \"(r)\", \"(r: Task)\")\n\
+         @shaped\n\
+         fn read_title(r) = map_get(r, \"titel\")\n\
+         println(show(read_title(t)))\n",
+    );
+    for mode in [vec!["run"], vec!["--no-ovm", "run"]] {
+        let mut args = mode.clone();
+        args.push("a.ol");
+        let (out, err, rc) = olang(&ws, &args);
+        assert_eq!(rc, 0, "{mode:?}: {out}{err}");
+        assert_eq!(
+            out,
+            "ship\nship\nfalse\nErr(\"parameter 'ts' of first_title expects List, got Int\")\n()\n",
+            "{mode:?}"
+        );
+    }
+    // The checker reads the shape through the alias — in a macro's output too.
+    let (out, err, _) = olang(&ws, &["check", "a.ol"]);
+    let all = out + &err;
+    assert!(
+        all.contains("`titel` is not a key of the declared shape { title: String, done: Bool }"),
+        "{all}"
+    );
+    assert!(all.contains("did you mean `title`?"), "{all}");
+    // meta.parse names the alias.
+    write(
+        &ws,
+        "m.ol",
+        "let nodes = unwrap(meta.parse(\"type Task = { title: String }\"))\n\
+         println(map_get(head(nodes), \"definition\") + \" \" + map_get(head(nodes), \"type\"))\n",
+    );
+    let (out, err, rc) = olang(&ws, &["run", "m.ol"]);
+    assert_eq!(rc, 0, "{out}{err}");
+    assert_eq!(out, "alias { title: String }\n");
+}
+
+#[test]
+fn encode_query_takes_a_map_as_well_as_a_record() {
+    let ws = workspace("query");
+    write(
+        &ws,
+        "q.ol",
+        "println(show(http.encode_query(#{ \"q\": \"a b\", \"page\": 2 })))\n\
+         println(show(http.encode_query({ q: \"x&y\", ok: true })))\n\
+         println(show(http.encode_query(\"nope\")))\n",
+    );
+    let (out, err, rc) = olang(&ws, &["run", "q.ol"]);
+    assert_eq!(rc, 0, "{out}{err}");
+    assert_eq!(
+        out,
+        "Ok(\"page=2&q=a%20b\")\nOk(\"ok=true&q=x%26y\")\nErr(\"encode_query: argument must be a map or a record\")\n"
+    );
+}
+
+#[test]
+fn a_modules_test_block_above_its_callee_runs_after_the_declarations() {
+    let ws = workspace("testorder");
+    // A project root, as the SDK has: module paths resolve against it.
+    write(
+        &ws,
+        "olang.toml",
+        "[package]\nname = \"testorder\"\nversion = \"0.1.0\"\n",
+    );
+    write(
+        &ws,
+        "lib/m.ol",
+        "test \"calls a function declared below\" {\n    assert_eq(f(), 1)\n}\n\
+         share fn f() = helper() + 1\n\
+         fn helper() = 0\n",
+    );
+    write(
+        &ws,
+        "tests/t.ol",
+        "use lib.m { f }\ntest \"uses the module\" { assert_eq(f(), 1) }\n",
+    );
+    // Imported under `olang test`, the module's tests run at load: the one
+    // above its callee must see the whole module declared.
+    let (out, err, rc) = olang(&ws, &["test", "tests/t.ol"]);
+    assert_eq!(rc, 0, "{out}{err}");
+    assert!(out.contains("2 passed, 0 failed"), "{out}{err}");
+}

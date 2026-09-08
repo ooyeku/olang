@@ -273,12 +273,13 @@ judgement about intent rather than a provable contradiction.
   nothing; a constructor pattern covers its constructor only when its
   sub-patterns are irrefutable.
 - **A literal key a declared shape does not carry.** A parameter, `let`,
-  or return annotated `{ summary: String, count: Int }` declares the
-  keys a map or record carries, and `map_get(r, "summry")`, `r.summry`,
-  and `r["summry"]` are then reported with the nearest key; the runtime
-  answers such a read with Unit. The shape reaches the checker from
-  wherever it was written — a macro's output included — and the runtime
-  does not enforce it (a map's keys are data).
+  or return annotated `{ summary: String, count: Int }` — or with an
+  alias of it, `type Summary = { summary: String, count: Int }` —
+  declares the keys a map or record carries, and `map_get(r, "summry")`,
+  `r.summry`, and `r["summry"]` are then reported with the nearest key;
+  the runtime answers such a read with Unit. The shape reaches the
+  checker from wherever it was written — a macro's output included —
+  and the runtime does not enforce it (a map's keys are data).
 - **A parameter that shadows a function its body calls.** `fn row(s,
   span) = span(s)` with `span` imported: the call reaches the argument,
   and the runtime can only say so at the call, in the browser, frames

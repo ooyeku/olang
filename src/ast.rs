@@ -1319,9 +1319,101 @@ impl PartialEq for TypeDecl {
 /// Type definition variants
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TypeDefinition {
-    Struct { fields: Vec<StructField> },
-    Enum { variants: Vec<EnumVariant> },
-    Union { types: Vec<TypeAnnotation> },
+    Struct {
+        fields: Vec<StructField>,
+    },
+    Enum {
+        variants: Vec<EnumVariant>,
+    },
+    Union {
+        types: Vec<TypeAnnotation>,
+    },
+    /// `type Task = { title: String, ... }`: a name for an annotation —
+    /// a record shape, most often — usable wherever an annotation goes.
+    /// An alias is not a runtime type: a parameter `t: Task` is checked
+    /// as the aliased annotation is (a record shape is the checker's,
+    /// unchecked at runtime), and `typeof` never answers the alias.
+    Alias {
+        target: TypeAnnotation,
+    },
+}
+
+/// Rewrite every alias name in `ann` to the annotation it stands for,
+/// recursively, so a checker or the runtime meets only concrete
+/// annotations. `depth` bounds a self-referential alias.
+pub fn resolve_type_aliases(
+    ann: &TypeAnnotation,
+    aliases: &HashMap<String, TypeAnnotation>,
+    depth: usize,
+) -> TypeAnnotation {
+    if aliases.is_empty() || depth == 0 {
+        return ann.clone();
+    }
+    let go = |a: &TypeAnnotation| resolve_type_aliases(a, aliases, depth - 1);
+    match ann {
+        TypeAnnotation::Custom(name) => match aliases.get(name) {
+            Some(target) => go(target),
+            None => ann.clone(),
+        },
+        TypeAnnotation::List(t) => TypeAnnotation::List(Box::new(go(t))),
+        TypeAnnotation::Map {
+            key_type,
+            value_type,
+        } => TypeAnnotation::Map {
+            key_type: Box::new(go(key_type)),
+            value_type: Box::new(go(value_type)),
+        },
+        TypeAnnotation::Tuple(ts) => TypeAnnotation::Tuple(ts.iter().map(go).collect()),
+        TypeAnnotation::Result { ok_type, err_type } => TypeAnnotation::Result {
+            ok_type: Box::new(go(ok_type)),
+            err_type: Box::new(go(err_type)),
+        },
+        TypeAnnotation::Function {
+            params,
+            return_type,
+        } => TypeAnnotation::Function {
+            params: params.iter().map(go).collect(),
+            return_type: Box::new(go(return_type)),
+        },
+        TypeAnnotation::Union { types } => TypeAnnotation::Union {
+            types: types.iter().map(go).collect(),
+        },
+        TypeAnnotation::Generic {
+            base_type,
+            type_args,
+        } => TypeAnnotation::Generic {
+            base_type: base_type.clone(),
+            type_args: type_args.iter().map(go).collect(),
+        },
+        TypeAnnotation::Record { fields } => TypeAnnotation::Record {
+            fields: fields
+                .iter()
+                .map(|f| StructField {
+                    name: f.name.clone(),
+                    field_type: go(&f.field_type),
+                })
+                .collect(),
+        },
+        other => other.clone(),
+    }
+}
+
+/// The alias declarations among `statements` (top level, `share` or
+/// not), by name — what a pre-pass registers before anything runs, so an
+/// annotation may name an alias declared below it.
+pub fn alias_declarations(statements: &[Statement]) -> Vec<(String, TypeAnnotation)> {
+    statements
+        .iter()
+        .filter_map(|st| match st.unwrapped() {
+            Statement::TypeDecl(t) | Statement::ShareDecl(ShareDecl::Type(t)) => {
+                match &t.definition {
+                    TypeDefinition::Alias { target } => Some((t.name.clone(), target.clone())),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// Struct field definition

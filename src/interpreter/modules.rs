@@ -687,6 +687,14 @@ impl Interpreter {
             // module's private helpers).
             let mut reexported: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
+            // Aliases are usable above their declaration in a module too.
+            self.register_type_aliases(&program.statements);
+            // A module's test blocks run after every declaration of the
+            // file has been made, not in statement order: a test above the
+            // function it calls (imported under `olang test`, where the
+            // module's tests run at load) would otherwise meet a name the
+            // module has not declared yet.
+            let mut deferred_tests: Vec<crate::ast::Statement> = Vec::new();
             // Process all statements in the module
             for statement in &program.statements {
                 // Coverage: a module's top-level statements execute right
@@ -704,6 +712,9 @@ impl Interpreter {
                     }
                 }
                 match statement.unwrapped() {
+                    crate::ast::Statement::TestDecl(_) => {
+                        deferred_tests.push(statement.clone());
+                    }
                     crate::ast::Statement::ShareDecl(share_decl) => {
                         match share_decl {
                             ShareDecl::Function(func_decl) => {
@@ -844,6 +855,10 @@ impl Interpreter {
             // VM-executed path that falls back to the recorded value
             // hits "Undefined variable" on exactly the mutual
             // references the re-closing exists to serve.
+            // The module's test blocks, with every declaration in place.
+            for test in &deferred_tests {
+                self.eval_statement(test)?;
+            }
             if let Some(tier) = self.bytecode_tier.as_mut() {
                 for (name, value) in exports.iter() {
                     if let Value::Function(func) = value {

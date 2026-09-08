@@ -1423,6 +1423,32 @@ are erased at runtime.
 When an enum is shared from a module, importing the type also imports its
 variant constructors — see [Modules](#modules-and-sharing).
 
+### Record shape aliases
+
+`type Name = <annotation>` names an annotation, and the name is usable
+wherever an annotation goes: a parameter, a `let`, a return type, a
+list or map element, a struct field. Its common form names a record
+shape, so every function handling the same record checks against one
+declaration:
+
+```olang
+type Task = { title: String, done: Bool }
+type Tasks = [Task]
+fn title_of(t: Task) -> String = map_get(t, "title")
+fn first_title(ts: Tasks) = title_of(head(ts))
+let t: Task = #{ "title": "ship", "done": false }
+println(first_title([t]))
+```
+
+An alias is not a runtime type: `t: Task` is checked as `{ title:
+String, done: Bool }` is — a record shape is the checker's, unchecked
+at runtime, while `Tasks` enforces "a List" at the call — and `typeof`
+never answers the alias. The checker reads the shape through the alias
+at every `map_get`, field, and index site with a literal key, in a
+macro's output too, so a macro that splices `type Task = { ... }`
+beside each declaration gives every hook's record a checked shape. An
+alias may be declared below its first use.
+
 ### What is not supported (yet)
 
 Union type *declarations* (`type Id = Int | String`) are not accepted;

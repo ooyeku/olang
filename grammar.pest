@@ -168,12 +168,15 @@ error_variant = { identifier ~ (":" ~ (unit_type | ("{" ~ struct_field_list ~ "}
 
 // Type declarations
 type_decl   = { type_kw ~ identifier ~ type_params? ~ "=" ~ type_definition }
-type_definition = { union_type_def | struct_def | enum_def }
+type_definition = { union_type_def | struct_def | enum_def | alias_def }
 union_type_def = { type_annotation ~ ("|" ~ type_annotation)+ }
 struct_def  = { struct_kw ~ "{" ~ struct_field_list? ~ "}" }
 struct_field_list = { NL* ~ struct_field ~ (NL* ~ "," ~ NL* ~ struct_field)* ~ NL* ~ ","? ~ NL* }
 struct_field = { identifier ~ ":" ~ type_annotation }
 enum_def    = { enum_kw ~ "{" ~ enum_variant_list? ~ "}" }
+// `type Task = { title: String }`: a name for an annotation, usable
+// wherever an annotation goes.
+alias_def   = { type_annotation }
 enum_variant_list = { NL* ~ enum_variant ~ (NL* ~ "," ~ NL* ~ enum_variant)* ~ NL* ~ ","? ~ NL* }
 enum_variant = { identifier ~ (("(" ~ type_annotation ~ ("," ~ type_annotation)* ~ ")") | ("{" ~ struct_field_list ~ "}"))? }
 

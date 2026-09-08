@@ -1415,7 +1415,7 @@ true for 2xx):
 | `http.get(url[, opts])` / `http.post(url, body[, opts])` / `http.put` / `http.delete` | requests |
 | `http.request(method, url, body[, opts])` | any method |
 | `http.parse_url(url)` | split a URL into parts |
-| `http.encode_query(map)` / `http.decode_query(s)` | query strings |
+| `http.encode_query(map)` / `http.decode_query(s)` | query strings — `encode_query` takes a `#{}` map or a `{ }` record, keys in sorted order |
 | `http.serve(port, handler[, options])` | serve `handler(request)` on a bounded worker pool; blocks the calling program |
 | `http.response(status, body)` / `http.response_with_headers(status, body, headers)` | build responses |
 | `http.defer()` / `http.respond(ticket, response)` | park the connection a handler is answering and complete it later, from any thread |

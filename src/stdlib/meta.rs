@@ -300,6 +300,10 @@ fn stmt_to_value(stmt: &Statement) -> Value {
                         list(types.iter().map(|t| s(&t.display_source())).collect()),
                     ));
                 }
+                crate::ast::TypeDefinition::Alias { target } => {
+                    entries.push(("definition", s("alias")));
+                    entries.push(("type", s(&target.display_source())));
+                }
             }
             map(entries)
         }

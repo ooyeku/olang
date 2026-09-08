@@ -282,6 +282,9 @@ pub struct Interpreter {
     /// declared struct validates its field set; an undeclared struct-literal
     /// name is an error.
     struct_defs: HashMap<String, Vec<String>>,
+    /// `type Name = <annotation>` aliases, by name; every annotation the
+    /// runtime checks is rewritten through this table first.
+    type_aliases: HashMap<String, TypeAnnotation>,
 
     /// Declared struct field types, for the fields whose annotation the
     /// runtime can enforce: struct name -> (field name -> checkable type).
@@ -372,6 +375,7 @@ impl Interpreter {
             warm_profile: None,
             timeline: None,
             struct_defs: HashMap::new(),
+            type_aliases: HashMap::new(),
             struct_field_checks: HashMap::new(),
             dependency_map: HashMap::new(),
         };
@@ -460,6 +464,9 @@ impl Interpreter {
             });
         }
 
+        // A type alias is usable above its declaration: register every
+        // top-level alias before anything runs.
+        self.register_type_aliases(&program.statements);
         // The program file's top-level functions exist before its first
         // statement runs — the module rule, applied to the entry file: a
         // function may call one declared below it, whatever runs between.
@@ -646,6 +653,37 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// seed the program's function landscape.
     pub fn define_global(&mut self, name: &str, value: Value) {
         self.environment.define(name.to_string(), value);
+    }
+
+    /// Register the `type Name = <annotation>` aliases among top-level
+    /// statements before they run (see `eval_program` and the module
+    /// loader), so an annotation may name an alias declared below it.
+    pub(crate) fn register_type_aliases(&mut self, statements: &[Statement]) {
+        for (name, target) in crate::ast::alias_declarations(statements) {
+            self.type_aliases.insert(name, target);
+        }
+    }
+
+    /// `ann` with every alias name replaced by what it stands for.
+    pub(crate) fn resolve_annotation(&self, ann: &TypeAnnotation) -> TypeAnnotation {
+        crate::ast::resolve_type_aliases(ann, &self.type_aliases, 16)
+    }
+
+    /// A declaration whose parameter and return annotations name no
+    /// alias — the form the runtime checks and the tier compile from.
+    fn resolve_decl_annotations(&self, mut decl: FunctionDecl) -> FunctionDecl {
+        if self.type_aliases.is_empty() {
+            return decl;
+        }
+        for p in decl.parameters.iter_mut() {
+            if let Some(ann) = &p.type_annotation {
+                p.type_annotation = Some(self.resolve_annotation(ann));
+            }
+        }
+        if let Some(ret) = &decl.return_type {
+            decl.return_type = Some(self.resolve_annotation(ret));
+        }
+        decl
     }
 
     /// Load a module's function declarations the way the module loader
@@ -1268,7 +1306,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         if let Some(check) = let_decl
             .type_annotation
             .as_ref()
-            .and_then(|ann| crate::ast::FieldTypeCheck::from_annotation(ann, &[]))
+            .map(|ann| self.resolve_annotation(ann))
+            .and_then(|ann| crate::ast::FieldTypeCheck::from_annotation(&ann, &[]))
         {
             let (actual, payload, fn_arity) = Self::value_view(&value);
             if let Some((expected, got)) = check.check_value(
@@ -1323,6 +1362,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         func_decl: FunctionDecl,
         early: Option<ImHashMap<String, Value>>,
     ) -> Result<Value, InterpreterError> {
+        // Aliases resolve here, once: the function value carries concrete
+        // annotations, so the checks both tiers build from it agree.
+        let func_decl = self.resolve_decl_annotations(func_decl);
         let early_root = early.is_some();
         // At the top level the closure adopts the persistent map in O(1).
         // A nested `fn` captures the whole enclosing chain of its file,
@@ -1534,11 +1576,27 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 let param_names: Vec<String> = parameters.iter().map(|p| p.name.clone()).collect();
                 let resolved_body =
                     crate::resolve::Resolver::resolve_function_body(body, None, &param_names);
+                // A parameter annotated with an alias checks as the alias's
+                // target, like a named function's.
+                let parameters: Vec<crate::ast::Parameter> = if self.type_aliases.is_empty() {
+                    parameters.clone()
+                } else {
+                    parameters
+                        .iter()
+                        .map(|p| {
+                            let mut p = p.clone();
+                            if let Some(ann) = &p.type_annotation {
+                                p.type_annotation = Some(self.resolve_annotation(ann));
+                            }
+                            p
+                        })
+                        .collect()
+                };
                 Ok(Value::Function(Function {
                     name: None,
-                    param_checks: crate::ast::param_checks_of(parameters, &[]),
+                    param_checks: crate::ast::param_checks_of(&parameters, &[]),
                     return_check: None,
-                    parameters: parameters.clone(),
+                    parameters,
                     body: Arc::new(resolved_body),
                     closure: Arc::new(closure),
                     param_bounds: Vec::new(),
@@ -3414,6 +3472,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 None
             },
             struct_defs: self.struct_defs.clone(),
+            type_aliases: self.type_aliases.clone(),
             struct_field_checks: self.struct_field_checks.clone(),
             dependency_map: self.dependency_map.clone(),
         }
@@ -3725,6 +3784,11 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // Type parameters (`enum Option<T>`) are erased at runtime — the
         // language is dynamically typed, so a generic variant constructs for
         // any argument type. The static side is the type checker's concern.
+        if let TypeDefinition::Alias { target } = &type_decl.definition {
+            self.type_aliases
+                .insert(type_decl.name.clone(), target.clone());
+            return Ok(Value::Unit);
+        }
         if let TypeDefinition::Enum { variants } = &type_decl.definition {
             // Remember the enum's type name so an annotation naming it is
             // recognized as a real type (and a name that is *not* declared
@@ -3769,7 +3833,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 .iter()
                 .filter_map(|f| {
                     crate::ast::FieldTypeCheck::from_annotation(
-                        &f.field_type,
+                        &self.resolve_annotation(&f.field_type),
                         &type_decl.type_params,
                     )
                     .map(|check| (f.name.clone(), check))

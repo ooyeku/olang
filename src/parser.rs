@@ -3046,6 +3046,17 @@ impl Parser {
                 };
                 Ok(TypeDefinition::Enum { variants })
             }
+            Rule::alias_def => {
+                let inner = pair
+                    .into_inner()
+                    .find(|p| p.as_rule() == Rule::type_annotation)
+                    .ok_or_else(|| ParseError::InvalidSyntax {
+                        message: "Missing annotation in type alias".to_string(),
+                    })?;
+                Ok(TypeDefinition::Alias {
+                    target: self.build_type_annotation(inner.into_inner())?,
+                })
+            }
             _ => Err(ParseError::InvalidSyntax {
                 message: format!("Invalid type definition: {:?}", pair.as_rule()),
             }),

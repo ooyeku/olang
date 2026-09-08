@@ -1465,30 +1465,38 @@ fn encode_query(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Err(format!("encode_query expects 1 argument, got {}", args.len()).into());
     }
 
-    match &args[0] {
-        Value::Struct { fields, .. } => {
-            let mut query_pairs = Vec::new();
-            for (key, value) in fields.iter() {
-                let value_str = match value {
-                    Value::String(s) => s.as_ref().clone(),
-                    Value::Integer(n) => n.to_string(),
-                    Value::Float(f) => f.to_string(),
-                    Value::Boolean(b) => b.to_string(),
-                    _ => continue, // Skip non-primitive values
-                };
-                query_pairs.push(format!(
-                    "{}={}",
-                    urlencoding::encode(key),
-                    urlencoding::encode(&value_str)
-                ));
-            }
-            Ok(Value::Ok(Box::new(Value::String(Arc::new(
-                query_pairs.join("&"),
-            )))))
+    // A `#{}` map or a `{ }` record, alike: the keys in sorted order so
+    // the same pairs always encode to the same string.
+    let entries: Vec<(&String, &Value)> = match &args[0] {
+        Value::Struct { fields, .. } => fields.iter().collect(),
+        Value::Map(map) => map.iter().collect(),
+        _ => {
+            return Ok(Value::Err(Box::new(Value::String(Arc::new(
+                "encode_query: argument must be a map or a record".to_string(),
+            )))));
         }
-        _ => Ok(Value::Err(Box::new(Value::String(Arc::new(
-            "encode_query: argument must be a struct".to_string(),
-        ))))),
+    };
+    let mut entries = entries;
+    entries.sort_by(|a, b| a.0.cmp(b.0));
+    let mut query_pairs = Vec::new();
+    for (key, value) in entries {
+        let value_str = match value {
+            Value::String(s) => s.as_ref().clone(),
+            Value::Integer(n) => n.to_string(),
+            Value::Float(f) => f.to_string(),
+            Value::Boolean(b) => b.to_string(),
+            _ => continue, // Skip non-primitive values
+        };
+        query_pairs.push(format!(
+            "{}={}",
+            urlencoding::encode(key),
+            urlencoding::encode(&value_str)
+        ));
+    }
+    {
+        Ok(Value::Ok(Box::new(Value::String(Arc::new(
+            query_pairs.join("&"),
+        )))))
     }
 }
 

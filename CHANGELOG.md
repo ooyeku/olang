@@ -7,7 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Record shape aliases**: `type Task = { title: String, done: Bool }`
+  names an annotation, usable wherever an annotation goes (`t: Task`,
+  `[Task]`, a return, a struct field), declared above or below its use.
+  The checker reads the shape through the alias; the runtime checks the
+  aliased annotation as it would the annotation itself.
+- **`http.encode_query` takes a `#{}` map** as well as a record, keys in
+  sorted order.
+
 ### Fixed
+
+- **A module's test blocks run after the module's declarations**, not in
+  statement order: a test above the function it calls no longer fails
+  with "Undefined variable" when the module is imported under
+  `olang test`.
 
 - **The route index keeps the first route at a path**, as the walk does:
   an app's page at `/` now answers under `serve` instead of the SDK's
