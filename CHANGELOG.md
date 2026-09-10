@@ -19,10 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`meta.parse` emits patterns and type annotations as nodes**: an arm's
   or `let`'s `pattern` with its `form`, a `fn`'s and `lambda`'s
   `parameters` with their `type`, a `fn`'s `return_type`, a `let`'s
-  `type` — so exhaustiveness and shape checks are project rules.
+  `type`, an alias declaration's `type` (a record alias's `fields` are
+  the shape), and a struct field's `type_node` — so exhaustiveness and
+  shape checks are project rules.
 
 ### Fixed
 
+- **A `let` annotated with an alias checks the aliased annotation on
+  every tier and thread**: the VM's compiler resolves aliases (a record
+  alias no longer keeps a function off the VM), its bridge interpreter
+  and every worker's tier carry the alias table.
+- **A nested package's file expands against its own root** under the
+  app's `olang test`: expansion resolves `use lib.x` from the file's
+  directory and its package before the working directory.
 - **A decorator sits above a `share` declaration** (`@shaped` over
   `share let SPEC = ...`); the macro receives the declaration with its
   `share`.

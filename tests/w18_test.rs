@@ -153,7 +153,7 @@ fn a_record_shape_alias_is_usable_wherever_an_annotation_goes() {
         &ws,
         "m.ol",
         "let nodes = unwrap(meta.parse(\"type Task = { title: String }\"))\n\
-         println(map_get(head(nodes), \"definition\") + \" \" + map_get(head(nodes), \"type\"))\n",
+         println(map_get(head(nodes), \"definition\") + \" \" + map_get(map_get(head(nodes), \"type\"), \"text\"))\n",
     );
     let (out, err, rc) = olang(&ws, &["run", "m.ol"]);
     assert_eq!(rc, 0, "{out}{err}");
@@ -302,4 +302,101 @@ fn meta_parse_emits_patterns_and_annotations_as_nodes() {
         out,
         "named Shape\nrecord title:String,n:[Int]\nFloat\nenum Circle(r)\nenum Rect(w, h)\nor 1 | 2\nwildcard _\nRect\ntrue\nTask ident\nInt\n"
     );
+}
+
+#[test]
+fn an_alias_let_checks_the_aliased_annotation_on_every_tier_and_thread() {
+    let ws = workspace("aliaslet");
+    write(
+        &ws,
+        "lib/types.ol",
+        "share type Task = { title: String, done: Bool }\n\
+         share fn by_param(t: Task) = map_get(t, \"title\")\n\
+         share fn by_let(m) = {\n    let t: Task = m\n    map_get(t, \"title\")\n}\n",
+    );
+    write(
+        &ws,
+        "a.ol",
+        "use lib.types { Task, by_param, by_let }\n\
+         let t = #{ \"title\": \"ship\", \"done\": false }\n\
+         fn local_let(m) = { let x: Task = m; map_get(x, \"done\") }\n\
+         fn outer(m, i) = by_let(m) + to_string(i)\n\
+         let mut acc = \"\"\n\
+         for i in range(0, 5) { acc = outer(t, i) }\n\
+         println(acc)\n\
+         println(show(task.join(spawn { by_let(t) + \"/\" + by_param(t) + \"/\" + show(local_let(t)) })))\n\
+         unwrap(os.on_shutdown((why) => http.shutdown()))\n\
+         let srv = spawn { http.serve(0, (req) => by_let(t) + \"/\" + show(local_let(t))) }\n\
+         time.sleep(300)\n\
+         http.shutdown()\n\
+         println(show(task.join(srv)))\n",
+    );
+    for mode in [vec!["run"], vec!["--no-ovm", "run"]] {
+        let mut args = mode.clone();
+        args.push("a.ol");
+        let (out, err, rc) = olang(&ws, &args);
+        assert_eq!(rc, 0, "{mode:?}: {out}{err}");
+        assert!(
+            out.starts_with("ship4\nship/ship/false\n"),
+            "{mode:?}: {out}{err}"
+        );
+        assert!(out.ends_with("Ok(())\n"), "{mode:?}: {out}{err}");
+    }
+}
+
+#[test]
+fn a_nested_packages_file_expands_against_its_own_root_under_olang_test() {
+    let ws = workspace("nestedroot");
+    // The app's root has a `lib/decl.ol` of its own, with a same-named macro.
+    write(
+        &ws,
+        "olang.toml",
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+    );
+    write(
+        &ws,
+        "lib/decl.ol",
+        "meta fn resource(name) = \"#{ \\\"resource\\\": \\\"APP\\\" }\"\n",
+    );
+    write(
+        &ws,
+        "vendor/shuttle/olang.toml",
+        "[package]\nname = \"shuttle\"\nversion = \"0.1.0\"\n",
+    );
+    write(
+        &ws,
+        "vendor/shuttle/lib/decl.ol",
+        "fn quote(s) = \"\\\"\" + s + \"\\\"\"\n\
+         meta fn resource(name) = \"#{ \\\"resource\\\": \" + quote(unwrap(meta.eval(name))) + \" }\"\n",
+    );
+    write(
+        &ws,
+        "vendor/shuttle/lib/sample.ol",
+        "use lib.decl { resource }\n\
+         share let SAMPLE = @resource(\"issues\")\n\
+         share fn sample_name() = map_get(SAMPLE, \"resource\")\n\
+         test \"expands against its own package\" { assert_eq(sample_name(), \"issues\") }\n",
+    );
+    // From the app's root, scanning everything: the nested file's macro is
+    // the nested package's, not the app's.
+    let (out, err, rc) = olang(&ws, &["test", "."]);
+    assert_eq!(rc, 0, "{out}{err}");
+    assert!(out.contains("1 passed, 0 failed"), "{out}{err}");
+}
+
+#[test]
+fn meta_parse_emits_an_alias_and_struct_field_types_as_nodes() {
+    let ws = workspace("aliasnodes");
+    write(
+        &ws,
+        "n.ol",
+        "let nodes = unwrap(meta.parse(\"type Task = { title: String, tags: [String] }\\ntype P = struct { x: Int }\"))\n\
+         let t = map_get(nodes[0], \"type\")\n\
+         println(map_get(t, \"form\") + \" \" + join(map(map_get(t, \"fields\"), (f) => map_get(f, \"name\") + \":\" + map_get(map_get(f, \"type\"), \"form\")), \",\"))\n\
+         let f = head(map_get(nodes[1], \"fields\"))\n\
+         println(map_get(f, \"type\") + \" \" + map_get(map_get(f, \"type_node\"), \"name\"))\n",
+    );
+    let (out, err, rc) = olang(&ws, &["run", "n.ol"]);
+    assert_eq!(rc, 0, "{out}{err}");
+    assert_eq!(out, "record title:basic,tags:list\nInt Int\n");
 }

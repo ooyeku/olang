@@ -279,7 +279,11 @@ fn stmt_to_value(stmt: &Statement) -> Value {
                                 .map(|f| {
                                     map(vec![
                                         ("name", s(&f.name)),
+                                        // `type` stays the source text a
+                                        // derive macro compares; the node
+                                        // rides beside it.
                                         ("type", s(&f.field_type.display_source())),
+                                        ("type_node", type_to_value(&f.field_type)),
                                     ])
                                 })
                                 .collect(),
@@ -301,8 +305,10 @@ fn stmt_to_value(stmt: &Statement) -> Value {
                     ));
                 }
                 crate::ast::TypeDefinition::Alias { target } => {
+                    // The aliased annotation as a node: a record alias's
+                    // `fields` are what a shape rule reads.
                     entries.push(("definition", s("alias")));
-                    entries.push(("type", s(&target.display_source())));
+                    entries.push(("type", type_to_value(target)));
                 }
             }
             map(entries)

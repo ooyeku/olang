@@ -220,6 +220,11 @@ pub struct BytecodeVm {
     /// one of these names is an equality match, not a binding — the same
     /// rule the interpreter applies.
     unit_variant_names: std::collections::HashSet<String>,
+    /// `type Name = <annotation>` aliases, mirrored from the interpreter:
+    /// the compiler resolves a `let`'s annotation through them (a record
+    /// alias then needs no runtime check and the function compiles), and
+    /// the bridge interpreter is seeded with them.
+    type_aliases: HashMap<String, crate::ast::TypeAnnotation>,
     /// Types redeclared with a *different* field set. Compile-time
     /// validation would go stale for them, so their literals are never
     /// compiled again — the interpreter (whose registry is live) stays the
@@ -295,6 +300,8 @@ pub struct BytecodeCompiler {
 
     /// Declared unit enum variant names (see BytecodeVm::unit_variant_names).
     unit_variant_names: std::collections::HashSet<String>,
+    /// Type aliases (see BytecodeVm::type_aliases).
+    type_aliases: HashMap<String, crate::ast::TypeAnnotation>,
 
     /// User function values for lambda-closure attachment (see
     /// BytecodeVm::known_function_values).
@@ -1249,6 +1256,7 @@ impl BytecodeVm {
             enum_type_names: std::collections::HashSet::new(),
             struct_field_checks: HashMap::new(),
             unit_variant_names: std::collections::HashSet::new(),
+            type_aliases: HashMap::new(),
             known_function_values: HashMap::new(),
             ambiguous_function_names: std::collections::HashSet::new(),
             trait_impls: HashMap::new(),
@@ -1445,6 +1453,16 @@ impl BytecodeVm {
         self.bridge_landscape_version += 1;
         self.builtin_interpreter = None;
         self.unit_variant_names.insert(name)
+    }
+
+    /// Record a `type Name = <annotation>` alias. The bridge interpreter,
+    /// if built, learns it at once; compiled functions need no recompile
+    /// (an alias only ever relaxes a `let` check from a refusal to none).
+    pub fn note_type_alias(&mut self, name: String, target: crate::ast::TypeAnnotation) {
+        self.type_aliases.insert(name, target);
+        if let Some(bridge) = self.builtin_interpreter.as_mut() {
+            bridge.set_type_aliases(self.type_aliases.clone());
+        }
     }
 
     /// Mirror a declared enum's type name, so `is_declared_type` recognizes
@@ -1656,6 +1674,7 @@ impl BytecodeVm {
         self.compiler.pending_def_file = def_file;
         self.compiler.known_function_values = self.known_function_values.clone();
         self.compiler.unit_variant_names = self.unit_variant_names.clone();
+        self.compiler.type_aliases = self.type_aliases.clone();
         self.compiler.enclosing_closure = closure;
 
         self.compiler.pending_lambdas.clear();
@@ -5763,6 +5782,10 @@ impl BytecodeVm {
         if self.builtin_interpreter.is_none() {
             self.bridge_seeded_version = self.bridge_landscape_version;
             let mut interp = Box::new(crate::interpreter::Interpreter::new());
+            // The aliases the program declared: a `let t: Task` in a
+            // function the bridge runs checks the aliased annotation, as
+            // it does on the main interpreter.
+            interp.set_type_aliases(self.type_aliases.clone());
             // Tier first: seed_bridge_state forwards the declaration
             // tables into an existing tier, so order matters here.
             if std::env::var_os("OLANG_BRIDGE_TIER_OFF").is_none() {
@@ -7685,6 +7708,7 @@ impl BytecodeCompiler {
             struct_defs: HashMap::new(),
             struct_field_checks: HashMap::new(),
             unit_variant_names: std::collections::HashSet::new(),
+            type_aliases: HashMap::new(),
             known_function_values: HashMap::new(),
             self_call: None,
             pending_lambdas: Vec::new(),
@@ -10541,7 +10565,8 @@ impl BytecodeCompiler {
                 if let_decl
                     .type_annotation
                     .as_ref()
-                    .and_then(|ann| crate::ast::FieldTypeCheck::from_annotation(ann, &[]))
+                    .map(|ann| crate::ast::resolve_type_aliases(ann, &self.type_aliases, 16))
+                    .and_then(|ann| crate::ast::FieldTypeCheck::from_annotation(&ann, &[]))
                     .is_some()
                 {
                     return Err(BytecodeError::CompilationFailed(

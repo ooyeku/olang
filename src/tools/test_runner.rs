@@ -42,7 +42,10 @@ pub fn run(path: &Path, coverage: bool, show_missing: bool) -> i32 {
             Ok(s) => s,
             Err(_) => continue,
         };
-        let program = match parser.parse(&source) {
+        // The file's directory anchors its macro expansion: a nested
+        // package's file resolves its own `use lib.x` against its package,
+        // not the project the runner was started from.
+        let program = match parser.parse_with_dir(&source, file.parent()) {
             Ok(p) => p,
             // A file that fails to parse is a real error, not "no tests here".
             // Silently skipping it lets a syntax error in a test file pass CI.

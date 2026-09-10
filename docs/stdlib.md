@@ -1154,8 +1154,10 @@ node is `kind: "type"` with `text` and a `form` — `basic`/`named`
 `map` (`key`, `value`), `tuple`/`union` (`types`), `result` (`ok`,
 `err`), `function` (`params`, `returns`), `generic` (`base`, `args`),
 `literal` (`value`) — so an exhaustiveness or shape rule is an olang
-program over `meta.parse`. Enough to *analyze* a program, not to
-perfectly reconstruct one. See
+program over `meta.parse`. A `type` declaration's alias `type` is such
+a node (a record alias's `fields` are the shape), and a struct's
+`fields` carry their `type` as text beside a `type_node`. Enough to
+*analyze* a program, not to perfectly reconstruct one. See
 [`examples/language/metatool`](../examples/language/metatool/main.ol) for a linter that
 counts bare `unwrap()` calls per function.
 

@@ -660,7 +660,25 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// loader), so an annotation may name an alias declared below it.
     pub(crate) fn register_type_aliases(&mut self, statements: &[Statement]) {
         for (name, target) in crate::ast::alias_declarations(statements) {
-            self.type_aliases.insert(name, target);
+            self.note_type_alias(name, target);
+        }
+    }
+
+    /// One alias, into this interpreter's table and its tier (whose
+    /// compiler and bridge interpreter check annotations too).
+    fn note_type_alias(&mut self, name: String, target: TypeAnnotation) {
+        if let Some(tier) = self.bytecode_tier.as_mut() {
+            tier.note_type_alias(name.clone(), target.clone());
+        }
+        self.type_aliases.insert(name, target);
+    }
+
+    /// Install a whole alias table — the VM seeds its bridge interpreter
+    /// through this, so a function the bridge runs checks `let t: Task`
+    /// as the main interpreter would.
+    pub fn set_type_aliases(&mut self, aliases: HashMap<String, TypeAnnotation>) {
+        for (name, target) in aliases {
+            self.note_type_alias(name, target);
         }
     }
 
@@ -2249,6 +2267,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         if let Some(trace) = self.caps_trace.clone() {
             tier.set_caps_trace(trace);
         }
+        for (name, target) in &self.type_aliases {
+            tier.note_type_alias(name.clone(), target.clone());
+        }
         self.bytecode_tier = Some(Box::new(tier));
         if let Some(profile) = self.warm_profile.clone()
             && let Some(t) = self.bytecode_tier.as_mut()
@@ -3378,6 +3399,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 for name in &self.unit_variant_names {
                     tier.note_unit_variant(name.clone());
                 }
+                for (name, target) in &self.type_aliases {
+                    tier.note_type_alias(name.clone(), target.clone());
+                }
                 for ((type_name, method), func) in &self.trait_impls {
                     tier.note_function(method.clone(), func.clone());
                     tier.note_trait_impl(type_name.clone(), method.clone(), func.clone());
@@ -3785,8 +3809,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // language is dynamically typed, so a generic variant constructs for
         // any argument type. The static side is the type checker's concern.
         if let TypeDefinition::Alias { target } = &type_decl.definition {
-            self.type_aliases
-                .insert(type_decl.name.clone(), target.clone());
+            self.note_type_alias(type_decl.name.clone(), target.clone());
             return Ok(Value::Unit);
         }
         if let TypeDefinition::Enum { variants } = &type_decl.definition {

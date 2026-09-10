@@ -241,14 +241,13 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
             if let Some(dir) = base_dir {
                 candidates.extend(names.iter().map(|n| dir.join(n)));
             }
-            candidates.extend(names.iter().map(std::path::PathBuf::from));
             // A module inside a package resolves `use lib.decl` against
-            // its package's root, as the runtime does: a sibling's macro
-            // is reachable from a package module, not only from the
-            // package's consumers.
-            // (`base_dir` is the file's directory as the caller named it —
-            // empty for a bare `olang run sample.ol` — so the walk up
-            // starts from its absolute form.)
+            // its own package's root, as the runtime does, and before the
+            // working directory: a nested package's file under the app's
+            // `olang test` meets the nested package's `lib/decl.ol`, not
+            // the app's. (`base_dir` is the file's directory as the caller
+            // named it — empty for a bare `olang run sample.ol` — so the
+            // walk up starts from its absolute form.)
             if let Some(dir) = base_dir
                 && let Ok(absolute) = std::path::absolute(if dir.as_os_str().is_empty() {
                     std::path::Path::new(".")
@@ -259,6 +258,7 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
             {
                 candidates.extend(names.iter().map(|n| root.join(n)));
             }
+            candidates.extend(names.iter().map(std::path::PathBuf::from));
             // Package imports resolve as the runtime resolves them —
             // without this, a LIBRARY could never export a macro. The
             // nearest manifest's path and shelf dependencies come first,

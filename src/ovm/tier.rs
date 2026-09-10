@@ -372,6 +372,12 @@ impl BytecodeTier {
         }
     }
 
+    /// Mirror a `type Name = <annotation>` alias into the VM (its
+    /// compiler and its bridge interpreter).
+    pub fn note_type_alias(&mut self, name: String, target: crate::ast::TypeAnnotation) {
+        self.vm.note_type_alias(name, target);
+    }
+
     /// Mirror a declared enum's type name so the tier recognizes it in an
     /// annotation (and reports a name that is *not* declared as unknown).
     pub fn note_enum_type(&mut self, name: String) {
