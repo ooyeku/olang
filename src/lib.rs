@@ -34,6 +34,8 @@ pub mod profile; // Sampling profiler behind `olang profile`
 #[cfg(feature = "native")]
 pub mod repl;
 pub mod resolve;
+#[cfg(feature = "native")]
+pub mod runtime_wasm; // The browser runtime the binary embeds
 pub mod scoping;
 pub mod stdlib;
 pub mod test_framework;

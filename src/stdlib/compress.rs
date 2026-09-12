@@ -18,6 +18,8 @@ pub fn create_compress_module() -> Value {
     for (name, arity) in [
         ("gzip", 1),
         ("gunzip", 1),
+        #[cfg(feature = "native")]
+        ("brotli", 1),
         ("deflate", 1),
         ("inflate", 1),
         ("gzip_level", 2),
@@ -60,6 +62,11 @@ pub fn call_compress_function(
             encoder.write_all(input)?;
             Ok(bytes::to_value(encoder.finish()?))
         }
+        #[cfg(feature = "native")]
+        "brotli" => {
+            let input = input_bytes(&args, "brotli", 1)?;
+            Ok(bytes::to_value(brotli(input, 5)?))
+        }
         "gunzip" => {
             let input = input_bytes(&args, "gunzip", 1)?;
             let mut out = Vec::new();
@@ -84,10 +91,23 @@ pub fn call_compress_function(
     }
 }
 
-fn gzip(input: &[u8], level: u32) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+pub fn gzip(input: &[u8], level: u32) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(level));
     encoder.write_all(input)?;
     Ok(encoder.finish()?)
+}
+
+/// Brotli at `quality` (0..=11; 5 is the web's usual trade of time for
+/// bytes, 11 the smallest output). What `Content-Encoding: br` carries.
+#[cfg(feature = "native")]
+pub fn brotli(input: &[u8], quality: u32) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut out = Vec::new();
+    {
+        let mut writer = brotli::CompressorWriter::new(&mut out, 4096, quality, 22);
+        writer.write_all(input)?;
+        writer.flush()?;
+    }
+    Ok(out)
 }
 
 fn err(message: String) -> Value {
@@ -144,8 +164,10 @@ mod tests {
 
     #[test]
     fn module_lists_its_functions() {
+        // gzip, gzip_level, gunzip, deflate, inflate — and brotli natively.
+        let expected = if cfg!(feature = "native") { 6 } else { 5 };
         match create_compress_module() {
-            Value::Struct { fields, .. } => assert_eq!(fields.len(), 5),
+            Value::Struct { fields, .. } => assert_eq!(fields.len(), expected),
             _ => panic!("module"),
         }
     }

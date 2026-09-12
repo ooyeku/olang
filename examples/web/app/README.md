@@ -59,9 +59,9 @@ Failures wear one envelope everywhere:
 ## What the server does for every response
 
 - **Compression** — text bodies of a kilobyte or more go out gzipped
-  when the client accepts it; the wasm is served from its brotli sibling
-  (`make wasm` writes it when `brotli` is installed) — a quarter of the
-  bytes on the wire.
+  when the client accepts it; the wasm is the runtime the olang binary
+  embeds (`runtime.wasm()`), served from memory in its brotli form — a
+  quarter of the bytes on the wire.
 - **Security headers** — `X-Content-Type-Options`, `Referrer-Policy`,
   `X-Frame-Options` on all of them, the static routes included.
 - **The program image** — the frontend is served as `/app.olb`, the

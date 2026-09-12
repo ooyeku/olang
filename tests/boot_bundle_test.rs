@@ -1,5 +1,5 @@
 //! The program image from the language side (roadmap W10): `meta.encode`
-//! yields bytes behind the `olb1` header, a syntax error is an `Err`,
+//! yields bytes behind the `olb2` header, a syntax error is an `Err`,
 //! and the Ok(String) miss names its fix.
 
 use std::process::Command;
@@ -41,7 +41,7 @@ fn meta_encode_yields_an_image_behind_its_header() {
          match meta.encode(\"println(@nope(1))\") { Ok(b) => println(\"ok\"), Err(e) => println(\"err\") }",
     );
     assert_eq!(rc, 0, "{out}");
-    assert_eq!(out, "olb1\ntrue\nerr\ntrue\nerr\n");
+    assert_eq!(out, "olb2\ntrue\nerr\ntrue\nerr\n");
 }
 
 #[test]

@@ -31,6 +31,8 @@ pub mod proc;
 pub mod random;
 #[cfg(feature = "regex-module")]
 pub mod regex_mod;
+#[cfg(feature = "native")]
+pub mod runtime;
 pub mod string;
 pub mod task;
 pub mod testing;
@@ -65,6 +67,8 @@ pub fn get_stdlib() -> HashMap<String, Value> {
     stdlib.insert("math".to_string(), math::create_math_module());
     #[cfg(feature = "native")]
     stdlib.insert("os".to_string(), os::create_os_module());
+    #[cfg(feature = "native")]
+    stdlib.insert("runtime".to_string(), runtime::create_runtime_module());
     #[cfg(feature = "native")]
     stdlib.insert("proc".to_string(), proc::create_proc_module());
     stdlib.insert("random".to_string(), random::create_random_module());

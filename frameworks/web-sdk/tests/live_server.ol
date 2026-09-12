@@ -81,7 +81,7 @@ test "the program image is served, and the source stays as the fallback" {
     let image = unwrap(http.get(base + "/app.olb"))
     assert_eq(image.status, 200)
     // The image header: magic first, then the version that wrote it.
-    assert_eq(str.starts_with(image.body, "olb1"), true)
+    assert_eq(str.starts_with(image.body, "olb2"), true)
     let shell = unwrap(http.get(base + "/"))
     assert_eq(str.contains(shell.body, "data-bin=\"/app.olb\""), true)
     assert_eq(str.contains(shell.body, "data-src=\"/app.ol\""), true)
@@ -159,17 +159,29 @@ test "a large text response is gzipped only for a client that accepts it" {
     assert_eq(str.length(packed.body) < str.length(plain.body), true)
 }
 
-test "configured headers leave a streamed file response intact" {
-    // The hashed wasm is served with `body_file`; with `"headers"` set the
-    // response used to be rebuilt around a `body` it did not have (a 500).
-    let wasm = if fs.exists("static/olang_playground.wasm") => "static/olang_playground.wasm"
-        else if fs.exists("../static/olang_playground.wasm") => "../static/olang_playground.wasm"
-        else => ""
-    if wasm != "" => {
-        let resp = unwrap(http.get(painted_base + "/olang.wasm"))
-        assert_eq(resp.status, 200)
-        assert_eq(map_get(resp.headers, "content-type"), "application/wasm")
-        assert_eq(map_get(resp.headers, "x-content-type-options"), "nosniff")
+test "the embedded runtime is served from memory, with the configured headers" {
+    // The runtime is the binary's own (`runtime.wasm()`); a binary built
+    // without it answers 503 and says what to build.
+    match runtime.wasm() {
+        Ok(r) => {
+            let resp = unwrap(http.get(painted_base + "/olang.wasm"))
+            assert_eq(resp.status, 200)
+            assert_eq(map_get(resp.headers, "content-type"), "application/wasm")
+            assert_eq(map_get(resp.headers, "x-content-type-options"), "nosniff")
+            assert_eq(map_get(resp.headers, "etag"), "\"" + map_get(r, "hash") + "\"")
+            let hashed = unwrap(http.get(painted_base + "/olang." + map_get(r, "hash") + ".wasm"))
+            assert_eq(hashed.status, 200)
+            assert_eq(str.contains(map_get(hashed.headers, "cache-control"), "immutable"), true)
+            // The shell names the content-addressed URL.
+            let shell = unwrap(http.get(painted_base + "/"))
+            assert_eq(str.contains(shell.body, "/olang." + map_get(r, "hash") + ".wasm"), true)
+            // Negotiated: brotli when accepted, the raw bytes otherwise.
+            let br = unwrap(http.get(painted_base + "/olang.wasm", #{ "headers": #{ "Accept-Encoding": "br" } }))
+            assert_eq(map_get(br.headers, "content-encoding"), "br")
+        },
+        Err(e) => {
+            let resp = unwrap(http.get(painted_base + "/olang.wasm"))
+            assert_eq(resp.status, 503)
+        }
     }
-    else => ()
 }

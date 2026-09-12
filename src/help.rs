@@ -5486,6 +5486,31 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             &[r##"http.response_with_headers(200, compress.gzip(body), #{ "Content-Encoding": "gzip" })"##],
         );
         self.doc_ex(
+            "compress.brotli",
+            "compress.brotli(data)",
+            "Bytes",
+            "Bytes",
+            "The brotli encoding of a string or Bytes value at quality 5 — what `Content-Encoding: br` carries; a wasm runtime is a quarter of its raw bytes.",
+            &[r##"http.response_with_headers(200, compress.brotli(body), #{ "Content-Encoding": "br" })"##],
+        );
+        self.doc_ex(
+            "runtime.wasm",
+            "runtime.wasm()",
+            "Result",
+            "runtime",
+            "The browser runtime this olang binary embeds: Ok(#{ \"bytes\", \"hash\", \"gzip\", \"br\", \"version\" }) — the wasm, the first sixteen hex digits of its SHA-256 (the name in /olang.<hash>.wasm), its compressed forms, and the olang version — or Err naming how to build a binary that carries one (cargo xtask wasm, then reinstall).",
+            &[r##"let rt = unwrap(runtime.wasm())
+route("GET", "/olang." + map_get(rt, "hash") + ".wasm", (req, p) => { status: 200, body: map_get(rt, "br"), headers: #{ "Content-Type": "application/wasm", "Content-Encoding": "br" } })"##],
+        );
+        self.doc_ex(
+            "runtime.version",
+            "runtime.version()",
+            "String",
+            "runtime",
+            "The olang version this binary is.",
+            &[r##"runtime.version()  // "0.84.0""##],
+        );
+        self.doc_ex(
             "compress.gunzip",
             "compress.gunzip(b)",
             "Result",

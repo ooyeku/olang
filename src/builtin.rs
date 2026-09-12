@@ -868,6 +868,11 @@ impl BuiltinFunctions {
             return crate::stdlib::os::call_os_function(os_function, arguments)
                 .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
+        #[cfg(feature = "native")]
+        if let Some(runtime_function) = name.strip_prefix("runtime.") {
+            return crate::stdlib::runtime::call_runtime_function(runtime_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
+        }
 
         // Handle proc functions (child processes + pipelines)
         #[cfg(feature = "native")]

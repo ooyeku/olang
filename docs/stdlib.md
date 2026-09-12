@@ -1032,6 +1032,7 @@ return `Result`, since arbitrary input may not be compressed data.
 |---|---|
 | `compress.gzip(data)` | gzip at the default level (6) |
 | `compress.gzip_level(data, n)` | gzip at level `n`, 0..=9 |
+| `compress.brotli(data)` | brotli at quality 5 — what `Content-Encoding: br` carries; a quarter of the bytes for a wasm |
 | `compress.gunzip(b)` | `Ok(Bytes)` or `Err(message)` |
 | `compress.deflate(data)` / `compress.inflate(b)` | raw deflate, no gzip header, and its inverse |
 
@@ -1185,6 +1186,34 @@ declaration written in another.
 println(to_string(unwrap(meta.eval("2 + 3"))))     // 5
 println(meta.lit([1, "a"]))                        // [1, "a"]
 ```
+
+## `runtime` — what this binary carries
+
+The olang binary carries its browser runtime: the playground wasm
+(olang compiled for `wasm32-unknown-unknown`, the browser profile the
+web SDK ships), embedded at build time from the artifact `cargo xtask
+wasm` builds. The web SDK's `serve` reads it from here, so an app has no
+wasm file to build, copy, or keep in step with the binary; a program
+that serves its own routes reads the same bytes.
+
+| Function | Result |
+|---|---|
+| `runtime.wasm()` | `Ok(#{ "bytes", "hash", "gzip", "br", "version" })` — the runtime's bytes, the first sixteen hex digits of their SHA-256 (the name in `/olang.<hash>.wasm` and the ETag), the gzip and brotli forms (computed once per process), and the olang version it is; `Err(message)` naming how to build a binary that carries one |
+| `runtime.version()` | the olang version string |
+
+```olang no-run
+let rt = unwrap(runtime.wasm())
+fn wasm(req, params) = {
+    status: 200, body: map_get(rt, "br"),
+    headers: #{ "Content-Type": "application/wasm", "Content-Encoding": "br",
+                "ETag": "\"" + map_get(rt, "hash") + "\"" }
+}
+```
+
+A binary built without the artifact (a fresh checkout's `cargo build`
+before `cargo xtask wasm`, or a `cargo install` from crates.io) answers
+`Err`; `serve` then serves the shell and answers the runtime's URLs
+with a 503 that says what to build.
 
 ## `os` — operating system
 

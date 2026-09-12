@@ -90,6 +90,16 @@ main() {
     # `otc update`; setup creates nothing there. Subsystems create their
     # own directories on first use, and `otc doctor` audits the result.
 
+    # The browser runtime the olang binary embeds: built first, so the
+    # binary installed below carries it (build.rs reads the artifact).
+    if rustup target list --installed 2>/dev/null | grep -q wasm32-unknown-unknown \
+        || rustup target add wasm32-unknown-unknown; then
+        print_status "Building the browser runtime (cargo xtask wasm)..."
+        cargo xtask wasm || print_warning "the browser runtime did not build; olang will install without it (web pages will report a missing runtime)"
+    else
+        print_warning "wasm32-unknown-unknown is not installable; olang will install without its browser runtime"
+    fi
+
     # Install olang and otc using cargo install
     print_status "Installing olang..."
     if cargo install --path . --bin olang; then

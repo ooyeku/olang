@@ -435,6 +435,39 @@ Tags as in W9.
 | `[olang]` Alias fields as nodes in `meta.parse` | an alias's `type` was text, so the shape check could not be a rule and `tools/check.ol` stayed | **landed** — an alias declaration's `type` is a type node (`form: "record"` with `fields`, or whatever the alias names), and a struct's fields carry a `type_node` beside their `type` text (which derive macros compare). Every gate lives in the rules files. Pinned in tests/w18_test.rs |
 | `[web-sdk]` A served test cannot use `http.defer`: `dispatch` hops the handler to a task under `olang test` | `dispatch_with` ran every handler on a spawned task when `OLANG_TEST` was set, `serve`'s workers included, so `http.defer` found no request on the task's thread; the workaround was clearing `OLANG_TEST` by hand | **landed** — the hop is a parameter: a direct `dispatch` under `olang test` still hops (the cell-escape check the hop exists for), `serve` passes `false` — its worker is already the thread. The live server test defers a route and answers it from a task over the wire |
 
+## W19 — the embedded runtime
+
+The browser has to run olang and the wasm is the interpreter, so the
+wasm itself cannot go; what can go is the *file* — the separate build,
+the copy in every app's `static/`, the sync tool, and the rule about
+matching checkouts. Logged from open-track, 2026-09-11; both the
+embedding and the image stamp were already OL issues. Tags as in W9.
+
+| Item | Observed | Status |
+|---|---|---|
+| `[olang]` Build the wasm as part of the `olang` crate | every consumer runs `make wasm` and copies `olang_playground.wasm` (and its `.gz`/`.br` siblings) into its own `static/`; open-track carries `tools/sync-runtime.ol`, a CI step, gitignore lines, an env check, a copy step in the sample's launch tool, and a CLAUDE.md paragraph about matching checkouts, and a stale copy fails in a user's browser as "Function not found" | **landed** — `cargo xtask wasm` (xtask/) builds `olang-playground` for `wasm32-unknown-unknown --release` (the browser profile; `--full` also stages the website's); the root crate's `build.rs` copies the artifact into `OUT_DIR` and `src/runtime_wasm.rs` embeds it with `include_bytes!`, so the next `cargo build` or `cargo install --path .` of olang carries the runtime (4.9 MB). A checkout without the artifact, and the wasm build of olang itself, embed nothing. `make wasm`, `setup.sh`, and the release workflow build it first |
+| `[web-sdk]` Serve the runtime from memory | `serve` reads `static/olang_playground.wasm` from the app's directory, falling back to the SDK's committed copy in `frameworks/web-sdk/static/`; the hashed URL is computed from whichever file it found | **landed** — `serve` answers `/olang.wasm` and `/olang.<hash>.wasm` from `runtime.wasm()`: the hash, the gzip form, and the brotli form (`compress.brotli`, new) are computed once, and the response negotiates `Accept-Encoding` from memory (1.17 MB brotli, 1.42 MB gzip, 4.9 MB raw). The file lookup, the SDK's copy, the `make wasm` copy steps, and the examples' boot warnings are gone; a binary without the runtime serves the shell and answers the runtime's URLs with a 503 naming the build. Pinned in the SDK's live server test |
+| `[olang]` Expose the runtime to programs | an app that serves its own routes (open-track's main.ol) recomputes the wasm's hash for its preload tag by reading the file | **landed** — `runtime.wasm()` answers `#{ bytes, hash, gzip, br, version }`, `runtime.version()` the version; the browser examples serve their `/olang.wasm` from it. Pinned in tests/w19_test.rs |
+| `[olang]` Stamp the program image | the image header names the olang version that wrote it and nothing else; a runtime that cannot decode an image says only that the version differs | **landed** — the header is `olb2` followed by a format number (`olb::FORMAT`), then the version; a runtime that reads another format reports "program image format N cannot be loaded by a runtime that reads format M" and the page falls back to the source, and a format-1 image is named as such rather than dismissed as not an image. Pinned in src/olb.rs |
+
+Three rows from a brainstorm on 2026-09-11, each with the number a
+release can pin:
+
+| Item | Observed | Status |
+|---|---|---|
+| `[web-sdk]` The boot budget as a gate | the harness's `--boot` mode reports `run_ms` for the SDK demo's image, and the W16 row set an acceptance of session start under 100 ms, but nothing fails when it regresses — open-track measured `run_ms` at 217 ms with an empty list and 434 with a hundred rows before the adoption fix, and no test would have caught the climb | **landed** — tests/w19_test.rs bundles the SDK demo's client as `serve` does (hot hints included), boots the image in the dom harness — which now carries the SDK's `#app` mount point, so the boot covers the first render — and asserts decode plus run under 60 ms (measured 1 + 7 ms on an M-series laptop, 2026-09-11; the first render runs on the VM, `rerender [vm]`). It skips where node or the wasm artifact is absent, as the W12 boot pin does |
+| `[olang]` `olang check` reads aliases and record shapes across files | the row was written on the assumption that a bare `olang check .` checks each file with its own declarations only | **not reproduced** — `olang check` already resolves a file's `use` declarations (`module_programs`, the same resolver the LSP uses) and feeds the imported modules as context, and the alias table is collected from context first: with `share type Task = { title: String, done: Bool }` and `share type Shape = enum { ... }` in `lib/types.ol`, `olang check .` over a `main.ol` that imports them reports the `titel` typo through the alias and the missing `Rect` arm. Pinned in tests/w19_test.rs so the assumption stays wrong |
+| `[olang]` Strings as one allocation | `ValueData::String` is `Arc<String>`: two allocations per string, so `"w" + to_string(n)` in `wordfreq` costs four mallocs an iteration — the bulk of its remaining gap to Node (508 → 552 ms would meet 1.5×) — and every `"id-" + to_string(n)` in the SDK pays the same | planned — the row starts with a measurement: allocations per iteration on `strbuild` and `wordfreq` (a counting allocator under a feature flag) and the ceiling an `Arc<str>` representation would reach, since the change touches every string site in the VM. The representation lands only if the measurement says it closes the gap; if a fused concatenation (`ConcatToString` and its siblings) gets there first, the row records that instead |
+
+What does not change: a consumer's `.olang-ref` pin still matters, because
+its CI builds olang at that commit — but it pins one artifact instead of
+two, and a stale ref fails in CI as a version mismatch rather than in a
+browser. Once the lane lands, open-track deletes its wasm copies and
+`tools/sync-runtime.ol`, the preload hash code and the boot guard in
+main.ol (replaced by one version check against the embedded runtime),
+the wasm lines in CI, the gitignore, and `tools/env.ol`, the copy step
+in the sample's launch tool, and the CLAUDE.md paragraph.
+
 ## Process
 
 One lane at a time, each landing with its tests and documentation in

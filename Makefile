@@ -49,29 +49,14 @@ prepush:
 	cargo build --release
 	cd examples && ../target/release/olang run run_all.ol
 
-# Build the playground wasm and stage it where the consumers load it:
-# the tracker example serves static/olang_playground.wasm, and the
-# website's playground worker fetches static/playground/olang.wasm
-# (website/scripts/sync-playground.mjs does the same staging at site
-# build time). Needs `rustup target add wasm32-unknown-unknown` once.
+# Build the browser runtime. `cargo xtask wasm --full` builds the
+# website playground's profile (the whole stdlib) and stages it at
+# website/static/playground/olang.wasm, then the browser profile the
+# web SDK and the examples ship — which the next `cargo build` of olang
+# embeds in the binary (build.rs), so no app copies a file. Needs
+# `rustup target add wasm32-unknown-unknown` once.
 wasm:
-	# The website's playground carries the whole stdlib (`re`, RSA).
-	cargo build -p olang-playground --features full --target $(WASM_TARGET) --release
-	mkdir -p website/static/playground
-	cp $(WASM_ARTIFACT) website/static/playground/olang.wasm
-	# The browser profile the SDK and the examples ship: no `re`, no RSA.
-	cargo build -p olang-playground --target $(WASM_TARGET) --release
-	cp $(WASM_ARTIFACT) examples/web/app/static/olang_playground.wasm
-	cp $(WASM_ARTIFACT) examples/web/ledger/static/olang_playground.wasm
-	cp $(WASM_ARTIFACT) frameworks/web-sdk/static/olang_playground.wasm
-	# A pre-compressed sibling next to each copy, when brotli is installed:
-	# the servers negotiate Accept-Encoding and send a quarter of the bytes.
-	@if command -v brotli >/dev/null 2>&1; then \
-	  for f in examples/web/app/static/olang_playground.wasm examples/web/ledger/static/olang_playground.wasm frameworks/web-sdk/static/olang_playground.wasm; do \
-	    brotli -f -q 11 $$f -o $$f.br; \
-	  done; \
-	fi
-
+	cargo xtask wasm --full
 # Local cross-check of everything a release ships: the release binaries,
 # the playground wasm, and the VS Code .vsix, staged into dist/out/
 # (gitignored) with a SHA256SUMS to compare against CI's.

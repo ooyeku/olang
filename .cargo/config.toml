@@ -7,6 +7,11 @@
 [env]
 RUST_MIN_STACK = "16777216"
 
+# `cargo xtask wasm` builds the browser runtime the olang binary embeds
+# (xtask/src/main.rs).
+[alias]
+xtask = "run -p xtask --"
+
 # Wasm playground builds select getrandom 0.4's opt-in "custom" backend:
 # src/playground.rs defines the __getrandom_v03_custom hook, fed by the
 # page's crypto.getRandomValues through the host_random_bytes import.

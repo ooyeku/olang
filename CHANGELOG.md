@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The browser runtime is embedded in the `olang` binary.** `cargo xtask
+  wasm` (or `make wasm`) builds the playground wasm and the next build
+  of olang carries it (`build.rs`); `setup.sh` and the release workflow
+  build it first. **`runtime.wasm()`** answers the bytes, their hash, and
+  their gzip and brotli forms; **`runtime.version()`** the version. The
+  web SDK's `serve` and the browser examples serve the runtime from
+  memory — no `static/olang_playground.wasm`, no copies, no sync — and
+  negotiate brotli or gzip from the embedded forms. **`compress.brotli`**
+  joins gzip.
+- **The program image carries a format number** (`olb2`): a runtime that
+  reads another format says so, and the page falls back to the source.
+- **The boot budget is a gate**: the SDK demo's image must boot in the
+  dom harness under 60 ms (measured 8), first render included; the
+  harness's fake DOM carries the SDK's `#app` mount point.
+
 - **Record shape aliases**: `type Task = { title: String, done: Bool }`
   names an annotation, usable wherever an annotation goes (`t: Task`,
   `[Task]`, a return, a struct field), declared above or below its use.

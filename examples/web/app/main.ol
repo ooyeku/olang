@@ -70,14 +70,13 @@ let board_html = unwrap(fs.read_file("static/board.html"))
 let board_ol = unwrap(fs.read_file("static/board.ol"))
 let suite_css = unwrap(fs.read_file("static/suite.css"))
 
-// The wasm artifact is gitignored; warn loudly at boot when missing.
-// (fs.exists, not read_file: the artifact is binary, and reading it as
-// a string fails on non-UTF-8 bytes even when the file is fine.)
-if !fs.exists("static/olang_playground.wasm") => {
-    println("WARNING: static/olang_playground.wasm is missing — the frontend cannot boot.")
-    println("Build and copy it:")
-    println("  cargo build -p olang-playground --target wasm32-unknown-unknown --release")
-    println("  cp target/wasm32-unknown-unknown/release/olang_playground.wasm examples/web/app/static/")
+// The browser runtime is the one this olang binary embeds
+// (`runtime.wasm()`): no artifact to build or copy, the same build as
+// the server. A binary built without it says so here and the page
+// reports the missing runtime.
+let runtime_wasm = match runtime.wasm() {
+    Ok(r) => r,
+    Err(e) => { println("WARNING: " + e); () }
 }
 
 // ── the olang frontend: the same tracker with its logic in app.ol,
@@ -140,19 +139,21 @@ fn board_source(req, params) =
 fn suite_styles(req, params) =
     http.response_with_headers(200, suite_css,
         #{ "Content-Type": "text/css; charset=utf-8", "Cache-Control": "no-store" })
-// The wasm is binary: body_file serves raw bytes straight from disk. A
-// pre-compressed sibling (`make wasm` writes the .br when brotli is
-// installed) goes out with its Content-Encoding when the browser accepts
-// it — a quarter of the bytes on the wire.
+// The wasm from memory: the brotli or gzip form the runtime carries
+// goes out with its Content-Encoding when the browser accepts it — a
+// quarter of the bytes on the wire — the raw bytes otherwise.
 fn olang_wasm(req, params) = {
-    let accepts = if map_has_key(req.headers, "accept-encoding") =>
-        map_get(req.headers, "accept-encoding") else => ""
-    let base = #{ "Content-Type": "application/wasm", "Cache-Control": "no-cache", "Vary": "Accept-Encoding" }
-    if str.contains(accepts, "br") && fs.exists("static/olang_playground.wasm.br") =>
-        { status: 200, body_file: "static/olang_playground.wasm.br", headers: map_set(base, "Content-Encoding", "br") }
-    else if str.contains(accepts, "gzip") && fs.exists("static/olang_playground.wasm.gz") =>
-        { status: 200, body_file: "static/olang_playground.wasm.gz", headers: map_set(base, "Content-Encoding", "gzip") }
-    else => { status: 200, body_file: "static/olang_playground.wasm", headers: base }
+    if runtime_wasm == () => http.response(503, "this olang binary carries no browser runtime")
+    else => {
+        let accepts = if map_has_key(req.headers, "accept-encoding") =>
+            map_get(req.headers, "accept-encoding") else => ""
+        let base = #{ "Content-Type": "application/wasm", "Cache-Control": "no-cache", "Vary": "Accept-Encoding" }
+        if str.contains(accepts, "br") && map_get(runtime_wasm, "br") != () =>
+            { status: 200, body: map_get(runtime_wasm, "br"), headers: map_set(base, "Content-Encoding", "br") }
+        else if str.contains(accepts, "gzip") && map_get(runtime_wasm, "gzip") != () =>
+            { status: 200, body: map_get(runtime_wasm, "gzip"), headers: map_set(base, "Content-Encoding", "gzip") }
+        else => { status: 200, body: map_get(runtime_wasm, "bytes"), headers: base }
+    }
 }
 fn app_image(req, params) =
     { status: 200, body: app_olb,

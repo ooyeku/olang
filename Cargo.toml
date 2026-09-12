@@ -12,7 +12,7 @@ keywords = ["language", "repl", "interpreter", "functional"]
 categories = ["development-tools"]
 
 [workspace]
-members = [".", "otc", "playground", "olang-ods"]
+members = [".", "otc", "playground", "olang-ods", "xtask"]
 
 [features]
 default = ["native", "full"]
@@ -29,6 +29,7 @@ rsa-crypto = ["dep:rsa"]
 # (wasm32) build compiles with --no-default-features; gated code falls back
 # to a clear "unavailable in the playground" error.
 native = [
+    "dep:brotli",
     "dep:rusqlite",
     "dep:rustyline",
     "dep:reqwest",
@@ -65,6 +66,10 @@ postcard = { version = "1.1", features = ["use-std"] }
 # gzip/deflate for `compress` and the web SDK's response encoding. The
 # default pure-Rust backend (miniz_oxide) builds for wasm too.
 flate2 = "1.1"
+# Brotli for the browser runtime on the wire (`compress.brotli`,
+# `runtime.wasm()`'s `br` form). Native only: a page never encodes, and
+# the encoder is nearly a megabyte of wasm.
+brotli = { version = "8", optional = true }
 # The VM's string-keyed maps and its function/builtin name tables hash
 # with FxHash: short keys, no DoS exposure, a fraction of SipHash's cost.
 rustc-hash = "2"

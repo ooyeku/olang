@@ -585,34 +585,32 @@ page.
 
 ## Running it
 
-The wasm artifact is built once and served as a static file. From the
-repository root:
+The browser runtime is the wasm the `olang` binary embeds: `cargo xtask
+wasm` (or `make wasm`) builds it once, and the next `cargo build` or
+`cargo install --path .` of olang carries it — `make install` and
+`setup.sh` do both. There is no artifact to copy into an app:
 
 ```bash
-cargo build -p olang-playground --target wasm32-unknown-unknown --release
-cp target/wasm32-unknown-unknown/release/olang_playground.wasm examples/web/app/static/
-
 cd examples/web/app
 olang main.ol            # http://127.0.0.1:7317
 ```
 
-(The target arrives via `rustup target add wasm32-unknown-unknown` if
-it is not installed. `make wasm` from the repository root runs both
-steps — and also stages the website playground's copy.) The tracker
-checks for the artifact at boot and prints these exact commands if it
-is missing.
+(The wasm target arrives via `rustup target add wasm32-unknown-unknown`
+if it is not installed.) A binary built without the runtime says so at
+boot and answers the runtime's URL with a 503 naming the build.
 
 On the server side, each frontend page is a handful of routes in
 [`examples/web/app/main.ol`](../examples/web/app/main.ol) — the page, its
 `.ol` source, and the shared shim — all serving text read at startup;
-the wasm route uses `body_file`, which streams raw bytes from disk —
-the response form for binary content:
+the wasm route serves the embedded bytes, `runtime.wasm()`, in the
+brotli or gzip form the client accepts:
 
 ```olang no-run
+let rt = unwrap(runtime.wasm())
 fn olang_wasm(req, params) = {
     status: 200,
-    body_file: "static/olang_playground.wasm",
-    headers: #{ "Content-Type": "application/wasm" }
+    body: map_get(rt, "br"),
+    headers: #{ "Content-Type": "application/wasm", "Content-Encoding": "br" }
 }
 ```
 

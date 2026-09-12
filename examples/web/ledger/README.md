@@ -10,11 +10,8 @@ rows, and the frontend builds Frames, runs `group_by`, and renders
 ## Run
 
 ```bash
-# one-time: build the wasm runtime the frontend boots on
-cargo build -p olang-playground --target wasm32-unknown-unknown --release
-cp target/wasm32-unknown-unknown/release/olang_playground.wasm examples/web/ledger/static/
-# (or `make wasm` at the repo root, which stages it for every example)
-
+# The frontend boots on the browser runtime the olang binary embeds
+# (`make install` builds it in); nothing to copy.
 cd examples/web/ledger
 olang seed.ol          # optional: three months of demo data
 olang main.ol          # http://127.0.0.1:7411, db ledger.db
@@ -58,9 +55,9 @@ static/ledger.ol  the frontend: dom events, ods Frames, viz charts,
 static/index.html the page; static/olang-dom.js the web SDK's shim, copied verbatim
 
 Every response carries security headers; text bodies of a kilobyte or
-more go out gzipped when the client accepts it, and the wasm is served
-from its brotli sibling (`make wasm` writes it when `brotli` is
-installed). The frontend also travels as a program image (`/ledger.olb`),
+more go out gzipped when the client accepts it, and the wasm — the
+runtime the olang binary embeds — is served from memory in its brotli
+form. The frontend also travels as a program image (`/ledger.olb`),
 decoded in the browser without parsing. Transaction rows, budget rows,
 and the category manager carry a `data-key` and repaint through
 `dom.morph`, so the note or amount being edited keeps its focus across

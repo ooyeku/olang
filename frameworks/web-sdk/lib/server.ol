@@ -504,13 +504,16 @@ test "the shell carries the first paint and its state when given a view" {
 /// Serves `/` (the shell), `/web.css`, `/olang-dom.js`, `/app.ol`
 /// (the bundled client), `/app.olb` (the client as a program image the
 /// runtime loads without parsing), the wasm runtime, and every route in
-/// the table. The runtime is served two ways: `/olang.<hash>.wasm`, the
-/// content-addressed URL the shell references (immutable, cached for
-/// a year — a new build is a new URL), and `/olang.wasm` (revalidated
-/// each load). Both negotiate `Accept-Encoding`: a pre-compressed
-/// sibling on disk (`olang_playground.wasm.br` or `.gz`, next to the
-/// wasm) is served with the matching `Content-Encoding` — a 6.7 MB
-/// runtime is 1.9 MB gzipped, and less with brotli.
+/// the table. The runtime is the one this olang binary embeds
+/// (`runtime.wasm()`): no file on disk, no build to copy, the same
+/// build as the server that serves the image. It is served two ways:
+/// `/olang.<hash>.wasm`, the content-addressed URL the shell references
+/// (immutable, cached for a year — a new build is a new URL), and
+/// `/olang.wasm` (revalidated each load). Both negotiate
+/// `Accept-Encoding`: the brotli or gzip form, computed once, goes out
+/// with its `Content-Encoding` — a 4.8 MB runtime is under 1 MB with
+/// brotli. A binary built without the runtime serves the shell and says
+/// so at boot; the page then reports that the runtime is missing.
 /// Blocks serving; returns only on failure to bind.
 share fn serve(config) = {
     let title = get_or(config, "title", "olang app")
@@ -562,27 +565,22 @@ share fn serve(config) = {
         Err(e) => unwrap(Err("client bundle does not encode: " + e)),
         Ok(bytes) => bytes
     }
-    let wasm_path = if fs.exists("static/olang_playground.wasm") =>
-        "static/olang_playground.wasm"
-    else => sdk + "/static/olang_playground.wasm"
-    if len(client_paths) > 0 && !fs.exists(wasm_path) => {
-        println("WARNING: olang_playground.wasm not found — the frontend cannot boot.")
-        println("Build and copy it:")
-        println("  cargo build -p olang-playground --target wasm32-unknown-unknown --release")
-        println("  cp target/wasm32-unknown-unknown/release/olang_playground.wasm static/")
+    // The browser runtime this binary embeds: its bytes, its content
+    // hash (the ETag and the content-addressed URL's name), and its
+    // brotli and gzip forms, all computed once here.
+    let wasm = match runtime.wasm() {
+        Ok(r) => r,
+        Err(e) => {
+            if len(client_paths) > 0 => println("WARNING: " + e) else => ()
+            ()
+        }
     }
 
     let css_tag = etag_of(css)
     let shim_tag = etag_of(shim)
     let bundle_tag = etag_of(bundle)
     let image_tag = if image == () => "" else => etag_of(image)
-    // The wasm's hash comes from its bytes, computed once at boot
-    // (crypto hashes accept Bytes directly); it is both the ETag and
-    // the content-addressed URL's name.
-    let wasm_hash = match fs.read_bytes(wasm_path) {
-        Ok(b) => str.substring(crypto.sha256(b), 0, 16),
-        Err(e) => ""
-    }
+    let wasm_hash = if wasm == () => "" else => map_get(wasm, "hash")
     let wasm_tag = if wasm_hash == "" => "" else => "\"" + wasm_hash + "\""
     let hashed_wasm_url = if wasm_hash == "" => "/olang.wasm" else => "/olang." + wasm_hash + ".wasm"
 
@@ -607,22 +605,27 @@ share fn serve(config) = {
                   headers: #{ "Content-Type": "application/octet-stream",
                               "ETag": image_tag, "Cache-Control": "no-cache" } }
 
-    // The wasm response: a pre-compressed sibling when the client
-    // accepts its encoding, the raw file otherwise. `cache` is the
-    // Cache-Control the URL wants.
+    // The wasm response from memory: the brotli or gzip form when the
+    // client accepts it, the raw bytes otherwise. `cache` is the
+    // Cache-Control the URL wants. Without an embedded runtime the
+    // route answers a 503 that says what to build.
     fn wasm_response(req, cache) = {
-        let accepts = if map_has_key(req.headers, "accept-encoding") =>
-            map_get(req.headers, "accept-encoding") else => ""
-        let encoded = if str.contains(accepts, "br") && fs.exists(wasm_path + ".br") =>
-            ["br", wasm_path + ".br"]
-        else if str.contains(accepts, "gzip") && fs.exists(wasm_path + ".gz") =>
-            ["gzip", wasm_path + ".gz"]
-        else => ()
-        let base = #{ "Content-Type": "application/wasm", "ETag": wasm_tag,
-                      "Cache-Control": cache, "Vary": "Accept-Encoding" }
-        if encoded == () => { status: 200, body_file: wasm_path, headers: base }
-        else => { status: 200, body_file: encoded[1],
-                  headers: map_set(base, "Content-Encoding", encoded[0]) }
+        if wasm == () => error_response(503, "no_runtime",
+            "this olang binary carries no browser runtime: build the wasm (`cargo xtask wasm`) and reinstall olang (`make install`)")
+        else => {
+            let accepts = if map_has_key(req.headers, "accept-encoding") =>
+                map_get(req.headers, "accept-encoding") else => ""
+            let encoded = if str.contains(accepts, "br") && map_get(wasm, "br") != () =>
+                ["br", map_get(wasm, "br")]
+            else if str.contains(accepts, "gzip") && map_get(wasm, "gzip") != () =>
+                ["gzip", map_get(wasm, "gzip")]
+            else => ()
+            let base = #{ "Content-Type": "application/wasm", "ETag": wasm_tag,
+                          "Cache-Control": cache, "Vary": "Accept-Encoding" }
+            if encoded == () => { status: 200, body: map_get(wasm, "bytes"), headers: base }
+            else => { status: 200, body: encoded[1],
+                      headers: map_set(base, "Content-Encoding", encoded[0]) }
+        }
     }
 
     let static_routes = [

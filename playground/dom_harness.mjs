@@ -8,8 +8,11 @@ const fakeDom = {
   "#btn": { text: "click me", value: "" },
   "#log": { text: "", value: "" },
   "body": { text: "", value: "" },
+  // The web SDK's mount point, so a real client bundle's `mount` runs
+  // under `--boot` and the boot number covers the first render.
+  "#app": { text: "", value: "", html: "" },
 };
-const handles = ["", "#count", "#btn", "#log", "body"]; // handle = index, 0 reserved
+const handles = ["", "#count", "#btn", "#log", "body", "#app"]; // handle = index, 0 reserved
 const node = (h) => {
   const el = fakeDom[handles[Number(h)]];
   el.attrs ??= {};

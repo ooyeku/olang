@@ -387,17 +387,20 @@ environment levels it: `OLANG_ACCESS_LOG` is `all` (the default),
 other machines; the default stays `127.0.0.1`), and `"sdk_dir"` to say
 where the SDK's assets are read from — by default `WEB_SDK_DIR`, then
 the directory the project's own `olang.lock` resolved `web` to (a path
-entry or a shelf entry), then the machine's shelf. It serves the
-runtime two ways: `/olang.<hash>.wasm`,
-the content-addressed URL the shell references (immutable, cached for
-a year — a new build is a new URL), and `/olang.wasm`, revalidated by
-ETag. Both negotiate `Accept-Encoding`: a pre-compressed sibling on
-disk next to the wasm (`olang_playground.wasm.br` or `.gz`) is served
-with its `Content-Encoding`. The runtime the SDK ships is the browser
-profile — no `re` module and no RSA, which a page never calls and
-which were a third of the code: 4.8 MB, 1.4 MB gzipped, under 1 MB
-brotli. The website's playground carries the whole stdlib (`make wasm`
-builds both). The shim yields to the browser between instantiating the
+entry or a shelf entry), then the machine's shelf. The runtime it
+serves is the one the `olang` binary embeds (`runtime.wasm()`): no file
+on disk, no copy to keep in step, the same build as the server that
+encodes the image. It is served two ways: `/olang.<hash>.wasm`, the
+content-addressed URL the shell references (immutable, cached for a
+year — a new build is a new URL), and `/olang.wasm`, revalidated by
+ETag. Both negotiate `Accept-Encoding`: the brotli or gzip form,
+computed once at boot, is served with its `Content-Encoding`. The
+runtime is the browser profile — no `re` module and no RSA, which a
+page never calls and which were a third of the code: 4.9 MB, 1.4 MB
+gzipped, 1.2 MB brotli. The website's playground carries the whole
+stdlib (`cargo xtask wasm --full` builds both). A binary built without
+the runtime serves the shell and answers the runtime's URLs with a 503
+that names the build. The shim yields to the browser between instantiating the
 runtime and running the bundle, so the shell paints first, and records
 the boot phases in `window.olangBoot`: `fetch_instantiate_ms`,
 `session_start_ms`, `total_ms`, and the split of the session start —
@@ -407,10 +410,9 @@ repaint spends its time is `window.olangProfile`: `start()`, act,
 `table()` — every olang function that ran, with its tier and exact
 self and total milliseconds (see the tooling chapter's `olang profile`).
 
-The playground wasm the demo serves (`static/olang_playground.wasm`)
-is a build artifact, not a committed file: `make wasm` builds it and
-copies it into place, as it does for the browser examples. A fresh
-clone runs `make wasm` once before starting the demo.
+The runtime the demo serves is the binary's own: a fresh clone runs
+`make install` (which builds the wasm and installs olang with it), and
+nothing is copied into the demo or the examples.
 
 ## Testing
 
