@@ -40,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The language server no longer reports a function declared below its
+  caller as undefined**: the semantic pass declares a file's top-level
+  functions before walking their bodies, as the runtime resolves them.
 - **A `let` annotated with an alias checks the aliased annotation on
   every tier and thread**: the VM's compiler resolves aliases (a record
   alias no longer keeps a function off the VM), its bridge interpreter

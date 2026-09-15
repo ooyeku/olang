@@ -675,3 +675,32 @@ fn robustness_batch_hints_actions_symbols_use() {
         "use-completion lists embedded packages: {v}"
     );
 }
+
+#[test]
+fn a_function_declared_below_its_caller_is_not_undefined() {
+    // The runtime resolves a top-level function whatever its order (a
+    // module re-closes over the whole file; the entry file declares on
+    // first use), and so must the editor: the semantic pass reported
+    // "Undefined variable: spin_for" over a hover that named it.
+    let mut c = Client::start();
+    let uri = "file:///order.ol";
+    c.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {} }
+    }));
+    c.recv_until(|m| m["id"] == 1);
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+            "textDocument":{"uri":uri,"languageId":"olang","version":1,
+                            "text":"share fn ask_within(reply) = {\n    let quick = spin_for(reply, 0)\n    if quick != () => Ok(quick) else => Err(\"timed out\")\n}\n\nfn spin_for(reply, tries) =\n    if tries == 0 => () else => spin_for(reply, tries - 1)\n\nprintln(show(ask_within(chan.new())))\n"}}
+    }));
+    let m = c.recv_until(|m| diagnostics_of(m).is_some());
+    let ds = diagnostics_of(&m).unwrap();
+    let errors: Vec<&str> = ds
+        .iter()
+        .filter(|d| d["severity"] == 1)
+        .map(|d| d["message"].as_str().unwrap_or(""))
+        .collect();
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+}

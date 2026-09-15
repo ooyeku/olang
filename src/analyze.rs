@@ -35,6 +35,10 @@ pub struct Analyzer {
     /// that shadowed an outer variable deleted the outer entry too, silently
     /// corrupting usage counts and unused-variable reports.
     shadowed: Vec<Vec<(String, VariableInfo)>>,
+    /// Top-level functions declared ahead of the walk (see
+    /// `analyze_program`): their declaration statement, when the walk
+    /// reaches it, is the same declaration, not a duplicate.
+    hoisted: HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -102,6 +106,7 @@ impl Analyzer {
             enum_definitions: HashMap::new(),
             builtin_names,
             shadowed: Vec::new(),
+            hoisted: HashSet::new(),
         }
     }
 
@@ -114,10 +119,38 @@ impl Analyzer {
             enum_definitions: HashMap::new(),
             builtin_names: HashSet::new(),
             shadowed: Vec::new(),
+            hoisted: HashSet::new(),
         }
     }
 
     pub fn analyze_program(&mut self, program: &Program) -> Result<(), AnalysisError> {
+        // A file's top-level functions are visible to one another whatever
+        // their order — a module's functions are re-closed over the whole
+        // module, and the entry file declares a function on first use —
+        // so the walk starts with every one of them declared. A body that
+        // calls a helper written below it is then resolved, not reported
+        // as an undefined variable (the editor showed that report over a
+        // hover that named the function).
+        for statement in &program.statements {
+            let decl = match statement.unwrapped() {
+                Statement::FunctionDecl(f) | Statement::ShareDecl(ShareDecl::Function(f)) => f,
+                _ => continue,
+            };
+            if self.scopes[self.current_scope].contains(&decl.name) {
+                continue;
+            }
+            self.declare_in_scope(decl.name.clone());
+            self.variables.insert(
+                decl.name.clone(),
+                VariableInfo {
+                    name: decl.name.clone(),
+                    scope: self.current_scope,
+                    is_mutable: false,
+                    usage_count: 0,
+                },
+            );
+            self.hoisted.insert(decl.name.clone());
+        }
         for statement in &program.statements {
             self.analyze_statement(statement)?;
         }
@@ -169,24 +202,26 @@ impl Analyzer {
                 Ok(())
             }
             Statement::FunctionDecl(func_decl) => {
-                // Add function to current scope
-                if self.scopes[self.current_scope].contains(&func_decl.name) {
+                // Add function to current scope (a hoisted top-level
+                // declaration is already there — this is its statement)
+                if self.hoisted.remove(&func_decl.name) {
+                    // declared by the pre-pass
+                } else if self.scopes[self.current_scope].contains(&func_decl.name) {
                     return Err(AnalysisError::DuplicateVariable {
                         name: func_decl.name.clone(),
                     });
+                } else {
+                    self.declare_in_scope(func_decl.name.clone());
+                    self.variables.insert(
+                        func_decl.name.clone(),
+                        VariableInfo {
+                            name: func_decl.name.clone(),
+                            scope: self.current_scope,
+                            is_mutable: false,
+                            usage_count: 0,
+                        },
+                    );
                 }
-                self.declare_in_scope(func_decl.name.clone());
-
-                // Add function to variables map
-                self.variables.insert(
-                    func_decl.name.clone(),
-                    VariableInfo {
-                        name: func_decl.name.clone(),
-                        scope: self.current_scope,
-                        is_mutable: false,
-                        usage_count: 0,
-                    },
-                );
 
                 // Analyze function body with parameters in scope
                 self.enter_scope();
@@ -1462,13 +1497,17 @@ impl Analyzer {
         match share_decl {
             ShareDecl::Trait(_) | ShareDecl::Impl(_) => Ok(()),
             ShareDecl::Function(func_decl) => {
-                // Add function to current scope
-                if self.scopes[self.current_scope].contains(&func_decl.name) {
+                // Add function to current scope (hoisted by the pre-pass
+                // when it is a top-level declaration)
+                if self.hoisted.remove(&func_decl.name) {
+                    // declared by the pre-pass
+                } else if self.scopes[self.current_scope].contains(&func_decl.name) {
                     return Err(AnalysisError::DuplicateVariable {
                         name: func_decl.name.clone(),
                     });
+                } else {
+                    self.declare_in_scope(func_decl.name.clone());
                 }
-                self.declare_in_scope(func_decl.name.clone());
 
                 // Add function to variables map
                 self.variables.insert(
