@@ -414,6 +414,29 @@ The runtime the demo serves is the binary's own: a fresh clone runs
 `make install` (which builds the wasm and installs olang with it), and
 nothing is copied into the demo or the examples.
 
+## Server push
+
+A handler that has nothing to say yet parks its connection under a
+topic and returns the ticket; any thread later answers every
+connection held under that topic. The holds live in the runtime's
+deferred-connection table (`http.hold`, `http.notify`), so a parked
+connection costs a socket, not a worker, and one table serves however
+many servers the process runs:
+
+```olang no-run
+use web { route, hold, notify, held }
+route("GET", "/api/changes", (req, p) => hold("issues"))
+// ... later, from the request that changed something:
+notify("issues", json_response(200, changed))   // how many were answered
+```
+
+A notified connection is answered once; a client that wants the next
+change asks again, which is the long poll a hundred tabs can hold
+without a hundred workers. `notify_all(response)` answers every topic,
+`held(topic)` counts what is parked, and a connection whose client left
+is skipped. The live server test parks two requests and answers both
+with one `notify`.
+
 ## Testing
 
 Under `olang test`, a direct `dispatch` runs each handler on a task

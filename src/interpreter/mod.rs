@@ -781,10 +781,25 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         end: i64,
         inclusive: bool,
     ) -> Option<Result<Value, InterpreterError>> {
+        self.tier_hof_range_with(name, function, start, end, inclusive, None)
+    }
+
+    /// The fold shape over a range: the accumulator threads natively
+    /// through the VM's range kernel, and no integer is boxed.
+    pub fn tier_hof_range_with(
+        &mut self,
+        name: &str,
+        function: &Value,
+        start: i64,
+        end: i64,
+        inclusive: bool,
+        init: Option<&Value>,
+    ) -> Option<Result<Value, InterpreterError>> {
         let Value::Function(f) = function else {
             return None;
         };
-        if f.parameters.len() != 1
+        let arity = if init.is_some() { 2 } else { 1 };
+        if f.parameters.len() != arity
             || f.parameters.iter().any(|p| p.default_value.is_some())
             || !f.param_bounds.is_empty()
         {
@@ -793,7 +808,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         let globals = self.global_bindings();
         let mut tier = self.bytecode_tier.take()?;
         tier.set_host_globals(globals);
-        let out = tier.try_hof_range(name, f, start, end, inclusive);
+        let out = tier.try_hof_range(name, f, start, end, inclusive, init);
         self.bytecode_tier = Some(tier);
         match out? {
             Ok(v) => Some(Ok(v)),
@@ -2060,15 +2075,6 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                             .to_string(),
                     });
                 }
-                // Under replay the task does not run: what the main
-                // thread received from it — every `chan.recv`, every
-                // `task.join` — is in the trace and replays from there,
-                // so the worker's effects are not repeated. The handle is
-                // a real one with no thread behind it; a join on it
-                // replays its recorded answer before it is ever consulted.
-                if self.timeline_replaying() {
-                    return Ok(crate::stdlib::task::handle(spawn_registry::next_id()));
-                }
                 // Real background execution: the expression evaluates on its
                 // own OS thread against a thread-safe clone of this
                 // interpreter — the same worker pattern http.serve uses. The
@@ -2079,6 +2085,13 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 let mut worker = self.thread_safe_clone();
                 let expr = expression.as_ref().clone();
                 let task_id = spawn_registry::next_id();
+                // Under a timeline the task records to, or replays from,
+                // its own stream (keyed by its spawn number): its
+                // nondeterministic calls and effects are captured in record
+                // mode and served — not repeated — in replay.
+                if let Some(timeline) = &self.timeline {
+                    worker.set_timeline(timeline.child_for_thread(task_id));
+                }
                 let handle = std::thread::Builder::new()
                     .name(format!("olang-spawn-{}", task_id))
                     .stack_size(64 * 1024 * 1024)
@@ -3475,21 +3488,18 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             caps_path_cache: HashMap::new(),
             cap_pregranted: false,
             warm_profile: None,
-            // The timeline is the main thread's view. A worker's own
-            // effects run live and are not logged; what the main thread
-            // receives from the worker (`chan.recv`, `task.join`) is, and
-            // under replay the worker is not started at all. A recorded
-            // run that starts a worker says so once, so the reader knows
-            // which side of that line the worker's effects fall on.
+            // A `spawn`ed task gets its own stream (the caller sets it
+            // right after this clone); an http worker does not — its
+            // requests arrive in an order no trace can pin — so a
+            // recorded server says so once.
             timeline: {
                 if self.timeline_recording() {
                     static TIMELINE_THREAD_WARNING: std::sync::Once = std::sync::Once::new();
                     TIMELINE_THREAD_WARNING.call_once(|| {
                         eprintln!(
-                            "note: this recorded run started a task or worker thread. The trace \
-                             logs what the main thread received from it (channel messages, join \
-                             results), not the worker's own effects; replay serves those \
-                             messages and starts no worker (docs/tooling.md)."
+                            "note: this recorded run started worker threads. A spawned task \
+                             records to and replays from its own stream; an http worker's \
+                             effects run live and are not captured (docs/tooling.md)."
                         );
                     });
                 }
@@ -3810,6 +3820,17 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // any argument type. The static side is the type checker's concern.
         if let TypeDefinition::Alias { target } = &type_decl.definition {
             self.note_type_alias(type_decl.name.clone(), target.clone());
+            return Ok(Value::Unit);
+        }
+        // A union declaration is an alias of the union annotation: `t: Id`
+        // checks as `t: Int | String` does.
+        if let TypeDefinition::Union { types } = &type_decl.definition {
+            self.note_type_alias(
+                type_decl.name.clone(),
+                TypeAnnotation::Union {
+                    types: types.clone(),
+                },
+            );
             return Ok(Value::Unit);
         }
         if let TypeDefinition::Enum { variants } = &type_decl.definition {

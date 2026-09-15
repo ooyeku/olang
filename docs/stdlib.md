@@ -1462,6 +1462,7 @@ true for 2xx):
 | `http.serve(port, handler[, options])` | serve `handler(request)` on a bounded worker pool; blocks the calling program |
 | `http.response(status, body)` / `http.response_with_headers(status, body, headers)` | build responses |
 | `http.defer()` / `http.respond(ticket, response)` | park the connection a handler is answering and complete it later, from any thread |
+| `http.hold(topic)` / `http.notify(topic, response)` / `http.notify_all(response)` / `http.held(topic)` | park the current request under a topic; answer every connection held under it (the count answered); count what is parked |
 
 Every client verb takes an optional trailing **options map** — this is
 how a request carries headers, a timeout, and authentication:

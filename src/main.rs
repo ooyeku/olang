@@ -162,6 +162,14 @@ enum Commands {
     /// Start the interactive REPL (the explicit form of bare `olang`)
     Repl,
 
+    /// Audit a project: the manifest, its dependencies, the lock, the
+    /// browser runtime this binary carries, and stale runtime copies
+    Doctor {
+        /// The project directory (default: the current directory's project)
+        #[arg(value_name = "PATH")]
+        path: Option<PathBuf>,
+    },
+
     /// Type-check programs without running them
     Check {
         /// Files or directories to check (default: current directory)
@@ -389,6 +397,8 @@ fn main() {
         .expect("failed to spawn interpreter thread")
         .join()
         .unwrap_or(1);
+    #[cfg(feature = "alloc-count")]
+    olang::alloc_count::report_if_asked();
     process::exit(exit_code);
 }
 
@@ -593,6 +603,9 @@ fn run() -> i32 {
             code
         }
 
+        Some(Commands::Doctor { path }) => {
+            olang::tools::doctor::run(&path.unwrap_or_else(|| PathBuf::from(".")))
+        }
         Some(Commands::Check {
             mut paths,
             rules,

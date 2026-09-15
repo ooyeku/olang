@@ -25,6 +25,7 @@ language server has [its own chapter](editors.md).
 | `olang <file> [args]` | Run a program (`olang run <file>` is the explicit form) |
 | `olang` | Start the REPL (`olang repl`) |
 | `olang check [path]` | Type-check without running; `--rules FILE` adds project lints |
+| `olang doctor [path]` | Audit a project: the manifest, its dependencies, the lock, the browser runtime the binary carries, stale runtime copies |
 | `olang eval SOURCE` | Evaluate one expression and print its value, with the working directory's project libraries in scope |
 | `olang fmt [path]` | Format sources in place; `--check` reports instead of writing |
 | `olang test [path]` | Discover and run `test` blocks; `--coverage` reports coverage |
@@ -324,6 +325,20 @@ built-in type checks:
 ```bash
 olang check --rules rules.ol .
 ```
+
+A project can also promote the checker's own advisories to errors
+without writing a rule. In `olang.toml`:
+
+```toml
+[check]
+promote = ["exhaustiveness", "shape"]
+```
+
+The classes are `exhaustiveness` (a `match` over an enum or a literal
+union that misses a case), `shape` (a literal key a declared record
+shape does not carry), `result` (a discarded `Result`), and `all`. A
+promoted finding fails `olang check` and shows as an error in the
+editor, and its message says which block promoted it.
 
 Define a rule as a top-level function whose name begins with `rule_`. The
 function takes one argument: the file's AST, flattened to a list of nodes.
@@ -687,17 +702,21 @@ and statement on it replays after it. The trace is the main thread's
 view of the program: what it receives from other threads — a
 `chan.recv`, `chan.recv_timeout`, `chan.try_recv`, or `chan.ask`
 answer, a `task.join` result — is logged in the order it arrived, and
-`chan.send` is logged too, so a replay fills no channel. A worker's own
-effects run live during recording and are not logged; under replay
-`spawn` starts no thread at all, and its handle joins from the trace.
-A recorded run that starts a worker says so once on stderr, so the
-reader knows which side of that line the worker's effects fall on.
+`chan.send` is logged too, so a replay fills no channel. A `spawn`ed
+task has a stream of its own: every event carries the thread that made
+it (0 for the main thread, the task's spawn number otherwise), the task
+records its database calls, random draws, and channel sends under its
+id, and under replay it runs against that stream — its effects are
+served, not repeated, so a worker that wrote a database while recording
+writes nothing on replay. A program that spawns in the same order meets
+the same streams.
 
 Two boundaries remain. Record/replay runs on the interpreter tier (the
 one dispatch point that sees every builtin), so a recorded run forgoes
-the bytecode tier — a debugging tool, not a hot path. And the worker's
-own side is not traced: a replay reproduces what the main thread saw,
-not what the worker did to a file or a database of its own. (Roadmap:
+the bytecode tier — a debugging tool, not a hot path. And an
+`http.serve` worker is not traced: its requests arrive in an order no
+trace can pin, so its effects run live and a recorded server says so
+once on stderr. (Roadmap:
 `replay --why`, which carries value provenance during replay to answer
 "where did this number come from?" — a chain back to the recorded
 inputs.)

@@ -37,8 +37,13 @@ pub const TRACE_FORMAT: u32 = 2;
 /// One recorded nondeterministic result, in program call order.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
-    /// Sequence number: the Nth recorded call in the run.
+    /// Sequence number: the Nth recorded call on its thread.
     pub seq: u64,
+    /// The thread that made the call: 0 for the main thread, a task's
+    /// id for a `spawn`ed worker. Absent (0) on traces from before
+    /// workers were recorded.
+    #[serde(default)]
+    pub thread: u64,
     /// The fully-qualified builtin that produced it (e.g. "time.now_ms").
     pub op: String,
     /// A deterministic fingerprint of the call's arguments (see
@@ -122,8 +127,15 @@ impl std::fmt::Display for Divergence {
 #[derive(Debug)]
 pub struct Timeline {
     mode: Mode,
+    /// Replay: this thread's events, in order. Record: unused (events
+    /// go to `shared`).
     events: Vec<Event>,
-    /// Replay cursor / record counter.
+    /// Record: the whole run's log, every thread appending — the trace
+    /// is written from here at the end.
+    shared: Option<std::sync::Arc<std::sync::Mutex<Vec<Event>>>>,
+    /// The thread this timeline records or replays for (0 = main).
+    thread: u64,
+    /// Replay cursor / record counter, per thread.
     cursor: usize,
     /// Where to write the trace on a recorded run (`None` when replaying).
     out_path: Option<std::path::PathBuf>,
@@ -144,6 +156,8 @@ impl Timeline {
         Timeline {
             mode: Mode::Record,
             events: Vec::new(),
+            shared: Some(std::sync::Arc::new(std::sync::Mutex::new(Vec::new()))),
+            thread: 0,
             cursor: 0,
             out_path: Some(out_path),
             program_path,
@@ -154,9 +168,14 @@ impl Timeline {
 
     /// Start replaying from a loaded trace.
     pub fn replay(trace: Trace) -> Timeline {
+        let all = trace.events;
+        let (mine, others): (Vec<Event>, Vec<Event>) = all.into_iter().partition(|e| e.thread == 0);
         Timeline {
             mode: Mode::Replay,
-            events: trace.events,
+            events: mine,
+            // The other threads' events wait here for `child_for_thread`.
+            shared: Some(std::sync::Arc::new(std::sync::Mutex::new(others))),
+            thread: 0,
             cursor: 0,
             out_path: None,
             program_path: trace.program_path,
@@ -167,6 +186,32 @@ impl Timeline {
 
     pub fn mode(&self) -> Mode {
         self.mode
+    }
+
+    /// The timeline a `spawn`ed task runs under: in record mode it
+    /// appends to the same log under its own thread id; in replay mode it
+    /// holds that thread's recorded events and serves them in order. A
+    /// task's id is its spawn number, so a program that spawns in the
+    /// same order gets the same streams.
+    pub fn child_for_thread(&self, thread: u64) -> Timeline {
+        let events = match (self.mode, &self.shared) {
+            (Mode::Replay, Some(shared)) => shared
+                .lock()
+                .map(|all| all.iter().filter(|e| e.thread == thread).cloned().collect())
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        Timeline {
+            mode: self.mode,
+            events,
+            shared: self.shared.clone(),
+            thread,
+            cursor: 0,
+            out_path: None,
+            program_path: self.program_path.clone(),
+            program_sha256: self.program_sha256.clone(),
+            source: self.source.clone(),
+        }
     }
 
     /// Whether `op` names a nondeterministic source that the timeline
@@ -212,12 +257,21 @@ impl Timeline {
         }
         let seq = self.cursor as u64;
         self.cursor += 1;
-        self.events.push(Event {
+        let event = Event {
             seq,
+            thread: self.thread,
             op: op.to_string(),
             args: args_fp.to_string(),
             result: result.clone(),
-        });
+        };
+        match &self.shared {
+            Some(shared) => {
+                if let Ok(mut all) = shared.lock() {
+                    all.push(event);
+                }
+            }
+            None => self.events.push(event),
+        }
     }
 
     /// Replay mode: return the recorded result for the next call, or a
@@ -250,13 +304,17 @@ impl Timeline {
         Ok(event.result.clone())
     }
 
+    /// Every event recorded so far, from whichever thread (record mode).
+    pub fn recorded_events(&self) -> Vec<Event> {
+        match &self.shared {
+            Some(shared) => shared.lock().map(|all| all.clone()).unwrap_or_default(),
+            None => self.events.clone(),
+        }
+    }
+
     /// The number of events recorded or consumed so far.
     pub fn len(&self) -> usize {
-        if self.mode == Mode::Record {
-            self.events.len()
-        } else {
-            self.cursor
-        }
+        self.cursor
     }
 
     pub fn is_empty(&self) -> bool {
@@ -264,7 +322,13 @@ impl Timeline {
     }
 
     pub fn total_events(&self) -> usize {
-        self.events.len()
+        match (self.mode, &self.shared) {
+            (Mode::Record, Some(shared)) => shared.lock().map(|all| all.len()).unwrap_or(0),
+            (Mode::Replay, Some(shared)) => {
+                self.events.len() + shared.lock().map(|all| all.len()).unwrap_or(0)
+            }
+            _ => self.events.len(),
+        }
     }
 
     /// Write the recorded trace to its output path. A no-op in replay mode.
@@ -278,7 +342,10 @@ impl Timeline {
             program_path: self.program_path.clone(),
             program_sha256: self.program_sha256.clone(),
             source: self.source.clone(),
-            events: self.events.clone(),
+            events: match &self.shared {
+                Some(shared) => shared.lock().map(|all| all.clone()).unwrap_or_default(),
+                None => self.events.clone(),
+            },
         };
         let json = serde_json::to_vec_pretty(&trace).map_err(std::io::Error::other)?;
         std::fs::write(path, json)?;
@@ -420,7 +487,7 @@ mod tests {
             program_path: "p.ol".into(),
             program_sha256: "sha".into(),
             source: "source".into(),
-            events: rec.events.clone(),
+            events: rec.recorded_events(),
         };
         let mut rep = Timeline::replay(trace);
         assert_eq!(
@@ -441,6 +508,7 @@ mod tests {
     fn replay_detects_divergence() {
         let event = |op: &str, args: &str, result: Value| Event {
             seq: 0,
+            thread: 0,
             op: op.into(),
             args: args.into(),
             result,

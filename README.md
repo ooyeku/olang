@@ -66,6 +66,7 @@ or with Cargo, or from a clone:
 ```bash
 cargo install --locked --git https://github.com/ooyeku/olang.git olang otc
 ./setup.sh                 # in a clone: guided source build of olang + otc
+cargo xtask install        # in a clone: the browser runtime, then olang + otc with it embedded
 
 olang script.ol            # run a program; arguments reach os.args()
 olang                      # start the REPL

@@ -92,6 +92,13 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
         diagnostics.extend(use_shadow_warnings(&program, file.parent()));
         diagnostics.extend(template_escape_warnings(&source));
         diagnostics.extend(shadow_warnings(&program));
+        // The project's `[check] promote`: the advisory classes it names
+        // are errors here, so an exhaustiveness or shape finding gates
+        // without a rules file.
+        let promoted = promotions_for(file.parent());
+        for d in diagnostics.iter_mut() {
+            promote(d, &promoted);
+        }
         for d in diagnostics {
             if d.warning {
                 warnings += 1;
@@ -1155,6 +1162,62 @@ fn edit_distance(a: &str, b: &str) -> usize {
         prev = cur;
     }
     prev[b.len()]
+}
+
+/// The warning classes the nearest `olang.toml` above `dir` promotes to
+/// errors (`[check] promote = [...]`); empty without a manifest.
+pub fn promotions_for(dir: Option<&Path>) -> Vec<String> {
+    let start = dir
+        .map(|d| d.to_path_buf())
+        .or_else(|| std::env::current_dir().ok());
+    let Some(start) = start else {
+        return Vec::new();
+    };
+    let start = std::path::absolute(if start.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        start.as_path()
+    })
+    .unwrap_or(start);
+    let Some(root) = crate::pkg::manifest::Manifest::find_root(&start) else {
+        return Vec::new();
+    };
+    crate::pkg::manifest::Manifest::load(&root)
+        .ok()
+        .and_then(|m| m.check)
+        .map(|c| c.promote)
+        .unwrap_or_default()
+}
+
+/// The class a warning belongs to, by its message: `exhaustiveness`,
+/// `shape`, `result`, or none.
+pub fn warning_class(message: &str) -> Option<&'static str> {
+    if message.contains("is not exhaustive") || message.contains("covers none of the scrutinee") {
+        Some("exhaustiveness")
+    } else if message.contains("is not a key of the declared shape") {
+        Some("shape")
+    } else if message.contains("the Result from") && message.contains("is discarded") {
+        Some("result")
+    } else {
+        None
+    }
+}
+
+/// Turn a warning into an error when its class is promoted.
+pub fn promote(d: &mut CheckDiagnostic, promoted: &[String]) {
+    if !d.warning || promoted.is_empty() {
+        return;
+    }
+    let Some(class) = warning_class(&d.message) else {
+        return;
+    };
+    if promoted.iter().any(|p| p == class || p == "all") {
+        d.warning = false;
+        d.message = format!(
+            "{} (promoted to an error by [check] promote in olang.toml)",
+            d.message
+        );
+    }
 }
 
 /// The most specific type both sides agree on; Unknown on any conflict.

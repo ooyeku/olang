@@ -891,4 +891,105 @@ dom.set_text(dom.query("#count"), "still here")
   console.log("stage 11: host throw raised, session alive ok");
 }
 console.log("final dom:", JSON.stringify(fakeDom));
+// ── stage 12: the shim's morph keeps the focused control's live value ──
+// The real shim's `morphInto` runs here against a small DOM model with a
+// focus: the control someone is typing in keeps its value and identity
+// across a repaint, every other control follows the markup, and a keyed
+// row that moves keeps its node. (Pinned nowhere else: the browser is
+// the only other DOM.)
+{
+  const shimSrc = await readFile(new URL("../frameworks/web-sdk/static/olang-dom.js", import.meta.url), "utf8");
+  const start = shimSrc.indexOf("  function morphInto(el, html)");
+  const end = shimSrc.indexOf("  function morphNode(from, to)");
+  const nodeEnd = shimSrc.indexOf("\n  }\n", shimSrc.indexOf("morphChildren(from, to);", end)) + 4;
+  if (start < 0 || end < 0 || nodeEnd < 4) throw new Error("stage 12: cannot find the shim's morph functions");
+  const morphSrc = shimSrc.slice(start, nodeEnd);
+
+  const VOID = new Set(["input", "br", "img", "hr", "meta", "link"]);
+  class MNode {
+    constructor(nodeType) { this.nodeType = nodeType; this.parentNode = null; this.childNodes = []; }
+    get lastChild() { return this.childNodes[this.childNodes.length - 1] || null; }
+    appendChild(c) { return this.insertBefore(c, null); }
+    insertBefore(c, ref) {
+      if (c.parentNode) c.parentNode.removeChild(c);
+      const i = ref ? this.childNodes.indexOf(ref) : this.childNodes.length;
+      this.childNodes.splice(i < 0 ? this.childNodes.length : i, 0, c);
+      c.parentNode = this;
+      return c;
+    }
+    removeChild(c) { const i = this.childNodes.indexOf(c); if (i >= 0) this.childNodes.splice(i, 1); c.parentNode = null; return c; }
+    replaceChild(n, old) { this.insertBefore(n, old); this.removeChild(old); return old; }
+  }
+  class MText extends MNode {
+    constructor(data) { super(3); this.data = data; }
+    get nodeName() { return "#text"; }
+    cloneNode() { return new MText(this.data); }
+  }
+  class MElement extends MNode {
+    constructor(tag) { super(1); this.tagName = tag.toUpperCase(); this.nodeName = this.tagName; this._attrs = new Map(); this._value = null; this.checked = false; }
+    get attributes() { return [...this._attrs].map(([name, value]) => ({ name, value })); }
+    getAttribute(n) { return this._attrs.has(n) ? this._attrs.get(n) : null; }
+    setAttribute(n, v) { this._attrs.set(n, String(v)); }
+    removeAttribute(n) { this._attrs.delete(n); }
+    hasAttribute(n) { return this._attrs.has(n); }
+    get dataset() { const o = {}; for (const [k, v] of this._attrs) if (k.startsWith("data-")) o[k.slice(5)] = v; return o; }
+    get type() { return this.getAttribute("type") || "text"; }
+    get value() { return this._value ?? this.getAttribute("value") ?? ""; }
+    set value(v) { this._value = String(v); }
+    cloneNode(deep) {
+      const c = new MElement(this.tagName);
+      for (const [k, v] of this._attrs) c._attrs.set(k, v);
+      if (deep) for (const k of this.childNodes) c.appendChild(k.cloneNode(true));
+      return c;
+    }
+  }
+  function parseHtml(html, into) {
+    const re = /<\/([a-zA-Z0-9-]+)\s*>|<([a-zA-Z0-9-]+)((?:\s+[a-zA-Z0-9:-]+(?:="[^"]*")?)*)\s*(\/?)>|([^<]+)/g;
+    let cur = into; let m;
+    while ((m = re.exec(html))) {
+      if (m[1]) { if (cur.parentNode) cur = cur.parentNode; }
+      else if (m[2]) {
+        const el = new MElement(m[2]);
+        for (const a of (m[3] || "").matchAll(/([a-zA-Z0-9:-]+)(?:="([^"]*)")?/g)) el.setAttribute(a[1], a[2] ?? "");
+        cur.appendChild(el);
+        if (!m[4] && !VOID.has(m[2].toLowerCase())) cur = el;
+      } else if (m[5] && m[5].trim() !== "") cur.appendChild(new MText(m[5]));
+    }
+  }
+  const document = {
+    activeElement: null,
+    createElement(tag) {
+      if (tag === "template") {
+        const t = { content: new MNode(11) };
+        Object.defineProperty(t, "innerHTML", { set(html) { t.content.childNodes = []; parseHtml(html, t.content); } });
+        return t;
+      }
+      return new MElement(tag);
+    },
+  };
+  const { morphInto } = new Function("document", morphSrc + "\n  return { morphInto };")(document);
+
+  const app = new MElement("div");
+  parseHtml('<ul><li data-key="a"><input id="a" value="alpha"></li><li data-key="b"><input id="b" value="beta"></li></ul>', app);
+  const list = app.childNodes[0];
+  const inputA = list.childNodes[0].childNodes[0];
+  const inputB = list.childNodes[1].childNodes[0];
+  document.activeElement = inputA;
+  inputA.value = "alpha typed";
+  // A repaint: the rows swap, both values change in the markup, a row joins.
+  morphInto(app, '<ul><li data-key="b"><input id="b" value="BETA"></li><li data-key="a"><input id="a" value="ALPHA"></li><li data-key="c"><input id="c" value="gamma"></li></ul>');
+  const rows = app.childNodes[0].childNodes;
+  const keys = rows.map((r) => r.getAttribute("data-key")).join(",");
+  if (keys !== "b,a,c") throw new Error("stage 12: keyed rows not reordered: " + keys);
+  if (rows[1].childNodes[0] !== inputA) throw new Error("stage 12: the focused input lost its identity across the move");
+  if (inputA.value !== "alpha typed") throw new Error("stage 12: the focused input's live value was overwritten: " + inputA.value);
+  if (rows[0].childNodes[0] !== inputB) throw new Error("stage 12: an unfocused keyed input lost its identity");
+  if (inputB.value !== "BETA") throw new Error("stage 12: an unfocused input did not follow the markup: " + inputB.value);
+  if (rows[2].childNodes[0].getAttribute("value") !== "gamma") throw new Error("stage 12: the new row is missing");
+  document.activeElement = null;
+  morphInto(app, '<ul><li data-key="a"><input id="a" value="ALPHA"></li></ul>');
+  if (app.childNodes[0].childNodes.length !== 1 || inputA.value !== "ALPHA") throw new Error("stage 12: blur then repaint did not adopt the markup value");
+  console.log("stage 12: morph keeps the focused control's value and identity ok");
+}
+
 console.log("DOM BRIDGE END-TO-END PASSED (incl. fetch payloads + random)");

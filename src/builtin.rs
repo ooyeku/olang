@@ -1907,6 +1907,39 @@ impl BuiltinFunctions {
                 got: args.len(),
             });
         }
+        // A range folds without being materialized: the VM's range kernel
+        // threads the accumulator natively, and the interpreter's own loop
+        // below walks the integers when the tier declines.
+        if let Value::Range {
+            start,
+            end,
+            inclusive,
+        } = &args[0]
+        {
+            if let Some(result) = interpreter.tier_hof_range_with(
+                "fold",
+                &args[2],
+                *start,
+                *end,
+                *inclusive,
+                Some(&args[1]),
+            ) {
+                return result;
+            }
+            let end_val = if *inclusive {
+                end.saturating_add(1)
+            } else {
+                *end
+            };
+            let mut acc = args[1].clone();
+            let function = &args[2];
+            let mut n = *start;
+            while n < end_val {
+                acc = interpreter.call_function(function.clone(), vec![acc, Value::Integer(n)])?;
+                n += 1;
+            }
+            return Ok(acc);
+        }
         let list_rc = match &args[0] {
             Value::List(items) => items,
             _ => {
@@ -2509,15 +2542,25 @@ impl BuiltinFunctions {
                 end,
                 inclusive,
             } => {
-                // Convert range to vector of integers
+                // The sum of a range is arithmetic, not a materialized
+                // list: (first + last) * count / 2, in i128 so a
+                // ten-million-element range cannot overflow on the way.
                 let end_val = if *inclusive {
                     end.saturating_add(1)
                 } else {
                     *end
                 };
-                let values: Vec<Value> = (*start..end_val).map(Value::Integer).collect();
-                let use_parallel = should_parallelize(values.len());
-                (values, use_parallel)
+                if end_val <= *start {
+                    return Ok(Value::Integer(0));
+                }
+                let count = (end_val - *start) as i128;
+                let total = (*start as i128 + (end_val - 1) as i128) * count / 2;
+                return match i64::try_from(total) {
+                    Ok(v) => Ok(Value::Integer(v)),
+                    Err(_) => Err(InterpreterError::RuntimeError {
+                        message: "sum: integer overflow".to_string(),
+                    }),
+                };
             }
             _ => {
                 return Err(InterpreterError::TypeError {

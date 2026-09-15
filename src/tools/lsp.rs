@@ -624,7 +624,13 @@ fn program_diagnostics(
                             let modules = crate::tools::check::module_programs(text, doc_dir);
                             let context: Vec<&crate::ast::Program> =
                                 modules.iter().map(|(_, _, p)| p).collect();
-                            crate::tools::check::check_program_with_context(&context, program)
+                            let promoted = crate::tools::check::promotions_for(doc_dir);
+                            let mut out =
+                                crate::tools::check::check_program_with_context(&context, program);
+                            for d in out.iter_mut() {
+                                crate::tools::check::promote(d, &promoted);
+                            }
+                            out
                         }
                         .into_iter()
                         .map(|d| {

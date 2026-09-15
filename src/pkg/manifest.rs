@@ -20,6 +20,22 @@ pub struct Manifest {
     /// each dependency) is allowed to touch. Absent = full capability.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<crate::caps::CapsConfig>,
+    /// The `[check]` block: how `olang check` treats this project's
+    /// advisories. `promote = ["exhaustiveness", "shape"]` turns those
+    /// warning classes into errors that fail the check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<CheckConfig>,
+}
+
+/// `[check]` in olang.toml.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct CheckConfig {
+    /// Warning classes promoted to errors: `exhaustiveness` (a `match`
+    /// over an enum or a literal union missing a case), `shape` (a
+    /// literal key a declared record shape does not carry), `result` (a
+    /// discarded `Result`), `all`.
+    #[serde(default)]
+    pub promote: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

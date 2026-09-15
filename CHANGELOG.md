@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Typed `let`s compile**: a `let x: T = ...` in a function is a
+  `CheckLet` instruction on the VM with the interpreter's message, so an
+  annotation no longer keeps the whole function on the tree-walker.
+- **`fold`, `reduce`, and `sum` over a range** run without a list: the
+  VM's range kernel threads the accumulator, `sum` is arithmetic, and
+  `map`/`filter` at the top level take the same path.
+- **Union type declarations** (`type Id = Int | String`) are aliases of
+  the union annotation.
+- **`[check] promote`** in `olang.toml` turns the checker's advisory
+  classes (`exhaustiveness`, `shape`, `result`, `all`) into errors, in
+  `olang check` and in the editor.
+- **`olang doctor [path]`** audits a project: the manifest, each
+  dependency's path or shelf entry, the lock against the manifest, the
+  `.olang-ref` pin, the embedded browser runtime, and stale runtime
+  copies. **`cargo xtask install`** builds the runtime and installs
+  olang and otc with it.
+- **Server push**: `http.hold(topic)`, `http.notify(topic, response)`,
+  `http.notify_all`, `http.held` park deferred connections under a
+  topic in the runtime's table and answer them together; the web SDK
+  exports them as `hold`/`notify`/`notify_all`/`held`.
+- **The timeline follows spawned tasks**: a task records to and replays
+  from a stream of its own (its database calls included), and replay
+  serves a task's effects instead of repeating them.
+- A `Bytes` response body is written from its handle, never copied into
+  the response; `runtime.wasm()` answers one shared value per process.
+- The dom harness pins the shim's morph: the focused control keeps its
+  live value and identity across a repaint, keyed rows move by identity.
+- An `alloc-count` feature builds a counting allocator (`OLANG_ALLOC_STATS=1`).
+
 - **The browser runtime is embedded in the `olang` binary.** `cargo xtask
   wasm` (or `make wasm`) builds the playground wasm and the next build
   of olang carries it (`build.rs`); `setup.sh` and the release workflow

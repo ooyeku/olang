@@ -1408,6 +1408,13 @@ pub fn alias_declarations(statements: &[Statement]) -> Vec<(String, TypeAnnotati
             Statement::TypeDecl(t) | Statement::ShareDecl(ShareDecl::Type(t)) => {
                 match &t.definition {
                     TypeDefinition::Alias { target } => Some((t.name.clone(), target.clone())),
+                    // `type Id = Int | String` names a union annotation.
+                    TypeDefinition::Union { types } => Some((
+                        t.name.clone(),
+                        TypeAnnotation::Union {
+                            types: types.clone(),
+                        },
+                    )),
                     _ => None,
                 }
             }

@@ -1451,10 +1451,9 @@ alias may be declared below its first use.
 
 ### What is not supported (yet)
 
-Union type *declarations* (`type Id = Int | String`) are not accepted;
-discriminated unions are written as enums or as objects with a `kind` field.
-Union *annotations* (`x: Int | String`) are not in this list — they have
-had semantics since 0.50 ([Types](types.md)). Intersection annotations
+Union type *declarations* (`type Id = Int | String`) are aliases of the
+union annotation, checked as `x: Int | String` is ([Types](types.md));
+a discriminated union with payloads is still an enum. Intersection annotations
 (`A & B`) are not accepted at all; writing one is a parse error. See
 [Stability](stability.md) for the full list.
 

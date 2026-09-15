@@ -33,6 +33,10 @@ share use lib.server {
     body_json, q_str, q_int, q_enum, bundle_client, bundle_clients, bundle_clients_in, sdk_dir
 }
 
+// server push — a handler parks its connection under a topic, any
+// thread answers the topic later
+share use lib.push { hold, notify, notify_all, held }
+
 // data layer
 // `row` here is the single-row query; `lib.ui` has a layout `row` too.
 // Exporting both under one name let the layout one silently win a

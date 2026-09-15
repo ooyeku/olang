@@ -470,6 +470,27 @@ main.ol (replaced by one version check against the embedded runtime),
 the wasm lines in CI, the gitignore, and `tools/env.ol`, the copy step
 in the sample's launch tool, and the CLAUDE.md paragraph.
 
+## W20 — toward 0.85.0
+
+The runtime, web SDK, language, and distribution proposals of
+2026-09-15, shipped as one lane; with the W19 rows, the 0.85.0 release.
+Tags as in W9.
+
+| Item | Observed | Status |
+|---|---|---|
+| `[olang]` A typed `let` keeps a whole function off the VM | any function with an enforcing `let` annotation was refused by the compiler ("let bindings with type annotations run interpreted") and ran on the tree-walker; annotations were becoming common as aliases landed | **landed** — the annotation (aliases resolved) compiles to a `CheckLet` instruction: one comparison on the bound value, the interpreter's message ("let binding 'n' expects Int, got String") on both tiers. `OLANG_TIER_VERBOSE` reports no refusal. Pinned in tests/w20_test.rs |
+| `[olang]` `fold`, `sum`, and `reduce` over a range materialize ten million boxed values | `map`/`filter` went through the VM's range kernel since W17; `fold(0..n, ...)` was "first argument must be a list" and `sum(0..n)` boxed the range | **landed** — the interpreter's `reduce` hands a range to the VM's range kernel with the accumulator (`tier_hof_range_with`), the VM's fold walks a range as integers, and `sum` over a range is arithmetic. Release build: `fold(0..10_000_000, 0, +)` 353 ms at the top level (it errored), `map(0..n, ...)` at the top level 271 ms (from 1,643). Pinned on both tiers in tests/w20_test.rs |
+| `[olang]` `runtime.wasm()` copies 4.9 MB per call | each call cloned the embedded bytes and their compressed forms into fresh values | **landed** — one value per process, built on first use; a later call clones handles |
+| `[olang]` Replay covering workers' own effects | a task's `db.execute` ran live and unlogged in record mode, and replay started no worker | **landed** — every timeline event carries a thread id (0 the main thread, a task's spawn number otherwise); a spawned task records to the shared log under its own id and, under replay, runs against its own stream, so its database calls and channel sends are served rather than repeated. Pinned: a worker writes `worker.db` while recording, the file is deleted, replay reproduces the output and writes no database. An `http.serve` worker stays live, and a recorded server says so once |
+| `[olang]` Strings as one allocation | `Arc<String>` is two allocations per string | **landed** as the measurement the row asked for — the `alloc-count` feature builds a counting allocator; `wordfreq` makes 7.0 M allocations over 3 M iterations (2.3 each, 531 ms) and `strbuild` 4.0 M (117 ms). `wordfreq` at 531 ms is under the 1.5× Node acceptance (552) with the fused concatenation already landed, so the `Arc<str>` representation is not taken: it would save one allocation per string and cost the in-place append `strbuild` relies on. The counter stays for the next measurement |
+| `[web-sdk]` A long-poll helper over `http.defer` | every app that wants push reimplements the ticket bookkeeping | **landed** — `http.hold(topic)`, `http.notify(topic, response)`, `http.notify_all`, `http.held` in the runtime's deferred table (one table for the process, however many servers), exported by the SDK as `hold`/`notify`/`notify_all`/`held`; the live server test parks two requests and answers both with one `notify` |
+| `[web-sdk]` The morph focus pin | the harness's fake DOM had no focus model | **landed** — the harness runs the shim's own `morphInto` against a small DOM model with an `activeElement`: the focused input keeps its typed value and its node across a keyed reorder, an unfocused one follows the markup, a new row appears, and a blurred control adopts the markup on the next repaint (stage 12) |
+| `[web-sdk]` The wasm response copies its body | each response concatenated the compressed runtime into the head buffer | **landed** — a `Bytes` body is written from its handle after the head, for the wasm, the image, and any large asset |
+| `[olang]` Union alias declarations | `type Id = Int | String` parsed and the docs said it was not accepted | **landed** — a union declaration registers as an alias of the union annotation on both tiers and in the checker; pinned in tests/w20_test.rs |
+| `[olang]` Exhaustiveness as an error under a project setting | the warning could only be promoted by writing a rule | **landed** — `[check] promote = ["exhaustiveness", "shape", "result"]` (or `"all"`) in `olang.toml` turns those classes into errors in `olang check` and in the editor, the message naming the block. Pinned in tests/w20_test.rs |
+| `[tooling]` `cargo xtask install` | the documented one-liner was a Makefile target | **landed** — builds the runtime, then installs olang and otc with it embedded |
+| `[tooling]` `olang doctor` for a project | nothing audited a project's manifest, lock, pin, or the runtime it would serve | **landed** — `olang doctor [path]`: the manifest parses, each dependency's path or shelf entry exists, the lock agrees with the manifest, the `.olang-ref` pin is shown beside the binary's version, the browser runtime is embedded, and stale `olang_playground.wasm` copies are named for deletion. Pinned in tests/w20_test.rs |
+
 ## Process
 
 One lane at a time, each landing with its tests and documentation in

@@ -24,9 +24,13 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("wasm") => wasm(args.iter().any(|a| a == "--full")),
+        Some("install") => install(),
         Some("help") | None => {
             eprintln!(
                 "cargo xtask wasm [--full]   build the browser runtime the olang binary embeds"
+            );
+            eprintln!(
+                "cargo xtask install         build the runtime, then install olang and otc with it"
             );
             ExitCode::SUCCESS
         }
@@ -53,6 +57,27 @@ fn cargo(root: &Path, args: &[&str]) -> bool {
             false
         }
     }
+}
+
+/// The one-liner: the runtime, then `cargo install --path . --locked
+/// --force` for olang and otc, so the installed binaries carry it.
+fn install() -> ExitCode {
+    if wasm(false) != ExitCode::SUCCESS {
+        return ExitCode::FAILURE;
+    }
+    let root = repo_root();
+    for (path, bin) in [(".", "olang"), ("otc", "otc")] {
+        if !cargo(
+            &root,
+            &[
+                "install", "--path", path, "--bin", bin, "--locked", "--force",
+            ],
+        ) {
+            return ExitCode::FAILURE;
+        }
+    }
+    println!("installed olang and otc with the browser runtime embedded");
+    ExitCode::SUCCESS
 }
 
 fn wasm(full: bool) -> ExitCode {

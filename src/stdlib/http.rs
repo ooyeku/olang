@@ -65,6 +65,13 @@ pub fn create_http_module() -> Value {
     // connection parks (a socket, not an interpreter) until
     // `http.respond(ticket, response)` completes it from any thread.
     module.insert("defer".to_string(), create_builtin_function("defer", 0));
+    module.insert("hold".to_string(), create_builtin_function("hold", 1));
+    module.insert("notify".to_string(), create_builtin_function("notify", 2));
+    module.insert(
+        "notify_all".to_string(),
+        create_builtin_function("notify_all", 1),
+    );
+    module.insert("held".to_string(), create_builtin_function("held", 1));
     module.insert("respond".to_string(), create_builtin_function("respond", 2));
     module.insert(
         "response_with_headers".to_string(),
@@ -120,6 +127,10 @@ pub fn call_http_function(
         "response" => http_response(args),
         "defer" => http_defer(args),
         "respond" => http_respond(args),
+        "hold" => http_hold(args),
+        "notify" => http_notify(args),
+        "notify_all" => http_notify_all(args),
+        "held" => http_held(args),
         "response_with_headers" => http_response_with_headers(args),
         "parse_url" => parse_url(args),
         "encode_query" => encode_query(args),
@@ -699,6 +710,100 @@ fn response_bytes(
 /// Turn whatever the handler returned into response bytes. A response struct
 /// (from `http.response`/`response_with_headers`, or any struct-like value
 /// with `status`/`body`/`headers` fields) is honored; a bare string is a 200.
+/// A rendered response: the head (status line and headers, and the body
+/// when it was built here) plus, for a `Bytes` body, the value whose
+/// buffer is written after the head straight from the handle — a 5 MB
+/// runtime or image is never copied into the response.
+struct Rendered {
+    head: Vec<u8>,
+    shared_body: Option<Value>,
+}
+
+impl Rendered {
+    fn write_to(&self, stream: &mut std::net::TcpStream) -> std::io::Result<()> {
+        use std::io::Write;
+        stream.write_all(&self.head)?;
+        if let Some(body) = &self.shared_body
+            && let Ok(bytes) = crate::stdlib::bytes::bytes_of(body)
+        {
+            stream.write_all(bytes)?;
+        }
+        stream.flush()
+    }
+}
+
+/// The head alone for a raw body of `len` bytes (see `response_raw_bytes`).
+fn raw_head(
+    status: i64,
+    len: usize,
+    extra_headers: &[(String, String)],
+    keep_alive: bool,
+) -> Vec<u8> {
+    let mut out = format!("HTTP/1.1 {} {}\r\n", status, reason_phrase(status));
+    let has_content_type = extra_headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("content-type"));
+    if !has_content_type {
+        out.push_str("Content-Type: application/octet-stream\r\n");
+    }
+    for (k, v) in extra_headers {
+        out.push_str(&format!(
+            "{}: {}\r\n",
+            header_line_safe(k),
+            header_line_safe(v)
+        ));
+    }
+    out.push_str(&format!("Content-Length: {}\r\n", len));
+    out.push_str(if keep_alive {
+        "Connection: keep-alive\r\n\r\n"
+    } else {
+        "Connection: close\r\n\r\n"
+    });
+    out.into_bytes()
+}
+
+fn render_handler_response(value: &Value, keep_alive: bool, fs: crate::caps::FsCap) -> Rendered {
+    // A `Bytes` body is the one case the handle's buffer is written as
+    // it is; everything else is built into the head.
+    if let Value::Struct { fields, .. } = value
+        && fields.get("body_file").is_none()
+        && let Some(raw @ Value::Native(_)) = fields.get("body")
+        && let Ok(bytes) = crate::stdlib::bytes::bytes_of(raw)
+    {
+        let status = match fields.get("status") {
+            Some(Value::Integer(s)) => *s,
+            _ => 200,
+        };
+        let headers = header_pairs(fields.get("headers"));
+        return Rendered {
+            head: raw_head(status, bytes.len(), &headers, keep_alive),
+            shared_body: Some(raw.clone()),
+        };
+    }
+    Rendered {
+        head: render_handler_result(value, keep_alive, fs),
+        shared_body: None,
+    }
+}
+
+fn header_pairs(headers: Option<&Value>) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    match headers {
+        Some(Value::Struct { fields: hs, .. }) => {
+            for (k, v) in hs.iter() {
+                out.push((k.clone(), header_value_text(v)));
+            }
+        }
+        Some(Value::Map(m)) => {
+            for (k, v) in m.iter() {
+                out.push((k.clone(), header_value_text(v)));
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
 fn render_handler_result(value: &Value, keep_alive: bool, fs: crate::caps::FsCap) -> Vec<u8> {
     match value {
         Value::String(s) => response_bytes(200, s, &[], keep_alive),
@@ -991,8 +1096,91 @@ fn http_defer(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     })
 }
 
+/// Deferred connections parked under a topic (`http.hold`), answered
+/// together by `http.notify`: server push without an actor of one's own.
+static HELD: std::sync::Mutex<Option<HashMap<String, Vec<u64>>>> = std::sync::Mutex::new(None);
+
+/// `http.hold(topic)` — defer the current request (as `http.defer`) and
+/// park its ticket under `topic`. Returns the ticket the handler must
+/// return.
+fn http_hold(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let topic = match args.as_slice() {
+        [Value::String(t)] => t.as_str().to_string(),
+        _ => return Err("http.hold expects the topic as a String".into()),
+    };
+    let ticket = http_defer(Vec::new())?;
+    if let Value::Struct { fields, .. } = &ticket
+        && let Some(Value::Integer(id)) = fields.get("ticket")
+        && let Ok(mut table) = HELD.lock()
+    {
+        table
+            .get_or_insert_with(HashMap::new)
+            .entry(topic)
+            .or_default()
+            .push(*id as u64);
+    }
+    Ok(ticket)
+}
+
+/// Answer every ticket in `ids` with `response`; a connection whose
+/// client left is skipped. Returns how many were answered.
+fn answer_all(ids: Vec<u64>, response: &Value) -> i64 {
+    let mut answered = 0;
+    for id in ids {
+        let ticket = Value::Integer(id as i64);
+        if let Ok(Value::Ok(_)) = http_respond(vec![ticket, response.clone()]) {
+            answered += 1;
+        }
+    }
+    answered
+}
+
+/// `http.notify(topic, response)` — answer every connection held under
+/// `topic`; the count answered.
+fn http_notify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let (topic, response) = match args.as_slice() {
+        [Value::String(t), response] => (t.as_str().to_string(), response.clone()),
+        _ => return Err("http.notify expects the topic and a response".into()),
+    };
+    let ids = HELD
+        .lock()
+        .ok()
+        .and_then(|mut table| table.as_mut().and_then(|t| t.remove(&topic)))
+        .unwrap_or_default();
+    Ok(Value::Integer(answer_all(ids, &response)))
+}
+
+/// `http.notify_all(response)` — answer every held connection, whatever
+/// its topic; the count answered.
+fn http_notify_all(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let response = match args.as_slice() {
+        [response] => response.clone(),
+        _ => return Err("http.notify_all expects a response".into()),
+    };
+    let ids: Vec<u64> = HELD
+        .lock()
+        .ok()
+        .and_then(|mut table| table.take())
+        .map(|t| t.into_values().flatten().collect())
+        .unwrap_or_default();
+    Ok(Value::Integer(answer_all(ids, &response)))
+}
+
+/// `http.held(topic)` — how many connections are parked under `topic`.
+fn http_held(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let topic = match args.as_slice() {
+        [Value::String(t)] => t.as_str().to_string(),
+        _ => return Err("http.held expects the topic as a String".into()),
+    };
+    let n = HELD
+        .lock()
+        .ok()
+        .and_then(|table| table.as_ref().and_then(|t| t.get(&topic).map(|v| v.len())))
+        .unwrap_or(0);
+    Ok(Value::Integer(n as i64))
+}
+
 fn http_respond(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    use std::io::Write;
     let ticket = match args.first() {
         Some(Value::Struct { type_name, fields }) if type_name == "HttpDeferred" => {
             match fields.get("ticket") {
@@ -1022,8 +1210,8 @@ fn http_respond(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         )))));
     };
     // The deferred connection is done after this answer.
-    let bytes = render_handler_result(response, false, fs);
-    match stream.write_all(&bytes).and_then(|_| stream.flush()) {
+    let rendered = render_handler_response(response, false, fs);
+    match rendered.write_to(&mut stream) {
         Ok(()) => Ok(Value::Ok(Box::new(Value::Unit))),
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
             "http.respond: {}",
@@ -1106,8 +1294,8 @@ fn serve_connection(
                     }
                     return;
                 }
-                let bytes = match outcome {
-                    Ok(result) => render_handler_result(&result, keep_alive, fs_grant),
+                let rendered = match outcome {
+                    Ok(result) => render_handler_response(&result, keep_alive, fs_grant),
                     Err(error) => {
                         crate::log::get_logger().error(
                             "http",
@@ -1116,10 +1304,13 @@ fn serve_connection(
                                 remote_addr, req.method, req.path, error
                             ),
                         );
-                        response_bytes(500, "internal server error", &[], keep_alive)
+                        Rendered {
+                            head: response_bytes(500, "internal server error", &[], keep_alive),
+                            shared_body: None,
+                        }
                     }
                 };
-                if stream.write_all(&bytes).is_err() || stream.flush().is_err() {
+                if rendered.write_to(&mut stream).is_err() {
                     break;
                 }
                 if !keep_alive {
@@ -1619,6 +1810,10 @@ mod tests {
                 "decode_query",
                 "defer",
                 "respond",
+                "hold",
+                "notify",
+                "notify_all",
+                "held",
             ];
 
             for func_name in expected_functions {
@@ -1637,7 +1832,7 @@ mod tests {
                 }
             }
 
-            assert_eq!(fields.len(), 14, "Expected 14 functions in http module");
+            assert_eq!(fields.len(), 18, "Expected 18 functions in http module");
         } else {
             panic!("Expected struct for http module, got: {:?}", module);
         }

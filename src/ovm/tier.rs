@@ -771,17 +771,36 @@ impl BytecodeTier {
         start: i64,
         end: i64,
         inclusive: bool,
+        init: Option<&Value>,
     ) -> Option<Result<Value, String>> {
-        let args = vec![
-            crate::ovm::value::OvmValue::from_ast(Value::Range {
+        let mut args = vec![crate::ovm::value::OvmValue::from_ast(Value::Range {
+            start,
+            end,
+            inclusive,
+        })];
+        if let Some(v) = init {
+            args.push(crate::ovm::value::OvmValue::from_ast(v.clone()));
+        }
+        args.push(crate::ovm::value::OvmValue::from_ast(Value::Function(
+            kernel.clone(),
+        )));
+        self.vm.clear_error_trace();
+        let out = self.vm.native_hof(name, &args);
+        if std::env::var_os("OLANG_DEBUG_HOF").is_some() {
+            eprintln!(
+                "[hof] tier {} over {}..{}{} -> {}",
+                name,
                 start,
                 end,
-                inclusive,
-            }),
-            crate::ovm::value::OvmValue::from_ast(Value::Function(kernel.clone())),
-        ];
-        self.vm.clear_error_trace();
-        let out = self.vm.native_hof(name, &args)?;
+                if inclusive { "=" } else { "" },
+                match &out {
+                    None => "declined",
+                    Some(Ok(_)) => "ran",
+                    Some(Err(_)) => "error",
+                }
+            );
+        }
+        let out = out?;
         self.stats.bytecode_calls += 1;
         Some(match out {
             Ok(value) => match value.to_ast() {

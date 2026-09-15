@@ -22,6 +22,10 @@ default = ["native", "full"]
 # the runtime's code and nothing a page needs. The website's playground
 # keeps them.
 full = ["regex-module", "rsa-crypto"]
+# `alloc-count`: a counting global allocator, for measuring allocations
+# per benchmark iteration (`OLANG_ALLOC_STATS=1 olang run x.ol` prints
+# the count at exit). A measurement build, not a shipping one.
+alloc-count = []
 regex-module = ["dep:regex"]
 rsa-crypto = ["dep:rsa"]
 # Everything that cannot exist in a browser: sockets, SQLite's C library,

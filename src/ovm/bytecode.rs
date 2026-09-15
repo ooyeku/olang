@@ -485,6 +485,15 @@ pub enum Instruction {
         key: Register,
         value: Register,
     },
+    /// `let x: T = value` — enforce the declared type of a binding, with
+    /// the interpreter's message. The check is one comparison; before this
+    /// instruction any function with an annotated `let` was refused to the
+    /// interpreter entirely.
+    CheckLet {
+        value: Register,
+        check: Box<crate::ast::FieldTypeCheck>,
+        binding: String,
+    },
     /// `text + to_string(n)` (or `to_string(n) + text`), fused: the
     /// number is formatted straight into the concatenation's buffer, so
     /// building a key or a label from a number costs one string
@@ -3625,6 +3634,24 @@ impl BytecodeVm {
                     };
                     self.execution_state.set_register(*target, out)?;
                 }
+                Instruction::CheckLet {
+                    value,
+                    check,
+                    binding,
+                } => {
+                    let v = self.execution_state.get_register(*value)?;
+                    let (actual, payload, fn_arity, scalar) = ovm_value_view(&v);
+                    if let Some((expected, got)) =
+                        check.check_value(actual, payload, fn_arity, scalar)
+                    {
+                        return Err(BytecodeError::TypeError(self.annotation_error(
+                            &format!("let binding '{}'", binding),
+                            check,
+                            &expected,
+                            &got,
+                        )));
+                    }
+                }
                 Instruction::ConcatToString {
                     dst,
                     text,
@@ -6553,8 +6580,30 @@ impl BytecodeVm {
                 Some(run())
             }
             "fold" | "reduce" if args.len() == 3 => {
+                // A list, or a range walked as integers without a list.
+                enum Seq {
+                    List(Arc<Vec<OvmValue>>),
+                    Range(i64, i64),
+                }
+                impl Seq {
+                    fn len(&self) -> usize {
+                        match self {
+                            Seq::List(items) => items.len(),
+                            Seq::Range(start, end) => (*end - *start).max(0) as usize,
+                        }
+                    }
+                    fn get(&self, i: usize) -> OvmValue {
+                        match self {
+                            Seq::List(items) => items[i].clone(),
+                            Seq::Range(start, _) => OvmValue::new_integer(*start + i as i64),
+                        }
+                    }
+                }
                 let items = match &args[0].data {
-                    ValueData::List(items) => items.clone(),
+                    ValueData::List(items) => Seq::List(items.clone()),
+                    ValueData::Range(r) => {
+                        Seq::Range(r.start, if r.inclusive { r.end + 1 } else { r.end })
+                    }
                     _ => return None,
                 };
                 let (func_id, captures) = match &args[2].data {
@@ -6601,9 +6650,9 @@ impl BytecodeVm {
                     call_args.push(OvmValue::new_unit());
                     call_args.push(OvmValue::new_unit());
                     call_args.extend(captures.iter().cloned());
-                    for item in items.iter() {
+                    for i in 0..items.len() {
                         call_args[0] = acc;
-                        call_args[1] = item.clone();
+                        call_args[1] = items.get(i);
                         acc = match self.execute_prepared(&bytecode, &call_args) {
                             Ok(r) => r,
                             Err(e) => return Some(Err(e)),
@@ -6613,10 +6662,10 @@ impl BytecodeVm {
                 }
                 let mut call_args = Vec::with_capacity(2 + captures.len());
                 let mut run = || -> Result<OvmValue, BytecodeError> {
-                    for item in items.iter() {
+                    for i in 0..items.len() {
                         call_args.clear();
                         call_args.push(acc.clone());
-                        call_args.push(item.clone());
+                        call_args.push(items.get(i));
                         call_args.extend(captures.iter().cloned());
                         acc = self.execute(func_id, &call_args)?;
                     }
@@ -10559,20 +10608,14 @@ impl BytecodeCompiler {
             }
             crate::ast::Statement::Expression(expr) => self.compile_expression(expr),
             crate::ast::Statement::LetDecl(let_decl) => {
-                // An annotated let is a checked boundary the VM does not
-                // yet enforce inline — refuse, fail-closed: the interpreter
-                // runs the function and enforces it (v1; liftable later).
-                if let_decl
+                // An annotated let is a checked boundary: the annotation
+                // (aliases resolved) becomes a CheckLet on the bound value,
+                // the interpreter's check with the interpreter's message.
+                let let_check = let_decl
                     .type_annotation
                     .as_ref()
                     .map(|ann| crate::ast::resolve_type_aliases(ann, &self.type_aliases, 16))
-                    .and_then(|ann| crate::ast::FieldTypeCheck::from_annotation(&ann, &[]))
-                    .is_some()
-                {
-                    return Err(BytecodeError::CompilationFailed(
-                        "let bindings with type annotations run interpreted".to_string(),
-                    ));
-                }
+                    .and_then(|ann| crate::ast::FieldTypeCheck::from_annotation(&ann, &[]));
                 let value_reg = match &let_decl.value {
                     Some(expr) => self.compile_expression(expr)?,
                     None => {
@@ -10582,6 +10625,17 @@ impl BytecodeCompiler {
                         reg
                     }
                 };
+                if let Some(check) = let_check {
+                    let binding = match &let_decl.pattern {
+                        crate::ast::Pattern::Identifier(name) => name.clone(),
+                        _ => "value".to_string(),
+                    };
+                    self.emitter.instructions.push(Instruction::CheckLet {
+                        value: value_reg,
+                        check: Box::new(check),
+                        binding,
+                    });
+                }
                 // Bind through the pattern machinery — an identifier binds
                 // (a fresh register, so later assignment doesn't clobber the
                 // shared value register), destructuring extracts, and a
@@ -11322,6 +11376,9 @@ impl BytecodeOptimizer {
                 uses.push(key.0);
                 uses.push(value.0);
                 defs.push(target.0);
+            }
+            I::CheckLet { value, .. } => {
+                uses.push(value.0);
             }
             I::ConcatToString { dst, text, arg, .. } => {
                 uses.push(text.0);

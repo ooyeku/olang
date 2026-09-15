@@ -5807,6 +5807,7 @@ pub(crate) fn instruction_name(inst: &Instruction) -> &'static str {
         Instruction::MakeMap { .. } => "MakeMap",
         Instruction::MapSetAssign { .. } => "MapSetAssign",
         Instruction::ConcatToString { .. } => "ConcatToString",
+        Instruction::CheckLet { .. } => "CheckLet",
         Instruction::ListSetAssign { .. } => "ListSetAssign",
         Instruction::ListAppendAssign { .. } => "ListAppendAssign",
         _ => "other",

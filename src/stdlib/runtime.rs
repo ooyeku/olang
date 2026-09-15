@@ -49,6 +49,13 @@ fn runtime_wasm(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                 .to_string(),
         )))));
     };
+    // Built once per process: the bytes values share their buffers, so a
+    // program that asks per request pays a handle clone, not a copy of
+    // the runtime and its compressed forms.
+    static ANSWER: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
+    if let Some(answer) = ANSWER.get() {
+        return Ok(Value::Ok(Box::new(answer.clone())));
+    }
     let mut out = HashMap::new();
     out.insert(
         "bytes".to_string(),
@@ -76,5 +83,7 @@ fn runtime_wasm(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         "version".to_string(),
         Value::String(Arc::new(crate::version::VERSION.to_string())),
     );
-    Ok(Value::Ok(Box::new(Value::Map(Arc::new(out)))))
+    let answer = Value::Map(Arc::new(out));
+    let answer = ANSWER.get_or_init(|| answer).clone();
+    Ok(Value::Ok(Box::new(answer)))
 }

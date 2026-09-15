@@ -9,6 +9,8 @@
 //! This crate provides the core implementation of the Olang programming language,
 //! including parsing, AST construction, interpretation, and REPL functionality.
 
+#[cfg(feature = "alloc-count")]
+pub mod alloc_count;
 pub mod analyze;
 pub mod ast;
 pub mod builtin;

@@ -4,6 +4,7 @@
 // through a real socket.
 use lib.routes { rpc, route }
 use lib.server { serve }
+use lib.push { hold, notify, held }
 use lib.sql { open_db, rows, row, insert_row }
 use lib.html { div }
 
@@ -29,7 +30,10 @@ let routes = [
         let ticket = http.defer()
         spawn { time.sleep(150); http.respond(ticket, http.response(200, "late")) }
         ticket
-    })
+    }),
+    // Server push: the handler parks under a topic; a later `notify`
+    // answers every connection held there.
+    route("GET", "/changes", (req, p) => hold("issues"))
 ]
 
 let client = if fs.exists("demo/client.ol") => "demo/client.ol" else => "../demo/client.ol"
@@ -128,6 +132,22 @@ test "a deferred handler answers over the wire under olang test" {
     assert_eq(late.status, 200)
     assert_eq(late.body, "late")
     assert_eq(time.monotonic_ms() - started >= 100, true)
+}
+
+test "held connections are answered by a later notify" {
+    let waiter = spawn { unwrap(http.get(base + "/changes")) }
+    let waiter2 = spawn { unwrap(http.get(base + "/changes")) }
+    // Both requests park; poll until the actor holds them.
+    let mut tries = 0
+    while held("issues") < 2 && tries < 100 { time.sleep(20); tries = tries + 1 }
+    assert_eq(held("issues"), 2)
+    let answered = notify("issues", http.response(200, "changed"))
+    assert_eq(answered, 2)
+    let a = task.join(waiter)
+    let b = task.join(waiter2)
+    assert_eq(a.body, "changed")
+    assert_eq(b.status, 200)
+    assert_eq(held("issues"), 0)
 }
 
 test "the error envelope crosses the socket" {

@@ -42,6 +42,7 @@ fn root_or_init() -> anyhow::Result<PathBuf> {
         },
         dependencies: Default::default(),
         capabilities: None,
+        check: None,
     };
     manifest.save(&cwd).map_err(|e| anyhow::anyhow!("{}", e))?;
     println!("No olang.toml found — created one for '{}'", name);
