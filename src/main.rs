@@ -402,8 +402,7 @@ fn main() {
         .expect("failed to spawn interpreter thread")
         .join()
         .unwrap_or(1);
-    #[cfg(feature = "alloc-count")]
-    olang::alloc_count::report_if_asked();
+    olang::memory::report_if_asked();
     process::exit(exit_code);
 }
 
@@ -2439,7 +2438,12 @@ fn execute_source(
     } else {
         source
     };
-    let program = match OlangParser::new().parse(source) {
+    // The parsed entry file is the program's share of the heap
+    // (`runtime.memory()`).
+    let load = olang::memory::load_scope();
+    let parsed = OlangParser::new().parse(source);
+    drop(load);
+    let program = match parsed {
         Ok(program) => program,
         Err(e) => {
             show_file_parse_error(&e, file_path, source);

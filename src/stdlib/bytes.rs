@@ -28,7 +28,10 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub struct BytesObject(pub Vec<u8>);
+/// Owned for bytes a program made; borrowed for bytes the binary already
+/// holds for the life of the process (the embedded browser runtime), so
+/// handing those to a program is not a copy of them.
+pub struct BytesObject(pub std::borrow::Cow<'static, [u8]>);
 
 impl std::fmt::Debug for BytesObject {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -95,7 +98,12 @@ impl NativeObject for BytesObject {
 
 /// Wrap raw bytes as an olang value.
 pub fn to_value(bytes: Vec<u8>) -> Value {
-    Value::Native(NativeHandle::new(BytesObject(bytes)))
+    Value::Native(NativeHandle::new(BytesObject(bytes.into())))
+}
+
+/// Wrap bytes that live as long as the process, without copying them.
+pub fn static_value(bytes: &'static [u8]) -> Value {
+    Value::Native(NativeHandle::new(BytesObject(bytes.into())))
 }
 
 /// Pull the byte slice back out of a value, or say what it was.
@@ -104,7 +112,7 @@ pub fn bytes_of(value: &Value) -> Result<&[u8], String> {
         Value::Native(h) => {
             h.0.as_any()
                 .downcast_ref::<BytesObject>()
-                .map(|b| b.0.as_slice())
+                .map(|b| b.0.as_ref())
                 .ok_or_else(|| format!("expected Bytes, got a {} handle", h.0.type_name()))
         }
         other => Err(format!("expected Bytes, got {}", other.type_name())),

@@ -1,6 +1,7 @@
 use crate::ast::{
-    Argument, BinaryOp, BuiltinFunction, EnumVariantData, Expr, Function, FunctionDecl, LetDecl,
-    MatchArm, Parameter, Program, ShareDecl, Statement, TestDecl, TypeAnnotation, UseDecl, Value,
+    Argument, BinaryOp, BuiltinFunction, EnumVariantData, Expr, FnRun, Function, FunctionDecl,
+    LetDecl, MatchArm, Parameter, Program, RunRef, ShareDecl, Statement, TestDecl, TypeAnnotation,
+    UseDecl, Value,
 };
 use crate::builtin::BuiltinFunctions;
 use crate::ovm::gc::SafepointManager;
@@ -90,6 +91,20 @@ pub use errors::{InterpreterError, IntuitiveErrorFormatter};
 mod environment;
 pub use environment::{Environment, ModuleDebugConfig};
 
+/// A run of consecutive top-level `fn` declarations, while it is open.
+struct OpenRun {
+    /// The scope map as the last declaration left it — by address, held
+    /// weakly (see `eval_function_decl`). Anything else that touches the
+    /// scope replaces the map's `Arc`, which ends the run.
+    after_last: std::sync::Weak<ImHashMap<String, Value>>,
+    /// The closure every member shares: the scope before the first.
+    closure: Arc<ImHashMap<String, Value>>,
+    /// Where the sibling table is published when the run ends.
+    cell: Arc<FnRun>,
+    /// The members so far, each with its position.
+    names: HashMap<String, (u32, Value)>,
+}
+
 /// Olang interpreter with optional type checking
 pub struct Interpreter {
     environment: Environment,
@@ -130,6 +145,11 @@ pub struct Interpreter {
     /// functions see every sibling, private or shared, however the file
     /// is ordered, and from any thread or the bridge.
     module_scopes: HashMap<String, Arc<ImHashMap<String, Value>>>,
+    /// The run of consecutive top-level `fn` declarations in progress (see
+    /// `ast::FnRun` and `build_function_value`).
+    fn_run: Option<OpenRun>,
+    /// A bridge interpreter's view of the program's functions, by name.
+    bridge_functions: Option<Arc<HashMap<String, Arc<Function>>>>,
     module_loading_stack: Vec<String>, // Feature 7: Track modules currently being loaded for circular detection
 
     // Feature 8: Smart caching system
@@ -337,6 +357,8 @@ impl Interpreter {
             pending_top_level: HashMap::new(),
             declared_early: HashMap::new(),
             module_scopes: HashMap::new(),
+            fn_run: None,
+            bridge_functions: None,
             module_loading_stack: Vec::new(), // Feature 7: Track modules currently being loaded for circular detection
 
             // Feature 8: Smart caching system
@@ -428,16 +450,35 @@ impl Interpreter {
 
     /// Register built-in functions in the environment
     fn register_builtins(&mut self) {
-        for (name, func) in self.builtin_functions.get_functions() {
-            self.environment
-                .define(name.clone(), Value::Builtin(func.clone()));
+        if self.environment.variables.is_empty() && self.environment.locals.is_empty() {
+            self.environment.variables = self.prelude();
+            return;
         }
+        for (name, value) in self.prelude().iter() {
+            self.environment.define(name.clone(), value.clone());
+        }
+    }
 
-        // Register stdlib modules
-        let stdlib = crate::stdlib::get_stdlib();
-        for (module_name, module_value) in stdlib {
-            self.environment.define(module_name, module_value);
-        }
+    /// The scope every file starts from: the builtins and the stdlib
+    /// modules. Built once per process and shared structurally — every
+    /// interpreter, module, bridge and expansion scope used to insert
+    /// its own three hundred entries, 165 KB of map each, and an
+    /// application of a hundred modules held a hundred copies.
+    pub(crate) fn prelude(&self) -> Arc<ImHashMap<String, Value>> {
+        static PRELUDE: std::sync::OnceLock<Arc<ImHashMap<String, Value>>> =
+            std::sync::OnceLock::new();
+        PRELUDE
+            .get_or_init(|| {
+                let mut map = ImHashMap::new();
+                for (name, func) in self.builtin_functions.get_functions() {
+                    map.insert(name.clone(), Value::Builtin(func.clone()));
+                }
+                for (name, module) in crate::stdlib::get_stdlib() {
+                    map.insert(name, module);
+                }
+                Arc::new(map)
+            })
+            .clone()
     }
 
     /// Evaluate a program.
@@ -719,12 +760,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         declarations: &[(crate::ast::FunctionDecl, bool)],
     ) -> Vec<(String, Value)> {
         let mut module_env = Environment::new();
-        for (name, func) in self.builtin_functions.get_functions() {
-            module_env.define(name.clone(), Value::Builtin(func.clone()));
-        }
-        for (name, module) in crate::stdlib::get_stdlib() {
-            module_env.define(name, module);
-        }
+        module_env.variables = self.prelude();
         let saved_env = std::mem::replace(&mut self.environment, module_env);
         let saved_path = self.current_module_path.replace(path.to_string());
         for (decl, _) in declarations {
@@ -740,7 +776,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             }
             if let Some(mut value) = self.environment.get(&decl.name) {
                 if let Value::Function(func) = &mut value {
-                    func.closure = Arc::new(scope.clone());
+                    Arc::make_mut(func).closure = Arc::new(scope.clone());
                 }
                 exported.push((decl.name.clone(), value));
             }
@@ -1029,6 +1065,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     param_bounds: Vec::new(),
                     def_file: self.current_module_path.clone(),
                     parent_scope: self.environment.scope_id,
+                    run: Default::default(),
                 };
                 if let Some(tier) = self.bytecode_tier.as_mut() {
                     tier.note_trait_default(
@@ -1065,6 +1102,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 param_bounds: Vec::new(),
                 def_file: self.current_module_path.clone(),
                 parent_scope: self.environment.scope_id,
+                run: Default::default(),
             };
             // Tell the tier this method body exists under its bare name. A
             // method dispatched by receiver type (`s.area()`) reaches the tier
@@ -1075,7 +1113,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             // arguments became tier-representable, these never compiled, which
             // hid the need to note them.)
             if let Some(tier) = self.bytecode_tier.as_mut() {
-                tier.note_function(method.name.clone(), function.clone());
+                tier.note_function(method.name.clone(), Arc::new(function.clone()));
                 tier.note_trait_impl(
                     impl_decl.type_name.clone(),
                     method.name.clone(),
@@ -1150,7 +1188,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// trait when a bound is violated.
     fn check_param_bounds(
         &self,
-        func: &Function,
+        func: &Arc<Function>,
         arguments: &[Value],
     ) -> Result<(), InterpreterError> {
         for (index, traits) in &func.param_bounds {
@@ -1216,7 +1254,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
 
     fn check_param_types(
         &self,
-        func: &Function,
+        func: &Arc<Function>,
         arguments: &[Value],
     ) -> Result<(), InterpreterError> {
         for (index, check) in func.param_checks.iter().enumerate() {
@@ -1380,10 +1418,43 @@ the function it shadows is the usual cause; `olang check` names the parameter",
 
     fn eval_function_decl(&mut self, func_decl: FunctionDecl) -> Result<Value, InterpreterError> {
         let name = func_decl.name.clone();
+        let top_level = self.environment.parent.is_none() && !self.environment.is_frame;
         let function_value = self.build_function_value(func_decl, None)?;
         // Define the function in the current environment so it can be called recursively
-        self.environment.define(name, function_value.clone());
+        self.environment
+            .define(name.clone(), function_value.clone());
+        if top_level && let Some(run) = self.fn_run.as_mut() {
+            if run.closure.contains_key(&name) {
+                // The name was already bound when the run began, so the
+                // shared closure holds the OLD binding and would shadow
+                // this one for every later sibling. End the run: the next
+                // declaration snapshots a scope that has this function.
+                self.close_fn_run();
+            } else {
+                let position = run.names.len() as u32;
+                run.names.insert(name, (position, function_value.clone()));
+                // The scope as this declaration left it: the next
+                // top-level `fn` that finds it untouched joins the run.
+                //
+                // Held weakly on purpose. A strong handle would make the
+                // next `define` copy the path it touches (the map would be
+                // shared); a weak one only makes `Arc::make_mut` move the
+                // map to a new allocation, which is exactly the change of
+                // address the run check looks for, and the old address
+                // stays reserved while the weak handle lives, so it cannot
+                // be reused by accident.
+                run.after_last = Arc::downgrade(&self.environment.variables);
+            }
+        }
         Ok(function_value)
+    }
+
+    /// End the run of top-level declarations in progress, publishing its
+    /// sibling table to the functions that belong to it.
+    pub(crate) fn close_fn_run(&mut self) {
+        if let Some(run) = self.fn_run.take() {
+            run.cell.close(run.names);
+        }
     }
 
     /// The function value a declaration denotes, noted to the tier but not
@@ -1407,10 +1478,47 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // interpreter fell back to the caller's frames, wrong the moment
         // the function ran compiled or on another thread (a `head`
         // parameter then resolved to the list builtin `head`).
+        //
+        // Consecutive top-level declarations share ONE snapshot: the scope
+        // as it stood before the first of the run. A snapshot per
+        // declaration pinned a version of the persistent map per function
+        // — three copied nodes of 7 KB each — so a file of 4,000 one-line
+        // functions held 80 MB of scope. A sibling declared earlier in
+        // the run is absent from the shared snapshot and resolves the way
+        // one declared later always has: through the file's scope
+        // (`lookup_name`). Anything else that touches the scope between
+        // two declarations replaces the map's `Arc`, which ends the run.
+        let mut run = RunRef::default();
         let closure = match early {
-            Some(root) => root,
-            None if self.environment.parent.is_none() => self.environment.flat_snapshot(),
-            None => self.collect_all_accessible_variables(),
+            Some(root) => Arc::new(root),
+            None if self.environment.parent.is_none() && !self.environment.is_frame => {
+                let joins = self.fn_run.as_ref().is_some_and(|open| {
+                    self.environment.locals.is_empty()
+                        && std::ptr::eq(
+                            open.after_last.as_ptr(),
+                            Arc::as_ptr(&self.environment.variables),
+                        )
+                        && !open.names.contains_key(&func_decl.name)
+                });
+                if !joins {
+                    self.close_fn_run();
+                    self.fn_run = Some(OpenRun {
+                        after_last: std::sync::Weak::new(),
+                        closure: Arc::new(self.environment.flat_snapshot()),
+                        cell: Arc::new(FnRun::default()),
+                        names: HashMap::new(),
+                    });
+                }
+                let open = self.fn_run.as_ref().expect("a run is open");
+                run = RunRef::Member(open.cell.clone(), open.names.len() as u32);
+                open.closure.clone()
+            }
+            None if self.environment.parent.is_none() => Arc::new(self.environment.flat_snapshot()),
+            None => {
+                // A nested `fn` sees the siblings its enclosing function sees.
+                run = self.environment.run.clone();
+                Arc::new(self.collect_all_accessible_variables())
+            }
         };
 
         // Resolve identifiers to frame slots once, at declaration — the
@@ -1441,7 +1549,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             name: Some(func_decl.name.clone()),
             parameters: func_decl.parameters,
             body: Arc::new(resolved_body),
-            closure: Arc::new(closure),
+            closure,
             param_bounds,
             param_checks,
             return_check,
@@ -1455,10 +1563,12 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             } else {
                 self.environment.scope_id
             },
+            run,
         };
 
         // Let the bytecode tier know this function exists, so a promoted
         // function that calls it can have it compiled too
+        let function = Arc::new(function);
         if let Some(tier) = self.bytecode_tier.as_mut() {
             tier.note_function(func_decl.name.clone(), function.clone());
         }
@@ -1580,7 +1690,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                             };
                             arg_values.push(self.eval_expr(expr)?);
                         }
-                        return self.call_function(Value::Function(method), arg_values);
+                        return self.call_function(Value::Function(Arc::new(method)), arg_values);
                     }
                 }
 
@@ -1625,7 +1735,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                         })
                         .collect()
                 };
-                Ok(Value::Function(Function {
+                Ok(Value::Function(Arc::new(Function {
                     name: None,
                     param_checks: crate::ast::param_checks_of(&parameters, &[]),
                     return_check: None,
@@ -1635,7 +1745,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     param_bounds: Vec::new(),
                     def_file: self.defining_file(),
                     parent_scope: self.environment.scope_id,
-                }))
+                    // A lambda sees the siblings its enclosing function sees.
+                    run: self.environment.run.clone(),
+                })))
             }
             Expr::Pipeline { left, right } => {
                 let left_value = self.eval_expr(left)?;
@@ -1649,9 +1761,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                         // otherwise `5 |> add(3)` errors on "missing" param.
                         let resolve_target = match &callee_value {
                             Value::Function(func) if !func.parameters.is_empty() => {
-                                let mut shifted = func.clone();
+                                let mut shifted = (**func).clone();
                                 shifted.parameters.remove(0);
-                                Value::Function(shifted)
+                                Value::Function(Arc::new(shifted))
                             }
                             other => other.clone(),
                         };
@@ -2099,6 +2211,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                         // In the stall detector's census for its whole
                         // life: this thread runs olang code.
                         let _live = crate::stdlib::chan::live_guard();
+                        let _counted =
+                            crate::memory::enter_task(&format!("olang-spawn-{}", task_id));
                         let outcome = worker.eval_expr(&expr).map_err(|e| e.to_string());
                         // A task that ends by raising says so, once, on
                         // stderr — as an uncaught error in main would. The
@@ -2790,7 +2904,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// being promises.
     fn check_call_boundary(
         &mut self,
-        func: &Function,
+        func: &Arc<Function>,
         arguments: &[Value],
     ) -> Result<(), InterpreterError> {
         let required_params = func
@@ -2835,11 +2949,12 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// Left to right, once per call.
     fn fill_default_arguments(
         &mut self,
-        func: &Function,
+        func: &Arc<Function>,
         slots: Vec<ArgSlot>,
     ) -> Result<Vec<Value>, InterpreterError> {
         let mut env = Environment::with_parent(self.environment.clone());
         env.owner = self.owner_of(func.def_file.as_deref());
+        env.run = func.run.clone();
         env.enter_function(func.parent_scope);
         if !func.closure.is_empty() {
             env.variables = func.closure.clone();
@@ -2883,7 +2998,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// resolution (holes fill from defaults in the callee's scope).
     pub fn call_user_function_slots(
         &mut self,
-        func: &Function,
+        func: &Arc<Function>,
         slots: Vec<ArgSlot>,
     ) -> Result<Value, InterpreterError> {
         let needs_fill = slots.len() < func.parameters.len()
@@ -2904,7 +3019,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
 
     pub fn call_user_function(
         &mut self,
-        func: &Function,
+        func: &Arc<Function>,
         mut arguments: Vec<Value>,
     ) -> Result<Value, InterpreterError> {
         // A short positional call fills its trailing parameters from
@@ -2946,7 +3061,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
 
     fn call_user_function_inner(
         &mut self,
-        func: &Function,
+        func: &Arc<Function>,
         mut arguments: Vec<Value>,
     ) -> Result<Value, InterpreterError> {
         {
@@ -3078,6 +3193,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 // inside it read this file's frames and the root, never
                 // the caller's.
                 new_env.owner = self.owner_of(func.def_file.as_deref());
+                new_env.run = func.run.clone();
                 new_env.enter_function(func.parent_scope);
 
                 // Adopt the closure as the environment's flat map in O(1) —
@@ -3268,11 +3384,22 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         if let Some(value) = self.environment.get_lexical(name, false) {
             return Some(value);
         }
+        // A sibling declared earlier in the running function's run: what
+        // its declaration-time snapshot would have held (`ast::FnRun`).
+        if let Some(value) = self.environment.run.get(name) {
+            return Some(value);
+        }
         if let Some(owner) = self.environment.owner.as_deref()
             && let Some(scope) = self.module_scopes.get(owner)
             && let Some(value) = scope.get(name)
         {
             return Some(value.clone());
+        }
+        // A bridge interpreter's table of the program's functions stands
+        // where its root would have held them: ahead of the root, so a
+        // user function still shadows a builtin of its name.
+        if let Some(function) = self.bridge_functions.as_ref().and_then(|t| t.get(name)) {
+            return Some(Value::Function(function.clone()));
         }
         if let Some(value) = self.environment.root().get_here(name) {
             return Some(value);
@@ -3304,6 +3431,12 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             }
         }
         None
+    }
+
+    /// Install the program's unambiguous functions by name, for a bridge
+    /// interpreter (see `lookup_name`).
+    pub fn set_bridge_functions(&mut self, functions: Arc<HashMap<String, Arc<Function>>>) {
+        self.bridge_functions = Some(functions);
     }
 
     /// Install the module tables a bridge interpreter resolves through.
@@ -3403,6 +3536,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             pending_top_level: HashMap::new(),
             declared_early: HashMap::new(),
             module_scopes: self.module_scopes.clone(),
+            fn_run: None,
+            bridge_functions: self.bridge_functions.clone(),
             module_loading_stack: Vec::new(), // Feature 7: Each thread gets its own loading stack
 
             // Feature 8: Smart caching system
@@ -3446,7 +3581,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     tier.note_type_alias(name.clone(), target.clone());
                 }
                 for ((type_name, method), func) in &self.trait_impls {
-                    tier.note_function(method.clone(), func.clone());
+                    tier.note_function(method.clone(), Arc::new(func.clone()));
                     tier.note_trait_impl(type_name.clone(), method.clone(), func.clone());
                 }
                 for ((trait_name, method), func) in &self.trait_defaults {
@@ -4288,7 +4423,16 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     all_variables.insert(name.clone(), value.clone());
                 }
             }
+            // The root's binding of a name is not what this code means by
+            // it when the running function has an earlier sibling of that
+            // name (`ast::FnRun`): its snapshot held the sibling, and a
+            // later redefinition in the root must not reach back. Left
+            // out here, the name resolves through the run at lookup.
+            let is_root = parent.parent.is_none();
             for (name, value) in parent.variables.iter() {
+                if is_root && self.environment.run.get(name).is_some() {
+                    continue;
+                }
                 if !all_variables.contains_key(name) {
                     all_variables.insert(name.clone(), value.clone());
                 }
@@ -4310,6 +4454,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             Value::List(items) => {
                 let parent_env = std::mem::take(&mut self.environment);
                 self.environment.owner = parent_env.owner.clone();
+                self.environment.run = parent_env.run.clone();
                 self.environment.scope_id = parent_env.scope_id;
                 self.environment.lexical_parent = parent_env.lexical_parent;
                 self.environment.parent = Some(Arc::new(parent_env));
@@ -4332,6 +4477,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             } => {
                 let parent_env = std::mem::take(&mut self.environment);
                 self.environment.owner = parent_env.owner.clone();
+                self.environment.run = parent_env.run.clone();
                 self.environment.scope_id = parent_env.scope_id;
                 self.environment.lexical_parent = parent_env.lexical_parent;
                 self.environment.parent = Some(Arc::new(parent_env));
@@ -4353,6 +4499,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             Value::Tuple(items) => {
                 let parent_env = std::mem::take(&mut self.environment);
                 self.environment.owner = parent_env.owner.clone();
+                self.environment.run = parent_env.run.clone();
                 self.environment.scope_id = parent_env.scope_id;
                 self.environment.lexical_parent = parent_env.lexical_parent;
                 self.environment.parent = Some(Arc::new(parent_env));
@@ -4372,6 +4519,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             Value::String(s) => {
                 let parent_env = std::mem::take(&mut self.environment);
                 self.environment.owner = parent_env.owner.clone();
+                self.environment.run = parent_env.run.clone();
                 self.environment.scope_id = parent_env.scope_id;
                 self.environment.lexical_parent = parent_env.lexical_parent;
                 self.environment.parent = Some(Arc::new(parent_env));

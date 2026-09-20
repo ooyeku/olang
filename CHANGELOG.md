@@ -28,8 +28,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `tier-refused:` lines, and the browser's profile report carries
   `refused` and `repaints` (`window.olangTier()` for the report alone).
 
+- **A declared function costs kilobytes, not tens of them.** Consecutive
+  top-level `fn` declarations share one closure instead of each pinning
+  its own version of the scope map, with the run's earlier members kept
+  in a table both tiers consult — what a function sees is unchanged,
+  including across a later redefinition. A function value is one shared
+  allocation (`Value` is 112 bytes, from 176; a call no longer copies the
+  function to bind its own name). The builtins and stdlib modules are one
+  shared map rather than a copy per module, interpreter and bridge.
+  Resident memory here: a file of 4,000 one-line functions 137 → 43 MB,
+  an application's modules loaded 433 → 173 MB, the same served 950 →
+  446 MB.
+- **The embedded browser runtime costs no heap.** Its gzip and brotli
+  forms and its hash are made when the binary is built; `runtime.wasm()`
+  hands out slices of the binary's image. Touching it cost 88 MB of
+  resident memory and a third of a second at boot; it costs neither.
+
 ### Added
 
+- `runtime.memory()` — `#{ "heap", "program", "values", "embedded",
+  "tasks" }` in bytes, from a counting allocator: the loaded program's
+  share, the running program's values, the embedded runtime, and each
+  spawned task and http worker by name.
 - The editor completes a declared shape's keys after `map_get(t, "`,
   `t["`, and `t.`; the checker flags a `map_set` of a key the shape does
   not declare.

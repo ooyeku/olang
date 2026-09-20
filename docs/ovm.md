@@ -126,7 +126,12 @@ A function is eligible when its body uses only the subset the VM implements:
   baked as constants. Sound because the interpreter installs exactly that
   closure as the call environment, and closures are declaration-time
   snapshots: a global mutated after the function's declaration is not seen
-  by either tier (pinned by a test)
+  by either tier (pinned by a test). Consecutive top-level declarations
+  share one closure — the scope before the first of the run — and each
+  function carries its position in the run's table of members
+  (`ast::FnRun`); the compiler consults closure, then the members declared
+  before the function, which together are what a snapshot per declaration
+  held, at a fraction of the memory
 - lambdas, including those capturing the enclosing function's *runtime*
   state (a parameter, a local), and those referencing registered user
   functions that are not in the closure — self-reference and forward

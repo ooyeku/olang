@@ -146,6 +146,7 @@ fn build_continuation(
         param_bounds: Vec::new(),
         def_file,
         parent_scope: 0,
+        run: Default::default(),
     }
 }
 

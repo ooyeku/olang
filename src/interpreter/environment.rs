@@ -73,6 +73,9 @@ pub struct Environment {
     /// to the root — the frames in between are the callers', and a
     /// caller's bindings are not this function's to see.
     pub(crate) lexical_parent: u64,
+    /// The running function's run of sibling declarations (`ast::FnRun`):
+    /// set on a call frame from its function, inherited by block scopes.
+    pub(crate) run: crate::ast::RunRef,
 }
 
 impl Default for Environment {
@@ -91,6 +94,7 @@ impl Environment {
             owner: None,
             scope_id: 0,
             lexical_parent: 0,
+            run: Default::default(),
         }
     }
 
@@ -103,6 +107,7 @@ impl Environment {
             owner: parent.owner.clone(),
             scope_id: parent.scope_id,
             lexical_parent: parent.lexical_parent,
+            run: parent.run.clone(),
             parent: Some(Arc::new(parent)),
         }
     }
@@ -116,6 +121,7 @@ impl Environment {
             owner: parent.owner.clone(),
             scope_id: parent.scope_id,
             lexical_parent: parent.lexical_parent,
+            run: parent.run.clone(),
             parent: Some(parent),
         }
     }

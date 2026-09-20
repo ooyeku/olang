@@ -147,7 +147,7 @@ pub struct BytecodeTier {
     rejected_reasons: HashMap<String, String>,
     /// User functions the interpreter has declared, so a promoted function
     /// calling a helper can have that helper compiled too
-    known_functions: HashMap<String, Function>,
+    known_functions: HashMap<String, Arc<Function>>,
     /// Names bound to more than one distinct function body — e.g. the same
     /// function name defined in two different modules. The tier resolves
     /// callees by name, which cannot tell such functions apart, so an
@@ -288,7 +288,7 @@ impl BytecodeTier {
     /// a task compiles there as it does on the main thread (without it,
     /// `count` stayed interpreted in every task: "cannot compile callee
     /// `as_str`", a name the worker's tier had never heard of).
-    pub fn known_functions(&self) -> Vec<(String, Function)> {
+    pub fn known_functions(&self) -> Vec<(String, Arc<Function>)> {
         self.known_functions
             .iter()
             .map(|(n, f)| (n.clone(), f.clone()))
@@ -520,7 +520,7 @@ impl BytecodeTier {
         }
     }
 
-    pub fn note_function(&mut self, name: String, func: Function) {
+    pub fn note_function(&mut self, name: String, func: Arc<Function>) {
         // Already known to be ambiguous: a second module's same-named function
         // stays off the tier for the rest of the run.
         if self.ambiguous.contains(&name) {
@@ -759,7 +759,7 @@ impl BytecodeTier {
     pub fn try_hof(
         &mut self,
         name: &str,
-        kernel: &crate::ast::Function,
+        kernel: &Arc<crate::ast::Function>,
         items: &[Value],
         init: Option<&Value>,
     ) -> Option<Result<Value, String>> {
@@ -812,7 +812,7 @@ impl BytecodeTier {
     pub fn try_hof_range(
         &mut self,
         name: &str,
-        kernel: &crate::ast::Function,
+        kernel: &Arc<crate::ast::Function>,
         start: i64,
         end: i64,
         inclusive: bool,
@@ -978,6 +978,7 @@ impl BytecodeTier {
                 func.param_checks.clone().into(),
                 func.return_check.clone(),
                 func.def_file.as_deref().map(Arc::from),
+                func.run.clone(),
             ) {
                 Ok(()) => {
                     self.compiled
@@ -1378,6 +1379,7 @@ let t2 = time.monotonic_ms()
             return_check: None,
             def_file: None,
             parent_scope: 0,
+            run: Default::default(),
         }
     }
 
@@ -1428,8 +1430,8 @@ let t2 = time.monotonic_ms()
         let double = double_fn();
         let triple = triple_fn();
 
-        tier.note_function("double".to_string(), double.clone());
-        tier.note_function("double".to_string(), triple.clone());
+        tier.note_function("double".to_string(), Arc::new(double.clone()));
+        tier.note_function("double".to_string(), Arc::new(triple.clone()));
 
         // double(5) = 10, triple(5) = 15 — the right body each time.
         assert!(matches!(
@@ -1448,8 +1450,8 @@ let t2 = time.monotonic_ms()
         // exports) shares the body Arc and must not be mistaken for a clash.
         let mut tier = BytecodeTier::new(1);
         let func = double_fn();
-        tier.note_function("double".to_string(), func.clone());
-        tier.note_function("double".to_string(), func.clone());
+        tier.note_function("double".to_string(), Arc::new(func.clone()));
+        tier.note_function("double".to_string(), Arc::new(func.clone()));
 
         match tier.try_call(&func, &mut [Value::Integer(5)]) {
             TierOutcome::Ran(Ok(Value::Integer(10))) => {}
@@ -1501,6 +1503,7 @@ let t2 = time.monotonic_ms()
             return_check: None,
             def_file: None,
             parent_scope: 0,
+            run: Default::default(),
         };
 
         match tier.try_call(&func, &mut [Value::Integer(5)]) {
@@ -1546,6 +1549,7 @@ let t2 = time.monotonic_ms()
             return_check: None,
             def_file: None,
             parent_scope: 0,
+            run: Default::default(),
         };
 
         for _ in 0..5 {
@@ -1584,7 +1588,7 @@ let t2 = time.monotonic_ms()
         // by 2 is a type error there exactly as it is interpreted.
         let mut tier = BytecodeTier::new(1);
         let func = double_fn();
-        match tier.try_call(&func, &mut [Value::Function(double_fn())]) {
+        match tier.try_call(&func, &mut [Value::Function(Arc::new(double_fn()))]) {
             TierOutcome::Ran(Err(_)) => {}
             TierOutcome::Ran(Ok(v)) => panic!("expected a type error, got {:?}", v),
             TierOutcome::Fallback => panic!("function arguments should cross the boundary"),
@@ -1608,6 +1612,7 @@ let t2 = time.monotonic_ms()
             return_check: None,
             def_file: None,
             parent_scope: 0,
+            run: Default::default(),
         };
 
         match tier.try_call(&func, &mut [Value::Integer(1), Value::Integer(0)]) {

@@ -22,8 +22,8 @@ default = ["native", "full"]
 # the runtime's code and nothing a page needs. The website's playground
 # keeps them.
 full = ["regex-module", "rsa-crypto"]
-# `alloc-count`: a counting global allocator, for measuring allocations
-# per benchmark iteration (`OLANG_ALLOC_STATS=1 olang run x.ol` prints
+# `alloc-count`: has the accounting allocator (`src/memory.rs`) also count
+# allocations made, for measuring allocations per benchmark iteration (`OLANG_ALLOC_STATS=1 olang run x.ol` prints
 # the count at exit). A measurement build, not a shipping one.
 alloc-count = []
 regex-module = ["dep:regex"]
@@ -175,6 +175,13 @@ chrono = { version = "0.4.41", default-features = false, features = ["clock", "s
 #   wasm32 target); src/playground.rs defines __getrandom_v03_custom.
 # - getrandom 0.2 (rand_core 0.6 era: rsa, aes-gcm, argon2): the "custom"
 #   feature plus register_custom_getrandom!.
+# build.rs compresses and hashes the embedded browser runtime once, at
+# build time (see its header).
+[build-dependencies]
+flate2 = "1.1"
+brotli = "8"
+sha2 = "0.10"
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = "0.4"
 getrandom02 = { package = "getrandom", version = "0.2", features = ["custom"] }

@@ -534,6 +534,9 @@ impl Interpreter {
         // worked only when its index.ol happened to cache the name first.
         let file_path = self.resolve_module_path(module_path)?;
         let file_path_str = file_path.to_string_lossy().to_string();
+        // What this load leaves on the heap is the program's, not its
+        // values' (`runtime.memory()`).
+        let _load = crate::memory::load_scope();
         self.module_name_index
             .entry(module_path.to_string())
             .or_insert_with(|| file_path.clone());
@@ -633,16 +636,7 @@ impl Interpreter {
 
         // Create a new environment for the module with builtins
         let mut module_env = Environment::new();
-
-        // Add builtin functions to module environment
-        for (name, func) in self.builtin_functions.get_functions() {
-            module_env.define(name.clone(), Value::Builtin(func.clone()));
-        }
-
-        // Add stdlib modules to module environment
-        for (name, module) in crate::stdlib::get_stdlib() {
-            module_env.define(name, module);
-        }
+        module_env.variables = self.prelude();
 
         // Feature 7: Add module to loading stack to track circular dependencies
         self.module_loading_stack.push(file_path_str.clone());
@@ -827,6 +821,7 @@ impl Interpreter {
             // full visibility of their siblings — matching how top-level
             // functions in a single file can call one another regardless of
             // order.
+            self.close_fn_run();
             let module_scope = self.environment.flat_snapshot();
             // The complete table is also how a frame of this file resolves
             // a sibling its closure predates (a private helper declared
@@ -837,6 +832,8 @@ impl Interpreter {
             if let Some(tier) = self.bytecode_tier.as_mut() {
                 tier.note_module_scope(file_path_str.clone(), scope_table);
             }
+            // One `Arc` for every export, not one per function.
+            let shared_scope = Arc::new(module_scope.clone());
             for (name, value) in exports.iter_mut() {
                 if reexported.contains(name) {
                     // A `share use` re-export keeps the closure its own
@@ -845,7 +842,7 @@ impl Interpreter {
                     continue;
                 }
                 if let Value::Function(func) = value {
-                    func.closure = Arc::new(module_scope.clone());
+                    Arc::make_mut(func).closure = shared_scope.clone();
                 }
             }
             // The tier recorded each of these functions at declaration,

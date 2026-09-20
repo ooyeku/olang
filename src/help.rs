@@ -5503,6 +5503,15 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
 route("GET", "/olang." + map_get(rt, "hash") + ".wasm", (req, p) => { status: 200, body: map_get(rt, "br"), headers: #{ "Content-Type": "application/wasm", "Content-Encoding": "br" } })"##],
         );
         self.doc_ex(
+            "runtime.memory",
+            "runtime.memory()",
+            "Map",
+            "runtime",
+            "Where the process's memory is, in bytes: #{ \"heap\", \"program\", \"values\", \"embedded\", \"tasks\": [#{ \"name\", \"bytes\" }] } — what is allocated and not freed, the share the loaded program holds (measured across parsing the entry file and each use), the rest, the browser runtime in the binary's image, and each spawned task and http worker with what it allocated and has not itself freed, largest first.",
+            &[r##"let m = runtime.memory()
+println("program: " + to_string(map_get(m, "program") / 1048576) + " MB")"##],
+        );
+        self.doc_ex(
             "runtime.version",
             "runtime.version()",
             "String",

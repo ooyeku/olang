@@ -24,6 +24,7 @@ below made a measured difference of between 2× and several hundred times.
 - [Reading the tier's decisions](#reading-the-tiers-decisions)
 - [Verifying a hot program](#verifying-a-hot-program)
 - [Bulk data belongs in ods](#bulk-data-belongs-in-ods)
+- [What a program costs in memory](#what-a-program-costs-in-memory)
 
 ## Put hot loops in functions
 
@@ -177,3 +178,38 @@ against NumPy, pandas, and Polars. The division of labor is simple:
 express per-element logic in olang functions, keep bulk transformation
 in `Series` and `Frame` operations, and cross between the two at the
 edges rather than inside loops.
+
+## What a program costs in memory
+
+A declared function costs its syntax tree and one table entry — a few
+kilobytes for a one-line function. Its closure is the scope it was
+declared in, and consecutive top-level declarations share one: the
+scope as it stood before the first of the run. Anything else at the top
+level between two declarations (a `let`, a `use`, a type) starts a new
+run. The builtins and stdlib modules every file starts from are one
+map shared by every module and interpreter in the process. The meaning
+is unchanged from a snapshot per declaration — a
+function sees the siblings declared before it as they were then, a
+sibling shadows a builtin of its name, and a later redefinition does not
+reach back — because each run keeps a table of its members by position,
+consulted after the closure by both tiers.
+
+| Program | Resident, 0.85.0 | Resident now | `runtime.memory()` heap |
+|---|---|---|---|
+| idle (`time.sleep`) | 10 MB | 10 MB | 0.3 MB |
+| the same after `runtime.wasm()` | 99 MB | 10 MB | 0.3 MB |
+| one file of 4,000 one-line functions | 137 MB | 43 MB | 15 MB |
+| the same as an imported module | 140 MB | 49 MB | 15 MB |
+| an application of 56 files and three packages, loaded | 433 MB | 173 MB | 48 MB |
+| the same, served with 18 http workers | 950 MB | 446 MB | 125 MB |
+
+The difference between resident memory and the heap, for a large
+source, is the parser's working memory: the grammar's token queue for a
+90 KB file passes 10 MB, is freed when the tree is built, and stays
+resident until the system asks for it back. It does not grow with the
+life of the process.
+
+[`runtime.memory()`](stdlib.md#runtime--what-this-binary-carries) reports
+the heap by share — the loaded program, the running program's values,
+each task and http worker — and is cheap enough to serve from a
+`/profile` route.

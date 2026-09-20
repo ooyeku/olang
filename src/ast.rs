@@ -553,7 +553,10 @@ pub enum Value {
     List(Arc<Vec<Value>>),
     Map(Arc<HashMap<String, Value>>),
     Tuple(Arc<Vec<Value>>),
-    Function(Function),
+    /// Behind an `Arc`: a function value is copied into every scope, table
+    /// and frame that names it, and inline it made `Value` 176 bytes —
+    /// the size of every slot of every list and persistent-map node.
+    Function(Arc<Function>),
     Builtin(BuiltinFunction),
     Struct {
         type_name: String,
@@ -652,6 +655,104 @@ pub struct Function {
     /// never through whatever frame happened to make the call.
     #[serde(default)]
     pub parent_scope: u64,
+    /// The run of consecutive top-level declarations this function
+    /// belongs to, and its place in it (see `FnRun`). Empty for a lambda
+    /// or nested `fn` declared outside any run, and for rebuilt values.
+    #[serde(skip)]
+    pub run: RunRef,
+}
+
+/// A run of consecutive top-level `fn` declarations shares ONE closure:
+/// the scope as it stood before the first of them. A snapshot per
+/// declaration pinned a version of the persistent scope map per function
+/// — three copied nodes of several kilobytes each — so a file of 4,000
+/// one-line functions held 80 MB of scope. What the per-declaration
+/// snapshot added over the shared one is exactly the siblings declared
+/// earlier in the run; this table holds them, each with its position, and
+/// a function sees the entries before its own. The table is written once,
+/// when the run ends; until then a sibling resolves through the file's
+/// live scope, which holds the same values (a name declared twice ends
+/// the run first).
+#[derive(Default)]
+pub struct FnRun {
+    table: std::sync::OnceLock<HashMap<String, (u32, Value)>>,
+}
+
+impl FnRun {
+    /// End the run: `names` is every function it declared, by position.
+    ///
+    /// The table's copies refer back to the run WEAKLY. A member holds
+    /// its run strongly; if the table held members as they are, run,
+    /// table and member would own each other and no run — nor the scope
+    /// its members share — would ever be freed. A sibling reached through
+    /// the table is running under a caller that holds the run, so the
+    /// weak handle resolves; one that escaped every such holder resolves
+    /// its own siblings through the file's scope instead.
+    pub fn close(self: &Arc<Self>, names: HashMap<String, (u32, Value)>) {
+        let table = names
+            .into_iter()
+            .map(|(name, (position, value))| {
+                let value = match value {
+                    Value::Function(f) => Value::Function(Arc::new(Function {
+                        run: RunRef::Sibling(Arc::downgrade(self), position),
+                        ..(*f).clone()
+                    })),
+                    other => other,
+                };
+                (name, (position, value))
+            })
+            .collect();
+        let _ = self.table.set(table);
+    }
+}
+
+/// A function's handle on its run: the run, and how many siblings were
+/// declared before it.
+#[derive(Clone, Default)]
+pub enum RunRef {
+    #[default]
+    None,
+    /// A function as declared: it keeps its run alive.
+    Member(Arc<FnRun>, u32),
+    /// A function as the run's table holds it (see `FnRun::close`).
+    Sibling(std::sync::Weak<FnRun>, u32),
+}
+
+impl RunRef {
+    /// The sibling `name` as this function's declaration-time snapshot
+    /// would have held it: declared earlier in the same run.
+    pub fn get(&self, name: &str) -> Option<Value> {
+        let (run, position) = match self {
+            RunRef::None => return None,
+            RunRef::Member(run, position) => (run.clone(), *position),
+            RunRef::Sibling(run, position) => (run.upgrade()?, *position),
+        };
+        let (declared_at, value) = run.table.get()?.get(name)?;
+        (*declared_at < position).then(|| value.clone())
+    }
+
+    fn identity(&self) -> Option<(*const FnRun, u32)> {
+        match self {
+            RunRef::None => None,
+            RunRef::Member(run, position) => Some((Arc::as_ptr(run), *position)),
+            RunRef::Sibling(run, position) => Some((run.as_ptr(), *position)),
+        }
+    }
+}
+
+impl std::fmt::Debug for RunRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.identity() {
+            Some((_, position)) => write!(f, "RunRef({position})"),
+            None => write!(f, "RunRef(-)"),
+        }
+    }
+}
+
+impl PartialEq for RunRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity() == other.identity()
+    }
 }
 
 impl Function {

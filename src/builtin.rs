@@ -1776,7 +1776,9 @@ impl BuiltinFunctions {
                                 // them core-local — measured 10x on a cheap
                                 // lambda kernel.
                                 let function = match function {
-                                    Value::Function(f) => Value::Function(f.thread_localized()),
+                                    Value::Function(f) => {
+                                        Value::Function(std::sync::Arc::new(f.thread_localized()))
+                                    }
                                     other => other.clone(),
                                 };
                                 scope.spawn(move || {

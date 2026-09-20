@@ -1198,8 +1198,9 @@ that serves its own routes reads the same bytes.
 
 | Function | Result |
 |---|---|
-| `runtime.wasm()` | `Ok(#{ "bytes", "hash", "gzip", "br", "version" })` — the runtime's bytes, the first sixteen hex digits of their SHA-256 (the name in `/olang.<hash>.wasm` and the ETag), the gzip and brotli forms (computed once per process), and the olang version it is; `Err(message)` naming how to build a binary that carries one |
+| `runtime.wasm()` | `Ok(#{ "bytes", "hash", "gzip", "br", "version" })` — the runtime's bytes, the first sixteen hex digits of their SHA-256 (the name in `/olang.<hash>.wasm` and the ETag), the gzip and brotli forms, and the olang version it is. Every form and the hash are made when the binary is built and are slices of its own image: the call computes nothing, copies nothing to the heap, and may be made per request; `Err(message)` naming how to build a binary that carries one |
 | `runtime.version()` | the olang version string |
+| `runtime.memory()` | `#{ "heap", "program", "values", "embedded", "tasks" }`, in bytes — where the process's memory is (below) |
 
 ```olang no-run
 let rt = unwrap(runtime.wasm())
@@ -1208,6 +1209,31 @@ fn wasm(req, params) = {
     headers: #{ "Content-Type": "application/wasm", "Content-Encoding": "br",
                 "ETag": "\"" + map_get(rt, "hash") + "\"" }
 }
+```
+
+`runtime.memory()` answers from a counting layer over the system
+allocator, so the figures are exact and the call is cheap enough for a
+`/profile` route:
+
+| Key | Meaning |
+|---|---|
+| `heap` | bytes allocated and not yet freed, across every thread |
+| `program` | the share the loaded program holds: the heap's growth measured across parsing the entry file and across each outermost `use` with everything it loads |
+| `values` | `heap - program`: the running program's values, tables, and buffers |
+| `embedded` | the browser runtime and its compressed forms in the binary's image — file-backed pages, not heap |
+| `tasks` | `[#{ "name", "bytes" }]`, largest first: each live spawned task (`olang-spawn-N`) and http worker (`olang-http-N`) with the bytes that thread allocated and has not itself freed |
+
+A task's figure is attributed by the thread that made the allocation: a
+value a task builds and hands to a joiner counts on the task until the
+task ends, when its balance folds into the rest of the heap. Resident
+memory as the operating system reports it is larger than `heap` — it
+includes the binary's image, thread stacks, and pages the allocator has
+freed but not yet returned.
+
+```olang no-run
+let m = runtime.memory()
+let mb = (key) => to_string(map_get(m, key) / 1048576) + " MB"
+println("program " + mb("program") + ", values " + mb("values"))
 ```
 
 A binary built without the artifact (a fresh checkout's `cargo build`

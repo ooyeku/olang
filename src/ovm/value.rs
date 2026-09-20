@@ -1224,9 +1224,9 @@ impl OvmValue {
     }
 
     /// Wrap an interpreter function verbatim so it converts back unchanged.
-    pub fn new_ast_function(func: crate::ast::Function) -> Self {
+    pub fn new_ast_function(func: Arc<crate::ast::Function>) -> Self {
         Self {
-            data: ValueData::AstFunction(Arc::new(func)),
+            data: ValueData::AstFunction(func),
         }
     }
 
@@ -1284,7 +1284,7 @@ impl OvmValue {
                 }
                 Ok(Value::Tuple(std::sync::Arc::new(ast_values)))
             }
-            ValueData::AstFunction(func) => Ok(Value::Function((**func).clone())),
+            ValueData::AstFunction(func) => Ok(Value::Function(func.clone())),
             ValueData::Map(m) => {
                 let mut out = HashMap::new();
                 for (k, v) in m.iter() {
@@ -1345,7 +1345,7 @@ impl OvmValue {
                         built
                     }
                 };
-                Ok(Value::Function(crate::ast::Function {
+                Ok(Value::Function(Arc::new(crate::ast::Function {
                     // The template's name survives the round trip: a
                     // nested fn's self-recursion binds through its name
                     // at call time, and a rebuilt `insert` that lost it
@@ -1359,7 +1359,8 @@ impl OvmValue {
                     param_bounds: Vec::new(),
                     def_file: c.template.def_file.clone(),
                     parent_scope: 0,
-                }))
+                    run: c.template.run.clone(),
+                })))
             }
             ValueData::Function(_) => {
                 // Functions return unit for now

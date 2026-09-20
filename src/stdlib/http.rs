@@ -1404,6 +1404,7 @@ pub fn serve_blocking(
                 // live, which correctly disables the stall abort for a
                 // program that may still receive external requests.
                 let _live = crate::stdlib::chan::live_guard();
+                let _counted = crate::memory::enter_task(&format!("olang-http-{}", worker_id + 1));
                 loop {
                     let stream = {
                         let receiver = match receiver.lock() {

@@ -618,7 +618,6 @@ impl Parser {
                 }
             }
         }
-
         // A bare `share` is never a statement: the grammar accepts only
         // `share` followed by a declaration, so a lone `share` here means
         // the thing after it was not one — `share meta fn` is the case

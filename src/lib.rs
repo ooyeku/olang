@@ -9,8 +9,6 @@
 //! This crate provides the core implementation of the Olang programming language,
 //! including parsing, AST construction, interpretation, and REPL functionality.
 
-#[cfg(feature = "alloc-count")]
-pub mod alloc_count;
 pub mod analyze;
 pub mod ast;
 pub mod builtin;
@@ -22,6 +20,7 @@ pub mod help;
 pub mod home;
 pub mod interpreter;
 pub mod log;
+pub mod memory; // The accounting behind `runtime.memory()`
 pub mod native;
 pub mod ods;
 pub mod olb; // The program image: a parsed Program as bytes

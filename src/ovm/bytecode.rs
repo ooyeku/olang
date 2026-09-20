@@ -200,7 +200,7 @@ pub struct BytecodeVm {
     /// lambda's AST form must still CARRY the function in its closure so
     /// it behaves identically when it escapes to the interpreter (bridged
     /// builtins, returned values).
-    known_function_values: HashMap<String, crate::ast::Function>,
+    known_function_values: HashMap<String, std::sync::Arc<crate::ast::Function>>,
     /// Bare names bound to more than one distinct function body over the
     /// run — a nested `fn insert` in two modules, say. The bridge seeds
     /// its environment only with unambiguous names; a name here would
@@ -310,6 +310,11 @@ pub struct BytecodeCompiler {
     /// private helper written below it) resolves here, as it does on the
     /// interpreter since 0.84.
     module_scope: Option<std::sync::Arc<im::HashMap<String, Value>>>,
+    /// The run of sibling declarations the function being compiled belongs
+    /// to: the earlier siblings its shared closure leaves out
+    /// (`ast::FnRun`). Consulted right after the closure, as the
+    /// interpreter does.
+    enclosing_run: crate::ast::RunRef,
     /// Callees the tier could not compile: a call to one is emitted as a
     /// call through its function VALUE (the bridge runs it), so one
     /// uncompilable function no longer takes every caller with it.
@@ -317,7 +322,7 @@ pub struct BytecodeCompiler {
 
     /// User function values for lambda-closure attachment (see
     /// BytecodeVm::known_function_values).
-    known_function_values: HashMap<String, crate::ast::Function>,
+    known_function_values: HashMap<String, std::sync::Arc<crate::ast::Function>>,
 
     /// Set while compiling a named nested fn's pending body: (name, id,
     /// real parameter count, capture count). A self-call must append the
@@ -1373,7 +1378,11 @@ impl BytecodeVm {
         self.bridge_landscape_version += 1;
     }
 
-    pub fn note_function_value(&mut self, name: String, func: crate::ast::Function) {
+    pub fn note_function_value(
+        &mut self,
+        name: String,
+        func: std::sync::Arc<crate::ast::Function>,
+    ) {
         if let Some(existing) = self.known_function_values.get(&name)
             && !std::sync::Arc::ptr_eq(&existing.body, &func.body)
         {
@@ -1601,6 +1610,7 @@ impl BytecodeVm {
             checks.into(),
             ret,
             None,
+            Default::default(),
         )
     }
 
@@ -1709,6 +1719,7 @@ impl BytecodeVm {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn compile_function_with_closure(
         &mut self,
         func_id: FunctionId,
@@ -1717,6 +1728,7 @@ impl BytecodeVm {
         param_checks: std::sync::Arc<[Option<crate::ast::FieldTypeCheck>]>,
         return_check: Option<crate::ast::FieldTypeCheck>,
         def_file: Option<Arc<str>>,
+        run: crate::ast::RunRef,
     ) -> Result<(), BytecodeError> {
         let start_time = crate::clock::Instant::now();
 
@@ -1738,6 +1750,7 @@ impl BytecodeVm {
             .as_deref()
             .and_then(|f| self.module_scopes.get(f).cloned());
         self.compiler.enclosing_closure = closure;
+        self.compiler.enclosing_run = run;
 
         self.compiler.pending_lambdas.clear();
         let bytecode = self.compiler.compile_function(func_id, func)?;
@@ -4524,7 +4537,7 @@ impl BytecodeVm {
                     } else if let Some(m) =
                         self.lookup_method(Self::ovm_type_name(&receiver), method)
                     {
-                        let m = OvmValue::new_ast_function(m.clone());
+                        let m = OvmValue::new_ast_function(std::sync::Arc::new(m.clone()));
                         let mut arg_values = self.arg_pool.pop().unwrap_or_default();
                         arg_values.reserve(args.len() + 1);
                         arg_values.push(receiver);
@@ -5764,6 +5777,7 @@ impl BytecodeVm {
                 func.param_checks.clone().into(),
                 func.return_check.clone(),
                 func.def_file.as_deref().map(Arc::from),
+                func.run.clone(),
             ) {
                 Ok(()) => {
                     result = Some(func_id);
@@ -5915,14 +5929,22 @@ impl BytecodeVm {
             // modules' private `insert`s must each resolve to their own,
             // which bare-name seeding cannot promise. The tier registry
             // gets every name — it carries its own ambiguity guard.
+            //
+            // They are handed over as one table the bridge consults where
+            // its root would have held them, not defined one by one: a
+            // few thousand inserts built every bridge a private scope map
+            // of several megabytes, and a served application holds a
+            // bridge per worker.
+            let mut by_name = HashMap::with_capacity(self.known_function_values.len());
             for (name, func) in self.known_function_values.clone() {
                 if !self.ambiguous_function_names.contains(&name) {
-                    interp.define_global(&name, crate::ast::Value::Function(func.clone()));
+                    by_name.insert(name.clone(), func.clone());
                 }
                 if let Some(tier) = interp.bytecode_tier_mut() {
                     tier.note_function(name, func);
                 }
             }
+            interp.set_bridge_functions(std::sync::Arc::new(by_name));
             // The verdict travels with the table: a name two definitions
             // share is ambiguous in the bridge's tier too, or the one
             // value the table kept for it would compile by name there —
@@ -6255,6 +6277,7 @@ impl BytecodeVm {
                 func.param_checks.clone().into(),
                 func.return_check.clone(),
                 func.def_file.as_deref().map(Arc::from),
+                func.run.clone(),
             ) {
                 Ok(()) => {
                     self.hof_promotions += 1;
@@ -7884,6 +7907,7 @@ impl BytecodeCompiler {
             type_aliases: HashMap::new(),
             bridged_callees: std::collections::HashSet::new(),
             module_scope: None,
+            enclosing_run: Default::default(),
             known_function_values: HashMap::new(),
             self_call: None,
             pending_lambdas: Vec::new(),
@@ -7906,6 +7930,16 @@ impl BytecodeCompiler {
     fn fold_cap_allowed(&self, cap: &str) -> Option<bool> {
         let caps = self.static_grant()?;
         crate::stdlib::caps_mod::holds(&caps, cap)
+    }
+
+    /// What the function being compiled sees lexically: its closure, then
+    /// the siblings declared before it in its run — together, what a
+    /// per-declaration snapshot held (`ast::FnRun`).
+    fn lexical(&self, name: &str) -> Option<Value> {
+        self.enclosing_closure
+            .get(name)
+            .cloned()
+            .or_else(|| self.enclosing_run.get(name))
     }
 
     /// True when the static manifest fully grants `builtin` for this
@@ -8206,9 +8240,11 @@ impl BytecodeCompiler {
                         .then(|| self.known_function_values.get(name))
                         .flatten()
                         .map(|f| Value::Function(f.clone()));
+                    let sibling = self.enclosing_run.get(name);
                     let resolved = self
                         .enclosing_closure
                         .get(name)
+                        .or(sibling.as_ref())
                         .or_else(|| self.module_scope.as_ref().and_then(|m| m.get(name)))
                         .or(later.as_ref());
                     match resolved {
@@ -8706,7 +8742,7 @@ impl BytecodeCompiler {
                 // agree (the overwhelmingly common case: the closure
                 // snapshot simply contains the global), the registry's
                 // direct CallFn stays.
-                let closure_disagrees = match self.enclosing_closure.get(&function_name) {
+                let closure_disagrees = match self.lexical(&function_name) {
                     Some(Value::Function(f)) => self
                         .known_function_values
                         .get(&function_name)
@@ -8764,7 +8800,7 @@ impl BytecodeCompiler {
                 // rule: `let head = (x) => …` at the top level, then
                 // `head(r)` inside a function, reached the list builtin
                 // `head` here and raised "argument must be a list".
-                let closure_shadows_builtin = match self.enclosing_closure.get(&function_name) {
+                let closure_shadows_builtin = match self.lexical(&function_name) {
                     None => false,
                     Some(Value::Builtin(b)) => b.name != function_name,
                     Some(_) => true,
@@ -8796,9 +8832,9 @@ impl BytecodeCompiler {
                     type_name,
                     variant_name,
                     arity,
-                }) = self.enclosing_closure.get(&function_name)
+                }) = self.lexical(&function_name)
                 {
-                    if *arity != arguments.len() {
+                    if arity != arguments.len() {
                         return Err(BytecodeError::UnresolvedCallee(function_name));
                     }
                     self.emitter.instructions.push(Instruction::MakeEnum {
@@ -8826,6 +8862,7 @@ impl BytecodeCompiler {
                     .enclosing_closure
                     .get(&function_name)
                     .cloned()
+                    .or_else(|| self.enclosing_run.get(&function_name))
                     .or_else(|| {
                         self.module_scope
                             .as_ref()
@@ -9643,6 +9680,7 @@ impl BytecodeCompiler {
                     name
                 )));
             } else if !self.enclosing_closure.contains_key(name)
+                && self.enclosing_run.get(name).is_none()
                 && !self
                     .module_scope
                     .as_ref()
@@ -9672,6 +9710,9 @@ impl BytecodeCompiler {
                 if let Some(value) = self.enclosing_closure.get(name) {
                     return Some((name.clone(), value.clone()));
                 }
+                if let Some(value) = self.enclosing_run.get(name) {
+                    return Some((name.clone(), value.clone()));
+                }
                 if let Some(value) = self.module_scope.as_ref().and_then(|m| m.get(name)) {
                     return Some((name.clone(), value.clone()));
                 }
@@ -9697,13 +9738,15 @@ impl BytecodeCompiler {
             // on the interpreter), so no def_file is threaded here.
             def_file: None,
             parent_scope: 0,
+            // A lambda sees the siblings its enclosing function sees.
+            run: self.enclosing_run.clone(),
         };
 
         if runtime_captures.is_empty() && self_name.is_none() {
             // No runtime state: the lambda is a compile-time constant
             let const_idx = self
                 .emitter
-                .add_constant(OvmValue::new_ast_function(function));
+                .add_constant(OvmValue::new_ast_function(std::sync::Arc::new(function)));
             let dst_reg = self.register_allocator.allocate_register();
             self.emitter.emit_load_const(dst_reg, const_idx);
             return Ok(dst_reg);
@@ -9782,7 +9825,7 @@ impl BytecodeCompiler {
                 if !self.local_variables.contains_key(name)
                     && self.unit_variant_names.contains(name)
                 {
-                    match self.enclosing_closure.get(name) {
+                    match self.lexical(name) {
                         Some(
                             variant @ Value::Enum {
                                 variant_data: crate::ast::EnumVariantData::Unit,
@@ -10536,7 +10579,7 @@ impl BytecodeCompiler {
             {
                 return None;
             }
-            match self.enclosing_closure.get(name) {
+            match self.lexical(name) {
                 None => {}
                 Some(Value::Builtin(b)) if b.name == "to_string" => {}
                 Some(_) => return None,

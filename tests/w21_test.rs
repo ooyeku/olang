@@ -235,3 +235,124 @@ fn the_checker_resolves_imports_from_the_package_root_and_flags_shape_writes() {
         assert!(all.contains("map_set adds"), "{all}");
     }
 }
+
+// --- Item 3: what a declared function costs ---
+
+/// `n` one-line functions, each calling the one before it, as a module.
+fn many_functions(n: usize) -> String {
+    let mut src = String::from("share fn f0(x) = x\n");
+    for i in 1..n {
+        src.push_str(&format!("share fn f{i}(x) = f{}(x) + 1\n", i - 1));
+    }
+    src
+}
+
+fn field(json: &str, key: &str) -> i64 {
+    let at = json
+        .find(&format!("\"{key}\":"))
+        .unwrap_or_else(|| panic!("no {key} in {json}"));
+    json[at + key.len() + 3..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .unwrap_or_else(|_| panic!("{key} is not a number in {json}"))
+}
+
+#[test]
+fn a_declared_function_costs_kilobytes_not_tens_of_them() {
+    // 0.85.0 held a version of the scope map per declaration: 32 KB a
+    // function, 137 MB resident for a file of 4,000. A run of
+    // declarations now shares one closure, and `runtime.memory()` is how
+    // a program sees the result.
+    let ws = workspace("fnmem");
+    write(&ws, "lib/many.ol", &many_functions(2000));
+    write(
+        &ws,
+        "main.ol",
+        "use lib.many { f1999 }\n\
+         println(to_string(f1999(0)))\n\
+         println(json.stringify(runtime.memory()))\n",
+    );
+    for flags in [&["main.ol"][..], &["--no-ovm", "main.ol"][..]] {
+        let (out, err, code) = olang(&ws, flags);
+        assert_eq!(code, 0, "{flags:?}: {err}");
+        let mut lines = out.lines();
+        assert_eq!(
+            lines.next(),
+            Some("1999"),
+            "{flags:?}: every sibling resolves"
+        );
+        let memory = lines.next().expect("the memory line");
+        let program = field(memory, "program");
+        let per_function = program / 2000;
+        assert!(
+            per_function < 8 * 1024,
+            "{flags:?}: {per_function} bytes a function ({program} for 2,000)"
+        );
+        let heap = field(memory, "heap");
+        assert_eq!(heap, program + field(memory, "values"), "{memory}");
+    }
+}
+
+#[test]
+fn a_shared_closure_keeps_what_a_snapshot_per_declaration_meant() {
+    // The three things the per-declaration snapshot guaranteed, in both
+    // tiers, on the main thread, in a task, and through a lambda: an
+    // earlier sibling is the one that was declared THEN (a later
+    // redefinition does not reach back), a sibling shadows a builtin of
+    // its name, and a binding between two declarations is seen by the
+    // second only.
+    let ws = workspace("runs");
+    write(
+        &ws,
+        "main.ol",
+        "fn helper(x) = x + 1\n\
+         fn go(xs) = xs |> map(helper) |> sum\n\
+         fn via_lambda(xs) = map(xs, (x) => helper(x)) |> sum\n\
+         fn clamp(n) = n + 1000\n\
+         fn use_it(n) = clamp(n)\n\
+         fn before_k() = if map_has_key(#{}, \"k\") => 0 else => 7\n\
+         let k = 5\n\
+         fn after_k() = k\n\
+         let xs = [10, 20, 30]\n\
+         let first = go(xs)\n\
+         fn helper(x) = x + 1000\n\
+         fn late(xs) = xs |> map(helper) |> sum\n\
+         println(to_string(first) + \" \" + to_string(go(xs)) + \" \" + to_string(via_lambda(xs)))\n\
+         println(to_string(late(xs)))\n\
+         println(to_string(use_it(1)))\n\
+         println(to_string(before_k() + after_k()))\n\
+         println(to_string(task.join(spawn go(xs))))\n",
+    );
+    for flags in [&["main.ol"][..], &["--no-ovm", "main.ol"][..]] {
+        let (out, err, code) = olang(&ws, flags);
+        assert_eq!(code, 0, "{flags:?}: {err}");
+        assert_eq!(out, "63 63 63\n3060\n1001\n12\n63\n", "{flags:?}");
+    }
+}
+
+#[test]
+fn memory_names_its_tasks_and_the_embedded_runtime_costs_no_heap() {
+    let ws = workspace("memory");
+    write(
+        &ws,
+        "main.ol",
+        "let before = map_get(runtime.memory(), \"heap\")\n\
+         let rt = runtime.wasm()\n\
+         let after = map_get(runtime.memory(), \"heap\")\n\
+         println(to_string(after - before < 262144))\n\
+         let t = spawn { let xs = map(0..50000, (i) => i * 2); time.sleep(300); len(xs) }\n\
+         time.sleep(120)\n\
+         let m = runtime.memory()\n\
+         let tasks = map_get(m, \"tasks\")\n\
+         println(to_string(len(tasks)))\n\
+         println(map_get(tasks[0], \"name\"))\n\
+         println(to_string(map_get(tasks[0], \"bytes\") > 1000000))\n\
+         println(to_string(task.join(t)))\n\
+         println(to_string(len(map_get(runtime.memory(), \"tasks\"))))\n",
+    );
+    let (out, err, code) = olang(&ws, &["main.ol"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out, "true\n1\nolang-spawn-1\ntrue\n50000\n0\n", "{err}");
+}
