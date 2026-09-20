@@ -53,7 +53,7 @@ share use lib.forms { field, rules, read, form_fields }
 // natively reaches the dom module's own browser-only error.
 share use lib.state { init, current, set, update }
 share use lib.store { hydrate, persist, on_restore, default_of, querystring }
-share use lib.view { mount, rerender, apply, patch, action, actions, action_arg, input_value, confirm_armed }
+share use lib.view { mount, rerender, paint_count, apply, patch, action, actions, action_arg, input_value, confirm_armed }
 share use lib.api { call, fetch, configure, unwrap_envelope, from_response, err_message, err_details }
 
 // the opinionated components

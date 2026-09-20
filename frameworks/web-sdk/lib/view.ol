@@ -22,17 +22,25 @@ use lib.state { init, current, update }
 let mount_root = cell.new("")
 let mount_view = cell.new(())
 let mount_actions = cell.new(#{})
+// How many repaints have been asked for. Action dispatch reads it
+// across a handler: one whose own `apply` already repainted is not
+// painted a second time.
+let paints = cell.new(0)
 
 /// Repaint now: the view function over the current state, rendered
 /// into the mount point. `apply` and action dispatch call this — a
 /// manual call is only needed after out-of-band state changes.
 share fn rerender() = {
+    cell.set(paints, cell.get(paints) + 1)
     let f = cell.get(mount_view)
     let root = cell.get(mount_root)
     if f != () && root != "" && dom.available() => {
         dom.patch(dom.query(root), f(current()))
     }
 }
+
+/// The repaints asked for so far (a test's, or a profiler's, count).
+share fn paint_count() = cell.get(paints)
 
 /// Update state and repaint — what an event handler calls:
 /// `apply((s) => map_set(s, "todos", s.todos + [t]))`.
@@ -185,13 +193,21 @@ fn dispatch_action(ev) = {
             }
         }
         if h != () => {
-            // Repaint only if the handler changed state: `apply` already
-            // repaints, and an unconditional rerender here would wipe
+            // Repaint only if the handler changed state and nothing has
+            // painted it yet: a handler that went through `apply` (or a
+            // runtime over it) has repainted already, and painting again
+            // doubled the cost of every click — the whole view built and
+            // diffed twice. An unconditional rerender here would also wipe
             // focus and in-progress typing on every click into an
-            // action-carrying form control.
+            // action-carrying form control. The states are compared only
+            // when no repaint ran: two large stores are not walked for a
+            // handler that already painted.
+            let painted = cell.get(paints)
             let before = current()
             let r = h(ev)
-            if current() != before => rerender() else => ()
+            if cell.get(paints) != painted => ()
+            else if current() != before => rerender()
+            else => ()
         }
     }
 }
@@ -218,6 +234,21 @@ share fn action_arg(ev) = {
         str.substring(name, 8, str.length(name)) else => name
     let colon = str.index_of(bare, ":")
     if colon == () => "" else => str.substring(bare, colon + 1, str.length(bare))
+}
+
+test "one repaint per handled action: a handler that applies is not painted again, one that only updates is painted once, one that changes nothing is not painted" {
+    let s0 = init(#{ "n": 0 })
+    action("t.apply", (ev) => apply((s) => map_set(s, "n", map_get(s, "n") + 1)))
+    action("t.update", (ev) => update((s) => map_set(s, "n", map_get(s, "n") + 1)))
+    action("t.idle", (ev) => ())
+    let click = (name) => #{ "type": "click", "tag": "button", "data": #{ "action": name } }
+    let p0 = paint_count()
+    dispatch_action(click("t.apply"))
+    assert_eq((paint_count() - p0, map_get(current(), "n")), (1, 1))
+    dispatch_action(click("t.update"))
+    assert_eq((paint_count() - p0, map_get(current(), "n")), (2, 2))
+    dispatch_action(click("t.idle"))
+    assert_eq(paint_count() - p0, 2)
 }
 
 test "action_arg: the argument after the handler's prefix, confirm or not" {
