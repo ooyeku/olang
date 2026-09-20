@@ -133,7 +133,10 @@ unsafe extern "C" {
     fn host_dom_get_text(handle: i64) -> *const u8;
     fn host_dom_set_html(handle: i64, ptr: *const u8, len: usize);
     fn host_dom_morph(handle: i64, ptr: *const u8, len: usize);
-    fn host_dom_patch(handle: i64, ptr: *const u8, len: usize);
+    /// Answers the keys of `keep` markers it found no element for, as a
+    /// JSON list — or null when every one was kept (and from a shim that
+    /// predates the answer).
+    fn host_dom_patch(handle: i64, ptr: *const u8, len: usize) -> *const u8;
     /// The message of a JavaScript exception the last host call caught
     /// (the shim wraps every `host_dom_*` import), or null. Read after
     /// every dom call so the failure is an olang error the handler can
@@ -229,6 +232,20 @@ thread_local! {
     /// Registered handlers. Separate from SESSION because dom.on runs
     /// DURING the initial program run, before the interpreter is parked.
     static HANDLERS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The nodes of a vnode tree: every element, text, raw and keep marker.
+#[cfg(target_arch = "wasm32")]
+fn count_vnodes(node: &serde_json::Value) -> usize {
+    match node {
+        serde_json::Value::Array(items) => items.iter().map(count_vnodes).sum(),
+        serde_json::Value::Object(fields) => {
+            let own = usize::from(fields.get("tag").and_then(|t| t.as_str()) != Some(""));
+            own + fields.get("children").map(count_vnodes).unwrap_or(0)
+        }
+        serde_json::Value::String(_) => 1,
+        _ => 0,
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -382,14 +399,40 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
         // on the host's, both native — and the host diffs it against the
         // live children. No markup is rendered, escaped, or parsed.
         ("patch", [el, v]) => {
+            let started = crate::clock::Instant::now();
             let json = crate::stdlib::json::olang_value_to_json(v).map_err(|e| {
                 crate::interpreter::InterpreterError::runtime(format!("dom.patch: {}", e))
             })?;
             let s = serde_json::to_string(&json).map_err(|e| {
                 crate::interpreter::InterpreterError::runtime(format!("dom.patch: {}", e))
             })?;
-            unsafe { host_dom_patch(handle(el)?, s.as_ptr(), s.len()) };
-            Ok(Value::Unit)
+            let serialize_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let started = crate::clock::Instant::now();
+            let answer =
+                read_host_string(unsafe { host_dom_patch(handle(el)?, s.as_ptr(), s.len()) });
+            let patch_ms = started.elapsed().as_secs_f64() * 1000.0;
+            // What the repaint cost and what it could not keep: a `keep`
+            // marker whose element is gone (a memo stamped while its
+            // subtree was off the page) is named here, so the caller can
+            // drop the stamp and paint that subtree for real.
+            let missing: Vec<Value> = serde_json::from_str::<Vec<String>>(&answer)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|k| Value::String(std::sync::Arc::new(k)))
+                .collect();
+            let mut out = std::collections::HashMap::new();
+            out.insert(
+                "missing".to_string(),
+                Value::List(std::sync::Arc::new(missing)),
+            );
+            out.insert(
+                "nodes".to_string(),
+                Value::Integer(count_vnodes(&json) as i64),
+            );
+            out.insert("bytes".to_string(), Value::Integer(s.len() as i64));
+            out.insert("serialize_ms".to_string(), Value::Float(serialize_ms));
+            out.insert("patch_ms".to_string(), Value::Float(patch_ms));
+            Ok(Value::Map(std::sync::Arc::new(out)))
         }
         ("value", [el]) => Ok(Value::String(std::sync::Arc::new(read_host_string(
             unsafe { host_dom_get_value(handle(el)?) },

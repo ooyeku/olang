@@ -44,8 +44,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   hands out slices of the binary's image. Touching it cost 88 MB of
   resident memory and a third of a second at boot; it costs neither.
 
+- **Repaints are counted, scoped, and cheap to keep** (web SDK). A state
+  change that moves no key a view reads does not repaint (`watch`,
+  `unwatch`); a handled action is judged once. `memo` no longer scans the
+  document per memoized node: the patcher answers the `keep` markers it
+  could not honor (`dom.patch` returns `missing`, with the node count and
+  the milliseconds of serialization and patching), and `rerender` drops
+  those stamps and paints once more, so a memo stamped while its subtree
+  was off the page heals. `el` keeps its children as given — the
+  per-node flattening pass is gone; `render` and the patcher flatten as
+  they walk, and `children_of(node)` is the flat list for code that
+  inspects a tree.
+
 ### Added
 
+- `memo_list(key, items, key_of, inputs_of, row)`, `volatile(key,
+  build)`, and `paint_stats()` in the web SDK; the dom harness pins
+  repaint counts (`--repaints`, driven by tests/w21_test.rs) and runs the
+  shim's own patcher against a DOM model (stage 13).
 - `runtime.memory()` — `#{ "heap", "program", "values", "embedded",
   "tasks" }` in bytes, from a counting allocator: the loaded program's
   share, the running program's values, the embedded runtime, and each

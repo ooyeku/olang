@@ -260,8 +260,16 @@
   // DOM — no markup to render on the wasm side, none to parse here.
   // Vnodes: { tag, attrs, children } | { text } | { raw } | { keep }.
   const SVG_NS = "http://www.w3.org/2000/svg";
+  // A `keep` marker names a subtree the view did not rebuild. When the
+  // element it names is not where the marker stands, the marker cannot be
+  // honored — the memo was stamped while its subtree was off the page —
+  // and the key is answered to the runtime (`dom.patch` returns
+  // `missing`), which drops the stamp and paints the subtree for real.
+  let missingKeeps = [];
   function patchInto(el, tree) {
+    missingKeeps = [];
     patchChildren(el, flatVNodes(tree.tag === "" ? tree.children : [tree]));
+    return missingKeeps;
   }
   function flatVNodes(list, out = []) {
     for (const v of list) {
@@ -269,6 +277,8 @@
       if (typeof v === "string") out.push({ text: v });
       else if (Array.isArray(v)) flatVNodes(v, out);
       else if (v.tag === "") flatVNodes(v.children || [], out);
+      // A memoized list that did not move: one marker for all its rows.
+      else if (Array.isArray(v.keeps)) for (const k of v.keeps) out.push({ keep: k });
       else if (v.raw !== undefined) {
         const tpl = document.createElement("template");
         tpl.innerHTML = String(v.raw);
@@ -294,6 +304,7 @@
         // stays as it is, moved into place if the order changed.
         const m = keyed.get(String(v.keep));
         if (m) { if (m !== at) from.insertBefore(m, at); i++; }
+        else missingKeeps.push(String(v.keep));
         continue;
       }
       if (v.dom) {
@@ -458,7 +469,10 @@
       host_dom_get_text: (h) => giveStr(elements[Number(h)].textContent ?? ""),
       host_dom_set_html: (h, ptr, len) => { elements[Number(h)].innerHTML = readStr(ptr, len); },
       host_dom_morph: (h, ptr, len) => morphInto(elements[Number(h)], readStr(ptr, len)),
-      host_dom_patch: (h, ptr, len) => patchInto(elements[Number(h)], JSON.parse(readStr(ptr, len))),
+      host_dom_patch: (h, ptr, len) => {
+        const missing = patchInto(elements[Number(h)], JSON.parse(readStr(ptr, len)));
+        return missing.length ? giveStr(JSON.stringify(missing)) : 0;
+      },
       // 2 says the element has no checked state (a select, a div): the
       // runtime answers Unit rather than a false that reads as unchecked.
       host_dom_checked: (h) => {
@@ -833,6 +847,8 @@
   const STRING_IMPORTS = new Set(["host_dom_query_all", "host_dom_get_text", "host_dom_get_value",
     "host_dom_get_attr", "host_dom_measure", "host_dom_location", "host_dom_storage_get",
     "host_dom_state_get", "host_dom_active_id", "host_dom_selection", "host_dom_values"]);
+  // Answers a string or null: a throw answers null (nothing missing).
+  const NULLABLE_IMPORTS = new Set(["host_dom_patch"]);
   for (const name of Object.keys(imports.env)) {
     if (!name.startsWith("host_dom_")) continue;
     const f = imports.env[name];
@@ -840,6 +856,7 @@
       try { return f(...a); }
       catch (e) {
         hostError = e && e.message ? e.message : String(e);
+        if (NULLABLE_IMPORTS.has(name)) return 0;
         return HANDLE_IMPORTS.has(name) ? 0n : STRING_IMPORTS.has(name) ? giveStr("") : undefined;
       }
     };

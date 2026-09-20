@@ -16,7 +16,7 @@
 //! instead of rebuilding them; wrap a subtree in `memo` and it is not
 //! even rebuilt while its inputs stand.
 
-use lib.html { render }
+use lib.html { render, take_memo_tally, forget_memos }
 use lib.state { init, current, update }
 
 let mount_root = cell.new("")
@@ -26,27 +26,121 @@ let mount_actions = cell.new(#{})
 // across a handler: one whose own `apply` already repainted is not
 // painted a second time.
 let paints = cell.new(0)
+// What the repaints cost, and the ones that were not needed (see
+// `paint_stats`).
+let paint_log = cell.new(#{
+    "skipped": 0, "healed": 0, "view_ms": 0, "serialize_ms": 0.0, "patch_ms": 0.0,
+    "nodes": 0, "memo_hits": 0, "memo_misses": 0, "last": #{}
+})
+// The top-level state keys a repaint depends on: `watched` when a view
+// named them, everything but `unwatched` otherwise.
+let watched = cell.new([])
+let unwatched = cell.new([])
+
+fn paint_once(f, root) = {
+    let t0 = time.monotonic_ms()
+    let tree = f(current())
+    let view_ms = time.monotonic_ms() - t0
+    let answer = dom.patch(dom.query(root), tree)
+    let tally = take_memo_tally()
+    // A runtime older than the answering `dom.patch` returns Unit.
+    let told = contains(["Map", "JsonObject"], typeof(answer))
+    let last = #{
+        "view_ms": view_ms,
+        "serialize_ms": if told => map_get(answer, "serialize_ms") else => 0.0,
+        "patch_ms": if told => map_get(answer, "patch_ms") else => 0.0,
+        "nodes": if told => map_get(answer, "nodes") else => 0,
+        "memo_hits": map_get(tally, "hits"),
+        "memo_misses": map_get(tally, "misses")
+    }
+    cell.update(paint_log, (log) => fold(map_keys(last), map_set(log, "last", last),
+        (acc, k) => map_set(acc, k, map_get(acc, k) + map_get(last, k))))
+    if told => map_get(answer, "missing") else => []
+}
 
 /// Repaint now: the view function over the current state, rendered
 /// into the mount point. `apply` and action dispatch call this — a
 /// manual call is only needed after out-of-band state changes.
+///
+/// A `keep` the page could not honor — a memo stamped while its subtree
+/// was off the page — comes back from the patch; its stamp is dropped
+/// and the view is painted once more, so a stale memo costs one extra
+/// pass instead of a subtree that never appears.
 share fn rerender() = {
     cell.set(paints, cell.get(paints) + 1)
     let f = cell.get(mount_view)
     let root = cell.get(mount_root)
     if f != () && root != "" && dom.available() => {
-        dom.patch(dom.query(root), f(current()))
+        let missing = paint_once(f, root)
+        if len(missing) > 0 => {
+            forget_memos(missing)
+            cell.update(paint_log, (log) => map_set(log, "healed", map_get(log, "healed") + 1))
+            paint_once(f, root)
+            ()
+        } else => ()
     }
 }
 
 /// The repaints asked for so far (a test's, or a profiler's, count).
 share fn paint_count() = cell.get(paints)
 
+/// What repainting has cost since the page loaded: `repaints`, the
+/// `skipped` ones (a state change that moved no watched key), the
+/// `healed` ones (a second pass after a `keep` the page could not
+/// honor), and — summed over every pass, with the latest pass alone
+/// under `last` — `view_ms` in the view function, `serialize_ms` and
+/// `patch_ms` inside `dom.patch`, the `nodes` handed over, and
+/// `memo_hits` / `memo_misses`.
+share fn paint_stats() = map_set(cell.get(paint_log), "repaints", cell.get(paints))
+
+/// Name the top-level state keys the view reads: `watch(["issues",
+/// "filter", "route"])`. A state change that moves none of them does
+/// not repaint — a heartbeat, a presence ping, a poll's bookkeeping.
+/// Calls add up; with none, every key is watched except those
+/// `unwatch` named.
+share fn watch(keys) = cell.update(watched, (w) => w + filter(keys, (k) => !contains(w, k)))
+
+/// Name top-level state keys no view reads: `unwatch(["live",
+/// "inflight"])` — what a runtime over this SDK declares for its own
+/// bookkeeping. A change confined to them does not repaint.
+share fn unwatch(keys) = cell.update(unwatched, (w) => w + filter(keys, (k) => !contains(w, k)))
+
+fn is_map(v) = contains(["Map", "JsonObject", "Object"], typeof(v))
+
+/// Whether going from `before` to `after` moved anything a view reads.
+fn moved_watched(before, after) =
+    if !is_map(before) || !is_map(after) => before != after
+    else => {
+        let named = cell.get(watched)
+        let ignored = cell.get(unwatched)
+        let keys = if len(named) > 0 => named else => {
+            let all = map_keys(after)
+            all + filter(map_keys(before), (k) => !contains(all, k))
+        }
+        fold(keys, false, (hit, k) => hit || (!contains(ignored, k) && map_get(before, k) != map_get(after, k)))
+    }
+
+// How many state changes have been judged for a repaint, and the state
+// the last judgment saw: action dispatch judges only what a handler
+// changed AFTER its own `apply` did.
+let judged = cell.new(0)
+let judged_state = cell.new(())
+
+/// Repaint unless the change moved nothing a view reads.
+fn repaint_for(before, after) = {
+    cell.set(judged, cell.get(judged) + 1)
+    cell.set(judged_state, after)
+    if moved_watched(before, after) => rerender()
+    else => cell.update(paint_log, (log) => map_set(log, "skipped", map_get(log, "skipped") + 1))
+}
+
 /// Update state and repaint — what an event handler calls:
-/// `apply((s) => map_set(s, "todos", s.todos + [t]))`.
+/// `apply((s) => map_set(s, "todos", s.todos + [t]))`. A change that
+/// moved no watched key (`watch`, `unwatch`) does not repaint.
 share fn apply(f) = {
+    let before = current()
     let next = update(f)
-    rerender()
+    repaint_for(before, current())
     next
 }
 
@@ -202,11 +296,19 @@ fn dispatch_action(ev) = {
             // action-carrying form control. The states are compared only
             // when no repaint ran: two large stores are not walked for a
             // handler that already painted.
+            // A change `apply` already judged — painted, or skipped because
+            // no view reads what moved — is not judged again; only what the
+            // handler changed after that is.
             let painted = cell.get(paints)
+            let judgments = cell.get(judged)
             let before = current()
             let r = h(ev)
-            if cell.get(paints) != painted => ()
-            else if current() != before => rerender()
+            if cell.get(judged) != judgments => {
+                let seen = cell.get(judged_state)
+                if current() != seen => repaint_for(seen, current()) else => ()
+            }
+            else if cell.get(paints) != painted => ()
+            else if current() != before => repaint_for(before, current())
             else => ()
         }
     }
@@ -249,6 +351,26 @@ test "one repaint per handled action: a handler that applies is not painted agai
     assert_eq((paint_count() - p0, map_get(current(), "n")), (2, 2))
     dispatch_action(click("t.idle"))
     assert_eq(paint_count() - p0, 2)
+}
+
+test "a change confined to unwatched keys does not repaint; watch narrows to the named keys" {
+    let s0 = init(#{ "n": 0, "live": 0, "other": 0 })
+    cell.set(watched, [])
+    cell.set(unwatched, [])
+    unwatch(["live"])
+    let p0 = paint_count()
+    let k0 = map_get(paint_stats(), "skipped")
+    apply((s) => map_set(s, "live", 1))
+    assert_eq((paint_count() - p0, map_get(paint_stats(), "skipped") - k0), (0, 1))
+    apply((s) => map_set(s, "other", 1))
+    assert_eq(paint_count() - p0, 1)
+    watch(["n"])
+    apply((s) => map_set(s, "other", 2))
+    assert_eq(paint_count() - p0, 1)
+    apply((s) => map_set(s, "n", 1))
+    assert_eq(paint_count() - p0, 2)
+    cell.set(watched, [])
+    cell.set(unwatched, [])
 }
 
 test "action_arg: the argument after the handler's prefix, confirm or not" {

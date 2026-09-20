@@ -356,3 +356,79 @@ fn memory_names_its_tasks_and_the_embedded_runtime_costs_no_heap() {
     assert_eq!(code, 0, "{err}");
     assert_eq!(out, "true\n1\nolang-spawn-1\ntrue\n50000\n0\n", "{err}");
 }
+
+// --- Item 4: repaints, counted and cheap to keep ---
+
+const REPAINT_CLIENT: &str = r##"use web { mount, apply, action, paint_stats, unwatch, memo, memo_list, div, button, ul, li, el, text }
+
+fn view(s) = div(#{}, [
+    button(#{ "data-action": "inc" }, ["+"]),
+    memo("panel", [map_get(s, "n")], () => div(#{ "class": "panel" }, [to_string(map_get(s, "n"))])),
+    ul(#{}, memo_list("rows", map_get(s, "rows"), (r) => map_get(r, "id"), (r) => r,
+        (r) => li(#{}, [map_get(r, "t")]))),
+    if map_get(s, "open") => memo("drawer", [1], () => el("aside", #{}, ["drawer"])) else => text("")
+])
+
+unwatch(["live"])
+action("inc", (ev) => apply((s) => map_set(s, "n", map_get(s, "n") + 1)))
+action("idle", (ev) => ())
+action("beat", (ev) => apply((s) => map_set(s, "live", map_get(s, "live") + 1)))
+action("retitle", (ev) => apply((s) => map_set(s, "rows",
+    map(map_get(s, "rows"), (r) => if map_get(r, "id") == 2 => map_set(r, "t", "renamed") else => r))))
+action("toggle", (ev) => apply((s) => map_set(s, "open", !map_get(s, "open"))))
+action("stats", (ev) => dom.set_text(dom.query("#log"), unwrap(json.stringify(paint_stats()))))
+
+mount("#app", view, #{ "n": 0, "live": 0, "open": false,
+    "rows": [#{ "id": 1, "t": "one" }, #{ "id": 2, "t": "two" }, #{ "id": 3, "t": "three" }] })
+"##;
+
+#[test]
+fn the_harness_pins_repaint_counts_against_the_sdk() {
+    // One repaint for a handled action, none for a handler that changes
+    // nothing or a change no view reads, a memo_list that keeps the rows
+    // that did not move, and a stale `keep` that heals in one extra pass
+    // — counted where the patches arrive, in the dom harness, over a
+    // client bundled as `serve` bundles it. Skips where node or the wasm
+    // artifact is absent.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let wasm = root.join("target/wasm32-unknown-unknown/release/olang_playground.wasm");
+    if !wasm.exists() || Command::new("node").arg("--version").output().is_err() {
+        eprintln!("skipping: needs node and the wasm artifact (cargo xtask wasm)");
+        return;
+    }
+    let ws = workspace("repaints");
+    write(&ws, "client.ol", REPAINT_CLIENT);
+    write(
+        &ws,
+        "bundle.ol",
+        "use lib.server { bundle_client }\n\
+         let dir = os.args()[1]\n\
+         unwrap(fs.write_file(dir + \"/bundle.ol\", bundle_client(unwrap(fs.read_file(dir + \"/client.ol\")))))\n",
+    );
+    let script = ws.join("bundle.ol").to_string_lossy().to_string();
+    let dir = ws.to_string_lossy().to_string();
+    let (out, err, rc) = olang(&root.join("frameworks/web-sdk"), &["run", &script, &dir]);
+    assert_eq!(rc, 0, "{out}{err}");
+    let run = Command::new("node")
+        .arg(root.join("playground/dom_harness.mjs"))
+        .arg(&wasm)
+        .arg("--repaints")
+        .arg(ws.join("bundle.ol"))
+        .output()
+        .expect("node");
+    let text = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        run.status.success(),
+        "{text}{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let stats: serde_json::Value = serde_json::from_str(text.lines().last().unwrap_or(""))
+        .unwrap_or_else(|_| panic!("{text}"));
+    // mount, inc, retitle, three toggles: six asked for; one healed.
+    assert_eq!(stats["repaints"], 6, "{stats}");
+    assert_eq!(stats["healed"], 1, "{stats}");
+    assert_eq!(stats["skipped"], 1, "{stats}");
+    assert!(stats["nodes"].as_i64().unwrap() > 0, "{stats}");
+    assert!(stats["memo_hits"].as_i64().unwrap() >= 4, "{stats}");
+    assert!(stats["last"]["nodes"].as_i64().unwrap() > 0, "{stats}");
+}

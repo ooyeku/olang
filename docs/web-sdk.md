@@ -124,7 +124,35 @@ testing.assert_eq(escape("<b>"), "&lt;b&gt;") |> unwrap
 Children may be nodes, strings, or lists (spliced), so `map(...)`
 results drop straight in. Text and attribute values escape on render;
 boolean attributes render bare (`disabled`), `false`/Unit render
-absent.
+absent. A node keeps its children as they were given — nested lists,
+bare strings, fragments — and the two readers of a tree, `render` and
+the browser's patcher, flatten as they walk; code that inspects a tree
+reads `children_of(node)`, the flat list of nodes.
+
+### Keeping what did not change
+
+Three forms skip work a repaint does not need. Each names its subtree
+with a key, which becomes the element's `data-key`.
+
+| Form | Rebuilds |
+|---|---|
+| `memo(key, inputs, build)` | when `inputs` differ, by value, from the last repaint's |
+| `memo_list(key, items, key_of, inputs_of, row)` | the rows whose own `inputs_of(item)` changed; answers the row nodes, to splice into any container |
+| `volatile(key, build)` | always, leaving no stamp a later `memo` of the key could match — "rebuild while this holds" as a call: `if editing => volatile("row", build) else => memo("row", inputs, build)` |
+
+A kept subtree crosses to the page as a marker, and the browser leaves
+the element exactly as it is, moving it if the order changed. A
+`memo_list` that moved nothing costs one comparison and one marker for
+all its rows. `memo` with `inputs` of `()` is `volatile`. Rendered to
+markup — the server, a static preview — every form builds.
+
+Whether a kept element is still on the page is the patcher's question:
+`dom.patch` answers `#{ "missing": [keys], "nodes", "bytes",
+"serialize_ms", "patch_ms" }`, and a `keep` it could not honor — a memo
+stamped while its subtree was off the page — is named in `missing`.
+`rerender` drops those stamps and paints once more, so a stale memo
+costs one extra pass rather than a subtree that never appears, and no
+repaint pays a selector scan per memo.
 
 ## The route table
 
@@ -221,6 +249,24 @@ Repainting is `apply` (the whole view) or `patch(id, node)` — one
 subtree rendered into the element with that id, leaving the rest of
 the page and its focused input alone: the toast, the counter, the
 chart that should not cost a full render on every store write.
+
+A state change repaints only when it moves something a view reads.
+`watch(keys)` names the top-level state keys the view depends on;
+`unwatch(keys)` names keys no view reads — a heartbeat, a presence
+ping, a poll's bookkeeping, what a runtime over the SDK keeps for
+itself. With neither, every key counts. A handled action is judged
+once: a handler that went through `apply` is not painted again, one
+that only updated the store is painted once, one that changed nothing
+is not painted.
+
+`paint_stats()` reports what repainting has cost since the page
+loaded: `repaints`, `skipped` (a change that moved no watched key),
+`healed` (a second pass after a `keep` the page could not honor), and —
+summed over every pass, with the latest alone under `last` — `view_ms`
+in the view function, `serialize_ms` and `patch_ms` inside `dom.patch`,
+the `nodes` handed over, and `memo_hits` / `memo_misses`. The tree
+crosses as JSON: 0.16 ms for a thousand nodes, measured in the dom
+harness, which is why it is not a binary encoding.
 
 Two events carry files: a `"drop"` on any element and a `"paste"` on a
 text control deliver `files` as `[#{ "name", "type", "size", "base64" }]`

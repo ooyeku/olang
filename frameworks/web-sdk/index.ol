@@ -19,6 +19,7 @@
 // markup — views as data
 share use lib.html {
     el, void_el, when, text, raw, fragment, render, page, escape, escape_attr,
+    memo, memo_list, volatile, children_of,
     div, span, p, h1, h2, h3, ul, li, a, form, label, button,
     section, header, footer, nav, pre, code, strong, em,
     input, img, br, hr, select, option, textarea
@@ -53,7 +54,10 @@ share use lib.forms { field, rules, read, form_fields }
 // natively reaches the dom module's own browser-only error.
 share use lib.state { init, current, set, update }
 share use lib.store { hydrate, persist, on_restore, default_of, querystring }
-share use lib.view { mount, rerender, paint_count, apply, patch, action, actions, action_arg, input_value, confirm_armed }
+share use lib.view {
+    mount, rerender, paint_count, paint_stats, watch, unwatch, apply, patch, action, actions,
+    action_arg, input_value, confirm_armed
+}
 share use lib.api { call, fetch, configure, unwrap_envelope, from_response, err_message, err_details }
 
 // the opinionated components

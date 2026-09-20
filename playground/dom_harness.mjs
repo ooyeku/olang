@@ -173,7 +173,44 @@ const imports = {
       crypto.getRandomValues(new Uint8Array(ex.memory.buffer, ptr, len)),
     host_dom_query_all: (ptr, len) => giveStr("[]"),
   host_dom_morph: (h, ptr, len) => { node(h).html = readStr(ptr, len); },
-  host_dom_patch: (h, ptr, len) => { node(h).tree = JSON.parse(readStr(ptr, len)); },
+  // Models what the shim's patcher answers: a `keep` (or a `keeps`
+  // list) naming a key that was not on the page after the previous patch
+  // cannot be honored, and is reported back as missing.
+  host_dom_patch: (h, ptr, len) => {
+    const n = node(h);
+    n.tree = JSON.parse(readStr(ptr, len));
+    n.patches = (n.patches ?? 0) + 1;
+    const before = n.keys ?? new Map(); // key -> the keys beneath it
+    const after = new Map();
+    const missing = [];
+    const walk = (v, under) => {
+      if (v == null || typeof v === "string") return;
+      if (Array.isArray(v)) { for (const c of v) walk(c, under); return; }
+      const kept = v.keep !== undefined ? [String(v.keep)] : Array.isArray(v.keeps) ? v.keeps.map(String) : null;
+      if (kept) {
+        for (const k of kept) {
+          if (!before.has(k)) { missing.push(k); continue; }
+          const beneath = before.get(k);
+          after.set(k, beneath);
+          for (const u of under) u.add(k);
+          for (const b of beneath) { after.set(b, before.get(b) ?? new Set()); for (const u of under) u.add(b); }
+        }
+        return;
+      }
+      const key = v.attrs && v.attrs["data-key"] != null ? String(v.attrs["data-key"]) : null;
+      let inside = under;
+      if (key) {
+        const mine = new Set();
+        after.set(key, mine);
+        for (const u of under) u.add(key);
+        inside = [...under, mine];
+      }
+      walk(v.children, inside);
+    };
+    walk(n.tree, []);
+    n.keys = after;
+    return missing.length ? giveStr(JSON.stringify(missing)) : 0;
+  },
   host_take_error: () => {
     if (hostError == null) return 0;
     const m = hostError;
@@ -378,6 +415,63 @@ if (process.argv[3] === "--boot") {
     const inFunctions = report.rows.filter((r) => r.builtin === false).reduce((a, r) => a + r.self_ms, 0);
     console.log(`self time inside functions: ${inFunctions.toFixed(1)} ms of run ${fromImage.run_ms} ms`);
   }
+  process.exit(0);
+}
+
+// `node dom_harness.mjs <wasm> --repaints <bundle.ol>`: the repaint pin.
+// The bundle is a web SDK client (tests/w21_test.rs writes it) mounted on
+// `#app`; each action is dispatched as a click through the delegated
+// listener, and the patches that reach `#app` are counted: one for a
+// handled action, none for a handler that changes nothing or a change
+// confined to unwatched keys, two when a `keep` could not be honored.
+if (process.argv[3] === "--repaints") {
+  const src = new Uint8Array(await readFile(process.argv[4]));
+  const p = ex.olang_alloc(src.length);
+  mem().set(src, p);
+  const boot = result(ex.olang_session_start(p, src.length));
+  ex.olang_dealloc(p, src.length);
+  if (boot.error) throw new Error("repaints session: " + boot.error);
+  const app = node(handles.indexOf("#app"));
+  const click = listeners[handles.indexOf("#app")]?.click;
+  if (click == null) throw new Error("mount bound no click listener on #app");
+  const fire = (action) => {
+    const was = app.patches ?? 0;
+    const r = dispatchJson(click, { type: "click", tag: "button", id: "", value: "", key: "", data: { action } });
+    if (r.error) throw new Error(action + ": " + r.error);
+    return (app.patches ?? 0) - was;
+  };
+  const flat = (v, out = []) => {
+    if (v == null) return out;
+    if (Array.isArray(v)) { for (const c of v) flat(c, out); return out; }
+    out.push(v);
+    if (v.children) flat(v.children, out);
+    return out;
+  };
+  const expect = (what, got, want) => {
+    if (got !== want) throw new Error(`${what}: ${got} patch(es), expected ${want}`);
+  };
+  if ((app.patches ?? 0) !== 1) throw new Error("mount painted " + app.patches + " times, expected 1");
+  expect("a handled action", fire("inc"), 1);
+  if (!flat(app.tree).some((v) => Array.isArray(v.keeps) && v.keeps.length === 3))
+    throw new Error("an unmoved memo_list did not answer one marker for its rows: " + JSON.stringify(app.tree));
+  expect("a handler that changes nothing", fire("idle"), 0);
+  expect("a change confined to an unwatched key", fire("beat"), 0);
+  expect("one row retitled", fire("retitle"), 1);
+  const rows = flat(app.tree).filter((v) => v.keep !== undefined || (v.attrs && String(v.attrs["data-key"] ?? "").startsWith("rows:")));
+  const built = rows.filter((v) => v.tag === "li").map((v) => v.attrs["data-key"]).join(",");
+  const kept = rows.filter((v) => v.keep !== undefined && String(v.keep).startsWith("rows:")).map((v) => v.keep).join(",");
+  if (built !== "rows:2" || kept !== "rows:1,rows:3")
+    throw new Error(`memo_list rebuilt [${built}] and kept [${kept}]; expected rows:2 rebuilt, rows:1 and rows:3 kept`);
+  expect("opening the drawer", fire("toggle"), 1);
+  expect("closing it", fire("toggle"), 1);
+  // The drawer's stamp outlived its element: the keep cannot be honored,
+  // the runtime forgets the stamp and paints once more.
+  expect("reopening it (a stale keep heals)", fire("toggle"), 2);
+  if (!flat(app.tree).some((v) => v.tag === "aside" && v.attrs["data-key"] === "drawer"))
+    throw new Error("the healed repaint did not build the drawer: " + JSON.stringify(app.tree));
+  fire("stats");
+  const stats = JSON.parse(fakeDom["#log"].text);
+  console.log(JSON.stringify(stats));
   process.exit(0);
 }
 
@@ -823,6 +917,17 @@ let t0 = time.monotonic_ms()
 for tick in range(0, 20) { dom.patch(root, table(100, tick)) }
 let per = (time.monotonic_ms() - t0) / 20
 println("repaint of 100 rows, wasm side: " + to_string(per) + " ms each")
+// What the tree's crossing costs, from dom.patch's own answer: the
+// measurement behind leaving the JSON encoding in place.
+let mut ser = 0.0
+let mut nodes = 0
+for tick in range(0, 20) {
+    let a = dom.patch(root, table(200, tick))
+    ser = ser + map_get(a, "serialize_ms")
+    nodes = map_get(a, "nodes")
+}
+println("serialize: " + to_string(ser / 20.0) + " ms for " + to_string(nodes) + " nodes")
+dom.patch(root, table(100, 0))
 `;
 {
   ex.olang_profile_start();
@@ -842,6 +947,9 @@ println("repaint of 100 rows, wasm side: " + to_string(per) + " ms each")
     throw new Error("profile did not see the view functions: " + JSON.stringify(rep.rows.slice(0, 5)));
   console.log("stage 9: browser profiler ok —", rep.rows.slice(0, 3).map((x) => `${x.function} ${x.self_ms}ms/${x.calls}`).join(", "));
   if (fakeDom["#log"].tree.children.length !== 100) throw new Error("repaint tree lost rows");
+  const crossing = r.output.split("\n").find((l) => l.startsWith("serialize:"));
+  if (!crossing) throw new Error("dom.patch did not answer its costs: " + r.output);
+  console.log("stage 9: the tree's crossing —", crossing);
 }
 // ── stage 10: a focus inside a handler nests a dispatch — queued, not re-entered ──
 const prog14 = `
@@ -990,6 +1098,39 @@ console.log("final dom:", JSON.stringify(fakeDom));
   morphInto(app, '<ul><li data-key="a"><input id="a" value="ALPHA"></li></ul>');
   if (app.childNodes[0].childNodes.length !== 1 || inputA.value !== "ALPHA") throw new Error("stage 12: blur then repaint did not adopt the markup value");
   console.log("stage 12: morph keeps the focused control's value and identity ok");
+
+  // ── stage 13: the shim's patcher answers the keeps it could not honor ──
+  // The real `patchInto`, over the same DOM model: nested children and
+  // strings flatten as they are walked, a `keeps` list stands for its
+  // rows, a kept element is left exactly as it is (moved if the order
+  // changed), and a `keep` naming an element that is not there comes back
+  // as missing — what `dom.patch` hands the SDK so a stale memo heals.
+  const pStart = shimSrc.indexOf("  const SVG_NS =");
+  const pEnd = shimSrc.indexOf("  function morphInto(el, html)");
+  const keyOfAt = shimSrc.indexOf("  const keyOf =");
+  if (pStart < 0 || pEnd < pStart || keyOfAt < 0) throw new Error("stage 13: cannot find the shim's patch functions");
+  const keyOfSrc = shimSrc.slice(keyOfAt, shimSrc.indexOf("\n", keyOfAt));
+  document.createTextNode = (data) => new MText(data);
+  document.createElementNS = (ns, tag) => new MElement(tag);
+  const { patchInto } = new Function("document", keyOfSrc + "\n" + shimSrc.slice(pStart, pEnd) + "\n  return { patchInto };")(document);
+  const li = (key, label) => ({ tag: "li", attrs: { "data-key": key }, children: [label] });
+  const host = new MElement("div");
+  let missing = patchInto(host, { tag: "ul", attrs: {}, children: [[li("rows:1", "one"), [li("rows:2", "two")]], { tag: "", attrs: {}, children: [li("rows:3", "three")] }] });
+  const ul = host.childNodes[0];
+  const labels = () => ul.childNodes.map((n) => n.getAttribute("data-key") + "=" + n.childNodes[0].data).join(",");
+  if (missing.length !== 0 || labels() !== "rows:1=one,rows:2=two,rows:3=three")
+    throw new Error("stage 13: nested children did not flatten: " + labels() + " missing " + missing);
+  const [one, two, three] = ul.childNodes;
+  missing = patchInto(host, { tag: "ul", attrs: {}, children: [{ keeps: ["rows:1", "rows:2", "rows:3"] }] });
+  if (missing.length !== 0 || ul.childNodes[0] !== one || ul.childNodes[2] !== three)
+    throw new Error("stage 13: a keeps list did not keep its rows");
+  missing = patchInto(host, { tag: "ul", attrs: {}, children: [{ keep: "rows:3" }, li("rows:2", "TWO"), { keep: "rows:1" }] });
+  if (missing.length !== 0 || labels() !== "rows:3=three,rows:2=TWO,rows:1=one" || ul.childNodes[0] !== three || ul.childNodes[1] !== two)
+    throw new Error("stage 13: kept rows were not moved in place: " + labels());
+  missing = patchInto(host, { tag: "ul", attrs: {}, children: [{ keep: "rows:1" }, { keep: "drawer" }, { keeps: ["rows:9"] }] });
+  if (missing.join(",") !== "drawer,rows:9" || labels() !== "rows:1=one")
+    throw new Error("stage 13: missing keeps not answered: " + missing + " / " + labels());
+  console.log("stage 13: the patcher flattens as it walks and answers the keeps it could not honor ok");
 }
 
 console.log("DOM BRIDGE END-TO-END PASSED (incl. fetch payloads + random)");
