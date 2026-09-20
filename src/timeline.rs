@@ -248,6 +248,13 @@ impl Timeline {
     /// recorded: replay then diverges cleanly at that call rather than
     /// serving a value that was silently corrupted through the trace.
     pub fn record_result(&mut self, op: &str, args_fp: &str, result: &Value) {
+        // A message may carry a channel (the reply pattern: `#{ req,
+        // reply }`) or a task: handles, not data. They are logged as a
+        // marker and revived as fresh handles under replay — sound
+        // because every operation on them replays from the log too, so
+        // the revived handle is never really used.
+        let portable = portable(result);
+        let result = &portable;
         if !round_trips(result) {
             eprintln!(
                 "olang --record: '{}' returned a value that does not serialize (e.g. NaN/Infinity); it was not recorded, so replay will report a divergence here rather than a wrong value",
@@ -278,6 +285,14 @@ impl Timeline {
     /// divergence if the program has stepped off the recorded path — a
     /// different op, or the same op with different arguments.
     pub fn replay_next(&mut self, op: &str, args_fp: &str) -> Result<Value, Divergence> {
+        let outcome = self.replay_step(op, args_fp);
+        if outcome.is_err() {
+            DIVERGED.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        outcome
+    }
+
+    fn replay_step(&mut self, op: &str, args_fp: &str) -> Result<Value, Divergence> {
         let seq = self.cursor as u64;
         let Some(event) = self.events.get(self.cursor) else {
             return Err(Divergence::RanOut {
@@ -301,7 +316,7 @@ impl Timeline {
             });
         }
         self.cursor += 1;
-        Ok(event.result.clone())
+        Ok(revive(&event.result))
     }
 
     /// Every event recorded so far, from whichever thread (record mode).
@@ -385,6 +400,119 @@ fn round_trips(v: &Value) -> bool {
 /// structs in sorted-key order (so a randomized `HashMap` order can't make
 /// the fingerprint unstable), lists and tuples in order, scalars via their
 /// display form.
+const HANDLE_MARKER: &str = "$ReplayHandle";
+
+/// Set when any thread's replay diverged. The main thread's divergence
+/// fails the run itself; a spawned task's would otherwise be one line on
+/// stderr under a verdict of "clean".
+static DIVERGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Did any thread diverge from the trace during this replay?
+pub fn any_thread_diverged() -> bool {
+    DIVERGED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// `v` with every channel and task handle replaced by a serializable
+/// marker (see `record_result`). Values without handles come back as
+/// they are.
+fn portable(v: &Value) -> Value {
+    use std::sync::Arc;
+    match v {
+        Value::Native(h) => {
+            let kind = h.0.type_name();
+            if kind == "Channel" || kind == "Task" {
+                let mut fields = std::collections::HashMap::new();
+                fields.insert(
+                    "kind".to_string(),
+                    Value::String(Arc::new(kind.to_string())),
+                );
+                Value::Struct {
+                    type_name: HANDLE_MARKER.to_string(),
+                    fields: Arc::new(fields),
+                }
+            } else {
+                v.clone()
+            }
+        }
+        Value::Map(m) if m.values().any(holds_handle) => Value::Map(Arc::new(
+            m.iter().map(|(k, x)| (k.clone(), portable(x))).collect(),
+        )),
+        Value::Struct { type_name, fields } if fields.values().any(holds_handle) => Value::Struct {
+            type_name: type_name.clone(),
+            fields: Arc::new(
+                fields
+                    .iter()
+                    .map(|(k, x)| (k.clone(), portable(x)))
+                    .collect(),
+            ),
+        },
+        Value::List(items) if items.iter().any(holds_handle) => {
+            Value::List(Arc::new(items.iter().map(portable).collect()))
+        }
+        Value::Tuple(items) if items.iter().any(holds_handle) => {
+            Value::Tuple(Arc::new(items.iter().map(portable).collect()))
+        }
+        Value::Ok(inner) if holds_handle(inner) => Value::Ok(Box::new(portable(inner))),
+        Value::Err(inner) if holds_handle(inner) => Value::Err(Box::new(portable(inner))),
+        _ => v.clone(),
+    }
+}
+
+fn holds_handle(v: &Value) -> bool {
+    match v {
+        Value::Native(h) => matches!(h.0.type_name(), "Channel" | "Task"),
+        Value::Map(m) => m.values().any(holds_handle),
+        Value::Struct { fields, .. } => fields.values().any(holds_handle),
+        Value::List(items) => items.iter().any(holds_handle),
+        Value::Tuple(items) => items.iter().any(holds_handle),
+        Value::Ok(inner) | Value::Err(inner) => holds_handle(inner),
+        _ => false,
+    }
+}
+
+fn holds_marker(v: &Value) -> bool {
+    match v {
+        Value::Struct { type_name, fields } => {
+            type_name == HANDLE_MARKER || fields.values().any(holds_marker)
+        }
+        Value::Map(m) => m.values().any(holds_marker),
+        Value::List(items) => items.iter().any(holds_marker),
+        Value::Tuple(items) => items.iter().any(holds_marker),
+        Value::Ok(inner) | Value::Err(inner) => holds_marker(inner),
+        _ => false,
+    }
+}
+
+/// The inverse of `portable`, under replay: a marker becomes a fresh
+/// handle of its kind.
+fn revive(v: &Value) -> Value {
+    use std::sync::Arc;
+    if !holds_marker(v) {
+        return v.clone();
+    }
+    match v {
+        Value::Struct { type_name, fields } if type_name == HANDLE_MARKER => {
+            match fields.get("kind") {
+                #[cfg(feature = "native")]
+                Some(Value::String(k)) if k.as_str() == "Task" => crate::stdlib::task::handle(0),
+                _ => crate::stdlib::chan::fresh_channel(),
+            }
+        }
+        Value::Struct { type_name, fields } => Value::Struct {
+            type_name: type_name.clone(),
+            fields: Arc::new(fields.iter().map(|(k, x)| (k.clone(), revive(x))).collect()),
+        },
+        Value::Map(m) => Value::Map(Arc::new(
+            m.iter().map(|(k, x)| (k.clone(), revive(x))).collect(),
+        )),
+        Value::List(items) => Value::List(Arc::new(items.iter().map(revive).collect())),
+        Value::Tuple(items) => Value::Tuple(Arc::new(items.iter().map(revive).collect())),
+        Value::Ok(inner) => Value::Ok(Box::new(revive(inner))),
+        Value::Err(inner) => Value::Err(Box::new(revive(inner))),
+        _ => v.clone(),
+    }
+}
+
 fn canon(v: &Value, out: &mut String) {
     match v {
         Value::Map(m) => {

@@ -71,6 +71,14 @@ impl CachedOwner {
     /// allocation must match: two different `Value`s can share an address
     /// only if one is dead, and a struct must not answer for a map that
     /// happens to sit where it used to.
+    /// Does the allocation this entry describes still exist?
+    fn is_alive(&self) -> bool {
+        match self {
+            CachedOwner::Tuple(w) => w.strong_count() > 0,
+            CachedOwner::Map(w) | CachedOwner::Struct(w) => w.strong_count() > 0,
+        }
+    }
+
     fn still_is(&self, value: &Value) -> bool {
         match (self, value) {
             (CachedOwner::Tuple(w), Value::Tuple(items)) => {
@@ -163,6 +171,8 @@ pub struct BytecodeTier {
     /// entirely in re-converting the same unchanged value 2,000 times.
     /// Every variant with a stable allocation now shares the cache.
     arg_cache: HashMap<usize, (CachedOwner, OvmValue)>,
+    /// True while a warm-start compile runs at declaration (see `reject`).
+    tentative: bool,
 }
 
 impl BytecodeTier {
@@ -185,6 +195,7 @@ impl BytecodeTier {
             known_functions: HashMap::new(),
             ambiguous: HashSet::new(),
             arg_cache: HashMap::new(),
+            tentative: false,
             stats: TierStats::default(),
             verbose: false,
         }
@@ -232,6 +243,34 @@ impl BytecodeTier {
             .collect();
         rows.sort();
         rows
+    }
+
+    /// Compile every function the tier knows of that it has neither
+    /// compiled nor refused — what `olang check --tier` runs, so a
+    /// refusal is found before the program is, rather than by a profile
+    /// of it. Returns the refusals among functions declared in `file`
+    /// (every function when `file` is None), sorted by name.
+    pub fn compile_ahead(&mut self, file: Option<&str>) -> Vec<(String, String)> {
+        let mut names: Vec<String> = self.known_functions.keys().cloned().collect();
+        names.sort();
+        for name in &names {
+            if self.compiled.contains_key(name)
+                || self.rejected.contains(name)
+                || self.ambiguous.contains(name)
+            {
+                continue;
+            }
+            if let Some(func) = self.known_functions.get(name).cloned() {
+                let _ = self.compile(name, &func);
+            }
+        }
+        self.rejections()
+            .into_iter()
+            .filter(|(name, _)| match (file, self.known_functions.get(name)) {
+                (Some(f), Some(func)) => func.def_file.as_deref().is_none_or(|d| d == f),
+                _ => true,
+            })
+            .collect()
     }
 
     /// Names compiled to bytecode this session, sorted.
@@ -526,9 +565,15 @@ impl BytecodeTier {
         // first call — compile it, and when the recorded kinds are
         // scalars, specialize the native code too. A hint that no
         // longer compiles costs one refused attempt, nothing more.
-        if let Some(kind_names) = self.warm_hints.remove(&name)
-            && !self.compiled.contains_key(&name)
-            && let Some(func_id) = self.compile(&name, &func)
+        let warm = self.warm_hints.remove(&name);
+        self.tentative = warm.is_some();
+        let precompiled = match &warm {
+            Some(_) if !self.compiled.contains_key(&name) => self.compile(&name, &func),
+            _ => None,
+        };
+        self.tentative = false;
+        if let Some(kind_names) = warm
+            && let Some(func_id) = precompiled
             && !kind_names.is_empty()
         {
             #[cfg(feature = "native")]
@@ -902,11 +947,17 @@ impl BytecodeTier {
     /// *before* compilation, which is what lets mutually recursive functions
     /// resolve each other.
     fn compile(&mut self, name: &str, func: &Function) -> Option<FunctionId> {
-        // Bound the retry loop: each iteration resolves one callee, so this is
-        // only reached by a pathological dependency graph.
-        const MAX_RESOLUTION_STEPS: usize = 64;
+        // Each iteration resolves one distinct callee — compiles it, or
+        // routes calls to it through the bridge — so the loop ends when the
+        // function has no unresolved callee left. The bound is a backstop
+        // against a compiler that reports the same name forever, not a
+        // limit on how many functions one function may call: at 64 a
+        // message dispatch with one callee per message (168 in open-track)
+        // never compiled.
+        const MAX_RESOLUTION_STEPS: usize = 4096;
 
         let func_id = self.register(name, func)?;
+        let mut resolved_by_bridge: HashSet<String> = HashSet::new();
 
         for _ in 0..MAX_RESOLUTION_STEPS {
             let decl = match Self::declaration(name, func) {
@@ -943,13 +994,42 @@ impl BytecodeTier {
                         eprintln!("[ovm] '{}' waits on callee '{}'", name, callee);
                     }
                     if !self.compile_dependency(&callee) {
+                        // The callee stays interpreted; this function need
+                        // not. A function the tier knows by value is called
+                        // through the bridge from here on, and the compile
+                        // retries around it. Only a name with no function
+                        // behind it at all still refuses the caller.
+                        let callable = callee != name
+                            && (self.known_functions.contains_key(&callee)
+                                || matches!(func.closure.get(&callee), Some(Value::Function(_)))
+                                || self
+                                    .vm
+                                    .module_scope_has_function(func.def_file.as_deref(), &callee));
+                        if callable && resolved_by_bridge.insert(callee.clone()) {
+                            if self.verbose {
+                                eprintln!(
+                                    "[ovm] '{}' calls '{}' through the bridge (it stays interpreted)",
+                                    name, callee
+                                );
+                            }
+                            self.vm.bridge_callee(&callee);
+                            continue;
+                        }
                         if self.verbose {
                             eprintln!(
                                 "[ovm] '{}' stays interpreted: cannot compile callee '{}'",
                                 name, callee
                             );
                         }
-                        self.reject(name, format!("calls '{}', which cannot compile", callee));
+                        let why = if callable {
+                            format!("calls '{}', which cannot compile", callee)
+                        } else {
+                            format!(
+                                "calls '{}', which nothing in its scope defines (a missing import? it would be an undefined variable when run natively)",
+                                callee
+                            )
+                        };
+                        self.reject(name, why);
                         return None;
                     }
                 }
@@ -1032,6 +1112,16 @@ impl BytecodeTier {
         // Withdraw the pre-compilation registration so nothing else resolves a
         // call against a name that has no bytecode
         self.vm.unregister_function(name);
+        // A warm-start compile runs at DECLARATION, before the functions
+        // written below this one exist: a refusal there is no verdict, and
+        // recording it kept the function on the tree-walker for the whole
+        // run on every second start (the warm profile a clean run leaves
+        // is what triggers it). The function compiles at its threshold,
+        // like any other, with everything it calls declared.
+        if self.tentative {
+            self.compiled.remove(name);
+            return;
+        }
         self.rejected.insert(name.to_string());
         self.rejected_reasons
             .insert(name.to_string(), reason.into());
@@ -1107,6 +1197,15 @@ impl BytecodeTier {
             }
             return Some(OvmValue::from_ast(owned));
         }
+        // Maps cross like lists: a wrap (or, for a small record of
+        // scalars, a handful of copies), with no representability scan —
+        // the scan walked the whole store on every call, which was the
+        // cost the wrapper exists to remove — and no identity cache, which
+        // an application's store (a new map every message) never hit.
+        // Values convert as compiled code touches them.
+        if matches!(arg, Value::Map(_)) {
+            return Some(OvmValue::from_ast(arg.clone()));
+        }
         if let Some((key, owner)) = CachedOwner::of(arg) {
             if let Some((cached_owner, cached)) = self.arg_cache.get(&key)
                 && cached_owner.still_is(arg)
@@ -1117,10 +1216,19 @@ impl BytecodeTier {
                 return None;
             }
             let converted = OvmValue::from_ast(arg.clone());
-            // Bound the cache; wholesale clear is fine — entries repopulate
-            // on the next call and hits dominate in steady state.
+            // Bound the cache by sweeping what is dead, then — only if the
+            // live set itself is over the bound — dropping half. A
+            // wholesale clear made a loop with a few hundred live values
+            // reconvert all of them every 512 calls.
             if self.arg_cache.len() >= 512 {
-                self.arg_cache.clear();
+                self.arg_cache.retain(|_, (owner, _)| owner.is_alive());
+                if self.arg_cache.len() >= 512 {
+                    let mut drop_next = false;
+                    self.arg_cache.retain(|_, _| {
+                        drop_next = !drop_next;
+                        drop_next
+                    });
+                }
             }
             self.arg_cache.insert(key, (owner, converted.clone()));
             return Some(converted);
@@ -1454,19 +1562,17 @@ let t2 = time.monotonic_ms()
     fn non_representable_arguments_fall_back() {
         let mut tier = BytecodeTier::new(1);
         let func = double_fn();
-        // Maps round-trip now; a TypeInfo value never converts, so a map
-        // holding one is the durable non-representable specimen
-        let mut bad = std::collections::HashMap::new();
-        bad.insert(
-            "t".to_string(),
-            Value::TypeInfo {
-                name: "X".to_string(),
-                definition: crate::ast::TypeDefinition::Struct { fields: Vec::new() },
-            },
-        );
-        let map_arg = Value::Map(std::sync::Arc::new(bad));
+        // A TypeInfo value never converts, so a tuple holding one is the
+        // durable non-representable specimen. (A map holding one is not:
+        // a map crosses as a wrapper, whole and unexamined, and leaves as
+        // the Arc it came in with.)
+        let type_info = Value::TypeInfo {
+            name: "X".to_string(),
+            definition: crate::ast::TypeDefinition::Struct { fields: Vec::new() },
+        };
+        let tuple_arg = Value::Tuple(std::sync::Arc::new(vec![type_info]));
         assert!(matches!(
-            tier.try_call(&func, &mut [map_arg]),
+            tier.try_call(&func, &mut [tuple_arg]),
             TierOutcome::Fallback
         ));
     }

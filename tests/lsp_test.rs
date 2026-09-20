@@ -704,3 +704,96 @@ fn a_function_declared_below_its_caller_is_not_undefined() {
         .collect();
     assert!(errors.is_empty(), "unexpected errors: {errors:?}");
 }
+
+#[test]
+fn annotations_are_uses_and_exports_are_never_unused() {
+    // `use m { Task }` then `t: Task` reported "unused variable: Task",
+    // and a module's `share let` reported itself unused: an annotation
+    // is a use, and an export's use is in another file.
+    let ws = std::env::temp_dir().join(format!("olang_lsp_uses_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&ws);
+    std::fs::create_dir_all(ws.join("lib")).unwrap();
+    std::fs::write(
+        ws.join("lib/rules.ol"),
+        "share type Task = { title: String }\nshare let LIMIT = 3\n",
+    )
+    .unwrap();
+    let main = ws.join("main.ol");
+    let text = "use lib.rules { Task, LIMIT }\nshare fn title_of(t: Task) = map_get(t, \"title\")\nshare let ROW = #{ \"title\": \"x\" }\nshare type Row = { n: Int }\nlet unused_local = LIMIT\n";
+    std::fs::write(&main, text).unwrap();
+    let uri = format!("file://{}", main.display());
+
+    let mut c = Client::start();
+    c.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {} }
+    }));
+    c.recv_until(|m| m["id"] == 1);
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+            "textDocument":{"uri":uri,"languageId":"olang","version":1,"text":text}}
+    }));
+    let m = c.recv_until(|m| diagnostics_of(m).is_some());
+    let unused: Vec<String> = diagnostics_of(&m)
+        .unwrap()
+        .iter()
+        .filter_map(|d| d["message"].as_str())
+        .filter(|t| t.contains("unused variable"))
+        .map(String::from)
+        .collect();
+    // The one genuinely unused name is still reported; nothing else is.
+    assert_eq!(
+        unused,
+        vec!["unused variable: unused_local".to_string()],
+        "{unused:?}"
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn a_declared_shape_completes_its_keys() {
+    let ws = std::env::temp_dir().join(format!("olang_lsp_keys_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&ws);
+    std::fs::create_dir_all(ws.join("lib")).unwrap();
+    std::fs::write(
+        ws.join("lib/types.ol"),
+        "share type Task = { title: String, tags: [String], done: Bool }\n",
+    )
+    .unwrap();
+    let main = ws.join("main.ol");
+    // The third line is incomplete on purpose: completion answers while
+    // the file does not parse.
+    let text = "use lib.types { Task }\nfn inline_shape(r: { id: Int, name: String }) = r.\nfn title_of(t: Task) = map_get(t, \"";
+    std::fs::write(&main, text).unwrap();
+    let uri = format!("file://{}", main.display());
+    let mut c = Client::start();
+    c.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {} }
+    }));
+    c.recv_until(|m| m["id"] == 1);
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+            "textDocument":{"uri":uri,"languageId":"olang","version":1,"text":text}}
+    }));
+    let labels = |c: &mut Client, id: i64, line: u32, character: u32| -> Vec<String> {
+        c.send(&serde_json::json!({
+            "jsonrpc":"2.0","id":id,"method":"textDocument/completion","params":{
+                "textDocument":{"uri":uri},"position":{"line":line,"character":character}}
+        }));
+        let r = c.recv_until(|m| m["id"] == id);
+        r["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["label"].as_str().unwrap().to_string())
+            .collect()
+    };
+    // `map_get(t, "` with `t: Task`, the alias declared in an import.
+    assert_eq!(labels(&mut c, 2, 2, 35), vec!["title", "tags", "done"]);
+    // `r.` with an inline shape.
+    assert_eq!(labels(&mut c, 3, 1, 50), vec!["id", "name"]);
+    let _ = std::fs::remove_dir_all(&ws);
+}

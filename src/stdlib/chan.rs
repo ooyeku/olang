@@ -366,6 +366,13 @@ fn register(tx: Tx, rx: Receiver<Value>) -> Value {
     }))
 }
 
+/// A fresh unbounded channel value — what `chan.new()` answers. The
+/// timeline revives a recorded channel as one of these under replay.
+pub fn fresh_channel() -> Value {
+    let (tx, rx) = std::sync::mpsc::channel();
+    register(Tx::Unbounded(tx), rx)
+}
+
 fn chan_new(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
         return Err("chan.new takes no arguments".into());

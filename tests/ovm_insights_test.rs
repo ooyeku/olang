@@ -54,9 +54,12 @@ fn rejections_carry_their_reason_and_a_fix() {
         out.contains("Named arguments are not supported"),
         "no reason for 'nb': {out}"
     );
+    // `blocked` calls `nb` by name. It used to be refused with it
+    // ("calls 'nb', which cannot compile"); it compiles around it now,
+    // calling `nb` through the bridge, so the one refusal stays one.
     assert!(
-        out.contains("calls 'nb', which cannot compile"),
-        "no chained reason for 'blocked': {out}"
+        !out.contains("calls 'nb', which cannot compile"),
+        "'blocked' was refused because of 'nb': {out}"
     );
     // The plain-language layer.
     assert!(

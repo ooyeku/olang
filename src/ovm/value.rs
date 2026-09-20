@@ -79,6 +79,11 @@ pub enum TypeTag {
 /// big data list) never pays a whole-list conversion per call.
 pub const AST_LIST_EAGER: usize = 64;
 
+/// Maps at or under this many entries whose values are all scalars
+/// convert eagerly at the tier boundary; larger or nested maps wrap as
+/// `AstMap`.
+pub const AST_MAP_EAGER: usize = 16;
+
 /// The typed-conversion cache: interpreter list (by Arc pointer) → its
 /// typed OvmValue. Bounded; oldest entry evicted. Thread-local because
 /// conversions happen on whichever thread runs the boundary.
@@ -148,6 +153,18 @@ pub enum ValueData {
     /// (at or under AST_LIST_EAGER) still convert eagerly at the
     /// boundary, so ordinary code never meets this variant.
     AstList(Arc<Vec<crate::ast::Value>>),
+    /// An interpreter map crossing the tier boundary WITHOUT conversion —
+    /// the `AstList` idea applied to maps. An application's store is a
+    /// map that changes on every message, so the pointer cache never
+    /// hits it and a deep conversion in and out was the whole cost of a
+    /// compiled helper (0.5 ms to read one key). Crossing in is a wrap;
+    /// crossing out of an unchanged wrapper is the original Arc. Reads
+    /// (`map_get`, `map_has_key`) convert the one value they touch;
+    /// `map_set` clones the interpreter map as the interpreter's own
+    /// `map_set` does and stays a wrapper. A small map of scalars (at or
+    /// under AST_MAP_EAGER entries) still converts eagerly, so a record
+    /// built and read in compiled code keeps the native layout.
+    AstMap(Arc<HashMap<String, crate::ast::Value>>),
     Tuple(Arc<Vec<OvmValue>>),
     Function(Arc<FunctionObject>),
     /// An interpreter function held verbatim, so it converts back losslessly.
@@ -620,6 +637,7 @@ impl PartialEq for OvmValue {
             (ValueData::Closure(a), ValueData::Closure(b)) => Arc::ptr_eq(a, b),
             (ValueData::Enum(a), ValueData::Enum(b)) => Arc::ptr_eq(a, b),
             (ValueData::Map(a), ValueData::Map(b)) => Arc::ptr_eq(a, b),
+            (ValueData::AstMap(a), ValueData::AstMap(b)) => Arc::ptr_eq(a, b) || a == b,
             (ValueData::Struct(a), ValueData::Struct(b)) => Arc::ptr_eq(a, b),
             (ValueData::Builtin(a), ValueData::Builtin(b)) => Arc::ptr_eq(a, b),
             (ValueData::Error(a), ValueData::Error(b)) => Arc::ptr_eq(a, b),
@@ -648,7 +666,7 @@ impl OvmValue {
             | ValueData::AstList(_)
             | ValueData::FloatList(_)
             | ValueData::IntList(_) => "List",
-            ValueData::Map(_) => "Map",
+            ValueData::Map(_) | ValueData::AstMap(_) => "Map",
             ValueData::Tuple(_) => "Tuple",
             ValueData::Function(_) | ValueData::AstFunction(_) | ValueData::Closure(_) => {
                 "Function"
@@ -751,6 +769,7 @@ impl OvmValue {
             ValueData::Closure(p) => ValueData::Closure(p.clone()),
             ValueData::Enum(p) => ValueData::Enum(p.clone()),
             ValueData::Map(p) => ValueData::Map(p.clone()),
+            ValueData::AstMap(p) => ValueData::AstMap(p.clone()),
             ValueData::Struct(p) => ValueData::Struct(p.clone()),
             ValueData::Range(p) => ValueData::Range(p.clone()),
             ValueData::Builtin(p) => ValueData::Builtin(p.clone()),
@@ -781,9 +800,11 @@ impl OvmValue {
             ValueData::Builtin(_) => TypeTag::Builtin,
             ValueData::Native(_) => TypeTag::Native,
             ValueData::Result(_) => TypeTag::Result,
-            ValueData::Enum(_) | ValueData::Map(_) | ValueData::Struct(_) | ValueData::Error(_) => {
-                TypeTag::Struct
-            }
+            ValueData::Enum(_)
+            | ValueData::Map(_)
+            | ValueData::AstMap(_)
+            | ValueData::Struct(_)
+            | ValueData::Error(_) => TypeTag::Struct,
         }
     }
 
@@ -1085,11 +1106,33 @@ impl OvmValue {
                 }))
             }
 
-            Value::Map(map) => Self::new_map(Arc::new(
-                map.iter()
-                    .map(|(k, v)| (k.clone(), Self::from_ast(v.clone())))
-                    .collect(),
-            )),
+            Value::Map(map) => {
+                // A small record of scalars keeps the native layout (the
+                // fast paths, the JIT's typed maps); anything larger or
+                // nested crosses as a wrapper, in O(1).
+                let small_and_flat = map.len() <= AST_MAP_EAGER
+                    && map.values().all(|v| {
+                        matches!(
+                            v,
+                            Value::Integer(_)
+                                | Value::Float(_)
+                                | Value::Boolean(_)
+                                | Value::String(_)
+                                | Value::Unit
+                        )
+                    });
+                if small_and_flat {
+                    Self::new_map(Arc::new(
+                        map.iter()
+                            .map(|(k, v)| (k.clone(), Self::from_ast(v.clone())))
+                            .collect(),
+                    ))
+                } else {
+                    OvmValue {
+                        data: ValueData::AstMap(map),
+                    }
+                }
+            }
 
             Value::TypeInfo { name, .. } => {
                 // For now, represent types as string names
@@ -1105,6 +1148,15 @@ impl OvmValue {
                 data: ValueData::Native(handle),
             },
         }
+    }
+
+    /// The native layout of a wrapped map, one level deep: each value
+    /// converts by `from_ast`, so a nested map is itself a wrapper. For
+    /// the operations that need to own or iterate the native form.
+    pub fn force_ast_map(map: &HashMap<String, Value>) -> OvmMap {
+        map.iter()
+            .map(|(k, v)| (k.clone(), Self::from_ast(v.clone())))
+            .collect()
     }
 
     /// Create OVM value from AST value with GC integration and safepoint coordination
@@ -1132,6 +1184,7 @@ impl OvmValue {
                 ValueData::Closure(_) => std::mem::size_of::<ClosureObject>(),
                 ValueData::Enum(_) => std::mem::size_of::<EnumObject>(),
                 ValueData::Map(m) => m.len() * 64,
+                ValueData::AstMap(m) => m.len() * 64,
                 ValueData::Struct(_) => std::mem::size_of::<StructObject>(),
                 ValueData::Range(_) => std::mem::size_of::<RangeObject>(),
                 _ => 0,
@@ -1239,6 +1292,9 @@ impl OvmValue {
                 }
                 Ok(Value::Map(Arc::new(out)))
             }
+            // The wrapper unwraps: an unchanged map leaves the tier as the
+            // Arc it came in with.
+            ValueData::AstMap(m) => Ok(Value::Map(m.clone())),
             ValueData::Enum(e) => {
                 let variant_data = match &e.data {
                     EnumData::Unit => crate::ast::EnumVariantData::Unit,
@@ -1324,10 +1380,14 @@ impl OvmValue {
                 end: gc_ptr.end,
                 inclusive: gc_ptr.inclusive,
             }),
-            ValueData::Builtin(_) => {
-                // Builtins return unit for now
-                Ok(Value::Unit)
-            }
+            // A builtin is its name and arity: it leaves the tier as the
+            // value it came in as, so one read out of a wrapped map (a
+            // table of formatters, say) is still callable through the
+            // bridge. (It used to come back as Unit.)
+            ValueData::Builtin(b) => Ok(Value::Builtin(crate::ast::BuiltinFunction {
+                name: b.name.clone(),
+                arity: b.arity,
+            })),
             ValueData::Error(gc_ptr) => Ok(Value::Err(Box::new(Value::String(
                 std::sync::Arc::new(gc_ptr.message.clone()),
             )))),
@@ -1409,6 +1469,7 @@ impl fmt::Display for OvmValue {
             }
             ValueData::Enum(e) => write!(f, "{}::{}", e.type_name, e.variant_name),
             ValueData::Map(m) => write!(f, "<map: {} entries>", m.len()),
+            ValueData::AstMap(m) => write!(f, "<map: {} entries>", m.len()),
             ValueData::Struct(_) => write!(f, "<struct>"),
             ValueData::Range(gc_ptr) => {
                 if gc_ptr.inclusive {

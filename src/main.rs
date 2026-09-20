@@ -182,6 +182,11 @@ enum Commands {
         /// escapes), then report what remains
         #[arg(long)]
         fix: bool,
+        /// Compile every function under the bytecode tier's rules and list
+        /// what it refuses, with the reason (a refused function runs on
+        /// the tree-walker)
+        #[arg(long)]
+        tier: bool,
     },
 
     /// Evaluate source text and print its value — a one-liner probe
@@ -610,9 +615,13 @@ fn run() -> i32 {
             mut paths,
             rules,
             fix,
+            tier,
         }) => {
             if paths.is_empty() {
                 paths.push(PathBuf::from("."));
+            }
+            if tier {
+                return olang::tools::check::run_tier(&paths);
             }
             if fix {
                 let fixed = olang::tools::check::fix(&paths);
@@ -2703,6 +2712,11 @@ fn execute_program(
                         kinds.join(",")
                     );
                 }
+                // What stayed on the tree-walker, and why — the line that
+                // was only ever visible in the REPL's `:ovm`.
+                for (name, reason) in interpreter.tier_refusals() {
+                    eprintln!("tier-refused: {}: {}", name, reason);
+                }
             }
             if ovm_stats {
                 match interpreter.bytecode_tier_stats() {
@@ -2823,6 +2837,13 @@ fn run_replay(trace_path: &std::path::Path, args: &[String], logger: &Logger) ->
         logger,
         None,
     ) {
+        Ok(()) if olang::timeline::any_thread_diverged() => {
+            eprintln!(
+                "olang replay: a spawned task diverged from the trace (its line is above); the main thread's {} event(s) reproduced",
+                events
+            );
+            1
+        }
         Ok(()) => {
             eprintln!(
                 "olang replay: clean — {} recorded event(s) reproduced",

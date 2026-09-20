@@ -556,24 +556,44 @@ d(1) + d(2) + d(3)
 }
 
 #[test]
-fn caller_is_rejected_when_helper_cannot_compile() {
+fn a_refused_helper_does_not_take_its_caller() {
     // `bump` spawns, which the tier does not compile — a task needs the
-    // interpreter's own environment to clone — so neither it nor its
-    // caller may be promoted, yet the program must still produce the right
-    // answer. (This test has burned through four previous "uncompilable"
-    // features: a global read, a map literal, assignment to a global which
-    // 0.62 made illegal, and `try`/`catch` which 0.65 removed. `spawn` is
-    // the durable choice: compiling it would mean compiling the thread
-    // boundary. If it ever does compile, pick another construct rather
-    // than deleting the test — what it guards is that an uncompilable
-    // *callee* keeps its caller interpreted.)
+    // interpreter's own environment to clone. Until W21 that refusal spread
+    // to every caller; now the caller compiles and reaches the refused
+    // function through the interpreter, so `label` is promoted, `bump` is
+    // named in the refusals, and the answer is unchanged. (`spawn` is the
+    // durable uncompilable construct: earlier versions of this test burned
+    // through a global read, a map literal, assignment to a global, and
+    // `try`/`catch`. If it ever compiles, pick another construct rather than
+    // deleting the test.)
     let src = r#"
 fn inner(n) = n
 fn bump(n) = task.join(spawn inner(n))
 fn label(n) = bump(n) + 1
 label(1) + label(2)
 "#;
-    assert_eq!(promotion_count(src, 1), 0);
+    let source = src.to_string();
+    let (promoted, refused) = with_big_stack(move || {
+        let program = Parser::new().parse(&source).unwrap();
+        let mut interpreter = Interpreter::new();
+        interpreter.enable_bytecode_tier(1, false);
+        interpreter.eval_program(program).unwrap();
+        (
+            interpreter.bytecode_tier_stats().unwrap().promoted,
+            interpreter.tier_refusals(),
+        )
+    });
+    assert_eq!(promoted, 1, "label compiles over the refused bump");
+    assert!(
+        refused
+            .iter()
+            .any(|(name, why)| name == "bump" && why.contains("spawn")),
+        "bump is refused by name and cause: {refused:?}"
+    );
+    assert!(
+        !refused.iter().any(|(name, _)| name == "label"),
+        "the refusal must not spread to the caller: {refused:?}"
+    );
     assert_tier_transparent(src);
 }
 

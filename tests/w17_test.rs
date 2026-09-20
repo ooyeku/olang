@@ -407,7 +407,7 @@ fn a_fresh_name_cannot_be_spelled_by_a_program() {
 }
 
 #[test]
-fn a_recording_covers_db_reads_channels_and_joins_and_replays_without_workers() {
+fn a_recording_covers_db_reads_channels_and_joins_and_replays_its_workers() {
     let ws = workspace("timeline");
     write(
         &ws,
@@ -437,18 +437,28 @@ fn a_recording_covers_db_reads_channels_and_joins_and_replays_without_workers() 
     assert!(rec_out.contains("worker ran"), "{rec_out}");
     assert!(rec_out.contains("consistent true"), "{rec_out}");
     assert!(rec_out.contains("Ok(42)"), "{rec_out}");
-    assert!(rec_err.contains("recorded 8 event(s)"), "{rec_err}");
+    // Since 0.85.0 a spawned task records to its own stream: the two
+    // workers' draws, sends, and receives are in the trace beside the
+    // main thread's, and a message that carries a reply channel is
+    // logged with the handle as a marker.
+    assert!(rec_err.contains("recorded 12 event(s)"), "{rec_err}");
     assert!(
-        rec_err.contains("note: this recorded run started a task"),
+        rec_err.contains("note: this recorded run started worker threads"),
         "{rec_err}"
     );
     let (rep_out, rep_err, rc) = olang(&ws, &["replay", "run.olt"]);
     assert_eq!(rc, 0, "{rep_out}{rep_err}");
-    // Byte-for-byte the recorded run's main-thread output, minus the
-    // worker's own line: under replay no worker starts.
-    assert_eq!(rep_out, rec_out.replace("worker ran\n", ""), "{rep_err}");
+    // The recorded run's lines exactly — the worker's included, since it
+    // runs against its own stream. (Where a worker's line lands among the
+    // main thread's is the scheduler's business, in either run.)
+    let sorted = |text: &str| {
+        let mut lines: Vec<String> = text.lines().map(String::from).collect();
+        lines.sort();
+        lines
+    };
+    assert_eq!(sorted(&rep_out), sorted(&rec_out), "{rep_err}");
     assert!(rep_err.contains("clean"), "{rep_err}");
-    assert!(!rep_err.contains("note: this recorded run"), "{rep_err}");
+    assert!(!rep_err.contains("diverged"), "{rep_err}");
 }
 
 #[test]

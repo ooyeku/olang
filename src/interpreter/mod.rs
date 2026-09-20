@@ -2350,6 +2350,36 @@ the function it shadows is the usual cause; `olang check` names the parameter",
 
     /// The per-function tier report (`OLANG_TIER_STATS=1`): every
     /// VM-callable name with its native call count and kinds.
+    /// What the tier refused and why (`OLANG_TIER_STATS=1`, the browser's
+    /// `olang_tier_report`): name and the compiler's reason, sorted.
+    pub fn tier_refusals(&self) -> Vec<(String, String)> {
+        self.bytecode_tier
+            .as_ref()
+            .map(|t| t.rejections())
+            .unwrap_or_default()
+    }
+
+    /// Record the program root as `file`'s module scope — what a loaded
+    /// module gets at the end of its load. `olang check --tier` checks a
+    /// file as the module it is at runtime, so a name declared below its
+    /// user resolves there as it does when the file is imported.
+    pub fn note_root_as_module_scope(&mut self, file: &str) {
+        let scope = Arc::new(self.environment.root().flat_snapshot());
+        self.module_scopes.insert(file.to_string(), scope.clone());
+        if let Some(tier) = self.bytecode_tier.as_mut() {
+            tier.note_module_scope(file.to_string(), scope);
+        }
+    }
+
+    /// `olang check --tier`: compile every declared function now and
+    /// answer the refusals among those declared in `file`.
+    pub fn tier_compile_ahead(&mut self, file: Option<&str>) -> Vec<(String, String)> {
+        self.bytecode_tier
+            .as_mut()
+            .map(|t| t.compile_ahead(file))
+            .unwrap_or_default()
+    }
+
     pub fn tier_report(&self) -> Vec<(String, u64, Vec<String>)> {
         self.bytecode_tier
             .as_ref()

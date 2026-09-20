@@ -89,7 +89,16 @@ A function is eligible when its body uses only the subset the VM implements:
 - map literals (`#{...}`), with the interpreter's key coercion (String
   raw, Int/Float/Bool via to_string), and the map builtins (`map_get`,
   `map_set`, `entries`, `map_merge`, `group_by`, ...) — maps are
-  first-class in the VM and round-trip the boundary losslessly
+  first-class in the VM and round-trip the boundary losslessly. An
+  interpreter map crosses the boundary as a wrapper, in O(1), the way a
+  long list does: `map_get` and `map_has_key` read through it and
+  convert the one value they touch, `map_set` answers a wrapper, and an
+  unchanged map leaves the tier as the allocation it came in with. Only
+  a small record of scalars (sixteen entries or fewer) converts to the
+  native layout at the boundary. An application's store — a map that is
+  new on every message, which no identity cache can hit — therefore
+  costs a compiled helper nothing to receive, and `cell.get` or a
+  bridged builtin nothing to hand back
 - struct literals and anonymous objects. Literals validate against the
   declared field set at *compile* time with the interpreter's exact rules
   (unknown type, missing field, surprise field all refuse, so the
@@ -575,8 +584,16 @@ one: a real run there is fresher evidence.
 **Tier counters.** `OLANG_TIER_STATS=1` prints the run's tier counters
 to stderr after a successful `olang run`: one aggregate line
 (`tier-stats: promoted=… rejected=… bytecode_calls=… instructions=…
-native_calls=…`) and one `tier-fn:` line per VM-callable function with
-the native calls its JIT entry served and its specialization kinds.
+native_calls=…`), one `tier-fn:` line per VM-callable function with
+the native calls its JIT entry served and its specialization kinds,
+and one `tier-refused: <name>: <reason>` line per function the compiler
+refused. A refused function no longer takes its callers with it — a
+caller compiles and calls it through the bridge — and a name is
+resolved against its module's finished scope, so a private helper
+written below its caller, a builtin with no native arm (`drop`,
+`map_path`, `map_get_or`, `attempt`), and a dispatch with a hundred
+callees all compile. `olang check --tier [path]` runs the same compiler
+over every function of a project without running it.
 The counters are deterministic — call counts, not samples — which is
 what makes them assertable: `tests/tier_floor_test.rs` runs
 representative hot shapes under this flag and fails if they stop

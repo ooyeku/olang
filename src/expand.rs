@@ -667,7 +667,10 @@ fn collect_sites(
 /// working directory) is consulted first: a `{ path = ... }` dependency
 /// points at its directory, a `{ shelf = ... }` one at the shelf entry it
 /// names. Failing that, the bare name is looked up on the shelf directly.
-fn package_dir(name: &str, base_dir: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+pub(crate) fn package_dir(
+    name: &str,
+    base_dir: Option<&std::path::Path>,
+) -> Option<std::path::PathBuf> {
     use crate::pkg::manifest::{Dependency, Manifest};
     let start = base_dir
         .map(|d| d.to_path_buf())
@@ -794,7 +797,7 @@ fn collect_literal_bindings(
     out
 }
 
-fn is_literal_expr(expr: &crate::ast::Expr) -> bool {
+pub(crate) fn is_literal_expr(expr: &crate::ast::Expr) -> bool {
     use crate::ast::Expr as E;
     match expr {
         E::Integer(_) | E::Float(_) | E::String(_) | E::Boolean(_) => true,

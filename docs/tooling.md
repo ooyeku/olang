@@ -24,7 +24,7 @@ language server has [its own chapter](editors.md).
 |---|---|
 | `olang <file> [args]` | Run a program (`olang run <file>` is the explicit form) |
 | `olang` | Start the REPL (`olang repl`) |
-| `olang check [path]` | Type-check without running; `--rules FILE` adds project lints |
+| `olang check [path]` | Type-check without running; `--rules FILE` adds project lints; `--tier` lists the functions the bytecode tier refuses, with the reason |
 | `olang doctor [path]` | Audit a project: the manifest, its dependencies, the lock, the browser runtime the binary carries, stale runtime copies |
 | `olang eval SOURCE` | Evaluate one expression and print its value, with the working directory's project libraries in scope |
 | `olang fmt [path]` | Format sources in place; `--check` reports instead of writing |
@@ -316,6 +316,26 @@ hints. Exit is non-zero for a violation or parse error but **not** for a
 warning alone, so `olang check` slots directly into CI without advisory
 findings failing a build.
 
+### What the tier refuses
+
+`olang check --tier [path]` compiles every function of each file under
+the bytecode tier's rules, without running the program, and lists what
+the tier refuses with the compiler's reason:
+
+```text
+lib/snapshot.ol
+  ⚠ `start_snapshot` stays on the tree-walker: Compilation failed: it contains a `spawn` (a task starts on the interpreter)
+lib/weft.ol
+  ⚠ `client_problems` stays on the tree-walker: calls 'check_record', which nothing in its scope defines (a missing import? ...)
+```
+
+A refused function runs on the tree-walker: correct, and several times
+slower. Declarations are evaluated (imports, types, functions, `let`s
+of literal values); nothing else a program does at start happens. The
+second line above is a finding in its own right — a name a module never
+imported, which a concatenated browser bundle resolves and a native run
+does not. Refusals are advisories unless `[check] promote` names `tier`.
+
 ### Project rules
 
 Run project-specific lint rules, written in olang over the [meta
@@ -336,7 +356,9 @@ promote = ["exhaustiveness", "shape"]
 
 The classes are `exhaustiveness` (a `match` over an enum or a literal
 union that misses a case), `shape` (a literal key a declared record
-shape does not carry), `result` (a discarded `Result`), and `all`. A
+shape does not carry, read or written), `result` (a discarded `Result`),
+`tier` (a function `olang check --tier` finds the bytecode tier
+refuses), and `all`. A
 promoted finding fails `olang check` and shows as an error in the
 editor, and its message says which block promoted it.
 
@@ -709,7 +731,12 @@ records its database calls, random draws, and channel sends under its
 id, and under replay it runs against that stream — its effects are
 served, not repeated, so a worker that wrote a database while recording
 writes nothing on replay. A program that spawns in the same order meets
-the same streams.
+the same streams. A message may carry a handle rather than data — the
+reply channel of `#{ req, reply }`, a task — and a handle is logged as
+a marker and revived as a fresh one under replay; every operation on it
+replays from the log, so the revived handle is never really used. A
+task that diverges from its stream fails the replay: the verdict is
+"clean" only when every thread reproduced.
 
 Two boundaries remain. Record/replay runs on the interpreter tier (the
 one dispatch point that sees every builtin), so a recorded run forgoes

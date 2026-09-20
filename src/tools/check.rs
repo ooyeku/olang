@@ -836,19 +836,50 @@ pub fn module_programs(
         }
         let joined = u.path.join("/");
         let last = u.path.last().cloned().unwrap_or_default();
-        let candidates = [
+        // The runtime's order: the file's directory, then its own
+        // package's root (a nested module's `use lib.x` means its
+        // package's lib/x.ol, wherever the check was started), then a
+        // package dependency's index or a module inside it.
+        let mut candidates = vec![
             dir.join(format!("{}.ol", joined)),
             dir.join(&joined).join("index.ol"),
             dir.join(&joined).join("mod.ol"),
-            dir.join(format!("{}.ol", last)),
         ];
+        let absolute = std::path::absolute(if dir.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            dir
+        })
+        .unwrap_or_else(|_| dir.to_path_buf());
+        if let Some(root) = crate::pkg::manifest::Manifest::find_root(&absolute) {
+            candidates.push(root.join(format!("{}.ol", joined)));
+            candidates.push(root.join(&joined).join("index.ol"));
+        }
+        if let Some(pkg) = crate::expand::package_dir(&u.path[0], Some(dir)) {
+            if u.path.len() == 1 {
+                candidates.push(pkg.join("index.ol"));
+            } else {
+                let rest = u.path[1..].join("/");
+                candidates.push(pkg.join(format!("{}.ol", rest)));
+                candidates.push(pkg.join(&rest).join("index.ol"));
+            }
+        }
+        candidates.push(dir.join(format!("{}.ol", last)));
         for c in candidates {
             if out.iter().any(|(p, _, _)| *p == c) {
                 break;
             }
             if let Ok(src) = std::fs::read_to_string(&c) {
-                if let Ok(prog) = crate::parser::Parser::new().parse(&src) {
+                if let Ok(prog) = crate::parser::Parser::new().parse_with_dir(&src, c.parent()) {
+                    // A package's index re-exports: the modules it
+                    // `share use`s carry the signatures and types.
+                    let reexports = module_programs(&src, c.parent());
                     out.push((c, src, prog));
+                    for r in reexports {
+                        if out.len() < 32 && !out.iter().any(|(p, _, _)| *p == r.0) {
+                            out.push(r);
+                        }
+                    }
                 }
                 break;
             }
@@ -1870,6 +1901,7 @@ impl Checker {
         };
         let read = match via {
             "map_get" => "map_get reads Unit for it at runtime".to_string(),
+            "map_set" => "map_set adds a key no reader of the shape looks for".to_string(),
             "index" => "the index reads Unit for it at runtime".to_string(),
             _ => "the field is missing at runtime".to_string(),
         };
@@ -2501,6 +2533,19 @@ impl Checker {
                 {
                     self.check_shape_key(object, key, "map_get", span);
                 }
+                // A write of a key the shape does not declare is the
+                // same typo, made on the other side.
+                if let Expr::Identifier(name) = callee.as_ref()
+                    && name == "map_set"
+                    && !self.bound("map_set")
+                    && let [
+                        Argument::Positional(object),
+                        Argument::Positional(Expr::String(key)),
+                        _,
+                    ] = arguments.as_slice()
+                {
+                    self.check_shape_key(object, key, "map_set", span);
+                }
             }
             Expr::List(elems) => {
                 for e in elems.iter() {
@@ -2712,6 +2757,133 @@ impl Checker {
             _ => {}
         }
     }
+}
+
+/// `olang check --tier [path]`: compile every function of each file under
+/// the bytecode tier's rules, without running the program, and list what
+/// the tier refuses with the compiler's reason. A refused function runs
+/// on the tree-walker — correct, and several times slower — and until now
+/// the only way to learn that was a profile of the running program.
+///
+/// Declarations are evaluated (imports, types, functions, and `let`s of
+/// literal values, which a function body may name); other top-level
+/// statements are not, so nothing a program does at start happens here.
+/// A refusal that names a top-level binding this pass did not evaluate is
+/// not reported: whether it resolves is a question for the running
+/// program. Refusals are advisories unless the project's `[check] promote`
+/// names `tier`.
+#[cfg(feature = "native")]
+pub fn run_tier(paths: &[PathBuf]) -> i32 {
+    let mut files = Vec::new();
+    for path in paths {
+        if !path.exists() {
+            eprintln!("olang check: path not found: {}", path.display());
+            return 1;
+        }
+        files.extend(super::discover_ol_files(path));
+    }
+    let mut refused_total = 0usize;
+    let mut promoted_errors = 0usize;
+    for file in &files {
+        let Ok(source) = std::fs::read_to_string(file) else {
+            continue;
+        };
+        let parser = crate::parser::Parser::new();
+        let Ok(program) = parser.parse_with_dir(&source, file.parent()) else {
+            continue; // `olang check` proper reports parse errors
+        };
+        let absolute = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
+        let mut interpreter = crate::interpreter::Interpreter::new();
+        interpreter.enable_bytecode_tier(1, std::env::var_os("OLANG_TIER_VERBOSE").is_some());
+        interpreter.set_current_file(&absolute);
+        if let Some(root) = crate::pkg::manifest::Manifest::find_root(&absolute)
+            && let Ok(map) = crate::pkg::install(&root, &crate::pkg::InstallOptions::default())
+        {
+            interpreter.set_dependency_map(map.into_iter().collect());
+        }
+        let mut skipped: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut declarations = Vec::new();
+        for statement in &program.statements {
+            use crate::ast::ShareDecl as S;
+            let keep = match statement.unwrapped() {
+                Statement::UseDecl(_)
+                | Statement::TypeDecl(_)
+                | Statement::ErrorTypeDecl(_)
+                | Statement::FunctionDecl(_)
+                | Statement::TraitDecl(_)
+                | Statement::ImplDecl(_) => true,
+                Statement::ShareDecl(S::Let(l)) | Statement::LetDecl(l) => {
+                    let literal = l.value.as_ref().is_none_or(crate::expand::is_literal_expr);
+                    if !literal && let crate::ast::Pattern::Identifier(name) = &l.pattern {
+                        skipped.insert(name.clone());
+                    }
+                    literal
+                }
+                Statement::ShareDecl(_) => true,
+                _ => false,
+            };
+            if keep {
+                declarations.push(statement.clone());
+            }
+        }
+        if interpreter
+            .eval_program(Program {
+                statements: declarations,
+            })
+            .is_err()
+        {
+            continue;
+        }
+        let file_key = absolute.to_string_lossy().to_string();
+        interpreter.note_root_as_module_scope(&file_key);
+        let refusals: Vec<(String, String)> = interpreter
+            .tier_compile_ahead(Some(&file_key))
+            .into_iter()
+            .filter(|(_, reason)| {
+                !skipped
+                    .iter()
+                    .any(|name| reason.contains(&format!("'{name}'")))
+            })
+            .collect();
+        if refusals.is_empty() {
+            continue;
+        }
+        let promoted = promotions_for(file.parent())
+            .iter()
+            .any(|p| p == "tier" || p == "all");
+        println!("{}", file.display());
+        for (name, reason) in &refusals {
+            println!(
+                "  {} `{}` stays on the tree-walker: {}",
+                if promoted { "×" } else { "⚠" },
+                name,
+                reason
+            );
+        }
+        refused_total += refusals.len();
+        if promoted {
+            promoted_errors += refusals.len();
+        }
+    }
+    if refused_total == 0 {
+        println!(
+            "olang check --tier: {} file{}, every function compiles",
+            files.len(),
+            if files.len() == 1 { "" } else { "s" }
+        );
+    } else {
+        println!(
+            "olang check --tier: {} function{} refused by the bytecode tier{}",
+            refused_total,
+            if refused_total == 1 { "" } else { "s" },
+            if promoted_errors > 0 {
+                " (an error here: [check] promote names `tier`)"
+            } else {
+                ""
+            }
+        );
+    }
+    if promoted_errors > 0 { 1 } else { 0 }
 }
 
 #[cfg(test)]

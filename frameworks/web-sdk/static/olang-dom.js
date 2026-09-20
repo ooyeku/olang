@@ -926,13 +926,29 @@ Two known causes:
   // tier, calls, and exact self and total milliseconds (instrumented,
   // not sampled). `report()` returns the rows; `stop()` also turns the
   // instrumentation off.
+  // `report()` also carries what the bytecode tier refused and why
+  // (`refused: [{ function, reason }]`) — a hot function that never
+  // promotes is named here, not guessed at — and how many times the
+  // page repainted since `start()` (`repaints`). `olangTier()` is the
+  // tier's report alone, for an app's own diagnostics page.
+  const tierReport = () =>
+    ex.olang_tier_report ? readResult(ex.olang_tier_report()) : { promoted: [], refused: [] };
+  const withTier = (r) => {
+    r.refused = tierReport().refused;
+    r.repaints = r.rows
+      .filter((x) => x.function === "rerender")
+      .reduce((a, x) => a + x.calls, 0);
+    return r;
+  };
+  window.olangTier = tierReport;
   window.olangProfile = {
     start: () => ex.olang_profile_start(),
-    report: () => readResult(ex.olang_profile_report()),
-    stop: () => readResult(ex.olang_profile_stop()),
+    report: () => withTier(readResult(ex.olang_profile_report())),
+    stop: () => withTier(readResult(ex.olang_profile_stop())),
     table: (top = 25) => {
-      const r = readResult(ex.olang_profile_report());
+      const r = withTier(readResult(ex.olang_profile_report()));
       console.table(r.rows.slice(0, top));
+      if (r.refused.length) console.table(r.refused);
       return r;
     },
   };

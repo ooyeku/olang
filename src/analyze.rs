@@ -39,6 +39,9 @@ pub struct Analyzer {
     /// `analyze_program`): their declaration statement, when the walk
     /// reaches it, is the same declaration, not a duplicate.
     hoisted: HashSet<String>,
+    /// Names a file exports with `share`: their use is in other files,
+    /// so they are never reported unused.
+    exported: HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -107,6 +110,7 @@ impl Analyzer {
             builtin_names,
             shadowed: Vec::new(),
             hoisted: HashSet::new(),
+            exported: HashSet::new(),
         }
     }
 
@@ -120,6 +124,7 @@ impl Analyzer {
             builtin_names: HashSet::new(),
             shadowed: Vec::new(),
             hoisted: HashSet::new(),
+            exported: HashSet::new(),
         }
     }
 
@@ -154,7 +159,65 @@ impl Analyzer {
         for statement in &program.statements {
             self.analyze_statement(statement)?;
         }
+        // With every name declared (imports and later declarations
+        // included): annotations are uses, and `share`d names are used
+        // elsewhere by definition.
+        for statement in &program.statements {
+            match statement.unwrapped() {
+                Statement::FunctionDecl(f) => self.note_signature(f),
+                Statement::LetDecl(l) => {
+                    if let Some(ann) = &l.type_annotation {
+                        self.note_annotation(ann);
+                    }
+                }
+                Statement::TypeDecl(t) => self.note_type_decl(t),
+                Statement::ShareDecl(sd) => match sd {
+                    ShareDecl::Function(f) => {
+                        self.exported.insert(f.name.clone());
+                        self.note_signature(f);
+                    }
+                    ShareDecl::Let(l) => {
+                        for name in self.extract_pattern_variables(&l.pattern) {
+                            self.exported.insert(name);
+                        }
+                        if let Some(ann) = &l.type_annotation {
+                            self.note_annotation(ann);
+                        }
+                    }
+                    ShareDecl::Type(t) => {
+                        self.exported.insert(t.name.clone());
+                        self.note_type_decl(t);
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
         Ok(())
+    }
+
+    fn note_type_decl(&mut self, t: &crate::ast::TypeDecl) {
+        use crate::ast::TypeDefinition as D;
+        match &t.definition {
+            D::Struct { fields } => {
+                for f in fields {
+                    self.note_annotation(&f.field_type);
+                }
+            }
+            D::Enum { variants } => {
+                for v in variants {
+                    for ann in v.data.iter().flatten() {
+                        self.note_annotation(ann);
+                    }
+                }
+            }
+            D::Union { types } => {
+                for ann in types {
+                    self.note_annotation(ann);
+                }
+            }
+            D::Alias { target } => self.note_annotation(target),
+        }
     }
 
     fn analyze_statement(&mut self, statement: &Statement) -> Result<(), AnalysisError> {
@@ -400,6 +463,11 @@ impl Analyzer {
             Expr::Lambda {
                 parameters, body, ..
             } => {
+                for p in parameters {
+                    if let Some(ann) = &p.type_annotation {
+                        self.note_annotation(ann);
+                    }
+                }
                 self.enter_scope();
                 for param in parameters {
                     // Add parameter to current scope
@@ -684,6 +752,74 @@ impl Analyzer {
         Ok(())
     }
 
+    /// A name written in an annotation is a use of it: an imported type
+    /// that appears only as `t: Task` is not unused. Unknown names are
+    /// not an error here (the checker owns annotation validity).
+    fn note_annotation(&mut self, ann: &crate::ast::TypeAnnotation) {
+        use crate::ast::TypeAnnotation as T;
+        match ann {
+            T::Custom(name) | T::TypeVariable(name) => {
+                if let Some(info) = self.variables.get_mut(name) {
+                    info.usage_count += 1;
+                }
+            }
+            T::List(t) => self.note_annotation(t),
+            T::Map {
+                key_type,
+                value_type,
+            } => {
+                self.note_annotation(key_type);
+                self.note_annotation(value_type);
+            }
+            T::Tuple(ts) | T::Union { types: ts } => {
+                for t in ts {
+                    self.note_annotation(t);
+                }
+            }
+            T::Result { ok_type, err_type } => {
+                self.note_annotation(ok_type);
+                self.note_annotation(err_type);
+            }
+            T::Function {
+                params,
+                return_type,
+            } => {
+                for t in params {
+                    self.note_annotation(t);
+                }
+                self.note_annotation(return_type);
+            }
+            T::Generic {
+                base_type,
+                type_args,
+            } => {
+                if let Some(info) = self.variables.get_mut(base_type) {
+                    info.usage_count += 1;
+                }
+                for t in type_args {
+                    self.note_annotation(t);
+                }
+            }
+            T::Record { fields } => {
+                for f in fields {
+                    self.note_annotation(&f.field_type);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn note_signature(&mut self, decl: &crate::ast::FunctionDecl) {
+        for p in &decl.parameters {
+            if let Some(ann) = &p.type_annotation {
+                self.note_annotation(ann);
+            }
+        }
+        if let Some(ret) = &decl.return_type {
+            self.note_annotation(ret);
+        }
+    }
+
     fn check_variable_usage(&mut self, name: &str) -> Result<(), AnalysisError> {
         // Check if variable is defined in any scope
         for scope in self.scopes.iter().rev() {
@@ -817,7 +953,11 @@ impl Analyzer {
             .iter()
             // Pre-registered builtins are not user variables and shouldn't
             // be reported as unused
-            .filter(|(name, info)| info.usage_count == 0 && !self.builtin_names.contains(*name))
+            .filter(|(name, info)| {
+                info.usage_count == 0
+                    && !self.builtin_names.contains(*name)
+                    && !self.exported.contains(*name)
+            })
             .map(|(name, _)| name)
             .collect()
     }

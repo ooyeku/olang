@@ -1175,6 +1175,37 @@ pub extern "C" fn olang_profile_stop() -> *mut u8 {
     result_buffer(crate::profile::instrument_stop())
 }
 
+/// `{ "promoted": [names], "refused": [{ "function", "reason" }] }` for
+/// the running session: which functions reached the bytecode tier and
+/// which it refused, with the compiler's reason — what an app puts on
+/// its own diagnostics page, and what `window.olangProfile.report()`
+/// carries as `refused`.
+#[unsafe(no_mangle)]
+pub extern "C" fn olang_tier_report() -> *mut u8 {
+    let json = SESSION.with(|s| match s.try_borrow() {
+        Ok(session) => match session.as_ref() {
+            Some(interpreter) => {
+                let refused: Vec<serde_json::Value> = interpreter
+                    .tier_refusals()
+                    .into_iter()
+                    .map(|(function, reason)| {
+                        serde_json::json!({ "function": function, "reason": reason })
+                    })
+                    .collect();
+                let promoted: Vec<String> = interpreter
+                    .tier_report()
+                    .into_iter()
+                    .map(|(name, _, _)| name)
+                    .collect();
+                serde_json::json!({ "promoted": promoted, "refused": refused }).to_string()
+            }
+            None => r#"{"promoted":[],"refused":[]}"#.to_string(),
+        },
+        Err(_) => r#"{"promoted":[],"refused":[],"busy":true}"#.to_string(),
+    });
+    result_buffer(json)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn olang_alloc(len: usize) -> *mut u8 {
     let mut buf = Vec::<u8>::with_capacity(len.max(1));

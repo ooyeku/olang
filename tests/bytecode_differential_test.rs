@@ -588,3 +588,141 @@ fn probe() = {
     );
     assert_eq!(interpreted, Value::Integer(1100));
 }
+
+/// A store-shaped interpreter map: big enough and nested enough to cross
+/// the tier boundary as an `AstMap` wrapper, not a converted native map.
+fn store_value() -> Value {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    let s = |t: &str| Value::String(Arc::new(t.to_string()));
+    let record = |i: i64| {
+        let mut r = HashMap::new();
+        r.insert("id".to_string(), Value::Integer(i));
+        r.insert("title".to_string(), s(&format!("issue {i}")));
+        r.insert(
+            "tags".to_string(),
+            Value::List(Arc::new(vec![s("a"), s("b")])),
+        );
+        Value::Map(Arc::new(r))
+    };
+    let mut by_id = HashMap::new();
+    for i in 0..20 {
+        by_id.insert(format!("id{i}"), record(i));
+    }
+    let mut store = HashMap::new();
+    store.insert("count".to_string(), Value::Integer(3));
+    store.insert(
+        "recent".to_string(),
+        Value::List(Arc::new((0..4).map(record).collect())),
+    );
+    store.insert("by_id".to_string(), Value::Map(Arc::new(by_id)));
+    Value::Map(Arc::new(store))
+}
+
+#[test]
+fn a_wrapped_map_reads_and_writes_as_the_interpreter_does() {
+    let store = store_value();
+    // The store really crosses as a wrapper.
+    assert!(matches!(
+        OvmValue::from_ast(store.clone()).data,
+        olang::ovm::value::ValueData::AstMap(_)
+    ));
+    // Reads through the wrapper, nested maps included.
+    assert_same(
+        "fn f(m) = map_get(map_get(map_get(m, \"by_id\"), \"id7\"), \"title\")",
+        "f",
+        std::slice::from_ref(&store),
+    );
+    assert_same(
+        "fn f(m) = [map_has_key(m, \"count\"), map_has_key(m, \"nope\"), map_get(m, \"nope\") == ()]",
+        "f",
+        std::slice::from_ref(&store),
+    );
+    assert_same(
+        "fn f(m) = map_get(head(map_get(m, \"recent\")), \"tags\")",
+        "f",
+        std::slice::from_ref(&store),
+    );
+    // map_set on a wrapper, then a read of what was written and of what
+    // was not — and the whole map back out.
+    assert_same(
+        "fn f(m) = { let n = map_set(m, \"count\", map_get(m, \"count\") + 1)\n [map_get(n, \"count\"), map_get(m, \"count\"), map_get(map_get(n, \"by_id\"), \"id3\")] }",
+        "f",
+        std::slice::from_ref(&store),
+    );
+    assert_same(
+        "fn f(m) = map_set(map_set(m, \"count\", 9), \"extra\", #{ \"k\": [1, 2] })",
+        "f",
+        std::slice::from_ref(&store),
+    );
+    // A nested write: set a record inside the index, put the index back.
+    assert_same(
+        "fn f(m) = { let idx = map_get(m, \"by_id\")\n let r = map_set(map_get(idx, \"id1\"), \"title\", \"renamed\")\n map_set(m, \"by_id\", map_set(idx, \"id1\", r)) }",
+        "f",
+        std::slice::from_ref(&store),
+    );
+    // The reassigning form the compiler fuses (MapSetAssign).
+    assert_same(
+        "fn f(m) = { let mut n = m\n n = map_set(n, \"a\", 1)\n n = map_set(n, \"b\", map_get(n, \"a\") + 1)\n n }",
+        "f",
+        std::slice::from_ref(&store),
+    );
+    // A closure stored in a wrapper has no interpreter form: the map
+    // takes the native layout and still reads back.
+    assert_same(
+        "fn f(m) = { let n = map_set(m, \"k\", 5)\n map_get(n, \"k\") + map_get(n, \"count\") }",
+        "f",
+        std::slice::from_ref(&store),
+    );
+}
+
+#[test]
+fn a_wrapped_map_compares_shows_and_travels_like_a_map() {
+    let store = store_value();
+    // Equality of a wrapper with a native map built in compiled code, in
+    // both directions, and with itself.
+    assert_same(
+        "fn f(m) = { let r = map_get(map_get(m, \"by_id\"), \"id2\")\n let built = #{ \"id\": 2, \"title\": \"issue 2\", \"tags\": [\"a\", \"b\"] }\n [r == built, built == r, r != built, m == m, r == map_get(map_get(m, \"by_id\"), \"id3\")] }",
+        "f",
+        std::slice::from_ref(&store),
+    );
+    // typeof, show, to_string, a template, and json.stringify see a Map.
+    assert_same("fn f(m) = typeof(m)", "f", std::slice::from_ref(&store));
+    assert_same(
+        "fn f(m) = show(map_get(map_get(m, \"by_id\"), \"id0\"))",
+        "f",
+        std::slice::from_ref(&store),
+    );
+    // (`json.stringify` of a wrapper is pinned in tests/w21_test.rs: this
+    // bare-VM harness has no stdlib modules in scope.)
+    assert_same(
+        "fn f(m) = `${map_get(m, \"count\")} of ${len(map_get(m, \"recent\"))}`",
+        "f",
+        std::slice::from_ref(&store),
+    );
+    // A wrapper as a struct field and inside a list and a tuple.
+    assert_same(
+        "fn f(m) = { let b = { inner: map_get(m, \"by_id\"), n: 1 }\n map_get(map_get(b.inner, \"id4\"), \"id\") + b.n }",
+        "f",
+        std::slice::from_ref(&store),
+    );
+    assert_same(
+        "fn f(m) = { let pair = (m, [m])\n match pair { (a, [b]) => map_get(a, \"count\") + map_get(b, \"count\") } }",
+        "f",
+        std::slice::from_ref(&store),
+    );
+    // entries, map_keys, map_values, map_len, map_remove, map_merge —
+    // native or bridged, the answer is the interpreter's.
+    assert_same(
+        "fn f(m) = { let r = map_get(map_get(m, \"by_id\"), \"id5\")\n [sort(map_keys(r)), map_len(r), len(entries(r)), map_keys(map_remove(r, \"tags\")), map_len(map_merge(r, #{ \"z\": 1 }))] }",
+        "f",
+        std::slice::from_ref(&store),
+    );
+    // A wrong receiver still says what the interpreter says.
+    assert_same(
+        "fn f(m) = map_get(map_get(m, \"count\"), \"k\")",
+        "f",
+        std::slice::from_ref(&store),
+    );
+    assert_same("fn f(m) = m[\"count\"]", "f", std::slice::from_ref(&store));
+}

@@ -122,8 +122,16 @@ practice:
   construction out of the loop, or accumulate with the rebind forms.
 - **Bridged builtins in the hot path.** The native set covers the
   collection core, the higher-order loops, `math`, and `str`; other
-  builtins convert values at the tier boundary per call. Move such calls
-  out of inner loops.
+  builtins convert their arguments at the tier boundary per call. Maps
+  and long lists cross as wrappers in O(1); a short list of records or a
+  struct converts one level per call. Move such calls out of inner
+  loops.
+- **What the tier refused.** A function the bytecode compiler refuses
+  runs on the tree-walker, correctly and several times slower, and its
+  callers compile around it (they call it through the bridge). `olang
+  check --tier` lists every refusal with its reason before the program
+  runs; `OLANG_TIER_STATS=1` prints them as `tier-refused:` lines after
+  it; in the browser they are `window.olangProfile.report().refused`.
 - **Shadowed builtins.** Defining a function named after a builtin (or
   binding one to a local) forces dynamic resolution and disqualifies the
   fused forms for that name, as correctness requires.

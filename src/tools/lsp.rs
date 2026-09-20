@@ -234,11 +234,16 @@ fn handle_request(
         Completion::METHOD => {
             let (id, params): (RequestId, lsp_types::CompletionParams) =
                 req.extract(Completion::METHOD)?;
-            let text = docs
-                .get(&params.text_document_position.text_document.uri)
-                .map(String::as_str)
-                .unwrap_or("");
-            let items = completions(text, params.text_document_position.position);
+            let uri = params.text_document_position.text_document.uri.clone();
+            let text = docs.get(&uri).map(String::as_str).unwrap_or("");
+            let dir = doc_dir(&uri);
+            let position = params.text_document_position.position;
+            // Inside `map_get(t, "` / `t["` / after `t.` on a value whose
+            // declared shape is known: the shape's keys, and nothing else.
+            let items = match shape_key_completions(text, position, dir.as_deref()) {
+                Some(keys) => keys,
+                None => completions(text, position),
+            };
             respond(connection, id, &CompletionResponse::Array(items))?;
         }
         lsp_types::request::DocumentSymbolRequest::METHOD => {
@@ -746,6 +751,186 @@ fn find_declaration(text: &str, name: &str) -> Option<Range> {
 /// the same entries `:help` prints. Anywhere else: keywords, global
 /// builtins (from the registry, so nothing rotted survives here),
 /// modules, and this file's own declarations.
+/// The keys of a declared record shape, where the cursor is reading or
+/// writing one: `map_get(t, "`, `map_set(t, "`, `map_has_key(t, "`,
+/// `t["`, or `t.`, with `t` annotated `{ title: String, ... }` or with
+/// an alias of one (`type Task = { ... }`, in this file or an imported
+/// module). Text-based, so it answers while the line does not parse.
+#[allow(clippy::question_mark)]
+fn shape_key_completions(
+    text: &str,
+    pos: Position,
+    doc_dir: Option<&std::path::Path>,
+) -> Option<Vec<CompletionItem>> {
+    let line = text.lines().nth(pos.line as usize)?;
+    let cursor = utf16_to_char_col(line, pos.character);
+    let head: String = line.chars().take(cursor).collect();
+    let ident = |s: &str| -> Option<String> {
+        let name: String = s
+            .chars()
+            .rev()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        (!name.is_empty()).then_some(name)
+    };
+    // Strip the partial key being typed.
+    let typed_from = head
+        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let before = &head[..typed_from];
+    let (receiver, quoted) = if let Some(rest) = before.strip_suffix('"') {
+        let rest = rest.trim_end();
+        if let Some(r) = rest.strip_suffix('[') {
+            (ident(r)?, true)
+        } else if let Some(r) = rest.strip_suffix(',') {
+            // `map_get(t, "` — the receiver is the call's first argument.
+            let r = r.trim_end();
+            let name = ident(r)?;
+            let call = r[..r.len() - name.len()].trim_end();
+            let call = call.strip_suffix('(')?;
+            let f = ident(call)?;
+            if !matches!(
+                f.as_str(),
+                "map_get" | "map_set" | "map_has_key" | "map_remove"
+            ) {
+                return None;
+            }
+            (name, true)
+        } else {
+            return None;
+        }
+    } else if let Some(r) = before.strip_suffix('.') {
+        (ident(r)?, false)
+    } else {
+        return None;
+    };
+    // The receiver's annotation: `name: <annotation>` anywhere above the
+    // cursor (a parameter or a let), nearest first.
+    let above: String = text
+        .lines()
+        .take(pos.line as usize + 1)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let needle = format!("{}:", receiver);
+    let mut annotation = None;
+    let mut search = above.as_str();
+    while let Some(at) = search.rfind(&needle) {
+        let boundary_ok = at == 0
+            || !search[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_');
+        if boundary_ok {
+            annotation = Some(search[at + needle.len()..].trim_start().to_string());
+            break;
+        }
+        search = &search[..at];
+    }
+    let annotation = annotation?;
+    let fields = if annotation.starts_with('{') {
+        record_fields(&annotation)
+    } else {
+        let alias: String = annotation
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if alias.is_empty() {
+            return None;
+        }
+        let decl = format!("type {} = {{", alias);
+        let mut sources = vec![text.to_string()];
+        // The imports alone: the rest of the file need not parse.
+        let uses: String = text
+            .lines()
+            .filter(|l| {
+                let t = l.trim_start();
+                t.starts_with("use ") || t.starts_with("share use ")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        sources.extend(
+            crate::tools::check::module_programs(&uses, doc_dir)
+                .into_iter()
+                .map(|(_, src, _)| src),
+        );
+        sources.iter().find_map(|src| {
+            src.find(&decl)
+                .map(|at| record_fields(&src[at + decl.len() - 1..]))
+        })?
+    };
+    if fields.is_empty() {
+        return None;
+    }
+    Some(
+        fields
+            .into_iter()
+            .map(|(name, ty)| CompletionItem {
+                label: name.clone(),
+                kind: Some(CompletionItemKind::FIELD),
+                detail: Some(ty),
+                insert_text: Some(if quoted { name.clone() } else { name }),
+                ..Default::default()
+            })
+            .collect(),
+    )
+}
+
+/// `{ title: String, tags: [String] }` → its (name, type text) pairs.
+/// `text` starts at the opening brace; nesting is respected.
+fn record_fields(text: &str) -> Vec<(String, String)> {
+    let mut depth = 0i32;
+    let mut body = String::new();
+    for c in text.chars() {
+        match c {
+            '{' | '[' | '(' | '<' => {
+                depth += 1;
+                if depth > 1 {
+                    body.push(c);
+                }
+            }
+            '}' | ']' | ')' | '>' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+                body.push(c);
+            }
+            _ if depth >= 1 => body.push(c),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    let mut level = 0i32;
+    let mut part = String::new();
+    for c in body.chars().chain(std::iter::once(',')) {
+        match c {
+            '{' | '[' | '(' | '<' => {
+                level += 1;
+                part.push(c);
+            }
+            '}' | ']' | ')' | '>' => {
+                level -= 1;
+                part.push(c);
+            }
+            ',' if level == 0 => {
+                if let Some((name, ty)) = part.split_once(':') {
+                    let name = name.trim();
+                    if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                        out.push((name.to_string(), ty.trim().to_string()));
+                    }
+                }
+                part.clear();
+            }
+            _ => part.push(c),
+        }
+    }
+    out
+}
+
 fn completions(text: &str, pos: Position) -> Vec<CompletionItem> {
     // The module receiver, if the cursor sits right after `name.`.
     let line = text.lines().nth(pos.line as usize).unwrap_or("");

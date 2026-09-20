@@ -409,6 +409,11 @@ the boot phases in `window.olangBoot`: `fetch_instantiate_ms`,
 repaint spends its time is `window.olangProfile`: `start()`, act,
 `table()` — every olang function that ran, with its tier and exact
 self and total milliseconds (see the tooling chapter's `olang profile`).
+The report also carries `repaints`, the number of `rerender` calls
+since `start()`, and `refused`, the functions the bytecode tier refused
+with the compiler's reason; `window.olangTier()` answers the tier's
+report alone (`{ promoted, refused }`) for an app's own diagnostics
+page.
 
 The runtime the demo serves is the binary's own: a fresh clone runs
 `make install` (which builds the wasm and installs olang with it), and

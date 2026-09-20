@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **A map crosses the tier boundary in O(1).** An interpreter map enters
+  compiled code as a wrapper and leaves as the allocation it came in
+  with; reads convert the one value they touch and `map_set` answers a
+  wrapper. The boundary no longer walks a map or a long list to ask
+  whether it can cross, and a builtin value survives the round trip. An
+  application's message loop — the store in a cell, a compiled helper
+  reading a key — was 45× slower with the tier than without; it is
+  faster with it (1,225 → 15 ms for 3,000 messages here).
+- **The tier refuses less, and says what it refused.** `attempt`, `drop`,
+  `map_path`, `map_get_or` and the other builtins without a native arm
+  compile (they bridge); a helper declared below its caller resolves
+  through its module's finished scope, in lambdas too; a function the
+  tier cannot compile is called through the bridge and its callers
+  compile around it; the 64-callee bound is gone. `olang check --tier`
+  lists refusals with reasons ahead of time (`[check] promote =
+  ["tier"]` makes one an error), `OLANG_TIER_STATS=1` prints
+  `tier-refused:` lines, and the browser's profile report carries
+  `refused` and `repaints` (`window.olangTier()` for the report alone).
+
+### Added
+
+- The editor completes a declared shape's keys after `map_get(t, "`,
+  `t["`, and `t.`; the checker flags a `map_set` of a key the shape does
+  not declare.
+
+### Fixed
+
+- **Replay of a worker that receives a reply channel** (0.85.0): a
+  channel or task handle inside a recorded value is logged as a marker
+  and revived under replay, and a task's divergence fails the replay
+  instead of printing under a verdict of "clean".
+- A warm-start compile's refusal is tentative: a function that calls one
+  declared below it is no longer kept on the tree-walker on every second
+  run.
+- `olang check` and the editor resolve a nested module's imports against
+  its package root and its dependencies, from any working directory, so
+  an imported function's arity and an imported shape are checked.
+- The editor no longer reports an imported type used only in annotations,
+  or a `share`d binding, as unused.
+
 ## [0.85.0] - 2026-09-15
 
 ### Added

@@ -220,6 +220,9 @@ pub struct BytecodeVm {
     /// one of these names is an equality match, not a binding — the same
     /// rule the interpreter applies.
     unit_variant_names: std::collections::HashSet<String>,
+    /// Names the tier asked to be called through the bridge (see
+    /// BytecodeCompiler::bridged_callees).
+    bridged_callees: std::collections::HashSet<String>,
     /// `type Name = <annotation>` aliases, mirrored from the interpreter:
     /// the compiler resolves a `let`'s annotation through them (a record
     /// alias then needs no runtime check and the function compiles), and
@@ -302,6 +305,15 @@ pub struct BytecodeCompiler {
     unit_variant_names: std::collections::HashSet<String>,
     /// Type aliases (see BytecodeVm::type_aliases).
     type_aliases: HashMap<String, crate::ast::TypeAnnotation>,
+    /// The finished scope of the module the function being compiled was
+    /// declared in: a name its declaration-time closure predates (a
+    /// private helper written below it) resolves here, as it does on the
+    /// interpreter since 0.84.
+    module_scope: Option<std::sync::Arc<im::HashMap<String, Value>>>,
+    /// Callees the tier could not compile: a call to one is emitted as a
+    /// call through its function VALUE (the bridge runs it), so one
+    /// uncompilable function no longer takes every caller with it.
+    bridged_callees: std::collections::HashSet<String>,
 
     /// User function values for lambda-closure attachment (see
     /// BytecodeVm::known_function_values).
@@ -1234,6 +1246,27 @@ impl BytecodeVm {
             "result_map",
             "result_map_err",
             "unwrap_or_else",
+            // `attempt` is native (its function runs on the VM's own
+            // tiers); until it was listed here no function that calls it
+            // compiled, so that arm was unreachable from compiled code
+            // and every caller of such a function was refused with it.
+            "attempt",
+            // Builtins with no native arm run through the bridge — the
+            // same implementation under the same name. Absent from this
+            // list, one call to any of them kept its function, and every
+            // function that calls that one by name, on the tree-walker.
+            "drop",
+            "map_path",
+            "map_get_or",
+            "result_and_then",
+            "result_or_else",
+            "assert",
+            "assert_eq",
+            "assert_ne",
+            "assert_true",
+            "assert_false",
+            "assert_close",
+            "set_parallel",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -1266,6 +1299,7 @@ impl BytecodeVm {
             struct_field_checks: HashMap::new(),
             unit_variant_names: std::collections::HashSet::new(),
             type_aliases: HashMap::new(),
+            bridged_callees: std::collections::HashSet::new(),
             known_function_values: HashMap::new(),
             ambiguous_function_names: std::collections::HashSet::new(),
             trait_impls: HashMap::new(),
@@ -1446,7 +1480,7 @@ impl BytecodeVm {
             ValueData::Result(_) => "Result",
             ValueData::Unit => "Unit",
             ValueData::Enum(e) => &e.type_name,
-            ValueData::Map(_) => "Map",
+            ValueData::Map(_) | ValueData::AstMap(_) => "Map",
             // Never constructed by compiled code; a failed lookup falls to
             // the field-access error, which is what the interpreter's
             // generic path produces too.
@@ -1467,6 +1501,19 @@ impl BytecodeVm {
     /// Record a `type Name = <annotation>` alias. The bridge interpreter,
     /// if built, learns it at once; compiled functions need no recompile
     /// (an alias only ever relaxes a `let` check from a refusal to none).
+    /// Ask that calls to `name` go through its function value (the
+    /// bridge): the tier could not compile it, and its callers should
+    /// compile anyway.
+    /// Is `name` a function in the finished scope of the module at `file`?
+    pub fn module_scope_has_function(&self, file: Option<&str>, name: &str) -> bool {
+        file.and_then(|f| self.module_scopes.get(f))
+            .is_some_and(|scope| matches!(scope.get(name), Some(Value::Function(_))))
+    }
+
+    pub fn bridge_callee(&mut self, name: &str) {
+        self.bridged_callees.insert(name.to_string());
+    }
+
     pub fn note_type_alias(&mut self, name: String, target: crate::ast::TypeAnnotation) {
         self.type_aliases.insert(name, target);
         if let Some(bridge) = self.builtin_interpreter.as_mut() {
@@ -1684,6 +1731,12 @@ impl BytecodeVm {
         self.compiler.known_function_values = self.known_function_values.clone();
         self.compiler.unit_variant_names = self.unit_variant_names.clone();
         self.compiler.type_aliases = self.type_aliases.clone();
+        self.compiler.bridged_callees = self.bridged_callees.clone();
+        self.compiler.module_scope = self
+            .compiler
+            .pending_def_file
+            .as_deref()
+            .and_then(|f| self.module_scopes.get(f).cloned());
         self.compiler.enclosing_closure = closure;
 
         self.compiler.pending_lambdas.clear();
@@ -3768,6 +3821,30 @@ impl BytecodeVm {
                                 },
                             )?;
                         }
+                        // A wrapped interpreter map stays a wrapper: clone
+                        // the interpreter map when it is shared (what the
+                        // interpreter's own map_set does), write the value
+                        // back in its AST form. A value with no AST form
+                        // materializes the native layout instead.
+                        ValueData::AstMap(mut arc) => match v.to_ast() {
+                            Ok(ast) => {
+                                std::sync::Arc::make_mut(&mut arc).insert(key_str.to_string(), ast);
+                                self.execution_state.set_register(
+                                    *target,
+                                    OvmValue {
+                                        data: ValueData::AstMap(arc),
+                                    },
+                                )?;
+                            }
+                            Err(_) => {
+                                let mut m = OvmValue::force_ast_map(&arc);
+                                m.insert(key_str.to_string(), v);
+                                self.execution_state.set_register(
+                                    *target,
+                                    OvmValue::new_map(std::sync::Arc::new(m)),
+                                )?;
+                            }
+                        },
                         ValueData::Struct(st) => {
                             let mut pairs: Vec<(String, OvmValue)> = st
                                 .iter()
@@ -5142,7 +5219,12 @@ impl BytecodeVm {
         if matches!(op, BinaryOp::Equal | BinaryOp::NotEqual) {
             let numeric = |d: &ValueData| matches!(d, ValueData::Integer(_) | ValueData::Float(_));
             // The map kinds compare with one another by contents.
-            let map_like = |d: &ValueData| matches!(d, ValueData::Map(_) | ValueData::Struct(_));
+            let map_like = |d: &ValueData| {
+                matches!(
+                    d,
+                    ValueData::Map(_) | ValueData::AstMap(_) | ValueData::Struct(_)
+                )
+            };
             let same_kind =
                 std::mem::discriminant(&left.data) == std::mem::discriminant(&right.data);
             if !same_kind
@@ -5284,9 +5366,11 @@ impl BytecodeVm {
             }
             (ValueData::Enum(_), ValueData::Enum(_))
             | (ValueData::Struct(_), ValueData::Struct(_))
-            | (ValueData::Map(_), ValueData::Map(_))
-            | (ValueData::Struct(_), ValueData::Map(_))
-            | (ValueData::Map(_), ValueData::Struct(_)) => match op {
+            | (
+                ValueData::Map(_) | ValueData::AstMap(_) | ValueData::Struct(_),
+                ValueData::Map(_) | ValueData::AstMap(_),
+            )
+            | (ValueData::Map(_) | ValueData::AstMap(_), ValueData::Struct(_)) => match op {
                 BinaryOp::Equal => OvmValue::new_boolean(Self::pattern_eq(left, right)),
                 BinaryOp::NotEqual => OvmValue::new_boolean(!Self::pattern_eq(left, right)),
                 _ => {
@@ -6014,10 +6098,12 @@ impl BytecodeVm {
         use crate::ovm::value::ValueData;
         enum Recv<'a> {
             Map(&'a crate::ovm::value::OvmMap),
+            Ast(&'a std::collections::HashMap<String, crate::ast::Value>),
             Struct(&'a crate::ovm::value::StructObject),
         }
         let recv = match &receiver.data {
             ValueData::Map(m) => Recv::Map(m),
+            ValueData::AstMap(m) => Recv::Ast(m),
             ValueData::Struct(st) => Recv::Struct(st),
             _ => {
                 return Err(BytecodeError::TypeError(format!(
@@ -6050,6 +6136,12 @@ impl BytecodeVm {
         };
         Ok(match recv {
             Recv::Map(m) => m.get(key_str).cloned().unwrap_or_else(OvmValue::new_unit),
+            // Read through the wrapper: the one value touched converts
+            // (a nested map is itself a wrapper, so this is O(1) for it).
+            Recv::Ast(m) => m
+                .get(key_str)
+                .map(|v| OvmValue::from_ast(v.clone()))
+                .unwrap_or_else(OvmValue::new_unit),
             Recv::Struct(st) => st
                 .field(key_str)
                 .cloned()
@@ -6061,10 +6153,12 @@ impl BytecodeVm {
         use crate::ovm::value::ValueData;
         enum Recv<'a> {
             Map(&'a crate::ovm::value::OvmMap),
+            Ast(&'a std::collections::HashMap<String, crate::ast::Value>),
             Struct(&'a crate::ovm::value::StructObject),
         }
         let recv = match &receiver.data {
             ValueData::Map(m) => Recv::Map(m),
+            ValueData::AstMap(m) => Recv::Ast(m),
             ValueData::Struct(st) => Recv::Struct(st),
             _ => {
                 return Err(BytecodeError::TypeError(
@@ -6074,6 +6168,7 @@ impl BytecodeVm {
         };
         let contains = |k: &str| match recv {
             Recv::Map(m) => m.contains_key(k),
+            Recv::Ast(m) => m.contains_key(k),
             Recv::Struct(st) => st.shape.field_index(k).is_some(),
         };
         let key_string;
@@ -6806,6 +6901,21 @@ impl BytecodeVm {
                         new_map.insert(key, args[2].clone());
                         Ok(OvmValue::new_map(Arc::new(new_map)))
                     }
+                    // A wrapper answers a wrapper (see MapSetAssign).
+                    ValueData::AstMap(m) => match args[2].to_ast() {
+                        Ok(ast) => {
+                            let mut new_map = (**m).clone();
+                            new_map.insert(key, ast);
+                            Ok(OvmValue {
+                                data: ValueData::AstMap(Arc::new(new_map)),
+                            })
+                        }
+                        Err(_) => {
+                            let mut new_map = OvmValue::force_ast_map(m);
+                            new_map.insert(key, args[2].clone());
+                            Ok(OvmValue::new_map(Arc::new(new_map)))
+                        }
+                    },
                     ValueData::Struct(st) => {
                         let mut pairs: Vec<(String, OvmValue)> = st
                             .iter()
@@ -6825,6 +6935,10 @@ impl BytecodeVm {
             "entries" if args.len() == 1 => Some((|| {
                 let mut pairs: Vec<(String, OvmValue)> = match &args[0].data {
                     ValueData::Map(m) => m.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                    ValueData::AstMap(m) => m
+                        .iter()
+                        .map(|(k, v)| (k.clone(), OvmValue::from_ast(v.clone())))
+                        .collect(),
                     ValueData::Struct(st) => {
                         st.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
                     }
@@ -7073,7 +7187,7 @@ impl BytecodeVm {
             ValueData::String(s) => Ok(s.chars().count() as i64),
             _ => {
                 let hint = match &source.data {
-                    ValueData::Map(_) | ValueData::Struct(_) => {
+                    ValueData::Map(_) | ValueData::AstMap(_) | ValueData::Struct(_) => {
                         " — iterate its pairs with `for (k, v) in entries(m)`"
                     }
                     _ => "",
@@ -7138,7 +7252,7 @@ impl BytecodeVm {
                 }),
             _ => {
                 let hint = match &source.data {
-                    ValueData::Map(_) | ValueData::Struct(_) => {
+                    ValueData::Map(_) | ValueData::AstMap(_) | ValueData::Struct(_) => {
                         " — iterate its pairs with `for (k, v) in entries(m)`"
                     }
                     _ => "",
@@ -7173,9 +7287,11 @@ impl BytecodeVm {
             // (Value's structural equality distinguishes element kinds).
             (ValueData::Enum(_), ValueData::Enum(_))
             | (ValueData::Struct(_), ValueData::Struct(_))
-            | (ValueData::Map(_), ValueData::Map(_))
-            | (ValueData::Struct(_), ValueData::Map(_))
-            | (ValueData::Map(_), ValueData::Struct(_))
+            | (
+                ValueData::Map(_) | ValueData::AstMap(_) | ValueData::Struct(_),
+                ValueData::Map(_) | ValueData::AstMap(_),
+            )
+            | (ValueData::Map(_) | ValueData::AstMap(_), ValueData::Struct(_))
             | (ValueData::List(_), ValueData::List(_))
             | (ValueData::AstList(_), ValueData::AstList(_))
             | (ValueData::AstList(_), ValueData::List(_))
@@ -7212,7 +7328,12 @@ impl BytecodeVm {
             | Value::String(_)
             | Value::Unit
             | Value::Range { .. } => true,
-            Value::List(items) => items.iter().all(Self::round_trips),
+            // A list over the eager threshold crosses as a wrapper, whole
+            // and unexamined; a shorter one converts, so its elements must.
+            Value::List(items) => {
+                items.len() > crate::ovm::value::AST_LIST_EAGER
+                    || items.iter().all(Self::round_trips)
+            }
             Value::Tuple(items) => items.iter().all(Self::round_trips),
             Value::Ok(inner) | Value::Err(inner) => Self::round_trips(inner),
             // Structs, anonymous objects, and parsed JSON objects convert
@@ -7226,9 +7347,12 @@ impl BytecodeVm {
             // round-trip — which is what lets user functions be passed as
             // arguments into promoted functions.
             Value::Function(_) => true,
-            // Maps convert losslessly now that the OVM has a first-class
-            // map value; they round-trip when every entry does.
-            Value::Map(map) => map.values().all(Self::round_trips),
+            // A map crosses as a wrapper (`AstMap`) and leaves as the Arc
+            // it came in with, so it round-trips whatever it holds — and
+            // this answer must not walk it: a bridged builtin that returns
+            // an application's store (`cell.get`) asked this of the whole
+            // store on every call.
+            Value::Map(_) => true,
             // Enums convert losslessly (type, variant, payload) since the
             // OVM grew a first-class enum value; they round-trip when the
             // payload does.
@@ -7388,7 +7512,7 @@ impl BytecodeVm {
         }
 
         match &object.data {
-            ValueData::Map(_) => {
+            ValueData::Map(_) | ValueData::AstMap(_) => {
                 return Err(BytecodeError::TypeError(
                     "a Map is not indexed with `[]`; read a key with `map_get(m, key)`".to_string(),
                 ));
@@ -7758,6 +7882,8 @@ impl BytecodeCompiler {
             struct_field_checks: HashMap::new(),
             unit_variant_names: std::collections::HashSet::new(),
             type_aliases: HashMap::new(),
+            bridged_callees: std::collections::HashSet::new(),
+            module_scope: None,
             known_function_values: HashMap::new(),
             self_call: None,
             pending_lambdas: Vec::new(),
@@ -8073,7 +8199,19 @@ impl BytecodeCompiler {
                     // the name will resolve to, baked as a constant. A miss
                     // (the interpreter would fall back to the caller's scope
                     // chain, which is runtime state) refuses compilation.
-                    match self.enclosing_closure.get(name) {
+                    // The closure, then the module's finished scope, then the
+                    // tier's own table of declared functions (an unambiguous
+                    // name declared after this function's closure was taken).
+                    let later = (!self.ambiguous_names.contains(name))
+                        .then(|| self.known_function_values.get(name))
+                        .flatten()
+                        .map(|f| Value::Function(f.clone()));
+                    let resolved = self
+                        .enclosing_closure
+                        .get(name)
+                        .or_else(|| self.module_scope.as_ref().and_then(|m| m.get(name)))
+                        .or(later.as_ref());
+                    match resolved {
                         // A function value is wrapped verbatim (AstFunction),
                         // the same representation the lambda machinery uses,
                         // so it converts back unchanged and the native
@@ -8680,17 +8818,54 @@ impl BytecodeCompiler {
                 // function, a lambda, a non-callable — bakes as a value and
                 // calls through CallValue, whose interpreter fallback owns
                 // the error semantics.
-                match self.enclosing_closure.get(&function_name) {
+                // The closure first, then the module's finished scope: a
+                // helper declared below its caller is absent from the
+                // closure (a snapshot of the declaration's moment) and
+                // present in the module.
+                let in_scope = self
+                    .enclosing_closure
+                    .get(&function_name)
+                    .cloned()
+                    .or_else(|| {
+                        self.module_scope
+                            .as_ref()
+                            .and_then(|m| m.get(&function_name).cloned())
+                    })
+                    .or_else(|| {
+                        (!self.ambiguous_names.contains(&function_name))
+                            .then(|| self.known_function_values.get(&function_name))
+                            .flatten()
+                            .map(|f| Value::Function(f.clone()))
+                    });
+                match in_scope.as_ref() {
                     // A same-named function the registry could still learn
                     // by name: report it unresolved so the tier compiles it
                     // and retries. Not when the name is ambiguous — then the
                     // closure's own binding is the only honest answer, and
-                    // it bakes as a value below.
+                    // it bakes as a value below. And not when the tier has
+                    // already tried and asked for the bridge: the call then
+                    // goes through the function value, and this function
+                    // compiles around the one that could not.
                     Some(Value::Function(f))
                         if f.name.as_deref() == Some(function_name.as_str())
-                            && !self.ambiguous_names.contains(&function_name) =>
+                            && !self.ambiguous_names.contains(&function_name)
+                            && !self.bridged_callees.contains(&function_name) =>
                     {
                         Err(BytecodeError::UnresolvedCallee(function_name))
+                    }
+                    Some(Value::Function(f)) => {
+                        let const_idx = self
+                            .emitter
+                            .add_constant(OvmValue::new_ast_function(f.clone()));
+                        let baked = self.register_allocator.allocate_register();
+                        self.emitter.emit_load_const(baked, const_idx);
+                        self.emitter.note_callee(&function_name);
+                        self.emitter.instructions.push(Instruction::CallValue {
+                            dst: dst_reg,
+                            callee: baked,
+                            args: arg_regs,
+                        });
+                        Ok(dst_reg)
                     }
                     Some(_) => {
                         let baked =
@@ -9369,9 +9544,20 @@ impl BytecodeCompiler {
                 // Refuse to compile unsupported expressions — substituting a
                 // Unit constant (e.g. for a recursive call site) silently
                 // changed program results on promotion to the bytecode tier
+                let what = match other {
+                    Expr::Spawn(_) => "a `spawn` (a task starts on the interpreter)".to_string(),
+                    Expr::MacroCall { name, .. } => format!("an unexpanded macro call `@{name}`"),
+                    Expr::ParForLoop { .. } => "a `par for` loop".to_string(),
+                    Expr::AssertEq { .. } | Expr::AssertNe { .. } => {
+                        "an assertion expression".to_string()
+                    }
+                    _ => format!(
+                        "an expression the compiler has no form for ({:?})",
+                        std::mem::discriminant(other)
+                    ),
+                };
                 Err(BytecodeError::CompilationFailed(format!(
-                    "Unsupported expression in bytecode tier: {:?}",
-                    std::mem::discriminant(other)
+                    "it contains {what}"
                 )))
             }
         }
@@ -9456,8 +9642,14 @@ impl BytecodeCompiler {
                     "Lambda captures '{}' before the enclosing function binds it",
                     name
                 )));
-            } else if !self.enclosing_closure.contains_key(name) {
-                // Not a local, not registered, not in the closure. It
+            } else if !self.enclosing_closure.contains_key(name)
+                && !self
+                    .module_scope
+                    .as_ref()
+                    .is_some_and(|m| m.contains_key(name))
+            {
+                // Not a local, not registered, not in the closure or the
+                // module's finished scope (a helper declared below). It
                 // may still be a user function declared LATER (mutual
                 // recursion through the lambda): report it as an
                 // unresolved callee so the tier's dependency
@@ -9478,6 +9670,9 @@ impl BytecodeCompiler {
             .filter(|name| !runtime_captures.iter().any(|(n, _)| n == *name))
             .filter_map(|name| {
                 if let Some(value) = self.enclosing_closure.get(name) {
+                    return Some((name.clone(), value.clone()));
+                }
+                if let Some(value) = self.module_scope.as_ref().and_then(|m| m.get(name)) {
                     return Some((name.clone(), value.clone()));
                 }
                 // Registry-resolved function: carried as a value so
@@ -11797,7 +11992,12 @@ mod tests {
                 definition: crate::ast::TypeDefinition::Struct { fields: Vec::new() },
             },
         );
-        assert!(!BytecodeVm::round_trips(&Value::Map(Arc::new(bad))));
+        // A map is a wrapper at the boundary: it round-trips untouched,
+        // whatever it holds. A tuple converts, so its elements must.
+        assert!(BytecodeVm::round_trips(&Value::Map(Arc::new(bad.clone()))));
+        assert!(!BytecodeVm::round_trips(&Value::Tuple(Arc::new(vec![
+            bad["t"].clone()
+        ]))));
         assert!(BytecodeVm::round_trips(&Value::Integer(1)));
         assert!(BytecodeVm::round_trips(&Value::Ok(Box::new(
             Value::Integer(1)
