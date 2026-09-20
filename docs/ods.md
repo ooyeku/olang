@@ -1204,13 +1204,19 @@ which is also why the whole stack runs in the browser build.
 | `plot.box(pairs, opts)` | five-number-summary boxes: whiskers to min/max, quartile box, median line |
 
 Options ride in a single map — `title`, `x_label`, `y_label`, `width`,
-`height`, `theme`, `responsive`, `interactive`, `colors`, `vary`,
-`scale` — and passing `#{}` accepts the defaults, which follow a
+`height`, `theme`, `paper`, `ink`, `responsive`, `interactive`,
+`colors`, `vary`, `scale` — and passing `#{}` accepts the defaults, which follow a
 colorblind-validated ten-hue palette assigned in fixed series order.
 `theme: "dark"` re-tunes every color for a dark surface (mint leads);
 `responsive: true` drops the fixed pixel size so the SVG fills its
-container (the browser case — the viewBox keeps the aspect ratio). An
-unknown option key is an error, because it is always a typo.
+container (the browser case — the viewBox keeps the aspect ratio).
+`paper` and `ink` take the frame's colors from the page instead of the
+theme: `paper` is the background as any CSS color (`"transparent"` lets
+the page show through), and `ink` is the color of every label, tick,
+axis, and grid line — the lines at reduced opacity — so `ink:
+"currentColor"` with a transparent paper gives one chart that sits
+correctly on a light and a dark page. An unknown option key is an
+error, because it is always a typo.
 
 **Color is a first-class option.** `colors: ["#5aa9e6", ...]` gives a
 chart its own palette (series take the list in order, cycling) —

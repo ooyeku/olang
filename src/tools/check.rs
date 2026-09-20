@@ -1221,7 +1221,7 @@ pub fn promotions_for(dir: Option<&Path>) -> Vec<String> {
 }
 
 /// The class a warning belongs to, by its message: `exhaustiveness`,
-/// `shape`, `result`, or none.
+/// `shape`, `result`, `shadow`, or none.
 pub fn warning_class(message: &str) -> Option<&'static str> {
     if message.contains("is not exhaustive") || message.contains("covers none of the scrutinee") {
         Some("exhaustiveness")
@@ -1229,6 +1229,10 @@ pub fn warning_class(message: &str) -> Option<&'static str> {
         Some("shape")
     } else if message.contains("the Result from") && message.contains("is discarded") {
         Some("result")
+    } else if message.contains("shadows the stdlib module") {
+        // `let cell = …`: every later `cell.get` in the scope reaches the
+        // binding and fails at run time, far from the `let`.
+        Some("shadow")
     } else {
         None
     }

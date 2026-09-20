@@ -197,6 +197,60 @@ pub struct PlotOptions {
     pub font_size: f64,
     /// The CSS font-family for every text in the document.
     pub font: String,
+    /// The chart's background, as any CSS color — `"transparent"` lets the
+    /// page show through. Unset, the theme's surface.
+    pub paper: Option<String>,
+    /// The color of every label, tick, axis and grid line, as any CSS
+    /// color — `"currentColor"` takes the text color of the element the
+    /// chart sits in, so one chart serves a light and a dark page. Axis
+    /// and grid lines are drawn in it at reduced opacity. Unset, the
+    /// theme's inks.
+    pub ink: Option<String>,
+}
+
+/// The colors a chart's frame is drawn in: the theme's, unless the
+/// options name a paper or an ink.
+#[derive(Clone, Debug)]
+struct Paint {
+    surface: String,
+    ink: String,
+    ink2: String,
+    grid: String,
+    axis: String,
+    /// Opacity of grid and axis lines: 1 for the theme's own recessive
+    /// colors, less when both are the caller's one ink.
+    grid_opacity: f64,
+    axis_opacity: f64,
+}
+
+impl Paint {
+    fn of(opts: &PlotOptions) -> Self {
+        let theme = opts.theme;
+        let surface = opts
+            .paper
+            .clone()
+            .unwrap_or_else(|| theme.surface().to_string());
+        match &opts.ink {
+            Some(ink) => Paint {
+                surface,
+                ink: ink.clone(),
+                ink2: ink.clone(),
+                grid: ink.clone(),
+                axis: ink.clone(),
+                grid_opacity: 0.12,
+                axis_opacity: 0.3,
+            },
+            None => Paint {
+                surface,
+                ink: theme.ink().to_string(),
+                ink2: theme.ink2().to_string(),
+                grid: theme.grid().to_string(),
+                axis: theme.axis().to_string(),
+                grid_opacity: 1.0,
+                axis_opacity: 1.0,
+            },
+        }
+    }
 }
 
 impl Default for PlotOptions {
@@ -215,6 +269,8 @@ impl Default for PlotOptions {
             scale: HeatScale::default(),
             font_size: 12.5,
             font: FONT.to_string(),
+            paper: None,
+            ink: None,
         }
     }
 }
@@ -689,7 +745,7 @@ pub fn render_heatmap(
             "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"end\" font-size=\"12.5\" fill=\"{}\">{}</text>",
             geo.left - 8.0,
             geo.top + cell_h * r as f64 + cell_h / 2.0 + 4.0,
-            opts.theme.ink2(),
+            escape(&Paint::of(opts).ink2),
             escape(&truncate(label, 12)),
         );
     }
@@ -711,7 +767,7 @@ pub fn render_heatmap(
         ramp_color(opts.scale, opts.theme, 1.0),
         key_x + 74.0,
         escape(&format_num(hi)),
-        ink = opts.theme.ink2(),
+        ink = escape(&Paint::of(opts).ink2),
     );
     Ok(svg.close(opts, &geo))
 }
@@ -842,12 +898,13 @@ impl Geometry {
 
 struct Svg {
     body: String,
-    theme: Theme,
+    paint: Paint,
     font_size: f64,
 }
 
 impl Svg {
     fn open(opts: &PlotOptions, _geo: &Geometry) -> Self {
+        let paint = Paint::of(opts);
         let mut body = String::with_capacity(4096);
         let size = if opts.responsive {
             "style=\"width:100%;height:auto\"".to_string()
@@ -862,11 +919,11 @@ impl Svg {
             w = opts.width,
             h = opts.height,
             font = opts.font,
-            surface = opts.theme.surface(),
+            surface = escape(&paint.surface),
         );
         Self {
             body,
-            theme: opts.theme,
+            paint,
             font_size: opts.font_size,
         }
     }
@@ -876,28 +933,30 @@ impl Svg {
             let y = geo.py(t, y_lo, y_hi);
             let _ = write!(
                 self.body,
-                "<line x1=\"{:.2}\" y1=\"{y:.2}\" x2=\"{:.2}\" y2=\"{y:.2}\" stroke=\"{}\" stroke-width=\"1\"/>\
+                "<line x1=\"{:.2}\" y1=\"{y:.2}\" x2=\"{:.2}\" y2=\"{y:.2}\" stroke=\"{}\" stroke-opacity=\"{go}\" stroke-width=\"1\"/>\
                  <text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"end\" font-size=\"12.5\" fill=\"{}\">{}</text>",
                 geo.left,
                 geo.left + geo.plot_w,
-                self.theme.grid(),
+                escape(&self.paint.grid),
                 geo.left - 8.0,
                 y + 4.0,
-                self.theme.ink2(),
+                escape(&self.paint.ink2),
                 escape(&format_num(t)),
                 y = y,
+                go = self.paint.grid_opacity,
             );
         }
         // Recessive axis lines: left and bottom only.
         let _ = write!(
             self.body,
-            "<line x1=\"{l:.2}\" y1=\"{t:.2}\" x2=\"{l:.2}\" y2=\"{b:.2}\" stroke=\"{axis}\"/>\
-             <line x1=\"{l:.2}\" y1=\"{b:.2}\" x2=\"{r:.2}\" y2=\"{b:.2}\" stroke=\"{axis}\"/>",
+            "<line x1=\"{l:.2}\" y1=\"{t:.2}\" x2=\"{l:.2}\" y2=\"{b:.2}\" stroke=\"{axis}\" stroke-opacity=\"{ao}\"/>\
+             <line x1=\"{l:.2}\" y1=\"{b:.2}\" x2=\"{r:.2}\" y2=\"{b:.2}\" stroke=\"{axis}\" stroke-opacity=\"{ao}\"/>",
             l = geo.left,
             t = geo.top,
             b = geo.top + geo.plot_h,
             r = geo.left + geo.plot_w,
-            axis = self.theme.axis(),
+            axis = escape(&self.paint.axis),
+            ao = self.paint.axis_opacity,
         );
     }
 
@@ -909,7 +968,7 @@ impl Svg {
                 "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"middle\" font-size=\"12.5\" fill=\"{}\">{}</text>",
                 x,
                 geo.top + geo.plot_h + 16.0,
-                self.theme.ink2(),
+                escape(&self.paint.ink2),
                 escape(&format_num(t))
             );
         }
@@ -930,7 +989,7 @@ impl Svg {
                 "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"middle\" font-size=\"12.5\" fill=\"{}\">{}</text>",
                 x,
                 geo.top + geo.plot_h + 16.0,
-                self.theme.ink2(),
+                escape(&self.paint.ink2),
                 escape(&text)
             );
         }
@@ -957,7 +1016,7 @@ impl Svg {
                 color,
                 x + 14.0,
                 y,
-                self.theme.ink2(),
+                escape(&self.paint.ink2),
                 escape(label),
                 x = x,
             );
@@ -976,7 +1035,7 @@ impl Svg {
                 "<text x=\"{:.2}\" y=\"25\" font-size=\"{:.1}\" font-weight=\"600\" fill=\"{}\">{}</text>",
                 geo.left,
                 title_size,
-                self.theme.ink(),
+                escape(&self.paint.ink),
                 escape(&opts.title)
             );
         }
@@ -987,7 +1046,7 @@ impl Svg {
                 geo.left + geo.plot_w / 2.0,
                 opts.height as f64 - 12.0,
                 label_size,
-                self.theme.ink2(),
+                escape(&self.paint.ink2),
                 escape(&opts.x_label)
             );
         }
@@ -998,7 +1057,7 @@ impl Svg {
                  transform=\"rotate(-90 16 {:.2})\">{}</text>",
                 geo.top + geo.plot_h / 2.0,
                 label_size,
-                self.theme.ink2(),
+                escape(&self.paint.ink2),
                 geo.top + geo.plot_h / 2.0,
                 escape(&opts.y_label)
             );
@@ -1276,6 +1335,45 @@ mod tests {
             point_colors: vec![],
         };
         assert!(render_xy(&[bad], &PlotOptions::default()).is_err());
+    }
+
+    #[test]
+    fn paper_and_ink_take_the_frame_from_the_page() {
+        let series = [XySeries {
+            label: String::new(),
+            xs: vec![0.0, 1.0],
+            ys: vec![0.0, 1.0],
+            kind: XyKind::Line,
+            point_colors: vec![],
+        }];
+        let svg = render_xy(
+            &series,
+            &PlotOptions {
+                paper: Some("transparent".to_string()),
+                ink: Some("currentColor".to_string()),
+                title: "t".to_string(),
+                ..PlotOptions::default()
+            },
+        )
+        .unwrap();
+        assert!(svg.contains("fill=\"transparent\"/>"), "{svg}");
+        assert!(svg.contains("fill=\"currentColor\""), "{svg}");
+        assert!(
+            svg.contains("stroke=\"currentColor\" stroke-opacity=\"0.12\""),
+            "{svg}"
+        );
+        // None of the theme's frame colors is left in the document.
+        for fixed in [
+            Theme::Light.surface(),
+            Theme::Light.ink2(),
+            Theme::Light.grid(),
+            Theme::Light.axis(),
+        ] {
+            assert!(!svg.contains(fixed), "{fixed} in {svg}");
+        }
+        // Without them the theme's own colors stand, at full opacity.
+        let plain = render_xy(&series, &PlotOptions::default()).unwrap();
+        assert!(plain.contains(Theme::Light.surface()) && plain.contains("stroke-opacity=\"1\""));
     }
 
     #[test]

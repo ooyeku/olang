@@ -55,10 +55,12 @@ share use lib.forms { field, rules, read, form_fields }
 share use lib.state { init, current, set, update }
 share use lib.store { hydrate, persist, on_restore, default_of, querystring }
 share use lib.view {
-    mount, rerender, paint_count, paint_stats, watch, unwatch, apply, patch, action, actions,
-    action_arg, input_value, confirm_armed
+    mount, rerender, paint_count, paint_stats, watch, unwatch, on_error, apply, patch, action,
+    actions, action_arg, input_value, confirm_armed
 }
-share use lib.api { call, fetch, configure, unwrap_envelope, from_response, err_message, err_details }
+share use lib.api {
+    call, fetch, configure, last_timing, unwrap_envelope, from_response, err_message, err_details
+}
 
 // the opinionated components
 share use lib.ui {

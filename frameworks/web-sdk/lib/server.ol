@@ -311,6 +311,41 @@ fn strip_module_lines(source) = {
     join(out, "\n")
 }
 
+/// The names each client module uses without importing or defining them.
+/// The bundle is one namespace, so such a name resolves in the browser —
+/// by accident of whichever module is spliced beside it — and is
+/// undefined the moment the module runs natively or the neighbor renames
+/// it. One line per module that has any; a module that does not parse
+/// on its own is left to the bundle's own check.
+share fn leaked_names(paths, sources) = {
+    let mut out = []
+    for i in range(0, len(sources)) {
+        match meta.unresolved(sources[i]) {
+            Ok(names) => {
+                if len(names) > 0 => {
+                    out = out + [paths[i] + " uses " + join(map(names, (n) => "`" + n + "`"), ", ")
+                        + " without importing or defining " + (if len(names) == 1 => "it" else => "them")
+                        + ": the bundle is one namespace, so the browser resolves "
+                        + (if len(names) == 1 => "it" else => "them")
+                        + " from another module — import " + (if len(names) == 1 => "it" else => "them")
+                        + " where " + (if len(names) == 1 => "it is" else => "they are") + " used"]
+                }
+            },
+            Err(e) => ()
+        }
+    }
+    out
+}
+
+test "a client module that uses a neighbor's name without importing it is named" {
+    let clean = "use web { mount, div }\nfn view(s) = div(#{}, [])\nmount(\"#app\", view, #{})\n"
+    let leaky = "use web { mount, div }\nfn view(s) = div(#{}, [helper_next_door(s)])\nmount(\"#app\", view, #{})\n"
+    assert_eq(leaked_names(["a.ol"], [clean]), [])
+    let lines = leaked_names(["a.ol", "b.ol"], [clean, leaky])
+    assert_eq(len(lines), 1)
+    assert_eq(str.contains(lines[0], "b.ol uses `helper_next_door`"), true)
+}
+
 /// The client program the browser actually loads: the SDK's browser
 /// modules spliced ahead of the app's client source, with its
 /// `use web { ... }` line removed (the bundle makes it true). The
@@ -553,6 +588,7 @@ share fn serve(config) = {
         else if client_path == "" => []
         else => [client_path]
     let client_sources = map(client_paths, (p) => unwrap(fs.read_file(p)))
+    for line in leaked_names(client_paths, client_sources) { println("WARNING: " + line) }
     let bundle = if len(client_paths) == 0 => ""
         else => bundle_clients_in(sdk, client_sources)
     let hot = if hot_config == () => client_fn_names(client_sources) else => hot_config

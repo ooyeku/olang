@@ -1606,6 +1606,16 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             see_also: vec!["meta.fresh".to_string(), "meta.lit".to_string()],
         });
         self.add_function(FunctionDoc {
+            name: "meta.unresolved".to_string(),
+            description: "Every name a program uses that nothing in it defines or imports and the language does not provide, in order of first use, as Ok(list) — Err when the source does not parse. A module spliced into a larger program (a browser bundle) resolves such a name by accident of its neighbors; this is how the splicer finds out.".to_string(),
+            syntax: "meta.unresolved(source)".to_string(),
+            parameters: vec!["source: String - a program's text".to_string()],
+            return_type: "Result<List<String>, String>".to_string(),
+            examples: vec![r#"meta.unresolved("fn f(x) = helper(x) + 1")  // Ok(["helper"])"#.to_string()],
+            category: "Meta".to_string(),
+            see_also: vec!["meta.parse".to_string(), "meta.expand".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "meta.parse".to_string(),
             description: "Parse olang source into its syntax tree as ordinary olang values: a list of kind-tagged node maps. The AST shapes are a stable, documented format, so linters, codemods, and import extractors are written in olang rather than as compiler changes. Read nodes with map_get; every node carries a \"kind\" key and a \"line\" number.".to_string(),
             syntax: "meta.parse(source)".to_string(),
@@ -3250,9 +3260,9 @@ let parts = ods.split(f, 0.8)   // [train, test]"##],
         self.doc_ex(
             "dom.patch",
             "dom.patch(el, node)",
-            "Unit",
+            "Map",
             "Dom",
-            "Reconcile the element's children with a `web.html` node tree — the view data itself. The host walks the tree and diffs it against the live DOM: text updated in place, attributes diffed, children matched by `data-key` (else by position and tag); a `memo` subtree whose inputs did not change is kept as it is. No markup is rendered or parsed, which is what makes a repaint cheap. Browser only.",
+            "Reconcile the element's children with a `web.html` node tree — the view data itself. The host walks the tree and diffs it against the live DOM: text updated in place, attributes diffed, children matched by `data-key` (else by position and tag); a `memo` subtree whose inputs did not change is kept as it is. No markup is rendered or parsed, which is what makes a repaint cheap. Answers #{ \"missing\", \"nodes\", \"bytes\", \"serialize_ms\", \"patch_ms\" }: the keys of `keep` markers the page had no element for, and what the repaint cost. Browser only.",
             &[r##"dom.patch(dom.query("#app"), view(state))"##],
         );
         self.doc_ex(
@@ -3325,10 +3335,34 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
         self.doc_ex(
             "dom.focus",
             "dom.focus(el)",
+            "Bool",
+            "dom",
+            "Give an element keyboard focus, as if the user had tabbed to it. Answers whether it holds focus afterwards — a hidden or disabled control does not take it.",
+            &[r##"dom.focus(dom.query("#search"))"##],
+        );
+        self.doc_ex(
+            "dom.window",
+            "dom.window()",
+            "Int",
+            "dom",
+            "A handle on the window, for dom.on: `online`, `offline`, `focus` and `blur` fire there and do not bubble to the body. The event map of `online` and `offline` carries `online`.",
+            &[r##"dom.on(dom.window(), "online", (ev) => resync())"##],
+        );
+        self.doc_ex(
+            "dom.document",
+            "dom.document()",
+            "Int",
+            "dom",
+            "A handle on the document, for dom.on: `visibilitychange` fires there, and its event map carries `hidden`.",
+            &[r##"dom.on(dom.document(), "visibilitychange", (ev) => if !map_get(ev, "hidden") => resync() else => ())"##],
+        );
+        self.doc_ex(
+            "dom.on_error",
+            "dom.on_error(handler)",
             "Unit",
             "dom",
-            "Give an element keyboard focus, as if the user had tabbed to it.",
-            &[r##"dom.focus(dom.query("#search"))"##],
+            "Report every failed dispatch to `handler`: a handler that raised, or a trap under one, arrives as #{ \"error\", \"output\", \"trap\" } after the failed dispatch has ended, and the session stays usable. The page-side twin is window.olangOnError.",
+            &[r##"dom.on_error((e) => show_toast(map_get(e, "error")))"##],
         );
         self.doc_ex(
             "dom.prefers_dark",
@@ -3560,9 +3594,9 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
         self.doc_ex(
             "dom.storage_set",
             "dom.storage_set(k, v)",
-            "Unit",
+            "Bool",
             "dom",
-            "Write a localStorage value.",
+            "Write a localStorage value. Answers false when the browser refused it (a full quota, storage disabled) instead of raising.",
             &[r##"dom.storage_set("theme", "dark")"##],
         );
         self.doc_ex(
@@ -5786,12 +5820,12 @@ println("program: " + to_string(map_get(m, "program") / 1048576) + " MB")"##],
 
         self.add_function(FunctionDoc {
             name: "fs.file_info".to_string(),
-            description: "Get detailed information about a file or directory".to_string(),
+            description: "A file's or directory's metadata, without reading it: size, is_file, is_dir, readonly, and modified_ms — when it last changed, in epoch milliseconds (the clock time.now_ms() reads)".to_string(),
             syntax: "fs.file_info(path)".to_string(),
             parameters: vec!["path: String - The path to get information about".to_string()],
             return_type: "Result<FileInfo, Error>".to_string(),
             examples: vec![
-                "fs.file_info(\"script.py\")  // Ok(FileInfo { size: 1024, is_file: true, is_dir: false, readonly: false })".to_string(),
+                "fs.file_info(\"script.py\")  // Ok(FileInfo { size: 1024, is_file: true, is_dir: false, readonly: false, modified_ms: 1790000000000 })".to_string(),
                 "match fs.file_info(\".\") { Ok(info) => println(\"Directory size: \" + to_string(info.size)), Err(e) => println(\"Error: \" + e) }".to_string(),
             ],
             category: "Filesystem".to_string(),

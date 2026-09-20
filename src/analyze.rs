@@ -114,6 +114,27 @@ impl Analyzer {
         }
     }
 
+    /// Every name `program` uses that nothing in it defines or imports and
+    /// the language does not provide — in order of first use. The analysis
+    /// stops at the first such name, so it is re-run with each one found
+    /// declared, up to a bound.
+    pub fn unresolved_names(program: &Program) -> Vec<String> {
+        let mut found: Vec<String> = Vec::new();
+        for _ in 0..64 {
+            let mut analyzer = Analyzer::new();
+            for name in &found {
+                analyzer.declare_in_scope(name.clone());
+            }
+            match analyzer.analyze_program(program) {
+                Err(AnalysisError::UndefinedVariable { name }) if !found.contains(&name) => {
+                    found.push(name)
+                }
+                _ => break,
+            }
+        }
+        found
+    }
+
     /// Create a new analyzer without builtin functions (for testing or custom environments)
     pub fn new_empty() -> Self {
         Self {

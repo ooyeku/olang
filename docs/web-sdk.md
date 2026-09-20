@@ -33,7 +33,9 @@ Everything else is built from these:
    position and tag), so the nodes that did not change are the nodes
    the browser keeps — focus, caret, scroll, an open select. Give list
    rows a `"data-key"` and reordering moves their elements instead of
-   rebuilding them; wrap a subtree in `memo(key, inputs, build)` and it
+   rebuilding them — a moved row keeps the focus and the caret of a
+   control inside it, which a browser otherwise drops when an element
+   leaves the document and returns; wrap a subtree in `memo(key, inputs, build)` and it
    is neither rebuilt nor diffed while its inputs stand. Events are
    delegated, so nothing re-binds either way.
 3. **One store.** `apply(f)` transforms state and repaints. State
@@ -276,6 +278,22 @@ state beyond `value` is readable: `dom.checked`, `dom.selection` and
 `dom.set_selection` (insert at the cursor), `dom.values` for a
 multi-select.
 
+A reply says what it cost. Inside a `call` or `fetch` callback,
+`last_timing()` is `#{ "network_ms", "queue_ms" }`: the time from the
+send to the response's last byte (from the browser's resource timing),
+and the time the reply then waited for the runtime to be free — a
+repaint in progress, a handler still running. A client-side timer
+around the call measures their sum and blames the server for the
+page's own work. The same two fields arrive on every `dom.request`
+response. Requests leave from a microtask, so the browser's own report
+of a refused fetch names the shim, not two hundred frames of the
+runtime.
+
+`on_error(handler)` hears every handler that fails — `#{ "error",
+"output", "trap" }`, after the failed dispatch has ended — so an app can
+show the failure where a console would have hidden it; the page-side
+twin is `window.olangOnError`.
+
 A request header rides every call once configured — `configure(#{
 "headers": #{ "Authorization": "Bearer " + token } })` — so a bearer
 token is the same shape in the browser as in the CLI. An element that
@@ -373,10 +391,14 @@ shows the data as it stands), renders the view into the mount point on
 the server, and places the state beside it in a JSON `<script>` the
 mount point names by `data-olang-state`. The browser shows that HTML
 before the runtime has downloaded. When `mount` runs, it starts the
-store from that state — the server's keys over the caller's defaults,
-so a `url` or `local` field `hydrate` restores keeps its value — and
-the first client render reproduces what is already on screen. No boot
-fetch is needed: the data came with the page.
+store from that state — the server's keys over the caller's defaults —
+and the first client render reproduces what is already on screen. No
+boot fetch is needed: the data came with the page. What the browser
+already holds is the exception: a `url` field `hydrate` read from the
+address bar or a `local` field it read from storage keeps the browser's
+value even when the server's state carries that key, and where the two
+differ the first paint is not adopted — the view repaints once with the
+preference the user chose.
 
 ```olang no-run
 use web { serve, rows }
@@ -406,6 +428,14 @@ the result parse-checked at boot — a broken client fails loudly at the
 server, never as a blank page. `"client"` may be a list of paths,
 bundled in order, so browser helpers live in tested lib modules that
 server code can import too.
+
+The bundle is one namespace, so a client module that uses a name it
+never imported still resolves it in the browser — from whichever module
+is spliced beside it — and fails the day it runs natively or the
+neighbor renames the function. `serve` checks each client module on its
+own before splicing (`meta.unresolved`) and prints one `WARNING:` line
+per module that has such names, naming them; `leaked_names(paths,
+sources)` answers the same lines for a build script or a test.
 
 The bundle is served two ways. `/app.ol` is the source. `/app.olb` is
 the program image: the bundle parsed once on the server and encoded

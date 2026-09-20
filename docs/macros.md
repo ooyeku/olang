@@ -95,7 +95,11 @@ returns [the Open AST](stdlib.md#meta--the-program-as-data-the-open-ast)
 as ordinary maps, and a macro walks them with the same `map`/`filter`
 as any other data. To *compute* with an argument, evaluate it:
 `meta.eval` called from a meta fn runs source in the same pure sandbox
-the meta fn itself occupies. (Called at ordinary runtime, outside
+the meta fn itself occupies, and the evaluated source may call what the
+meta fn may call: the expanding file's own functions and the shared
+functions of the modules it imports. Functions only — the meta fn's
+other bindings are its working state, not the evaluated program's.
+(Called at ordinary runtime, outside
 expansion, `meta.eval` is real evaluation — effects allowed, under the
 run's own capability grants.) And `meta.lit` renders a value back into
 source — together

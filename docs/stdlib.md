@@ -993,6 +993,25 @@ println(str.substring(crypto.sha256("olang"), 0, 16))
 println(to_string(crypto.secure_compare("abc", "abc")))
 ```
 
+`crypto.random_hex(n)` answers `n` random bytes as `2n` hexadecimal
+characters (at most 1,024 bytes a call), and `crypto.random_bytes(n)` the
+same bytes as a list of integers. Both draw from a cryptographically
+secure generator — ChaCha12, seeded from the operating system's entropy
+source and reseeded from it periodically; in the browser the seed comes
+from the page's `getRandomValues` — so they are the functions to mint a
+session secret, a share token, or a nonce. `random`, the module, is the
+seedable generator for simulations and is not.
+
+`crypto.hmac_sha256(key, message)` answers the HMAC as a hexadecimal
+string; compare a received MAC against it with `secure_compare`, never
+`==`.
+
+```olang no-run
+let token = crypto.random_hex(32)                       // 64 hex characters
+let mac = crypto.hmac_sha256(secret, payload)
+let genuine = crypto.secure_compare(mac, received_mac)
+```
+
 ## `bytes` — binary data
 
 Strings are UTF-8 text; `Bytes` (new in 0.69) is the value for everything
@@ -1086,6 +1105,12 @@ rather than bugs. (Examples are `no-run`: they touch the disk.)
 | Queries | `exists` `is_file` `is_dir` `file_size` `file_info` |
 | Paths | `join(parts)` `dirname` `basename` `ext` `abs_path` — pure string surgery (except `abs_path`, which resolves against the current directory and normalizes `.`/`..` without requiring the file to exist) |
 
+`fs.file_size(path)` answers a file's bytes and `fs.file_info(path)` a
+record — `size`, `is_file`, `is_dir`, `readonly`, and `modified_ms`
+(when the file last changed, in epoch milliseconds, the clock
+`time.now_ms()` reads) — both from the file's metadata, without reading
+it: what a cache or a change check asks.
+
 `fs.join(["logs", name + ".txt"])` joins segments with the platform
 separator (an absolute segment restarts the path, standard join
 semantics); `fs.dirname`/`fs.basename`/`fs.ext` decompose without
@@ -1118,6 +1143,7 @@ olang scripts, not compiler changes.
 | `meta.eval(source, options?)` | evaluate source; `options` bounds untrusted code — `#{ "max_steps": n }` (loop iterations and calls, deterministic) and `#{ "timeout_ms": ms }` (wall clock) — returning `Err("budget exceeded …")` instead of a hung thread |
 | `meta.expand(source)` | `Ok(text)` \| `Err(message)` — the program after macro expansion, as source: every `meta fn` removed and every `@` site replaced by what it generated (what `olang expand FILE` prints) |
 | `meta.encode(source, options?)` | `Ok(bytes)` \| `Err(message)` — the parsed program (macros expanded) as a program image: bytes the runtime loads without parsing, behind a header naming the olang version that wrote it, which is the only version that loads it. `#{ "hot": [names] }` names the functions the loading runtime compiles at declaration rather than at their first call. What the web SDK's `serve` hands the browser in place of the source bundle |
+| `meta.unresolved(source)` | `Ok(list)` of every name the program uses that nothing in it defines or imports and the language does not provide, in order of first use; `Err` when the source does not parse. How a splicer — the web SDK's bundler — finds a module that resolves a name only by accident of its neighbors |
 | `meta.exports(path)` | at expansion time, `Ok(map)` of the literal values the module the expanding file imports as `path` binds at its top level (`let`/`share let` of a number, string, list, map, or tuple literal), by name; `Err` for a path the file does not import, and at runtime |
 
 Nodes are discriminated-union maps. Top-level statements carry `line` and
@@ -1600,7 +1626,7 @@ in-process database — the example below really runs.
 | `db.execute(conn, sql)` / `db.execute(conn, sql, params)` | run a statement; `?` placeholders |
 | `db.query(conn, sql)` / with `params` | rows as a list of maps |
 | `db.query_one(conn, sql)` | the first row as a map, or `Ok(())` when there is none — unambiguous, since a row is always a map |
-| `db.transaction(conn, f)` | `f(conn)` inside a transaction: commit unless `f` returns an `Err` or raises, which roll back; `f`'s result is handed through |
+| `db.transaction(conn, f)` | `f(conn)` inside a transaction: commit unless `f` returns an `Err` or raises, which roll back; `f`'s result is handed through. Transactions on one connection are serialized across threads — a second `db.transaction` waits for the first to end — so the http workers of a served app may share a connection; plain statements from another thread do not wait, and join whatever transaction is open |
 | `db.migrate(conn, steps)` | bring the schema to the head of `steps` (a list of versions, each a list of SQL); a `schema_version` table records progress, each version runs in its own transaction, a failing statement is named — `Ok(version)` |
 | `db.begin(conn)` / `db.commit(conn)` / `db.rollback(conn)` | transactions by hand |
 | `db.close(conn)` | close the handle |
@@ -1636,18 +1662,20 @@ with timers and animation frames; everything else is ordinary olang.
 | `dom.get_text(el)` / `dom.set_text(el, s)` | read / write an element's text content |
 | `dom.set_html(el, html)` | replace an element's inner HTML — the render primitive |
 | `dom.value(el)` / `dom.set_value(el, s)` | read / write a form control's value |
-| `dom.focus(el)` | focus an element |
+| `dom.focus(el)` | focus an element; answers whether it holds focus afterwards (a hidden or disabled control does not take it) |
 | `dom.active_id()` | the id of the focused element, or `""` — the read side of `focus`, so a repaint can leave an in-progress edit alone |
 | `dom.prefers_dark()` | does the page prefer a dark color scheme — what a themed canvas or SVG needs to pick its palette |
 | `dom.confirm(message)` | the browser's yes/no dialog, `true` on accept |
 | `dom.read_file(el, callback)` | the first file a file input holds, delivered to the callback as `#{ "name", "size", "type", "base64" }` (or `#{ "error": … }`) |
 | `dom.on(el, event, handler)` | attach an event handler (see below) |
+| `dom.window()` / `dom.document()` | handles `dom.on` accepts for the events that fire there and do not bubble to the body: `online`, `offline`, `focus`, `blur` on the window (the first two carry `online` in their event map), `visibilitychange` on the document (carries `hidden`) |
+| `dom.on_error(handler)` | hear every failed dispatch — a handler that raised, or a trap under one — as `#{ "error", "output", "trap" }`, after the failed dispatch has ended; the session goes on. `window.olangOnError` is the page-side twin |
 | `dom.fetch(method, path, body, callback)` | asynchronous HTTP from the page — the callback receives the response text |
 | `dom.fetch_json(method, path, body, callback)` | `dom.fetch`, but the callback receives the parsed value directly |
-| `dom.request(method, path, body, callback)` | the whole response — `#{ "status", "headers", "body" }`, status `0` with an `"error"` when no server answered — so a handler tells a 404 from a 500 from a network failure |
+| `dom.request(method, path, body, callback)` | the whole response — `#{ "status", "headers", "body" }`, status `0` with an `"error"` when no server answered — so a handler tells a 404 from a 500 from a network failure; the response also carries `network_ms` (the send to the last byte) and `queue_ms` (the wait for the runtime to be free) |
 | `dom.request_with(method, path, body, headers, callback)` | `dom.request` with request headers — a bearer token, another content type |
 | `dom.find(selector)` | the first match, or `()` when nothing matches — the lookup for an element that may be absent (`dom.query` raises on a miss, and a raise inside a handler takes the page down) |
-| `dom.patch(el, node)` | reconcile the element's children with a `web.html` node tree: the host diffs the data against the live DOM by `data-key`, no markup rendered or parsed; a `memo` subtree whose inputs stand is kept as it is |
+| `dom.patch(el, node)` | reconcile the element's children with a `web.html` node tree: the host diffs the data against the live DOM by `data-key`, no markup rendered or parsed; a `memo` subtree whose inputs stand is kept as it is; answers `#{ "missing", "nodes", "bytes", "serialize_ms", "patch_ms" }` — the keys of `keep` markers the page had no element for, and what the repaint cost |
 | `dom.morph(el, html)` | the same reconciliation from markup, for code that renders its own HTML |
 | `dom.checked(el)` | a checkbox's or radio's state; `()` for an element that has no checked state (a select, a div) |
 | `dom.selection(el)` / `dom.set_selection(el, from, to)` | a text control's selection as `(from, to)`, and setting it (focusing the control) — inserting at the cursor is set the value, then place the caret |
@@ -1667,7 +1695,7 @@ with timers and animation frames; everything else is ordinary olang.
 | `dom.insert_before(parent, child, before)` | position a child (`0` appends) |
 | `dom.push_state(path)` / `dom.location()` | SPA navigation; location is a Map of `path` and `query` |
 | `dom.on_route(fn)` | the back/forward listener — a `route` event Map with `path` and `query` |
-| `dom.storage_get(k)` / `storage_set(k, v)` / `storage_remove(k)` | localStorage (missing keys read as `""`) |
+| `dom.storage_get(k)` / `storage_set(k, v)` / `storage_remove(k)` | localStorage (missing keys read as `""`); `storage_set` answers whether the value was stored — `false` for a full quota or disabled storage, never a raise |
 | `dom.state_get(k)` / `state_set(k, v)` | session state — a JSON-typed, page-lifetime store (a Map/list round-trips; missing keys read as Unit; not persisted) |
 | `dom.worker(path)` | boot a second olang program in a Web Worker; returns a worker handle |
 | `dom.worker_send(w, value)` / `dom.worker_on(w, handler)` | send a value to / receive values from a worker |
@@ -1919,7 +1947,9 @@ with `dom.set_html`. `plot.line`, `plot.scatter`, `plot.area`,
 shared scales), `plot.bar`, `plot.bars` (grouped), `plot.stacked`,
 `plot.hist`, `plot.heatmap`, and `plot.box` take Series data plus one
 options map (`title`, `x_label`, `y_label`, `width`, `height`, `theme`
-— `"dark"` re-tunes every color for a dark surface — `responsive`,
+— `"dark"` re-tunes every color for a dark surface — `paper` and `ink`,
+which take the background and the frame's color from the page
+(`"transparent"`, `"currentColor"`) instead of the theme, `responsive`,
 which sizes the SVG to its container, `font_size` and `font` for the
 text — the default 12.5 suits a 720×440 document, a chart drawn into a
 narrow column wants less — plus the color system below; unknown keys

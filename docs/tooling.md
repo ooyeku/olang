@@ -56,6 +56,8 @@ Discovers and runs [`test` blocks](language.md#testing) across a directory:
 ```bash
 olang test              # everything under the current directory
 olang test examples/    # or a specific directory / single file
+olang test tests/ --only "rate limit"   # the blocks whose name contains the text
+olang test tests/ --times               # each block's milliseconds, and the slowest five
 ```
 
 A *test file* is any `.ol` file containing a top-level `test "name" { ... }`
@@ -65,7 +67,15 @@ functions, fixtures, and imports work exactly as they do under
 Files without test blocks are not executed at all. An imported module's
 test blocks run once per `olang test` invocation, keyed by the module's
 file — a project whose every client module imports the SDK runs the
-SDK's suite once, not once per importer.
+SDK's suite once, not once per importer. A named *file* runs its own
+blocks only: `olang test tests/x.ol` is a question about that file, and
+the modules it imports are not part of the answer.
+
+`--only <text>` runs the blocks whose name contains the text, across
+every file under the path, and names only the files that had one — the
+way to check one test of a suite that takes minutes. `--times` prints
+each block's milliseconds beside its name and lists the slowest five at
+the end. Both pass through `--watch`.
 
 Under the runner, a failing block **records its failure and execution
 continues**, so one red test doesn't hide the rest (in a normal
@@ -357,8 +367,10 @@ promote = ["exhaustiveness", "shape"]
 The classes are `exhaustiveness` (a `match` over an enum or a literal
 union that misses a case), `shape` (a literal key a declared record
 shape does not carry, read or written), `result` (a discarded `Result`),
-`tier` (a function `olang check --tier` finds the bytecode tier
-refuses), and `all`. A
+`shadow` (a `let` that takes a stdlib module's name — `let cell = …`
+turns every later `cell.get` in its scope into a run-time failure far
+from the `let`), `tier` (a function `olang check --tier` finds the
+bytecode tier refuses), and `all`. A
 promoted finding fails `olang check` and shows as an error in the
 editor, and its message says which block promoted it.
 

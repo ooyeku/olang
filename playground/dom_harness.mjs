@@ -22,6 +22,12 @@ const node = (h) => {
   return el;
 };
 const listeners = {}; // handle -> {event -> callbackId}
+let errorCallback = null; // dom.on_error's handler
+const handleFor = (key) => {
+  fakeDom[key] ??= { text: "", value: "" };
+  const at = handles.indexOf(key);
+  return at > 0 ? at : handles.push(key) - 1;
+};
 const fetchLog = [];
 const timers = []; // {ms, cb, kind}
 const frames = []; // callback ids
@@ -248,7 +254,13 @@ const imports = {
     host_dom_focus: (h) => {
       const l = listeners[Number(h)];
       if (l && l.focusin != null) dispatchJson(l.focusin, { type: "focusin", id: handles[Number(h)] });
+      // A hidden control does not take focus, and the call says so.
+      return node(h).attrs.hidden != null ? 0 : 1;
     },
+    // `window` and `document` are handles like any element's.
+    host_dom_window: () => BigInt(handleFor("window")),
+    host_dom_document: () => BigInt(handleFor("document")),
+    host_dom_on_error: (id) => { errorCallback = Number(id); },
     host_dom_set_class: (h, ptr, len) => { fakeDom[handles[Number(h)]].className = readStr(ptr, len); },
     host_dom_fetch: (mp, ml, pp, pl, bp, bl, id) => {
       fetchLog.push({ method: readStr(mp, ml), path: readStr(pp, pl), body: readStr(bp, bl), cb: Number(id) });
@@ -318,7 +330,14 @@ const imports = {
     },
     host_dom_on_route: (id) => { routeHandlers.push(Number(id)); },
     host_dom_storage_get: (ptr, len) => giveStr(fakeStorage[readStr(ptr, len)] ?? ""),
-    host_dom_storage_set: (kp, kl, vp, vl) => { fakeStorage[readStr(kp, kl)] = readStr(vp, vl); },
+    // A quota: a value over 64 characters is refused, and the refusal is
+    // an answer.
+    host_dom_storage_set: (kp, kl, vp, vl) => {
+      const v = readStr(vp, vl);
+      if (v.length > 64) return 0;
+      fakeStorage[readStr(kp, kl)] = v;
+      return 1;
+    },
     host_dom_storage_remove: (ptr, len) => { delete fakeStorage[readStr(ptr, len)]; },
     host_dom_state_get: (ptr, len) => giveStr(fakeState[readStr(ptr, len)] ?? ""),
     host_dom_state_set: (kp, kl, vp, vl) => { fakeState[readStr(kp, kl)] = readStr(vp, vl); },
@@ -998,6 +1017,48 @@ dom.set_text(dom.query("#count"), "still here")
   if (fakeDom["#count"].text !== "still here") throw new Error("session did not survive the host throw");
   console.log("stage 11: host throw raised, session alive ok");
 }
+// ── stage 11b: the window, the document, and host calls that answer ──
+const prog16 = `
+let log = dom.query("#log")
+dom.on(dom.window(), "online", (ev) => dom.set_text(log, "online=" + show(map_get(ev, "online"))))
+dom.on(dom.document(), "visibilitychange", (ev) => dom.set_text(log, "hidden=" + show(map_get(ev, "hidden"))))
+dom.on_error((e) => dom.set_text(dom.query("#count"), "reported: " + map_get(e, "error")))
+dom.on(dom.query("#btn"), "click", (ev) => map_get(1, "boom"))
+dom.set_attr(dom.query("#btn"), "hidden", "")
+println(show(dom.focus(dom.query("#btn"))) + " " + show(dom.focus(log)))
+println(show(dom.storage_set("draft", "short")) + " " + show(dom.storage_set("draft", "${"x".repeat(80)}")))
+println(dom.storage_get("draft"))
+`;
+{
+  const enc16 = new TextEncoder().encode(prog16);
+  const p16 = ex.olang_alloc(enc16.length);
+  mem().set(enc16, p16);
+  const r = result(ex.olang_session_start(p16, enc16.length));
+  ex.olang_dealloc(p16, enc16.length);
+  if (r.error) throw new Error("stage11b session: " + r.error);
+  if (r.output !== "false true\ntrue false\nshort\n")
+    throw new Error("stage 11b: focus and storage_set did not answer: " + JSON.stringify(r.output));
+  const win = listeners[handles.indexOf("window")];
+  const doc = listeners[handles.indexOf("document")];
+  if (!win || win.online == null || !doc || doc.visibilitychange == null)
+    throw new Error("stage 11b: window/document listeners not bound");
+  dispatchJson(win.online, { type: "online", online: true });
+  if (fakeDom["#log"].text !== "online=true") throw new Error("stage 11b: online payload: " + fakeDom["#log"].text);
+  dispatchJson(doc.visibilitychange, { type: "visibilitychange", hidden: true });
+  if (fakeDom["#log"].text !== "hidden=true") throw new Error("stage 11b: visibility payload: " + fakeDom["#log"].text);
+  // A handler that raises: the dispatch answers the error, the shim's
+  // part — mirrored here — reports it to the registered handler, and the
+  // session goes on serving events.
+  if (errorCallback == null) throw new Error("stage 11b: dom.on_error registered nothing");
+  const failed = dispatchJson(listeners[handles.indexOf("#btn")].click, { type: "click", data: {} });
+  if (!failed.error) throw new Error("stage 11b: the raising handler reported no error");
+  const reported = dispatchJson(errorCallback, { error: failed.error, output: failed.output ?? "", trap: false });
+  if (reported.error || !fakeDom["#count"].text.startsWith("reported: "))
+    throw new Error("stage 11b: the error handler did not run: " + JSON.stringify(reported) + fakeDom["#count"].text);
+  dispatchJson(win.online, { type: "online", online: false });
+  if (fakeDom["#log"].text !== "online=false") throw new Error("stage 11b: the session did not survive the raise");
+  console.log("stage 11b: window + document events, answering host calls, error handler ok");
+}
 console.log("final dom:", JSON.stringify(fakeDom));
 // ── stage 12: the shim's morph keeps the focused control's live value ──
 // The real shim's `morphInto` runs here against a small DOM model with a
@@ -1016,9 +1077,13 @@ console.log("final dom:", JSON.stringify(fakeDom));
   const VOID = new Set(["input", "br", "img", "hr", "meta", "link"]);
   class MNode {
     constructor(nodeType) { this.nodeType = nodeType; this.parentNode = null; this.childNodes = []; }
+    contains(n) { for (let c = n; c; c = c.parentNode) if (c === this) return true; return false; }
     get lastChild() { return this.childNodes[this.childNodes.length - 1] || null; }
     appendChild(c) { return this.insertBefore(c, null); }
     insertBefore(c, ref) {
+      // As a browser does: an element that leaves the document, even to
+      // come straight back, loses the focus it held.
+      if (c.parentNode && document.activeElement && c.contains(document.activeElement)) document.activeElement = null;
       if (c.parentNode) c.parentNode.removeChild(c);
       const i = ref ? this.childNodes.indexOf(ref) : this.childNodes.length;
       this.childNodes.splice(i < 0 ? this.childNodes.length : i, 0, c);
@@ -1042,6 +1107,7 @@ console.log("final dom:", JSON.stringify(fakeDom));
     hasAttribute(n) { return this._attrs.has(n); }
     get dataset() { const o = {}; for (const [k, v] of this._attrs) if (k.startsWith("data-")) o[k.slice(5)] = v; return o; }
     get type() { return this.getAttribute("type") || "text"; }
+    focus() { document.activeElement = this; }
     get value() { return this._value ?? this.getAttribute("value") ?? ""; }
     set value(v) { this._value = String(v); }
     cloneNode(deep) {
@@ -1075,7 +1141,10 @@ console.log("final dom:", JSON.stringify(fakeDom));
       return new MElement(tag);
     },
   };
-  const { morphInto } = new Function("document", morphSrc + "\n  return { morphInto };")(document);
+  const moveAt = shimSrc.indexOf("  function moveNode(parent, node, before)");
+  const moveSrc = shimSrc.slice(moveAt, shimSrc.indexOf("\n  }\n", moveAt) + 4);
+  if (moveAt < 0) throw new Error("stage 12: cannot find the shim's moveNode");
+  const { morphInto } = new Function("document", moveSrc + morphSrc + "\n  return { morphInto };")(document);
 
   const app = new MElement("div");
   parseHtml('<ul><li data-key="a"><input id="a" value="alpha"></li><li data-key="b"><input id="b" value="beta"></li></ul>', app);
@@ -1090,6 +1159,7 @@ console.log("final dom:", JSON.stringify(fakeDom));
   const keys = rows.map((r) => r.getAttribute("data-key")).join(",");
   if (keys !== "b,a,c") throw new Error("stage 12: keyed rows not reordered: " + keys);
   if (rows[1].childNodes[0] !== inputA) throw new Error("stage 12: the focused input lost its identity across the move");
+  if (document.activeElement !== inputA) throw new Error("stage 12: the focused input lost its focus when its row moved");
   if (inputA.value !== "alpha typed") throw new Error("stage 12: the focused input's live value was overwritten: " + inputA.value);
   if (rows[0].childNodes[0] !== inputB) throw new Error("stage 12: an unfocused keyed input lost its identity");
   if (inputB.value !== "BETA") throw new Error("stage 12: an unfocused input did not follow the markup: " + inputB.value);
@@ -1127,6 +1197,15 @@ console.log("final dom:", JSON.stringify(fakeDom));
   missing = patchInto(host, { tag: "ul", attrs: {}, children: [{ keep: "rows:3" }, li("rows:2", "TWO"), { keep: "rows:1" }] });
   if (missing.length !== 0 || labels() !== "rows:3=three,rows:2=TWO,rows:1=one" || ul.childNodes[0] !== three || ul.childNodes[1] !== two)
     throw new Error("stage 13: kept rows were not moved in place: " + labels());
+  // A kept row that moves keeps the focus it held.
+  const field = new MElement("input");
+  one.appendChild(field);
+  field.focus();
+  missing = patchInto(host, { tag: "ul", attrs: {}, children: [{ keep: "rows:1" }, { keep: "rows:3" }, { keep: "rows:2" }] });
+  if (document.activeElement !== field || ul.childNodes[0] !== one)
+    throw new Error("stage 13: a moved row lost the focus inside it");
+  one.removeChild(field);
+  document.activeElement = null;
   missing = patchInto(host, { tag: "ul", attrs: {}, children: [{ keep: "rows:1" }, { keep: "drawer" }, { keeps: ["rows:9"] }] });
   if (missing.join(",") !== "drawer,rows:9" || labels() !== "rows:1=one")
     throw new Error("stage 13: missing keeps not answered: " + missing + " / " + labels());

@@ -14,8 +14,25 @@ use colored::*;
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
+/// How a run is narrowed and reported: `only` keeps the blocks whose name
+/// contains it, `times` prints each block's milliseconds and the slowest
+/// at the end.
+#[derive(Default)]
+pub struct Options {
+    pub only: Option<String>,
+    pub times: bool,
+}
+
 pub fn run(path: &Path, coverage: bool, show_missing: bool) -> i32 {
+    run_with(path, coverage, show_missing, &Options::default())
+}
+
+pub fn run_with(path: &Path, coverage: bool, show_missing: bool, options: &Options) -> i32 {
     let started = std::time::Instant::now();
+    // A named file runs its own blocks; a directory runs every file in it
+    // (an imported module's blocks once, as before).
+    let own_blocks = path.is_file();
+    let mut slowest: Vec<(f64, String, String)> = Vec::new();
 
     // Aggregated coverage across every test file: source path -> the set of
     // lines executed in it. Empty (and left untouched) unless `--coverage`.
@@ -65,10 +82,15 @@ pub fn run(path: &Path, coverage: bool, show_missing: bool) -> i32 {
         }
 
         test_files += 1;
-        println!("{}", file.display().to_string().bright_blue());
+        // Under `--only` a file is named when one of its blocks ran.
+        let mut named = options.only.is_none();
+        if named {
+            println!("{}", file.display().to_string().bright_blue());
+        }
 
         let mut interpreter = Interpreter::new();
         interpreter.enable_test_mode();
+        interpreter.narrow_tests(options.only.clone(), own_blocks);
         // Programs can tell: the web SDK's `dispatch` runs handlers on a
         // task thread under `olang test`, so a captured cell fails in the
         // test that exercises it instead of in production.
@@ -116,14 +138,26 @@ pub fn run(path: &Path, coverage: bool, show_missing: bool) -> i32 {
         }
 
         for outcome in &results {
+            if !named {
+                named = true;
+                println!("{}", file.display().to_string().bright_blue());
+            }
+            let took = if options.times {
+                format!("  {}", format!("{:.0} ms", outcome.ms).dimmed())
+            } else {
+                String::new()
+            };
+            if options.times {
+                slowest.push((outcome.ms, outcome.name.clone(), file.display().to_string()));
+            }
             match &outcome.error {
                 None => {
                     total_passed += 1;
-                    println!("  {} {}", "✓".green(), outcome.name);
+                    println!("  {} {}{}", "✓".green(), outcome.name, took);
                 }
                 Some(msg) => {
                     total_failed += 1;
-                    println!("  {} {}", "✗".red().bold(), outcome.name.bold());
+                    println!("  {} {}{}", "✗".red().bold(), outcome.name.bold(), took);
                     println!("      {}", msg.red());
                 }
             }
@@ -182,6 +216,18 @@ pub fn run(path: &Path, coverage: bool, show_missing: bool) -> i32 {
         println!("{}", summary.red().bold());
     } else {
         println!("{}", summary.green());
+    }
+    if let Some(only) = &options.only
+        && total_passed + total_failed == 0
+    {
+        println!("  no test block's name contains {:?}", only);
+    }
+    if options.times && slowest.len() > 1 {
+        slowest.sort_by(|a, b| b.0.total_cmp(&a.0));
+        println!("  slowest:");
+        for (ms, name, file) in slowest.iter().take(5) {
+            println!("    {:>7.0} ms  {}  {}", ms, name, file.dimmed());
+        }
     }
 
     // Coverage is a report, not a gate: it never changes the exit code, so

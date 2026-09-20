@@ -25,11 +25,28 @@ share fn configure(options) = {
 /// The configured request headers.
 share fn headers() = cell.get(api_headers)
 
+// What the latest reply cost, as the shim measured it (see `last_timing`).
+let api_timing = cell.new(#{ "network_ms": 0, "queue_ms": 0 })
+
 fn request(method, path, body, k) = {
     let h = headers()
-    if len(map_keys(h)) == 0 => dom.request(method, path, body, k)
-    else => dom.request_with(method, path, body, h, k)
+    let timed = (resp) => {
+        if maplike(resp) && map_has_key(resp, "network_ms") =>
+            cell.set(api_timing, #{ "network_ms": map_get(resp, "network_ms"),
+                                    "queue_ms": map_get(resp, "queue_ms") })
+        else => ()
+        k(resp)
+    }
+    if len(map_keys(h)) == 0 => dom.request(method, path, body, timed)
+    else => dom.request_with(method, path, body, h, timed)
 }
+
+/// What the latest `call` or `fetch` reply cost: `network_ms` from the
+/// send to the response's last byte, and `queue_ms` the reply then
+/// waited for the runtime to be free — a repaint in progress, a handler
+/// still running. Read it inside the callback; a client-side timing
+/// that lumps the two blames the server for the page's own work.
+share fn last_timing() = cell.get(api_timing)
 
 /// Call a named endpoint: `call("todos.create", #{ "title": t },
 /// (r) => match r { Ok(todo) => ..., Err(e) => ... })`.

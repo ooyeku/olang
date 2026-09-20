@@ -155,7 +155,7 @@ olang. The full surface, grouped:
 | Group | Functions |
 |---|---|
 | Query & content | `query` / `find` / `query_all`, `get_text` / `set_text`, `set_html`, `morph`, `patch`, `value` / `set_value`, `checked`, `selection`, `values`, `focus` |
-| Events | `on(el, event, handler)` — any DOM event name, plus the `enter` alias |
+| Events | `on(el, event, handler)` — any DOM event name, plus the `enter` alias; `window()` and `document()` are handles for the events that fire there; `on_error(handler)` hears every failed dispatch |
 | Attributes & style | `get_attr` / `set_attr` / `remove_attr`, `set_class`, `class_add` / `class_remove` / `class_toggle`, `set_style`, `measure` |
 | Structure | `create`, `append`, `remove`, `insert_before`, `scroll_into_view` |
 | Timers & frames | `set_timeout`, `set_interval` / `clear_interval`, `request_frame`, `on_frame` |
@@ -214,6 +214,26 @@ of event type, so handlers pick the fields they need:
 | `x`, `y` | pointer coordinates (client space — pair with `dom.measure` for element space) |
 | `alt`, `ctrl`, `shift`, `meta` | modifier flags |
 | `data` | a Map of the target's `data-*` attributes |
+
+`online`, `offline`, `focus`, and `blur` fire on the window and
+`visibilitychange` on the document, and none of them bubbles to the
+body: `dom.window()` and `dom.document()` are handles `dom.on` accepts
+for them. The event Map of `online` and `offline` carries `online`
+(Bool), and that of `visibilitychange` carries `hidden`.
+
+A handler that raises does not end the session. The dispatch answers
+its error, the page reports it to `window.olangOnError` when that is
+defined and to the handler registered with `dom.on_error` — as `#{
+"error", "output", "trap" }`, once the failed dispatch has ended — and
+the next event is served as usual. `trap` is true when the runtime
+itself trapped under the handler.
+
+Host calls answer where an answer is useful: `dom.focus(el)` says
+whether the element holds focus afterwards (a hidden or disabled
+control does not take it), `dom.storage_set(k, v)` answers `false` when
+the browser refused the write (a full quota) instead of raising into
+the handler that was saving, and `dom.patch` answers the `keep` markers
+it could not honor along with what the repaint cost.
 
 One shape, one convention to learn. The target's `id` and `data`
 arrive even when the listener sits on an ancestor — which makes event
@@ -473,7 +493,8 @@ Two small surfaces make single-page applications honest. Navigation:
 the URL becomes one more piece of DOM-resident state, bookmarkable and
 back-button-correct. Persistence: `dom.storage_get` / `storage_set` /
 `storage_remove` wrap localStorage (missing keys read as `""` — pair
-with `json.parse` and `unwrap_or` for a default).
+with `json.parse` and `unwrap_or` for a default; `storage_set` answers
+whether the value was stored).
 
 [`examples/web/app/static/notes.ol`](../examples/web/app/static/notes.ol),
 served at `/notes.html`, composes all of it with `ui.render`: notes

@@ -28,6 +28,9 @@ pub fn create_dom_module() -> Value {
         ("on", 3),
         ("fetch", 4),
         ("focus", 1),
+        ("window", 0),
+        ("document", 0),
+        ("on_error", 1),
         ("set_class", 2),
         // Node-level control
         ("get_attr", 2),

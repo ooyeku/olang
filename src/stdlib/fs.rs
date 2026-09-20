@@ -884,6 +884,16 @@ fn file_info(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                 "readonly".to_string(),
                 Value::Boolean(metadata.permissions().readonly()),
             );
+            // When the file last changed, as epoch milliseconds — the
+            // clock `time.now_ms()` reads — or Unit where the platform
+            // keeps none. A cache asks this instead of reading the file.
+            let modified = metadata
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| Value::Integer(d.as_millis() as i64))
+                .unwrap_or(Value::Unit);
+            info.insert("modified_ms".to_string(), modified);
 
             Ok(Value::Ok(Box::new(Value::Struct {
                 type_name: "FileInfo".to_string(),

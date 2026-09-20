@@ -432,3 +432,202 @@ fn the_harness_pins_repaint_counts_against_the_sdk() {
     assert!(stats["memo_hits"].as_i64().unwrap() >= 4, "{stats}");
     assert!(stats["last"]["nodes"].as_i64().unwrap() > 0, "{stats}");
 }
+
+// --- Item 6: the smaller gaps ---
+
+#[test]
+fn the_test_runner_filters_times_and_keeps_a_named_file_to_its_own_blocks() {
+    let ws = workspace("runner");
+    write(
+        &ws,
+        "olang.toml",
+        "[package]\nname = \"runner\"\nversion = \"0.1.0\"\n",
+    );
+    write(
+        &ws,
+        "lib/helper.ol",
+        "share fn twice(n) = n * 2\n\
+         test \"helper doubles\" { assert_eq(twice(2), 4) }\n",
+    );
+    write(
+        &ws,
+        "tests/app.ol",
+        "use lib.helper { twice }\n\
+         test \"app uses the helper\" { assert_eq(twice(3), 6) }\n\
+         test \"app rate limit\" { assert_eq(1, 1) }\n",
+    );
+    // A named file: its own two blocks, not the helper's.
+    let (out, err, code) = olang(&ws, &["test", "tests/app.ol"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("2 passed, 0 failed"), "{out}");
+    assert!(!out.contains("helper doubles"), "{out}");
+    // A directory: every file's blocks, the helper's once.
+    let (out, _, code) = olang(&ws, &["test", "."]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("3 passed, 0 failed"), "{out}");
+    // --only: one block, and only its file is named.
+    let (out, _, code) = olang(&ws, &["test", ".", "--only", "rate limit"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("1 passed, 0 failed"), "{out}");
+    assert!(
+        out.contains("app rate limit") && !out.contains("helper.ol"),
+        "{out}"
+    );
+    let (out, _, _) = olang(&ws, &["test", ".", "--only", "no such block"]);
+    assert!(out.contains("no test block's name contains"), "{out}");
+    // --times: milliseconds beside each block and the slowest at the end.
+    let (out, _, code) = olang(&ws, &["test", ".", "--times"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains(" ms") && out.contains("slowest:"), "{out}");
+}
+
+#[test]
+fn a_local_named_like_a_module_is_an_error_when_shadow_is_promoted() {
+    let ws = workspace("shadowclass");
+    write(
+        &ws,
+        "olang.toml",
+        "[package]\nname = \"shadowclass\"\nversion = \"0.1.0\"\n\n[check]\npromote = [\"shadow\"]\n",
+    );
+    write(
+        &ws,
+        "main.ol",
+        "fn f() = {\n    let cell = 1\n    cell + 1\n}\nprintln(to_string(f()))\n",
+    );
+    let (out, err, code) = olang(&ws, &["check", "main.ol"]);
+    let all = format!("{out}{err}");
+    assert_ne!(code, 0, "{all}");
+    assert!(all.contains("shadows the stdlib module"), "{all}");
+    assert!(all.contains("promoted to an error"), "{all}");
+}
+
+#[test]
+fn file_info_answers_the_modification_time_without_reading_the_file() {
+    let ws = workspace("fileinfo");
+    write(&ws, "data.txt", "hello");
+    write(
+        &ws,
+        "main.ol",
+        "let info = unwrap(fs.file_info(\"data.txt\"))\n\
+         let age = time.now_ms() - info.modified_ms\n\
+         println(to_string(info.size) + \" \" + to_string(age >= 0 && age < 600000))\n\
+         println(to_string(unwrap(fs.file_size(\"data.txt\"))))\n",
+    );
+    let (out, err, code) = olang(&ws, &["main.ol"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out, "5 true\n5\n", "{err}");
+}
+
+#[test]
+fn transactions_on_a_shared_connection_do_not_interleave() {
+    // Eight tasks, one connection, each transaction a read-modify-write
+    // with a pause between the read and the write. Interleaved — as
+    // 0.85.0 ran them — a second BEGIN failed inside the first's
+    // transaction or an update was lost; serialized, every one lands.
+    let ws = workspace("txlock");
+    write(
+        &ws,
+        "main.ol",
+        "let conn = unwrap(db.open(\":memory:\"))\n\
+         unwrap(db.execute(conn, \"CREATE TABLE c (n INTEGER)\", []))\n\
+         unwrap(db.execute(conn, \"INSERT INTO c VALUES (0)\", []))\n\
+         fn bump(i) = db.transaction(conn, (c) => {\n\
+             let n = map_get(unwrap(db.query(c, \"SELECT n FROM c\", []))[0], \"n\")\n\
+             time.sleep(5)\n\
+             db.execute(c, \"UPDATE c SET n = ?\", [n + 1])\n\
+         })\n\
+         let tasks = map(range(0, 8), (i) => spawn bump(i))\n\
+         let failed = filter(map(tasks, (t) => task.join(t)), (r) => match r { Err(e) => true, _ => false })\n\
+         println(to_string(len(failed)) + \" \" + to_string(map_get(unwrap(db.query(conn, \"SELECT n FROM c\", []))[0], \"n\")))\n",
+    );
+    let (out, err, code) = olang(&ws, &["main.ol"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out, "0 8\n", "{err}");
+}
+
+#[test]
+fn meta_eval_inside_a_meta_fn_sees_the_functions_the_expansion_sees() {
+    // A meta fn could call an imported shared function directly and not
+    // through `meta.eval`, which evaluated in an empty world. The child
+    // is still pure: functions only, meta mode, no effects.
+    let ws = workspace("metaeval");
+    write(
+        &ws,
+        "olang.toml",
+        "[package]\nname = \"metaeval\"\nversion = \"0.1.0\"\n",
+    );
+    write(
+        &ws,
+        "lib/names.ol",
+        "share fn label_of(n) = \"item-\" + to_string(n)\n",
+    );
+    write(
+        &ws,
+        "main.ol",
+        "use lib.names { label_of }\n\
+         fn local_helper(n) = n * 10\n\
+         meta fn labels(n) = {\n\
+             let direct = label_of(2)\n\
+             let through_eval = unwrap(meta.eval(\"label_of(3)\"))\n\
+             let local = unwrap(meta.eval(\"local_helper(4)\"))\n\
+             let effect = meta.eval(\"fs.read_file(\\\"main.ol\\\")\")\n\
+             let refused = match effect { Err(e) => true, _ => false }\n\
+             meta.lit([direct, through_eval, local, refused])\n\
+         }\n\
+         println(show(@labels(1)))\n",
+    );
+    let (out, err, code) = olang(&ws, &["main.ol"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out, "[\"item-2\", \"item-3\", 40, true]\n", "{err}");
+}
+
+#[test]
+fn the_allocation_counter_does_not_serialize_parallel_workers() {
+    // `runtime.memory()`'s counter once had one slot for every thread
+    // that claimed none, so the workers of a `par_map` wrote the same
+    // cache line on every allocation: eight blocks took 1,987 ms in
+    // parallel against 2,170 alone on the interpreter, and an example ran
+    // for two minutes. Each thread now has its own; the same blocks take
+    // 573 ms. The bound is loose (three quarters of the sequential time,
+    // best of two) and needs four cores to mean anything.
+    if std::thread::available_parallelism().map_or(1, |n| n.get()) < 4 {
+        eprintln!("skipping: needs four cores");
+        return;
+    }
+    let ws = workspace("parcount");
+    write(
+        &ws,
+        "main.ol",
+        "fn work(block) = {\n\
+             let mut count = 0\n\
+             let mut n = block * 4000 + 2\n\
+             let hi = n + 4000\n\
+             while n < hi {\n\
+                 let mut d = 2\n\
+                 let mut prime = true\n\
+                 while d * d <= n { if n % d == 0 => { prime = false; break }; d = d + 1 }\n\
+                 if prime => { count = count + 1 }\n\
+                 n = n + 1\n\
+             }\n\
+             count\n\
+         }\n\
+         let blocks = range(0, 8)\n\
+         let mut best = 1000.0\n\
+         for attempt in range(0, 2) {\n\
+             let t0 = time.monotonic_ms()\n\
+             let a = map(blocks, work)\n\
+             let t1 = time.monotonic_ms()\n\
+             let b = par_map(blocks, work)\n\
+             let t2 = time.monotonic_ms()\n\
+             let ratio = to_float(t2 - t1) / to_float(max(t1 - t0, 1))\n\
+             if a == b && ratio < best => { best = ratio }\n\
+         }\n\
+         println(to_string(best < 0.75) + \" \" + to_string(best))\n",
+    );
+    let (out, err, code) = olang(&ws, &["--no-ovm", "main.ol"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.starts_with("true"),
+        "par_map / map on the interpreter: {out}{err}"
+    );
+}

@@ -249,6 +249,11 @@ pub struct Interpreter {
     /// the long-standing inline behavior.
     test_mode: bool,
     test_results: Vec<TestOutcome>,
+    /// `olang test --only`: run the blocks whose name contains this.
+    test_filter: Option<String>,
+    /// `olang test <file>`: run the named file's own blocks, not those of
+    /// the modules it imports.
+    test_own_blocks_only: bool,
 
     /// Line-coverage recording (`olang test --coverage`). When `Some`,
     /// every executed located statement records its line under the file
@@ -387,6 +392,8 @@ impl Interpreter {
             enum_type_names: HashSet::new(),
             test_mode: false,
             test_results: Vec::new(),
+            test_filter: None,
+            test_own_blocks_only: false,
             coverage: None,
             coverage_file_stack: Vec::new(),
             caps: None,
@@ -3636,6 +3643,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             enum_type_names: self.enum_type_names.clone(),
             test_mode: false,
             test_results: Vec::new(),
+            test_filter: None,
+            test_own_blocks_only: false,
             // Coverage is single-threaded: worker clones don't record.
             coverage: None,
             coverage_file_stack: Vec::new(),
@@ -5190,7 +5199,21 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // raised error OR on any testing.assert_* that returned Err inside
         // it — asserts tally rather than raise, and a runner that only
         // watched for raises reported ✓ over failing assertions.
+        if self
+            .test_filter
+            .as_deref()
+            .is_some_and(|only| !test_decl.name.contains(only))
+        {
+            return Ok(Value::Unit);
+        }
+        if self.test_own_blocks_only
+            && let Some(module) = self.current_module_path.as_deref()
+            && self.entry_file.as_deref() != Some(module)
+        {
+            return Ok(Value::Unit);
+        }
         let (_, failed_before) = crate::stdlib::testing::tally_snapshot();
+        let started = crate::clock::Instant::now();
         // A module's tests run once per `olang test`, keyed by the file
         // they live in: a project whose 22 client modules each `use web`
         // ran the SDK's suite 22 times. The file under test itself always
@@ -5234,6 +5257,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         self.test_results.push(TestOutcome {
             name: test_decl.name,
             error,
+            ms: started.elapsed().as_secs_f64() * 1000.0,
         });
         Ok(Value::Unit)
     }
@@ -5366,6 +5390,39 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // populates.
         if let Some(path) = self.current_module_path.as_ref() {
             child.set_current_file(std::path::Path::new(path));
+        }
+        match child.eval_program(program) {
+            Ok(v) => Value::Ok(Box::new(v)),
+            Err(e) => err(format!("{}", e)),
+        }
+    }
+
+    /// `meta.eval` inside a meta fn: a pure child, as ever — meta mode, the
+    /// budget, no effects — that also knows the functions the expansion
+    /// scope knows: the expanding file's own helpers and the shared
+    /// functions of the modules it imports. A meta fn could call
+    /// `label_of(3)` directly and not through `meta.eval("label_of(3)")`,
+    /// which evaluated in an empty world. Functions only: the expansion's
+    /// other bindings are the meta fn's working state, not the evaluated
+    /// program's.
+    pub fn eval_source_at_expansion(
+        &self,
+        source: &str,
+        budget: (Option<u64>, Option<std::time::Duration>),
+    ) -> Value {
+        let err = |m: String| Value::Err(Box::new(Value::String(std::sync::Arc::new(m))));
+        let program = match crate::parser::Parser::new().parse(source) {
+            Ok(p) => p,
+            Err(e) => return err(format!("{}", e)),
+        };
+        let mut child = Interpreter::new();
+        child.set_meta_mode(true);
+        child.set_eval_budget(budget.0, budget.1);
+        child.module_scopes = self.module_scopes.clone();
+        for (name, value) in self.environment.root().variables.iter() {
+            if matches!(value, Value::Function(_)) {
+                child.environment.define(name.clone(), value.clone());
+            }
         }
         match child.eval_program(program) {
             Ok(v) => Value::Ok(Box::new(v)),
@@ -5596,6 +5653,14 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         self.test_mode = true;
     }
 
+    /// Narrow a test run: `only` keeps the blocks whose name contains it,
+    /// and `own_blocks` keeps the entry file's blocks alone — a named file
+    /// is a question about that file, not about everything it imports.
+    pub fn narrow_tests(&mut self, only: Option<String>, own_blocks: bool) {
+        self.test_filter = only;
+        self.test_own_blocks_only = own_blocks;
+    }
+
     /// Forget the location and frames captured for an error that a
     /// boundary (`attempt`) has just turned into a value.
     pub fn clear_pending_error(&mut self) {
@@ -5641,6 +5706,8 @@ pub struct TestOutcome {
     pub name: String,
     /// `None` when the block passed; the failure message otherwise.
     pub error: Option<String>,
+    /// How long the block ran, in milliseconds.
+    pub ms: f64,
 }
 
 pub(crate) mod spawn_registry;

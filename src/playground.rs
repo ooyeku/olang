@@ -152,7 +152,15 @@ unsafe extern "C" {
     fn host_dom_get_value(handle: i64) -> *const u8;
     fn host_dom_set_value(handle: i64, ptr: *const u8, len: usize);
     fn host_dom_on(handle: i64, event: *const u8, len: usize, callback_id: i64);
-    fn host_dom_focus(handle: i64);
+    /// 1 when the element holds focus after the call.
+    fn host_dom_focus(handle: i64) -> i32;
+    /// Handles on `window` and `document`, for the events that fire there
+    /// and do not bubble to `body` (`online`, `offline`, `focus`, `blur`,
+    /// `visibilitychange`).
+    fn host_dom_window() -> i64;
+    fn host_dom_document() -> i64;
+    /// The handler a failed dispatch is reported to.
+    fn host_dom_on_error(callback_id: i64);
     fn host_dom_set_class(handle: i64, ptr: *const u8, len: usize);
     fn host_dom_fetch(
         method: *const u8,
@@ -209,7 +217,9 @@ unsafe extern "C" {
     fn host_dom_read_file(handle: i64, id: i64);
     fn host_dom_on_route(callback_id: i64);
     fn host_dom_storage_get(ptr: *const u8, len: usize) -> *const u8;
-    fn host_dom_storage_set(kp: *const u8, kl: usize, vp: *const u8, vl: usize);
+    /// 1 when the value was stored; 0 when the browser refused it (a
+    /// full quota, storage disabled).
+    fn host_dom_storage_set(kp: *const u8, kl: usize, vp: *const u8, vl: usize) -> i32;
     fn host_dom_storage_remove(ptr: *const u8, len: usize);
     fn host_dom_state_get(ptr: *const u8, len: usize) -> *const u8;
     fn host_dom_state_set(kp: *const u8, kl: usize, vp: *const u8, vl: usize);
@@ -452,8 +462,21 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
             unsafe { host_dom_on(handle(el)?, ev.as_ptr(), ev.len(), id) };
             Ok(Value::Unit)
         }
-        ("focus", [el]) => {
-            unsafe { host_dom_focus(handle(el)?) };
+        // Answers whether the element took focus: a hidden or disabled
+        // control does not, and the caller can say so instead of assuming.
+        ("focus", [el]) => Ok(Value::Boolean(unsafe { host_dom_focus(handle(el)?) } != 0)),
+        ("window", []) => Ok(Value::Integer(unsafe { host_dom_window() })),
+        ("document", []) => Ok(Value::Integer(unsafe { host_dom_document() })),
+        // A handler that raises — or a trap under one — is reported here
+        // as `#{ "error", "output", "trap" }` after the failed dispatch
+        // ends, so an app can show it instead of reading a console.
+        ("on_error", [callback]) => {
+            let id = HANDLERS.with(|h| {
+                let mut h = h.borrow_mut();
+                h.push(callback.clone());
+                (h.len() - 1) as i64
+            });
+            unsafe { host_dom_on_error(id) };
             Ok(Value::Unit)
         }
         ("set_class", [el, v]) => {
@@ -717,8 +740,11 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
         }
         ("storage_set", [key, val]) => {
             let (k, v) = (text(key)?, text(val)?);
-            unsafe { host_dom_storage_set(k.as_ptr(), k.len(), v.as_ptr(), v.len()) };
-            Ok(Value::Unit)
+            // A refusal (a full quota) is an answer, not a raise into the
+            // handler that happened to be saving a draft.
+            Ok(Value::Boolean(
+                unsafe { host_dom_storage_set(k.as_ptr(), k.len(), v.as_ptr(), v.len()) } != 0,
+            ))
         }
         ("storage_remove", [key]) => {
             let k = text(key)?;

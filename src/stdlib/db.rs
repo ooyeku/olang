@@ -112,6 +112,78 @@ fn string(s: impl Into<String>) -> Value {
     Value::String(std::sync::Arc::new(s.into()))
 }
 
+/// One `db.transaction` at a time per connection. A SQLite connection
+/// has one transaction, so two threads sharing a connection — every http
+/// worker of a served app — that both ran `db.transaction` interleaved:
+/// the second `BEGIN` failed inside the first's, or its statements
+/// joined a transaction another thread then rolled back. The lock is
+/// per connection and re-entrant on its thread (a nested call reaches
+/// SQLite's own "transaction within a transaction" error as before);
+/// plain statements do not take it, so a task the transaction's body
+/// waits on may still use the connection.
+struct TxLock {
+    owner: Mutex<Option<(std::thread::ThreadId, usize)>>,
+    freed: std::sync::Condvar,
+}
+
+fn tx_locks() -> &'static Mutex<HashMap<i64, std::sync::Arc<TxLock>>> {
+    static LOCKS: OnceLock<Mutex<HashMap<i64, std::sync::Arc<TxLock>>>> = OnceLock::new();
+    LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Held for the length of one `db.transaction`.
+pub struct TxGuard(std::sync::Arc<TxLock>);
+
+impl Drop for TxGuard {
+    fn drop(&mut self) {
+        let mut owner = self.0.owner.lock().unwrap_or_else(|e| e.into_inner());
+        match owner.as_mut() {
+            Some((_, depth)) if *depth > 1 => *depth -= 1,
+            _ => {
+                *owner = None;
+                self.0.freed.notify_one();
+            }
+        }
+    }
+}
+
+/// Wait for the connection's transaction slot. `None` when the value is
+/// not a connection — `begin` then says so.
+pub fn transaction_enter(conn: &Value) -> Option<TxGuard> {
+    let id = connection_id(conn).ok()?;
+    let lock = tx_locks()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .entry(id)
+        .or_insert_with(|| {
+            std::sync::Arc::new(TxLock {
+                owner: Mutex::new(None),
+                freed: std::sync::Condvar::new(),
+            })
+        })
+        .clone();
+    let me = std::thread::current().id();
+    {
+        let mut owner = lock.owner.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            match owner.as_mut() {
+                None => {
+                    *owner = Some((me, 1));
+                    break;
+                }
+                Some((thread, depth)) if *thread == me => {
+                    *depth += 1;
+                    break;
+                }
+                Some(_) => {
+                    owner = lock.freed.wait(owner).unwrap_or_else(|e| e.into_inner());
+                }
+            }
+        }
+    }
+    Some(TxGuard(lock))
+}
+
 /// A connection handle is a struct { id: Integer }; pull the id back out.
 fn connection_id(value: &Value) -> Result<i64, Value> {
     match value {
@@ -426,6 +498,10 @@ fn db_close(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Ok(id) => id,
         Err(e) => return Ok(e),
     };
+    tx_locks()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&id);
     let mut reg = registry().lock().unwrap();
     match reg.connections.remove(&id) {
         Some(conn) => {

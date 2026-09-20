@@ -56,8 +56,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   they walk, and `children_of(node)` is the flat list for code that
   inspects a tree.
 
+- **The shim answers its callers** (web SDK, `dom`). `dom.focus` answers
+  whether the element took focus and `dom.storage_set` whether the value
+  was stored — a full quota is `false`, not a raise into the handler that
+  was saving. A handler that raises is reported to `window.olangOnError`
+  and to `dom.on_error` / the SDK's `on_error`, after the failed dispatch
+  has ended, and the session goes on. Requests leave from a microtask, so
+  a refused fetch is no longer printed under the runtime's stack.
+
+- `olang test <file>` runs the named file's own test blocks, not those
+  of the modules it imports (a file with seven tests reported 143); a
+  directory run is unchanged. `--only <text>` runs the blocks whose name
+  contains the text and `--times` prints each block's milliseconds and
+  the slowest five.
+- `db.transaction` is serialized per connection across threads: a second
+  transaction waits for the first instead of failing inside it or
+  joining it, so a served app's workers may share a connection.
+- `meta.eval` inside a meta fn sees the functions the meta fn sees — the
+  expanding file's own and the imported modules' shared ones — and stays
+  a pure sandbox.
+- `mount` keeps a `url` or `local` store field the browser already holds
+  when it adopts a server-rendered state that carries the same key, and
+  repaints once where they differ.
+- The patcher gives focus and caret back to a control inside a keyed
+  node it moves.
+
 ### Added
 
+- `[check] promote = ["shadow"]`: a `let` that takes a stdlib module's
+  name is an error.
+- `fs.file_info` carries `modified_ms`; `plot` and `viz.chart` take
+  `paper` and `ink` (any CSS color — `"transparent"`, `"currentColor"`);
+  `meta.unresolved(source)` lists the names a program uses without
+  defining or importing them, and `serve` warns with it about a client
+  module that resolves a name only because the bundle is one namespace.
+- `dom.window()` and `dom.document()` — handles for `online`, `offline`,
+  `focus`, `blur` and `visibilitychange`, whose event maps carry `online`
+  and `hidden`.
+- Every `dom.request` reply carries `network_ms` and `queue_ms`; the
+  SDK's `last_timing()` reads them inside a `call` or `fetch` callback.
 - `memo_list(key, items, key_of, inputs_of, row)`, `volatile(key,
   build)`, and `paint_stats()` in the web SDK; the dom harness pins
   repaint counts (`--repaints`, driven by tests/w21_test.rs) and runs the

@@ -9,6 +9,19 @@
 
 let app_state = cell.new(())
 
+// The state keys whose value came from the browser — a `url` field read
+// from the address bar, a `local` field read from storage — recorded by
+// `store.hydrate` and honored by `view.mount`: a server-rendered state
+// does not overwrite what this browser already holds.
+let browser_held = cell.new([])
+
+/// Record state keys the browser holds a value for (`store.hydrate`).
+share fn hold_keys(keys) =
+    cell.update(browser_held, (held) => held + filter(keys, (k) => !contains(held, k)))
+
+/// The state keys the browser holds a value for.
+share fn held_keys() = cell.get(browser_held)
+
 /// Install the initial state. `web.view.mount` calls this.
 share fn init(initial) = cell.set(app_state, initial)
 

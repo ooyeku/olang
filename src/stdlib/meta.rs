@@ -41,6 +41,7 @@ pub fn create_meta_module() -> Value {
     module.insert("encode".to_string(), builtin("encode", 1));
     module.insert("fresh".to_string(), builtin("fresh", 1));
     module.insert("exports".to_string(), builtin("exports", 1));
+    module.insert("unresolved".to_string(), builtin("unresolved", 1));
     Value::Struct {
         type_name: "Module".to_string(),
         fields: std::sync::Arc::new(module),
@@ -66,7 +67,40 @@ pub fn call_meta_function(
         "encode" => meta_encode(args),
         "fresh" => meta_fresh(args),
         "exports" => meta_exports(args),
+        "unresolved" => meta_unresolved(args),
         _ => Err(format!("Unknown meta function: {}", name).into()),
+    }
+}
+
+/// `meta.unresolved(source)` → Ok(list of names) | Err(message): every
+/// name the program uses that nothing in it defines or imports and the
+/// language does not provide, in order of first use. A module that is
+/// spliced into a larger program — a browser bundle — resolves such a
+/// name by accident of its neighbors; this is how the splicer finds out.
+fn meta_unresolved(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let source = match args.first() {
+        Some(Value::String(s)) => s.as_str().to_string(),
+        other => {
+            return Err(format!(
+                "meta.unresolved expects source text, got {}",
+                other
+                    .map(|v| v.type_name())
+                    .unwrap_or_else(|| "nothing".to_string())
+            )
+            .into());
+        }
+    };
+    match crate::parser::Parser::new().parse(&source) {
+        Err(e) => Ok(Value::Err(Box::new(Value::String(std::sync::Arc::new(
+            e.to_string(),
+        ))))),
+        Ok(program) => {
+            let names: Vec<Value> = crate::analyze::Analyzer::unresolved_names(&program)
+                .into_iter()
+                .map(|n| Value::String(std::sync::Arc::new(n)))
+                .collect();
+            Ok(Value::Ok(Box::new(Value::List(std::sync::Arc::new(names)))))
+        }
     }
 }
 

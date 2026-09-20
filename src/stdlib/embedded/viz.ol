@@ -58,7 +58,7 @@ fn plot_opts(spec) = {
     let mut o = #{}
     for k in ["title", "x_label", "y_label", "width", "height", "theme",
               "responsive", "interactive", "colors", "vary", "scale",
-              "font_size", "font"] {
+              "font_size", "font", "paper", "ink"] {
         if map_has_key(spec, k) => {
             o = map_set(o, k, map_get(spec, k))
         }
@@ -76,7 +76,7 @@ let spec_keys = ["data", "layers", "mark", "x", "y", "color", "color_by",
                  "label", "scale", "stack", "bins", "title", "x_label",
                  "y_label", "width", "height", "w", "h", "theme",
                  "responsive", "interactive", "colors", "vary",
-                 "font_size", "font"]
+                 "font_size", "font", "paper", "ink"]
 
 // Every problem a spec has before rendering, as messages: unknown keys
 // (in the spec or a layer) and an empty dataset. `check` returns them

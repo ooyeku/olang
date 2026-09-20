@@ -40,6 +40,8 @@
 //! table. Everything here runs natively too (persistence degrades to
 //! the defaults), which is what keeps it testable without a browser.
 
+use lib.state { hold_keys }
+
 // ── the macro ────────────────────────────────────────────────────────
 
 meta fn store(prefix, fields) = {
@@ -110,15 +112,23 @@ share fn hydrate(spec) = {
     let mut s = map_get(spec, "defaults")
     if dom.available() => {
         let qmap = map_get(dom.location(), "query")
+        // What this browser holds wins over a server-rendered state at
+        // `mount`: the address bar's fields and the stored preferences.
+        let mut held_names = []
         for name in map_get(spec, "url") {
             if map_has_key(qmap, name) => {
                 s = map_set(s, name, map_get(qmap, name))
+                held_names = held_names + [name]
             }
         }
         for name in map_get(spec, "local") {
             let held = dom.storage_get(map_get(spec, "prefix") + "-" + name)
-            if held != "" => { s = map_set(s, name, held) }
+            if held != "" => {
+                s = map_set(s, name, held)
+                held_names = held_names + [name]
+            }
         }
+        hold_keys(held_names)
         cell.set(last_qs, querystring(spec, s))
     }
     s

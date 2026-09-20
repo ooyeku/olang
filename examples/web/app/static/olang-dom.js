@@ -98,8 +98,31 @@
     const json = JSON.parse(new TextDecoder().decode(mem().slice(res + 4, res + 4 + len)));
     ex.olang_result_free(res);
     if (json.output) console.log(json.output.trimEnd());
-    if (json.error) console.error("olang:", json.error);
+    if (json.error) {
+      console.error("olang:", json.error);
+      reportError({ error: json.error, output: json.output ?? "", trap: false });
+    }
     return json;
+  }
+
+  // A failed dispatch is reported, never swallowed and never fatal: to
+  // `window.olangOnError` when the page defines it, and to the handler
+  // the program registered with `dom.on_error` — after the failed
+  // dispatch has ended (its own dispatch queues behind it), and never
+  // for a failure of the error handler itself.
+  let errorHandler = null;
+  let reportingError = false;
+  function reportError(report) {
+    try { if (typeof window.olangOnError === "function") window.olangOnError(report); }
+    catch (e) { console.error("olangOnError threw:", e); }
+    if (errorHandler == null || reportingError) return;
+    // The flag is raised inside the dispatch itself, so it holds whether
+    // the report runs at once or waits its turn in the queue.
+    const text = JSON.stringify(report);
+    queueMicrotask(() => enter(() => {
+      reportingError = true;
+      try { rawJsonNow(errorHandler, text); } finally { reportingError = false; }
+    }));
   }
 
   // A trap inside the runtime reaches the page as a bare
@@ -111,11 +134,14 @@
       return f();
     } catch (e) {
       const p = ex.olang_last_panic ? ex.olang_last_panic() : 0;
+      let message = String(e);
       if (p) {
         const len = new DataView(ex.memory.buffer).getUint32(p, true);
-        console.error("olang panic:", new TextDecoder().decode(mem().slice(p + 4, p + 4 + len)));
+        message = new TextDecoder().decode(mem().slice(p + 4, p + 4 + len));
+        console.error("olang panic:", message);
         ex.olang_result_free(p);
       }
+      reportError({ error: message, output: "", trap: true });
       throw e;
     }
   }
@@ -160,14 +186,14 @@
   // Same dispatch, but the payload is already JSON text (worker messages,
   // fetch_json responses) — no stringify round-trip.
   function dispatchRawJson(id, text) {
-    enter(() => {
-      const bytes = new TextEncoder().encode(text);
-      const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
-      mem().set(bytes, ptr);
-      readResult(callRuntime(() => ex.olang_dispatch_event_json(BigInt(id), ptr, bytes.length)));
-      ex.olang_dealloc(ptr, Math.max(bytes.length, 1));
-
-    });
+    enter(() => rawJsonNow(id, text));
+  }
+  function rawJsonNow(id, text) {
+    const bytes = new TextEncoder().encode(text);
+    const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
+    mem().set(bytes, ptr);
+    readResult(callRuntime(() => ex.olang_dispatch_event_json(BigInt(id), ptr, bytes.length)));
+    ex.olang_dealloc(ptr, Math.max(bytes.length, 1));
   }
 
   // Every DOM event delivers the same shape; handlers pick what they use.
@@ -183,6 +209,9 @@
     const checkable = inputType === "checkbox" || inputType === "radio";
     return {
       type,
+      // What the window's and the document's own events are about.
+      ...(type === "visibilitychange" ? { hidden: !!document.hidden } : {}),
+      ...(type === "online" || type === "offline" ? { online: !!navigator.onLine } : {}),
       id: t.id ?? "",
       value: t.value ?? "",
       key: e.key ?? "",
@@ -214,7 +243,38 @@
 
   // The one fetch path behind dom.fetch, dom.fetch_json, dom.request, and
   // dom.request_with.
+  // The request leaves from a microtask, not from inside the runtime's
+  // call: the browser prints every refused fetch with its initiator's
+  // stack, and from inside the call that stack was two hundred `$func`
+  // frames of the runtime per retry. The shim cannot silence the
+  // browser's line; it can be the initiator.
   function doFetch(method, path, body, extra, id) {
+    queueMicrotask(() => doFetchNow(method, path, body, extra, id));
+  }
+  // When the response finished arriving, by the browser's own resource
+  // timing — a `.then` runs only once the main thread is free, so its
+  // clock reading already includes the wait behind a repaint.
+  function responseEndOf(path) {
+    try {
+      const entries = performance.getEntriesByName(new URL(path, location.href).href);
+      const last = entries[entries.length - 1];
+      if (last && last.responseEnd > 0) return last.responseEnd;
+    } catch (e) { /* no resource timing here */ }
+    return performance.now();
+  }
+  // A `dom.request` reply says how long the network took and how long
+  // the reply then waited for the runtime: `network_ms` from the send to
+  // the last byte, `queue_ms` from there to the moment the handler
+  // starts — stamped inside the dispatch, after any wait in the queue.
+  function deliverTimed(cb, reply, sentMs, receivedMs) {
+    enter(() => {
+      reply.network_ms = Math.max(0, receivedMs - sentMs);
+      reply.queue_ms = Math.max(0, performance.now() - receivedMs);
+      rawJsonNow(cb, JSON.stringify(reply));
+    });
+  }
+  function doFetchNow(method, path, body, extra, id) {
+    const sentMs = performance.now();
     // Bit 40 marks a fetch_json callback: deliver the response through
     // the JSON dispatch so the handler receives a parsed value. Bit 41
     // marks a dom.request callback: the whole response — status,
@@ -235,14 +295,17 @@
     });
     if (wantsStatus) {
       request
-        .then(async (r) => dispatchRawJson(cb, JSON.stringify({
-          status: r.status,
-          headers: Object.fromEntries(r.headers.entries()),
-          body: await r.text(),
-        })))
-        .catch((e) => dispatchRawJson(cb, JSON.stringify({
+        .then(async (r) => {
+          const text = await r.text();
+          deliverTimed(cb, {
+            status: r.status,
+            headers: Object.fromEntries(r.headers.entries()),
+            body: text,
+          }, sentMs, responseEndOf(path));
+        })
+        .catch((e) => deliverTimed(cb, {
           status: 0, headers: {}, body: "", error: String(e),
-        })));
+        }, sentMs, performance.now()));
       return;
     }
     request
@@ -260,6 +323,26 @@
   // DOM — no markup to render on the wasm side, none to parse here.
   // Vnodes: { tag, attrs, children } | { text } | { raw } | { keep }.
   const SVG_NS = "http://www.w3.org/2000/svg";
+  // Moving an element takes it out of the document and puts it back, and
+  // the browser blurs whatever inside it held focus: a keyed row that
+  // changed places lost the caret of the input someone was typing in.
+  // The patcher knows the focused element before the move, so it gives
+  // the focus — and the caret — back after it.
+  function moveNode(parent, node, before) {
+    const active = document.activeElement;
+    const held = !!active && active !== document.body && !!node.contains && node.contains(active);
+    let caret = null;
+    if (held) {
+      try {
+        if (typeof active.selectionStart === "number") caret = [active.selectionStart, active.selectionEnd];
+      } catch (e) { /* this control has no caret */ }
+    }
+    parent.insertBefore(node, before);
+    if (held && document.activeElement !== active) {
+      active.focus({ preventScroll: true });
+      if (caret) { try { active.setSelectionRange(caret[0], caret[1]); } catch (e) { /* as above */ } }
+    }
+  }
   // A `keep` marker names a subtree the view did not rebuild. When the
   // element it names is not where the marker stands, the marker cannot be
   // honored — the memo was stamped while its subtree was off the page —
@@ -303,7 +386,7 @@
         // An unchanged memo subtree: the element it rendered last time
         // stays as it is, moved into place if the order changed.
         const m = keyed.get(String(v.keep));
-        if (m) { if (m !== at) from.insertBefore(m, at); i++; }
+        if (m) { if (m !== at) moveNode(from, m, at); i++; }
         else missingKeeps.push(String(v.keep));
         continue;
       }
@@ -318,7 +401,7 @@
       if (k && keyed.has(k)) match = keyed.get(k);
       else if (at && !keyOf(at) && !k && sameVKind(at, v)) match = at;
       if (match) {
-        if (match !== at) from.insertBefore(match, at);
+        if (match !== at) moveNode(from, match, at);
         patchNode(match, v);
       } else {
         from.insertBefore(createVNode(v, from), at);
@@ -395,7 +478,7 @@
       if (k && keyed.has(k)) match = keyed.get(k);
       else if (at && !keyOf(at) && !k && sameKind(at, t)) match = at;
       if (match) {
-        if (match !== at) from.insertBefore(match, at);
+        if (match !== at) moveNode(from, match, at);
         morphNode(match, t);
       } else {
         from.insertBefore(t.cloneNode(true), at);
@@ -555,7 +638,14 @@
           });
         }
       },
-      host_dom_focus: (h) => { elements[Number(h)].focus(); },
+      host_dom_focus: (h) => {
+        const el = elements[Number(h)];
+        el.focus();
+        return document.activeElement === el ? 1 : 0;
+      },
+      host_dom_window: () => BigInt(handleOf(window)),
+      host_dom_document: () => BigInt(handleOf(document)),
+      host_dom_on_error: (id) => { errorHandler = Number(id); },
       host_dom_prefers_dark: () =>
         (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? 1 : 0,
       host_dom_active_id: () => giveStr((document.activeElement && document.activeElement.id) || ""),
@@ -662,8 +752,11 @@
       },
       host_dom_storage_get: (ptr, len) =>
         giveStr(localStorage.getItem(readStr(ptr, len)) ?? ""),
+      // A refusal — a full quota, storage disabled — is answered, not
+      // thrown into the handler that was saving.
       host_dom_storage_set: (kp, kl, vp, vl) => {
-        localStorage.setItem(readStr(kp, kl), readStr(vp, vl));
+        try { localStorage.setItem(readStr(kp, kl), readStr(vp, vl)); return 1; }
+        catch (e) { console.warn("olang: localStorage refused a write:", e); return 0; }
       },
       host_dom_storage_remove: (ptr, len) => {
         localStorage.removeItem(readStr(ptr, len));
@@ -843,12 +936,13 @@
   // error the handler can `attempt`.
   let hostError = null;
   const HANDLE_IMPORTS = new Set(["host_dom_query", "host_dom_create", "host_dom_set_interval",
+    "host_dom_window", "host_dom_document",
     "host_dom_worker_spawn", "host_dom_prefers_dark", "host_dom_confirm", "host_dom_checked"]);
   const STRING_IMPORTS = new Set(["host_dom_query_all", "host_dom_get_text", "host_dom_get_value",
     "host_dom_get_attr", "host_dom_measure", "host_dom_location", "host_dom_storage_get",
     "host_dom_state_get", "host_dom_active_id", "host_dom_selection", "host_dom_values"]);
   // Answers a string or null: a throw answers null (nothing missing).
-  const NULLABLE_IMPORTS = new Set(["host_dom_patch"]);
+  const NULLABLE_IMPORTS = new Set(["host_dom_patch", "host_dom_focus", "host_dom_storage_set"]);
   for (const name of Object.keys(imports.env)) {
     if (!name.startsWith("host_dom_")) continue;
     const f = imports.env[name];

@@ -17,7 +17,7 @@
 //! even rebuilt while its inputs stand.
 
 use lib.html { render, take_memo_tally, forget_memos }
-use lib.state { init, current, update }
+use lib.state { init, current, update, held_keys }
 
 let mount_root = cell.new("")
 let mount_view = cell.new(())
@@ -80,6 +80,13 @@ share fn rerender() = {
         } else => ()
     }
 }
+
+/// Hear about every handler that fails: `on_error((e) => toast(map_get(e,
+/// "error")))`. A handler that raises, or a trap under one, arrives as
+/// `#{ "error", "output", "trap" }` once the failed dispatch has ended;
+/// the session goes on serving events. Without a DOM it does nothing.
+share fn on_error(handler) =
+    if dom.available() => dom.on_error(handler) else => ()
 
 /// The repaints asked for so far (a test's, or a profiler's, count).
 share fn paint_count() = cell.get(paints)
@@ -407,7 +414,7 @@ share fn mount(selector, view_fn, initial) = {
         let adopted = if state_id != "" => {
             match json.parse(dom.get_text(dom.query("#" + state_id))) {
                 Ok(server_state) => {
-                    let merged = merge_state(initial, server_state)
+                    let merged = keep_held(merge_state(initial, server_state), initial, held_keys())
                     init(merged)
                     adopts_first_paint(merged, server_state)
                 },
@@ -438,6 +445,17 @@ fn merge_state(base, server) =
         fold(map_keys(server), base, (acc, k) => map_set(acc, k, map_get(server, k)))
     else => server
 
+/// What the browser holds is not the server's to overwrite: a `local`
+/// preference read from storage, a `url` field read from the address
+/// bar (`store.hydrate` records them). Where one differs from what the
+/// server rendered, the first paint is not adopted and the view repaints
+/// with the browser's value — an app used to re-apply its preferences
+/// by hand after every boot.
+fn keep_held(merged, initial, held) =
+    if !is_map(merged) || !is_map(initial) => merged
+    else => fold(held, merged, (acc, k) =>
+        if map_has_key(initial, k) => map_set(acc, k, map_get(initial, k)) else => acc)
+
 /// Whether the merged state is what the server rendered from — then the
 /// first paint stands as it is. Compared key by key: the server's state
 /// arrives as parsed JSON and the merged one is a map, and values of
@@ -453,6 +471,17 @@ test "the first paint is adopted only when the state is the server's" {
     let server = unwrap(json.parse("{\"notes\": [1], \"errors\": []}"))
     assert_eq(adopts_first_paint(merge_state(#{ "notes": [], "errors": [] }, server), server), true)
     assert_eq(adopts_first_paint(merge_state(#{ "notes": [], "theme": "dark" }, server), server), false)
+}
+
+test "a key the browser holds survives the server's state, and the first paint is then not adopted" {
+    let server = unwrap(json.parse("{\"theme\": \"system\", \"notes\": [1]}"))
+    let initial = #{ "theme": "dark", "notes": [] }
+    let merged = keep_held(merge_state(initial, server), initial, ["theme"])
+    assert_eq((map_get(merged, "theme"), len(map_get(merged, "notes"))), ("dark", 1))
+    assert_eq(adopts_first_paint(merged, server), false)
+    // Nothing held: the server's state stands and its paint is adopted.
+    let plain = keep_held(merge_state(initial, server), initial, [])
+    assert_eq(adopts_first_paint(plain, server), true)
 }
 
 test "merge_state: the server's keys over the caller's defaults" {

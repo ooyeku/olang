@@ -200,10 +200,14 @@ fn a_modules_test_block_above_its_callee_runs_after_the_declarations() {
         "use lib.m { f }\ntest \"uses the module\" { assert_eq(f(), 1) }\n",
     );
     // Imported under `olang test`, the module's tests run at load: the one
-    // above its callee must see the whole module declared.
-    let (out, err, rc) = olang(&ws, &["test", "tests/t.ol"]);
+    // above its callee must see the whole module declared. A directory
+    // run, because a named file runs its own blocks only (W21).
+    let (out, err, rc) = olang(&ws, &["test", "tests"]);
     assert_eq!(rc, 0, "{out}{err}");
     assert!(out.contains("2 passed, 0 failed"), "{out}{err}");
+    let (out, err, rc) = olang(&ws, &["test", "tests/t.ol"]);
+    assert_eq!(rc, 0, "{out}{err}");
+    assert!(out.contains("1 passed, 0 failed"), "{out}{err}");
 }
 
 #[test]

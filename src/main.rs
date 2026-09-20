@@ -242,6 +242,12 @@ enum Commands {
         /// Re-run the tests whenever a .ol file under the target changes
         #[arg(long)]
         watch: bool,
+        /// Run only the test blocks whose name contains this text
+        #[arg(long, value_name = "SUBSTRING")]
+        only: Option<String>,
+        /// Print each block's milliseconds, and the slowest five at the end
+        #[arg(long)]
+        times: bool,
     },
 
     /// Compile a program to a self-contained executable
@@ -554,6 +560,8 @@ fn run() -> i32 {
             coverage,
             coverage_lines,
             watch,
+            only,
+            times,
         }) => {
             // Files under the runner get a bare argv — a program that branches
             // on os.args() takes its no-argument path.
@@ -569,6 +577,13 @@ fn run() -> i32 {
                 } else if coverage {
                     argv.push("--coverage".to_string());
                 }
+                if let Some(only) = &only {
+                    argv.push("--only".to_string());
+                    argv.push(only.clone());
+                }
+                if times {
+                    argv.push("--times".to_string());
+                }
                 let dir = if target.is_dir() {
                     target.clone()
                 } else {
@@ -580,7 +595,12 @@ fn run() -> i32 {
                 };
                 return watch_argv(&dir, &argv);
             }
-            olang::tools::test_runner::run(&target, coverage || coverage_lines, coverage_lines)
+            olang::tools::test_runner::run_with(
+                &target,
+                coverage || coverage_lines,
+                coverage_lines,
+                &olang::tools::test_runner::Options { only, times },
+            )
         }
 
         Some(Commands::Profile {

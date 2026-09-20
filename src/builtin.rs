@@ -799,6 +799,17 @@ impl BuiltinFunctions {
                     .map_err(|e| InterpreterError::runtime(e.to_string()))?;
                 return Ok(interpreter.eval_source_at_runtime(&src, budget));
             }
+            // During expansion it stays a pure sandbox, but one that knows
+            // the expansion scope's functions.
+            if meta_function == "eval"
+                && interpreter.in_meta_mode()
+                && let Some(Value::String(src)) = arguments.first()
+            {
+                let src = src.clone();
+                let budget = crate::stdlib::meta::eval_budget(&arguments)
+                    .map_err(|e| InterpreterError::runtime(e.to_string()))?;
+                return Ok(interpreter.eval_source_at_expansion(&src, budget));
+            }
             return crate::stdlib::meta::call_meta_function(meta_function, arguments)
                 .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
@@ -3913,6 +3924,7 @@ impl Clone for BuiltinFunctions {
 /// `db.transaction(conn, f)`: `f(conn)` inside BEGIN … COMMIT. An `Err`
 /// returned by `f` rolls back and is handed through; a raise inside `f`
 /// rolls back and propagates; anything else commits and is returned.
+/// Transactions on one connection are serialized across threads.
 #[cfg(feature = "native")]
 fn db_transaction(
     arguments: Vec<Value>,
@@ -3930,6 +3942,9 @@ fn db_transaction(
         crate::stdlib::db::call_db_function(name, args)
             .map_err(|e| InterpreterError::runtime(e.to_string()))
     };
+    // One transaction at a time on this connection, across threads: held
+    // until this function returns, whichever way it ends.
+    let _slot = crate::stdlib::db::transaction_enter(&conn);
     if let Value::Err(e) = db("begin", vec![conn.clone()])? {
         return Ok(Value::Err(e));
     }

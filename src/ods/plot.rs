@@ -91,6 +91,15 @@ fn parse_options(value: &Value) -> Result<PlotOptions, String> {
                     other.type_name()
                 ));
             }
+            ("paper", Value::String(s)) => opts.paper = Some(s.as_ref().clone()),
+            ("ink", Value::String(s)) => opts.ink = Some(s.as_ref().clone()),
+            ("paper" | "ink", other) => {
+                return Err(format!(
+                    "plot: {} must be a CSS color String, got {}",
+                    key,
+                    other.type_name()
+                ));
+            }
             ("responsive", Value::Boolean(b)) => opts.responsive = *b,
             ("interactive", Value::Boolean(b)) => opts.interactive = *b,
             ("vary", Value::Boolean(b)) => opts.vary = *b,
