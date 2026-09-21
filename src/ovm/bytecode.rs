@@ -1899,6 +1899,40 @@ impl BytecodeVm {
         result
     }
 
+    /// `execute_prepared`, handing the FIRST argument over: once the frame
+    /// holds it the caller's copy is released, so the callee's register is
+    /// the value's only owner and a fused in-place write (`m = map_set(m,
+    /// …)`, `acc = acc + [x]`) stays in place. `fold` threads its
+    /// accumulator this way; with the caller still holding it, every step
+    /// of a fold that builds a map copied the map.
+    fn execute_prepared_moving(
+        &mut self,
+        bytecode: &Arc<CompiledBytecode>,
+        args: &mut [OvmValue],
+    ) -> Result<OvmValue, BytecodeError> {
+        if self.call_depth >= self.max_call_depth {
+            return Err(BytecodeError::RuntimeError(format!(
+                "Maximum call depth ({}) exceeded - possible infinite recursion or very deep call stack",
+                self.max_call_depth
+            )));
+        }
+        self.call_depth += 1;
+        let saved = self
+            .execution_state
+            .push_frame(bytecode.register_count as usize, args);
+        if let Some(first) = args.first_mut() {
+            *first = OvmValue::new_unit();
+        }
+        self.stats.bytecode_cache_hits += 1;
+        self.stats.function_calls += 1;
+        self.push_caps_frame(bytecode);
+        let result = self.execute_bytecode(bytecode);
+        self.pop_caps_frame();
+        self.execution_state.pop_frame(saved);
+        self.call_depth -= 1;
+        result
+    }
+
     pub fn execute(
         &mut self,
         func_id: FunctionId,
@@ -6605,7 +6639,11 @@ impl BytecodeVm {
                             }
                         };
                         if !jit_owned
-                            && bytecode.param_checks.is_empty()
+                            // A lambda's check list is one `None` per
+                            // parameter, not an empty list: "nothing to
+                            // check" is what the lane needs, and asking
+                            // for an empty list kept every lambda off it.
+                            && bytecode.param_checks.iter().all(Option::is_none)
                             && bytecode.param_count == 1 + captures.len()
                         {
                             Some(bytecode)
@@ -6764,7 +6802,11 @@ impl BytecodeVm {
                             }
                         };
                         if !jit_owned
-                            && bytecode.param_checks.is_empty()
+                            // A lambda's check list is one `None` per
+                            // parameter, not an empty list: "nothing to
+                            // check" is what the lane needs, and asking
+                            // for an empty list kept every lambda off it.
+                            && bytecode.param_checks.iter().all(Option::is_none)
                             && bytecode.param_count == 2 + captures.len()
                         {
                             Some(bytecode)
@@ -6783,7 +6825,7 @@ impl BytecodeVm {
                     for i in 0..items.len() {
                         call_args[0] = acc;
                         call_args[1] = items.get(i);
-                        acc = match self.execute_prepared(&bytecode, &call_args) {
+                        acc = match self.execute_prepared_moving(&bytecode, &mut call_args) {
                             Ok(r) => r,
                             Err(e) => return Some(Err(e)),
                         };
@@ -9634,6 +9676,13 @@ impl BytecodeCompiler {
                     .to_string(),
             ));
         }
+        // A reducer's accumulator — `(m, k) => map_set(m, k, v)` — is
+        // rebound before it is compiled, as the resolver does for the
+        // interpreter (`resolve::tail_accumulate`), so the fused in-place
+        // instructions apply to it.
+        let names: Vec<String> = parameters.iter().map(|p| p.name.clone()).collect();
+        let rebound = crate::resolve::tail_accumulate(body, &names);
+        let body = rebound.as_ref().unwrap_or(body);
 
         let bound: std::collections::HashSet<String> =
             parameters.iter().map(|p| p.name.clone()).collect();

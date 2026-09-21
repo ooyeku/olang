@@ -92,6 +92,7 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
         let context: Vec<&Program> = modules.iter().map(|(_, _, p)| p).collect();
         let mut diagnostics = check_program_with_context(&context, &program);
         diagnostics.extend(use_shadow_warnings(&program, file.parent()));
+        diagnostics.extend(unimported_names(&program, &source, &modules, file.parent()));
         diagnostics.extend(template_escape_warnings(&source));
         diagnostics.extend(shadow_warnings(&program));
         // The project's `[check] promote`: the advisory classes it names
@@ -352,6 +353,179 @@ fn rule_findings(result: &Value) -> Vec<(i64, String)> {
         Value::List(items) => items.iter().filter_map(one).collect(),
         other => one(other).into_iter().collect(),
     }
+}
+
+/// Every name a top-level declaration of `program` introduces: functions,
+/// lets, types, and the variants and constructors of its enums and error
+/// types — what a bare `use` of the module may bring into scope, taken
+/// generously (private names too), because this list only ever excuses.
+fn declared_names(program: &Program, out: &mut std::collections::HashSet<String>) {
+    fn of(stmt: &Statement, out: &mut std::collections::HashSet<String>) {
+        match stmt {
+            Statement::Located { stmt, .. } => of(stmt, out),
+            Statement::FunctionDecl(f) => {
+                out.insert(f.name.clone());
+            }
+            Statement::LetDecl(l) => {
+                if let crate::ast::Pattern::Identifier(n) = &l.pattern {
+                    out.insert(n.clone());
+                }
+            }
+            Statement::TypeDecl(t) => {
+                out.insert(t.name.clone());
+                if let crate::ast::TypeDefinition::Enum { variants } = &t.definition {
+                    out.extend(variants.iter().map(|v| v.name.clone()));
+                }
+            }
+            Statement::ErrorTypeDecl(e) => {
+                out.insert(e.name.clone());
+                out.extend(e.variants.iter().map(|v| v.name.clone()));
+            }
+            Statement::ShareDecl(sd) => match sd {
+                crate::ast::ShareDecl::Function(f) => {
+                    out.insert(f.name.clone());
+                }
+                crate::ast::ShareDecl::Let(l) => {
+                    if let crate::ast::Pattern::Identifier(n) = &l.pattern {
+                        out.insert(n.clone());
+                    }
+                }
+                crate::ast::ShareDecl::Type(t) => of(&Statement::TypeDecl(t.clone()), out),
+                crate::ast::ShareDecl::Use(u) => {
+                    out.extend(
+                        u.items
+                            .iter()
+                            .filter_map(|i| i.bound_name().map(str::to_string)),
+                    );
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    for stmt in &program.statements {
+        of(stmt, out);
+    }
+}
+
+/// A name the file uses and nothing in it defines or imports. Natively
+/// that is an undefined variable the moment the line runs; in a browser
+/// bundle, which is one namespace, it resolves from whichever module is
+/// spliced beside this one — so it works until the day it does not
+/// (open-track's `refresh_fx`, Shuttle's `check_record`). An error.
+///
+/// What a file may name without importing it item by item: everything a
+/// bare `use m` brings, and the variants of any enum a context module
+/// declares (a variant arrives with its type). When a bare `use` cannot
+/// be resolved, what it brings is unknown and nothing is reported.
+fn unimported_names(
+    program: &Program,
+    source: &str,
+    modules: &[(PathBuf, String, Program)],
+    dir: Option<&Path>,
+) -> Vec<CheckDiagnostic> {
+    let candidates = crate::analyze::Analyzer::unresolved_names(program);
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    let mut excused = std::collections::HashSet::new();
+    declared_names(program, &mut excused);
+    // Modules that load on first touch, without a `use`.
+    excused.extend(crate::stdlib::get_stdlib().into_keys());
+    excused.extend(
+        crate::stdlib::embedded::names()
+            .into_iter()
+            .map(String::from),
+    );
+    excused.insert("log".to_string());
+    for stmt in &program.statements {
+        let (Statement::UseDecl(u) | Statement::ShareDecl(crate::ast::ShareDecl::Use(u))) =
+            stmt.unwrapped()
+        else {
+            continue;
+        };
+        // `use a.b.c` binds `c`, the module itself, whatever else it brings.
+        if let Some(last) = u.path.last() {
+            excused.insert(last.clone());
+        }
+        let bare = u.items.is_empty()
+            || u.items
+                .iter()
+                .any(|i| matches!(i, crate::ast::UseItem::Wildcard));
+        if !bare || u.path.is_empty() {
+            continue;
+        }
+        // A stdlib module brings its own name and nothing else.
+        if u.path.len() == 1 && crate::stdlib::get_stdlib().contains_key(&u.path[0]) {
+            continue;
+        }
+        if u.path.len() == 1 && crate::stdlib::embedded::is_embedded(&u.path[0]) {
+            match crate::stdlib::embedded::parsed(&u.path[0]) {
+                Ok(Some(parsed)) => declared_names(&parsed, &mut excused),
+                _ => return Vec::new(),
+            }
+            continue;
+        }
+        let brought = modules_used(&format!("use {}\n", u.path.join(".")), dir, false);
+        if brought.is_empty() {
+            return Vec::new();
+        }
+        for (_, _, module) in &brought {
+            declared_names(module, &mut excused);
+        }
+    }
+    // A variant arrives with the import of its type.
+    for (_, _, module) in modules {
+        for stmt in &module.statements {
+            let decl = match stmt.unwrapped() {
+                Statement::TypeDecl(t) => t,
+                Statement::ShareDecl(crate::ast::ShareDecl::Type(t)) => t,
+                _ => continue,
+            };
+            if let crate::ast::TypeDefinition::Enum { variants } = &decl.definition {
+                excused.extend(variants.iter().map(|v| v.name.clone()));
+            }
+        }
+    }
+    candidates
+        .into_iter()
+        .filter(|name| !excused.contains(name))
+        .map(|name| {
+            let (line, column) = first_use_of(source, &name);
+            CheckDiagnostic {
+                line,
+                column,
+                message: format!(
+                    "Undefined variable: {name} — nothing in this file defines or imports it \
+                     (in a browser bundle it would resolve from a neighboring module, by accident)"
+                ),
+                runtime: true,
+                warning: false,
+                scope: false,
+            }
+        })
+        .collect()
+}
+
+/// 1-based line and column of the first whole-word use of `name` outside
+/// a `//` comment; (0, 0) when it is not found as written (an expansion).
+fn first_use_of(source: &str, name: &str) -> (u32, u32) {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    for (index, line) in source.lines().enumerate() {
+        let code = line.split("//").next().unwrap_or(line);
+        let mut from = 0;
+        while let Some(at) = code[from..].find(name) {
+            let start = from + at;
+            let end = start + name.len();
+            let before = code[..start].chars().next_back();
+            let after = code[end..].chars().next();
+            if !before.is_some_and(|c| word(c) || c == '.') && !after.is_some_and(word) {
+                return (index as u32 + 1, code[..start].chars().count() as u32 + 1);
+            }
+            from = end;
+        }
+    }
+    (0, 0)
 }
 
 /// Warnings for the import-shadowing trap: a bare `use module` (a
@@ -1278,7 +1452,7 @@ pub fn promotions_for(dir: Option<&Path>) -> Vec<String> {
 }
 
 /// The class a warning belongs to, by its message: `exhaustiveness`,
-/// `shape`, `result`, `shadow`, or none.
+/// `shape`, `result`, `shadow`, `copy`, or none.
 pub fn warning_class(message: &str) -> Option<&'static str> {
     if message.contains("is not exhaustive") || message.contains("covers none of the scrutinee") {
         Some("exhaustiveness")
@@ -1286,6 +1460,10 @@ pub fn warning_class(message: &str) -> Option<&'static str> {
         Some("shape")
     } else if message.contains("the Result from") && message.contains("is discarded") {
         Some("result")
+    } else if message.contains("is copied on every pass") || message.contains("moves every element")
+    {
+        // A loop that rebuilds the collection it is accumulating.
+        Some("copy")
     } else if message.contains("shadows the stdlib module") {
         // `let cell = …`: every later `cell.get` in the scope reaches the
         // binding and fails at run time, far from the `let`.
@@ -1428,6 +1606,159 @@ fn violation(expected: &SType, actual: &SType) -> Option<(String, String, bool)>
     deep.then(|| (expected.display(), actual.display(), false))
 }
 
+/// What an argument must be for the call not to fail when it runs.
+#[derive(Debug, Clone, PartialEq)]
+enum Need {
+    /// A list or a range — the first argument of `fold`, `map`, `len`, …
+    /// A number or a boolean there is refused by every one of them.
+    Sequence(String),
+    /// A map, a record or an object — the first argument of `map_get` and
+    /// its family. Anything else is refused.
+    MapLike(String),
+    /// A callable taking this many arguments: the parameter is called
+    /// with them.
+    Callable(usize, String),
+    /// A string: the parameter is added to a string literal, and `+`
+    /// refuses a String and anything else ("use to_string(...)").
+    Text,
+}
+
+/// What a builtin needs of its first argument. Only the builtins, and
+/// only the kinds, that the runtime refuses on both tiers (checked one by
+/// one): everything absent from this table is unknown and never reported.
+fn builtin_need(name: &str) -> Option<Need> {
+    match name {
+        "map" | "filter" | "fold" | "reduce" | "sum" | "head" | "tail" | "sort" | "reverse"
+        | "join" | "take" | "drop" | "flatten" | "zip" | "len" | "contains" => {
+            Some(Need::Sequence(name.to_string()))
+        }
+        "map_get" | "map_set" | "map_keys" | "map_values" | "map_has_key" | "map_remove" => {
+            Some(Need::MapLike(name.to_string()))
+        }
+        _ => None,
+    }
+}
+
+impl Need {
+    /// Why a value of type `ty` cannot satisfy this need — None when it
+    /// can, or when the checker does not know.
+    fn refuses(&self, ty: &SType) -> Option<String> {
+        let kind = match ty {
+            SType::Int => "an Int",
+            SType::Float => "a Float",
+            SType::Bool => "a Bool",
+            SType::String => "a String",
+            SType::List(_) => "a List",
+            SType::Function { .. } => "a function",
+            _ => return None,
+        };
+        match self {
+            Need::Text => matches!(ty, SType::Int | SType::Float | SType::Bool | SType::List(_))
+                .then(|| {
+                    format!("{kind}, added to a string there: convert it with `to_string(...)`")
+                }),
+            Need::Sequence(builtin) => matches!(ty, SType::Int | SType::Float | SType::Bool)
+                .then(|| format!("{kind}, and `{builtin}` needs a list")),
+            Need::MapLike(builtin) => matches!(
+                ty,
+                SType::Int | SType::Float | SType::Bool | SType::String | SType::List(_)
+            )
+            .then(|| format!("{kind}, and `{builtin}` needs a map or a record")),
+            Need::Callable(count, how) => match ty {
+                SType::Function {
+                    params, required, ..
+                } if *count < *required || *count > params.len() => Some(format!(
+                    "a function of {} parameter{}, and {how} calls it with {count}",
+                    params.len(),
+                    if params.len() == 1 { "" } else { "s" }
+                )),
+                SType::Function { .. } => None,
+                _ => Some(format!("{kind}, and {how} calls it")),
+            },
+        }
+    }
+}
+
+/// What `body` shows of its parameters on the path every call takes: the
+/// body itself and the statements of its block, through call arguments,
+/// operands, pipelines and `let` values — never into a branch, a loop, a
+/// lambda or the right of `&&`/`||`, where a guard may stand. A parameter
+/// rebound by a `let` stops being the parameter from there on.
+fn parameter_needs(function: &str, parameters: &[String], body: &Expr) -> Vec<Option<Need>> {
+    fn walk(e: &Expr, function: &str, live: &[String], all: &[String], out: &mut [Option<Need>]) {
+        let mut note = |name: &str, need: Need| {
+            if live.iter().any(|p| p == name)
+                && let Some(i) = all.iter().position(|p| p == name)
+                && out[i].is_none()
+            {
+                out[i] = Some(need);
+            }
+        };
+        match e {
+            Expr::Call { callee, arguments } => {
+                if let Expr::Identifier(name) = callee.as_ref() {
+                    if let (Some(need), Some(Argument::Positional(Expr::Identifier(first)))) =
+                        (builtin_need(name), arguments.first())
+                    {
+                        note(first, need);
+                    }
+                    if arguments
+                        .iter()
+                        .all(|a| matches!(a, Argument::Positional(_)))
+                    {
+                        note(
+                            name,
+                            Need::Callable(arguments.len(), format!("`{function}`")),
+                        );
+                    }
+                }
+                for a in arguments {
+                    let (Argument::Positional(inner) | Argument::Named { value: inner, .. }) = a;
+                    walk(inner, function, live, all, out);
+                }
+            }
+            Expr::BinaryOp { left, op, right } => {
+                if matches!(op, crate::ast::BinaryOp::Add) {
+                    match (left.as_ref(), right.as_ref()) {
+                        (Expr::String(_), Expr::Identifier(p))
+                        | (Expr::Identifier(p), Expr::String(_)) => note(p, Need::Text),
+                        _ => {}
+                    }
+                }
+                walk(left, function, live, all, out);
+                if !matches!(op, crate::ast::BinaryOp::And | crate::ast::BinaryOp::Or) {
+                    walk(right, function, live, all, out);
+                }
+            }
+            Expr::Pipeline { left, right } => {
+                walk(left, function, live, all, out);
+                walk(right, function, live, all, out);
+            }
+            Expr::Block(statements) => {
+                let mut live: Vec<String> = live.to_vec();
+                for statement in statements {
+                    match statement.unwrapped() {
+                        Statement::Expression(inner) => walk(inner, function, &live, all, out),
+                        Statement::LetDecl(decl) => {
+                            if let Some(value) = &decl.value {
+                                walk(value, function, &live, all, out);
+                            }
+                            let mut bound = std::collections::HashSet::new();
+                            crate::resolve::pattern_names_of(&decl.pattern, &mut bound);
+                            live.retain(|p| !bound.contains(p));
+                        }
+                        _ => return,
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = vec![None; parameters.len()];
+    walk(body, function, parameters, parameters, &mut out);
+    out
+}
+
 /// A known function's checkable surface.
 struct FnSig {
     param_names: Vec<String>,
@@ -1522,6 +1853,7 @@ pub fn check_program_with_context(context: &[&Program], program: &Program) -> Ve
         checker.collect(p);
     }
     checker.sigs.retain(|name, _| !ambiguous.contains(name));
+    checker.needs.retain(|name, _| !ambiguous.contains(name));
     // A context module's functions are signatures for THIS file only
     // under the names it imported. `use web { rpc, route }` does not put
     // the SDK's `p(attrs, children)` in scope, and a local `p` called
@@ -1529,6 +1861,7 @@ pub fn check_program_with_context(context: &[&Program], program: &Program) -> Ve
     // shared name arrives) the set is unknown, and all are kept.
     if let Some(imported) = imported_names(program) {
         checker.sigs.retain(|name, _| imported.contains(name));
+        checker.needs.retain(|name, _| imported.contains(name));
     }
     checker.collect(program);
     checker.push_scope();
@@ -1606,6 +1939,9 @@ pub fn hover_types(program: &Program) -> HashMap<String, String> {
 #[derive(Default)]
 struct Checker {
     sigs: HashMap<String, FnSig>,
+    /// What each parameter of a function of this file must be, as far as
+    /// its body shows on its unconditional path (see `Need`).
+    needs: HashMap<String, Vec<Option<Need>>>,
     structs: HashMap<String, Vec<(String, SType)>>,
     /// Declared enums: type name → its constructors, in declaration
     /// order, and the reverse map from a constructor to its enum.
@@ -1683,6 +2019,13 @@ impl Checker {
                     _ => {}
                 },
                 Statement::FunctionDecl(f) => {
+                    let names: Vec<String> = f.parameters.iter().map(|p| p.name.clone()).collect();
+                    let needs = parameter_needs(&f.name, &names, &f.body);
+                    if needs.iter().any(Option::is_some) {
+                        self.needs.insert(f.name.clone(), needs);
+                    } else {
+                        self.needs.remove(&f.name);
+                    }
                     let required = f
                         .parameters
                         .iter()
@@ -2046,6 +2389,114 @@ impl Checker {
             warning: false,
             scope: false,
         });
+    }
+
+    /// A loop that copies the collection it is building, once per pass.
+    /// `v = v + [x]` and `v = map_set(v, k, x)` extend in place, and so
+    /// does `let t = v + [x]; v = t` when `t` is not read again. What
+    /// cannot: a temporary that is still read after the rebind holds a
+    /// second reference, so the extension copies (O(n) a pass, O(n²) a
+    /// loop); and a prepend, `v = [x] + v`, moves every element each time.
+    /// Both run correctly and look innocent — 525 ms against 1 ms for
+    /// 60,000 elements, measured — so they are said here. Class `copy`.
+    fn copies_per_pass(&mut self, body: &Expr, span: (u32, u32)) {
+        let Expr::Block(statements) = body else {
+            return;
+        };
+        let extends = |e: &Expr, of: &mut Option<String>| -> bool {
+            match e {
+                Expr::BinaryOp {
+                    left,
+                    op: crate::ast::BinaryOp::Add,
+                    right,
+                } => match (left.as_ref(), right.as_ref()) {
+                    (Expr::Identifier(v), Expr::List(_)) => {
+                        *of = Some(v.clone());
+                        true
+                    }
+                    _ => false,
+                },
+                Expr::Call { callee, arguments } => {
+                    let named = matches!(callee.as_ref(), Expr::Identifier(n) if n == "map_set");
+                    match arguments.first() {
+                        Some(Argument::Positional(Expr::Identifier(v))) if named => {
+                            *of = Some(v.clone());
+                            true
+                        }
+                        _ => false,
+                    }
+                }
+                _ => false,
+            }
+        };
+        for (i, statement) in statements.iter().enumerate() {
+            let at = match statement {
+                Statement::Located { line, column, .. } => (*line, *column),
+                _ => span,
+            };
+            match statement.unwrapped() {
+                // let t = v + [x] … v = t, with t read in between or after.
+                Statement::LetDecl(decl) => {
+                    let (crate::ast::Pattern::Identifier(temp), Some(value)) =
+                        (&decl.pattern, &decl.value)
+                    else {
+                        continue;
+                    };
+                    let mut of = None;
+                    if !extends(value, &mut of) {
+                        continue;
+                    }
+                    let collection = of.unwrap_or_default();
+                    let rebinds_at = statements[i + 1..].iter().position(|s| {
+                        matches!(s.unwrapped(), Statement::Expression(Expr::Assignment { target, value })
+                            if *target == collection
+                                && matches!(value.as_ref(), Expr::Identifier(n) if n == temp))
+                    });
+                    let Some(offset) = rebinds_at else { continue };
+                    let others: Vec<&Statement> = statements[i + 1..]
+                        .iter()
+                        .enumerate()
+                        .filter(|(j, _)| *j != offset)
+                        .map(|(_, s)| s)
+                        .collect();
+                    if crate::resolve::mentioned_names(&others)
+                        .binary_search(temp)
+                        .is_ok()
+                    {
+                        self.warn(
+                            at,
+                            format!(
+                                "`{collection}` is copied on every pass of this loop: `{temp}` still holds \
+                                 the extended value when `{collection} = {temp}` runs, so the extension \
+                                 cannot happen in place. Rebind first — `{collection} = ...` — and read \
+                                 `{collection}` afterwards"
+                            ),
+                        );
+                    }
+                }
+                // v = [x] + v
+                Statement::Expression(Expr::Assignment { target, value }) => {
+                    if let Expr::BinaryOp {
+                        left,
+                        op: crate::ast::BinaryOp::Add,
+                        right,
+                    } = value.as_ref()
+                        && matches!(left.as_ref(), Expr::List(_))
+                        && matches!(right.as_ref(), Expr::Identifier(n) if n == target)
+                    {
+                        self.warn(
+                            at,
+                            format!(
+                                "`{target} = [..] + {target}` moves every element of `{target}` on each \
+                                 pass of this loop: append (`{target} = {target} + [..]`, in place) and \
+                                 `reverse` once after it"
+                            ),
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     /// A fallible call in statement position drops its failure on the
@@ -2569,7 +3020,67 @@ impl Checker {
         }
     }
 
+    /// An argument that cannot be what the call needs: a builtin's first
+    /// argument (`fold(5, …)`), or what a function of this program passes
+    /// straight on to one, or calls (`total(5)` where `total` folds its
+    /// parameter; a one-parameter lambda handed to a function that calls
+    /// it with two). Only what is provable: a literal or an inferred type
+    /// the runtime refuses on every tier.
+    fn check_needs(&mut self, name: &str, arguments: &[Argument], span: (u32, u32)) {
+        if self.scopes.iter().any(|scope| scope.contains_key(name)) {
+            return;
+        }
+        let positional = |i: usize| match arguments.get(i) {
+            Some(Argument::Positional(e)) => Some(e),
+            _ => None,
+        };
+        if !self.sigs.contains_key(name)
+            && let Some(need) = builtin_need(name)
+            && let Some(first) = positional(0)
+            && let Some(why) = need.refuses(&self.infer(first))
+        {
+            self.diag(
+                span,
+                true,
+                format!("the first argument of `{name}` is {why}"),
+            );
+            return;
+        }
+        let Some(needs) = self.needs.get(name).cloned() else {
+            return;
+        };
+        if !arguments
+            .iter()
+            .all(|a| matches!(a, Argument::Positional(_)))
+        {
+            return;
+        }
+        for (i, need) in needs.iter().enumerate() {
+            let (Some(need), Some(argument)) = (need, positional(i)) else {
+                continue;
+            };
+            if let Some(why) = need.refuses(&self.infer(argument)) {
+                let via = match need {
+                    Need::Callable(..) | Need::Text => String::new(),
+                    Need::Sequence(b) | Need::MapLike(b) => {
+                        format!(" (`{name}` passes it to `{b}`)")
+                    }
+                };
+                self.diag(
+                    span,
+                    true,
+                    format!("argument {} of `{name}` is {why}{via}", i + 1),
+                );
+            }
+        }
+    }
+
     fn check_expr(&mut self, expr: &Expr, span: (u32, u32)) {
+        if let Expr::Call { callee, arguments } = expr
+            && let Expr::Identifier(name) = callee.as_ref()
+        {
+            self.check_needs(name, arguments, span);
+        }
         // Check this node, then walk its children.
         if let Expr::Call { callee, arguments } = expr
             && let Expr::Identifier(name) = callee.as_ref()
@@ -2789,14 +3300,19 @@ impl Checker {
                 self.check_expr(iterable, span);
                 self.push_scope();
                 self.bind(&variable.clone(), SType::Unknown);
+                self.copies_per_pass(body, span);
                 self.check_expr(body, span);
                 self.pop_scope(Merge::Construct);
             }
             Expr::WhileLoop { condition, body } => {
                 self.check_expr(condition, span);
+                self.copies_per_pass(body, span);
                 self.check_expr(body, span);
             }
-            Expr::Loop { body } => self.check_expr(body, span),
+            Expr::Loop { body } => {
+                self.copies_per_pass(body, span);
+                self.check_expr(body, span)
+            }
             Expr::Lambda {
                 parameters, body, ..
             } => {

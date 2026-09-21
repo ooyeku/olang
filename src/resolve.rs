@@ -98,6 +98,12 @@ impl Resolver {
         function_name: Option<&str>,
         parameters: &[String],
     ) -> Expr {
+        // The accumulator a function returns extended — `(m, k) =>
+        // map_set(m, k, v)`, `(acc, x) => acc + [x]` — is rebound first
+        // (see `tail_accumulate`), so the existing fusions extend it in
+        // place instead of copying it on every call.
+        let rebound = tail_accumulate(body, parameters);
+        let body = rebound.as_ref().unwrap_or(body);
         let mut scope = Scope::new();
         if let Some(name) = function_name {
             scope.bind(name);
@@ -168,6 +174,8 @@ impl Resolver {
             // opening one here would put every inner reference one hop
             // too deep.
             Expr::Block(statements) => {
+                let fused = fuse_rebinds(statements);
+                let statements = fused.as_ref().unwrap_or(statements);
                 let binds = statements.iter().any(Self::statement_binds);
                 if binds {
                     self.frames.push(Scope::new());
@@ -386,6 +394,16 @@ impl Resolver {
 
     fn resolve_statement(&mut self, statement: &Statement) -> Statement {
         match statement {
+            // The parser wraps every statement in its position. Without
+            // this arm the wrapper fell to the clone at the bottom, and no
+            // statement inside any block was ever resolved — or reached by
+            // the rewrites above: slot resolution had been applying to
+            // single-expression bodies alone.
+            Statement::Located { line, column, stmt } => Statement::Located {
+                line: *line,
+                column: *column,
+                stmt: Box::new(self.resolve_statement(stmt)),
+            },
             Statement::Expression(e) => Statement::Expression(self.resolve_expr(e)),
             Statement::LetDecl(decl) => {
                 let value = decl.value.as_ref().map(|v| self.resolve_expr(v));
@@ -472,5 +490,279 @@ impl Resolver {
             }
             Pattern::Literal(_) | Pattern::Wildcard | Pattern::Range { .. } => {}
         }
+    }
+}
+
+/// Every name a piece of syntax mentions: every string in its serialized
+/// form, sorted. A superset of the identifiers it can name, and total by
+/// construction — a hand-written walk of the expression forms would miss
+/// the next form added. A string literal that happens to spell a binding
+/// captures that binding, which is harmless.
+pub(crate) fn mentioned_names<T: serde::Serialize>(syntax: &T) -> Vec<String> {
+    /// Reads serialized JSON as it is written and keeps the contents of
+    /// its strings — keys and values alike — without building the tree: a
+    /// view function's body is thousands of nodes, and a tree of them was
+    /// tens of megabytes allocated and freed per lambda expression.
+    #[derive(Default)]
+    struct Strings {
+        found: Vec<String>,
+        current: Vec<u8>,
+        in_string: bool,
+        escaped: bool,
+    }
+    impl std::io::Write for Strings {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            for &b in bytes {
+                if !self.in_string {
+                    self.in_string = b == b'"';
+                } else if self.escaped {
+                    // An escape never occurs in an identifier; whatever it
+                    // stands for, the string is not a name.
+                    self.escaped = false;
+                    self.current.push(b'\\');
+                } else if b == b'\\' {
+                    self.escaped = true;
+                } else if b == b'"' {
+                    self.in_string = false;
+                    if let Ok(name) = std::str::from_utf8(&self.current) {
+                        self.found.push(name.to_string());
+                    }
+                    self.current.clear();
+                } else {
+                    self.current.push(b);
+                }
+            }
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut strings = Strings::default();
+    let _ = serde_json::to_writer(&mut strings, syntax);
+    let mut mentioned = strings.found;
+    mentioned.sort();
+    mentioned.dedup();
+    mentioned
+}
+
+/// `let t = e` followed at once by `v = t`, with `t` never named again in
+/// the block, is `v = e`. People write an accumulation that way — `let
+/// next = out + [x]; out = next` — and it cost a copy of `out` per
+/// iteration (525 ms against 1 ms for 60,000 elements) because the
+/// in-place fusions recognize `out = out + [x]` and nothing else. The two
+/// statements mean the same thing for ANY `e`: the `let`'s value is
+/// evaluated where it stood, and the only thing dropped is a binding
+/// nothing reads. An annotated `let` is left alone — its type check is
+/// an observable part of it.
+fn fuse_rebinds(statements: &[Statement]) -> Option<Vec<Statement>> {
+    fn unwrapped(statement: &Statement) -> &Statement {
+        match statement {
+            Statement::Located { stmt, .. } => unwrapped(stmt),
+            other => other,
+        }
+    }
+    let mut out: Option<Vec<Statement>> = None;
+    let mut i = 0;
+    while i < statements.len() {
+        let pair = statements.get(i + 1).and_then(|next| {
+            let Statement::LetDecl(decl) = unwrapped(&statements[i]) else {
+                return None;
+            };
+            let (Pattern::Identifier(temp), None, Some(value)) =
+                (&decl.pattern, &decl.type_annotation, &decl.value)
+            else {
+                return None;
+            };
+            let Statement::Expression(Expr::Assignment {
+                target,
+                value: assigned,
+            }) = unwrapped(next)
+            else {
+                return None;
+            };
+            let from_temp = matches!(assigned.as_ref(), Expr::Identifier(n) if n == temp);
+            if !from_temp || target == temp {
+                return None;
+            }
+            let later = &statements[i + 2..];
+            if !later.is_empty() && mentioned_names(&later).binary_search(temp).is_ok() {
+                return None;
+            }
+            Some(Expr::Assignment {
+                target: target.clone(),
+                value: Box::new(value.clone()),
+            })
+        });
+        match pair {
+            Some(assignment) => {
+                let fused = match &statements[i] {
+                    Statement::Located { line, column, .. } => Statement::Located {
+                        line: *line,
+                        column: *column,
+                        stmt: Box::new(Statement::Expression(assignment)),
+                    },
+                    _ => Statement::Expression(assignment),
+                };
+                out.get_or_insert_with(|| statements[..i].to_vec())
+                    .push(fused);
+                i += 2;
+            }
+            None => {
+                if let Some(out) = out.as_mut() {
+                    out.push(statements[i].clone());
+                }
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// A function whose result is one of its parameters extended — `map_set(m,
+/// k, v)`, `acc + [x]`, `push(h, p, v)` as its final expression — is the
+/// accumulator of a `fold`, a reducer, a recursive builder. Returned as
+/// written, the parameter's slot still holds the collection while it is
+/// extended, so the extension copies it: `fold` over 20,000 keys with
+/// `map_set` took 3.5 s where the same loop written with `m = map_set(m,
+/// …)` took 3 ms. The final expression is rewritten to that rebinding
+/// form, `p = f(p, …)`, which both tiers already fuse into an in-place
+/// write when the value is solely owned. An assignment's value is the
+/// value assigned and the frame ends with the expression, so nothing can
+/// observe the difference but the clock.
+pub(crate) fn tail_accumulate(body: &Expr, parameters: &[String]) -> Option<Expr> {
+    fn is_param(e: &Expr, parameters: &[String]) -> Option<String> {
+        match e {
+            Expr::Identifier(name) | Expr::LocalRef { name, .. } if parameters.contains(name) => {
+                Some(name.clone())
+            }
+            _ => None,
+        }
+    }
+    match body {
+        Expr::Block(statements) => {
+            let (last, before) = statements.split_last()?;
+            let (expr, located) = match last {
+                Statement::Located { line, column, stmt } => match stmt.as_ref() {
+                    Statement::Expression(e) => (e, Some((*line, *column))),
+                    _ => return None,
+                },
+                Statement::Expression(e) => (e, None),
+                _ => return None,
+            };
+            // A `let` of the same name inside the block would make the
+            // parameter's name mean something else at the tail.
+            let rewritten = tail_accumulate(expr, parameters)?;
+            if let Expr::Assignment { target, .. } = &rewritten
+                && before.iter().any(|s| {
+                    let mut names = std::collections::HashSet::new();
+                    collect_let_names(s, &mut names);
+                    names.contains(target)
+                })
+            {
+                return None;
+            }
+            let mut out = before.to_vec();
+            let statement = Statement::Expression(rewritten);
+            out.push(match located {
+                Some((line, column)) => Statement::Located {
+                    line,
+                    column,
+                    stmt: Box::new(statement),
+                },
+                None => statement,
+            });
+            Some(Expr::Block(out))
+        }
+        // The accumulator of a fold that keeps some elements: `if keep(x)
+        // => acc + [x] else => acc`. Each branch's tail is the function's.
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            let then_new = tail_accumulate(then_branch, parameters);
+            let else_new = else_branch
+                .as_ref()
+                .and_then(|e| tail_accumulate(e, parameters));
+            if then_new.is_none() && else_new.is_none() {
+                return None;
+            }
+            Some(Expr::If {
+                condition: condition.clone(),
+                then_branch: Box::new(then_new.unwrap_or_else(|| (**then_branch).clone())),
+                else_branch: match (else_new, else_branch) {
+                    (Some(e), _) => Some(Box::new(e)),
+                    (None, other) => other.clone(),
+                },
+            })
+        }
+        Expr::Match { value, arms } => {
+            let mut any = false;
+            let arms = arms
+                .iter()
+                .map(|arm| {
+                    // A pattern that binds the parameter's name makes the
+                    // name mean the pattern's binding inside the arm.
+                    let mut bound = std::collections::HashSet::new();
+                    Resolver::pattern_names(&arm.pattern, &mut bound);
+                    let usable: Vec<String> = parameters
+                        .iter()
+                        .filter(|p| !bound.contains(*p))
+                        .cloned()
+                        .collect();
+                    match tail_accumulate(&arm.expression, &usable) {
+                        Some(expression) => {
+                            any = true;
+                            crate::ast::MatchArm {
+                                pattern: arm.pattern.clone(),
+                                guard: arm.guard.clone(),
+                                expression,
+                            }
+                        }
+                        None => arm.clone(),
+                    }
+                })
+                .collect();
+            any.then(|| Expr::Match {
+                value: value.clone(),
+                arms,
+            })
+        }
+        Expr::Call { arguments, .. } => {
+            let crate::ast::Argument::Positional(first) = arguments.first()? else {
+                return None;
+            };
+            let target = is_param(first, parameters)?;
+            Some(Expr::Assignment {
+                target,
+                value: Box::new(body.clone()),
+            })
+        }
+        Expr::BinaryOp {
+            left,
+            op: crate::ast::BinaryOp::Add,
+            ..
+        } => {
+            let target = is_param(left, parameters)?;
+            Some(Expr::Assignment {
+                target,
+                value: Box::new(body.clone()),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// The names a pattern binds.
+pub(crate) fn pattern_names_of(pattern: &Pattern, names: &mut std::collections::HashSet<String>) {
+    Resolver::pattern_names(pattern, names)
+}
+
+fn collect_let_names(statement: &Statement, names: &mut std::collections::HashSet<String>) {
+    match statement {
+        Statement::Located { stmt, .. } => collect_let_names(stmt, names),
+        Statement::LetDecl(decl) => Resolver::pattern_names(&decl.pattern, names),
+        _ => {}
     }
 }

@@ -87,6 +87,23 @@ O(n) per operation instead of O(1). The same applies to reading the
 variable in a position the fusion cannot see; keep updates in the shape
 `x = op(x, ...)`.
 
+Two spellings that are not literally the rebind form are read as it,
+because they are what people write and mean exactly the same thing:
+
+| Written | Read as |
+|---|---|
+| `let next = out + [x]; out = next` — a temporary that is never read again, rebound at once | `out = out + [x]` |
+| a function or lambda whose result is one of its parameters extended: `(m, k) => map_set(m, k, v)`, `(acc, x) => if keep(x) => acc + [x] else => acc`, the same through a `match` | `m = map_set(m, k, v)` as its final expression, which answers the value assigned |
+
+The second is every reducer: `fold` hands its accumulator over rather
+than sharing it, so a `fold` that builds a list or a map extends it in
+place — 20,000 keys through `fold` and `map_set` took 3.5 s in 0.86.0
+and take 5 ms, which is what the loop took. A temporary that *is* read
+again holds a second reference, and a prepend (`out = [x] + out`) moves
+every element; neither can happen in place, and `olang check` says so
+where the loop is written (class `copy` of
+[`[check] promote`](tooling.md#olang-check)).
+
 One ordering rule follows from the semantics: the arguments after the
 first are evaluated *before* the value is taken, so
 `m = map_set(m, k, map_get(m, k) + 1)` reads the live map and then
@@ -200,7 +217,7 @@ consulted after the closure by both tiers.
 | the same after `runtime.wasm()` | 99 MB | 10 MB | 0.3 MB |
 | one file of 4,000 one-line functions | 137 MB | 32 MB | 12 MB |
 | the same as an imported module | 140 MB | 39 MB | 12 MB |
-| an application of 56 files and three packages, served with 18 http workers | 950 MB | 445 MB | 97 MB |
+| an application of 56 files and three packages, served with 18 http workers | 950 MB | 445 MB (330 MB since the flat expression grammar) | 97 MB |
 | twenty thousand closures created in a function, on the interpreter | 2.9 GB of heap | 82 MB | 60 MB |
 
 A value is 40 bytes (176 in 0.85.0): a function, an enum value, a
@@ -212,14 +229,18 @@ map rebuilt per closure — and every closure made from one lambda
 expression shares one resolved body.
 
 The difference between resident memory and the heap is memory that was
-freed and is still resident. The grammar's token queue costs about a
-hundred bytes per byte of source, so a source of 16 KB or more is
-parsed a run of top-level statements at a time and the queue is bounded
-by a chunk; that lowers the peak. What remains is the system
-allocator's own cache of freed large blocks — about 120 MB for the
-served application above, which macOS returns under memory pressure and
-`MallocLargeCache=0` removes at a third more boot time. It does not
-grow with the life of the process.
+freed and is still resident, and most of it was the parser's. The
+grammar's token queue cost about a hundred bytes per byte of source
+while every operand opened and closed a rule per precedence level; a
+binary expression is now parsed flat and its tree built by precedence
+climbing, which cut the queue by two thirds, and a source of 16 KB or
+more is parsed a run of top-level statements at a time, which bounds it
+by a chunk (640 KB for a 90 KB file, from 10 MB). Booting the served
+application above made 436 allocations of 4 MB or more in 0.86.0 and
+makes three — single statements too large to split — and the system
+allocator's cache of freed large blocks, which it keeps resident, fell
+from 122 MB to 8: the process's physical footprint at boot is 143 MB,
+from 303. It does not grow with the life of the process.
 
 [`runtime.memory()`](stdlib.md#runtime--what-this-binary-carries) reports
 the heap by share — the loaded program, the running program's values,

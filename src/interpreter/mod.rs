@@ -91,59 +91,6 @@ pub use errors::{InterpreterError, IntuitiveErrorFormatter};
 mod environment;
 pub use environment::{Environment, ModuleDebugConfig};
 
-/// Every name a piece of syntax mentions: every string in its serialized
-/// form, sorted. A superset of the identifiers it can name, and total by
-/// construction — a hand-written walk of the expression forms would miss
-/// the next form added. A string literal that happens to spell a binding
-/// captures that binding, which is harmless.
-fn mentioned_names<T: serde::Serialize>(syntax: &T) -> Vec<String> {
-    /// Reads serialized JSON as it is written and keeps the contents of
-    /// its strings — keys and values alike — without building the tree: a
-    /// view function's body is thousands of nodes, and a tree of them was
-    /// tens of megabytes allocated and freed per lambda expression.
-    #[derive(Default)]
-    struct Strings {
-        found: Vec<String>,
-        current: Vec<u8>,
-        in_string: bool,
-        escaped: bool,
-    }
-    impl std::io::Write for Strings {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            for &b in bytes {
-                if !self.in_string {
-                    self.in_string = b == b'"';
-                } else if self.escaped {
-                    // An escape never occurs in an identifier; whatever it
-                    // stands for, the string is not a name.
-                    self.escaped = false;
-                    self.current.push(b'\\');
-                } else if b == b'\\' {
-                    self.escaped = true;
-                } else if b == b'"' {
-                    self.in_string = false;
-                    if let Ok(name) = std::str::from_utf8(&self.current) {
-                        self.found.push(name.to_string());
-                    }
-                    self.current.clear();
-                } else {
-                    self.current.push(b);
-                }
-            }
-            Ok(bytes.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    let mut strings = Strings::default();
-    let _ = serde_json::to_writer(&mut strings, syntax);
-    let mut mentioned = strings.found;
-    mentioned.sort();
-    mentioned.dedup();
-    mentioned
-}
-
 /// A lambda expression, worked out once (`Interpreter::lambda_shape`).
 struct LambdaShape {
     parameters: Vec<String>,
@@ -1595,12 +1542,10 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             None => {
                 // A nested `fn` sees the siblings its enclosing function sees.
                 run = self.environment.run.clone();
-                Arc::new(
-                    self.collect_captures(&mentioned_names(&(
-                        &func_decl.parameters,
-                        &func_decl.body,
-                    ))),
-                )
+                Arc::new(self.collect_captures(&crate::resolve::mentioned_names(&(
+                    &func_decl.parameters,
+                    &func_decl.body,
+                ))))
             }
         };
 
@@ -1738,6 +1683,11 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     return result;
                 }
                 if let Some(result) = self.try_fused_move_call(name, value) {
+                    return result;
+                }
+                // The same fusion the unresolved form has: a resolved body
+                // must not be the slower one.
+                if let Some(result) = self.try_fused_list_extend(name, value) {
                     return result;
                 }
                 let val = self.eval_expr(value)?;
@@ -2045,50 +1995,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 if let Some(result) = self.try_fused_move_call(target, value) {
                     return result;
                 }
-                // Fuse `xs = xs + [..]` into an in-place extend when xs holds
-                // a sole-owned list — the interpreter half of finding #1,
-                // turning O(n²) accumulation into O(n). Narrowed to a list
-                // *literal* rhs so numeric and string accumulation keep their
-                // existing path untouched. Guarded exactly like the bytecode
-                // tier: fusion evaluates rhs before touching xs, so rhs must
-                // provably assign nothing (else the read order would change),
-                // and `try_extend_list`'s `Arc::get_mut` guard copies instead
-                // of mutating whenever the list is aliased — so a snapshot, a
-                // nested list, or a captured closure is never disturbed.
-                if let Expr::BinaryOp {
-                    left,
-                    op: crate::ast::BinaryOp::Add,
-                    right,
-                } = value.as_ref()
-                    && matches!(right.as_ref(), Expr::List(_))
-                    && matches!(left.as_ref(), Expr::Identifier(n) if n == target)
-                    && crate::ovm::bytecode::BytecodeCompiler::assignment_free(right)
-                {
-                    let rhs = self.eval_expr(right)?;
-                    if let Value::List(items) = &rhs
-                        && self.environment.try_extend_list(target, items)
-                    {
-                        return self.environment.get(target).ok_or_else(|| {
-                            InterpreterError::UndefinedVariable {
-                                name: target.clone(),
-                            }
-                        });
-                    }
-                    // Aliased, or xs is not a list: finish as an ordinary
-                    // `xs + rhs`. rhs is assignment-free, so reading xs now
-                    // (after rhs) gives the same value the normal left-first
-                    // order would have.
-                    let current = self.environment.get(target).ok_or_else(|| {
-                        InterpreterError::UndefinedVariable {
-                            name: target.clone(),
-                        }
-                    })?;
-                    let val = self.eval_binary_op(current, crate::ast::BinaryOp::Add, rhs)?;
-                    self.environment.set(target, val.clone()).or_else(|_| {
-                        self.environment.define(target.clone(), val.clone());
-                        Ok(())
-                    })?;
-                    return Ok(val);
+                if let Some(result) = self.try_fused_list_extend(target, value) {
+                    return result;
                 }
                 let val = self.eval_expr(value)?;
                 self.environment.set(target, val.clone()).or_else(|_| {
@@ -2856,6 +2764,61 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 }
             }
         }
+    }
+
+    /// Fuse `xs = xs + [..]` into an in-place extend when xs holds a
+    /// sole-owned list — the interpreter half of finding #1, turning O(n²)
+    /// accumulation into O(n). Narrowed to a list *literal* rhs so numeric
+    /// and string accumulation keep their existing path untouched. Guarded
+    /// exactly like the bytecode tier: fusion evaluates rhs before touching
+    /// xs, so rhs must provably assign nothing (else the read order would
+    /// change), and `try_extend_list`'s `Arc::get_mut` guard copies instead
+    /// of mutating whenever the list is aliased — so a snapshot, a nested
+    /// list, or a captured closure is never disturbed. `None` when the
+    /// assignment is not of this shape.
+    fn try_fused_list_extend(
+        &mut self,
+        target: &str,
+        value: &Expr,
+    ) -> Option<Result<Value, InterpreterError>> {
+        let Expr::BinaryOp {
+            left,
+            op: crate::ast::BinaryOp::Add,
+            right,
+        } = value
+        else {
+            return None;
+        };
+        let names_target = matches!(left.as_ref(), Expr::Identifier(n) if n == target)
+            || matches!(left.as_ref(), Expr::LocalRef { name, .. } if name == target);
+        if !names_target
+            || !matches!(right.as_ref(), Expr::List(_))
+            || !crate::ovm::bytecode::BytecodeCompiler::assignment_free(right)
+        {
+            return None;
+        }
+        Some(self.fused_list_extend(target, right))
+    }
+
+    fn fused_list_extend(&mut self, target: &str, right: &Expr) -> Result<Value, InterpreterError> {
+        let undefined = || InterpreterError::UndefinedVariable {
+            name: target.to_string(),
+        };
+        let rhs = self.eval_expr(right)?;
+        if let Value::List(items) = &rhs
+            && self.environment.try_extend_list(target, items)
+        {
+            return self.environment.get(target).ok_or_else(undefined);
+        }
+        // Aliased, or xs is not a list: finish as an ordinary `xs + rhs`.
+        // rhs is assignment-free, so reading xs now (after rhs) gives the
+        // same value the normal left-first order would have.
+        let current = self.environment.get(target).ok_or_else(undefined)?;
+        let val = self.eval_binary_op(current, crate::ast::BinaryOp::Add, rhs)?;
+        if self.environment.set(target, val.clone()).is_err() {
+            self.environment.define(target.to_string(), val.clone());
+        }
+        Ok(val)
     }
 
     /// Fuse `x = f(x, ...)` — a call to a user function that rebinds
@@ -4493,7 +4456,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         let param_names: Vec<String> = parameters.iter().map(|p| p.name.clone()).collect();
         let resolved = crate::resolve::Resolver::resolve_function_body(body, None, &param_names);
         // Parameter defaults are evaluated in the closure too.
-        let mentioned = mentioned_names(&(parameters, body));
+        let mentioned = crate::resolve::mentioned_names(&(parameters, body));
         let shape = Arc::new(LambdaShape {
             parameters: param_names,
             original: body.clone(),

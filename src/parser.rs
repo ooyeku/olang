@@ -146,9 +146,9 @@ fn humanize_rule(rule: Rule) -> &'static str {
 
 /// Sources at least this large are parsed in chunks.
 const CHUNKED_FROM: usize = 16 * 1024;
-/// The least a chunk holds. A large source uses an eighth of itself:
+/// The least a chunk holds. A large source uses a sixteenth of itself:
 /// every chunk re-reads the blanked text before it (9 ms a megabyte), and
-/// eight chunks bound that at four passes over the file.
+/// sixteen chunks bound that at eight passes over the file.
 const CHUNK_BYTES: usize = 8 * 1024;
 
 /// The byte offsets at which a top-level statement of `input` may be
@@ -728,7 +728,7 @@ impl Parser {
         // (see `parse_in_chunks`); anything that does not come out clean
         // that way is parsed whole, which also owns every error message.
         let chunked = if input.len() >= CHUNKED_FROM {
-            self.parse_in_chunks(input, (input.len() / 8).max(CHUNK_BYTES))
+            self.parse_in_chunks(input, (input.len() / 16).max(CHUNK_BYTES))
         } else {
             None
         };
@@ -1135,7 +1135,6 @@ impl Parser {
             match pair.as_rule() {
                 Rule::binary_expr => self.build_binary_expr(pair.into_inner()),
                 Rule::match_expr => self.build_match_expr(pair.into_inner()),
-                Rule::pipe_expr => self.build_pipe_expr(pair.into_inner()),
                 Rule::call_expr => self.build_call_expr(pair.into_inner()),
                 Rule::primary => self.build_primary(pair.into_inner()),
                 Rule::for_loop => self.build_for_loop(pair.into_inner(), false),
@@ -1170,231 +1169,127 @@ impl Parser {
         }
     }
 
-    fn build_binary_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing left operand in binary expression".to_string(),
-        })?;
-        let mut expr = self.build_and_expr(first_pair.into_inner())?;
-
-        while let Some(op_pair) = pairs.next() {
-            if let Some(right_pair) = pairs.next() {
-                let op = match op_pair.as_str() {
-                    "||" => BinaryOp::Or,
-                    _ => break,
-                };
-                let right = self.build_and_expr(right_pair.into_inner())?;
-                expr = Expr::BinaryOp {
-                    left: Box::new(expr),
-                    op,
-                    right: Box::new(right),
-                };
-            } else {
-                break;
-            }
-        }
-        Ok(expr)
-    }
-
-    fn build_and_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing left operand in logical-and expression".to_string(),
-        })?;
-        let mut expr = self.build_comparison_expr(first_pair.into_inner())?;
-
-        while let Some(op_pair) = pairs.next() {
-            if let Some(right_pair) = pairs.next() {
-                let op = match op_pair.as_str() {
-                    "&&" => BinaryOp::And,
-                    _ => break,
-                };
-                let right = self.build_comparison_expr(right_pair.into_inner())?;
-                expr = Expr::BinaryOp {
-                    left: Box::new(expr),
-                    op,
-                    right: Box::new(right),
-                };
-            } else {
-                break;
-            }
-        }
-        Ok(expr)
-    }
-
-    fn build_comparison_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing left operand in comparison expression".to_string(),
-        })?;
-        let mut expr = self.build_pipe_expr(first_pair.into_inner())?;
-
-        while let Some(op_pair) = pairs.next() {
-            if let Some(right_pair) = pairs.next() {
-                let op = match op_pair.as_str() {
-                    "==" => BinaryOp::Equal,
-                    "!=" => BinaryOp::NotEqual,
-                    "<" => BinaryOp::LessThan,
-                    "<=" => BinaryOp::LessThanEqual,
-                    ">" => BinaryOp::GreaterThan,
-                    ">=" => BinaryOp::GreaterThanEqual,
-                    _ => break,
-                };
-                let right = match right_pair.as_rule() {
-                    Rule::cmp_rhs => {
-                        let inner = right_pair.into_inner().next().ok_or_else(|| {
-                            ParseError::InvalidSyntax {
+    /// A binary expression: the grammar hands over operands and the
+    /// operators between them, flat, and the tree is built here by
+    /// precedence climbing — to the tree the grammar's old ladder of one
+    /// rule per level built, at a fraction of the parser's queue (see
+    /// the ladder's note in grammar.pest).
+    fn build_binary_expr(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
+        let mut operands: Vec<Expr> = Vec::new();
+        let mut operators: Vec<(Rule, String)> = Vec::new();
+        for pair in pairs {
+            match pair.as_rule() {
+                Rule::unary_expr => operands.push(self.build_unary_expr(pair.into_inner())?),
+                Rule::cmp_rhs => {
+                    let inner =
+                        pair.into_inner()
+                            .next()
+                            .ok_or_else(|| ParseError::InvalidSyntax {
                                 message: "Missing right operand in comparison".to_string(),
-                            }
-                        })?;
-                        match inner.as_rule() {
-                            Rule::unit => Expr::Tuple(std::sync::Arc::new(Vec::new())),
-                            _ => self.build_pipe_expr(inner.into_inner())?,
-                        }
-                    }
-                    _ => self.build_pipe_expr(right_pair.into_inner())?,
-                };
-                expr = Expr::BinaryOp {
-                    left: Box::new(expr),
-                    op,
-                    right: Box::new(right),
-                };
-            } else {
-                break;
-            }
-        }
-        Ok(expr)
-    }
-
-    fn build_additive_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing left operand in additive expression".to_string(),
-        })?;
-        let mut expr = self.build_multiplicative_expr(first_pair.into_inner())?;
-
-        while let Some(op_pair) = pairs.next() {
-            if let Some(right_pair) = pairs.next() {
-                let op = match op_pair.as_str() {
-                    "+" => BinaryOp::Add,
-                    "-" => BinaryOp::Subtract,
-                    _ => break,
-                };
-                let right = self.build_multiplicative_expr(right_pair.into_inner())?;
-                expr = Expr::BinaryOp {
-                    left: Box::new(expr),
-                    op,
-                    right: Box::new(right),
-                };
-            } else {
-                break;
-            }
-        }
-        Ok(expr)
-    }
-
-    fn build_multiplicative_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing left operand in multiplicative expression".to_string(),
-        })?;
-        let mut expr = self.build_bitwise_expr(first_pair.into_inner())?;
-
-        while let Some(op_pair) = pairs.next() {
-            if let Some(right_pair) = pairs.next() {
-                let op = match op_pair.as_str() {
-                    "*" => BinaryOp::Multiply,
-                    "/" => BinaryOp::Divide,
-                    "%" => BinaryOp::Modulo,
-                    _ => break,
-                };
-                // Multiplicative operands sit directly above bitwise in the
-                // ladder, so both sides build through build_bitwise_expr.
-                let right = self.build_bitwise_expr(right_pair.into_inner())?;
-                expr = Expr::BinaryOp {
-                    left: Box::new(expr),
-                    op,
-                    right: Box::new(right),
-                };
-            } else {
-                break;
-            }
-        }
-        Ok(expr)
-    }
-
-    fn build_bitwise_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing left operand in bitwise expression".to_string(),
-        })?;
-        let mut expr = self.build_unary_expr(first_pair.into_inner())?;
-
-        while let Some(op_pair) = pairs.next() {
-            if let Some(right_pair) = pairs.next() {
-                let op = match op_pair.as_str() {
-                    "&" => BitwiseOp::And,
-                    "|" => BitwiseOp::Or,
-                    "^" => BitwiseOp::Xor,
-                    "<<" => BitwiseOp::Shl,
-                    ">>" => BitwiseOp::Shr,
-                    _ => break,
-                };
-                let right = self.build_unary_expr(right_pair.into_inner())?;
-                expr = Expr::BitwiseOp {
-                    left: Box::new(expr),
-                    op,
-                    right: Box::new(right),
-                };
-            } else {
-                break;
-            }
-        }
-        Ok(expr)
-    }
-
-    fn build_pipe_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing left operand in pipeline expression".to_string(),
-        })?;
-        let mut left = self.build_range_expr(first_pair.into_inner())?;
-
-        while let Some(op_pair) = pairs.next() {
-            if op_pair.as_rule() == Rule::pipe_op {
-                if let Some(right_pair) = pairs.next() {
-                    let right = self.build_range_expr(right_pair.into_inner())?;
-                    left = Expr::Pipeline {
-                        left: Box::new(left),
-                        right: Box::new(right),
-                    };
-                } else {
-                    return Err(ParseError::InvalidSyntax {
-                        message: "Missing right-hand side of pipeline expression".to_string(),
+                            })?;
+                    operands.push(match inner.as_rule() {
+                        Rule::unit => Expr::Tuple(std::sync::Arc::new(Vec::new())),
+                        _ => self.build_unary_expr(inner.into_inner())?,
                     });
                 }
+                rule => operators.push((rule, pair.as_str().to_string())),
             }
         }
-
-        Ok(left)
+        if operands.len() != operators.len() + 1 {
+            return Err(ParseError::InvalidSyntax {
+                message: "Missing operand in binary expression".to_string(),
+            });
+        }
+        let mut operands = operands.into_iter();
+        let mut operators = operators.into_iter().peekable();
+        let first = operands.next().expect("at least one operand");
+        Self::climb(first, &mut operands, &mut operators, 1)
     }
 
-    fn build_range_expr(&self, mut pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let first_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "Missing left operand in range expression".to_string(),
-        })?;
-        // Range bounds are additive expressions: `0..n-1` is `0..(n-1)`.
-        let mut left = self.build_additive_expr(first_pair.into_inner())?;
-
-        if let Some(pair) = pairs.next() {
-            let op_str = pair.as_str();
-            if op_str == ".." || op_str == "..=" {
-                let inclusive = op_str == "..=";
-                let right_pair = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
-                    message: "Missing right operand in range expression".to_string(),
-                })?;
-                let right = self.build_additive_expr(right_pair.into_inner())?;
-                left = Expr::Range {
-                    start: Box::new(left),
-                    end: Box::new(right),
-                    inclusive,
-                };
-            }
+    /// An operator's level on the ladder, loosest first.
+    fn precedence(rule: Rule) -> u8 {
+        match rule {
+            Rule::or_op => 1,
+            Rule::and_op => 2,
+            Rule::comp_op => 3,
+            Rule::pipe_op => 4,
+            Rule::range_op => 5,
+            Rule::add_op => 6,
+            Rule::mul_op => 7,
+            _ => 8, // bitwise_op
         }
+    }
 
+    /// Extend `left` with every operator at `min` or tighter. All levels
+    /// associate to the left; a range does not associate at all.
+    fn climb(
+        mut left: Expr,
+        operands: &mut std::vec::IntoIter<Expr>,
+        operators: &mut std::iter::Peekable<std::vec::IntoIter<(Rule, String)>>,
+        min: u8,
+    ) -> Result<Expr, ParseError> {
+        while let Some((rule, _)) = operators.peek() {
+            let level = Self::precedence(*rule);
+            if level < min {
+                break;
+            }
+            let (rule, text) = operators.next().expect("peeked");
+            let next = operands.next().ok_or_else(|| ParseError::InvalidSyntax {
+                message: "Missing right operand in binary expression".to_string(),
+            })?;
+            let right = Self::climb(next, operands, operators, level + 1)?;
+            left = match rule {
+                Rule::pipe_op => Expr::Pipeline {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                Rule::range_op => {
+                    // `a..b..c`: the ladder's range rule took one `..`.
+                    if matches!(operators.peek(), Some((Rule::range_op, _))) {
+                        return Err(ParseError::InvalidSyntax {
+                            message: "a range's bound cannot itself be a range: parenthesize \
+                                      the one that is meant"
+                                .to_string(),
+                        });
+                    }
+                    Expr::Range {
+                        start: Box::new(left),
+                        end: Box::new(right),
+                        inclusive: text == "..=",
+                    }
+                }
+                Rule::bitwise_op => Expr::BitwiseOp {
+                    left: Box::new(left),
+                    op: match text.as_str() {
+                        "&" => BitwiseOp::And,
+                        "|" => BitwiseOp::Or,
+                        "^" => BitwiseOp::Xor,
+                        "<<" => BitwiseOp::Shl,
+                        _ => BitwiseOp::Shr,
+                    },
+                    right: Box::new(right),
+                },
+                _ => Expr::BinaryOp {
+                    left: Box::new(left),
+                    op: match text.as_str() {
+                        "||" => BinaryOp::Or,
+                        "&&" => BinaryOp::And,
+                        "==" => BinaryOp::Equal,
+                        "!=" => BinaryOp::NotEqual,
+                        "<" => BinaryOp::LessThan,
+                        "<=" => BinaryOp::LessThanEqual,
+                        ">" => BinaryOp::GreaterThan,
+                        ">=" => BinaryOp::GreaterThanEqual,
+                        "+" => BinaryOp::Add,
+                        "-" => BinaryOp::Subtract,
+                        "*" => BinaryOp::Multiply,
+                        "/" => BinaryOp::Divide,
+                        _ => BinaryOp::Modulo,
+                    },
+                    right: Box::new(right),
+                },
+            };
+        }
         Ok(left)
     }
 

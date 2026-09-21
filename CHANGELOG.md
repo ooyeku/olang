@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **Binary expressions are parsed flat and built by precedence
+  climbing.** The grammar had a rule per precedence level, so every
+  operand opened and closed eight rules on its way to `unary_expr` and
+  the parser's queue cost about a hundred bytes per byte of source.
+  What each level means is unchanged: 298 olang files — this repository,
+  and two applications — build byte-identical programs. The queue is a
+  third of what it was, chunks bound it further (640 KB for a 90 KB
+  file, from 10 MB), and an application that made 436 allocations of
+  4 MB or more at boot makes three: its physical footprint at boot is
+  143 MB, from 303.
+- **An accumulation costs the same however it is spelled.** `let next =
+  out + [x]; out = next` is read as `out = out + [x]` (525 → 1 ms for
+  60,000 elements), and a function whose result is one of its parameters
+  extended — every reducer: `(m, k) => map_set(m, k, v)`, `(acc, x) => if
+  keep(x) => acc + [x] else => acc`, the same through `match` — extends
+  it in place, `fold` handing the accumulator over rather than sharing
+  it: 20,000 keys through `fold` and `map_set`, 3.5 s → 5 ms. Lambdas
+  with nothing to check take the fused `map`/`filter`/`fold` lanes (a
+  check list of `None`s had kept every one of them off).
+- **Slot resolution reaches inside blocks again.** The resolver had no
+  case for a statement wrapped in its position — every statement since
+  positions were added — so nothing inside a block was resolved. The
+  interpreter is a third faster for it (`sieve` 16.6 → 10.3 s, `wordfreq`
+  6.9 → 4.8 s under `--no-ovm`).
+
+### Added
+
+- `olang check` reports what every run would refuse in unannotated
+  code: a number handed to a builtin that takes a collection, a non-map
+  to the `map_*` family, a function called with an argument its body
+  passes straight to one of those, adds to a string, or calls with
+  another arity.
+- `olang check` reports a name a file uses and never defines or imports
+  (an undefined variable natively, whatever a browser bundle makes of
+  it), knowing what a bare `use`, an imported type, and a module's own
+  name bring into scope.
+- `[check] promote = ["copy"]`: a loop that copies the collection it is
+  building — a temporary read again after the rebind, or a prepend.
+
 ## [0.86.0] - 2026-09-20
 
 ### Changed

@@ -224,21 +224,36 @@ unary_op      = { "-" | "!" }
 // `0..n-1` is `0..(n-1)`. `|>` sits between comparison and ranges
 // (Elixir's placement): arithmetic feeds a pipeline, and a pipeline's
 // result feeds a comparison — `xs |> len == 3` stays `(xs |> len) == 3`.
-binary_expr   = { and_expr ~ (NL* ~ or_op ~ NL* ~ and_expr)* }
-and_expr      = { comparison_expr ~ (NL* ~ and_op ~ NL* ~ comparison_expr)* }
-comparison_expr = { pipe_expr ~ (NL* ~ comp_op ~ NL* ~ cmp_rhs)* }
+//
+// The ladder is the MEANING; it is not the shape of the grammar. One
+// rule per level made every operand open and close eight rules on its
+// way down to `unary_expr` — sixteen tokens in the parser's queue for a
+// bare identifier, about a hundred bytes of queue per byte of source,
+// which was most of a large program's memory at load. A binary
+// expression is parsed flat — operands and the operators between them —
+// and the tree is built from that by precedence climbing
+// (`Parser::build_binary_expr`), to the tree the ladder built.
+//
+// What the ladder's shape said that a flat rule must still say:
+//   * a range's `..` takes no newline around it, and its bounds are
+//     additive — `0..n-1` — which precedence gives; a range of a range
+//     (`a..b..c`) is refused by the builder, as the ladder refused it;
+//   * every other operator may sit at the start of the next line.
+// Bitwise operators come before the comparisons in the choice so `<<`
+// is never read as `<`.
+binary_expr   = { unary_expr ~ binary_tail* }
+binary_tail   = _{
+    (NL* ~ (or_op | and_op | pipe_op | bitwise_op | add_op | mul_op) ~ NL* ~ unary_expr)
+  | (NL* ~ comp_op ~ NL* ~ cmp_rhs)
+  | (range_op ~ unary_expr)
+}
 // The right of a comparison is the one place `()` must outrank the
 // nullary-lambda reading. `if t == () => 0 else => 1` means "t is Unit,
 // then this branch" — never "t equals a function" — but ordered choice
 // would otherwise let `lambda` swallow the `=>` that belongs to the `if`.
 // Comparing against a literal function is still writable, parenthesized.
-cmp_rhs = { unit | pipe_expr }
+cmp_rhs = { unit | unary_expr }
 pipe_op       = { "|>" }
-pipe_expr     = { range_expr ~ (NL* ~ pipe_op ~ NL* ~ range_expr)* }
-range_expr    = { additive_expr ~ (range_op ~ additive_expr)? }
-additive_expr = { multiplicative_expr ~ (NL* ~ add_op ~ NL* ~ multiplicative_expr)* }
-multiplicative_expr = { bitwise_expr ~ (NL* ~ mul_op ~ NL* ~ bitwise_expr)* }
-bitwise_expr = { unary_expr ~ (NL* ~ bitwise_op ~ NL* ~ unary_expr)* }
 unary_expr    = { unary_op* ~ call_expr }
 call_expr   = { primary ~ ( function_call | ("." ~ identifier) | ("[" ~ expr ~ "]") | postfix_op )* }
 

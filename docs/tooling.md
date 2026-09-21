@@ -231,6 +231,31 @@ runtime's local conventions: `a/b.ol`, `index.ol`, `mod.ol`, same-dir)
 and their `share`d signatures feed the analysis, so a wrong argument to
 an imported function is flagged in the importing file.
 
+Unannotated code is judged where a failure is provable all the same.
+The builtins that take a collection refuse a number or a boolean
+(`fold(5, …)`), and the `map_*` family refuses anything that is not a
+map or a record; and a function shows what it needs of a parameter on
+the path every call takes — handed straight to such a builtin, added to
+a string literal, or called with so many arguments — so the call that
+cannot work is reported where it is written:
+
+```text
+  × argument 1 of `total` is an Int, and `fold` needs a list (`total` passes it to `fold`)
+  × argument 1 of `apply_to` is a function of 1 parameter, and `apply_to` calls it with 2
+```
+
+Only the unconditional path counts: a use inside a branch, a loop, a
+lambda, or the right of `&&`/`||` may stand behind a guard and says
+nothing, as does a local that takes a builtin's name.
+
+A name a file uses and nothing in it defines or imports is an error:
+natively it is an undefined variable the moment that line runs, though
+a browser bundle — one namespace — resolves it from whichever module is
+spliced beside the file, which is how such a name survives for months.
+A bare `use m` brings every name of `m`, an imported type brings its
+variants, and a module is its own namespace; when a bare `use` cannot be
+resolved, what it brings is unknown and nothing is reported.
+
 The checker also goes where the runtime deliberately doesn't: **element
 types**. The runtime checks `List<Int>` shallowly ("a List", O(1)), but
 the checker decomposes literals element by element — `[1, "a", 3]`
@@ -375,7 +400,10 @@ union that misses a case), `shape` (a literal key a declared record
 shape does not carry, read or written), `result` (a discarded `Result`),
 `shadow` (a `let` that takes a stdlib module's name — `let cell = …`
 turns every later `cell.get` in its scope into a run-time failure far
-from the `let`), `tier` (a function `olang check --tier` finds the
+from the `let`), `copy` (a loop that copies the collection it is
+building on every pass: a temporary read again after the rebind, or a
+prepend — see [the rebind forms](performance.md#the-rebind-forms)),
+`tier` (a function `olang check --tier` finds the
 bytecode tier refuses), and `all`. A
 promoted finding fails `olang check` and shows as an error in the
 editor, and its message says which block promoted it.
