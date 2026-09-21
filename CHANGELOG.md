@@ -98,6 +98,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   when any chunk does not come out clean. Every olang file in the
   repository builds the same tree both ways (a test). The 4,000-function
   file: 43 → 32 MB resident.
+- `olang check` means what the file imported. Resolving imports gave it
+  every function of every module a file touches, keyed by bare name: a
+  local `p` was checked as the SDK's `p(attrs, children)`, a function the
+  file never imported had a say, and of two packages' `watch` the wrong
+  one was applied. A local shadows a signature; only imported names
+  carry one; a name two modules declare differently carries none. A
+  module's private imports are no longer followed, and parsed modules
+  are kept for the run: an application of eighty files checks in 13 s,
+  not 64.
 - The analyzer reports every undefined name in one pass; the editor
   shows them all, and `meta.unresolved` no longer re-runs the analysis
   per name.

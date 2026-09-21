@@ -795,3 +795,47 @@ fn a_program_profiles_itself_and_reads_the_counts_back() {
         "{err}"
     );
 }
+
+#[test]
+fn the_checker_means_what_the_file_imported() {
+    // Resolving imports (W21) gave the checker every function of every
+    // module a file touches, keyed by bare name — so a local `p` was the
+    // SDK's `p(attrs, children)`, a function the file never imported had
+    // a say, and of two packages' `watch` the wrong one was checked.
+    let ws = workspace("checkscope");
+    write(
+        &ws,
+        "olang.toml",
+        "[package]\nname = \"checkscope\"\nversion = \"0.1.0\"\n",
+    );
+    write(
+        &ws,
+        "lib/html.ol",
+        "share fn p(attrs, children) = [attrs, children]\nshare fn watch(keys) = keys\n",
+    );
+    write(
+        &ws,
+        "lib/follow.ol",
+        "share fn watch(conn, cfg, id, who) = [conn, cfg, id, who]\n",
+    );
+    write(
+        &ws,
+        "main.ol",
+        "use lib.html { p }\n\
+         use lib.follow { watch }\n\
+         fn run(table, e) = {\n\
+             let p = map_get(table, \"k\")\n\
+             if p == () => () else => p(e)\n\
+         }\n\
+         let followed = watch(1, 2, 3, 4)\n\
+         println(show(p(#{}, [])))\n",
+    );
+    let (out, err, code) = olang(&ws, &["check", "main.ol"]);
+    assert_eq!(code, 0, "{out}{err}");
+    // What it still catches: the imported function, called wrongly.
+    write(&ws, "bad.ol", "use lib.html { p }\nprintln(show(p(#{})))\n");
+    let (out, err, code) = olang(&ws, &["check", "bad.ol"]);
+    let all = format!("{out}{err}");
+    assert_ne!(code, 0, "{all}");
+    assert!(all.contains("Missing required argument: children"), "{all}");
+}

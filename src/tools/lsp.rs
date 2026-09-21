@@ -132,6 +132,9 @@ fn utf16_range(text: &str, line: u32, start_char: usize, end_char: usize) -> Ran
 }
 
 pub fn run() -> Result<(), Box<dyn Error + Sync + Send>> {
+    // One project, many files, checked on every keystroke: keep each
+    // imported module's parse (keyed by its source, so an edit re-parses).
+    crate::expand::keep_module_parses(true);
     let (connection, io_threads) = Connection::stdio();
 
     let capabilities = ServerCapabilities {

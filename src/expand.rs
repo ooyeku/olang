@@ -716,8 +716,7 @@ fn load_module_scope(
     label: &str,
     file: &str,
 ) -> Result<Program, String> {
-    let module_prog = parser
-        .parse_raw(module_src)
+    let module_prog = cached_raw_parse(parser, module_src, file)
         .map_err(|e| format!("use {label}: the imported module does not parse: {e}"))?;
     let mut declarations: Vec<(crate::ast::FunctionDecl, bool)> = Vec::new();
     let mut macros: Vec<String> = Vec::new();
@@ -739,6 +738,58 @@ fn load_module_scope(
     }
     known_macros.extend(macros);
     Ok(module_prog)
+}
+
+thread_local! {
+    /// Whether imported modules' raw parses are kept between expansions,
+    /// and the parses kept (by file, with a hash of the source they are
+    /// of). A tool that expands many files of one project — `olang
+    /// check .`, the language server — turns it on: every file that uses
+    /// a macro parses every module it imports in order to expand, so an
+    /// application's fifty files each parsed the same dozen modules. A
+    /// run leaves it off; it would hold every module's tree for life.
+    static KEEP_MODULE_PARSES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static MODULE_PARSES: std::cell::RefCell<std::collections::HashMap<String, (u64, Program)>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Keep imported modules' parses between expansions on this thread (see
+/// `KEEP_MODULE_PARSES`).
+pub fn keep_module_parses(on: bool) {
+    KEEP_MODULE_PARSES.with(|k| k.set(on));
+    if !on {
+        MODULE_PARSES.with(|m| m.borrow_mut().clear());
+    }
+}
+
+fn cached_raw_parse(
+    parser: &Parser,
+    source: &str,
+    file: &str,
+) -> Result<Program, crate::parser::ParseError> {
+    if !KEEP_MODULE_PARSES.with(|k| k.get()) {
+        return parser.parse_raw(source);
+    }
+    let stamp = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        source.hash(&mut h);
+        h.finish()
+    };
+    if let Some(program) = MODULE_PARSES.with(|m| {
+        m.borrow()
+            .get(file)
+            .filter(|(have, _)| *have == stamp)
+            .map(|(_, program)| program.clone())
+    }) {
+        return Ok(program);
+    }
+    let program = parser.parse_raw(source)?;
+    MODULE_PARSES.with(|m| {
+        m.borrow_mut()
+            .insert(file.to_string(), (stamp, program.clone()))
+    });
+    Ok(program)
 }
 
 /// The expanding file's own `fn` declarations (shared or not) join the

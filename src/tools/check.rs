@@ -32,6 +32,8 @@ use std::sync::Arc;
 /// lints written in olang over the meta AST. Exit 0 when everything is clean
 /// (or unknowable), 1 when a violation, parse error, or rule finding appears.
 pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
+    // Many files of one project: keep each imported module's parse.
+    crate::expand::keep_module_parses(true);
     let mut files = Vec::new();
     for path in paths {
         if !path.exists() {
@@ -815,21 +817,74 @@ pub fn module_programs(
     text: &str,
     doc_dir: Option<&std::path::Path>,
 ) -> Vec<(PathBuf, String, Program)> {
+    modules_used(text, doc_dir, false)
+}
+
+/// A module's tree, parsed once per process while the file stands as it
+/// is: a run over an application checks fifty files that import the same
+/// dozen modules, and parsing (and macro-expanding) each of them for each
+/// importer made `olang check .` a minute long.
+fn parsed_module(path: &Path, src: &str) -> Option<Program> {
+    thread_local! {
+        static PARSED: std::cell::RefCell<HashMap<PathBuf, (u64, Option<Program>)>> =
+            std::cell::RefCell::new(HashMap::new());
+    }
+    // The source's length and a cheap hash of it: an edit between two
+    // checks (the language server) is a different key.
+    let stamp = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        src.hash(&mut h);
+        h.finish()
+    };
+    PARSED.with(|cache| {
+        if let Some((have, program)) = cache.borrow().get(path)
+            && *have == stamp
+        {
+            return program.clone();
+        }
+        let program = crate::parser::Parser::new()
+            .parse_with_dir(src, path.parent())
+            .ok();
+        cache
+            .borrow_mut()
+            .insert(path.to_path_buf(), (stamp, program.clone()));
+        program
+    })
+}
+
+/// `module_programs`, or — for a module it found — only what that module
+/// re-exports (`share use`): a module's private imports are not part of
+/// what importing it brings in, and following them made the walk
+/// exponential in the depth of an application's import graph.
+fn modules_used(
+    text: &str,
+    doc_dir: Option<&std::path::Path>,
+    reexports_only: bool,
+) -> Vec<(PathBuf, String, Program)> {
     let Some(dir) = doc_dir else {
         return Vec::new();
     };
     let Ok(program) = crate::parser::Parser::new().parse(text) else {
         return Vec::new();
     };
-    let mut out = Vec::new();
+    // The modules the file names, and apart from them the modules those
+    // re-export. Re-exports are returned FIRST: a later signature replaces
+    // an earlier one of the same name, and the function a file imports
+    // from a module it names must win over a like-named one some package
+    // re-exports (the SDK's `watch(keys)` stood in for an app module's
+    // `watch(conn, cfg, id, who)` — and did so because the SDK's dozen
+    // re-exports used up a cap of sixteen before the app's module loaded).
+    let mut out: Vec<(PathBuf, String, Program)> = Vec::new();
+    let mut reexported: Vec<(PathBuf, String, Program)> = Vec::new();
     for stmt in &program.statements {
-        if out.len() >= 16 {
+        if out.len() >= 64 {
             break;
         }
-        let (Statement::UseDecl(u) | Statement::ShareDecl(crate::ast::ShareDecl::Use(u))) =
-            stmt.unwrapped()
-        else {
-            continue;
+        let u = match stmt.unwrapped() {
+            Statement::UseDecl(u) if !reexports_only => u,
+            Statement::ShareDecl(crate::ast::ShareDecl::Use(u)) => u,
+            _ => continue,
         };
         if u.path.is_empty() {
             continue;
@@ -870,14 +925,14 @@ pub fn module_programs(
                 break;
             }
             if let Ok(src) = std::fs::read_to_string(&c) {
-                if let Ok(prog) = crate::parser::Parser::new().parse_with_dir(&src, c.parent()) {
+                if let Some(prog) = parsed_module(&c, &src) {
                     // A package's index re-exports: the modules it
                     // `share use`s carry the signatures and types.
-                    let reexports = module_programs(&src, c.parent());
+                    let reexports = modules_used(&src, c.parent(), true);
                     out.push((c, src, prog));
                     for r in reexports {
-                        if out.len() < 32 && !out.iter().any(|(p, _, _)| *p == r.0) {
-                            out.push(r);
+                        if reexported.len() < 96 && !reexported.iter().any(|(p, _, _)| *p == r.0) {
+                            reexported.push(r);
                         }
                     }
                 }
@@ -885,7 +940,9 @@ pub fn module_programs(
             }
         }
     }
-    out
+    reexported.retain(|(path, _, _)| !out.iter().any(|(p, _, _)| p == path));
+    reexported.extend(out);
+    reexported
 }
 
 /// Byte offset of a 1-based (line, column) position — what miette's span
@@ -1393,6 +1450,39 @@ thread_local! {
     > = const { std::cell::RefCell::new(None) };
 }
 
+/// The names `program` imports item by item — or `None` when any `use`
+/// is bare or a wildcard, and what it brings in cannot be listed from the
+/// file alone.
+fn imported_names(program: &Program) -> Option<std::collections::HashSet<String>> {
+    let mut names = std::collections::HashSet::new();
+    let mut any_use = false;
+    for stmt in &program.statements {
+        let (Statement::UseDecl(u) | Statement::ShareDecl(crate::ast::ShareDecl::Use(u))) =
+            stmt.unwrapped()
+        else {
+            continue;
+        };
+        any_use = true;
+        if u.items.is_empty() {
+            return None;
+        }
+        for item in &u.items {
+            match item {
+                crate::ast::UseItem::Specific(name) => {
+                    names.insert(name.clone());
+                }
+                // An alias is a new name for the function: its signature
+                // is not collected under it, so it is simply not checked.
+                crate::ast::UseItem::Aliased { .. } => {}
+                crate::ast::UseItem::Wildcard => return None,
+            }
+        }
+    }
+    // A context handed to a file with no `use` at all came from the
+    // caller's own knowledge, not from this file's imports: keep it.
+    any_use.then_some(names)
+}
+
 /// Check `program` with signatures collected from `context` first — the
 /// modules a file `use`s, resolved and parsed by the caller (the LSP).
 /// Only `program`'s statements are walked; context contributes function
@@ -1408,8 +1498,37 @@ pub fn check_program_with_context(context: &[&Program], program: &Program) -> Ve
         }
     }
     CHECK_ALIASES.with(|a| *a.borrow_mut() = Some(aliases));
+    // Two context modules may each declare a function of one name — the
+    // SDK's `watch(keys)` and an application package's `watch(conn, cfg,
+    // id, who)` — and the file means whichever it imported, which a flat
+    // list of programs cannot say. A name declared twice with different
+    // shapes has no signature here: unknown, and so never reported.
+    let mut shapes: HashMap<String, (Vec<String>, usize, usize)> = HashMap::new();
+    let mut ambiguous: std::collections::HashSet<String> = std::collections::HashSet::new();
     for p in context {
+        let mut one = Checker::default();
+        one.collect(p);
+        for (name, sig) in &one.sigs {
+            let shape = (sig.param_names.clone(), sig.required, sig.total);
+            match shapes.get(name) {
+                Some(seen) if *seen != shape => {
+                    ambiguous.insert(name.clone());
+                }
+                _ => {
+                    shapes.insert(name.clone(), shape);
+                }
+            }
+        }
         checker.collect(p);
+    }
+    checker.sigs.retain(|name, _| !ambiguous.contains(name));
+    // A context module's functions are signatures for THIS file only
+    // under the names it imported. `use web { rpc, route }` does not put
+    // the SDK's `p(attrs, children)` in scope, and a local `p` called
+    // with one argument is not a call of it. With a bare `use m` (every
+    // shared name arrives) the set is unknown, and all are kept.
+    if let Some(imported) = imported_names(program) {
+        checker.sigs.retain(|name, _| imported.contains(name));
     }
     checker.collect(program);
     checker.push_scope();
@@ -2458,6 +2577,10 @@ impl Checker {
             && arguments
                 .iter()
                 .all(|a| matches!(a, Argument::Positional(_)))
+            // A local of the same name — a parameter, a `let`, a lambda's
+            // argument — is what the call means, whatever a function
+            // elsewhere is called.
+            && !self.scopes.iter().any(|scope| scope.contains_key(name))
             && let Some(sig) = self.sigs.get(name)
         {
             let param_names = sig.param_names.clone();
