@@ -183,6 +183,27 @@ pub struct BytecodeVm {
     /// Declared struct shapes (type name -> field names), mirrored from the
     /// interpreter's registry so struct literals validate at compile time
     /// with exactly the interpreter's rules.
+    /// The function ids one closure's compilation created — its own and
+    /// its nested lambdas' — by the closure's id. A closure compiles with
+    /// its captures baked in as constants, so its artifacts hold whatever
+    /// it captured; when the closure dies they are evicted together
+    /// (`sweep_hof_cache`). Without this every request a server handled
+    /// left its lambdas' captures behind for the life of the worker.
+    hof_owned: HashMap<FunctionId, Vec<FunctionId>>,
+    /// Entries dropped from `hof_cache` while their closure was still
+    /// alive (the live set over its bound): kept by weak reference so their
+    /// artifacts go when the closure does.
+    #[allow(clippy::type_complexity)]
+    hof_retired: Vec<(
+        std::sync::Weak<Expr>,
+        std::sync::Weak<im::HashMap<String, crate::ast::Value>>,
+        FunctionId,
+    )>,
+    /// The ids inserted while a closure compiles; `None` outside that.
+    hof_track: Option<Vec<FunctionId>>,
+    /// The `hof_cache` size at which the next sweep runs: what the last
+    /// sweep left alive, plus a few.
+    hof_sweep_at: usize,
     struct_defs: HashMap<String, Vec<String>>,
     /// Declared struct field types (type name -> field name -> checkable
     /// type), mirrored from the interpreter. MakeStruct enforces these at
@@ -1088,6 +1109,12 @@ pub enum VmException {
     InvalidOperation(String),
 }
 
+/// `hof_cache` is swept every time it has grown by this many entries…
+const HOF_SWEEP_MIN: usize = 8;
+/// …and a LIVE set this large is retired from the index (as the old
+/// fixed bound of 512 did by clearing it).
+const HOF_LIVE_CAP: usize = 4096;
+
 // Default implementations
 
 /// Bridge interpreters built so far, process-wide (`OLANG_TIER_STATS`).
@@ -1305,6 +1332,10 @@ impl BytecodeVm {
             call_depth: 0,
             arg_pool: Vec::new(),
             hof_cache: HashMap::new(),
+            hof_owned: HashMap::new(),
+            hof_retired: Vec::new(),
+            hof_track: None,
+            hof_sweep_at: HOF_SWEEP_MIN,
             struct_defs: HashMap::new(),
             enum_type_names: std::collections::HashSet::new(),
             struct_field_checks: HashMap::new(),
@@ -1810,6 +1841,9 @@ impl BytecodeVm {
                 if let Ok(mut cache) = self.bytecode_cache.write() {
                     cache.insert(lambda_id, lambda_bytecode);
                 }
+                if let Some(tracked) = self.hof_track.as_mut() {
+                    tracked.push(lambda_id);
+                }
             }
         }
 
@@ -1820,6 +1854,9 @@ impl BytecodeVm {
         self.jit.try_compile(func_id, &bytecode);
         if let Ok(mut cache) = self.bytecode_cache.write() {
             cache.insert(func_id, bytecode);
+        }
+        if let Some(tracked) = self.hof_track.as_mut() {
+            tracked.push(func_id);
         }
 
         self.stats.compilation_time += start_time.elapsed();
@@ -5750,6 +5787,94 @@ impl BytecodeVm {
     /// that could drift from the interpreter; delegating makes them identical
     /// by construction. The cost is a value round trip per call, which is
     /// dominated by the builtin's own work.
+    /// Drop the compiled artifacts of these function ids: the shared
+    /// cache, the hot mirror, the JIT's slot (which owns a copy of the
+    /// bytecode), and the OSR tables. Only for ids nothing can call any
+    /// more — a dead closure's.
+    fn evict_compiled(&mut self, ids: &[FunctionId]) {
+        if ids.is_empty() {
+            return;
+        }
+        if let Ok(mut cache) = self.bytecode_cache.write() {
+            for id in ids {
+                cache.remove(id);
+            }
+        }
+        for id in ids {
+            if let Some(slot) = self.bytecode_hot.get_mut(id.index()) {
+                *slot = None;
+            }
+            #[cfg(feature = "native")]
+            self.jit.forget(*id);
+        }
+        #[cfg(feature = "native")]
+        let regions = !self.osr_regions.is_empty();
+        #[cfg(not(feature = "native"))]
+        let regions = false;
+        if regions || !self.osr_enclosing.is_empty() {
+            let gone: std::collections::HashSet<FunctionId> = ids.iter().copied().collect();
+            #[cfg(feature = "native")]
+            self.osr_regions.retain(|(f, _), _| !gone.contains(f));
+            self.osr_enclosing.retain(|(f, _), _| !gone.contains(f));
+        }
+    }
+
+    /// Evict what dead closures left: a `hof_cache` entry whose body or
+    /// environment no longer upgrades can never be looked up again (the
+    /// key is the pair of addresses, validated by the weak references), so
+    /// its root id and the ids it owns are unreachable. A live set over
+    /// the bound is retired rather than forgotten — the index entry goes,
+    /// the artifacts wait for the closure to die.
+    fn sweep_hof_cache(&mut self) {
+        let mut dead: Vec<FunctionId> = Vec::new();
+        self.hof_cache.retain(|_, (body, env, id)| {
+            let alive = body.strong_count() > 0 && env.strong_count() > 0;
+            if !alive && let Some(id) = id {
+                dead.push(*id);
+            }
+            alive
+        });
+        self.hof_retired.retain(|(body, env, id)| {
+            let alive = body.strong_count() > 0 && env.strong_count() > 0;
+            if !alive {
+                dead.push(*id);
+            }
+            alive
+        });
+        if self.hof_cache.len() >= HOF_LIVE_CAP {
+            for (_, (body, env, id)) in self.hof_cache.drain() {
+                if let Some(id) = id {
+                    self.hof_retired.push((body, env, id));
+                }
+            }
+        }
+        let mut ids: Vec<FunctionId> = Vec::new();
+        for root in dead {
+            match self.hof_owned.remove(&root) {
+                Some(owned) => ids.extend(owned),
+                None => ids.push(root),
+            }
+        }
+        self.evict_compiled(&ids);
+        if std::env::var_os("OLANG_DEBUG_HOF_SWEEP").is_some() {
+            eprintln!(
+                "[hof-sweep] evicted={} live={} owned={} retired={} bytecode_cache={} hot={}",
+                ids.len(),
+                self.hof_cache.len(),
+                self.hof_owned.len(),
+                self.hof_retired.len(),
+                self.bytecode_cache.read().map(|c| c.len()).unwrap_or(0),
+                self.bytecode_hot.len()
+            );
+        }
+        // The next sweep comes after a handful more closures, not after the
+        // set doubles: a dead entry holds whatever its closure captured — a
+        // request's whole result, on a server — so the garbage allowed
+        // between sweeps is a count of those. A sweep is a weak-count check
+        // per entry, and it runs only beside a compile, which costs far more.
+        self.hof_sweep_at = self.hof_cache.len() + HOF_SWEEP_MIN;
+    }
+
     /// Resolve a function *value* (a lambda constant or a function passed
     /// by value) to compiled bytecode, compiling it on first sight. The
     /// value's own attached closure is the compilation environment — the
@@ -5809,6 +5934,10 @@ impl BytecodeVm {
         // the registry, and the retry's registry lookup emits a direct
         // CallFn.
         let mut result = None;
+        // Everything this closure's compilation inserts is its own: the
+        // root and its nested lambdas (a named dependency compiled on the
+        // way belongs to the registry, so tracking is suspended for it).
+        self.hof_track = Some(Vec::new());
         for _ in 0..8 {
             match self.compile_function_with_closure(
                 func_id,
@@ -5824,24 +5953,46 @@ impl BytecodeVm {
                     break;
                 }
                 Err(BytecodeError::UnresolvedCallee(callee)) => {
-                    if !self.compile_hof_dependency(&callee, 0) {
+                    let tracked = self.hof_track.take();
+                    let compiled = self.compile_hof_dependency(&callee, 0);
+                    self.hof_track = tracked;
+                    if !compiled {
                         break;
                     }
                 }
                 Err(_) => break,
             }
         }
-        if self.hof_cache.len() >= 512 {
-            self.hof_cache.clear();
+        let created = self.hof_track.take().unwrap_or_default();
+        match result {
+            // What a failed or abandoned attempt inserted serves nothing.
+            None => self.evict_compiled(&created),
+            Some(root) => {
+                // An earlier attempt's nested lambdas are superseded by the
+                // successful one's; all of them go with the closure.
+                self.hof_owned.insert(root, created);
+            }
         }
-        self.hof_cache.insert(
+        if self.hof_cache.len() >= self.hof_sweep_at {
+            self.sweep_hof_cache();
+        }
+        // The key is a pair of ADDRESSES, and a dead closure's are reused
+        // by the next allocation of the same size — on a server, by the
+        // next request's closure. The entry found under this key failed
+        // its weak check above, so it is a dead closure's: its artifacts
+        // go now, or the insert would drop the only record of them.
+        if let Some((_, _, Some(stale))) = self.hof_cache.insert(
             key,
             (
                 Arc::downgrade(&func.body),
                 Arc::downgrade(&func.closure),
                 result,
             ),
-        );
+        ) && Some(stale) != result
+        {
+            let ids = self.hof_owned.remove(&stale).unwrap_or_else(|| vec![stale]);
+            self.evict_compiled(&ids);
+        }
         result
     }
 

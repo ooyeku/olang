@@ -1761,15 +1761,33 @@ impl JitCache {
 
     /// Called at bytecode registration: run the cheap syntactic whitelist
     /// so functions that can never compile pay nothing per call later.
+    /// Forget a function nothing can call any more (a dead closure's
+    /// compiled lambda): its slot owns a copy of the bytecode, and with it
+    /// every constant the closure baked in. The native code stays in the
+    /// module's memory, unreachable.
+    pub fn forget(&mut self, func_id: FunctionId) {
+        if let Some(slot) = self.table.get_mut(func_id.index()) {
+            *slot = None;
+        }
+        self.poly.remove(&func_id.index());
+        self.poly_refused.remove(&func_id.index());
+    }
+
     pub fn try_compile(&mut self, func_id: FunctionId, bytecode: &CompiledBytecode) {
         let idx = func_id.index();
-        if self.table.len() <= idx {
-            self.table.resize_with(idx + 1, || None);
-        }
-        if self.table[idx].is_some() {
+        if self.table.get(idx).is_some_and(|slot| slot.is_some()) {
             return;
         }
         if whitelist_ok(bytecode) {
+            // The table grows for a function that QUALIFIES, never for one
+            // that does not: ids come from one process-wide counter, a
+            // server compiles lambdas per request on every worker, and a
+            // slot per id sized every worker's table to the global
+            // high-water — a hundred bytes per lambda anyone ever compiled.
+            // An absent slot already reads as "not native".
+            if self.table.len() <= idx {
+                self.table.resize_with(idx + 1, || None);
+            }
             self.table[idx] = Some(Slot::Pending);
             if boundary_unprofitable(bytecode) {
                 if self.boundary_skip.len() <= idx {
@@ -1802,7 +1820,9 @@ impl JitCache {
                     }
                 }
             }
-            self.table[idx] = Some(Slot::Refused);
+            if let Some(slot) = self.table.get_mut(idx) {
+                *slot = Some(Slot::Refused);
+            }
         }
     }
 

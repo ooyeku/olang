@@ -48,6 +48,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `[check] promote = ["copy"]`: a loop that copies the collection it is
   building — a temporary read again after the rebind, or a prepend.
 
+### Fixed
+
+- **A lambda compiled per closure is evicted when its closure dies.** A
+  closure handed to a builtin from interpreted code compiles with its
+  captures baked in as constants, so the compiled artifact holds whatever
+  it captured. The index of those artifacts was cleared at 512 entries but
+  the artifacts — the bytecode cache, the hot mirror, the JIT's slot,
+  which owns a copy of the bytecode — were never dropped, and neither
+  were the nested lambdas compiled with them: every such closure stayed
+  resident with its captures for the life of the thread. On a server that
+  is every request's data on every http worker. The index is swept every
+  few inserts (a weak-count check per entry, beside a compile that costs
+  far more), a dead closure's root and nested ids are evicted together, a
+  failed attempt's artifacts go at once, and an entry displaced because
+  its addresses were reused is evicted rather than forgotten. 3,000
+  closures each capturing a 20,000-element list: 948 MB of live values →
+  under 30 MB. open-track under 2,000 reads: 453 → 1,380 MB and climbing
+  → 442 → about 600 MB, flat at 255 MB with four workers (open-track
+  OL-146). `OLANG_DEBUG_HOF_SWEEP=1` prints each sweep's counts.
+- The tier's argument cache sweeps its dead entries once it has grown by
+  a few dozen, not at a fixed 512: a converted tuple pins what it holds (a
+  large list crosses as a wrapper sharing the interpreter's allocation),
+  so the garbage between sweeps was tens of megabytes per worker thread.
+- The JIT's table grows for a function that qualifies for native code,
+  never for one that does not. Function ids come from one process-wide
+  counter, so a slot per compiled lambda sized every thread's table to
+  the global high-water.
+
 ## [0.86.0] - 2026-09-20
 
 ### Changed

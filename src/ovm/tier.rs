@@ -171,6 +171,8 @@ pub struct BytecodeTier {
     /// entirely in re-converting the same unchanged value 2,000 times.
     /// Every variant with a stable allocation now shares the cache.
     arg_cache: HashMap<usize, (CachedOwner, OvmValue)>,
+    /// The `arg_cache` size at which dead entries are next swept.
+    arg_sweep_at: usize,
     /// True while a warm-start compile runs at declaration (see `reject`).
     tentative: bool,
 }
@@ -195,6 +197,7 @@ impl BytecodeTier {
             known_functions: HashMap::new(),
             ambiguous: HashSet::new(),
             arg_cache: HashMap::new(),
+            arg_sweep_at: 32,
             tentative: false,
             stats: TierStats::default(),
             verbose: false,
@@ -1221,8 +1224,14 @@ impl BytecodeTier {
             // live set itself is over the bound — dropping half. A
             // wholesale clear made a loop with a few hundred live values
             // reconvert all of them every 512 calls.
-            if self.arg_cache.len() >= 512 {
+            if self.arg_cache.len() >= self.arg_sweep_at {
                 self.arg_cache.retain(|_, (owner, _)| owner.is_alive());
+                // Swept again once it has grown by a few dozen, not at a
+                // fixed 512: a converted tuple pins what it holds (a large
+                // list crosses as a wrapper sharing the interpreter's
+                // allocation), so every dead entry is a request's data kept
+                // alive — tens of megabytes per worker thread on a server.
+                self.arg_sweep_at = (self.arg_cache.len() + 32).min(512);
                 if self.arg_cache.len() >= 512 {
                     let mut drop_next = false;
                     self.arg_cache.retain(|_, _| {
