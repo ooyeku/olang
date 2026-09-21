@@ -194,7 +194,7 @@ sibling shadows a builtin of its name, and a later redefinition does not
 reach back — because each run keeps a table of its members by position,
 consulted after the closure by both tiers.
 
-| Program | Resident, 0.85.0 | Resident now | `runtime.memory()` heap |
+| Program | Resident, 0.85.0 | Resident, 0.86.0 | `runtime.memory()` heap |
 |---|---|---|---|
 | idle (`time.sleep`) | 10 MB | 10 MB | 0.3 MB |
 | the same after `runtime.wasm()` | 99 MB | 10 MB | 0.3 MB |
