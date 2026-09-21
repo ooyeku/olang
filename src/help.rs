@@ -2155,6 +2155,14 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
             &[r##"let t0 = time.monotonic_ms()"##],
         );
         self.doc_ex(
+            "time.monotonic",
+            "time.monotonic()",
+            "Float",
+            "time",
+            "the monotonic clock in fractional milliseconds — for a duration under a millisecond, which time.monotonic_ms() reads as 0; in the browser it is the page's performance.now()",
+            &[r##"let t0 = time.monotonic()"##],
+        );
+        self.doc_ex(
             "time.sleep",
             "time.sleep(ms)",
             "Unit",
@@ -5544,6 +5552,23 @@ route("GET", "/olang." + map_get(rt, "hash") + ".wasm", (req, p) => { status: 20
             "Where the process's memory is, in bytes: #{ \"heap\", \"program\", \"values\", \"embedded\", \"tasks\": [#{ \"name\", \"bytes\" }] } — what is allocated and not freed, the share the loaded program holds (measured across parsing the entry file and each use), the rest, the browser runtime in the binary's image, and each spawned task and http worker with what it allocated and has not itself freed, largest first.",
             &[r##"let m = runtime.memory()
 println("program: " + to_string(map_get(m, "program") / 1048576) + " MB")"##],
+        );
+        self.doc_ex(
+            "runtime.profile_start",
+            "runtime.profile_start()",
+            "Result",
+            "runtime",
+            "Begin sampling this process with the profiler behind `olang profile` — every thread's olang call stack, by tier, every 1,000 µs (or runtime.profile_start(interval_us)). Ok(()), or Err when a profile is already running. For a program that cannot be wrapped in one profiled run: a server opens the window around the requests it wants to see.",
+            &[r##"unwrap(runtime.profile_start())"##],
+        );
+        self.doc_ex(
+            "runtime.profile_stop",
+            "runtime.profile_stop()",
+            "Result",
+            "runtime",
+            "End the profile runtime.profile_start began: Ok(#{ \"interval_us\", \"ticks\", \"idle\", \"blocked\", \"samples\", \"rows\": [#{ \"function\", \"tier\", \"samples\", \"share\" }] }), most samples first. `blocked` counts thread-ticks spent parked — a receive, a sleep, a server waiting for a connection — charged to no function. Err when no profile is running.",
+            &[r##"let p = unwrap(runtime.profile_stop())
+for row in take(map_get(p, "rows"), 5) { println(map_get(row, "function") + " " + map_get(row, "tier")) }"##],
         );
         self.doc_ex(
             "runtime.version",

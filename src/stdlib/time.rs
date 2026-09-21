@@ -6,11 +6,14 @@
 //! sleep.
 
 use crate::ast::Value;
+#[cfg(any(feature = "native", test))]
 use crate::clock::Instant;
 use std::collections::HashMap;
+#[cfg(feature = "native")]
 use std::sync::OnceLock;
 
 /// The monotonic clock's origin: the first time anything asked for it.
+#[cfg(feature = "native")]
 static MONOTONIC_ORIGIN: OnceLock<Instant> = OnceLock::new();
 
 pub fn create_time_module() -> Value {
@@ -20,6 +23,10 @@ pub fn create_time_module() -> Value {
     module.insert(
         "monotonic_ms".to_string(),
         create_builtin_function("monotonic_ms", 0),
+    );
+    module.insert(
+        "monotonic".to_string(),
+        create_builtin_function("monotonic", 0),
     );
     module.insert("sleep".to_string(), create_builtin_function("sleep", 1));
 
@@ -43,6 +50,7 @@ pub fn call_time_function(
     match name {
         "now_ms" => time_now_ms(args),
         "monotonic_ms" => time_monotonic_ms(args),
+        "monotonic" => time_monotonic(args),
         "sleep" => time_sleep(args),
         _ => Err(format!("Unknown time function: {}", name).into()),
     }
@@ -57,6 +65,22 @@ fn time_now_ms(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     Ok(Value::Integer(crate::clock::epoch_ms()))
 }
 
+/// The monotonic clock, in fractional milliseconds. Natively the origin
+/// is its first use in this process; in the browser it is the page's own
+/// `performance.now()`, so a reading here and a stamp the page made are
+/// the same clock.
+fn monotonic_now() -> f64 {
+    #[cfg(feature = "native")]
+    {
+        let origin = MONOTONIC_ORIGIN.get_or_init(Instant::now);
+        origin.elapsed().as_secs_f64() * 1000.0
+    }
+    #[cfg(not(feature = "native"))]
+    {
+        crate::clock::host_monotonic_ms()
+    }
+}
+
 /// Milliseconds on a monotonic clock (origin: first use in this process).
 /// Never goes backwards — the right clock for measuring durations.
 /// Usage: time.monotonic_ms() -> Int
@@ -64,8 +88,17 @@ fn time_monotonic_ms(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
     if !args.is_empty() {
         return Err(format!("monotonic_ms expects 0 arguments, got {}", args.len()).into());
     }
-    let origin = MONOTONIC_ORIGIN.get_or_init(Instant::now);
-    Ok(Value::Integer(origin.elapsed().as_millis() as i64))
+    Ok(Value::Integer(monotonic_now() as i64))
+}
+
+/// The same clock with its fraction: what a duration under a millisecond
+/// needs (`time.monotonic_ms` reads 0 for it).
+/// Usage: time.monotonic() -> Float
+fn time_monotonic(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if !args.is_empty() {
+        return Err(format!("monotonic expects 0 arguments, got {}", args.len()).into());
+    }
+    Ok(Value::Float(monotonic_now()))
 }
 
 /// Block for the given number of milliseconds.

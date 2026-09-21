@@ -206,10 +206,10 @@ pub mod error_utils {
             Value::Unit => "unit",
             Value::Ok(_) => "Ok",
             Value::Err(_) => "Err",
-            Value::Enum { .. } => "enum",
-            Value::EnumConstructor { .. } => "enum_constructor",
+            Value::Enum(_) => "enum",
+            Value::EnumConstructor(_) => "enum_constructor",
             Value::Map(_) => "map",
-            Value::TypeInfo { .. } => "type",
+            Value::TypeInfo(_) => "type",
             Value::Native(handle) => handle.0.type_name(),
         }
     }

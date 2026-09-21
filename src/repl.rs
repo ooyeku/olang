@@ -2422,13 +2422,13 @@ impl Repl {
             Value::Unit => "unit",
             Value::Ok(_) => "result",
             Value::Err(_) => "result",
-            Value::EnumConstructor { .. } => "enum_constructor",
-            Value::Enum { .. } => {
+            Value::EnumConstructor(_) => "enum_constructor",
+            Value::Enum(_) => {
                 // Use a static string for REPL display
                 "enum"
             }
             Value::Map(_) => "map",
-            Value::TypeInfo { .. } => "type",
+            Value::TypeInfo(_) => "type",
             Value::Native(handle) => handle.0.type_name(),
         }
     }
@@ -4304,13 +4304,9 @@ fn color_value(value: &Value) -> String {
             None => "<function>".cyan().to_string(),
         },
         Value::Builtin(b) => format!("<builtin: {}>", b.name).cyan().to_string(),
-        Value::Enum {
-            type_name,
-            variant_name,
-            variant_data,
-        } => {
-            let head = format!("{}.{}", type_name.blue(), variant_name.cyan());
-            match variant_data {
+        Value::Enum(e) => {
+            let head = format!("{}.{}", e.type_name.blue(), e.variant_name.cyan());
+            match &e.variant_data {
                 crate::ast::EnumVariantData::Unit => head,
                 crate::ast::EnumVariantData::Tuple(values) => {
                     let inner: Vec<String> = values.iter().map(color_value).collect();
@@ -4325,12 +4321,8 @@ fn color_value(value: &Value) -> String {
                 }
             }
         }
-        Value::EnumConstructor {
-            type_name,
-            variant_name,
-            ..
-        } => format!("{}.{}", type_name.blue(), variant_name.cyan()),
-        Value::TypeInfo { name, .. } => format!("<type: {}>", name).blue().to_string(),
+        Value::EnumConstructor(c) => format!("{}.{}", c.type_name.blue(), c.variant_name.cyan()),
+        Value::TypeInfo(t) => format!("<type: {}>", t.name).blue().to_string(),
         // Native handles format themselves (ods tables and friends);
         // recoloring their internals isn't this function's business.
         Value::Native(_) => format!("{}", value).cyan().to_string(),

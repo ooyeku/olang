@@ -53,6 +53,10 @@ pub fn run_with(path: &Path, coverage: bool, show_missing: bool, options: &Optio
     let mut test_files = 0usize;
 
     let parser = Parser::new();
+    // Every file the walk will visit: a module among them runs its blocks
+    // as a file of its own, not again when another file imports it.
+    let entries: std::sync::Arc<std::collections::HashSet<std::path::PathBuf>> =
+        std::sync::Arc::new(files.iter().filter_map(|f| f.canonicalize().ok()).collect());
 
     for file in &files {
         let source = match std::fs::read_to_string(file) {
@@ -91,6 +95,7 @@ pub fn run_with(path: &Path, coverage: bool, show_missing: bool, options: &Optio
         let mut interpreter = Interpreter::new();
         interpreter.enable_test_mode();
         interpreter.narrow_tests(options.only.clone(), own_blocks);
+        interpreter.set_test_entries(entries.clone());
         // Programs can tell: the web SDK's `dispatch` runs handlers on a
         // task thread under `olang test`, so a captured cell fails in the
         // test that exercises it instead of in production.

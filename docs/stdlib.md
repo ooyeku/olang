@@ -764,6 +764,7 @@ the epoch, now" (`timestamp` parses its argument, so it returns a
 |---|---|
 | `time.now_ms()` | milliseconds since the Unix epoch |
 | `time.monotonic_ms()` | monotonic milliseconds (never goes backwards) — the clock for durations |
+| `time.monotonic()` | the same clock as a Float with its fraction, for a duration under a millisecond; in the browser both read the page's `performance.now()`, so a reading and a stamp the page made (a `dom.request` reply's timings) are one clock |
 | `time.sleep(ms)` | block for `ms` milliseconds |
 
 ```olang
@@ -1227,6 +1228,8 @@ that serves its own routes reads the same bytes.
 | `runtime.wasm()` | `Ok(#{ "bytes", "hash", "gzip", "br", "version" })` — the runtime's bytes, the first sixteen hex digits of their SHA-256 (the name in `/olang.<hash>.wasm` and the ETag), the gzip and brotli forms, and the olang version it is. Every form and the hash are made when the binary is built and are slices of its own image: the call computes nothing, copies nothing to the heap, and may be made per request; `Err(message)` naming how to build a binary that carries one |
 | `runtime.version()` | the olang version string |
 | `runtime.memory()` | `#{ "heap", "program", "values", "embedded", "tasks" }`, in bytes — where the process's memory is (below) |
+| `runtime.profile_start()` / `runtime.profile_start(interval_us)` | begin sampling this process with the profiler behind `olang profile` (every 1,000 µs by default): `Ok(())`, or `Err` when a profile is already running |
+| `runtime.profile_stop()` | end it: `Ok(#{ "interval_us", "ticks", "idle", "blocked", "samples", "rows" })`, where `rows` is `[#{ "function", "tier", "samples", "share" }]`, most first — the functions that were running when the sampler looked, the tier each ran on (`interp`, `vm`, `native`, `builtin`), and its share of the samples that landed in code. `blocked` counts thread-ticks spent parked — a receive, a sleep, a server waiting for a connection, an idle http worker — which are charged to no function. `Err` when no profile is running |
 
 ```olang no-run
 let rt = unwrap(runtime.wasm())

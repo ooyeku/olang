@@ -27,6 +27,11 @@ pub struct Shelf {
     /// Library name -> absolute path of its directory.
     #[serde(default)]
     pub libraries: BTreeMap<String, PathBuf>,
+    /// Library name -> the commit it was shelved at (`otc lib add <path>
+    /// --rev <sha>`). Such a library is a snapshot the shelf owns, not a
+    /// pointer at a checkout that moves; the rest follow their directory.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub revs: BTreeMap<String, String>,
 }
 
 #[derive(Debug)]
@@ -108,7 +113,122 @@ impl Shelf {
             .or_else(|| dir.file_name().map(|n| n.to_string_lossy().into_owned()))
             .unwrap_or_else(|| "library".to_string());
         self.libraries.insert(name.clone(), dir);
+        // Re-registering a name by directory unpins it.
+        self.revs.remove(&name);
         Ok(name)
+    }
+
+    /// Register a library as it stands at one commit of its repository.
+    /// The tree at `rev` is written under the shelf's own directory
+    /// (`pins/<name>-<sha>`), so the shelved library no longer follows the
+    /// checkout, and the full commit id is recorded — in the shelf, and
+    /// from there in the `olang.lock` of every project that depends on
+    /// it. Returns the registered name and the full commit id.
+    pub fn add_at_rev(
+        &mut self,
+        path: &Path,
+        explicit_name: Option<&str>,
+        rev: &str,
+    ) -> Result<(String, String), ShelfError> {
+        let repo = std::fs::canonicalize(path).map_err(|e| {
+            ShelfError::NotALibrary(format!("'{}' is not reachable: {}", path.display(), e))
+        })?;
+        let git = |args: &[&str]| -> Result<std::process::Output, ShelfError> {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .output()
+                .map_err(|e| ShelfError::Io(format!("git: {}", e)))
+        };
+        let resolved = git(&["rev-parse", "--verify", &format!("{rev}^{{commit}}")])?;
+        if !resolved.status.success() {
+            return Err(ShelfError::NotALibrary(format!(
+                "'{}' has no commit '{}': {}",
+                repo.display(),
+                rev,
+                String::from_utf8_lossy(&resolved.stderr).trim()
+            )));
+        }
+        let sha = String::from_utf8_lossy(&resolved.stdout).trim().to_string();
+        // The library may sit below the repository's root: archive the
+        // subtree it occupies.
+        let prefix = git(&["rev-parse", "--show-prefix"])?;
+        let prefix = String::from_utf8_lossy(&prefix.stdout).trim().to_string();
+        let tree = if prefix.is_empty() {
+            sha.clone()
+        } else {
+            format!("{}:{}", sha, prefix.trim_end_matches('/'))
+        };
+        let archive = git(&["archive", "--format=tar", &tree])?;
+        if !archive.status.success() {
+            return Err(ShelfError::Io(format!(
+                "git archive {}: {}",
+                tree,
+                String::from_utf8_lossy(&archive.stderr).trim()
+            )));
+        }
+        let staging = Self::home()
+            .join("pins")
+            .join(format!(".staging-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&staging);
+        std::fs::create_dir_all(&staging).map_err(|e| ShelfError::Io(e.to_string()))?;
+        let staging = std::fs::canonicalize(&staging).unwrap_or(staging);
+        let mut untar = std::process::Command::new("tar")
+            .arg("-x")
+            .arg("-C")
+            .arg(&staging)
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| ShelfError::Io(format!("tar: {}", e)))?;
+        {
+            use std::io::Write;
+            let mut stdin = untar.stdin.take().expect("piped");
+            stdin
+                .write_all(&archive.stdout)
+                .map_err(|e| ShelfError::Io(e.to_string()))?;
+        }
+        if !untar
+            .wait()
+            .map_err(|e| ShelfError::Io(e.to_string()))?
+            .success()
+        {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(ShelfError::Io(
+                "tar could not unpack the archive".to_string(),
+            ));
+        }
+        // Named like any other library: from the snapshot's own manifest.
+        let name = match self.add(&staging, explicit_name) {
+            Ok(name) => name,
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&staging);
+                return Err(e);
+            }
+        };
+        let name = if explicit_name.is_none() && name.starts_with(".staging-") {
+            repo.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or(name)
+        } else {
+            name
+        };
+        let pinned =
+            Self::home()
+                .join("pins")
+                .join(format!("{}-{}", name, &sha[..sha.len().min(12)]));
+        let _ = std::fs::remove_dir_all(&pinned);
+        std::fs::rename(&staging, &pinned).map_err(|e| ShelfError::Io(e.to_string()))?;
+        self.libraries.retain(|_, dir| dir != &staging);
+        let pinned = std::fs::canonicalize(&pinned).unwrap_or(pinned);
+        self.libraries.insert(name.clone(), pinned);
+        self.revs.insert(name.clone(), sha.clone());
+        Ok((name, sha))
+    }
+
+    /// The commit a shelf name is pinned at, if it is.
+    pub fn rev_of(&self, name: &str) -> Option<&str> {
+        self.revs.get(name).map(String::as_str)
     }
 
     /// The directory a shelf name resolves to, if registered.

@@ -436,6 +436,8 @@ neighbor renames the function. `serve` checks each client module on its
 own before splicing (`meta.unresolved`) and prints one `WARNING:` line
 per module that has such names, naming them; `leaked_names(paths,
 sources)` answers the same lines for a build script or a test.
+Capitalized names are not reported: a variant constructor arrives with
+the import of its enum, which the module's text alone does not show.
 
 The bundle is served two ways. `/app.ol` is the source. `/app.olb` is
 the program image: the bundle parsed once on the server and encoded

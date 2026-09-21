@@ -189,6 +189,10 @@ fn run(case: &Case, dir: &Path, flags: &[&str]) -> (String, String, Option<i32>)
         .args(flags)
         .arg("run")
         .arg(&file)
+        // An example that is heavy on the tree-walker runs a lighter
+        // workload (examples/concurrency/parmap): the comparison is of
+        // answers, and this test was most of a forty-minute suite.
+        .env("OLANG_EXAMPLE_QUICK", "1")
         .current_dir(&cwd)
         .output()
         .expect("olang runs");

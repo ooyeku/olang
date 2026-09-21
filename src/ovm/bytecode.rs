@@ -1090,6 +1090,12 @@ pub enum VmException {
 
 // Default implementations
 
+/// Bridge interpreters built so far, process-wide (`OLANG_TIER_STATS`).
+pub static BRIDGE_BUILDS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Microseconds spent building them.
+pub static BRIDGE_BUILD_MICROS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 impl BytecodeVm {
     pub fn new() -> Self {
         // Builtins whose calls the compiler will emit rather than refuse.
@@ -5905,6 +5911,8 @@ impl BytecodeVm {
 
     fn build_bridge_if_missing(&mut self) {
         if self.builtin_interpreter.is_none() {
+            BRIDGE_BUILDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let bridge_started = crate::clock::Instant::now();
             self.bridge_seeded_version = self.bridge_landscape_version;
             let mut interp = Box::new(crate::interpreter::Interpreter::new());
             // The aliases the program declared: a `let t: Task` in a
@@ -5978,6 +5986,10 @@ impl BytecodeVm {
             // magnitude. Its capabilities are (re)seeded per dispatch by
             // seed_bridge_caps, which forwards them into this tier.
             self.builtin_interpreter = Some(interp);
+            BRIDGE_BUILD_MICROS.fetch_add(
+                bridge_started.elapsed().as_micros() as usize,
+                std::sync::atomic::Ordering::Relaxed,
+            );
         }
     }
 
@@ -7379,7 +7391,7 @@ impl BytecodeVm {
             // Enums convert losslessly (type, variant, payload) since the
             // OVM grew a first-class enum value; they round-trip when the
             // payload does.
-            Value::Enum { variant_data, .. } => match variant_data {
+            Value::Enum(e) => match &e.variant_data {
                 crate::ast::EnumVariantData::Unit => true,
                 crate::ast::EnumVariantData::Tuple(values) => values.iter().all(Self::round_trips),
                 crate::ast::EnumVariantData::Struct(fields) => {
@@ -8828,19 +8840,14 @@ impl BytecodeCompiler {
                 // An enum tuple-variant constructor from the closure —
                 // `Circle(2.0)`. An argument-count mismatch refuses, and the
                 // interpreter raises its arity error.
-                if let Some(Value::EnumConstructor {
-                    type_name,
-                    variant_name,
-                    arity,
-                }) = self.lexical(&function_name)
-                {
-                    if arity != arguments.len() {
+                if let Some(Value::EnumConstructor(constructor)) = self.lexical(&function_name) {
+                    if constructor.arity != arguments.len() {
                         return Err(BytecodeError::UnresolvedCallee(function_name));
                     }
                     self.emitter.instructions.push(Instruction::MakeEnum {
                         dst: dst_reg,
-                        type_name: type_name.clone(),
-                        variant_name: variant_name.clone(),
+                        type_name: constructor.type_name.clone(),
+                        variant_name: constructor.variant_name.clone(),
                         args: arg_regs,
                     });
                     return Ok(dst_reg);
@@ -9826,12 +9833,13 @@ impl BytecodeCompiler {
                     && self.unit_variant_names.contains(name)
                 {
                     match self.lexical(name) {
-                        Some(
-                            variant @ Value::Enum {
-                                variant_data: crate::ast::EnumVariantData::Unit,
-                                ..
-                            },
-                        ) => {
+                        Some(variant @ Value::Enum(_))
+                            if matches!(
+                                &variant,
+                                Value::Enum(e)
+                                    if e.variant_data == crate::ast::EnumVariantData::Unit
+                            ) =>
+                        {
                             let const_idx = self
                                 .emitter
                                 .add_constant(OvmValue::from_ast(variant.clone()));
@@ -12030,10 +12038,10 @@ mod tests {
         let mut bad = std::collections::HashMap::new();
         bad.insert(
             "t".to_string(),
-            Value::TypeInfo {
-                name: "X".to_string(),
-                definition: crate::ast::TypeDefinition::Struct { fields: Vec::new() },
-            },
+            Value::type_info(
+                "X".to_string(),
+                crate::ast::TypeDefinition::Struct { fields: Vec::new() },
+            ),
         );
         // A map is a wrapper at the boundary: it round-trips untouched,
         // whatever it holds. A tuple converts, so its elements must.

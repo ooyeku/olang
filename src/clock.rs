@@ -130,10 +130,15 @@ mod hosted {
         unsafe { host_epoch_ms() as i64 }
     }
 
+    /// The host's monotonic clock as it reads: `performance.now()`.
+    pub fn host_monotonic_ms() -> f64 {
+        unsafe { host_now_ms() }
+    }
+
     pub fn system_now() -> std::time::SystemTime {
         std::time::UNIX_EPOCH + Duration::from_millis(epoch_ms().max(0) as u64)
     }
 }
 
 #[cfg(not(feature = "native"))]
-pub use hosted::{Instant, epoch_ms, system_now};
+pub use hosted::{Instant, epoch_ms, host_monotonic_ms, system_now};

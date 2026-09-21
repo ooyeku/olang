@@ -797,3 +797,37 @@ fn a_declared_shape_completes_its_keys() {
     assert_eq!(labels(&mut c, 3, 1, 50), vec!["id", "name"]);
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+#[test]
+fn every_undefined_name_is_reported_in_one_pass() {
+    // The analysis stopped at the first undefined name, so the editor
+    // showed them one save at a time.
+    let mut c = Client::start();
+    let uri = "file:///undefined.ol";
+    c.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {} }
+    }));
+    c.recv_until(|m| m["id"] == 1);
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+            "textDocument":{"uri":uri,"languageId":"olang","version":1,
+                            "text":"fn f(x) = first_missing(x) + 1\nfn g(y) = second_missing(y) + first_missing(y)\nprintln(show(f(1) + g(2)))\n"}}
+    }));
+    let m = c.recv_until(|m| diagnostics_of(m).is_some());
+    let mut errors: Vec<String> = diagnostics_of(&m)
+        .unwrap()
+        .iter()
+        .filter(|d| d["severity"] == 1)
+        .map(|d| d["message"].as_str().unwrap_or("").to_string())
+        .collect();
+    errors.sort();
+    assert_eq!(
+        errors,
+        [
+            "Undefined variable: first_missing",
+            "Undefined variable: second_missing"
+        ]
+    );
+}

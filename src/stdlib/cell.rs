@@ -205,7 +205,7 @@ pub fn confined_within(value: &Value) -> Option<&'static str> {
         Value::Map(entries) => first(entries.values()),
         Value::Struct { fields, .. } => first(fields.values()),
         Value::Ok(inner) | Value::Err(inner) => confined_within(inner),
-        Value::Enum { variant_data, .. } => match variant_data {
+        Value::Enum(e) => match &e.variant_data {
             crate::ast::EnumVariantData::Tuple(items) => first(items.iter()),
             crate::ast::EnumVariantData::Struct(fields) => first(fields.values()),
             crate::ast::EnumVariantData::Unit => None,

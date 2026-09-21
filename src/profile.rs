@@ -505,12 +505,15 @@ fn sample_once(out: &mut Collected) {
     let mut saw_any = false;
     for stack in stacks.iter() {
         let depth = stack.depth.load(Ordering::Relaxed).min(MAX_FRAMES);
-        if depth == 0 {
-            continue;
-        }
+        // Parked is parked whatever is on the stack: a top-level
+        // `time.sleep` and an http worker waiting for a connection have
+        // no frame at all, and were not counted anywhere.
         if stack.blocked.load(Ordering::Relaxed) {
             out.blocked += 1;
             saw_any = true;
+            continue;
+        }
+        if depth == 0 {
             continue;
         }
         saw_any = true;
@@ -553,6 +556,80 @@ impl Session {
         };
         render(&collected, elapsed, top, self.interval_us, label)
     }
+}
+
+/// What a program reads back from a profile it ran on itself
+/// (`runtime.profile_stop`): the counts behind the report, not its text.
+pub struct Summary {
+    pub interval_us: u64,
+    /// Ticks taken, and of those the ones that found every thread idle
+    /// and the thread-ticks spent parked (a receive, a sleep, a join, a
+    /// server waiting for a connection).
+    pub ticks: u64,
+    pub idle: u64,
+    pub blocked: u64,
+    /// Samples that landed in code: the sum of `rows`.
+    pub samples: u64,
+    /// (function, tier — "interp", "vm", "native" or "builtin" —, self
+    /// samples), most first.
+    pub rows: Vec<(String, &'static str, u64)>,
+}
+
+impl Session {
+    /// Stop sampling and answer the counts.
+    pub fn finish_summary(mut self) -> Summary {
+        self.stop.store(true, Ordering::Relaxed);
+        registry().enabled.store(false, Ordering::Relaxed);
+        let collected = match self.handle.take() {
+            Some(h) => h.join().unwrap_or_default(),
+            None => Collected::default(),
+        };
+        let mut rows: Vec<(String, &'static str, u64)> = collected
+            .leaves
+            .iter()
+            .map(|((id, tier), count)| {
+                let label = if tier & BUILTIN_BIT != 0 {
+                    "builtin"
+                } else {
+                    Tier::from_u8(*tier).label()
+                };
+                (name_of(*id), label, *count)
+            })
+            .collect();
+        rows.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+        Summary {
+            interval_us: self.interval_us,
+            ticks: collected.total,
+            idle: collected.idle,
+            blocked: collected.blocked,
+            samples: rows.iter().map(|r| r.2).sum(),
+            rows,
+        }
+    }
+}
+
+/// The profile a program started on itself, if one is running.
+static IN_PROCESS: Mutex<Option<Session>> = Mutex::new(None);
+
+/// `runtime.profile_start`: begin sampling this process. Err when a
+/// profile is already running — `olang profile`'s, or an earlier call's.
+pub fn start_in_process(interval_us: u64) -> Result<(), String> {
+    let mut slot = IN_PROCESS.lock().unwrap_or_else(|e| e.into_inner());
+    if slot.is_some() || enabled() {
+        return Err("a profile is already running".to_string());
+    }
+    *slot = Some(start(interval_us));
+    Ok(())
+}
+
+/// `runtime.profile_stop`: end it and answer what it saw.
+pub fn stop_in_process() -> Result<Summary, String> {
+    let session = IN_PROCESS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+        .ok_or_else(|| "no profile is running (runtime.profile_start starts one)".to_string())?;
+    Ok(session.finish_summary())
 }
 
 /// A proportional bar. Filled cells are the share; the track makes

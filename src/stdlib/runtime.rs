@@ -19,6 +19,8 @@ pub fn create_runtime_module() -> Value {
     module.insert("wasm".to_string(), builtin("wasm", 0));
     module.insert("version".to_string(), builtin("version", 0));
     module.insert("memory".to_string(), builtin("memory", 0));
+    module.insert("profile_start".to_string(), builtin("profile_start", 0));
+    module.insert("profile_stop".to_string(), builtin("profile_stop", 0));
     Value::Struct {
         type_name: "Module".to_string(),
         fields: Arc::new(module),
@@ -33,8 +35,94 @@ pub fn call_runtime_function(
         "version" => Ok(Value::String(Arc::new(crate::version::VERSION.to_string()))),
         "wasm" => runtime_wasm(args),
         "memory" => runtime_memory(args),
+        "profile_start" => runtime_profile_start(args),
+        "profile_stop" => runtime_profile_stop(args),
         _ => Err(format!("Unknown runtime function: {}", name).into()),
     }
+}
+
+fn err_value(message: String) -> Value {
+    Value::Err(Box::new(Value::String(Arc::new(message))))
+}
+
+/// `runtime.profile_start()` or `runtime.profile_start(interval_us)` —
+/// begin sampling this process with the profiler behind `olang profile`
+/// (default 1,000 µs): every thread's olang call stack, by tier. `Ok(())`,
+/// or `Err` when a profile is already running.
+fn runtime_profile_start(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let interval_us = match args.as_slice() {
+        [] => 1000,
+        [Value::Integer(n)] if *n >= 50 => *n as u64,
+        _ => {
+            return Err(
+                "runtime.profile_start expects no argument, or an interval in microseconds (50 or more)"
+                    .into(),
+            );
+        }
+    };
+    Ok(match crate::profile::start_in_process(interval_us) {
+        Ok(()) => Value::Ok(Box::new(Value::Unit)),
+        Err(e) => err_value(e),
+    })
+}
+
+/// `runtime.profile_stop()` — end the profile and answer `Ok(#{
+/// "interval_us", "ticks", "idle", "blocked", "samples", "rows": [#{
+/// "function", "tier", "samples", "share" }] })`: the functions that were
+/// running when the sampler looked, most first, each with the tier it
+/// ran on and its share of the samples that landed in code. `blocked`
+/// counts thread-ticks spent parked — a receive, a sleep, a server
+/// waiting for a connection — which are not charged to any function.
+fn runtime_profile_stop(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if !args.is_empty() {
+        return Err(format!(
+            "runtime.profile_stop expects 0 arguments, got {}",
+            args.len()
+        )
+        .into());
+    }
+    let summary = match crate::profile::stop_in_process() {
+        Ok(summary) => summary,
+        Err(e) => return Ok(err_value(e)),
+    };
+    let rows: Vec<Value> = summary
+        .rows
+        .iter()
+        .map(|(function, tier, samples)| {
+            let mut row = HashMap::new();
+            row.insert(
+                "function".to_string(),
+                Value::String(Arc::new(function.clone())),
+            );
+            row.insert(
+                "tier".to_string(),
+                Value::String(Arc::new(tier.to_string())),
+            );
+            row.insert("samples".to_string(), Value::Integer(*samples as i64));
+            row.insert(
+                "share".to_string(),
+                Value::Float(*samples as f64 / summary.samples.max(1) as f64),
+            );
+            Value::Map(Arc::new(row))
+        })
+        .collect();
+    let mut out = HashMap::new();
+    out.insert(
+        "interval_us".to_string(),
+        Value::Integer(summary.interval_us as i64),
+    );
+    out.insert("ticks".to_string(), Value::Integer(summary.ticks as i64));
+    out.insert("idle".to_string(), Value::Integer(summary.idle as i64));
+    out.insert(
+        "blocked".to_string(),
+        Value::Integer(summary.blocked as i64),
+    );
+    out.insert(
+        "samples".to_string(),
+        Value::Integer(summary.samples as i64),
+    );
+    out.insert("rows".to_string(), Value::List(Arc::new(rows)));
+    Ok(Value::Ok(Box::new(Value::Map(Arc::new(out)))))
 }
 
 /// `runtime.memory()` — `#{ "heap", "program", "values", "embedded",

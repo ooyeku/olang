@@ -580,27 +580,19 @@ pub enum Value {
     Err(Box<Value>),
     Unit,
 
-    // Enum values with proper variant representation
-    Enum {
-        type_name: String,
-        variant_name: String,
-        variant_data: EnumVariantData,
-    },
+    // Enum values with proper variant representation. Behind an `Arc`,
+    // as the next two are: inline, their strings made `Value` 112 bytes,
+    // and `Value` is the size of every list slot and of every entry of
+    // every persistent scope-map node. With the three boxed it is 40.
+    Enum(Arc<EnumValue>),
 
     // A tuple-variant constructor, e.g. `Circle` in `Circle(radius)`. Unit
     // variants are `Enum` values directly; payload variants are callables
     // that build an `Enum` when applied. Defined by `eval_type_decl`.
-    EnumConstructor {
-        type_name: String,
-        variant_name: String,
-        arity: usize,
-    },
+    EnumConstructor(Arc<EnumConstructorValue>),
 
     // Type information for exported types
-    TypeInfo {
-        name: String,
-        definition: TypeDefinition,
-    },
+    TypeInfo(Arc<TypeInfoValue>),
 
     // A value owned by an OVM module (e.g. an ods array). The handle is
     // one Arc shared verbatim with the bytecode tier, so crossing the
@@ -614,6 +606,62 @@ const _: () = {
     const fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<Value>()
 };
+
+/// An enum value: `Shape.Circle(2.0)`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EnumValue {
+    pub type_name: String,
+    pub variant_name: String,
+    pub variant_data: EnumVariantData,
+}
+
+/// The callable a payload variant's bare name denotes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EnumConstructorValue {
+    pub type_name: String,
+    pub variant_name: String,
+    pub arity: usize,
+}
+
+/// An exported type, as a value.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TypeInfoValue {
+    pub name: String,
+    pub definition: TypeDefinition,
+}
+
+impl Value {
+    /// An enum value.
+    pub fn enum_of(
+        type_name: String,
+        variant_name: String,
+        variant_data: EnumVariantData,
+    ) -> Value {
+        Value::Enum(Arc::new(EnumValue {
+            type_name,
+            variant_name,
+            variant_data,
+        }))
+    }
+
+    /// A payload variant's constructor.
+    pub fn enum_constructor(type_name: String, variant_name: String, arity: usize) -> Value {
+        Value::EnumConstructor(Arc::new(EnumConstructorValue {
+            type_name,
+            variant_name,
+            arity,
+        }))
+    }
+
+    /// An exported type.
+    pub fn type_info(name: String, definition: TypeDefinition) -> Value {
+        Value::TypeInfo(Arc::new(TypeInfoValue { name, definition }))
+    }
+}
+
+// The size is the point of the three `Arc`s above; hold it.
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(std::mem::size_of::<Value>() <= 40);
 
 /// Function value
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1758,14 +1806,10 @@ impl std::fmt::Display for Value {
                 }
             }
             Value::Unit => write!(f, "()"),
-            Value::Enum {
-                type_name,
-                variant_name,
-                variant_data,
-            } => match variant_data {
-                EnumVariantData::Unit => write!(f, "{}.{}", type_name, variant_name),
+            Value::Enum(e) => match &e.variant_data {
+                EnumVariantData::Unit => write!(f, "{}.{}", e.type_name, e.variant_name),
                 EnumVariantData::Tuple(values) => {
-                    write!(f, "{}.{}(", type_name, variant_name)?;
+                    write!(f, "{}.{}(", e.type_name, e.variant_name)?;
                     for (i, value) in values.iter().enumerate() {
                         if i > 0 {
                             write!(f, ", ")?;
@@ -1776,7 +1820,7 @@ impl std::fmt::Display for Value {
                 }
                 EnumVariantData::Struct(fields) => {
                     // Sorted by key, like Map above — deterministic output.
-                    write!(f, "{}.{} {{ ", type_name, variant_name)?;
+                    write!(f, "{}.{} {{ ", e.type_name, e.variant_name)?;
                     let mut names: Vec<&String> = fields.keys().collect();
                     names.sort();
                     for (i, name) in names.into_iter().enumerate() {
@@ -1788,12 +1832,8 @@ impl std::fmt::Display for Value {
                     write!(f, " }}")
                 }
             },
-            Value::EnumConstructor {
-                type_name,
-                variant_name,
-                ..
-            } => write!(f, "{}.{}", type_name, variant_name),
-            Value::TypeInfo { name, .. } => write!(f, "<type: {}>", name),
+            Value::EnumConstructor(c) => write!(f, "{}.{}", c.type_name, c.variant_name),
+            Value::TypeInfo(t) => write!(f, "<type: {}>", t.name),
             Value::Native(handle) => write!(f, "{}", handle.0.display()),
         }
     }
@@ -1817,9 +1857,9 @@ impl Value {
             Value::Ok(_) => "Result".to_string(),
             Value::Err(_) => "Result".to_string(),
             Value::Unit => "Unit".to_string(),
-            Value::Enum { type_name, .. } => type_name.clone(),
-            Value::EnumConstructor { type_name, .. } => type_name.clone(),
-            Value::TypeInfo { .. } => "Type".to_string(),
+            Value::Enum(e) => e.type_name.clone(),
+            Value::EnumConstructor(c) => c.type_name.clone(),
+            Value::TypeInfo(_) => "Type".to_string(),
             Value::Native(handle) => handle.0.type_name().to_string(),
         }
     }

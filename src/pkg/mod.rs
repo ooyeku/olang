@@ -166,7 +166,18 @@ pub fn install_lenient(
                 return (map, vec![("<manifest>".to_string(), first.to_string())]);
             };
             let resolution = Default::default();
+            let lock = Lockfile::load(root).ok();
             for (name, dep) in &manifest.dependencies {
+                // A shelf library the lock pins at a commit this shelf does
+                // not hold is resolvable — and is not the code the lock
+                // means. It is missing, by that reason, rather than run.
+                if let Some(locked) = lock.as_ref().and_then(|l| l.package.get(name))
+                    && matches!(locked.source, LockedSource::Shelf { rev: Some(_), .. })
+                    && let Err(e) = locked_dir(root, name, locked, options)
+                {
+                    missing.push((name.clone(), e.to_string()));
+                    continue;
+                }
                 match resolve_dependency(root, name, dep, &resolution, options) {
                     Ok((dir, _)) => {
                         map.insert(name.clone(), dir);
@@ -279,6 +290,7 @@ fn resolve_dependency(
                     // tampering).
                     source: LockedSource::Shelf {
                         shelf: shelf_name.clone(),
+                        rev: shelf.rev_of(shelf_name).map(str::to_string),
                     },
                     checksum,
                     dependencies: sub_dependency_names(&dir),
@@ -354,7 +366,7 @@ fn replay_lock(
             (Dependency::Path { path }, LockedSource::Path { path: locked_path }) => {
                 path == locked_path
             }
-            (Dependency::Shelf { shelf: sname }, LockedSource::Shelf { shelf: locked }) => {
+            (Dependency::Shelf { shelf: sname }, LockedSource::Shelf { shelf: locked, .. }) => {
                 sname == locked
             }
             // Older locks pinned a shelf library by the path it resolved
@@ -426,6 +438,12 @@ fn replay_lock(
         // A lock that names a path this machine does not have (a clone of
         // a project whose lock was written elsewhere, a moved checkout) is
         // not a reason to fail: re-resolve from the manifest instead.
+        // Not so a pinned shelf library: the lock says which commit the
+        // name means, and quietly re-resolving to whatever the shelf holds
+        // is the drift the pin exists to stop.
+        if matches!(locked.source, LockedSource::Shelf { rev: Some(_), .. }) {
+            locked_dir(root, name, locked, options)?;
+        }
         if matches!(
             locked.source,
             LockedSource::Path { .. } | LockedSource::Shelf { .. }
@@ -439,9 +457,11 @@ fn replay_lock(
         // Fetched sources must still match the checksum the lock recorded —
         // this is where the trust model's tamper detection actually bites.
         // Path and shelf deps are exempt: editing one is normal development.
+        // A shelf library pinned at a commit is not: it is a snapshot, and
+        // the same commit is the same tree on every machine.
         if !matches!(
             locked.source,
-            LockedSource::Path { .. } | LockedSource::Shelf { .. }
+            LockedSource::Path { .. } | LockedSource::Shelf { rev: None, .. }
         ) {
             verify_checksum(name, locked.checksum.as_deref(), &dir)?;
         }
@@ -459,9 +479,31 @@ fn locked_dir(
 ) -> Result<PathBuf, PkgError> {
     match &locked.source {
         LockedSource::Path { path } => Ok(normalize(root, path)),
-        LockedSource::Shelf { shelf: shelf_name } => {
+        LockedSource::Shelf {
+            shelf: shelf_name,
+            rev,
+        } => {
             let shelf =
                 shelf::Shelf::load().map_err(|e| PkgError::Resolve(format!("shelf: {}", e)))?;
+            // A lock that pins a revision is a promise about what the name
+            // means: a shelf holding the library at another commit, or
+            // following a checkout, does not keep it.
+            if let Some(wanted) = rev
+                && shelf.rev_of(shelf_name) != Some(wanted.as_str())
+            {
+                return Err(PkgError::Resolve(format!(
+                    "the lock pins shelf library '{}' at {}, and this machine's shelf has {}                      (shelve that commit: `otc lib add <path> --rev {}`)",
+                    shelf_name,
+                    &wanted[..wanted.len().min(12)],
+                    match shelf.rev_of(shelf_name) {
+                        Some(have) => format!("it at {}", &have[..have.len().min(12)]),
+                        None if shelf.resolve(shelf_name).is_some() =>
+                            "it following its directory".to_string(),
+                        None => "no such library".to_string(),
+                    },
+                    &wanted[..wanted.len().min(12)],
+                )));
+            }
             shelf.resolve(shelf_name).cloned().ok_or_else(|| {
                 PkgError::Resolve(format!(
                     "the lock names shelf library '{}', which is not on this machine's shelf \

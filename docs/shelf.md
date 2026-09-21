@@ -52,6 +52,7 @@ Register a library once, per user, from anywhere:
 ```bash
 otc lib add ~/code/geometry   # registers under its package name
 otc lib add . --name geo      # the current directory, under a chosen name
+otc lib add ~/code/sdk --rev 4f2a91c   # the library as it stands at that commit
 otc lib list                  # every shelved library, and where it points
 otc lib remove geometry       # take it off the shelf
 otc lib restore textkit       # re-shelve a starter (or refresh it)
@@ -223,6 +224,20 @@ shelf resolved and a checksum of its contents. From there:
   re-pins.
 - **`otc install --frozen`** replays the lockfile exactly and fails on
   any drift — the reproducible-build mode.
+
+- **A library shelved at a commit** does not follow its checkout. `otc
+  lib add <path> --rev <commit>` writes the repository's tree at that
+  commit into the shelf's own directory (`shelf/pins/<name>-<sha>`),
+  registers the name there, and records the full commit id; `otc lib
+  list` shows it as `pinned at <sha>`. The lock of every project that
+  depends on the name then carries `rev`, and that is a promise about
+  what the name means: on a machine whose shelf holds the library at
+  another commit, or following a directory, the install fails and names
+  the `otc lib add <path> --rev <sha>` that satisfies it — a run does
+  not quietly use whatever the shelf has — and the snapshot's checksum
+  is verified like a fetched dependency's. Re-registering the name
+  without `--rev` unpins it. This is how two machines resolve the same
+  SDK from a checkout each keeps moving.
 
 Because starters are versioned with the toolchain, a lockfile pin on a
 starter behaves like any other: upgrading olang and running `otc lib

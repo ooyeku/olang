@@ -213,7 +213,7 @@ pub fn list() -> anyhow::Result<()> {
                 let resolved = locked
                     .and_then(|p| match &p.source {
                         LockedSource::Path { path } => Some(path.clone()),
-                        LockedSource::Shelf { shelf } => olang::pkg::shelf::Shelf::load()
+                        LockedSource::Shelf { shelf, .. } => olang::pkg::shelf::Shelf::load()
                             .ok()
                             .and_then(|s| s.resolve(shelf).cloned())
                             .map(|dir| dir.display().to_string())

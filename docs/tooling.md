@@ -85,6 +85,12 @@ branches on arguments takes its no-argument path, and `OLANG_TEST` is
 set in the environment, so a library can choose test-time behavior
 (the web SDK's `dispatch` runs handlers on a task thread under it).
 
+In a directory run, a module that is itself one of the files under the
+path runs its blocks as that file and not again when another file
+imports it (they were counted twice whenever the importer came first);
+a module outside the path — a package — still runs its blocks once, at
+its first import.
+
 `olang test --watch` re-runs the tests whenever a `.ol` file under the
 target changes — the edit-test loop, each run a child process so a
 crash ends the run and never the watcher.
@@ -467,8 +473,16 @@ olang profile report.ol -- --input big.csv   # the program's own arguments
 ```
 
 The run is an ordinary run — same tiers, same capability grant, same
-`os.args()` — with a shadow stack sampled by a background thread. The
-report names, for every function that appeared:
+`os.args()` — with a shadow stack sampled by a background thread. A
+program that cannot be wrapped in one run — a server — opens the window
+itself: [`runtime.profile_start()` and
+`runtime.profile_stop()`](stdlib.md#runtime--what-this-binary-carries)
+sample the same stacks and answer the counts as data, for a `/profile`
+route. Time a thread spends parked — a channel receive, a sleep, a
+join, `http.serve` waiting for a connection, an idle http worker — is
+counted as blocked and charged to no function; a served app's profile
+is its handlers, not its server's idle loop. The report names, for
+every function that appeared:
 
 ```
   TIME BY TIER

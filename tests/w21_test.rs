@@ -465,6 +465,19 @@ fn the_test_runner_filters_times_and_keeps_a_named_file_to_its_own_blocks() {
     let (out, _, code) = olang(&ws, &["test", "."]);
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("3 passed, 0 failed"), "{out}");
+    // The same when the importer is visited before the module it imports:
+    // the module's block ran at the import and again as its own file, and
+    // two tests reported three.
+    write(
+        &ws,
+        "a_first/early.ol",
+        "use lib.helper { twice }\ntest \"early importer\" { assert_eq(twice(1), 2) }\n",
+    );
+    let (out, _, code) = olang(&ws, &["test", "."]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("4 passed, 0 failed"), "{out}");
+    assert_eq!(out.matches("helper doubles").count(), 1, "{out}");
+    std::fs::remove_dir_all(ws.join("a_first")).unwrap();
     // --only: one block, and only its file is named.
     let (out, _, code) = olang(&ws, &["test", ".", "--only", "rate limit"]);
     assert_eq!(code, 0, "{out}");
@@ -629,5 +642,156 @@ fn the_allocation_counter_does_not_serialize_parallel_workers() {
     assert!(
         out.starts_with("true"),
         "par_map / map on the interpreter: {out}{err}"
+    );
+}
+
+// --- Release close-out ---
+
+#[test]
+fn a_closure_captures_what_it_can_name_and_means_what_it_meant() {
+    // A closure used to copy every accessible binding — three hundred
+    // entries, 20 µs and up to 140 KB each on the interpreter — and now
+    // captures the names its body and parameter defaults mention. What it
+    // means is unchanged: by value at creation, inner scopes over outer,
+    // templates and nested lambdas included, and a function declared
+    // further down resolved at the call.
+    let ws = workspace("captures");
+    write(
+        &ws,
+        "main.ol",
+        "let greeting = \"hi\"\n\
+         fn make(i) = {\n\
+             let mut n = i\n\
+             let by_value = () => n\n\
+             n = n + 100\n\
+             let shadow = (greeting) => greeting + \"!\"\n\
+             let templated = () => `${greeting} ${i}`\n\
+             let nested = () => map([1, 2], (k) => k + i + later(k))\n\
+             let defaulted = (x, y = i * 2) => x + y\n\
+             [by_value(), shadow(\"yo\"), templated(), nested(), defaulted(1)]\n\
+         }\n\
+         fn later(k) = k * 10\n\
+         println(show(make(3)))\n\
+         let handlers = map(range(0, 20000), (i) => { let a = i + 1; (ev) => a + i })\n\
+         let heap = map_get(runtime.memory(), \"heap\")\n\
+         println(to_string(handlers[7](0)) + \" \" + to_string(heap / 20000 < 8192))\n",
+    );
+    for flags in [&["main.ol"][..], &["--no-ovm", "main.ol"][..]] {
+        let (out, err, code) = olang(&ws, flags);
+        assert_eq!(code, 0, "{flags:?}: {err}");
+        assert_eq!(
+            out, "[3, \"yo!\", \"hi 3\", [14, 25], 7]\n15 true\n",
+            "{flags:?}: {err}"
+        );
+    }
+}
+
+fn ol_files_under(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if path.is_dir() {
+            if !matches!(name.as_str(), "target" | "node_modules" | ".git" | "dist") {
+                ol_files_under(&path, out);
+            }
+        } else if name.ends_with(".ol") {
+            out.push(path);
+        }
+    }
+}
+
+#[test]
+fn a_source_parsed_in_chunks_is_the_source_parsed_whole() {
+    // Large sources are parsed a run of top-level statements at a time so
+    // the grammar's token queue — a hundred bytes per byte of source — is
+    // bounded by a chunk. Every olang file in the repository, split at
+    // every boundary the scanner offers 200 bytes or more apart, must
+    // build the same tree, positions included, as parsing it whole.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    for dir in [
+        "examples",
+        "frameworks",
+        "benchmarks",
+        "benches",
+        "src/stdlib/embedded",
+        "otc",
+    ] {
+        ol_files_under(&root.join(dir), &mut files);
+    }
+    assert!(files.len() > 100, "found only {} files", files.len());
+    let parser = olang::Parser::new();
+    let (mut compared, mut declined) = (0usize, Vec::new());
+    for file in &files {
+        let Ok(source) = std::fs::read_to_string(file) else {
+            continue;
+        };
+        let source = source.strip_prefix('\u{feff}').unwrap_or(&source);
+        let Ok(whole) = parser.parse_raw(source) else {
+            continue; // a fixture that is meant not to parse
+        };
+        match parser.parse_raw_chunked(source, 200) {
+            Some(chunked) => {
+                assert!(
+                    chunked == whole,
+                    "{} parses differently in chunks",
+                    file.display()
+                );
+                compared += 1;
+            }
+            None => declined.push(file.display().to_string()),
+        }
+    }
+    eprintln!(
+        "chunked parse: {compared} files agree, {} declined",
+        declined.len()
+    );
+    assert!(compared > 100, "compared only {compared}");
+    // Declining is always safe; it should also be rare.
+    assert!(
+        declined.len() * 20 <= compared,
+        "{} of {} files could not be parsed in chunks:\n{}",
+        declined.len(),
+        compared + declined.len(),
+        declined.join("\n")
+    );
+}
+
+#[test]
+fn a_program_profiles_itself_and_reads_the_counts_back() {
+    // `olang profile` wraps a whole run; a served app wants a window it
+    // opens and closes itself, and the answer as data. Waiting — here a
+    // sleep, in a server the accept loop and its idle workers — is
+    // counted as blocked, not charged to a function.
+    let ws = workspace("selfprofile");
+    write(
+        &ws,
+        "main.ol",
+        "fn busy(n) = { let mut t = 0; let mut i = 0; while i < n { t = t + i % 7; i = i + 1 }; t }\n\
+         println(show(runtime.profile_stop()))\n\
+         unwrap(runtime.profile_start())\n\
+         println(show(runtime.profile_start()))\n\
+         let total = busy(20000000)\n\
+         time.sleep(80)\n\
+         let p = unwrap(runtime.profile_stop())\n\
+         let top = map_get(p, \"rows\")[0]\n\
+         println(map_get(top, \"function\") + \" \" + to_string(map_get(top, \"share\") > 0.8)\n\
+             + \" \" + to_string(map_get(p, \"blocked\") > 0) + \" \" + to_string(map_get(p, \"samples\") > 0))\n\
+         let a = time.monotonic()\n\
+         let b = time.monotonic()\n\
+         println(typeof(a) + \" \" + to_string(b >= a))\n",
+    );
+    let (out, err, code) = olang(&ws, &["main.ol"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(
+        out,
+        "Err(\"no profile is running (runtime.profile_start starts one)\")\n\
+         Err(\"a profile is already running\")\n\
+         busy true true true\n\
+         Float true\n",
+        "{err}"
     );
 }

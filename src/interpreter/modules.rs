@@ -285,10 +285,9 @@ impl Interpreter {
                                     // usable for construction (`Text(..)`) and not
                                     // only as a type reference. Variants are bare
                                     // names with no qualified form to reach otherwise.
-                                    if let Value::TypeInfo {
-                                        definition: crate::ast::TypeDefinition::Enum { variants },
-                                        ..
-                                    } = &value
+                                    if let Value::TypeInfo(info) = &value
+                                        && let crate::ast::TypeDefinition::Enum { variants } =
+                                            &info.definition
                                     {
                                         for variant in variants {
                                             if let Some(ctor) =
@@ -726,10 +725,10 @@ impl Interpreter {
                             ShareDecl::Type(type_decl) => {
                                 self.eval_type_decl(type_decl.clone())?;
                                 // Export type information as a special Type value
-                                let type_info = Value::TypeInfo {
-                                    name: type_decl.name.clone(),
-                                    definition: type_decl.definition.clone(),
-                                };
+                                let type_info = Value::type_info(
+                                    type_decl.name.clone(),
+                                    type_decl.definition.clone(),
+                                );
                                 exports.insert(type_decl.name.clone(), type_info);
 
                                 // For an enum, also export each variant

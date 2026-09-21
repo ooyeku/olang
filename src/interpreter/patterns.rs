@@ -26,13 +26,10 @@ impl Interpreter {
                 // `Concat(a, b)` must still bind even when a `b` already in
                 // scope holds a unit variant.
                 if self.unit_variant_names.contains(name)
-                    && let Some(variant @ Value::Enum { .. }) = self.environment.get(name)
+                    && let Some(variant @ Value::Enum(_)) = self.environment.get(name)
                     && matches!(
-                        variant,
-                        Value::Enum {
-                            variant_data: EnumVariantData::Unit,
-                            ..
-                        }
+                        &variant,
+                        Value::Enum(e) if e.variant_data == EnumVariantData::Unit
                     )
                 {
                     return Ok(&variant == val);
@@ -98,19 +95,15 @@ impl Interpreter {
                     variant_name,
                     patterns,
                 },
-                Value::Enum {
-                    variant_name: val_variant,
-                    variant_data,
-                    ..
-                },
+                Value::Enum(enum_value),
             ) => {
                 // Check if variant names match
-                if variant_name != val_variant {
+                if variant_name != &enum_value.variant_name {
                     return Ok(false);
                 }
 
                 // Match based on the variant data type
-                match variant_data {
+                match &enum_value.variant_data {
                     EnumVariantData::Unit => {
                         // Unit variants should have no patterns
                         Ok(patterns.is_empty())

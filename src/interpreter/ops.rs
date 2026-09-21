@@ -188,10 +188,10 @@ impl Interpreter {
             (Value::Boolean(a), BinaryOp::Equal, Value::Boolean(b)) => Ok(Value::Boolean(a == b)),
             // Enum values compare structurally: same variant and payloads.
             // Value derives PartialEq, so this is the natural equality.
-            (left @ Value::Enum { .. }, BinaryOp::Equal, right @ Value::Enum { .. }) => {
+            (left @ Value::Enum(_), BinaryOp::Equal, right @ Value::Enum(_)) => {
                 Ok(Value::Boolean(left == right))
             }
-            (left @ Value::Enum { .. }, BinaryOp::NotEqual, right @ Value::Enum { .. }) => {
+            (left @ Value::Enum(_), BinaryOp::NotEqual, right @ Value::Enum(_)) => {
                 Ok(Value::Boolean(left != right))
             }
             // Collections and structs compare structurally, like enums:

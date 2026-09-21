@@ -160,6 +160,7 @@ fn recorded_of(op: &str) -> bool {
         op,
         "time.now_ms"
             | "time.monotonic_ms"
+            | "time.monotonic"
             | "dates.now"
             | "dates.utc_now"
             | "dates.today"

@@ -35,7 +35,10 @@ fn count_primes(block) = {
     count
 }
 
-let blocks = range(0, 48)
+// `OLANG_EXAMPLE_QUICK` (the tier-agreement test sets it) runs an eighth
+// of the work: on the tree-walker in a debug build the full program is
+// minutes of trial division, and what that test compares is the answers.
+let blocks = range(0, if os.has_env("OLANG_EXAMPLE_QUICK") => 6 else => 48)
 
 let t0 = time.monotonic_ms()
 let sequential = map(blocks, count_primes)
@@ -50,8 +53,9 @@ println("blocks: " + show(len(blocks)) + " x 20000 numbers")
 println("primes found: " + show(sum(parallel)))
 println("map:     " + show(seq_ms) + "ms")
 println("par_map: " + show(par_ms) + "ms")
-if par_ms > 0 && seq_ms / par_ms > 1 =>
-    { println("speedup: " + show(seq_ms / par_ms) + "x") }
+// Printed whichever way it came out: a line that appears only when the
+// fan-out won is a line whose presence depends on the clock.
+println("speedup: " + show(if par_ms > 0 => seq_ms / par_ms else => seq_ms) + "x")
 
 if sequential != parallel => {
     println("MISMATCH — par_map diverged from map")

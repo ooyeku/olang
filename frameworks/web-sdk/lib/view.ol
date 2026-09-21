@@ -29,7 +29,7 @@ let paints = cell.new(0)
 // What the repaints cost, and the ones that were not needed (see
 // `paint_stats`).
 let paint_log = cell.new(#{
-    "skipped": 0, "healed": 0, "view_ms": 0, "serialize_ms": 0.0, "patch_ms": 0.0,
+    "skipped": 0, "healed": 0, "view_ms": 0.0, "serialize_ms": 0.0, "patch_ms": 0.0,
     "nodes": 0, "memo_hits": 0, "memo_misses": 0, "last": #{}
 })
 // The top-level state keys a repaint depends on: `watched` when a view
@@ -38,9 +38,9 @@ let watched = cell.new([])
 let unwatched = cell.new([])
 
 fn paint_once(f, root) = {
-    let t0 = time.monotonic_ms()
+    let t0 = time.monotonic()
     let tree = f(current())
-    let view_ms = time.monotonic_ms() - t0
+    let view_ms = time.monotonic() - t0
     let answer = dom.patch(dom.query(root), tree)
     let tally = take_memo_tally()
     // A runtime older than the answering `dom.patch` returns Unit.

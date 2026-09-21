@@ -1570,10 +1570,10 @@ let t2 = time.monotonic_ms()
         // durable non-representable specimen. (A map holding one is not:
         // a map crosses as a wrapper, whole and unexamined, and leaves as
         // the Arc it came in with.)
-        let type_info = Value::TypeInfo {
-            name: "X".to_string(),
-            definition: crate::ast::TypeDefinition::Struct { fields: Vec::new() },
-        };
+        let type_info = Value::type_info(
+            "X".to_string(),
+            crate::ast::TypeDefinition::Struct { fields: Vec::new() },
+        );
         let tuple_arg = Value::Tuple(std::sync::Arc::new(vec![type_info]));
         assert!(matches!(
             tier.try_call(&func, &mut [tuple_arg]),

@@ -91,6 +91,69 @@ pub use errors::{InterpreterError, IntuitiveErrorFormatter};
 mod environment;
 pub use environment::{Environment, ModuleDebugConfig};
 
+/// Every name a piece of syntax mentions: every string in its serialized
+/// form, sorted. A superset of the identifiers it can name, and total by
+/// construction — a hand-written walk of the expression forms would miss
+/// the next form added. A string literal that happens to spell a binding
+/// captures that binding, which is harmless.
+fn mentioned_names<T: serde::Serialize>(syntax: &T) -> Vec<String> {
+    /// Reads serialized JSON as it is written and keeps the contents of
+    /// its strings — keys and values alike — without building the tree: a
+    /// view function's body is thousands of nodes, and a tree of them was
+    /// tens of megabytes allocated and freed per lambda expression.
+    #[derive(Default)]
+    struct Strings {
+        found: Vec<String>,
+        current: Vec<u8>,
+        in_string: bool,
+        escaped: bool,
+    }
+    impl std::io::Write for Strings {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            for &b in bytes {
+                if !self.in_string {
+                    self.in_string = b == b'"';
+                } else if self.escaped {
+                    // An escape never occurs in an identifier; whatever it
+                    // stands for, the string is not a name.
+                    self.escaped = false;
+                    self.current.push(b'\\');
+                } else if b == b'\\' {
+                    self.escaped = true;
+                } else if b == b'"' {
+                    self.in_string = false;
+                    if let Ok(name) = std::str::from_utf8(&self.current) {
+                        self.found.push(name.to_string());
+                    }
+                    self.current.clear();
+                } else {
+                    self.current.push(b);
+                }
+            }
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut strings = Strings::default();
+    let _ = serde_json::to_writer(&mut strings, syntax);
+    let mut mentioned = strings.found;
+    mentioned.sort();
+    mentioned.dedup();
+    mentioned
+}
+
+/// A lambda expression, worked out once (`Interpreter::lambda_shape`).
+struct LambdaShape {
+    parameters: Vec<String>,
+    /// The expression as written, to tell a reused address from a hit.
+    original: Expr,
+    resolved: Arc<Expr>,
+    /// Every name the body mentions (a superset), sorted.
+    mentioned: Vec<String>,
+}
+
 /// A run of consecutive top-level `fn` declarations, while it is open.
 struct OpenRun {
     /// The scope map as the last declaration left it — by address, held
@@ -148,6 +211,8 @@ pub struct Interpreter {
     /// The run of consecutive top-level `fn` declarations in progress (see
     /// `ast::FnRun` and `build_function_value`).
     fn_run: Option<OpenRun>,
+    /// Lambda expressions already worked out (`lambda_shape`).
+    lambda_shapes: HashMap<usize, Arc<LambdaShape>>,
     /// A bridge interpreter's view of the program's functions, by name.
     bridge_functions: Option<Arc<HashMap<String, Arc<Function>>>>,
     module_loading_stack: Vec<String>, // Feature 7: Track modules currently being loaded for circular detection
@@ -254,6 +319,10 @@ pub struct Interpreter {
     /// `olang test <file>`: run the named file's own blocks, not those of
     /// the modules it imports.
     test_own_blocks_only: bool,
+    /// The files this `olang test` run visits as entries (canonical
+    /// paths). An imported module among them does not run its blocks at
+    /// import: it runs them as an entry, once.
+    test_entries: Arc<std::collections::HashSet<std::path::PathBuf>>,
 
     /// Line-coverage recording (`olang test --coverage`). When `Some`,
     /// every executed located statement records its line under the file
@@ -363,6 +432,7 @@ impl Interpreter {
             declared_early: HashMap::new(),
             module_scopes: HashMap::new(),
             fn_run: None,
+            lambda_shapes: HashMap::new(),
             bridge_functions: None,
             module_loading_stack: Vec::new(), // Feature 7: Track modules currently being loaded for circular detection
 
@@ -394,6 +464,7 @@ impl Interpreter {
             test_results: Vec::new(),
             test_filter: None,
             test_own_blocks_only: false,
+            test_entries: Arc::new(std::collections::HashSet::new()),
             coverage: None,
             coverage_file_stack: Vec::new(),
             caps: None,
@@ -1354,17 +1425,17 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 if let Some(tier) = self.bytecode_tier.as_mut() {
                     tier.note_unit_variant(variant.name.clone());
                 }
-                Value::Enum {
-                    type_name: error_type_decl.name.clone(),
-                    variant_name: variant.name.clone(),
-                    variant_data: EnumVariantData::Unit,
-                }
+                Value::enum_of(
+                    error_type_decl.name.clone(),
+                    variant.name.clone(),
+                    EnumVariantData::Unit,
+                )
             } else {
-                Value::EnumConstructor {
-                    type_name: error_type_decl.name.clone(),
-                    variant_name: variant.name.clone(),
-                    arity: variant.fields.len(),
-                }
+                Value::enum_constructor(
+                    error_type_decl.name.clone(),
+                    variant.name.clone(),
+                    variant.fields.len(),
+                )
             };
             self.environment.define(variant.name.clone(), value);
         }
@@ -1524,7 +1595,12 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             None => {
                 // A nested `fn` sees the siblings its enclosing function sees.
                 run = self.environment.run.clone();
-                Arc::new(self.collect_all_accessible_variables())
+                Arc::new(
+                    self.collect_captures(&mentioned_names(&(
+                        &func_decl.parameters,
+                        &func_decl.body,
+                    ))),
+                )
             }
         };
 
@@ -1721,11 +1797,14 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             Expr::Lambda {
                 parameters, body, ..
             } => {
-                // Capture all accessible variables from the environment chain
-                let closure = self.collect_all_accessible_variables();
-                let param_names: Vec<String> = parameters.iter().map(|p| p.name.clone()).collect();
-                let resolved_body =
-                    crate::resolve::Resolver::resolve_function_body(body, None, &param_names);
+                // What this lambda expression is, worked out once: its body
+                // with identifiers resolved to slots, and every name the
+                // body mentions. Creating a closure then shares the one
+                // resolved body — a fresh copy per creation also gave the
+                // tier a "new" function each time — and captures what the
+                // body can name rather than the whole accessible scope.
+                let shape = self.lambda_shape(parameters, body);
+                let closure = self.collect_captures(&shape.mentioned);
                 // A parameter annotated with an alias checks as the alias's
                 // target, like a named function's.
                 let parameters: Vec<crate::ast::Parameter> = if self.type_aliases.is_empty() {
@@ -1747,7 +1826,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     param_checks: crate::ast::param_checks_of(&parameters, &[]),
                     return_check: None,
                     parameters,
-                    body: Arc::new(resolved_body),
+                    body: shape.resolved.clone(),
                     closure: Arc::new(closure),
                     param_bounds: Vec::new(),
                     def_file: self.defining_file(),
@@ -3337,24 +3416,20 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 BuiltinFunctions::call(&builtin_functions, &name, arguments, self)
             }
             // Applying a tuple-variant constructor builds the enum value
-            Value::EnumConstructor {
-                type_name,
-                variant_name,
-                arity,
-            } => {
+            Value::EnumConstructor(constructor) => {
                 // call_depth is only incremented in the Function arm, so
                 // there is nothing to unwind here
-                if arguments.len() != arity {
+                if arguments.len() != constructor.arity {
                     return Err(InterpreterError::ArityMismatch {
-                        expected: arity,
+                        expected: constructor.arity,
                         got: arguments.len(),
                     });
                 }
-                Ok(Value::Enum {
-                    type_name,
-                    variant_name,
-                    variant_data: crate::ast::EnumVariantData::Tuple(arguments),
-                })
+                Ok(Value::enum_of(
+                    constructor.type_name.clone(),
+                    constructor.variant_name.clone(),
+                    crate::ast::EnumVariantData::Tuple(arguments),
+                ))
             }
             // A module that exports `new` is callable, and calling it *is*
             // calling `new`: `cell(0)` is `cell.new(0)`. Constructing one
@@ -3544,6 +3619,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             declared_early: HashMap::new(),
             module_scopes: self.module_scopes.clone(),
             fn_run: None,
+            lambda_shapes: HashMap::new(),
             bridge_functions: self.bridge_functions.clone(),
             module_loading_stack: Vec::new(), // Feature 7: Each thread gets its own loading stack
 
@@ -3645,6 +3721,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             test_results: Vec::new(),
             test_filter: None,
             test_own_blocks_only: false,
+            test_entries: Arc::new(std::collections::HashSet::new()),
             // Coverage is single-threaded: worker clones don't record.
             coverage: None,
             coverage_file_stack: Vec::new(),
@@ -4025,17 +4102,17 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                         if let Some(tier) = self.bytecode_tier.as_mut() {
                             tier.note_unit_variant(variant.name.clone());
                         }
-                        Value::Enum {
-                            type_name: type_decl.name.clone(),
-                            variant_name: variant.name.clone(),
-                            variant_data: EnumVariantData::Unit,
-                        }
+                        Value::enum_of(
+                            type_decl.name.clone(),
+                            variant.name.clone(),
+                            EnumVariantData::Unit,
+                        )
                     }
-                    Some(fields) => Value::EnumConstructor {
-                        type_name: type_decl.name.clone(),
-                        variant_name: variant.name.clone(),
-                        arity: fields.len(),
-                    },
+                    Some(fields) => Value::enum_constructor(
+                        type_decl.name.clone(),
+                        variant.name.clone(),
+                        fields.len(),
+                    ),
                 };
                 self.environment.define(variant.name.clone(), value);
             }
@@ -4396,59 +4473,84 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     }
 
     /// Collect all accessible variables from the current environment and its parent chain
-    fn collect_all_accessible_variables(&self) -> ImHashMap<String, Value> {
-        // Union the chain innermost-first: im's union prefers entries from
-        // self on collision, so inner scopes shadow outer ones. Structural
-        // sharing makes this near-O(1) for the common shallow chains,
-        // versus copying every entry of every scope.
-        // NOTE: im::HashMap::union is unusable here — its collision bias
-        // depends on which map is LARGER (it swaps sides internally as a
-        // size optimization), so "inner scope wins" silently became
-        // "bigger scope wins" and a captured variable could resolve to an
-        // ancestor frame's stale value. Insert explicitly instead: existing
-        // entries always win, so inner scopes shadow outer ones.
-        let mut all_variables = self.environment.flat_snapshot();
-        // A module's code does not capture the program's root: the root
-        // belongs to the entry file, and a name it binds — an import of
-        // some other module's `compute_here` — must never be what a
-        // lambda in this module means by that name. The module's own
-        // table answers at lookup time instead. While the module is still
-        // loading, the root in the chain IS the module's environment, and
-        // that one is captured as ever.
+    /// A lambda expression's resolved body and the names it mentions,
+    /// cached by the expression's address and checked against its content
+    /// (an address can be reused by another program's tree, so a hit is
+    /// only a hit when parameters and body are equal).
+    fn lambda_shape(&mut self, parameters: &[Parameter], body: &Expr) -> Arc<LambdaShape> {
+        let key = body as *const Expr as usize;
+        if let Some(shape) = self.lambda_shapes.get(&key)
+            && shape.parameters.len() == parameters.len()
+            && shape
+                .parameters
+                .iter()
+                .zip(parameters)
+                .all(|(have, p)| *have == p.name)
+            && shape.original == *body
+        {
+            return shape.clone();
+        }
+        let param_names: Vec<String> = parameters.iter().map(|p| p.name.clone()).collect();
+        let resolved = crate::resolve::Resolver::resolve_function_body(body, None, &param_names);
+        // Parameter defaults are evaluated in the closure too.
+        let mentioned = mentioned_names(&(parameters, body));
+        let shape = Arc::new(LambdaShape {
+            parameters: param_names,
+            original: body.clone(),
+            resolved: Arc::new(resolved),
+            mentioned,
+        });
+        if self.lambda_shapes.len() >= 8192 {
+            self.lambda_shapes.clear();
+        }
+        self.lambda_shapes.insert(key, shape.clone());
+        shape
+    }
+
+    /// What a lambda created here closes over: the bindings its body (or
+    /// a parameter default) can name, each as the lexical chain holds it
+    /// now — by value, as closures capture. Capturing everything
+    /// accessible, as this once did, rebuilt a
+    /// three-hundred-entry map for every closure created inside a
+    /// function — 20 µs and up to 140 KB each, so a table of twenty
+    /// thousand handlers cost 414 ms and 2.9 GB on the interpreter — and
+    /// made every closure pin the whole scope it was born in. A name the
+    /// body mentions that is not bound yet (a function declared further
+    /// down) resolves at call time, as it always has.
+    fn collect_captures(&self, mentioned: &[String]) -> ImHashMap<String, Value> {
         let skip_root = self
             .environment
             .owner
             .as_deref()
             .is_some_and(|owner| self.module_scopes.contains_key(owner));
-        // The lexical chain only: the enclosing scopes and the declaring
-        // frames, never the frames that happened to call into this one.
-        for parent in self.environment.lexical_chain().into_iter().skip(1) {
-            if skip_root && parent.parent.is_none() {
-                continue;
-            }
-            // Within a scope, call-frame locals shadow its flat map
-            for (name, value) in parent.locals.iter().rev() {
-                if !all_variables.contains_key(name) {
-                    all_variables.insert(name.clone(), value.clone());
+        let chain = self.environment.lexical_chain();
+        let mut captured = ImHashMap::new();
+        for name in mentioned {
+            for env in &chain {
+                if env.parent.is_none() && !std::ptr::eq(*env, &self.environment) {
+                    // A module's code does not capture the program's root:
+                    // the root belongs to the entry file, and a name it
+                    // binds — an import of some other module's
+                    // `compute_here` — must never be what a lambda in this
+                    // module means by that name (the module's own table
+                    // answers at lookup instead; while the module is still
+                    // loading, the root in the chain IS the module's
+                    // environment and is captured from as ever). And the
+                    // root's binding is not what this code means by a name
+                    // the running function has an earlier sibling for
+                    // (`ast::FnRun`): left out, it resolves through the
+                    // run at lookup.
+                    if skip_root || self.environment.run.get(name).is_some() {
+                        break;
+                    }
                 }
-            }
-            // The root's binding of a name is not what this code means by
-            // it when the running function has an earlier sibling of that
-            // name (`ast::FnRun`): its snapshot held the sibling, and a
-            // later redefinition in the root must not reach back. Left
-            // out here, the name resolves through the run at lookup.
-            let is_root = parent.parent.is_none();
-            for (name, value) in parent.variables.iter() {
-                if is_root && self.environment.run.get(name).is_some() {
-                    continue;
-                }
-                if !all_variables.contains_key(name) {
-                    all_variables.insert(name.clone(), value.clone());
+                if let Some(value) = env.get_here(name) {
+                    captured.insert(name.clone(), value);
+                    break;
                 }
             }
         }
-
-        all_variables
+        captured
     }
 
     fn eval_for_loop(
@@ -5206,11 +5308,22 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         {
             return Ok(Value::Unit);
         }
-        if self.test_own_blocks_only
-            && let Some(module) = self.current_module_path.as_deref()
+        if let Some(module) = self.current_module_path.as_deref()
             && self.entry_file.as_deref() != Some(module)
         {
-            return Ok(Value::Unit);
+            if self.test_own_blocks_only {
+                return Ok(Value::Unit);
+            }
+            // A module the run also visits as a file of its own runs its
+            // blocks there. Run here too, they were counted twice whenever
+            // the importer came first in the walk.
+            if !self.test_entries.is_empty()
+                && std::path::Path::new(module)
+                    .canonicalize()
+                    .is_ok_and(|path| self.test_entries.contains(&path))
+            {
+                return Ok(Value::Unit);
+            }
         }
         let (_, failed_before) = crate::stdlib::testing::tally_snapshot();
         let started = crate::clock::Instant::now();
@@ -5659,6 +5772,14 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     pub fn narrow_tests(&mut self, only: Option<String>, own_blocks: bool) {
         self.test_filter = only;
         self.test_own_blocks_only = own_blocks;
+    }
+
+    /// The files this test run visits as entries (canonical paths).
+    pub fn set_test_entries(
+        &mut self,
+        entries: Arc<std::collections::HashSet<std::path::PathBuf>>,
+    ) {
+        self.test_entries = entries;
     }
 
     /// Forget the location and frames captured for an error that a

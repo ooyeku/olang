@@ -600,6 +600,19 @@ fn program_diagnostics(
                         message: msg,
                         ..Default::default()
                     });
+                    // Every other undefined name of the same pass, each
+                    // at its first occurrence — not one per save.
+                    for name in analyzer.get_undefined_variables().into_iter().skip(1) {
+                        if let Some(range) = find_identifier(text, &name) {
+                            scope_diags.push(Diagnostic {
+                                range,
+                                severity: Some(DiagnosticSeverity::ERROR),
+                                source: Some("olang".to_string()),
+                                message: format!("Undefined variable: {}", name),
+                                ..Default::default()
+                            });
+                        }
+                    }
                     scope_diags
                 }
                 Ok(report) => {

@@ -2741,6 +2741,13 @@ fn execute_program(
                 for (name, reason) in interpreter.tier_refusals() {
                     eprintln!("tier-refused: {}: {}", name, reason);
                 }
+                eprintln!(
+                    "bridge-builds: {} ({} ms)",
+                    olang::ovm::bytecode::BRIDGE_BUILDS.load(std::sync::atomic::Ordering::Relaxed),
+                    olang::ovm::bytecode::BRIDGE_BUILD_MICROS
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                        / 1000
+                );
             }
             if ovm_stats {
                 match interpreter.bytecode_tier_stats() {

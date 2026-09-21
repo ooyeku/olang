@@ -194,6 +194,7 @@ without remembering where it lives". Register a library once, per user:
 
 ```bash
 otc lib add ~/code/geometry     # registers under its package name
+otc lib add ~/code/sdk --rev 4f2a91c   # as it stands at that commit; the lock carries the rev
 otc lib list                    # what is shelved, and where each points
 otc lib remove geometry
 ```

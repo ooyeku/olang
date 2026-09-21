@@ -81,8 +81,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - The patcher gives focus and caret back to a control inside a keyed
   node it moves.
 
+- **A value is 40 bytes** (176 in 0.85.0, 112 after the function value
+  moved behind an `Arc`): an enum value, a variant constructor and a type
+  are each one shared allocation. Every list slot and every scope-map
+  entry shrinks with it; `sieve` runs a quarter faster.
+- **A closure captures what its body can name.** Creating one inside a
+  function copied every accessible binding — a three-hundred-entry map,
+  20 µs and up to 140 KB each on the interpreter — and re-resolved the
+  body. Twenty thousand closures: 414 ms and 2.9 GB of heap → 28 ms and
+  60 MB. Every closure of one lambda expression shares one resolved
+  body. What a closure means is unchanged.
+- **A large source is parsed in chunks.** The grammar's token queue
+  costs a hundred bytes per byte of source; a source of 16 KB or more is
+  parsed a run of top-level statements at a time, each inside a blanked
+  copy of the file so every position is the file's own, and parsed whole
+  when any chunk does not come out clean. Every olang file in the
+  repository builds the same tree both ways (a test). The 4,000-function
+  file: 43 → 32 MB resident.
+- The analyzer reports every undefined name in one pass; the editor
+  shows them all, and `meta.unresolved` no longer re-runs the analysis
+  per name.
+- A directory `olang test` no longer counts a module's blocks twice when
+  its importer is visited first (the SDK's suite is 77 tests, not 95).
+- A profile counts a parked thread as blocked whatever is on its stack:
+  `http.serve` waiting for a connection and an idle http worker are not
+  work.
+
 ### Added
 
+- `runtime.profile_start()` / `runtime.profile_stop()`: the sampling
+  profiler as a window a program opens on itself, answering the counts —
+  functions, tiers, shares, blocked ticks — as data.
+- `time.monotonic()`: the monotonic clock as a Float with its fraction.
+  In the browser both monotonic clocks read the page's
+  `performance.now()`.
+- `otc lib add <path> --rev <commit>`: a shelved library as it stands at
+  a commit, the commit carried in `olang.lock`, and an install that
+  refuses a shelf holding another revision.
+- `OLANG_ALLOC_TRACE=<bytes>` in an `alloc-count` build prints the
+  backtrace of every allocation at least that large;
+  `OLANG_TIER_STATS=1` adds `bridge-builds:`.
+- `benches/par_interp.ol`: the interpreter's parallel path against its
+  sequential one — the ratio that shows per-allocation or per-call state
+  shared between threads.
 - `[check] promote = ["shadow"]`: a `let` that takes a stdlib module's
   name is an error.
 - `fs.file_info` carries `modified_ms`; `plot` and `viz.chart` take

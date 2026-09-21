@@ -1082,11 +1082,12 @@ impl OvmValue {
                 }
             }
 
-            Value::Enum {
-                type_name,
-                variant_name,
-                variant_data,
-            } => {
+            Value::Enum(e) => {
+                let crate::ast::EnumValue {
+                    type_name,
+                    variant_name,
+                    variant_data,
+                } = Arc::unwrap_or_clone(e);
                 let data = match variant_data {
                     crate::ast::EnumVariantData::Unit => EnumData::Unit,
                     crate::ast::EnumVariantData::Tuple(values) => {
@@ -1134,13 +1135,13 @@ impl OvmValue {
                 }
             }
 
-            Value::TypeInfo { name, .. } => {
+            Value::TypeInfo(t) => {
                 // For now, represent types as string names
-                Self::new_string(name)
+                Self::new_string(t.name.clone())
             }
             // A constructor is a callable; it never actually crosses into the
             // VM (round_trips excludes it), so a placeholder unit is fine
-            Value::EnumConstructor { .. } => Self::new_unit(),
+            Value::EnumConstructor(_) => Self::new_unit(),
 
             // The same Arc, shared verbatim: crossing the boundary is a
             // refcount bump, never a conversion.
@@ -1311,11 +1312,11 @@ impl OvmValue {
                             .collect::<Result<_, RuntimeError>>()?,
                     ),
                 };
-                Ok(Value::Enum {
-                    type_name: e.type_name.clone(),
-                    variant_name: e.variant_name.clone(),
+                Ok(Value::enum_of(
+                    e.type_name.clone(),
+                    e.variant_name.clone(),
                     variant_data,
-                })
+                ))
             }
             // Rebuild the interpreter function the lambda evaluation would
             // have produced: the declaration-time closure with the runtime

@@ -42,6 +42,8 @@ pub struct Analyzer {
     /// Names a file exports with `share`: their use is in other files,
     /// so they are never reported unused.
     exported: HashSet<String>,
+    /// Undefined names met so far, in order of first use.
+    undefined: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -111,28 +113,16 @@ impl Analyzer {
             shadowed: Vec::new(),
             hoisted: HashSet::new(),
             exported: HashSet::new(),
+            undefined: Vec::new(),
         }
     }
 
     /// Every name `program` uses that nothing in it defines or imports and
-    /// the language does not provide — in order of first use. The analysis
-    /// stops at the first such name, so it is re-run with each one found
-    /// declared, up to a bound.
+    /// the language does not provide — in order of first use.
     pub fn unresolved_names(program: &Program) -> Vec<String> {
-        let mut found: Vec<String> = Vec::new();
-        for _ in 0..64 {
-            let mut analyzer = Analyzer::new();
-            for name in &found {
-                analyzer.declare_in_scope(name.clone());
-            }
-            match analyzer.analyze_program(program) {
-                Err(AnalysisError::UndefinedVariable { name }) if !found.contains(&name) => {
-                    found.push(name)
-                }
-                _ => break,
-            }
-        }
-        found
+        let mut analyzer = Analyzer::new();
+        let _ = analyzer.analyze_program(program);
+        analyzer.get_undefined_variables()
     }
 
     /// Create a new analyzer without builtin functions (for testing or custom environments)
@@ -146,10 +136,19 @@ impl Analyzer {
             shadowed: Vec::new(),
             hoisted: HashSet::new(),
             exported: HashSet::new(),
+            undefined: Vec::new(),
         }
     }
 
     pub fn analyze_program(&mut self, program: &Program) -> Result<(), AnalysisError> {
+        self.analyze_program_walk(program)?;
+        match self.undefined.first() {
+            Some(name) => Err(AnalysisError::UndefinedVariable { name: name.clone() }),
+            None => Ok(()),
+        }
+    }
+
+    fn analyze_program_walk(&mut self, program: &Program) -> Result<(), AnalysisError> {
         // A file's top-level functions are visible to one another whatever
         // their order — a module's functions are re-closed over the whole
         // module, and the entry file declares a function on first use —
@@ -853,9 +852,14 @@ impl Analyzer {
             }
         }
 
-        Err(AnalysisError::UndefinedVariable {
-            name: name.to_string(),
-        })
+        // Recorded, not raised: the walk goes on, so one pass finds every
+        // undefined name (an editor showed them one save at a time, and
+        // `unresolved_names` re-ran the whole analysis per name). The
+        // first is still what `analyze_program` answers with.
+        if !self.undefined.iter().any(|n| n == name) {
+            self.undefined.push(name.to_string());
+        }
+        Ok(())
     }
 
     fn enter_scope(&mut self) {
@@ -983,10 +987,9 @@ impl Analyzer {
             .collect()
     }
 
+    /// Every undefined name the analysis met, in order of first use.
     pub fn get_undefined_variables(&self) -> Vec<String> {
-        // Collect all undefined variables encountered during analysis
-        // This would be populated during analysis if we tracked undefined refs
-        Vec::new()
+        self.undefined.clone()
     }
 
     pub fn get_overwritten_variables(&self) -> Vec<String> {

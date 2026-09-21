@@ -84,9 +84,44 @@ fn count(delta: i64) {
     LIVE[my_slot()].live.fetch_add(delta, Ordering::Relaxed);
 }
 
+/// `OLANG_ALLOC_TRACE=<bytes>` in an `alloc-count` build: every
+/// allocation at least that large prints its size and backtrace to
+/// stderr — how a transient spike is found, which a heap snapshot cannot
+/// show because the memory is already free when anyone looks.
+#[cfg(feature = "alloc-count")]
+fn trace_large(size: usize) {
+    use std::sync::atomic::AtomicUsize;
+    static THRESHOLD: AtomicUsize = AtomicUsize::new(usize::MAX - 1);
+    thread_local! {
+        static TRACING: Cell<bool> = const { Cell::new(false) };
+    }
+    // Reading the environment and printing a backtrace both allocate.
+    if TRACING.try_with(|t| t.replace(true)).unwrap_or(true) {
+        return;
+    }
+    let mut threshold = THRESHOLD.load(Ordering::Relaxed);
+    if threshold == usize::MAX - 1 {
+        threshold = std::env::var("OLANG_ALLOC_TRACE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(usize::MAX);
+        THRESHOLD.store(threshold, Ordering::Relaxed);
+    }
+    if size >= threshold {
+        eprintln!(
+            "alloc-trace: {} bytes\n{}",
+            size,
+            std::backtrace::Backtrace::force_capture()
+        );
+    }
+    let _ = TRACING.try_with(|t| t.set(false));
+}
+
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         count(layout.size() as i64);
+        #[cfg(feature = "alloc-count")]
+        trace_large(layout.size());
         if cfg!(feature = "alloc-count") {
             ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
             REQUESTED.fetch_add(layout.size() as u64, Ordering::Relaxed);
@@ -107,6 +142,8 @@ unsafe impl GlobalAlloc for Counting {
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         count(new_size as i64 - layout.size() as i64);
+        #[cfg(feature = "alloc-count")]
+        trace_large(new_size);
         if cfg!(feature = "alloc-count") {
             ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
             REQUESTED.fetch_add(new_size as u64, Ordering::Relaxed);

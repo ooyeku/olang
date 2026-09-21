@@ -21,6 +21,12 @@ pub enum LibCommand {
         /// Register under this name (default: the library's package name)
         #[arg(long)]
         name: Option<String>,
+        /// Shelve the library as it stands at this commit of its
+        /// repository (a snapshot the shelf owns) and record the commit,
+        /// so `olang.lock` pins it and another machine resolves the same
+        /// code
+        #[arg(long, value_name = "COMMIT")]
+        rev: Option<String>,
     },
     /// List the libraries on your shelf
     List,
@@ -41,7 +47,7 @@ pub enum LibCommand {
 impl LibCommand {
     pub fn execute(&self) -> anyhow::Result<()> {
         match self {
-            LibCommand::Add { path, name } => add(path, name.as_deref()),
+            LibCommand::Add { path, name, rev } => add(path, name.as_deref(), rev.as_deref()),
             LibCommand::List => list(),
             LibCommand::Remove { name } => remove(name),
             LibCommand::Restore { name } => restore(name.as_deref()),
@@ -49,14 +55,33 @@ impl LibCommand {
     }
 }
 
-fn add(path: &str, name: Option<&str>) -> anyhow::Result<()> {
+fn add(path: &str, name: Option<&str>, rev: Option<&str>) -> anyhow::Result<()> {
     let mut shelf = Shelf::load_or_seed().map_err(|e| anyhow::anyhow!("{}", e))?;
-    let registered = shelf
-        .add(std::path::Path::new(path), name)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let (registered, pinned) = match rev {
+        Some(rev) => {
+            let (registered, sha) = shelf
+                .add_at_rev(std::path::Path::new(path), name, rev)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            (registered, Some(sha))
+        }
+        None => (
+            shelf
+                .add(std::path::Path::new(path), name)
+                .map_err(|e| anyhow::anyhow!("{}", e))?,
+            None,
+        ),
+    };
     let dir = shelf.resolve(&registered).cloned().expect("just added");
     shelf.save().map_err(|e| anyhow::anyhow!("{}", e))?;
-    println!("Shelved '{}' → {}", registered, dir.display());
+    match &pinned {
+        Some(sha) => println!(
+            "Shelved '{}' at {} → {}",
+            registered,
+            &sha[..sha.len().min(12)],
+            dir.display()
+        ),
+        None => println!("Shelved '{}' → {}", registered, dir.display()),
+    }
     println!("Use it from any project:  otc add {}", registered);
     Ok(())
 }
@@ -85,6 +110,10 @@ fn list() -> anyhow::Result<()> {
         } else {
             ""
         };
+        let status = match shelf.rev_of(name) {
+            Some(rev) => format!("  (pinned at {}){}", &rev[..rev.len().min(12)], status),
+            None => status.to_string(),
+        };
         println!("  {:<width$}  {}{}", name, dir.display(), status);
     }
     Ok(())
@@ -102,6 +131,10 @@ fn remove(name: &str) -> anyhow::Result<()> {
     // restore — so removal deletes it too. A user directory the shelf
     // merely points at is never touched.
     if shelf.owns(&dir) && olang::pkg::starter::get(name).is_some() {
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    // A pinned library is a snapshot the shelf made: it goes too.
+    if shelf.revs.remove(name).is_some() && shelf.owns(&dir) {
         let _ = std::fs::remove_dir_all(&dir);
     }
     shelf.save().map_err(|e| anyhow::anyhow!("{}", e))?;

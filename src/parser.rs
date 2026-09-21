@@ -144,6 +144,136 @@ fn humanize_rule(rule: Rule) -> &'static str {
     }
 }
 
+/// Sources at least this large are parsed in chunks.
+const CHUNKED_FROM: usize = 16 * 1024;
+/// The least a chunk holds. A large source uses an eighth of itself:
+/// every chunk re-reads the blanked text before it (9 ms a megabyte), and
+/// eight chunks bound that at four passes over the file.
+const CHUNK_BYTES: usize = 8 * 1024;
+
+/// The byte offsets at which a top-level statement of `input` may be
+/// taken to start: the first byte of a line, outside every bracket,
+/// string, template and comment, that begins the way only a statement
+/// does — and only when what came before it is finished.
+///
+/// Deliberately narrow. The grammar lets an expression continue on a line
+/// that starts with an operator, `else`, or `=>`, lets a declaration's
+/// body start on the line after its `=`, and keeps a decorator with the
+/// declaration under it, so a start must open with a letter, digit, `_`,
+/// `@`, `#`, a quote, or a comment; must not be `else`; must follow code
+/// that ended in a name, a literal, or a closing bracket; and must not
+/// follow a decorator line. A boundary that is missed costs nothing (the
+/// chunk is longer); one that is wrong leaves a chunk that does not
+/// parse, and the source is then parsed whole.
+fn top_level_starts(input: &str) -> Vec<usize> {
+    #[derive(PartialEq)]
+    enum In {
+        Code,
+        Text,
+        RawText,
+        Template,
+        Comment,
+    }
+    let bytes = input.as_bytes();
+    let mut starts = Vec::new();
+    let mut state = In::Code;
+    let mut depth = 0usize;
+    // The last byte of code seen, and the first byte of the code line it
+    // was on (a decorator line opens with `@`).
+    let mut last_code = 0u8;
+    let mut last_line_opener = 0u8;
+    let mut line_opener = 0u8;
+    let mut i = 0usize;
+    let mut at_line_start = true;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if at_line_start && state == In::Code {
+            at_line_start = false;
+            let opens = b.is_ascii_alphanumeric()
+                || matches!(b, b'_' | b'@' | b'#' | b'"' | b'`')
+                || (b == b'/' && bytes.get(i + 1) == Some(&b'/'));
+            let is_else = input[i..].starts_with("else")
+                && !bytes
+                    .get(i + 4)
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_');
+            let finished = last_code == 0
+                || last_code.is_ascii_alphanumeric()
+                || matches!(last_code, b'_' | b')' | b']' | b'}' | b'"' | b'`' | b'?');
+            if depth == 0 && opens && !is_else && finished && last_line_opener != b'@' {
+                starts.push(i);
+            }
+        }
+        match state {
+            In::Code => match b {
+                b'\n' => {
+                    at_line_start = true;
+                    if line_opener != 0 {
+                        last_line_opener = line_opener;
+                        line_opener = 0;
+                    }
+                }
+                b'/' if bytes.get(i + 1) == Some(&b'/') => state = In::Comment,
+                b'"' => {
+                    state = In::Text;
+                    last_code = b;
+                }
+                b'r' if bytes.get(i + 1) == Some(&b'"')
+                    && !(i > 0
+                        && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_')) =>
+                {
+                    state = In::RawText;
+                    last_code = b'"';
+                    i += 1;
+                }
+                b'`' => {
+                    state = In::Template;
+                    last_code = b;
+                }
+                b'(' | b'[' | b'{' => {
+                    depth += 1;
+                    last_code = b;
+                }
+                b')' | b']' | b'}' => {
+                    depth = depth.saturating_sub(1);
+                    last_code = b;
+                }
+                b' ' | b'\t' | b'\r' => {}
+                _ => last_code = b,
+            },
+            In::Text => match b {
+                b'\\' => i += 1,
+                b'"' => state = In::Code,
+                _ => {}
+            },
+            In::RawText => match b {
+                b'\\' if bytes.get(i + 1) == Some(&b'"') => i += 1,
+                b'"' => state = In::Code,
+                _ => {}
+            },
+            In::Template => match b {
+                b'\\' => i += 1,
+                b'`' => state = In::Code,
+                _ => {}
+            },
+            In::Comment => {
+                if b == b'\n' {
+                    state = In::Code;
+                    at_line_start = true;
+                    if line_opener != 0 {
+                        last_line_opener = line_opener;
+                        line_opener = 0;
+                    }
+                }
+            }
+        }
+        if state == In::Code && line_opener == 0 && !matches!(b, b' ' | b'\t' | b'\r' | b'\n') {
+            line_opener = b;
+        }
+        i += 1;
+    }
+    starts
+}
+
 /// Turn a raw pest error into the same rich, located ParseError the
 /// hand-written sub-parsers produce: plain-English message, line/column,
 /// and a caret snippet — instead of leaking the parser crate's name and
@@ -594,8 +724,72 @@ impl Parser {
             input
         };
         self.index_lines(input);
+        // A large source is parsed in chunks of whole top-level statements
+        // (see `parse_in_chunks`); anything that does not come out clean
+        // that way is parsed whole, which also owns every error message.
+        let chunked = if input.len() >= CHUNKED_FROM {
+            self.parse_in_chunks(input, (input.len() / 8).max(CHUNK_BYTES))
+        } else {
+            None
+        };
+        let statements = match chunked {
+            Some(statements) => statements,
+            None => self.parse_statements(input, input)?,
+        };
+        self.check_bare_share(&statements, input)?;
+        Ok(Program { statements })
+    }
+
+    /// Parse a large source as a sequence of chunks, each a run of whole
+    /// top-level statements, and answer the statements in order — or
+    /// `None` when the source cannot be split or any chunk fails to
+    /// parse, and the caller parses it whole.
+    ///
+    /// The grammar's token queue costs about a hundred bytes per byte of
+    /// source — every identifier opens and closes a dozen precedence
+    /// rules — and lives until the tree is built: 10 MB for a 90 KB file,
+    /// freed at once but kept resident by the allocator, so a process
+    /// carried its largest file's parse for life. A chunk bounds it.
+    ///
+    /// Each chunk is parsed inside a copy of the source in which
+    /// everything else is blanked (newlines kept), the way a shebang line
+    /// is masked: every line, column and byte offset the tree records is
+    /// the file's own, with nothing to shift afterwards.
+    fn parse_in_chunks(&self, input: &str, chunk_bytes: usize) -> Option<Vec<Statement>> {
+        let starts = top_level_starts(input);
+        if starts.len() < 2 {
+            return None;
+        }
+        let blank = |b: u8| if b == b'\n' || b == b'\r' { b } else { b' ' };
+        let mut masked: Vec<u8> = input.bytes().map(blank).collect();
+        let mut statements = Vec::new();
+        let mut from = 0usize;
+        let mut index = 0usize;
+        while from < input.len() {
+            // The first boundary at least a chunk away, or the end.
+            while index < starts.len() && starts[index] < from + chunk_bytes {
+                index += 1;
+            }
+            let to = starts.get(index).copied().unwrap_or(input.len());
+            masked[from..to].copy_from_slice(&input.as_bytes()[from..to]);
+            let parsed = {
+                let text = std::str::from_utf8(&masked).ok()?;
+                self.parse_statements(text, input).ok()?
+            };
+            statements.extend(parsed);
+            for b in &mut masked[from..to] {
+                *b = blank(*b);
+            }
+            from = to;
+        }
+        Some(statements)
+    }
+
+    /// The statements of `input`, which is `original` or a masked copy of
+    /// it (errors are rendered against `original`).
+    fn parse_statements(&self, input: &str, original: &str) -> Result<Vec<Statement>, ParseError> {
         let parsed = <OlangParser as PestParser<Rule>>::parse(Rule::program, input)
-            .map_err(|e| humanize_pest_error(e, input))?;
+            .map_err(|e| humanize_pest_error(e, original))?;
 
         let mut statements = Vec::new();
         for pair in parsed {
@@ -618,6 +812,10 @@ impl Parser {
                 }
             }
         }
+        Ok(statements)
+    }
+
+    fn check_bare_share(&self, statements: &[Statement], input: &str) -> Result<(), ParseError> {
         // A bare `share` is never a statement: the grammar accepts only
         // `share` followed by a declaration, so a lone `share` here means
         // the thing after it was not one — `share meta fn` is the case
@@ -626,7 +824,7 @@ impl Parser {
         // the identifier `share` survived to run time and failed there
         // as "Undefined variable: share", attributed to the importer's
         // `use` line.
-        for statement in &statements {
+        for statement in statements {
             if let Statement::Located { stmt, line, column } = statement
                 && let Statement::Expression(Expr::Identifier(name)) = stmt.as_ref()
                 && name == "share"
@@ -659,8 +857,17 @@ impl Parser {
                 });
             }
         }
+        Ok(())
+    }
 
-        Ok(Program { statements })
+    /// `parse_raw`, split at every top-level statement `chunk_bytes` or
+    /// more apart whatever the source's size — for the test that holds the
+    /// chunked parse to the whole one. `None` when it declines.
+    #[doc(hidden)]
+    pub fn parse_raw_chunked(&self, input: &str, chunk_bytes: usize) -> Option<Program> {
+        self.index_lines(input);
+        let statements = self.parse_in_chunks(input, chunk_bytes)?;
+        Some(Program { statements })
     }
 
     /// Wrap a statement with the source position of the pair it was built

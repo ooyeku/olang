@@ -1411,6 +1411,7 @@ pub fn serve_blocking(
                             Ok(receiver) => receiver,
                             Err(_) => return,
                         };
+                        let _parked = crate::profile::blocked();
                         match receiver.recv() {
                             Ok(stream) => stream,
                             Err(_) => return,
@@ -1447,6 +1448,10 @@ pub fn serve_blocking(
         let stream = match listener.accept() {
             Ok((s, _)) => s,
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                // Waiting for a connection is waiting: a profile counts it
+                // as blocked, not as `http.serve` at work — a served app's
+                // profile used to be one bar, the server's own idle loop.
+                let _parked = crate::profile::blocked();
                 std::thread::sleep(std::time::Duration::from_millis(5));
                 continue;
             }

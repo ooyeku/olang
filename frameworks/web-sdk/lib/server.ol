@@ -316,12 +316,17 @@ fn strip_module_lines(source) = {
 /// by accident of whichever module is spliced beside it — and is
 /// undefined the moment the module runs natively or the neighbor renames
 /// it. One line per module that has any; a module that does not parse
-/// on its own is left to the bundle's own check.
+/// on its own is left to the bundle's own check. Capitalized names are
+/// left out: a variant constructor arrives with the import of its enum,
+/// which a check of the module's text alone cannot see, and a warning
+/// that cries wolf over every message type is one nobody reads.
 share fn leaked_names(paths, sources) = {
     let mut out = []
     for i in range(0, len(sources)) {
         match meta.unresolved(sources[i]) {
-            Ok(names) => {
+            Ok(found) => {
+                let upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                let names = filter(found, (n) => !str.contains(upper, str.substring(n, 0, 1)))
                 if len(names) > 0 => {
                     out = out + [paths[i] + " uses " + join(map(names, (n) => "`" + n + "`"), ", ")
                         + " without importing or defining " + (if len(names) == 1 => "it" else => "them")
@@ -344,6 +349,9 @@ test "a client module that uses a neighbor's name without importing it is named"
     let lines = leaked_names(["a.ol", "b.ol"], [clean, leaky])
     assert_eq(len(lines), 1)
     assert_eq(str.contains(lines[0], "b.ol uses `helper_next_door`"), true)
+    // A variant constructor arrives with its enum's import.
+    let typed = "use web { mount }\nuse lib.msg { Msg }\nfn go() = Refresh\n"
+    assert_eq(leaked_names(["c.ol"], [typed]), [])
 }
 
 /// The client program the browser actually loads: the SDK's browser

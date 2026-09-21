@@ -198,16 +198,28 @@ consulted after the closure by both tiers.
 |---|---|---|---|
 | idle (`time.sleep`) | 10 MB | 10 MB | 0.3 MB |
 | the same after `runtime.wasm()` | 99 MB | 10 MB | 0.3 MB |
-| one file of 4,000 one-line functions | 137 MB | 43 MB | 15 MB |
-| the same as an imported module | 140 MB | 49 MB | 15 MB |
-| an application of 56 files and three packages, loaded | 433 MB | 173 MB | 48 MB |
-| the same, served with 18 http workers | 950 MB | 446 MB | 125 MB |
+| one file of 4,000 one-line functions | 137 MB | 32 MB | 12 MB |
+| the same as an imported module | 140 MB | 39 MB | 12 MB |
+| an application of 56 files and three packages, served with 18 http workers | 950 MB | 445 MB | 97 MB |
+| twenty thousand closures created in a function, on the interpreter | 2.9 GB of heap | 82 MB | 60 MB |
 
-The difference between resident memory and the heap, for a large
-source, is the parser's working memory: the grammar's token queue for a
-90 KB file passes 10 MB, is freed when the tree is built, and stays
-resident until the system asks for it back. It does not grow with the
-life of the process.
+A value is 40 bytes (176 in 0.85.0): a function, an enum value, a
+constructor and a type are each one shared allocation the value points
+at, so a list slot and a scope-map entry are a quarter of what they
+were. A closure captures the bindings its body can name — not every
+binding in scope, which on the interpreter was a three-hundred-entry
+map rebuilt per closure — and every closure made from one lambda
+expression shares one resolved body.
+
+The difference between resident memory and the heap is memory that was
+freed and is still resident. The grammar's token queue costs about a
+hundred bytes per byte of source, so a source of 16 KB or more is
+parsed a run of top-level statements at a time and the queue is bounded
+by a chunk; that lowers the peak. What remains is the system
+allocator's own cache of freed large blocks — about 120 MB for the
+served application above, which macOS returns under memory pressure and
+`MallocLargeCache=0` removes at a third more boot time. It does not
+grow with the life of the process.
 
 [`runtime.memory()`](stdlib.md#runtime--what-this-binary-carries) reports
 the heap by share — the loaded program, the running program's values,
