@@ -19,7 +19,7 @@ async function instantiate() {
         host_now_ms: () => performance.now(),
         host_epoch_ms: () => Date.now(),
         host_random_bytes: (ptr, len) => {
-          crypto.getRandomValues(new Uint8Array(exportsRef.memory.buffer, ptr, len));
+          crypto.getRandomValues(new Uint8Array(exportsRef.memory.buffer, ptr >>> 0, len >>> 0));
         },
         // dom stubs: there is no document in the sandbox.
         host_dom_query: () => 0n,
@@ -88,6 +88,9 @@ const ready = instantiate().then((ex) => {
 });
 
 function readResult(ex, ptr) {
+  // Pointers cross as wasm i32, which JavaScript reads as signed: past
+  // 2 GiB of heap they arrive negative unless made unsigned.
+  ptr = ptr >>> 0;
   const len = new DataView(ex.memory.buffer).getUint32(ptr, true);
   const json = new TextDecoder().decode(new Uint8Array(ex.memory.buffer, ptr + 4, len));
   ex.olang_result_free(ptr);
@@ -99,7 +102,7 @@ self.onmessage = async (event) => {
   try {
     const ex = await ready;
     const bytes = new TextEncoder().encode(source);
-    const ptr = ex.olang_alloc(bytes.length);
+    const ptr = ex.olang_alloc(bytes.length) >>> 0;
     new Uint8Array(ex.memory.buffer, ptr, bytes.length).set(bytes);
     const resPtr = ex.olang_run(ptr, bytes.length);
     ex.olang_dealloc(ptr, bytes.length);
@@ -108,7 +111,7 @@ self.onmessage = async (event) => {
     // A trap poisons the instance; report it and let the page recycle us.
     let panic = null;
     try {
-      const p = exportsRef?.olang_last_panic();
+      const p = exportsRef?.olang_last_panic() >>> 0;
       if (p) {
         const len = new DataView(exportsRef.memory.buffer).getUint32(p, true);
         panic = new TextDecoder().decode(

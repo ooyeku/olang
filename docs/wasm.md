@@ -96,11 +96,17 @@ exchange for automating about a dozen signatures:
 | `olang_dispatch_event(id)` / `olang_dispatch_event_with(id, ptr, len)` | re-enter the live session for one event, optionally carrying a string payload |
 | `olang_dispatch_event_json(id, ptr, len)` | the structured variant: the payload is JSON, parsed into the Map the handler receives |
 | `olang_result_free(ptr)` | free a result buffer |
+| `olang_handler_count()` | a result buffer `{"live", "registered"}`: the handlers still held (one-shot callbacks leave when they run) |
 
 Every call answers with the same shape: a length-prefixed JSON buffer
 carrying `output` (everything the program printed), `value`, `error`,
 and timing. Strings cross the boundary as `(pointer, length)` pairs
 into linear memory in both directions. That is the entire protocol.
+A pointer is an unsigned 32-bit offset, but it crosses as a wasm `i32`,
+which JavaScript reads as signed — a host must make it unsigned
+(`ptr >>> 0`) wherever one enters JavaScript, or a heap past 2 GiB reads
+from the end of memory. The shim's "wasm boundary" block does this for
+every export's answer and every import's pointer argument.
 
 ### The host imports
 

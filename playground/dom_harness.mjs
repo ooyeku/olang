@@ -392,6 +392,125 @@ let hostError = null;
 }
 
 const bytes = await readFile(process.argv[2]);
+
+// `node dom_harness.mjs <wasm> --high-memory`: the heap above 2 GiB.
+// A pointer crosses the boundary as a wasm i32, which JavaScript reads as
+// signed; past 2 GiB the shim once read selectors from the wrong bytes and
+// failed on every result buffer after. This mode runs the REAL shim's
+// boundary block (u32, unsignedExports, readStr, giveStr, takeResultText)
+// against the runtime with the low 2 GiB held, so every allocation the
+// session makes lands above 0x8000_0000, and drives dispatches that
+// succeed, raise, and fire one-shot callbacks. Prints one JSON line.
+if (process.argv[3] === "--high-memory") {
+  const shimSrc = await readFile(new URL("../frameworks/web-sdk/static/olang-dom.js", import.meta.url), "utf8");
+  const from = shimSrc.indexOf("  // ── the wasm boundary: pointers are unsigned ──");
+  const to = shimSrc.indexOf("  // (end of the wasm boundary)");
+  if (from < 0 || to < from) throw new Error("high-memory: cannot find the shim's wasm boundary block");
+  const B = new Function(
+    `let ex;\n${shimSrc.slice(from, to)}\n` +
+    "return { bind: (raw) => (ex = unsignedExports(raw)), u32, mem, readStr, giveStr, takeResultText };"
+  )();
+  let hx; // the runtime's exports, bound through the shim's boundary
+  let highest = 0; // the highest pointer the host was handed
+  const seen = (p) => { highest = Math.max(highest, B.u32(p)); return p; };
+  const names = [null, "#app"];
+  const text = {};
+  const on = {};
+  const env = {
+    host_now_ms: () => performance.now(),
+    host_epoch_ms: () => Date.now(),
+    host_random_bytes: (ptr, len) =>
+      crypto.getRandomValues(new Uint8Array(hx.memory.buffer, B.u32(ptr), B.u32(len))),
+    host_dom_query: (ptr, len) => {
+      seen(ptr);
+      const i = names.indexOf(B.readStr(ptr, len));
+      return BigInt(i > 0 ? i : 0);
+    },
+    host_dom_set_text: (h, ptr, len) => { seen(ptr); text[names[Number(h)]] = B.readStr(ptr, len); },
+    host_dom_on: (h, ptr, len, id) => { seen(ptr); on[B.readStr(ptr, len)] = Number(id); },
+    host_dom_set_timeout: (ms, id) => { on.timeout = Number(id); },
+    host_take_error: () => 0,
+  };
+  const { instance } = await WebAssembly.instantiate(bytes, {
+    env: new Proxy(env, { get: (t, name) => t[name] ?? (() => 0) }),
+  });
+  hx = B.bind(instance.exports);
+  // Hold the low 2 GiB in 16 MiB blocks: nothing below is free after.
+  const held = [];
+  for (;;) {
+    const p = hx.olang_alloc(16 << 20);
+    if (p < 0) throw new Error("high-memory: the boundary answered a negative pointer: " + p);
+    held.push(p);
+    if (p >= 2 ** 31 + (32 << 20)) break;
+    if (held.length > 200) throw new Error("high-memory: the heap never passed 2 GiB");
+  }
+  const program = `
+let app = dom.query("#app")
+dom.set_text(app, "booted")
+dom.on(app, "click", (ev) => dom.set_text(dom.query("#app"), "clicked " + to_string(map_get(ev, "n"))))
+dom.on(app, "boom", (ev) => dom.set_text(dom.query("#nope"), "never"))
+dom.on(app, "notstr", (ev) => dom.find(42))
+dom.on(app, "arm", (ev) => dom.set_timeout(5, (t) => dom.set_text(dom.query("#app"), "timeout " + to_string(map_get(ev, "n")))))
+`;
+  const src = new TextEncoder().encode(program);
+  const sp = seen(hx.olang_alloc(src.length));
+  B.mem().set(src, sp);
+  const boot = JSON.parse(B.takeResultText(seen(hx.olang_session_start(sp, src.length))));
+  hx.olang_dealloc(sp, src.length);
+  if (boot.error) throw new Error("high-memory: boot: " + boot.error);
+  if (text["#app"] !== "booted") throw new Error("high-memory: boot did not set the text: " + JSON.stringify(text));
+  const fire = (id, obj) => {
+    const b = new TextEncoder().encode(JSON.stringify(obj));
+    const p = seen(hx.olang_alloc(Math.max(b.length, 1)));
+    B.mem().set(b, p);
+    const r = JSON.parse(B.takeResultText(seen(hx.olang_dispatch_event_json(BigInt(id), p, b.length))));
+    hx.olang_dealloc(p, Math.max(b.length, 1));
+    return r;
+  };
+  const live = () => JSON.parse(B.takeResultText(seen(hx.olang_handler_count())));
+  const liveBefore = live();
+  let raised = 0;
+  for (let i = 1; i <= 120; i++) {
+    const r = fire(on.click, { type: "click", n: i, pad: "x".repeat(i * 997) });
+    if (r.error || text["#app"] !== "clicked " + i)
+      throw new Error(`high-memory: click ${i}: ${JSON.stringify(r)} / ${text["#app"]}`);
+    if (i % 3 === 0) {
+      // A handler that raises answers a readable result with the error
+      // inside, and the next dispatch is unaffected.
+      const b = fire(on.boom, { type: "boom" });
+      if (!b.error || !b.error.includes('no element matches "#nope"'))
+        throw new Error("high-memory: the raise was not reported: " + JSON.stringify(b));
+      raised++;
+    }
+    if (i % 5 === 0) {
+      const b = fire(on.notstr, { type: "notstr" });
+      if (!b.error || !b.error.includes("dom.find: not a string"))
+        throw new Error("high-memory: dom.find(42) did not refuse: " + JSON.stringify(b));
+    }
+    if (i % 4 === 0) {
+      // A one-shot callback runs once and leaves the registry.
+      fire(on.arm, { type: "arm", n: i });
+      const t = fire(on.timeout, { type: "timeout" });
+      if (t.error || text["#app"] !== "timeout " + i)
+        throw new Error("high-memory: the timeout did not run: " + JSON.stringify(t));
+      const again = fire(on.timeout, { type: "timeout" });
+      if (!again.error || !again.error.includes("already ran"))
+        throw new Error("high-memory: a spent one-shot ran again: " + JSON.stringify(again));
+    }
+  }
+  const liveAfter = live();
+  for (const p of held) hx.olang_dealloc(p, 16 << 20);
+  console.log(JSON.stringify({
+    highest,
+    memory_mb: Math.round(hx.memory.buffer.byteLength / 1048576),
+    raised,
+    live_before: liveBefore.live,
+    live_after: liveAfter.live,
+    registered: liveAfter.registered,
+  }));
+  process.exit(0);
+}
+
 ({ instance: { exports: ex } } = await WebAssembly.instantiate(bytes, imports));
 
 // `node dom_harness.mjs <wasm> --boot <bundle.ol> <bundle.olb>`: the boot

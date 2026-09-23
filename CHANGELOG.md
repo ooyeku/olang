@@ -50,6 +50,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The browser runtime works with its heap above 2 GiB.** A pointer
+  crosses the wasm boundary as an i32, and JavaScript reads an i32 as
+  signed: past 2 GiB every pointer reached the shim negative, and
+  `slice(ptr, ptr + len)` counted from the end of memory. A selector was
+  read from unrelated bytes (`dom.query: no element matches "#app"` on a
+  page that had one; `'       name          ' is not a valid selector`;
+  the allocator's free-list words), then every result buffer failed
+  (`Offset is outside the bounds of the DataView`) and every allocation
+  after (`offset is out of bounds` at `mem().set`). The heap was never
+  corrupt — the host read the wrong addresses. The shim now makes every
+  pointer unsigned where it enters JavaScript (the exports' answers,
+  `readStr`, the entropy and `draw_points` views), a result buffer the
+  memory cannot hold is named rather than a bare `RangeError`, and the
+  runtime checks every block `olang_alloc` and a result buffer hand out
+  against the memory's size, stopping at the write with a panic message
+  if the allocator ever answers outside it. The worker harness and the
+  website playground's worker take the same care. Pinned by
+  `dom_harness.mjs --high-memory` (tests/wasm_high_memory_test.rs): the
+  shim's own boundary code against the runtime with the low 2 GiB held.
+- **A one-shot callback is released after it runs.** `dom.set_timeout`,
+  `request_frame`, `read_file`, and every `fetch`/`request` callback
+  stayed in the runtime's handler registry for the life of the page, each
+  pinning the environment its closure captured (and, since that closure
+  never died, the lambdas compiled for it): a page polling every few
+  seconds held tens of thousands of state snapshots after a day. The
+  registry now empties a one-shot slot when it is dispatched; ids are not
+  reused, so a second dispatch of a spent id answers an error ("already
+  ran") rather than running someone else's handler. `olang_handler_count`
+  reports the live and registered counts.
+- `dom.query`, `dom.find`, and `dom.query_all` raise "not a string" for
+  a selector that is not a String (it was formatted and sent), and for a
+  String whose bytes are not UTF-8 — the runtime's tripwire for a string
+  overwritten in place — rather than handing those bytes to the host.
+- A dispatch always answers a readable result buffer, the error inside
+  it: the two dispatch entries share one path, and a handler id that is
+  unknown, spent, or arrives while the session is busy is an `error`
+  there like a raise.
+
 - **A lambda compiled per closure is evicted when its closure dies.** A
   closure handed to a builtin from interpreted code compiles with its
   captures baked in as constants, so the compiled artifact holds whatever

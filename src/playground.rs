@@ -239,9 +239,78 @@ thread_local! {
     /// The persistent browser session: the interpreter that ran the
     /// program stays alive so event handlers can re-enter it.
     static SESSION: RefCell<Option<Interpreter>> = const { RefCell::new(None) };
-    /// Registered handlers. Separate from SESSION because dom.on runs
-    /// DURING the initial program run, before the interpreter is parked.
-    static HANDLERS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
+    /// Registered handlers, indexed by callback id. Separate from SESSION
+    /// because dom.on runs DURING the initial program run, before the
+    /// interpreter is parked. A slot is emptied when its one-shot
+    /// callback runs; ids are never reused, so a stale id from the host
+    /// finds an empty slot rather than someone else's handler.
+    static HANDLERS: RefCell<Vec<Option<Handler>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// How long a registered callback lives.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lifetime {
+    /// Dispatched any number of times: `dom.on`, `set_interval`,
+    /// `on_frame`, `on_route`, `on_error`, `worker_on`, `on_message`.
+    Persistent,
+    /// Dispatched once and then released: `set_timeout`,
+    /// `request_frame`, `read_file`, and every fetch/request callback.
+    /// Kept forever, each one pinned the environment its closure
+    /// captured — a poll every few seconds is tens of thousands of
+    /// state snapshots a day, and the heap only grew.
+    Once,
+}
+
+struct Handler {
+    callback: Value,
+    lifetime: Lifetime,
+}
+
+fn register_handler(callback: &Value, lifetime: Lifetime) -> i64 {
+    HANDLERS.with(|h| {
+        let mut h = h.borrow_mut();
+        h.push(Some(Handler {
+            callback: callback.clone(),
+            lifetime,
+        }));
+        (h.len() - 1) as i64
+    })
+}
+
+/// The handler for a dispatch: a persistent one is cloned, a one-shot one
+/// is taken out of its slot (so its closure is freed when the call ends).
+fn claim_handler(callback_id: i64) -> Result<Value, String> {
+    HANDLERS.with(|h| {
+        let mut h = h.borrow_mut();
+        let Some(slot) = usize::try_from(callback_id).ok().and_then(|i| h.get_mut(i)) else {
+            return Err(format!("unknown handler id {}", callback_id));
+        };
+        match slot {
+            None => Err(format!(
+                "handler id {} already ran (a one-shot callback is dispatched once)",
+                callback_id
+            )),
+            Some(handler) if handler.lifetime == Lifetime::Persistent => {
+                Ok(handler.callback.clone())
+            }
+            Some(_) => Ok(slot.take().map(|h| h.callback).unwrap_or(Value::Unit)),
+        }
+    })
+}
+
+/// The live handlers — persistent ones plus one-shot callbacks not yet
+/// dispatched — as a result buffer `{"live", "registered"}`, so a page (or
+/// the dom harness) can see that the registry does not grow with use.
+#[unsafe(no_mangle)]
+pub extern "C" fn olang_handler_count() -> *mut u8 {
+    let (live, registered) = HANDLERS.with(|h| {
+        let h = h.borrow();
+        (h.iter().filter(|s| s.is_some()).count(), h.len())
+    });
+    result_buffer(format!(
+        r#"{{"live":{},"registered":{}}}"#,
+        live, registered
+    ))
 }
 
 /// The nodes of a vnode tree: every element, text, raw and keep marker.
@@ -323,9 +392,25 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
             other => Ok(format!("{}", other)),
         }
     };
+    // A selector is a String, and its bytes go to the host as UTF-8 the
+    // host decodes: anything else is refused here with "not a string"
+    // instead of being formatted, or handed over, as a selector. (A
+    // String always holds UTF-8; the byte check is the runtime's own
+    // tripwire for a string whose bytes were overwritten.)
+    let selector = |v: &Value| -> Result<String, Box<dyn std::error::Error>> {
+        match v {
+            Value::String(s) if std::str::from_utf8(s.as_bytes()).is_ok() => Ok(s.as_ref().clone()),
+            Value::String(_) => Err(format!(
+                "dom.{}: not a string (the selector's bytes are not UTF-8)",
+                name
+            )
+            .into()),
+            other => Err(format!("dom.{}: not a string (got {})", name, other.type_name()).into()),
+        }
+    };
     match (name, args.as_slice()) {
         ("query", [sel]) => {
-            let s = text(sel)?;
+            let s = selector(sel)?;
             let h = unsafe { host_dom_query(s.as_ptr(), s.len()) };
             if h == 0 {
                 Err(format!("dom.query: no element matches {:?}", s).into())
@@ -337,7 +422,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
         // an optional element ("is there a <html data-phone>?") is a
         // question, not a landmine inside an event handler.
         ("find", [sel]) => {
-            let s = text(sel)?;
+            let s = selector(sel)?;
             let h = unsafe { host_dom_query(s.as_ptr(), s.len()) };
             Ok(if h == 0 {
                 Value::Unit
@@ -346,7 +431,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
             })
         }
         ("query_all", [sel]) => {
-            let s = text(sel)?;
+            let s = selector(sel)?;
             let json = read_host_string(unsafe { host_dom_query_all(s.as_ptr(), s.len()) });
             let handles: Vec<i64> = serde_json::from_str(&json).unwrap_or_default();
             Ok(Value::List(std::sync::Arc::from(
@@ -454,11 +539,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
         }
         ("on", [el, event, callback]) => {
             let ev = text(event)?;
-            let id = HANDLERS.with(|h| {
-                let mut h = h.borrow_mut();
-                h.push(callback.clone());
-                (h.len() - 1) as i64
-            });
+            let id = register_handler(callback, Lifetime::Persistent);
             unsafe { host_dom_on(handle(el)?, ev.as_ptr(), ev.len(), id) };
             Ok(Value::Unit)
         }
@@ -471,11 +552,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
         // as `#{ "error", "output", "trap" }` after the failed dispatch
         // ends, so an app can show it instead of reading a console.
         ("on_error", [callback]) => {
-            let id = HANDLERS.with(|h| {
-                let mut h = h.borrow_mut();
-                h.push(callback.clone());
-                (h.len() - 1) as i64
-            });
+            let id = register_handler(callback, Lifetime::Persistent);
             unsafe { host_dom_on_error(id) };
             Ok(Value::Unit)
         }
@@ -486,11 +563,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
         }
         ("fetch", [method, path, body, callback]) => {
             let (m, pa, b) = (text(method)?, text(path)?, text(body)?);
-            let id = HANDLERS.with(|h| {
-                let mut h = h.borrow_mut();
-                h.push(callback.clone());
-                (h.len() - 1) as i64
-            });
+            let id = register_handler(callback, Lifetime::Once);
             unsafe {
                 host_dom_fetch(
                     m.as_ptr(),
@@ -573,11 +646,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
                 Value::Float(f) => *f,
                 _ => return Err("dom.set_timeout expects a millisecond number".into()),
             };
-            let id = HANDLERS.with(|h| {
-                let mut h = h.borrow_mut();
-                h.push(callback.clone());
-                (h.len() - 1) as i64
-            });
+            let id = register_handler(callback, Lifetime::Once);
             unsafe { host_dom_set_timeout(ms, id) };
             Ok(Value::Unit)
         }
@@ -587,11 +656,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
                 Value::Float(f) => *f,
                 _ => return Err("dom.set_interval expects a millisecond number".into()),
             };
-            let id = HANDLERS.with(|h| {
-                let mut h = h.borrow_mut();
-                h.push(callback.clone());
-                (h.len() - 1) as i64
-            });
+            let id = register_handler(callback, Lifetime::Persistent);
             let timer = unsafe { host_dom_set_interval(ms, id) };
             Ok(Value::Integer(timer))
         }
@@ -692,11 +757,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
             // The persistent animation loop: register once, the page
             // re-arms requestAnimationFrame and dispatches every frame
             // (no per-frame handler registration).
-            let id = HANDLERS.with(|h| {
-                let mut h = h.borrow_mut();
-                h.push(callback.clone());
-                (h.len() - 1) as i64
-            });
+            let id = register_handler(callback, Lifetime::Persistent);
             unsafe { host_dom_on_frame(id) };
             Ok(Value::Unit)
         }
@@ -724,11 +785,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
             }
         }
         ("on_route", [callback]) => {
-            let id = HANDLERS.with(|h| {
-                let mut h = h.borrow_mut();
-                h.push(callback.clone());
-                (h.len() - 1) as i64
-            });
+            let id = register_handler(callback, Lifetime::Persistent);
             unsafe { host_dom_on_route(id) };
             Ok(Value::Unit)
         }
@@ -791,11 +848,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
             Ok(Value::Unit)
         }
         ("worker_on", [worker, callback]) => {
-            let id = HANDLERS.with(|h| {
-                let mut h = h.borrow_mut();
-                h.push(callback.clone());
-                (h.len() - 1) as i64
-            });
+            let id = register_handler(callback, Lifetime::Persistent);
             unsafe { host_dom_worker_on(handle(worker)?, id) };
             Ok(Value::Unit)
         }
@@ -809,11 +862,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
             Ok(Value::Unit)
         }
         ("on_message", [callback]) => {
-            let id = HANDLERS.with(|h| {
-                let mut h = h.borrow_mut();
-                h.push(callback.clone());
-                (h.len() - 1) as i64
-            });
+            let id = register_handler(callback, Lifetime::Persistent);
             unsafe { host_dom_on_message(id) };
             Ok(Value::Unit)
         }
@@ -842,11 +891,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
                 }
             }
             let hjson = serde_json::Value::Object(hmap).to_string();
-            let id = HANDLERS.with(|h| {
-                let mut h = h.borrow_mut();
-                h.push(callback.clone());
-                (h.len() - 1) as i64
-            });
+            let id = register_handler(callback, Lifetime::Once);
             unsafe {
                 host_dom_fetch_with(
                     m.as_ptr(),
@@ -864,11 +909,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
         }
         ("request", [method, path, body, callback]) => {
             let (m, pa, b) = (text(method)?, text(path)?, text(body)?);
-            let id = HANDLERS.with(|h| {
-                let mut h = h.borrow_mut();
-                h.push(callback.clone());
-                (h.len() - 1) as i64
-            });
+            let id = register_handler(callback, Lifetime::Once);
             unsafe {
                 host_dom_fetch(
                     m.as_ptr(),
@@ -886,11 +927,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
             // fetch, but the handler receives the parsed value instead of
             // raw text — the JSON dispatch does the parsing.
             let (m, pa, b) = (text(method)?, text(path)?, text(body)?);
-            let id = HANDLERS.with(|h| {
-                let mut h = h.borrow_mut();
-                h.push(callback.clone());
-                (h.len() - 1) as i64
-            });
+            let id = register_handler(callback, Lifetime::Once);
             // Reuse host_dom_fetch; the page routes fetch_json callbacks
             // through the JSON dispatch (id offset marks them).
             unsafe {
@@ -907,11 +944,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
             Ok(Value::Unit)
         }
         ("request_frame", [callback]) => {
-            let id = HANDLERS.with(|h| {
-                let mut h = h.borrow_mut();
-                h.push(callback.clone());
-                (h.len() - 1) as i64
-            });
+            let id = register_handler(callback, Lifetime::Once);
             unsafe { host_dom_request_frame(id) };
             Ok(Value::Unit)
         }
@@ -934,11 +967,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
         // #{ "name", "size", "type", "base64" }, or #{ "error": ... }
         // when nothing is selected.
         ("read_file", [el, callback]) => {
-            let id = HANDLERS.with(|h| {
-                let mut h = h.borrow_mut();
-                h.push(callback.clone());
-                (h.len() - 1) as i64
-            });
+            let id = register_handler(callback, Lifetime::Once);
             unsafe { host_dom_read_file(handle(el)?, id) };
             Ok(Value::Unit)
         }
@@ -1081,58 +1110,14 @@ pub unsafe extern "C" fn olang_dispatch_event_with(
     ptr: *const u8,
     len: usize,
 ) -> *mut u8 {
-    let handler = HANDLERS.with(|h| h.borrow().get(callback_id as usize).cloned());
-    let outcome = SESSION.with(|s| {
-        // A dispatch that arrives while another is on the stack (a host
-        // call that fired a DOM event synchronously) must not panic the
-        // runtime and leave the session dead: it is refused with a
-        // message. The shim queues such dispatches, so this is the
-        // backstop.
-        let Ok(mut s) = s.try_borrow_mut() else {
-            return Err(
-                "the session is busy: a handler was still running when this event arrived                  (a host call fired it synchronously); the event was dropped"
-                    .to_string(),
-            );
-        };
-        let Some(interpreter) = s.as_mut() else {
-            return Err("no active session".to_string());
-        };
-        let Some(handler) = handler else {
-            return Err(format!("unknown handler id {}", callback_id));
-        };
-        let arity = match &handler {
-            Value::Function(f) => f.parameters.len(),
-            _ => 0,
-        };
-        let args = if arity >= 1 {
-            let payload = if ptr.is_null() {
-                String::new()
-            } else {
-                String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(ptr, len) })
-                    .into_owned()
-            };
-            vec![Value::String(std::sync::Arc::new(payload))]
+    dispatch(callback_id, || {
+        let payload = if ptr.is_null() {
+            String::new()
         } else {
-            Vec::new()
+            String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(ptr, len) }).into_owned()
         };
-        interpreter
-            .call_function(handler, args)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    });
-    let output = crate::output::drain_captured();
-    let json = match outcome {
-        Ok(()) => format!(
-            r#"{{"output":{},"value":null,"error":null,"ms":0}}"#,
-            json_escape(&output)
-        ),
-        Err(e) => format!(
-            r#"{{"output":{},"value":null,"error":{},"ms":0}}"#,
-            json_escape(&output),
-            json_escape(&e)
-        ),
-    };
-    result_buffer(json)
+        Value::String(std::sync::Arc::new(payload))
+    })
 }
 
 /// Re-enter the session for one STRUCTURED event: the page delivers a
@@ -1150,7 +1135,28 @@ pub unsafe extern "C" fn olang_dispatch_event_json(
     ptr: *const u8,
     len: usize,
 ) -> *mut u8 {
-    let handler = HANDLERS.with(|h| h.borrow().get(callback_id as usize).cloned());
+    dispatch(callback_id, || {
+        let raw = if ptr.is_null() {
+            String::new()
+        } else {
+            String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(ptr, len) }).into_owned()
+        };
+        match crate::stdlib::json::call_json_function(
+            "parse",
+            vec![Value::String(std::sync::Arc::new(raw.clone()))],
+        ) {
+            Ok(Value::Ok(inner)) => *inner,
+            _ => Value::String(std::sync::Arc::new(raw)),
+        }
+    })
+}
+
+/// One dispatch into the session: the handler for `callback_id` runs
+/// with the event (built only when the handler takes a parameter), and
+/// the answer is ALWAYS a result buffer — a handler that raised, an
+/// unknown or spent id, a busy or absent session are all an `error` in
+/// it, never a missing or unreadable result.
+fn dispatch(callback_id: i64, event: impl FnOnce() -> Value) -> *mut u8 {
     let outcome = SESSION.with(|s| {
         // A dispatch that arrives while another is on the stack (a host
         // call that fired a DOM event synchronously) must not panic the
@@ -1166,31 +1172,15 @@ pub unsafe extern "C" fn olang_dispatch_event_json(
         let Some(interpreter) = s.as_mut() else {
             return Err("no active session".to_string());
         };
-        let Some(handler) = handler else {
-            return Err(format!("unknown handler id {}", callback_id));
-        };
+        // Claimed only once the dispatch will run: a one-shot callback
+        // leaves the registry here, and its closure is dropped with the
+        // call.
+        let handler = claim_handler(callback_id)?;
         let arity = match &handler {
             Value::Function(f) => f.parameters.len(),
             _ => 0,
         };
-        let args = if arity >= 1 {
-            let raw = if ptr.is_null() {
-                String::new()
-            } else {
-                String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(ptr, len) })
-                    .into_owned()
-            };
-            let event = match crate::stdlib::json::call_json_function(
-                "parse",
-                vec![Value::String(std::sync::Arc::new(raw.clone()))],
-            ) {
-                Ok(Value::Ok(inner)) => *inner,
-                _ => Value::String(std::sync::Arc::new(raw)),
-            };
-            vec![event]
-        } else {
-            Vec::new()
-        };
+        let args = if arity >= 1 { vec![event()] } else { Vec::new() };
         interpreter
             .call_function(handler, args)
             .map(|_| ())
@@ -1222,9 +1212,33 @@ fn result_buffer(json: String) -> *mut u8 {
     let mut out = Vec::with_capacity(4 + bytes.len());
     out.extend_from_slice(&len.to_le_bytes());
     out.extend_from_slice(&bytes);
+    let total = out.len();
     let boxed = out.into_boxed_slice();
-    Box::into_raw(boxed) as *mut u8
+    let ptr = Box::into_raw(boxed) as *mut u8;
+    assert_in_memory(ptr, total, "result buffer");
+    ptr
 }
+
+/// The allocator's answers are checked before a pointer is handed to the
+/// host: a block that does not lie inside linear memory means the heap's
+/// own bookkeeping was overwritten, and the runtime stops there — the
+/// panic hook keeps this message for `olang_last_panic` — rather than
+/// giving the page a pointer it cannot read. One `memory.size` and a
+/// compare per call.
+#[cfg(target_arch = "wasm32")]
+fn assert_in_memory(ptr: *const u8, len: usize, what: &str) {
+    let size = core::arch::wasm32::memory_size(0) as u64 * 65536;
+    let (start, end) = (ptr as usize as u64, ptr as usize as u64 + len as u64);
+    if ptr.is_null() || end > size {
+        panic!(
+            "olang runtime: the allocator answered a {what} at {start}..{end}, outside the \
+             {size}-byte memory: the heap is corrupt"
+        );
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn assert_in_memory(_ptr: *const u8, _len: usize, _what: &str) {}
 
 /// The browser profiler (see `profile::instrument_start`): the page
 /// starts it, acts, and reads a per-function report — self and total
@@ -1280,6 +1294,7 @@ pub extern "C" fn olang_alloc(len: usize) -> *mut u8 {
     let mut buf = Vec::<u8>::with_capacity(len.max(1));
     let ptr = buf.as_mut_ptr();
     std::mem::forget(buf);
+    assert_in_memory(ptr, len.max(1), "block");
     ptr
 }
 

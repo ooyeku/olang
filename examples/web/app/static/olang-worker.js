@@ -10,9 +10,14 @@ let messageCb = null;
 const queued = [];
 
 const mem = () => new Uint8Array(ex.memory.buffer);
-const readStr = (ptr, len) => new TextDecoder().decode(mem().slice(ptr, ptr + len));
+// Pointers cross as wasm i32, which JavaScript reads as signed: made
+// unsigned here, or a heap past 2 GiB reads from the end of memory (see
+// the wasm boundary block in olang-dom.js).
+const u32 = (n) => n >>> 0;
+const readStr = (ptr, len) => { const p = u32(ptr); return new TextDecoder().decode(mem().slice(p, p + u32(len))); };
 
 function readResult(res) {
+  res = u32(res);
   const len = new DataView(ex.memory.buffer).getUint32(res, true);
   const json = JSON.parse(new TextDecoder().decode(mem().slice(res + 4, res + 4 + len)));
   ex.olang_result_free(res);
@@ -23,7 +28,7 @@ function readResult(res) {
 
 function dispatchJson(id, obj) {
   const bytes = new TextEncoder().encode(JSON.stringify(obj));
-  const ptr = ex.olang_alloc(Math.max(bytes.length, 1));
+  const ptr = u32(ex.olang_alloc(Math.max(bytes.length, 1)));
   mem().set(bytes, ptr);
   readResult(ex.olang_dispatch_event_json(BigInt(id), ptr, bytes.length));
   ex.olang_dealloc(ptr, Math.max(bytes.length, 1));
@@ -36,7 +41,7 @@ const imports = {
       host_now_ms: () => performance.now(),
       host_epoch_ms: () => Date.now(),
       host_random_bytes: (ptr, len) =>
-        crypto.getRandomValues(new Uint8Array(ex.memory.buffer, ptr, len)),
+        crypto.getRandomValues(new Uint8Array(ex.memory.buffer, u32(ptr), u32(len))),
       host_dom_query: () => 0n,
       host_dom_get_text: () => 0,
       host_dom_get_value: () => 0,
@@ -72,7 +77,7 @@ self.onmessage = async (e) => {
     const bytes = await fetch(wasmUrl).then((r) => r.arrayBuffer());
     ({ instance: { exports: ex } } = await WebAssembly.instantiate(bytes, imports));
     const enc = new TextEncoder().encode(source);
-    const ptr = ex.olang_alloc(enc.length);
+    const ptr = u32(ex.olang_alloc(enc.length));
     mem().set(enc, ptr);
     readResult(ex.olang_session_start(ptr, enc.length));
     ex.olang_dealloc(ptr, enc.length);

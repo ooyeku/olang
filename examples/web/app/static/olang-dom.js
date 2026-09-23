@@ -26,9 +26,35 @@
   // server about it; the plain path is the fallback.
   const wasmUrl = me?.dataset?.wasm ?? "/olang.wasm";
   const bootMarks = { start: performance.now() };
-  let ex; // wasm exports
+  let ex; // wasm exports, through unsignedExports (below)
+  // ── the wasm boundary: pointers are unsigned ──
+  // A pointer crosses as a wasm i32, and JavaScript reads an i32 as
+  // SIGNED: once the runtime's heap passes 2 GiB, every pointer above
+  // 0x8000_0000 arrived here negative. `slice(ptr, ptr + len)` with a
+  // negative start counts from the END of memory, so a selector was read
+  // from unrelated bytes (spaces, the allocator's free-list words), a
+  // result pointer failed `DataView.getUint32` ("Offset is outside the
+  // bounds of the DataView"), and `mem().set(bytes, ptr)` threw "offset
+  // is out of bounds" on every dispatch after. Every pointer is made
+  // unsigned where it enters JavaScript: an export's answer (all of the
+  // runtime's i32 answers are pointers) and an import's arguments.
+  // (dom_harness.mjs --high-memory runs this block against the real
+  // runtime with its heap above 2 GiB.)
+  const u32 = (n) => n >>> 0;
+  function unsignedExports(raw) {
+    const out = {};
+    for (const [name, v] of Object.entries(raw)) {
+      out[name] = typeof v === "function"
+        ? (...a) => { const r = v(...a); return typeof r === "number" ? r >>> 0 : r; }
+        : v;
+    }
+    return out;
+  }
   const mem = () => new Uint8Array(ex.memory.buffer);
-  const readStr = (ptr, len) => new TextDecoder().decode(mem().slice(ptr, ptr + len));
+  const readStr = (ptr, len) => {
+    const p = u32(ptr);
+    return new TextDecoder().decode(mem().slice(p, p + u32(len)));
+  };
   function giveStr(s) {
     const bytes = new TextEncoder().encode(s);
     const ptr = ex.olang_alloc(4 + bytes.length);
@@ -36,6 +62,19 @@
     mem().set(bytes, ptr + 4);
     return ptr;
   }
+  // A result buffer (4 length bytes, then UTF-8) as text, freed. A
+  // pointer the memory cannot hold is named, not a bare RangeError.
+  function takeResultText(res) {
+    const p = u32(res);
+    const size = ex.memory.buffer.byteLength;
+    if (p === 0 || p + 4 > size) throw new Error(`olang: result pointer ${p} is outside the memory (${size} bytes)`);
+    const len = new DataView(ex.memory.buffer).getUint32(p, true);
+    if (p + 4 + len > size) throw new Error(`olang: result at ${p} claims ${len} bytes past the memory (${size} bytes)`);
+    const text = new TextDecoder().decode(mem().slice(p + 4, p + 4 + len));
+    ex.olang_result_free(p);
+    return text;
+  }
+  // (end of the wasm boundary)
 
   // Canvas contexts render at devicePixelRatio: the backing store
   // scales up once and the context pre-scales, so every draw call keeps
@@ -93,10 +132,7 @@
   };
 
   function readResult(res) {
-    const view = new DataView(ex.memory.buffer);
-    const len = view.getUint32(res, true);
-    const json = JSON.parse(new TextDecoder().decode(mem().slice(res + 4, res + 4 + len)));
-    ex.olang_result_free(res);
+    const json = JSON.parse(takeResultText(res));
     if (json.output) console.log(json.output.trimEnd());
     if (json.error) {
       console.error("olang:", json.error);
@@ -136,10 +172,8 @@
       const p = ex.olang_last_panic ? ex.olang_last_panic() : 0;
       let message = String(e);
       if (p) {
-        const len = new DataView(ex.memory.buffer).getUint32(p, true);
-        message = new TextDecoder().decode(mem().slice(p + 4, p + 4 + len));
+        message = takeResultText(p);
         console.error("olang panic:", message);
-        ex.olang_result_free(p);
       }
       reportError({ error: message, output: "", trap: true });
       throw e;
@@ -541,7 +575,7 @@
       host_now_ms: () => performance.now(),
       host_epoch_ms: () => Date.now(),
       host_random_bytes: (ptr, len) =>
-        crypto.getRandomValues(new Uint8Array(ex.memory.buffer, ptr, len)),
+        crypto.getRandomValues(new Uint8Array(ex.memory.buffer, u32(ptr), u32(len))),
       host_dom_query: (ptr, len) => {
         const el = document.querySelector(readStr(ptr, len));
         return BigInt(el ? handleOf(el) : 0);
@@ -831,7 +865,7 @@
         const ctx = ctx2d(el);
         if (!ctx || !canPaint(el)) return;
         const style = JSON.parse(readStr(sp, sl));
-        const pts = new Float64Array(ex.memory.buffer, Number(ptr), n * 2);
+        const pts = new Float64Array(ex.memory.buffer, u32(ptr), u32(n) * 2);
         const sx = style.sx ?? 1, sy = style.sy ?? 1;
         const tx = style.tx ?? 0, ty = style.ty ?? 0;
         // Optional rotation (radians) around the data origin, applied
@@ -996,7 +1030,7 @@ Two known causes:
   const fetchSource = () => fetch(src).then((r) => r.text());
 
   const [wasmModule, program] = await Promise.all([instantiateWasm(), fetchProgram()]);
-  ({ instance: { exports: ex } } = wasmModule);
+  ex = unsignedExports(wasmModule.instance.exports);
   bootMarks.instantiated = performance.now();
 
   // Yield once between instantiation and the session start: loading
