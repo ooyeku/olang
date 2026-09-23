@@ -50,6 +50,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`otc lib add <path> --rev` pins a library below its repository's
+  root.** From inside a subdirectory `git archive` narrows to that
+  subdirectory too, so `<commit>:<prefix>` named the prefix twice, the
+  snapshot came out empty, and the add failed with "neither an index.ol
+  nor an olang.toml" — the web SDK (`frameworks/web-sdk`) could not be
+  pinned. The archive now runs from the top level.
+
 - **The browser runtime works with its heap above 2 GiB.** A pointer
   crosses the wasm boundary as an i32, and JavaScript reads an i32 as
   signed: past 2 GiB every pointer reached the shim negative, and

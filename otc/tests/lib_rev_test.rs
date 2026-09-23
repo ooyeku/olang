@@ -3,8 +3,9 @@
 //! `olang.lock`, and a shelf that holds the library at another commit —
 //! or following its checkout — does not satisfy that lock.
 //!
-//! One test in its own binary: the shelf's location is a process-global
-//! environment variable.
+//! The first test runs a program, so it sets the shelf's location in
+//! this process's environment; the second only drives `otc`, which is
+//! handed the location explicitly.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -135,5 +136,50 @@ fn a_shelved_library_pinned_at_a_commit_travels_in_the_lock() {
     assert!(!ok && out.contains("has no commit"), "{out}");
 
     unsafe { std::env::remove_var("OLANG_SHELF") };
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_library_below_its_repository_root_is_pinned_from_its_own_subtree() {
+    if Command::new("git").arg("--version").output().is_err() {
+        eprintln!("skipping: needs git");
+        return;
+    }
+    let root: PathBuf =
+        std::env::temp_dir().join(format!("otc_lib_rev_sub_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let (repo, shelf) = (root.join("mono"), root.join("home/shelf.toml"));
+    let lib = repo.join("frameworks/sdk");
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(repo.join("README.md"), "the repository's root\n").unwrap();
+    std::fs::write(
+        lib.join("olang.toml"),
+        "[package]\nname = \"sdk\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    std::fs::write(lib.join("index.ol"), "share fn hello() = \"sdk\"\n").unwrap();
+    git(&repo, &["init", "-q", "."]);
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "one"]);
+    let sha = git(&repo, &["rev-parse", "HEAD"]);
+
+    let (ok, out) = otc(
+        &root,
+        &shelf,
+        &["lib", "add", &lib.to_string_lossy(), "--rev", &sha[..10]],
+    );
+    assert!(ok, "{out}");
+    let pinned = PathBuf::from(
+        out.lines()
+            .find_map(|l| l.split(" → ").nth(1))
+            .expect("the shelved path is named")
+            .trim(),
+    );
+    assert!(pinned.ends_with(format!("sdk-{}", &sha[..12])), "{out}");
+    assert!(pinned.join("index.ol").exists(), "{out}");
+    assert!(
+        !pinned.join("README.md").exists(),
+        "the snapshot is the library's subtree, not the repository"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }

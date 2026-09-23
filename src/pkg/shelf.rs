@@ -160,7 +160,22 @@ impl Shelf {
         } else {
             format!("{}:{}", sha, prefix.trim_end_matches('/'))
         };
-        let archive = git(&["archive", "--format=tar", &tree])?;
+        // Run from the repository's top level: from inside a subdirectory
+        // `git archive` narrows to that subdirectory as well, so
+        // `<sha>:<prefix>` named a path under the prefix twice and the
+        // archive came back empty.
+        let top = git(&["rev-parse", "--show-toplevel"])?;
+        let top = String::from_utf8_lossy(&top.stdout).trim().to_string();
+        let archive = std::process::Command::new("git")
+            .arg("-C")
+            .arg(if top.is_empty() {
+                repo.as_path()
+            } else {
+                Path::new(&top)
+            })
+            .args(["archive", "--format=tar", &tree])
+            .output()
+            .map_err(|e| ShelfError::Io(format!("git: {}", e)))?;
         if !archive.status.success() {
             return Err(ShelfError::Io(format!(
                 "git archive {}: {}",
