@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **An `intent` event, and view transitions, in the web SDK's shim.**
+  `dom.on(root, "intent", f)` fires when the pointer rests on (about
+  80 ms), or the keyboard reaches, the nearest `data-intent` carrier,
+  once per carrier; its `data` is the carrier's — what a framework
+  fetches before the click. A repaint marked with `<html
+  data-transition>` is applied inside `document.startViewTransition`
+  (the patch and any that follow in the same beat, in order; a focus
+  asked meanwhile lands after), and at once under reduced motion or
+  without the API (docs/wasm.md).
+
 ### Changed
 
 - **Binary expressions are parsed flat and built by precedence

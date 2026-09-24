@@ -27,6 +27,8 @@
   const wasmUrl = me?.dataset?.wasm ?? "/olang.wasm";
   const bootMarks = { start: performance.now() };
   let ex; // wasm exports, through unsignedExports (below)
+  // A view transition in progress: the patches it will apply, in order.
+  let pendingPatches = null, viewTransition = null;
   // ── the wasm boundary: pointers are unsigned ──
   // A pointer crosses as a wasm i32, and JavaScript reads an i32 as
   // SIGNED: once the runtime's heap passes 2 GiB, every pointer above
@@ -587,7 +589,31 @@
       host_dom_set_html: (h, ptr, len) => { elements[Number(h)].innerHTML = readStr(ptr, len); },
       host_dom_morph: (h, ptr, len) => morphInto(elements[Number(h)], readStr(ptr, len)),
       host_dom_patch: (h, ptr, len) => {
-        const missing = patchInto(elements[Number(h)], JSON.parse(readStr(ptr, len)));
+        const el = elements[Number(h)];
+        const tree = JSON.parse(readStr(ptr, len));
+        // A view transition: the program marks <html data-transition>
+        // before the repaint it wants animated (a navigation). The browser
+        // captures the old frame first, so the patch — and any patch that
+        // follows in the same beat — is applied inside the transition's
+        // update, in order; the answer is "nothing missing" (a memo heals
+        // on the next repaint). Reduced motion, or a browser without the
+        // API, patches at once.
+        const root = document.documentElement;
+        const marked = root && root.dataset && root.dataset.transition != null;
+        if (marked) delete root.dataset.transition;
+        if (pendingPatches) { pendingPatches.push([el, tree]); return 0; }
+        if (marked && typeof document.startViewTransition === "function"
+            && !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches)) {
+          pendingPatches = [[el, tree]];
+          viewTransition = document.startViewTransition(() => {
+            const list = pendingPatches || [];
+            pendingPatches = null;
+            for (const [e2, t2] of list) patchInto(e2, t2);
+          });
+          viewTransition.finished.finally(() => { viewTransition = null; });
+          return 0;
+        }
+        const missing = patchInto(el, tree);
         return missing.length ? giveStr(JSON.stringify(missing)) : 0;
       },
       // 2 says the element has no checked state (a select, a div): the
@@ -621,7 +647,28 @@
         // value, key, pointer x/y, modifier flags, and data-* attributes.
         // "enter" stays as the keydown-filtered alias; delegation is the
         // model throughout (one listener per container, rebind-free).
-        if (ev === "enter") {
+        if (ev === "intent") {
+          // Intent: the pointer resting on (about 80 ms), or the keyboard
+          // reaching, the nearest [data-intent] carrier — once per carrier
+          // until it is left. The payload's `data` is the carrier's own
+          // (`intent`, `intentArgs`): what to fetch before the click.
+          let timer = null, current = null;
+          const carrierOf = (t) => (t && t.closest && t.closest("[data-intent]")) || null;
+          const fire = (c, e) => { const p = eventPayload(e, "intent"); p.data = { ...(c.dataset ?? {}) }; dispatchJson(cb, p); };
+          el.addEventListener("pointerover", (e) => {
+            const c = carrierOf(e.target);
+            if (c === current) return;
+            current = c; clearTimeout(timer);
+            if (c) timer = setTimeout(() => { if (current === c) fire(c, e); }, 80);
+          });
+          // leaving the carrier (for anywhere but inside it) forgets it; the
+          // pointerover that follows (it comes after the pointerout) starts
+          // the rest on the next one
+          el.addEventListener("pointerout", (e) => {
+            if (carrierOf(e.relatedTarget) !== current) { current = null; clearTimeout(timer); }
+          });
+          el.addEventListener("focusin", (e) => { const c = carrierOf(e.target); if (c) fire(c, e); });
+        } else if (ev === "enter") {
           el.addEventListener("keydown", (e) => {
             if (e.key === "Enter") {
               const p = eventPayload(e, "enter");
@@ -674,6 +721,8 @@
       },
       host_dom_focus: (h) => {
         const el = elements[Number(h)];
+        // a focus asked while a transition holds the new frame lands once it is in
+        if (pendingPatches && viewTransition) { viewTransition.updateCallbackDone.then(() => el.focus()).catch(() => {}); return 1; }
         el.focus();
         return document.activeElement === el ? 1 : 0;
       },

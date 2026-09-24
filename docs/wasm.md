@@ -221,6 +221,22 @@ of event type, so handlers pick the fields they need:
 | `alt`, `ctrl`, `shift`, `meta` | modifier flags |
 | `data` | a Map of the target's `data-*` attributes |
 
+`intent` is the shim's own: it fires when the pointer rests (about
+80 ms) on, or the keyboard focus reaches, the nearest element carrying
+`data-intent` — once per carrier until it is left — and its `data` is
+that carrier's (`intent`, `intentArgs`). A framework prefetches on it
+(Shuttle answers the click's identical rpc from what it fetched).
+
+A repaint is a **view transition** when the program marks
+`<html data-transition>` before it (`dom.set_attr(dom.find("html"),
+"data-transition", "1")`): the shim takes the mark off and applies the
+patch — and any patch in the same beat, in order — inside
+`document.startViewTransition`, so the old frame cross-fades into the
+new and elements named alike (`view-transition-name`) move between
+them. A focus asked meanwhile lands once the new frame is in. Under
+`prefers-reduced-motion`, or in a browser without the API, it patches
+at once.
+
 `online`, `offline`, `focus`, and `blur` fire on the window and
 `visibilitychange` on the document, and none of them bubbles to the
 body: `dom.window()` and `dom.document()` are handles `dom.on` accepts
