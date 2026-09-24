@@ -6,7 +6,7 @@
   --bg: #f6f5f2;
   --surface: #ffffff;
   --ink: #21242a;
-  --muted: #70767f;
+  --muted: #62676f; /* 5.2:1 on --bg, 5.7:1 on --surface (WCAG AA for small text; #70767f was 4.2:1) */
   --line: #e7e5e0;
   --accent: #2e6e4e;
   --accent-soft: #e3efe8;
