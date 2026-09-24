@@ -1670,7 +1670,8 @@ with timers and animation frames; everything else is ordinary olang.
 | `dom.prefers_dark()` | does the page prefer a dark color scheme — what a themed canvas or SVG needs to pick its palette |
 | `dom.confirm(message)` | the browser's yes/no dialog, `true` on accept |
 | `dom.read_file(el, callback)` | the first file a file input holds, delivered to the callback as `#{ "name", "size", "type", "base64" }` (or `#{ "error": … }`) |
-| `dom.on(el, event, handler)` | attach an event handler (see below) |
+| `dom.on(el, event, handler)` | attach an event handler (see below); additive — binding the same element and event again adds a listener |
+| `dom.off(el, event)` | detach every handler `dom.on` attached to `el` for `event` (`"*"`: every event) and release them; answers how many |
 | `dom.window()` / `dom.document()` | handles `dom.on` accepts for the events that fire there and do not bubble to the body: `online`, `offline`, `focus`, `blur` on the window (the first two carry `online` in their event map), `visibilitychange` on the document (carries `hidden`) |
 | `dom.on_error(handler)` | hear every failed dispatch — a handler that raised, or a trap under one — as `#{ "error", "output", "trap" }`, after the failed dispatch has ended; the session goes on. `window.olangOnError` is the page-side twin |
 | `dom.fetch(method, path, body, callback)` | asynchronous HTTP from the page — the callback receives the response text |

@@ -465,7 +465,11 @@ environment levels it: `OLANG_ACCESS_LOG` is `all` (the default),
 other machines; the default stays `127.0.0.1`), and `"sdk_dir"` to say
 where the SDK's assets are read from — by default `WEB_SDK_DIR`, then
 the directory the project's own `olang.lock` resolved `web` to (a path
-entry or a shelf entry), then the machine's shelf. The runtime it
+entry or a shelf entry), then the machine's shelf. A shelf entry is
+looked up in the shelf `otc` and the resolver use — `OLANG_SHELF` (the
+path to the `shelf.toml` itself), else `$OLANG_HOME/shelf.toml`, else
+`~/.olang/shelf.toml` — so the assets come from the same SDK `use web`
+resolved. The runtime it
 serves is the one the `olang` binary embeds (`runtime.wasm()`): no file
 on disk, no copy to keep in step, the same build as the server that
 encodes the image. It is served two ways: `/olang.<hash>.wasm`, the

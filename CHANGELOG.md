@@ -62,6 +62,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`otc install` picks up a re-shelved library.** A lock entry for a
+  shelf library was matched by name alone, so after `otc lib add <path>
+  --rev <sha>` moved the shelf to another commit — or re-registered the
+  name by directory, unpinned — `otc install` replayed the old entry:
+  it either kept the stale `rev` or failed with "the lock pins shelf
+  library … at …", and the way out was `rm olang.lock && otc install`.
+  An entry whose `rev` differs from the one the shelf now holds is
+  re-resolved and re-pinned (the lock carries the new `rev`, or none),
+  and the install says so: `shelf library 'web' moved: the lock had it
+  at …, the shelf has it at … — re-pinning`. `otc install --frozen`
+  still fails on the drift, and running a program still refuses a lock
+  the shelf does not satisfy rather than re-pinning under it
+  (docs/shelf.md).
+- **The web SDK reads its assets from the shelf `OLANG_SHELF` names.**
+  `sdk_dir()` — where `serve` finds `web.css` and `olang-dom.js` — looked
+  a shelf entry up in `$HOME/.olang/shelf.toml` whatever `OLANG_SHELF`
+  said, so with `OLANG_SHELF` pointing at another shelf `use web`
+  resolved one SDK and `serve` read the assets of another. The shelf
+  file is now found as `otc` and the resolver find it: `OLANG_SHELF`
+  (the path to `shelf.toml` itself), then `$OLANG_HOME/shelf.toml`, then
+  `$HOME/.olang/shelf.toml` (docs/web-sdk.md).
+- **The browser runtime releases the handlers it can no longer
+  dispatch.** Three kinds stayed registered for the life of the page,
+  each pinning the environment its closure captured: an interval's
+  handler after `dom.clear_interval` (now released with the timer); a
+  callback handed to a dom call that failed — its JavaScript threw, as
+  `read_file` on a handle with no file input does, or the runtime
+  refused the element handle — which the host never took (now released
+  when the call raises); and a `dom.on` binding re-made for the same
+  element and event. `dom.on` stays additive, as `addEventListener` is —
+  the SDK binds its delegating root once, and `viz`'s tooltip and mark
+  handlers share an element and event on purpose — so the fix there is
+  the new **`dom.off(el, event)`** (`"*"`: every event), which detaches
+  those listeners, releases their handlers, and answers how many. Pinned
+  by `dom_harness.mjs --high-memory` (tests/wasm_high_memory_test.rs):
+  `olang_handler_count` stays flat across 200 interval create/clear
+  cycles, 200 `dom.off`/`dom.on` re-bindings, and 200 failing dom calls
+  (docs/wasm.md).
 - **`otc lib add <path> --rev` pins a library below its repository's
   root.** From inside a subdirectory `git archive` narrows to that
   subdirectory too, so `<commit>:<prefix>` named the prefix twice, the

@@ -155,8 +155,9 @@ fn under_test() = match os.get_env("OLANG_TEST") { Ok(v) => v != "", Err(e) => f
 // ── the SDK's own files (for bundling and assets) ────────────────────
 
 /// Where the SDK lives on this machine: `WEB_SDK_DIR`, the project's
-/// own resolution of `web` (its `olang.lock`), the shelf's registration,
-/// or the in-repo path — the project's answer before the machine's.
+/// own resolution of `web` (its `olang.lock`), the shelf's registration
+/// (the shelf `OLANG_SHELF` names, as `otc` reads it), or the in-repo
+/// path — the project's answer before the machine's.
 share fn sdk_dir() = {
     match os.get_env("WEB_SDK_DIR") {
         Ok(dir) => dir,
@@ -192,10 +193,23 @@ fn locked_web_dir() = {
     }
 }
 
+/// This machine's shelf file, found the way `otc` and the resolver find
+/// it: `OLANG_SHELF` (the path to the `shelf.toml` itself), else
+/// `$OLANG_HOME/shelf.toml`, else `$HOME/.olang/shelf.toml`. Reading
+/// `$HOME` alone would let `use web` resolve one SDK while `serve` reads
+/// its assets from another.
+fn shelf_file() = {
+    let explicit = match os.get_env("OLANG_SHELF") { Ok(p) => p, Err(e) => "" }
+    let olang_home = match os.get_env("OLANG_HOME") { Ok(h) => h, Err(e) => "" }
+    let home = match os.get_env("HOME") { Ok(h) => h, Err(e) => "" }
+    if explicit != "" => explicit
+    else if olang_home != "" => olang_home + "/shelf.toml"
+    else => home + "/.olang/shelf.toml"
+}
+
 /// A shelf library's directory, or Unit.
 fn shelf_dir(name) = {
-    let home = match os.get_env("HOME") { Ok(h) => h, Err(e) => "" }
-    match fs.read_file(home + "/.olang/shelf.toml") {
+    match fs.read_file(shelf_file()) {
         Err(e) => (),
         Ok(text) => match toml.parse(text) {
             Err(e2) => (),
@@ -208,27 +222,12 @@ fn shelf_dir(name) = {
 }
 
 fn sdk_dir_from_machine() = {
-    {
-        {
-            let home = match os.get_env("HOME") { Ok(h) => h, Err(e2) => "" }
-            let from_shelf = match fs.read_file(home + "/.olang/shelf.toml") {
-                Err(e3) => (),
-                Ok(text) => match toml.parse(text) {
-                    Err(e4) => (),
-                    Ok(t) => {
-                        let libs = map_get(t, "libraries")
-                        if libs != () && map_has_key(libs, "web") => map_get(libs, "web")
-                        else => ()
-                    }
-                }
-            }
-            if from_shelf != () => from_shelf
-            else if fs.exists("frameworks/web-sdk/olang.toml") => "frameworks/web-sdk"
-            else if fs.exists("lib/html.ol") => "."
-            else if fs.exists("../lib/html.ol") => ".."
-            else => "."
-        }
-    }
+    let from_shelf = shelf_dir("web")
+    if from_shelf != () => from_shelf
+    else if fs.exists("frameworks/web-sdk/olang.toml") => "frameworks/web-sdk"
+    else if fs.exists("lib/html.ol") => "."
+    else if fs.exists("../lib/html.ol") => ".."
+    else => "."
 }
 
 fn sdk_file(rel) = unwrap(fs.read_file(sdk_dir() + "/" + rel))
@@ -894,4 +893,42 @@ test "static responses revalidate: 304 on a matching ETag" {
 test "content types" {
     assert_eq(content_type_for("a/web.css"), "text/css")
     assert_eq(content_type_for("x.wasm.bak"), "application/octet-stream")
+}
+
+/// Run `body` with environment variables set (a value of `()` removes
+/// one), restoring every one of them afterwards.
+fn with_env(vars, body) = {
+    let saved = map(vars, (kv) => [kv[0], os.get_env(kv[0])])
+    for kv in vars {
+        if kv[1] == () => os.remove_env(kv[0]) else => os.set_env(kv[0], kv[1])
+    }
+    let result = body()
+    for kv in saved {
+        match kv[1] { Ok(v) => os.set_env(kv[0], v), Err(e) => os.remove_env(kv[0]) }
+    }
+    result
+}
+
+test "the SDK is found on the shelf OLANG_SHELF names, then $HOME's" {
+    let tmp = "/tmp/web_sdk_shelf_test_" + to_string(time.now_ms())
+    let named = tmp + "/named-web"
+    let homed = tmp + "/home-web"
+    unwrap(fs.create_dir_all(tmp + "/home/.olang"))
+    unwrap(fs.write_file(tmp + "/other.toml",
+        "[libraries]\nweb = \"" + named + "\"\n"))
+    unwrap(fs.write_file(tmp + "/home/.olang/shelf.toml",
+        "[libraries]\nweb = \"" + homed + "\"\n"))
+    // OLANG_SHELF is the shelf file itself, and it wins over $HOME.
+    let from_named = with_env(
+        [["WEB_SDK_DIR", ()], ["OLANG_HOME", ()], ["OLANG_SHELF", tmp + "/other.toml"],
+         ["HOME", tmp + "/home"]],
+        () => [sdk_dir(), shelf_dir("web")])
+    // Unset, the shelf under $HOME answers, as before.
+    let from_home = with_env(
+        [["WEB_SDK_DIR", ()], ["OLANG_HOME", ()], ["OLANG_SHELF", ()],
+         ["HOME", tmp + "/home"]],
+        () => [sdk_dir(), shelf_dir("web")])
+    fs.remove_dir_all(tmp)
+    assert_eq(from_named, [named, named])
+    assert_eq(from_home, [homed, homed])
 }

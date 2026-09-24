@@ -9,6 +9,11 @@
 //! `--high-memory` mode runs the shim's own boundary block against the
 //! runtime with the low 2 GiB held, and drives dispatches that succeed,
 //! raise, refuse a non-string selector, and fire one-shot callbacks.
+//! It then holds the handler registry flat across 200 `set_interval` /
+//! `clear_interval` cycles, 200 re-bindings of one element and event
+//! after `dom.off`, and 200 dom calls whose host threw (or whose element
+//! handle was refused) — each of which once left a handler registered
+//! for the life of the page.
 //! Skips where node or the wasm artifact (`cargo xtask wasm`) is absent.
 
 use std::path::Path;
@@ -49,4 +54,14 @@ fn dispatches_answer_readable_results_with_the_heap_above_2_gib() {
     // still held by the registry.
     assert_eq!(stats["live_after"], stats["live_before"], "{stats}");
     assert!(stats["registered"].as_u64().unwrap() >= 30, "{stats}");
+    // clear_interval releases the interval's handler.
+    assert_eq!(stats["interval_growth"], 0, "{stats}");
+    // dom.off detaches the previous binding (one each time) and releases
+    // it; the new binding is the one that fires.
+    assert_eq!(stats["rebind_growth"], 0, "{stats}");
+    assert_eq!(stats["rebind_off_reported"], true, "{stats}");
+    // A dom call whose host threw raised in the handler, and the callback
+    // it registered left the registry with it.
+    assert_eq!(stats["throws_reported"], 200, "{stats}");
+    assert_eq!(stats["throw_growth"], 0, "{stats}");
 }

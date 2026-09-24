@@ -232,12 +232,24 @@ shelf resolved and a checksum of its contents. From there:
   list` shows it as `pinned at <sha>`. The lock of every project that
   depends on the name then carries `rev`, and that is a promise about
   what the name means: on a machine whose shelf holds the library at
-  another commit, or following a directory, the install fails and names
-  the `otc lib add <path> --rev <sha>` that satisfies it — a run does
-  not quietly use whatever the shelf has — and the snapshot's checksum
-  is verified like a fetched dependency's. Re-registering the name
-  without `--rev` unpins it. This is how two machines resolve the same
-  SDK from a checkout each keeps moving.
+  another commit, or following a directory, running the program fails
+  and names the `otc lib add <path> --rev <sha>` that satisfies it — a
+  run does not quietly use whatever the shelf has — and the snapshot's
+  checksum is verified like a fetched dependency's. Re-registering the
+  name without `--rev` unpins it. This is how two machines resolve the
+  same SDK from a checkout each keeps moving.
+- **Re-shelving is picked up by `otc install`.** When you move the pin
+  yourself — `otc lib add <path> --rev <new-sha>`, or `otc lib add
+  <path>` to follow the directory again — the next `otc install` sees
+  that the shelf's rev for the name differs from the lock's, reports the
+  move (`shelf library 'sdk' moved: the lock had it at 4f2a91c…, the
+  shelf has it at 9b03e7d… — re-pinning`), and re-resolves that entry:
+  the lock carries the new `rev`, or drops it for an unpinned library.
+  There is no need to delete `olang.lock` first. `otc install --frozen`
+  still refuses the drift. (A library that follows its directory has no
+  directory in the lock — the lock is portable — so re-registering it at
+  another path needs no re-pin: every install and run resolves the name
+  through the shelf as it stands.)
 
 Because starters are versioned with the toolchain, a lockfile pin on a
 starter behaves like any other: upgrading olang and running `otc lib

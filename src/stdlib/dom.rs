@@ -26,6 +26,9 @@ pub fn create_dom_module() -> Value {
         ("value", 1),
         ("set_value", 2),
         ("on", 3),
+        // Detach what `on` attached to an element for an event ("*": every
+        // event) and release the handlers.
+        ("off", 2),
         ("fetch", 4),
         ("focus", 1),
         ("window", 0),

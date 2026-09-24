@@ -249,6 +249,13 @@ const imports = {
     host_dom_on: (h, ptr, len, id) => {
       (listeners[Number(h)] ??= {})[readStr(ptr, len)] = Number(id);
     },
+    host_dom_off: (h, ptr, len) => {
+      const ev = readStr(ptr, len);
+      const l = listeners[Number(h)] ?? {};
+      const ids = [];
+      for (const k of Object.keys(l)) if (ev === "*" || k === ev) { ids.push(l[k]); delete l[k]; }
+      return giveStr(JSON.stringify(ids));
+    },
     // A focus fires the element's focusin listener synchronously, as a
     // browser does — the nested dispatch the shim's queue exists for.
     host_dom_focus: (h) => {
@@ -377,7 +384,7 @@ let hostError = null;
     "host_dom_prefers_dark", "host_dom_confirm", "host_dom_checked"]);
   const STRING = new Set(["host_dom_query_all", "host_dom_get_text", "host_dom_get_value", "host_dom_get_attr",
     "host_dom_measure", "host_dom_location", "host_dom_storage_get", "host_dom_state_get", "host_dom_active_id",
-    "host_dom_selection", "host_dom_values"]);
+    "host_dom_selection", "host_dom_values", "host_dom_off"]);
   for (const name of Object.keys(imports.env)) {
     if (!name.startsWith("host_dom_")) continue;
     const f = imports.env[name];
@@ -416,6 +423,9 @@ if (process.argv[3] === "--high-memory") {
   const names = [null, "#app"];
   const text = {};
   const on = {};
+  const attached = {}; // event -> every callback id bound for it
+  const intervals = new Map(); // timer id -> callback id
+  let lastTimer = 0;
   const env = {
     host_now_ms: () => performance.now(),
     host_epoch_ms: () => Date.now(),
@@ -427,10 +437,46 @@ if (process.argv[3] === "--high-memory") {
       return BigInt(i > 0 ? i : 0);
     },
     host_dom_set_text: (h, ptr, len) => { seen(ptr); text[names[Number(h)]] = B.readStr(ptr, len); },
-    host_dom_on: (h, ptr, len, id) => { seen(ptr); on[B.readStr(ptr, len)] = Number(id); },
+    host_dom_on: (h, ptr, len, id) => {
+      seen(ptr);
+      if (!names[Number(h)]) throw new TypeError("no element for handle " + h);
+      on[B.readStr(ptr, len)] = Number(id);
+      (attached[B.readStr(ptr, len)] ??= []).push(Number(id));
+    },
+    // dom.off: detach every listener bound for the event; answer their ids.
+    host_dom_off: (h, ptr, len) => {
+      const ev = B.readStr(ptr, len);
+      const ids = attached[ev] ?? [];
+      delete attached[ev];
+      return B.giveStr(JSON.stringify(ids));
+    },
     host_dom_set_timeout: (ms, id) => { on.timeout = Number(id); },
-    host_take_error: () => 0,
+    host_dom_set_interval: (ms, id) => { intervals.set(++lastTimer, Number(id)); return BigInt(lastTimer); },
+    host_dom_clear_interval: (t) => { intervals.delete(Number(t)); },
+    // What a real read_file does with a handle that names no file input:
+    // its JavaScript throws, and the callback it was handed never runs.
+    host_dom_read_file: (h, id) => { throw new TypeError("Cannot read properties of undefined (reading 'files')"); },
+    host_take_error: () => {
+      if (hostError == null) return 0;
+      const m = hostError;
+      hostError = null;
+      return B.giveStr(m);
+    },
   };
+  // The shim's rule: a host import that throws reports through
+  // host_take_error instead of unwinding through the runtime.
+  let hostError = null;
+  for (const name of Object.keys(env)) {
+    if (!name.startsWith("host_dom_")) continue;
+    const f = env[name];
+    env[name] = (...a) => {
+      try { return f(...a); }
+      catch (e) {
+        hostError = e && e.message ? e.message : String(e);
+        return name === "host_dom_set_interval" ? 0n : name === "host_dom_off" ? B.giveStr("") : undefined;
+      }
+    };
+  }
   const { instance } = await WebAssembly.instantiate(bytes, {
     env: new Proxy(env, { get: (t, name) => t[name] ?? (() => 0) }),
   });
@@ -451,6 +497,22 @@ dom.on(app, "click", (ev) => dom.set_text(dom.query("#app"), "clicked " + to_str
 dom.on(app, "boom", (ev) => dom.set_text(dom.query("#nope"), "never"))
 dom.on(app, "notstr", (ev) => dom.find(42))
 dom.on(app, "arm", (ev) => dom.set_timeout(5, (t) => dom.set_text(dom.query("#app"), "timeout " + to_string(map_get(ev, "n")))))
+dom.on(app, "cycle", (ev) => {
+    let n = map_get(ev, "n")
+    let t = dom.set_interval(1000, (tick) => dom.set_text(dom.query("#app"), "tick " + to_string(n)))
+    dom.clear_interval(t)
+})
+dom.on(app, "rebind", (ev) => {
+    let n = map_get(ev, "n")
+    let gone = dom.off(dom.query("#app"), "rebound")
+    dom.on(dom.query("#app"), "rebound", (e) => dom.set_text(dom.query("#app"), "rebound " + to_string(n) + " off " + to_string(gone)))
+})
+dom.on(app, "throws", (ev) => {
+    let n = map_get(ev, "n")
+    dom.read_file(dom.query("#app"), (f) => dom.set_text(dom.query("#app"), "file " + to_string(n)))
+})
+dom.on(app, "badhandle", (ev) => dom.on(99, "click", (e) => ()))
+dom.on(app, "badtype", (ev) => dom.on("app", "click", (e) => ()))
 `;
   const src = new TextEncoder().encode(program);
   const sp = seen(hx.olang_alloc(src.length));
@@ -468,6 +530,9 @@ dom.on(app, "arm", (ev) => dom.set_timeout(5, (t) => dom.set_text(dom.query("#ap
     return r;
   };
   const live = () => JSON.parse(B.takeResultText(seen(hx.olang_handler_count())));
+  // The rebind stage's first binding, made before the baseline: the
+  // stage replaces it 200 times and must leave exactly it behind.
+  fire(on.rebind, { type: "rebind", n: 0 });
   const liveBefore = live();
   let raised = 0;
   for (let i = 1; i <= 120; i++) {
@@ -498,6 +563,42 @@ dom.on(app, "arm", (ev) => dom.set_timeout(5, (t) => dom.set_text(dom.query("#ap
         throw new Error("high-memory: a spent one-shot ran again: " + JSON.stringify(again));
     }
   }
+  // Handler lifetimes beyond the one-shots: each stage below runs 200
+  // times and the registry must come back to where it started.
+  const stage = (label, run) => {
+    const before = live().live;
+    for (let i = 1; i <= 200; i++) run(i);
+    return live().live - before;
+  };
+  // (a) An interval created and cleared: the handler leaves with the timer.
+  const intervalGrowth = stage("interval", (i) => {
+    const r = fire(on.cycle, { type: "cycle", n: i });
+    if (r.error) throw new Error("high-memory: interval cycle: " + JSON.stringify(r));
+    if (intervals.size !== 0) throw new Error("high-memory: an interval outlived clear_interval");
+  });
+  // (b) A handler re-bound for the same element and event after dom.off:
+  // the old one is detached and released, the new one fires.
+  let offReported = true;
+  const rebindGrowth = stage("rebind", (i) => {
+    const r = fire(on.rebind, { type: "rebind", n: i });
+    if (r.error) throw new Error("high-memory: rebind: " + JSON.stringify(r));
+    if ((attached.rebound ?? []).length !== 1) throw new Error("high-memory: dom.off left listeners: " + JSON.stringify(attached.rebound));
+    const f = fire(attached.rebound[0], { type: "rebound" });
+    if (f.error) throw new Error("high-memory: the rebound handler: " + JSON.stringify(f));
+    if (text["#app"] !== `rebound ${i} off 1`) offReported = false;
+  });
+  // (c) A host call that throws, and a registration on a handle that is
+  // not an element: the call raises, and its callback is not kept.
+  let throwsReported = 0;
+  const throwGrowth = stage("throws", (i) => {
+    const r = fire(on.throws, { type: "throws", n: i });
+    if (r.error && r.error.includes("dom.read_file")) throwsReported++;
+    const b = fire(on.badhandle, { type: "badhandle" });
+    if (!b.error) throw new Error("high-memory: dom.on(99, ...) did not raise");
+    const c = fire(on.badtype, { type: "badtype" });
+    if (!c.error || !c.error.includes("expected an element handle"))
+      throw new Error("high-memory: dom.on(\"app\", ...) did not refuse: " + JSON.stringify(c));
+  });
   const liveAfter = live();
   for (const p of held) hx.olang_dealloc(p, 16 << 20);
   console.log(JSON.stringify({
@@ -507,6 +608,11 @@ dom.on(app, "arm", (ev) => dom.set_timeout(5, (t) => dom.set_text(dom.query("#ap
     live_before: liveBefore.live,
     live_after: liveAfter.live,
     registered: liveAfter.registered,
+    interval_growth: intervalGrowth,
+    rebind_growth: rebindGrowth,
+    rebind_off_reported: offReported,
+    throw_growth: throwGrowth,
+    throws_reported: throwsReported,
   }));
   process.exit(0);
 }

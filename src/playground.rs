@@ -152,6 +152,10 @@ unsafe extern "C" {
     fn host_dom_get_value(handle: i64) -> *const u8;
     fn host_dom_set_value(handle: i64, ptr: *const u8, len: usize);
     fn host_dom_on(handle: i64, event: *const u8, len: usize, callback_id: i64);
+    /// Detach the listeners this runtime attached to an element for one
+    /// event (every event for "*"); answers the JSON array of their
+    /// callback ids, which the runtime then releases.
+    fn host_dom_off(handle: i64, event: *const u8, len: usize) -> *const u8;
     /// 1 when the element holds focus after the call.
     fn host_dom_focus(handle: i64) -> i32;
     /// Handles on `window` and `document`, for the events that fire there
@@ -245,6 +249,10 @@ thread_local! {
     /// callback runs; ids are never reused, so a stale id from the host
     /// finds an empty slot rather than someone else's handler.
     static HANDLERS: RefCell<Vec<Option<Handler>>> = const { RefCell::new(Vec::new()) };
+    /// Live `set_interval` timers: the host's timer id -> the callback id
+    /// it dispatches, so `clear_interval` can release the handler too.
+    static INTERVALS: RefCell<std::collections::HashMap<i64, i64>> =
+        RefCell::new(std::collections::HashMap::new());
 }
 
 /// How long a registered callback lives.
@@ -252,6 +260,13 @@ thread_local! {
 enum Lifetime {
     /// Dispatched any number of times: `dom.on`, `set_interval`,
     /// `on_frame`, `on_route`, `on_error`, `worker_on`, `on_message`.
+    /// Released when its source is torn down: `clear_interval` releases
+    /// the interval's handler, `dom.off` the listeners it detaches.
+    /// (`dom.on` is additive, as `addEventListener` is: binding the same
+    /// element and event again adds a listener beside the first — the
+    /// SDK's `mount` delegates from one root bound once, and `viz`'s
+    /// tooltip and mark handlers share an element and event on purpose —
+    /// so a re-render that binds again must `dom.off` first.)
     Persistent,
     /// Dispatched once and then released: `set_timeout`,
     /// `request_frame`, `read_file`, and every fetch/request callback.
@@ -275,6 +290,38 @@ fn register_handler(callback: &Value, lifetime: Lifetime) -> i64 {
         }));
         (h.len() - 1) as i64
     })
+}
+
+/// Empty a handler's slot, so its closure is freed. The id is never
+/// reused: a later dispatch of it answers "already ran".
+fn release_handler(callback_id: i64) {
+    let released = HANDLERS.with(|h| {
+        let mut h = h.borrow_mut();
+        usize::try_from(callback_id)
+            .ok()
+            .and_then(|i| h.get_mut(i))
+            .and_then(Option::take)
+    });
+    drop(released);
+}
+
+/// How many handler slots exist: a dom call that fails releases every
+/// handler registered from this mark on.
+fn handler_mark() -> usize {
+    HANDLERS.with(|h| h.borrow().len())
+}
+
+/// Release the handlers registered since `mark`: the dom call that
+/// registered them failed — on our side (a bad element handle) or in the
+/// host (its JavaScript threw) — so the host never took their ids and
+/// nothing will ever dispatch them.
+fn release_since(mark: usize) {
+    HANDLERS.with(|h| {
+        let mut h = h.borrow_mut();
+        for slot in h.iter_mut().skip(mark) {
+            *slot = None;
+        }
+    });
 }
 
 /// The handler for a dispatch: a persistent one is cloned, a one-shot one
@@ -367,14 +414,22 @@ fn value_to_json(value: &Value) -> Result<String, Box<dyn std::error::Error>> {
 /// Dispatch for dom.* builtins on the wasm build.
 #[cfg(target_arch = "wasm32")]
 pub fn dom_call(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let mark = handler_mark();
     let result = dom_call_inner(name, args);
     // A host function whose JavaScript threw (an invalid selector, a
     // selection range on an element without one) reports here; the
     // call's own result is whatever fallback the shim returned and is
     // discarded in favour of the error.
     let failure = read_host_string(unsafe { host_take_error() });
+    // A failed call's callback was never taken by the host (a read_file
+    // on a missing element, a set_timeout whose host threw): released
+    // here, or it pinned its closure for the life of the page.
     if !failure.is_empty() {
+        release_since(mark);
         return Err(format!("dom.{}: {}", name, failure).into());
+    }
+    if result.is_err() {
+        release_since(mark);
     }
     result
 }
@@ -543,6 +598,19 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
             unsafe { host_dom_on(handle(el)?, ev.as_ptr(), ev.len(), id) };
             Ok(Value::Unit)
         }
+        // Detach what `dom.on` attached to this element for one event —
+        // or, for "*", every event — and release the handlers. Answers
+        // how many listeners were detached.
+        ("off", [el, event]) => {
+            let ev = text(event)?;
+            let json =
+                read_host_string(unsafe { host_dom_off(handle(el)?, ev.as_ptr(), ev.len()) });
+            let ids: Vec<i64> = serde_json::from_str(&json).unwrap_or_default();
+            for id in &ids {
+                release_handler(*id);
+            }
+            Ok(Value::Integer(ids.len() as i64))
+        }
         // Answers whether the element took focus: a hidden or disabled
         // control does not, and the caller can say so instead of assuming.
         ("focus", [el]) => Ok(Value::Boolean(unsafe { host_dom_focus(handle(el)?) } != 0)),
@@ -658,10 +726,17 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
             };
             let id = register_handler(callback, Lifetime::Persistent);
             let timer = unsafe { host_dom_set_interval(ms, id) };
+            INTERVALS.with(|t| t.borrow_mut().insert(timer, id));
             Ok(Value::Integer(timer))
         }
+        // The interval stops, and its handler leaves the registry: kept,
+        // each create/clear cycle pinned one more closure.
         ("clear_interval", [timer]) => {
-            unsafe { host_dom_clear_interval(handle(timer)?) };
+            let timer = handle(timer)?;
+            unsafe { host_dom_clear_interval(timer) };
+            if let Some(id) = INTERVALS.with(|t| t.borrow_mut().remove(&timer)) {
+                release_handler(id);
+            }
             Ok(Value::Unit)
         }
         ("draw", [el, ops]) => {

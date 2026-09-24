@@ -58,6 +58,14 @@ pub struct InstallOptions {
     /// satisfying sources (`otc pkg update`). Without this, an existing lock
     /// that still covers the manifest is replayed exactly.
     pub refresh: bool,
+    /// Re-pin a shelf library whose shelf registration moved since the
+    /// lock was written (`otc install`): a lock entry whose recorded rev
+    /// differs from the rev this machine's shelf now holds the name at —
+    /// re-shelved at another commit, pinned where it followed its
+    /// directory, or unpinned where it was pinned — is re-resolved rather
+    /// than replayed. Off for running a program, where such a lock is
+    /// refused instead of quietly drifted past; `frozen` still fails on it.
+    pub repin_shelf: bool,
 }
 
 /// Resolve and fetch all dependencies of the project rooted at `root`,
@@ -366,8 +374,15 @@ fn replay_lock(
             (Dependency::Path { path }, LockedSource::Path { path: locked_path }) => {
                 path == locked_path
             }
-            (Dependency::Shelf { shelf: sname }, LockedSource::Shelf { shelf: locked, .. }) => {
+            (
+                Dependency::Shelf { shelf: sname },
+                LockedSource::Shelf {
+                    shelf: locked,
+                    rev: locked_rev,
+                },
+            ) => {
                 sname == locked
+                    && (!options.repin_shelf || !shelf_moved(sname, locked_rev.as_deref()))
             }
             // Older locks pinned a shelf library by the path it resolved
             // to on the machine that wrote them; honored while it agrees.
@@ -468,6 +483,45 @@ fn replay_lock(
         map.insert(name.clone(), dir);
     }
     Ok(Some(map))
+}
+
+/// Whether this machine's shelf now holds `name` at a different revision
+/// than a lock entry recorded (`locked_rev`; None = following its
+/// directory). A name the shelf no longer holds is not a move: replaying
+/// it reports the missing library.
+fn shelf_moved(name: &str, locked_rev: Option<&str>) -> bool {
+    let Ok(shelf) = shelf::Shelf::load() else {
+        return false;
+    };
+    shelf.resolve(name).is_some() && shelf.rev_of(name) != locked_rev
+}
+
+/// A shelf library whose lock entry no longer matches the shelf: its name,
+/// the rev the lock recorded, and the rev the shelf now holds (None =
+/// following its directory). `otc install` reports these before it
+/// re-pins them.
+pub fn moved_shelf_pins(root: &Path) -> Vec<(String, Option<String>, Option<String>)> {
+    let Ok(lock) = Lockfile::load(root) else {
+        return Vec::new();
+    };
+    let Ok(shelf) = shelf::Shelf::load() else {
+        return Vec::new();
+    };
+    lock.package
+        .values()
+        .filter_map(|locked| match &locked.source {
+            LockedSource::Shelf { shelf: name, rev }
+                if shelf.resolve(name).is_some() && shelf.rev_of(name) != rev.as_deref() =>
+            {
+                Some((
+                    name.clone(),
+                    rev.clone(),
+                    shelf.rev_of(name).map(str::to_string),
+                ))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// Produce the on-disk directory a lock entry pins, fetching if needed.

@@ -128,6 +128,8 @@
 
   // Element handles: index into this array (0 reserved = not found).
   const elements = [null];
+  // The listeners dom.on attached: { el, ev, cb, pairs, stops }.
+  let bound = [];
   const handleOf = (el) => {
     const i = elements.indexOf(el);
     return i > 0 ? i : elements.push(el) - 1;
@@ -643,6 +645,10 @@
         const cb = Number(id);
         const ev = readStr(ptr, len);
         const el = elements[Number(h)];
+        // Every listener attached here is recorded against its callback,
+        // so dom.off can detach it and the runtime release the handler.
+        const entry = { el, ev, cb, pairs: [], stops: [] };
+        const listen = (type, fn) => { el.addEventListener(type, fn); entry.pairs.push([type, fn]); };
         // Every handler receives a structured event Map: type, target id,
         // value, key, pointer x/y, modifier flags, and data-* attributes.
         // "enter" stays as the keydown-filtered alias; delegation is the
@@ -654,8 +660,9 @@
           // (`intent`, `intentArgs`): what to fetch before the click.
           let timer = null, current = null;
           const carrierOf = (t) => (t && t.closest && t.closest("[data-intent]")) || null;
+          entry.stops.push(() => clearTimeout(timer));
           const fire = (c, e) => { const p = eventPayload(e, "intent"); p.data = { ...(c.dataset ?? {}) }; dispatchJson(cb, p); };
-          el.addEventListener("pointerover", (e) => {
+          listen("pointerover", (e) => {
             const c = carrierOf(e.target);
             if (c === current) return;
             current = c; clearTimeout(timer);
@@ -664,12 +671,12 @@
           // leaving the carrier (for anywhere but inside it) forgets it; the
           // pointerover that follows (it comes after the pointerout) starts
           // the rest on the next one
-          el.addEventListener("pointerout", (e) => {
+          listen("pointerout", (e) => {
             if (carrierOf(e.relatedTarget) !== current) { current = null; clearTimeout(timer); }
           });
-          el.addEventListener("focusin", (e) => { const c = carrierOf(e.target); if (c) fire(c, e); });
+          listen("focusin", (e) => { const c = carrierOf(e.target); if (c) fire(c, e); });
         } else if (ev === "enter") {
-          el.addEventListener("keydown", (e) => {
+          listen("keydown", (e) => {
             if (e.key === "Enter") {
               const p = eventPayload(e, "enter");
               p.value = el.value ?? "";
@@ -681,15 +688,15 @@
           // browser only permits a drop where dragover is cancelled. The
           // dropped files travel in the payload as `files`, each read to
           // base64 — the shape dom.read_file hands back.
-          el.addEventListener("dragover", (e) => e.preventDefault());
-          el.addEventListener("drop", (e) => {
+          listen("dragover", (e) => e.preventDefault());
+          listen("drop", (e) => {
             e.preventDefault();
             withFiles(e.dataTransfer && e.dataTransfer.files, eventPayload(e, "drop"), (p) => dispatchJson(cb, p));
           });
         } else if (ev === "paste") {
           // A paste with files (an image from the clipboard) carries them
           // as `files`; a text paste carries `text` and is not prevented.
-          el.addEventListener("paste", (e) => {
+          listen("paste", (e) => {
             const files = e.clipboardData && e.clipboardData.files;
             const p = eventPayload(e, "paste");
             p.text = (e.clipboardData && e.clipboardData.getData("text/plain")) || "";
@@ -697,7 +704,7 @@
             withFiles(files, p, (payload) => dispatchJson(cb, payload));
           });
         } else if (ev === "dragstart") {
-          el.addEventListener("dragstart", (e) => {
+          listen("dragstart", (e) => {
             // Firefox refuses to drag until dataTransfer holds data;
             // the payload itself crosses through the event map.
             if (e.dataTransfer) {
@@ -707,7 +714,7 @@
             dispatchJson(cb, eventPayload(e, "dragstart"));
           });
         } else {
-          el.addEventListener(ev, (e) => {
+          listen(ev, (e) => {
             // A link that carries an action means the action: the href is
             // the no-JS fallback, not a second navigation on top of the
             // app's own. `data-follow` on the anchor opts back in.
@@ -718,6 +725,23 @@
             dispatchJson(cb, eventPayload(e, ev));
           });
         }
+        bound.push(entry);
+      },
+      // Detach what host_dom_on attached to this element for one event
+      // ("*": every event); answers the callback ids for the runtime to
+      // release.
+      host_dom_off: (h, ptr, len) => {
+        const el = elements[Number(h)];
+        const ev = readStr(ptr, len);
+        const ids = [];
+        bound = bound.filter((b) => {
+          if (b.el !== el || (ev !== "*" && b.ev !== ev)) return true;
+          for (const [type, fn] of b.pairs) el.removeEventListener(type, fn);
+          for (const stop of b.stops) stop();
+          ids.push(b.cb);
+          return false;
+        });
+        return giveStr(JSON.stringify(ids));
       },
       host_dom_focus: (h) => {
         const el = elements[Number(h)];
@@ -1023,7 +1047,7 @@
     "host_dom_worker_spawn", "host_dom_prefers_dark", "host_dom_confirm", "host_dom_checked"]);
   const STRING_IMPORTS = new Set(["host_dom_query_all", "host_dom_get_text", "host_dom_get_value",
     "host_dom_get_attr", "host_dom_measure", "host_dom_location", "host_dom_storage_get",
-    "host_dom_state_get", "host_dom_active_id", "host_dom_selection", "host_dom_values"]);
+    "host_dom_state_get", "host_dom_active_id", "host_dom_selection", "host_dom_values", "host_dom_off"]);
   // Answers a string or null: a throw answers null (nothing missing).
   const NULLABLE_IMPORTS = new Set(["host_dom_patch", "host_dom_focus", "host_dom_storage_set"]);
   for (const name of Object.keys(imports.env)) {

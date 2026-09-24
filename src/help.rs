@@ -3250,6 +3250,14 @@ let parts = ods.split(f, 0.8)   // [train, test]"##],
             &[r##"dom.on(dom.query("#save"), "click", (ev) => save())"##],
         );
         self.doc_ex(
+            "dom.off",
+            "dom.off(el, event)",
+            "Int",
+            "dom",
+            "Detach the handlers dom.on attached to el for event (\"*\": every event) and release them; returns how many.",
+            &[r##"dom.off(dom.query("#list"), "click")"##],
+        );
+        self.doc_ex(
             "dom.fetch",
             "dom.fetch(method, path, body, callback)",
             "Unit",

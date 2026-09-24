@@ -96,7 +96,7 @@ exchange for automating about a dozen signatures:
 | `olang_dispatch_event(id)` / `olang_dispatch_event_with(id, ptr, len)` | re-enter the live session for one event, optionally carrying a string payload |
 | `olang_dispatch_event_json(id, ptr, len)` | the structured variant: the payload is JSON, parsed into the Map the handler receives |
 | `olang_result_free(ptr)` | free a result buffer |
-| `olang_handler_count()` | a result buffer `{"live", "registered"}`: the handlers still held (one-shot callbacks leave when they run) |
+| `olang_handler_count()` | a result buffer `{"live", "registered"}`: the handlers still held (one-shot callbacks leave when they run, an interval's at `clear_interval`, a listener's at `dom.off`, a failed call's at once) |
 
 Every call answers with the same shape: a length-prefixed JSON buffer
 carrying `output` (everything the program printed), `value`, `error`,
@@ -161,7 +161,7 @@ olang. The full surface, grouped:
 | Group | Functions |
 |---|---|
 | Query & content | `query` / `find` / `query_all`, `get_text` / `set_text`, `set_html`, `morph`, `patch`, `value` / `set_value`, `checked`, `selection`, `values`, `focus` |
-| Events | `on(el, event, handler)` — any DOM event name, plus the `enter` alias; `window()` and `document()` are handles for the events that fire there; `on_error(handler)` hears every failed dispatch |
+| Events | `on(el, event, handler)` — any DOM event name, plus the `enter` alias; `off(el, event)` detaches them; `window()` and `document()` are handles for the events that fire there; `on_error(handler)` hears every failed dispatch |
 | Attributes & style | `get_attr` / `set_attr` / `remove_attr`, `set_class`, `class_add` / `class_remove` / `class_toggle`, `set_style`, `measure` |
 | Structure | `create`, `append`, `remove`, `insert_before`, `scroll_into_view` |
 | Timers & frames | `set_timeout`, `set_interval` / `clear_interval`, `request_frame`, `on_frame` |
@@ -249,6 +249,32 @@ defined and to the handler registered with `dom.on_error` — as `#{
 "error", "output", "trap" }`, once the failed dispatch has ended — and
 the next event is served as usual. `trap` is true when the runtime
 itself trapped under the handler.
+
+`dom.on` is additive, as `addEventListener` is: binding the same
+element and event again adds a second listener beside the first, and
+both fire. That is on purpose — the web SDK's `mount` binds its
+delegating root once, and `viz.tooltip` and `viz.on_mark` share an
+element and event — so code that re-binds on every render must first
+`dom.off(el, event)`, which detaches every listener `dom.on` attached
+to that element for that event (`"*"`: for every event), releases their
+handlers, and answers how many it removed:
+
+```olang no-run
+fn wire(list) = {
+    dom.off(list, "click")
+    dom.on(list, "click", (e) => select(map_get(e, "id")))
+}
+```
+
+A registered handler holds the environment its closure captured, so the
+runtime releases each one as soon as nothing can dispatch it: a one-shot
+callback (`set_timeout`, `request_frame`, `read_file`, every fetch) when
+it runs, an interval's when `dom.clear_interval` stops it, a listener's
+when `dom.off` detaches it, and any callback handed to a dom call that
+raised — its JavaScript threw, or the element handle was refused —
+since the host never took it. A listener on an element a repaint
+removed stays registered until `dom.off`: the element may yet be put
+back.
 
 Host calls answer where an answer is useful: `dom.focus(el)` says
 whether the element holds focus afterwards (a hidden or disabled

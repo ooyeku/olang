@@ -183,3 +183,84 @@ fn a_library_below_its_repository_root_is_pinned_from_its_own_subtree() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn otc_install_repins_a_shelf_library_reshelved_at_another_commit() {
+    if Command::new("git").arg("--version").output().is_err() {
+        eprintln!("skipping: needs git");
+        return;
+    }
+    let root: PathBuf = std::env::temp_dir().join(format!("otc_lib_repin_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let (lib, app, shelf) = (
+        root.join("greeter"),
+        root.join("app"),
+        root.join("home/shelf.toml"),
+    );
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::create_dir_all(&app).unwrap();
+    std::fs::write(
+        lib.join("olang.toml"),
+        "[package]\nname = \"greeter\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    std::fs::write(lib.join("index.ol"), "share fn greet() = \"one\"\n").unwrap();
+    git(&lib, &["init", "-q", "."]);
+    git(&lib, &["add", "."]);
+    git(&lib, &["commit", "-qm", "one"]);
+    let a = git(&lib, &["rev-parse", "HEAD"]);
+    std::fs::write(lib.join("index.ol"), "share fn greet() = \"two\"\n").unwrap();
+    git(&lib, &["commit", "-qam", "two"]);
+    let b = git(&lib, &["rev-parse", "HEAD"]);
+    std::fs::write(
+        app.join("olang.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ngreeter = { shelf = \"greeter\" }\n",
+    )
+    .unwrap();
+    let lib_path = lib.to_string_lossy().to_string();
+    let lock = || std::fs::read_to_string(app.join("olang.lock")).unwrap();
+
+    // Pinned at A, installed: the lock carries A.
+    let (ok, out) = otc(&root, &shelf, &["lib", "add", &lib_path, "--rev", &a]);
+    assert!(ok, "{out}");
+    let (ok, out) = otc(&app, &shelf, &["install"]);
+    assert!(ok, "{out}");
+    assert!(lock().contains(&format!("rev = \"{a}\"")), "{}", lock());
+
+    // Re-shelved at B: --frozen refuses the drift and leaves the lock be;
+    // a plain install re-pins to B and says so.
+    let (ok, out) = otc(&root, &shelf, &["lib", "add", &lib_path, "--rev", &b]);
+    assert!(ok, "{out}");
+    let (ok, out) = otc(&app, &shelf, &["install", "--frozen"]);
+    assert!(!ok, "--frozen must fail on a moved shelf pin: {out}");
+    assert!(lock().contains(&format!("rev = \"{a}\"")), "{}", lock());
+    let (ok, out) = otc(&app, &shelf, &["install"]);
+    assert!(ok, "{out}");
+    assert!(
+        out.contains("shelf library 'greeter' moved") && out.contains(&b[..12]),
+        "{out}"
+    );
+    let text = lock();
+    assert!(text.contains(&format!("rev = \"{b}\"")), "{text}");
+    assert!(!text.contains(&a), "{text}");
+
+    // Installing again is a replay: nothing moved, the lock is unchanged.
+    let (ok, out) = otc(&app, &shelf, &["install"]);
+    assert!(
+        ok && out.contains("olang.lock unchanged") && !out.contains("moved"),
+        "{out}"
+    );
+
+    // Unpinned (registered by directory): the lock drops its rev.
+    let (ok, out) = otc(&root, &shelf, &["lib", "add", &lib_path]);
+    assert!(ok, "{out}");
+    let (ok, out) = otc(&app, &shelf, &["install"]);
+    assert!(ok && out.contains("following its directory"), "{out}");
+    let text = lock();
+    assert!(
+        text.contains("kind = \"shelf\"") && !text.contains("rev ="),
+        "{text}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}

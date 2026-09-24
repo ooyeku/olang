@@ -265,7 +265,26 @@ pub fn do_install(frozen: bool, update: bool, verbose: bool) -> anyhow::Result<(
         frozen,
         registry: registry_from_env(),
         refresh: update,
+        repin_shelf: true,
     };
+    // A shelf library re-shelved since the lock was written (another
+    // commit, or pinned/unpinned) is re-pinned to what the shelf holds now:
+    // say so, as a moved path is announced, so the lock change is expected.
+    // Under --frozen the install below refuses the drift instead.
+    if !frozen {
+        let short = |rev: &Option<String>| match rev {
+            Some(r) => format!("at {}", &r[..r.len().min(12)]),
+            None => "following its directory".to_string(),
+        };
+        for (name, was, now) in olang::pkg::moved_shelf_pins(&root) {
+            println!(
+                "shelf library '{}' moved: the lock had it {}, the shelf has it {} — re-pinning",
+                name,
+                short(&was),
+                short(&now)
+            );
+        }
+    }
     // A lock written on another machine can name paths this one does not
     // have; say so before re-resolving, so the change to the lock is not
     // a surprise.
