@@ -43,6 +43,7 @@ fn every_callable_module_has_help_entries() {
         "db",
         "chan",
         "proc",
+        "tty",
         "testing",
         "meta",
         "dom",

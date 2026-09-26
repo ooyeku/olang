@@ -1476,6 +1476,7 @@ impl HelpSystem {
         // (proc, chan, time, toml, ods, stats, plot, dom, and the embedded
         // packages cli/term/ui/viz/dash), plus recent additions to os/str.
         self.add_process_and_concurrency_docs();
+        self.add_tty_docs();
         self.add_time_and_encoding_docs();
         self.add_data_stack_docs();
         self.add_browser_and_toolkit_docs();
@@ -1898,6 +1899,74 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
                 see_also: vec![],
             });
         }
+    }
+
+    /// The `tty` module: the terminal as an interactive device.
+    fn add_tty_docs(&mut self) {
+        self.doc_ex(
+            "tty.enter",
+            "tty.enter(opts?)",
+            "Result",
+            "tty",
+            "Take the terminal: Ok(handle) or Err when stdin or stdout is not a terminal, or a handle is already entered (one at a time). opts are Bools, all optional: raw (default true: no echo, no line editing, ctrl+c/ctrl+z arrive as keys), alt_screen, mouse, paste (bracketed paste), focus (focus in/out events), kitty_keys (the kitty keyboard protocol, when the terminal has it), hide_cursor. An unknown option raises. Whatever enter changes is restored by tty.leave, and — without the program's help — when the program ends or raises (before the error prints), on os.exit, on a panic, and on SIGTERM, SIGHUP, and SIGINT.",
+            &[r##"let h = unwrap(tty.enter(#{ "alt_screen": true, "hide_cursor": true, "mouse": true }))"##],
+        );
+        self.doc_ex(
+            "tty.leave",
+            "tty.leave(h)",
+            "Unit",
+            "tty",
+            "Give the terminal back: cooked mode, the main screen, the cursor shown, every reporting mode off, the events channel closed. Idempotent, and never fails: leaving a handle already left does nothing.",
+            &[r##"tty.leave(h)"##],
+        );
+        self.doc_ex(
+            "tty.events",
+            "tty.events(h)",
+            "Channel",
+            "tty",
+            "The channel of decoded input, as maps with a \"kind\": key (key, text, ctrl, alt, shift, super, chord — \"ctrl+d\", \"alt+enter\", \"shift+tab\", \"G\"), paste (text), mouse (action down/up/move/drag/wheel, button, x, y zero-based, mods), resize (cols, rows), focus (on), signal (name: tstp, cont, term, hup, int, eof). Replies to tty.query never appear here. Closed by tty.leave.",
+            &[r##"match chan.recv(tty.events(h)) { Ok(ev) => println(map_get(ev, "kind")), Err(e) => () }"##],
+        );
+        self.doc_ex(
+            "tty.size",
+            "tty.size()",
+            "Result",
+            "tty",
+            "The terminal's size, Ok((cols, rows)), or Err when stdout is not a terminal. Needs no tty.enter.",
+            &[r##"let (cols, rows) = unwrap(tty.size())"##],
+        );
+        self.doc_ex(
+            "tty.write",
+            "tty.write(h, s)",
+            "Result",
+            "tty",
+            "Write a String or Bytes to the terminal now — no waiting for a newline, after anything print left buffered. In raw mode a newline only moves down: end lines with \"\\r\\n\".",
+            &[r##"tty.write(h, "\u{1b}[2J\u{1b}[H" + "hello\r\n")"##],
+        );
+        self.doc_ex(
+            "tty.query",
+            "tty.query(h, seq, timeout_ms)",
+            "Result",
+            "tty",
+            "Ask the terminal something (OSC 11 for the background colour, DA1, the kitty keyboard flags) and answer Ok(reply) — the raw reply bytes as a String — or Err(\"timeout\"). The reply is taken out of the input stream: it never reaches tty.events, even when it arrives late. Needs raw mode. Unix only for now (Err on Windows).",
+            &[r##"let bg = tty.query(h, "\u{1b}]11;?\u{1b}\\", 100)"##],
+        );
+        self.doc_ex(
+            "tty.is_tty",
+            "tty.is_tty()",
+            "Bool",
+            "tty",
+            "Whether stdin and stdout are both terminals — what tty.enter needs.",
+            &[r##"if tty.is_tty() => println("interactive") else => println("piped")"##],
+        );
+        self.doc_ex(
+            "tty.suspend",
+            "tty.suspend(h)",
+            "Result",
+            "tty",
+            "Suspend to the shell as ctrl+z does in a cooked terminal: restore the terminal, stop (SIGTSTP), and after `fg` re-enter every mode and deliver a signal \"cont\" event and a resize (repaint then). Bind it to ctrl+z, which arrives as a key in raw mode. Unix only.",
+            &[r##"tty.suspend(h)"##],
+        );
     }
 
     fn add_process_and_concurrency_docs(&mut self) {
@@ -4995,6 +5064,32 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             ],
             category: "String".to_string(),
             see_also: vec!["str.chars".to_string(), "str.reverse".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.width".to_string(),
+            description: "How many terminal cells a string occupies: the sum of str.cell_width over its grapheme clusters. East Asian wide and fullwidth characters and emoji are 2, combining marks and other zero-width characters 0, control characters (tab and newline included) 0, everything else 1. Unicode 17 tables (unicode-width 0.2). What layout, truncation, and padding in a terminal must count.".to_string(),
+            syntax: "str.width(s)".to_string(),
+            parameters: vec![],
+            return_type: "Int".to_string(),
+            examples: vec![
+                "str.width(\"abc\")  // 3".to_string(),
+                "str.width(\"中文\")  // 4".to_string(),
+            ],
+            category: "String".to_string(),
+            see_also: vec!["str.cell_width".to_string(), "str.graphemes".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.cell_width".to_string(),
+            description: "The cells one grapheme cluster occupies in a terminal: 0, 1 or 2. A flag, an emoji ZWJ sequence, and an emoji with a skin tone are each one cluster of 2; a combining mark alone is 0. More than one grapheme raises (use str.width).".to_string(),
+            syntax: "str.cell_width(g)".to_string(),
+            parameters: vec![],
+            return_type: "Int".to_string(),
+            examples: vec![
+                "str.cell_width(\"中\")  // 2".to_string(),
+                "map(str.graphemes(s), (g) => str.cell_width(g))".to_string(),
+            ],
+            category: "String".to_string(),
+            see_also: vec!["str.width".to_string(), "str.graphemes".to_string()],
         });
         self.add_function(FunctionDoc {
             name: "str.capitalize".to_string(),
@@ -10814,6 +10909,7 @@ mod tests {
             ("db", 8),
             ("random", 14),
             ("os", 20),
+            ("tty", 8),
         ] {
             let fns = h.functions_in_module(module);
             assert!(

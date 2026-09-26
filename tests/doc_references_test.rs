@@ -48,6 +48,7 @@ const MODULES: &[&str] = &[
     "str",
     "task",
     "testing",
+    "tty",
     "time",
     "toml",
     "viz",

@@ -412,6 +412,9 @@ fn main() {
         .expect("failed to spawn interpreter thread")
         .join()
         .unwrap_or(1);
+    // Whatever ran, the terminal is given back before the process ends
+    // (a no-op unless a program entered `tty` and is still in it).
+    olang::stdlib::tty::restore_terminal();
     olang::memory::report_if_asked();
     process::exit(exit_code);
 }
@@ -825,7 +828,9 @@ fn run_eval(cli: &Cli, source: &str) -> i32 {
         program.statements.last().map(|st| st.unwrapped()),
         Some(olang::ast::Statement::Expression(_))
     );
-    match interpreter.eval_program(program) {
+    let outcome = interpreter.eval_program(program);
+    olang::stdlib::tty::restore_terminal();
+    match outcome {
         Ok(value) if ends_in_expression && !matches!(value, olang::Value::Unit) => {
             println!("{}", value);
             0
@@ -1123,6 +1128,8 @@ fn show_classic_interpreter_error(
     location: Option<olang::ast::ErrorLocation>,
     source: &str,
 ) {
+    // Restore before reporting (idempotent; the callers restore already).
+    olang::stdlib::tty::restore_terminal();
     eprintln!("\n{}", "═══ Execution Error ═══".bright_red().bold());
 
     let formatted_error = interpreter.format_error(error);
@@ -2712,6 +2719,10 @@ fn execute_program(
     } else {
         interpreter.eval_program(program)
     };
+    // The program is over: a terminal it entered with `tty` is restored
+    // now, before anything below prints — an uncaught error must land on
+    // the main screen in cooked mode, not in a vanished alternate screen.
+    olang::stdlib::tty::restore_terminal();
     match outcome {
         Ok(result) => {
             if verbose {

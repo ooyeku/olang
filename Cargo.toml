@@ -83,6 +83,10 @@ rustc-hash = "2"
 # a timed recv is bounded by its own timeout, not by another waiter's.
 crossbeam-channel = "0.5"
 unicode-segmentation = "1.13"
+# `str.width` / `str.cell_width`: display width in terminal cells (East
+# Asian Width, emoji presentation). Pure tables, so the browser build
+# carries it too.
+unicode-width = "0.2"
 memchr = "2"
 csv = "1.4"
 regex = { version = "1.13", optional = true }
@@ -195,6 +199,16 @@ getrandom02 = { package = "getrandom", version = "0.2", features = ["custom"] }
 # `os.exec`'s timeout).
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+# The `tty` module's restore guard: SIGTERM/SIGHUP/SIGINT/SIGTSTP/SIGCONT
+# and SIGWINCH actions that chain with any handler already installed
+# (`os.on_interrupt`'s). Only the low-level registry is used.
+signal-hook = { version = "0.4", default-features = false }
+
+# The `tty` module on Windows: console raw mode and the console input
+# records (keys, mouse, resize, focus). On Unix the module decodes the
+# byte stream itself (src/stdlib/tty/decode.rs) — see its header for why.
+[target.'cfg(windows)'.dependencies]
+crossterm = { version = "0.29", default-features = false, features = ["events", "windows", "bracketed-paste"] }
 
 [dev-dependencies]
 criterion = "0.5"

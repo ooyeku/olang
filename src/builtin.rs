@@ -702,12 +702,12 @@ impl BuiltinFunctions {
         // Without the native feature (the browser playground), whole module
         // families don't exist: say so plainly instead of "unknown function".
         #[cfg(not(feature = "native"))]
-        for gated in ["fs.", "http.", "os.", "db."] {
+        for gated in ["fs.", "http.", "os.", "db.", "tty."] {
             if name.starts_with(gated) {
                 return Err(InterpreterError::RuntimeError {
                     message: format!(
                         "{} is not available in the playground (no filesystem, network, \
-                         processes, or database in the browser sandbox)",
+                         processes, terminal, or database in the browser sandbox)",
                         name
                     ),
                 });
@@ -882,6 +882,13 @@ impl BuiltinFunctions {
         #[cfg(feature = "native")]
         if let Some(runtime_function) = name.strip_prefix("runtime.") {
             return crate::stdlib::runtime::call_runtime_function(runtime_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
+        }
+
+        // Handle tty functions (the terminal as an interactive device)
+        #[cfg(feature = "native")]
+        if let Some(tty_function) = name.strip_prefix("tty.") {
+            return crate::stdlib::tty::call_tty_function(tty_function, arguments)
                 .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 

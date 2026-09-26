@@ -88,6 +88,7 @@ const MODULES: &[&str] = &[
     "chan",
     "task",
     "proc",
+    "tty",
     "caps",
     "meta",
     "bigint",

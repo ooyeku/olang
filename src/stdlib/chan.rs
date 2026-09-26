@@ -140,6 +140,9 @@ fn stall_tick(last_gen: &mut Option<u64>) {
     ) {
         return;
     }
+    // The terminal back first, so the report is readable.
+    #[cfg(feature = "native")]
+    crate::stdlib::tty::restore_terminal();
     let sites = parked().lock().unwrap().clone();
     let mut lines: Vec<String> = sites
         .values()
@@ -372,6 +375,42 @@ fn register(tx: Tx, rx: Receiver<Value>) -> Value {
 pub fn fresh_channel() -> Value {
     let (tx, rx) = crossbeam_channel::unbounded();
     register(Tx::Unbounded(tx), rx)
+}
+
+/// The producing end of a channel, held by Rust code (a native reader
+/// thread) that feeds olang code: `tty.events` is one. Sends go through
+/// the channel's own sender, so `chan.close` from either side closes it,
+/// and the depth `chan.stat` reports stays true.
+#[derive(Clone)]
+pub struct ChannelSender(Arc<Chan>);
+
+impl ChannelSender {
+    /// Send a value; `false` once the channel is closed.
+    pub fn send(&self, value: Value) -> bool {
+        let tx = self.0.tx.lock().unwrap().clone();
+        let sent = match tx {
+            Some(Tx::Unbounded(t)) | Some(Tx::Bounded(t)) => t.send(value).is_ok(),
+            None => false,
+        };
+        if sent {
+            self.0.depth.fetch_add(1, Ordering::Relaxed);
+        }
+        sent
+    }
+
+    /// Close the channel: queued values are still received, then `recv`
+    /// reports the close.
+    pub fn close(&self) {
+        *self.0.tx.lock().unwrap() = None;
+    }
+}
+
+/// A fresh unbounded channel and a Rust-side sender into it.
+pub fn channel_with_sender() -> (Value, ChannelSender) {
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let value = register(Tx::Unbounded(tx), rx);
+    let chan = chan_of(&value).expect("a fresh channel");
+    (value, ChannelSender(chan))
 }
 
 fn chan_new(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {

@@ -25,6 +25,8 @@ pub fn create_string_module() -> Value {
         "reverse",
         "chars",
         "graphemes",
+        "width",
+        "cell_width",
         "lines",
         "words",
         "capitalize",
@@ -97,6 +99,8 @@ pub fn call_string_function(
         "reverse" => str_reverse(args),
         "chars" => str_chars(args),
         "graphemes" => str_graphemes(args),
+        "width" => str_width(args),
+        "cell_width" => str_cell_width(args),
         "lines" => str_lines(args),
         "words" => str_words(args),
         "capitalize" => str_capitalize(args),
@@ -291,6 +295,72 @@ fn str_graphemes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         .map(|g| Value::String(std::sync::Arc::new(g.to_string())))
         .collect();
     Ok(Value::List(items.into()))
+}
+
+// ── display width ───────────────────────────────────────────────────
+//
+// How many terminal cells a string occupies. The unit is the grapheme
+// cluster (UAX #29, extended), and a cluster is 0, 1 or 2 cells:
+//
+// - 0 if it contains a control character (C0, DEL, C1: `\t`, `\n`,
+//   `\r\n`, ESC — a terminal does not advance for them, and a program
+//   should expand tabs and escape controls before measuring);
+// - otherwise the width `unicode-width` 0.2 gives the cluster (Unicode
+//   17.0 tables: East Asian Width W and F are 2; Emoji_Presentation
+//   characters, emoji presentation sequences (VS16), emoji modifier
+//   sequences and fully-qualified emoji ZWJ sequences are 2; a text
+//   presentation sequence (VS15) of an emoji is 1; combining marks
+//   (Grapheme_Extend), default-ignorables (ZWJ, ZWSP, soft hyphen,
+//   variation selectors) and Hangul medial vowels and final consonants
+//   are 0; everything else, East Asian Ambiguous included, is 1),
+// - capped at 2, so a flag (a pair of regional indicators) and any
+//   other multi-character cluster occupy the two cells a terminal gives
+//   one glyph.
+//
+// Ambiguous-width characters count as 1 (the non-CJK context), which is
+// what terminals do unless configured otherwise.
+
+/// The cells one grapheme cluster occupies (see the block comment).
+pub fn cell_width_of(g: &str) -> usize {
+    use unicode_width::UnicodeWidthStr;
+    if g.chars().any(char::is_control) {
+        return 0;
+    }
+    UnicodeWidthStr::width(g).min(2)
+}
+
+/// The cells a string occupies: the sum of its clusters' widths.
+pub fn display_width(s: &str) -> usize {
+    use unicode_segmentation::UnicodeSegmentation;
+    s.graphemes(true).map(cell_width_of).sum()
+}
+
+fn str_width(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 1 {
+        return Err(crate::stdlib::misuse::arity("str.width", "1", args.len()));
+    }
+    let s = arg_str(&args, 0, "width")?;
+    Ok(Value::Integer(display_width(s) as i64))
+}
+
+fn str_cell_width(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    use unicode_segmentation::UnicodeSegmentation;
+    if args.len() != 1 {
+        return Err(crate::stdlib::misuse::arity(
+            "str.cell_width",
+            "1",
+            args.len(),
+        ));
+    }
+    let g = arg_str(&args, 0, "cell_width")?;
+    let clusters = g.graphemes(true).count();
+    if clusters > 1 {
+        return Err(crate::stdlib::misuse::arg_value(
+            "str.cell_width",
+            &format!("expects one grapheme, got {clusters} (str.width measures a whole string)"),
+        ));
+    }
+    Ok(Value::Integer(cell_width_of(g) as i64))
 }
 
 fn str_chars(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {

@@ -2388,6 +2388,8 @@ impl BytecodeVm {
             Ok(vm) => clip(format!("{}", vm)),
             Err(e) => format!("error: {:?}", e),
         };
+        #[cfg(feature = "native")]
+        crate::stdlib::tty::restore_terminal();
         eprintln!(
             "tier divergence: the native tier and the VM disagree\n  at:     {}\n  native: {}\n  vm:     {}\nThis is an engine bug — the program's results past this point cannot be trusted.\nPlease report it (a reproducing program plus this message).",
             what,

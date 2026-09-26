@@ -921,6 +921,10 @@ fn os_exit(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
     };
 
+    // The terminal first: a program that entered `tty` and exits from
+    // anywhere gets its terminal back (atexit covers Unix too; Windows's
+    // ExitProcess runs no atexit handlers, so this call is the guarantee).
+    crate::stdlib::tty::restore_terminal();
     process::exit(exit_code);
 }
 
@@ -960,6 +964,15 @@ static INTERRUPTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 /// The OS handler can be installed only once per process; remember that we
 /// have, so `on_interrupt` is idempotent.
 static HANDLER_INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the program has trapped SIGINT/SIGTERM/SIGHUP itself
+/// (`os.on_interrupt` or `os.on_shutdown`). The `tty` restore guard reads
+/// it from its signal action: a trapped signal is the program's to
+/// handle, so the guard does not restore the terminal and end the
+/// process. A plain atomic load, safe in a signal handler.
+pub fn signals_trapped() -> bool {
+    HANDLER_INSTALLED.load(std::sync::atomic::Ordering::SeqCst)
+}
 
 /// Shutdown handlers registered by `os.on_shutdown`: each runs on its own
 /// thread against a thread-safe clone of the registering interpreter when
