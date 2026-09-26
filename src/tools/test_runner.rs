@@ -154,9 +154,9 @@ pub fn run_with(path: &Path, coverage: bool, show_missing: bool, options: &Optio
 
         // Resolve the file's package dependencies, as `olang <file>` would.
         let package_root = crate::pkg::manifest::Manifest::find_root(&absolute);
-        let deps_map = package_root
-            .as_deref()
-            .and_then(|root| crate::pkg::install(root, &crate::pkg::InstallOptions::default()).ok());
+        let deps_map = package_root.as_deref().and_then(|root| {
+            crate::pkg::install(root, &crate::pkg::InstallOptions::default()).ok()
+        });
         if !options.deps {
             let (root, dirs) = project_scope(package_root.as_deref(), deps_map.as_ref());
             interpreter.set_test_scope(root, dirs);

@@ -405,7 +405,9 @@ fn values_equal(a: &Value, b: &Value) -> bool {
 fn map_like(v: &Value) -> Option<&std::collections::HashMap<String, Value>> {
     match v {
         Value::Map(m) => Some(m),
-        Value::Struct { type_name, fields } if type_name == "JsonObject" || type_name == "Object" => {
+        Value::Struct { type_name, fields }
+            if type_name == "JsonObject" || type_name == "Object" =>
+        {
             Some(fields)
         }
         _ => None,

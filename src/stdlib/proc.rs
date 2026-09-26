@@ -307,7 +307,9 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Ok(a) => a,
         Err(e) => return Ok(e),
     };
-    let Opts { cwd, env, group, .. } = match args.get(2) {
+    let Opts {
+        cwd, env, group, ..
+    } = match args.get(2) {
         Some(opts) => match parse_opts(opts, "spawn") {
             Ok(o) => o,
             Err(e) => return Ok(e),

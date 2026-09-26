@@ -17,10 +17,10 @@
 
 use crate::ast::Value;
 use crate::native::{NativeHandle, NativeObject};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
-use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, OnceLock};
 
 // ─── The stall detector ──────────────────────────────────────────────

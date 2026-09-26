@@ -184,7 +184,12 @@ fn an_error_inside_a_module_names_the_modules_file() {
         if no_ovm {
             cmd.arg("--no-ovm");
         }
-        let out = cmd.arg("run").arg("main.ol").current_dir(&dir).output().expect("run");
+        let out = cmd
+            .arg("run")
+            .arg("main.ol")
+            .current_dir(&dir)
+            .output()
+            .expect("run");
         let text = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),

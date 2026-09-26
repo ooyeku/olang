@@ -712,8 +712,20 @@ fn exec_bounded(
     // everything holding the pipe) exits, or when the kill ends them.
     let (tx, rx) = std::sync::mpsc::channel::<(bool, Vec<u8>)>();
     for (is_err, stream) in [
-        (false, child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>)),
-        (true, child.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>)),
+        (
+            false,
+            child
+                .stdout
+                .take()
+                .map(|s| Box::new(s) as Box<dyn Read + Send>),
+        ),
+        (
+            true,
+            child
+                .stderr
+                .take()
+                .map(|s| Box::new(s) as Box<dyn Read + Send>),
+        ),
     ] {
         let tx = tx.clone();
         std::thread::spawn(move || {

@@ -75,10 +75,7 @@ let inline = match true { true => assert_eq([j], [m]), false => () }
 assert_ne(j, #{ "a": 2 })
 [j == m, is_ok(testing.assert_eq(j, m)), is_err(testing.assert_eq(j, #{ "a": 2 }))]
 "#;
-    assert_eq!(
-        eval(src),
-        Value::List(vec![Value::Boolean(true); 3].into())
-    );
+    assert_eq!(eval(src), Value::List(vec![Value::Boolean(true); 3].into()));
     let e = eval_res("assert_eq(unwrap(json.parse(\"{\\\"a\\\":1}\")), #{ \"a\": 2 })")
         .expect_err("unequal contents still fail");
     assert!(e.contains("Assertion failed") && e.contains("!="), "{e}");

@@ -5817,7 +5817,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             return false;
         };
         let (root, deps) = scope;
-        root.as_ref().is_none_or(|r| path.starts_with(r)) && !deps.iter().any(|d| path.starts_with(d))
+        root.as_ref().is_none_or(|r| path.starts_with(r))
+            && !deps.iter().any(|d| path.starts_with(d))
     }
 
     /// The files this test run visits as entries (canonical paths).
