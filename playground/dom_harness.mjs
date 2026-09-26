@@ -1435,6 +1435,55 @@ console.log("final dom:", JSON.stringify(fakeDom));
   if (missing.join(",") !== "drawer,rows:9" || labels() !== "rows:1=one")
     throw new Error("stage 13: missing keeps not answered: " + missing + " / " + labels());
   console.log("stage 13: the patcher flattens as it walks and answers the keeps it could not honor ok");
+
+  // ── stage 14: a view transition the browser aborts is no error ──
+  // The real `host_dom_patch` and `host_dom_focus`, against a browser
+  // whose transitions are aborted (a hidden or busy document rejects
+  // `ready`, `updateCallbackDone`, and `finished` with InvalidStateError).
+  // Nothing may surface as an unhandled rejection, the repaint must land
+  // exactly once whether or not the browser ran the update, and a focus
+  // asked meanwhile must still land after it.
+  {
+    const patchAt = shimSrc.indexOf("      host_dom_patch: (h, ptr, len) => {");
+    const patchEnd = shimSrc.indexOf("      // 2 says the element has no checked state");
+    const focusAt = shimSrc.indexOf("      host_dom_focus: (h) => {");
+    const focusEnd = shimSrc.indexOf("\n      },\n", focusAt) + 9;
+    if (patchAt < 0 || patchEnd < patchAt || focusAt < 0 || focusEnd < 9) throw new Error("stage 14: cannot find the shim's patch and focus imports");
+    const hostSrc = "let pendingPatches = null, viewTransition = null;\nreturn {\n"
+      + shimSrc.slice(patchAt, patchEnd) + shimSrc.slice(focusAt, focusEnd) + "};";
+    const unhandled = [];
+    const onUnhandled = (e) => unhandled.push(e);
+    process.on("unhandledRejection", onUnhandled);
+    const invalid = () => Object.assign(new Error("Transition was aborted because of invalid state"), { name: "InvalidStateError" });
+    for (const runsUpdate of [false, true]) {
+      const applied = [];
+      const doc = { documentElement: { dataset: {} }, activeElement: null };
+      const target = { focus() { doc.activeElement = target; } };
+      const elements = [null, target];
+      doc.startViewTransition = (update) => {
+        const ran = runsUpdate ? Promise.resolve().then(update) : Promise.reject(invalid());
+        const done = ran.then(() => { throw invalid(); });
+        return { ready: Promise.reject(invalid()), updateCallbackDone: runsUpdate ? ran : done, finished: done };
+      };
+      const win = { matchMedia: () => ({ matches: false }) };
+      const host = new Function("document", "window", "elements", "readStr", "giveStr", "patchInto", hostSrc)(
+        doc, win, elements, (ptr) => ptr, (str) => str, (_el, tree) => { applied.push(tree.n); return []; });
+      doc.documentElement.dataset.transition = "";
+      host.host_dom_patch(1, JSON.stringify({ n: 1 }), 0);
+      host.host_dom_patch(1, JSON.stringify({ n: 2 }), 0);
+      host.host_dom_focus(1);
+      await new Promise((r) => setTimeout(r, 30));
+      if (applied.join(",") !== "1,2") throw new Error(`stage 14 (update ${runsUpdate ? "run" : "not run"}): the repaint did not land once, in order: ${applied}`);
+      if (doc.activeElement !== target) throw new Error(`stage 14 (update ${runsUpdate ? "run" : "not run"}): the focus asked meanwhile did not land`);
+      // After the aborted transition, a plain repaint patches at once.
+      host.host_dom_patch(1, JSON.stringify({ n: 3 }), 0);
+      if (applied.join(",") !== "1,2,3") throw new Error("stage 14: a repaint after the aborted transition did not patch at once: " + applied);
+    }
+    await new Promise((r) => setTimeout(r, 10));
+    process.off("unhandledRejection", onUnhandled);
+    if (unhandled.length) throw new Error("stage 14: an aborted transition surfaced as an unhandled rejection: " + unhandled.map((e) => e && e.message));
+    console.log("stage 14: an aborted view transition is no error, and the repaint lands ok");
+  }
 }
 
 console.log("DOM BRIDGE END-TO-END PASSED (incl. fetch payloads + random)");

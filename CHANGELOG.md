@@ -115,6 +115,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   match misses a case", "the declared shape has no such key", "the
   Result is dropped here", "the collection is copied here on every
   pass".
+- **An aborted view transition is no error.** In a hidden or busy
+  document the browser rejects a view transition with
+  `InvalidStateError: Transition was aborted because of invalid state`,
+  and the shim left the rejection unhandled. It catches the
+  transition's `ready`, `updateCallbackDone`, and `finished`, applies
+  the repaint itself if the browser has not, exactly once, and lets a
+  focus asked meanwhile land after it (docs/wasm.md). The dom harness's
+  stage 14 drives the real imports against such a browser.
 - **`otc install` picks up a re-shelved library.** A lock entry for a
   shelf library was matched by name alone, so after `otc lib add <path>
   --rev <sha>` moved the shelf to another commit — or re-registered the

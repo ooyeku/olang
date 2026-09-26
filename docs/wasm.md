@@ -235,7 +235,11 @@ patch — and any patch in the same beat, in order — inside
 new and elements named alike (`view-transition-name`) move between
 them. A focus asked meanwhile lands once the new frame is in. Under
 `prefers-reduced-motion`, or in a browser without the API, it patches
-at once.
+at once. A transition the browser skips or aborts (a hidden or busy
+document rejects it with `InvalidStateError`) is not an error: the
+patch still lands, once, and nothing surfaces as an unhandled
+rejection; only a throw from the patch itself is reported, on the
+console.
 
 `online`, `offline`, `focus`, and `blur` fire on the window and
 `visibilitychange` on the document, and none of them bubbles to the

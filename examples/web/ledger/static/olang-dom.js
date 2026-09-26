@@ -607,12 +607,25 @@
         if (marked && typeof document.startViewTransition === "function"
             && !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches)) {
           pendingPatches = [[el, tree]];
-          viewTransition = document.startViewTransition(() => {
+          const apply = () => {
             const list = pendingPatches || [];
             pendingPatches = null;
             for (const [e2, t2] of list) patchInto(e2, t2);
+          };
+          const vt = document.startViewTransition(apply);
+          viewTransition = vt;
+          // A transition the browser skips or aborts (a hidden or busy
+          // document: InvalidStateError) rejects its promises; that is no
+          // error of the program's, and the repaint still lands — the
+          // browser runs the update anyway, and if it has not, it runs
+          // here. Only a throw from the patch itself is reported.
+          const skipped = (e) => e && (e.name === "AbortError" || e.name === "InvalidStateError");
+          vt.ready.catch(() => { if (pendingPatches) apply(); });
+          vt.updateCallbackDone.catch((e) => {
+            if (pendingPatches) apply();
+            if (!skipped(e)) console.error(e);
           });
-          viewTransition.finished.finally(() => { viewTransition = null; });
+          vt.finished.catch(() => {}).finally(() => { if (viewTransition === vt) viewTransition = null; });
           return 0;
         }
         const missing = patchInto(el, tree);
@@ -746,7 +759,7 @@
       host_dom_focus: (h) => {
         const el = elements[Number(h)];
         // a focus asked while a transition holds the new frame lands once it is in
-        if (pendingPatches && viewTransition) { viewTransition.updateCallbackDone.then(() => el.focus()).catch(() => {}); return 1; }
+        if (pendingPatches && viewTransition) { viewTransition.updateCallbackDone.catch(() => {}).then(() => el.focus()); return 1; }
         el.focus();
         return document.activeElement === el ? 1 : 0;
       },
