@@ -1026,7 +1026,7 @@ impl BuiltinFunctions {
                         message: format!("{} expects (actual, expected, message?)", name),
                     });
                 }
-                let equal = arguments[0] == arguments[1];
+                let equal = crate::interpreter::ops::assert_eq_holds(&arguments[0], &arguments[1]);
                 let want_equal = name == "assert_eq";
                 if equal != want_equal {
                     let message = arguments

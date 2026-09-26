@@ -62,6 +62,29 @@ P { x: 1 } == P { x: 1 }
 // ── `?` propagation ────────────────────────────────────────────────────
 
 #[test]
+fn assert_eq_compares_as_equality_does() {
+    // `==` holds between a parsed JSON object and the `#{}` map it reads
+    // as; `assert_eq` failed on the same pair (Foundry). Every form: the
+    // statement, the call in expression position, and testing.assert_eq.
+    let src = r#"
+let j = unwrap(json.parse("{\"a\":1,\"b\":[{\"c\":2}]}"))
+let m = #{ "a": 1, "b": [#{ "c": 2 }] }
+assert_eq(j, m)
+assert_eq(json.parse("{\"a\":1}"), Ok(#{ "a": 1 }))
+let inline = match true { true => assert_eq([j], [m]), false => () }
+assert_ne(j, #{ "a": 2 })
+[j == m, is_ok(testing.assert_eq(j, m)), is_err(testing.assert_eq(j, #{ "a": 2 }))]
+"#;
+    assert_eq!(
+        eval(src),
+        Value::List(vec![Value::Boolean(true); 3].into())
+    );
+    let e = eval_res("assert_eq(unwrap(json.parse(\"{\\\"a\\\":1}\")), #{ \"a\": 2 })")
+        .expect_err("unequal contents still fail");
+    assert!(e.contains("Assertion failed") && e.contains("!="), "{e}");
+}
+
+#[test]
 fn question_mark_unwraps_ok() {
     let src = r#"
 fn f() = Ok(41)

@@ -458,6 +458,57 @@ fn map_like(v: &Value) -> Option<&std::collections::HashMap<String, Value>> {
     }
 }
 
+/// What `assert_eq` asks: equal as `==` says — the map kinds alike (a
+/// parsed JSON object equals the `#{}` map with its keys and values), Int
+/// and Float numerically at the top — and total, where `==` refuses some
+/// kinds: a Result is compared through its payload, so
+/// `assert_eq(json.parse(s), Ok(#{ "a": 1 }))` holds too.
+pub fn assert_eq_holds(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Integer(x), Value::Float(y)) => (*x as f64) == *y,
+        (Value::Float(x), Value::Integer(y)) => *x == (*y as f64),
+        _ => deep_eq(a, b),
+    }
+}
+
+/// `loose_eq` carried through Results, at every depth.
+fn deep_eq(a: &Value, b: &Value) -> bool {
+    if a == b {
+        return true;
+    }
+    if let (Some(x), Some(y)) = (map_like(a), map_like(b)) {
+        return x.len() == y.len()
+            && x.iter()
+                .all(|(k, v)| y.get(k).is_some_and(|w| deep_eq(v, w)));
+    }
+    match (a, b) {
+        (Value::List(x), Value::List(y)) => {
+            x.len() == y.len() && x.iter().zip(y.iter()).all(|(v, w)| deep_eq(v, w))
+        }
+        (Value::Tuple(x), Value::Tuple(y)) => {
+            x.len() == y.len() && x.iter().zip(y.iter()).all(|(v, w)| deep_eq(v, w))
+        }
+        (
+            Value::Struct {
+                type_name: tn,
+                fields: fx,
+            },
+            Value::Struct {
+                type_name: tm,
+                fields: fy,
+            },
+        ) => {
+            tn == tm
+                && fx.len() == fy.len()
+                && fx
+                    .iter()
+                    .all(|(k, v)| fy.get(k).is_some_and(|w| deep_eq(v, w)))
+        }
+        (Value::Ok(x), Value::Ok(y)) | (Value::Err(x), Value::Err(y)) => deep_eq(x, y),
+        _ => false,
+    }
+}
+
 /// Structural equality that treats the map kinds alike and compares Int
 /// with Float numerically, at every depth. What `==` means for maps,
 /// lists, tuples, and records on both tiers.

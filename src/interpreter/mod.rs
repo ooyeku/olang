@@ -2279,7 +2279,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             } => {
                 let actual_val = self.eval_expr(actual)?;
                 let expected_val = self.eval_expr(expected)?;
-                if actual_val != expected_val {
+                if !ops::assert_eq_holds(&actual_val, &expected_val) {
                     let msg = message.clone().unwrap_or_else(|| {
                         format!("Assertion failed: {:?} != {:?}", actual_val, expected_val)
                     });
@@ -2294,7 +2294,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             } => {
                 let actual_val = self.eval_expr(actual)?;
                 let expected_val = self.eval_expr(expected)?;
-                if actual_val == expected_val {
+                if ops::assert_eq_holds(&actual_val, &expected_val) {
                     let msg = message.clone().unwrap_or_else(|| {
                         format!("Assertion failed: {:?} == {:?}", actual_val, expected_val)
                     });

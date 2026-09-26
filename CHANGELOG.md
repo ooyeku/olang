@@ -102,6 +102,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `os.exec` with a `cwd` that names no directory answered `failed to
   start 'sh': No such file or directory`, blaming the program; they
   answer `spawn: cwd '/x' does not exist` (or `is not a directory`).
+- **`assert_eq` compares as `==` does.** `unwrap(json.parse("{\"a\":1}"))
+  == #{ "a": 1 }` held while `assert_eq` of the same pair failed with
+  `JsonObject {...} != Map {...}`. `assert_eq`/`assert_ne` — the
+  statement, the call, and `testing.assert_eq` — treat the map kinds
+  alike at every depth and Int and Float numerically at the top, as `==`
+  does, and compare Results through their payloads.
 - **`otc install` picks up a re-shelved library.** A lock entry for a
   shelf library was matched by name alone, so after `otc lib add <path>
   --rev <sha>` moved the shelf to another commit — or re-registered the

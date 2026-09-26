@@ -372,12 +372,43 @@ fn values_equal(a: &Value, b: &Value) -> bool {
         // structural equality; without this arm two equal BigInts
         // "failed" with identical expected and actual in the message.
         (Value::Native(a), Value::Native(b)) => a == b,
-        (Value::Map(a), Value::Map(b)) => {
+        // The map kinds compare by contents with one another, as `==`
+        // has them: a parsed JSON object equals the `#{}` map it reads as.
+        _ if map_like(a).is_some() && map_like(b).is_some() => {
+            let (a, b) = (map_like(a).unwrap(), map_like(b).unwrap());
             a.len() == b.len()
                 && a.iter()
                     .all(|(k, v)| b.get(k).is_some_and(|bv| values_equal(v, bv)))
         }
-        _ => false,
+        (
+            Value::Struct {
+                type_name: ta,
+                fields: fa,
+            },
+            Value::Struct {
+                type_name: tb,
+                fields: fb,
+            },
+        ) => {
+            ta == tb
+                && fa.len() == fb.len()
+                && fa
+                    .iter()
+                    .all(|(k, v)| fb.get(k).is_some_and(|bv| values_equal(v, bv)))
+        }
+        _ => a == b,
+    }
+}
+
+/// A map, a parsed JSON object, or an anonymous record: the kinds `==`
+/// compares by contents with one another.
+fn map_like(v: &Value) -> Option<&std::collections::HashMap<String, Value>> {
+    match v {
+        Value::Map(m) => Some(m),
+        Value::Struct { type_name, fields } if type_name == "JsonObject" || type_name == "Object" => {
+            Some(fields)
+        }
+        _ => None,
     }
 }
 
