@@ -512,6 +512,9 @@ fn a_local_named_like_a_module_is_an_error_when_shadow_is_promoted() {
     assert_ne!(code, 0, "{all}");
     assert!(all.contains("shadows the stdlib module"), "{all}");
     assert!(all.contains("promoted to an error"), "{all}");
+    // The span's label is the shadow's own, not the annotation checker's.
+    assert!(all.contains("shadows the module from here"), "{all}");
+    assert!(!all.contains("the annotation's promise"), "{all}");
 }
 
 #[test]

@@ -108,6 +108,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   statement, the call, and `testing.assert_eq` — treat the map kinds
   alike at every depth and Int and Float numerically at the top, as `==`
   does, and compare Results through their payloads.
+- **A promoted advisory is labelled as itself.** An advisory promoted by
+  `[check] promote` was drawn with the type checker's label — `let col`
+  shadowing the stdlib module read "the annotation's promise is broken
+  here". Each class has its own: "shadows the module from here", "this
+  match misses a case", "the declared shape has no such key", "the
+  Result is dropped here", "the collection is copied here on every
+  pass".
 - **`otc install` picks up a re-shelved library.** A lock entry for a
   shelf library was matched by name alone, so after `otc lib add <path>
   --rev <sha>` moved the shelf to another commit — or re-registered the

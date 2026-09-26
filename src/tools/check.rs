@@ -116,7 +116,9 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
             } else if d.runtime {
                 "this would fail at runtime"
             } else {
-                "the annotation's promise is broken here"
+                // A promoted advisory speaks for its own class; the
+                // annotation label is the type checker's.
+                promoted_label(&d.message).unwrap_or("the annotation's promise is broken here")
             };
             let mut diagnostic = miette::MietteDiagnostic::new(d.message.clone())
                 .with_label(miette::LabeledSpan::at_offset(offset, label));
@@ -1471,6 +1473,22 @@ pub fn warning_class(message: &str) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+/// The label an advisory promoted by `[check] promote` is rendered with:
+/// what its class says about the spot, not the annotation checker's.
+pub fn promoted_label(message: &str) -> Option<&'static str> {
+    if !message.contains("promoted to an error") {
+        return None;
+    }
+    Some(match warning_class(message)? {
+        "shadow" => "shadows the module from here",
+        "exhaustiveness" => "this match misses a case",
+        "shape" => "the declared shape has no such key",
+        "result" => "the Result is dropped here",
+        "copy" => "the collection is copied here on every pass",
+        _ => return None,
+    })
 }
 
 /// Turn a warning into an error when its class is promoted.
