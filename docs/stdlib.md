@@ -883,7 +883,7 @@ boundary like anything else.
 | `chan.send(c, v)` | `Ok(())`, or `Err` when the channel is closed |
 | `chan.recv(c)` | blocks; `Ok(value)`, or `Err` when closed and drained |
 | `chan.try_recv(c)` | `Ok(value)`, `Err("channel is empty")`, or `Err("channel is closed")` |
-| `chan.recv_timeout(c, ms)` | like `recv`, plus `Err("timed out")` |
+| `chan.recv_timeout(c, ms)` | like `recv`, plus `Err("timed out")` once `ms` pass — receivers on one channel wait side by side, so the bound is this wait's own, never another waiter's |
 | `chan.ask(service, request)` | the reply pattern in one call: sends `#{ "req": request, "reply": r }` on a fresh reply channel and answers `Ok(reply)` — spinning briefly before it parks, so a service that answers in microseconds costs no thread wake-up |
 | `chan.stat(c)` | a snapshot map: `id`, `queued`, `closed`, `recv_waiting`, `send_waiting` |
 | `chan.close(c)` | closes the sending side (idempotent) |

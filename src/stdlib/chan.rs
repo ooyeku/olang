@@ -20,7 +20,7 @@ use crate::native::{NativeHandle, NativeObject};
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender, TryRecvError};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, OnceLock};
 
 // ─── The stall detector ──────────────────────────────────────────────
@@ -223,14 +223,15 @@ pub fn parked_sites() -> Vec<(String, String, u64)> {
 }
 
 /// One channel's two ends. The sender is cloned out of its lock before
-/// use so a blocking bounded send never holds it; the receiver stays
-/// locked across a blocking recv, which is what makes concurrent
-/// consumers take turns (each message goes to exactly one).
+/// use so a blocking bounded send never holds it. The receiver is a
+/// multi-consumer one, shared without a lock: concurrent consumers wait
+/// side by side (each message still goes to exactly one), so a timed
+/// recv is bounded by its own timeout and never by another waiter's.
 struct Chan {
     /// Sequential id, for `chan.stat` and the stall report.
     id: u64,
     tx: Mutex<Option<Tx>>,
-    rx: Mutex<Receiver<Value>>,
+    rx: Receiver<Value>,
     /// Messages queued: +1 on a successful send, -1 on a successful
     /// receive. Advisory (reads race sends), which is all `chan.stat`
     /// promises.
@@ -242,7 +243,7 @@ struct Chan {
 #[derive(Clone)]
 enum Tx {
     Unbounded(Sender<Value>),
-    Bounded(SyncSender<Value>),
+    Bounded(Sender<Value>),
 }
 
 /// The native handle wrapping a channel. Owning the `Arc<Chan>` here — in
@@ -359,7 +360,7 @@ fn register(tx: Tx, rx: Receiver<Value>) -> Value {
     handle(Arc::new(Chan {
         id: CHAN_SEQ.fetch_add(1, Ordering::Relaxed),
         tx: Mutex::new(Some(tx)),
-        rx: Mutex::new(rx),
+        rx,
         depth: AtomicI64::new(0),
         recv_waiting: AtomicUsize::new(0),
         send_waiting: AtomicUsize::new(0),
@@ -369,7 +370,7 @@ fn register(tx: Tx, rx: Receiver<Value>) -> Value {
 /// A fresh unbounded channel value — what `chan.new()` answers. The
 /// timeline revives a recorded channel as one of these under replay.
 pub fn fresh_channel() -> Value {
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = crossbeam_channel::unbounded();
     register(Tx::Unbounded(tx), rx)
 }
 
@@ -377,7 +378,7 @@ fn chan_new(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
         return Err("chan.new takes no arguments".into());
     }
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = crossbeam_channel::unbounded();
     Ok(register(Tx::Unbounded(tx), rx))
 }
 
@@ -386,7 +387,7 @@ fn chan_bounded(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         [Value::Integer(n)] if *n >= 0 => *n as usize,
         _ => return Err("chan.bounded expects a non-negative Int capacity".into()),
     };
-    let (tx, rx) = std::sync::mpsc::sync_channel(cap);
+    let (tx, rx) = crossbeam_channel::bounded(cap);
     Ok(register(Tx::Bounded(tx), rx))
 }
 
@@ -437,7 +438,7 @@ fn chan_send(mut args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         }),
         #[cfg(not(target_arch = "wasm32"))]
         Tx::Bounded(t) => {
-            use std::sync::mpsc::TrySendError;
+            use crossbeam_channel::TrySendError;
             let mut value = value;
             let mut parked_mark: Option<crate::profile::Blocked> = None;
             let mut token: Option<u64> = None;
@@ -493,7 +494,7 @@ fn chan_ask(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         )
         .into());
     }
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = crossbeam_channel::unbounded();
     let reply = register(Tx::Unbounded(tx), rx);
     let reply_chan = chan_of(&reply)?;
     let mut message = HashMap::new();
@@ -507,7 +508,7 @@ fn chan_ask(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     // Spin for the fast answer, then park for the slow one.
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let rx = reply_chan.rx.lock().unwrap();
+        let rx = &reply_chan.rx;
         for _ in 0..2000 {
             match rx.try_recv() {
                 Ok(v) => {
@@ -536,7 +537,7 @@ fn chan_ask(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let rx = reply_chan.rx.lock().unwrap();
+        let rx = &reply_chan.rx;
         Ok(match rx.recv() {
             Ok(v) => ok(v),
             Err(_) => err("channel is closed"),
@@ -549,15 +550,13 @@ fn chan_recv(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Err("chan.recv expects a channel".into());
     }
     let chan = chan_of(&args[0])?;
-    // Park before taking the receiver lock: with several consumers the
-    // wait happens on the lock as often as on the queue, and both are
-    // unbounded — the stall detector must see either.
+    // Park for the whole wait so the stall detector sees it.
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _parked = crate::profile::blocked();
         let token = park(format!("chan.recv on channel #{}", chan.id));
         chan.recv_waiting.fetch_add(1, Ordering::Relaxed);
-        let rx = chan.rx.lock().unwrap();
+        let rx = &chan.rx;
         let mut last_gen: Option<u64> = None;
         let outcome = loop {
             match rx.recv_timeout(std::time::Duration::from_millis(STALL_TICK_MS)) {
@@ -575,7 +574,7 @@ fn chan_recv(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let rx = chan.rx.lock().unwrap();
+        let rx = &chan.rx;
         Ok(match rx.recv() {
             Ok(v) => ok(v),
             Err(_) => err("channel is closed"),
@@ -588,7 +587,7 @@ fn chan_try_recv(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         return Err("chan.try_recv expects a channel".into());
     }
     let chan = chan_of(&args[0])?;
-    let rx = chan.rx.lock().unwrap();
+    let rx = &chan.rx;
     Ok(match rx.try_recv() {
         Ok(v) => {
             chan.depth.fetch_sub(1, Ordering::Relaxed);
@@ -606,7 +605,7 @@ fn chan_recv_timeout(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
     };
     let chan = chan_of(&args[0])?;
     let _parked = crate::profile::blocked();
-    let rx = chan.rx.lock().unwrap();
+    let rx = &chan.rx;
     Ok(
         match rx.recv_timeout(std::time::Duration::from_millis(ms)) {
             Ok(v) => {

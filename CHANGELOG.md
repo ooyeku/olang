@@ -62,6 +62,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Receivers on one channel wait side by side.** A channel's receiving
+  end sat behind a lock held for the whole wait, so waiters took turns:
+  a `chan.recv_timeout(c, 100)` waited out another thread's
+  `recv_timeout(c, 3000)` first (3050 ms), four threads looping on
+  100 ms timeouts over one channel got a quarter of their turns, and a
+  timed receive behind a plain `chan.recv` never returned. The queue is
+  a multi-consumer one now: every waiter waits on its own, a timeout
+  bounds only its own wait, and each message still goes to exactly one
+  receiver, in order.
 - **`otc install` picks up a re-shelved library.** A lock entry for a
   shelf library was matched by name alone, so after `otc lib add <path>
   --rev <sha>` moved the shelf to another commit — or re-registered the

@@ -79,6 +79,9 @@ brotli = { version = "8", optional = true }
 # The VM's string-keyed maps and its function/builtin name tables hash
 # with FxHash: short keys, no DoS exposure, a fraction of SipHash's cost.
 rustc-hash = "2"
+# `chan`'s queue: multi-consumer, so every receiver waits on its own —
+# a timed recv is bounded by its own timeout, not by another waiter's.
+crossbeam-channel = "0.5"
 unicode-segmentation = "1.13"
 memchr = "2"
 csv = "1.4"

@@ -127,3 +127,75 @@ fn closing_the_channel_is_the_clean_way_out() {
     assert_eq!(code, 0, "clean close failed:\n{text}");
     assert!(text.contains("closed: channel is closed"), "{text}");
 }
+
+#[test]
+fn a_short_timed_recv_does_not_wait_behind_a_long_one() {
+    // Foundry's runner: a 3000 ms timed wait and a 100 ms one on the same
+    // channel. The short one is bounded by its own timeout.
+    let (code, text) = run("let stop = chan.new()\n\
+         let long = spawn { let r = chan.recv_timeout(stop, 3000) ; \"done\" }\n\
+         time.sleep(50)\n\
+         let short = spawn { let t0 = time.monotonic_ms() ; let r = chan.recv_timeout(stop, 100) ; time.monotonic_ms() - t0 }\n\
+         println(`short ${task.join(short)}`)\n\
+         chan.close(stop)\n\
+         println(task.join(long))");
+    assert_eq!(code, 0, "run failed:\n{text}");
+    let short: i64 = text
+        .lines()
+        .find_map(|l| l.strip_prefix("short "))
+        .and_then(|n| n.trim().parse().ok())
+        .unwrap_or_else(|| panic!("no timing:\n{text}"));
+    assert!(
+        (95..1000).contains(&short),
+        "the 100 ms wait took {short} ms:\n{text}"
+    );
+    assert!(text.contains("done"), "{text}");
+}
+
+#[test]
+fn timed_receivers_on_one_channel_wait_side_by_side() {
+    // Four threads looping on 100 ms timeouts over one quiet channel for
+    // a second: each gets its ~10 turns, not a quarter of them.
+    let (code, text) = run("let c = chan.new()\n\
+         fn worker(ch) = {\n\
+             let t0 = time.monotonic_ms()\n\
+             let mut n = 0\n\
+             while time.monotonic_ms() - t0 < 1000 {\n\
+                 let r = chan.recv_timeout(ch, 100)\n\
+                 n = n + 1\n\
+             }\n\
+             n\n\
+         }\n\
+         let ts = [spawn worker(c), spawn worker(c), spawn worker(c), spawn worker(c)]\n\
+         for t in ts { println(`n ${task.join(t)}`) }");
+    assert_eq!(code, 0, "run failed:\n{text}");
+    let counts: Vec<i64> = text
+        .lines()
+        .filter_map(|l| l.strip_prefix("n "))
+        .filter_map(|n| n.trim().parse().ok())
+        .collect();
+    assert_eq!(counts.len(), 4, "{text}");
+    for n in counts {
+        assert!(n >= 8, "a waiter ran {n} iterations in 1 s:\n{text}");
+    }
+}
+
+#[test]
+fn a_timed_recv_does_not_wait_behind_a_blocking_recv() {
+    let (code, text) = run("let c = chan.new()\n\
+         let blocked = spawn chan.recv(c)\n\
+         time.sleep(50)\n\
+         let t0 = time.monotonic_ms()\n\
+         let r = chan.recv_timeout(c, 100)\n\
+         println(`took ${time.monotonic_ms() - t0}`)\n\
+         unwrap(chan.send(c, 7))\n\
+         println(unwrap(task.join(blocked)))");
+    assert_eq!(code, 0, "run failed:\n{text}");
+    let took: i64 = text
+        .lines()
+        .find_map(|l| l.strip_prefix("took "))
+        .and_then(|n| n.trim().parse().ok())
+        .unwrap_or_else(|| panic!("no timing:\n{text}"));
+    assert!(took < 1000, "the timed recv waited {took} ms:\n{text}");
+    assert!(text.lines().any(|l| l.trim() == "7"), "{text}");
+}
