@@ -274,6 +274,12 @@ pub struct Interpreter {
     /// paths). An imported module among them does not run its blocks at
     /// import: it runs them as an entry, once.
     test_entries: Arc<std::collections::HashSet<std::path::PathBuf>>,
+    /// The project an `olang test` run is about (its canonical root) and
+    /// the directories its dependencies resolved to. When set, an imported
+    /// module outside the root, under a dependency, or embedded in the
+    /// runtime does not run its blocks: `olang test` answers for the
+    /// project's own files (`--deps` leaves this unset).
+    test_scope: Option<Arc<(Option<std::path::PathBuf>, Vec<std::path::PathBuf>)>>,
 
     /// Line-coverage recording (`olang test --coverage`). When `Some`,
     /// every executed located statement records its line under the file
@@ -417,6 +423,7 @@ impl Interpreter {
             test_filter: None,
             test_own_blocks_only: false,
             test_entries: Arc::new(std::collections::HashSet::new()),
+            test_scope: None,
             coverage: None,
             coverage_file_stack: Vec::new(),
             caps: None,
@@ -3728,6 +3735,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             test_filter: None,
             test_own_blocks_only: false,
             test_entries: Arc::new(std::collections::HashSet::new()),
+            test_scope: None,
             // Coverage is single-threaded: worker clones don't record.
             coverage: None,
             coverage_file_stack: Vec::new(),
@@ -5317,6 +5325,14 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             if self.test_own_blocks_only {
                 return Ok(Value::Unit);
             }
+            // A dependency's blocks (a shelf or lock package, the runtime's
+            // own embedded modules) are its authors' suite, not this
+            // project's: they run under `--deps`.
+            if let Some(scope) = &self.test_scope
+                && !Self::in_test_scope(module, scope)
+            {
+                return Ok(Value::Unit);
+            }
             // A module the run also visits as a file of its own runs its
             // blocks there. Run here too, they were counted twice whenever
             // the importer came first in the walk.
@@ -5775,6 +5791,33 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     pub fn narrow_tests(&mut self, only: Option<String>, own_blocks: bool) {
         self.test_filter = only;
         self.test_own_blocks_only = own_blocks;
+    }
+
+    /// Keep an `olang test` run to one project's own files: `root` is the
+    /// project's canonical root (None outside a package: every file on
+    /// disk), `deps` the canonical directories its dependencies resolved
+    /// to. The runtime's embedded modules are never the project's.
+    pub fn set_test_scope(
+        &mut self,
+        root: Option<std::path::PathBuf>,
+        deps: Vec<std::path::PathBuf>,
+    ) {
+        self.test_scope = Some(Arc::new((root, deps)));
+    }
+
+    /// Is `module` one of the project's own files?
+    fn in_test_scope(
+        module: &str,
+        scope: &(Option<std::path::PathBuf>, Vec<std::path::PathBuf>),
+    ) -> bool {
+        if module.starts_with("__") {
+            return false;
+        }
+        let Ok(path) = std::path::Path::new(module).canonicalize() else {
+            return false;
+        };
+        let (root, deps) = scope;
+        root.as_ref().is_none_or(|r| path.starts_with(r)) && !deps.iter().any(|d| path.starts_with(d))
     }
 
     /// The files this test run visits as entries (canonical paths).

@@ -34,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`olang test` runs the project's own blocks; `--deps` the rest.** An
+  imported module's test blocks ran whatever it was: Foundry's 13 tests
+  were reported as 133, the other 120 Shuttle's. A module's blocks run
+  when it is the project's own — under the package root and not a
+  dependency — so a `lib/` module's still run from `olang test tests/`;
+  a shelf, lock, or path dependency's, and the runtime's embedded
+  modules', run under `olang test --deps` (docs/tooling.md).
 - **Binary expressions are parsed flat and built by precedence
   climbing.** The grammar had a rule per precedence level, so every
   operand opened and closed eight rules on its way to `unary_expr` and

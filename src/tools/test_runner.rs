@@ -16,11 +16,33 @@ use std::path::Path;
 
 /// How a run is narrowed and reported: `only` keeps the blocks whose name
 /// contains it, `times` prints each block's milliseconds and the slowest
-/// at the end.
+/// at the end, `deps` runs the blocks of the project's dependencies too
+/// (by default only the project's own files' blocks run).
 #[derive(Default)]
 pub struct Options {
     pub only: Option<String>,
     pub times: bool,
+    pub deps: bool,
+}
+
+/// The project a file belongs to — its package root, canonical; None
+/// outside any package, where every file on disk is the project's — and
+/// the canonical directories its dependencies resolved to. A dependency
+/// that contains the root itself is no dependency of it.
+fn project_scope(
+    root: Option<&Path>,
+    deps: Option<&crate::pkg::DependencyMap>,
+) -> (Option<std::path::PathBuf>, Vec<std::path::PathBuf>) {
+    let root = root.map(|r| r.canonicalize().unwrap_or_else(|_| r.to_path_buf()));
+    let dirs = deps
+        .map(|m| {
+            m.values()
+                .filter_map(|d| d.canonicalize().ok())
+                .filter(|d| root.as_ref().is_none_or(|r| !r.starts_with(d)))
+                .collect()
+        })
+        .unwrap_or_default();
+    (root, dirs)
 }
 
 pub fn run(path: &Path, coverage: bool, show_missing: bool) -> i32 {
@@ -44,7 +66,23 @@ pub fn run_with(path: &Path, coverage: bool, show_missing: bool, options: &Optio
         eprintln!("error: path not found: {}", path.display());
         return 1;
     }
-    let files = super::discover_ol_files(path);
+    let mut files = super::discover_ol_files(path);
+    // A dependency vendored inside the project (a path dependency below
+    // its root) is walked past too, unless `--deps` asks for it.
+    if !options.deps
+        && let Ok(abs) = path.canonicalize()
+        && let Some(root) = crate::pkg::manifest::Manifest::find_root(&abs)
+        && let Ok(map) = crate::pkg::install(&root, &crate::pkg::InstallOptions::default())
+    {
+        let (_, dep_dirs) = project_scope(Some(&root), Some(&map));
+        if !dep_dirs.is_empty() {
+            files.retain(|f| {
+                f.canonicalize()
+                    .map(|c| !dep_dirs.iter().any(|d| c.starts_with(d)))
+                    .unwrap_or(true)
+            });
+        }
+    }
 
     let mut total_passed = 0usize;
     let mut total_failed = 0usize;
@@ -115,9 +153,15 @@ pub fn run_with(path: &Path, coverage: bool, show_missing: bool, options: &Optio
         interpreter.set_current_file(&absolute);
 
         // Resolve the file's package dependencies, as `olang <file>` would.
-        if let Some(root) = crate::pkg::manifest::Manifest::find_root(&absolute)
-            && let Ok(map) = crate::pkg::install(&root, &crate::pkg::InstallOptions::default())
-        {
+        let package_root = crate::pkg::manifest::Manifest::find_root(&absolute);
+        let deps_map = package_root
+            .as_deref()
+            .and_then(|root| crate::pkg::install(root, &crate::pkg::InstallOptions::default()).ok());
+        if !options.deps {
+            let (root, dirs) = project_scope(package_root.as_deref(), deps_map.as_ref());
+            interpreter.set_test_scope(root, dirs);
+        }
+        if let Some(map) = deps_map {
             interpreter.set_dependency_map(map.into_iter().collect());
         }
 

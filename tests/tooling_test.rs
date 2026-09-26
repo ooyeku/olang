@@ -290,3 +290,70 @@ fn bench_fails_cleanly_on_broken_programs_and_bad_paths() {
         .unwrap();
     assert_eq!(out.status.code(), Some(2));
 }
+
+/// `olang test` answers for the project's own files: its `lib/` modules'
+/// blocks run (imported or walked), a dependency's do not — Foundry's 13
+/// tests were reported as 133, the rest Shuttle's. `--deps` runs them.
+#[test]
+fn test_runner_runs_the_projects_own_blocks_and_dependencies_only_with_deps() {
+    let ws = fixture_dir("own_deps");
+    let write = |rel: &str, text: &str| {
+        let p = ws.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    };
+    write(
+        "mathlib/olang.toml",
+        "[package]\nname = \"mathlib\"\nversion = \"1.0.0\"\n",
+    );
+    write(
+        "mathlib/index.ol",
+        "share fn square(x) = x * x\n\ntest \"the dependency's block\" {\n    assert_eq(square(3), 9)\n}\n",
+    );
+    write(
+        "app/olang.toml",
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nmathlib = { path = \"../mathlib\" }\n",
+    );
+    write(
+        "app/lib/util.ol",
+        "share fn twice(x) = x * 2\n\ntest \"the lib module's block\" {\n    assert_eq(twice(2), 4)\n}\n",
+    );
+    write(
+        "app/tests/app_test.ol",
+        "use mathlib { square }\nuse lib.util { twice }\n\ntest \"the app's block\" {\n    assert_eq(twice(square(2)), 8)\n}\n",
+    );
+    let app = ws.join("app");
+
+    // The whole project, and its tests/ directory alone: the lib module's
+    // block runs either way (walked, or at import), the dependency's never.
+    for target in [app.clone(), app.join("tests")] {
+        let out = olang()
+            .arg("test")
+            .arg(&target)
+            .current_dir(&app)
+            .output()
+            .expect("run");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success(), "{}: {stdout}", target.display());
+        assert!(stdout.contains("✓ the app's block"), "{stdout}");
+        assert!(stdout.contains("✓ the lib module's block"), "{stdout}");
+        assert!(
+            !stdout.contains("the dependency's block"),
+            "a dependency's block ran without --deps: {stdout}"
+        );
+        assert!(stdout.contains("2 passed, 0 failed"), "{stdout}");
+    }
+
+    let out = olang()
+        .arg("test")
+        .arg("--deps")
+        .arg(&app)
+        .current_dir(&app)
+        .output()
+        .expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{stdout}");
+    assert!(stdout.contains("✓ the dependency's block"), "{stdout}");
+    assert!(stdout.contains("3 passed, 0 failed"), "{stdout}");
+    let _ = std::fs::remove_dir_all(&ws);
+}

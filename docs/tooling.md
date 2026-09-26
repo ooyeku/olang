@@ -58,24 +58,34 @@ olang test              # everything under the current directory
 olang test examples/    # or a specific directory / single file
 olang test tests/ --only "rate limit"   # the blocks whose name contains the text
 olang test tests/ --times               # each block's milliseconds, and the slowest five
+olang test --deps       # the dependencies' blocks too
 ```
 
 A *test file* is any `.ol` file containing a top-level `test "name" { ... }`
 block. Each test file runs in a fresh interpreter, top to bottom — helper
 functions, fixtures, and imports work exactly as they do under
 `olang <file>`, and files inside a package get the package's dependencies.
-Files without test blocks are not executed at all. An imported module's
-test blocks run once per `olang test` invocation, keyed by the module's
-file — a project whose every client module imports the SDK runs the
-SDK's suite once, not once per importer. A named *file* runs its own
-blocks only: `olang test tests/x.ol` is a question about that file, and
-the modules it imports are not part of the answer.
+Files without test blocks are not executed at all.
+
+`olang test` answers for the project's own files. An imported module's
+blocks run when the module is one of them — under the package's root
+(anywhere on disk outside a package) and not a dependency — so
+`olang test tests/` still runs the blocks of the `lib/` modules the
+tests import. A dependency's blocks — a shelf or lock package, a path
+dependency (even one vendored below the root, which the walk skips),
+the runtime's embedded modules — are its authors' suite and do not run;
+`--deps` runs them too, as they are imported. Either way an imported
+module's blocks run once per invocation, keyed by the module's file —
+a project whose every client module imports the SDK runs the SDK's
+suite once under `--deps`, not once per importer. A named *file* runs
+its own blocks only: `olang test tests/x.ol` is a question about that
+file, and the modules it imports are not part of the answer.
 
 `--only <text>` runs the blocks whose name contains the text, across
 every file under the path, and names only the files that had one — the
 way to check one test of a suite that takes minutes. `--times` prints
 each block's milliseconds beside its name and lists the slowest five at
-the end. Both pass through `--watch`.
+the end. Both pass through `--watch`, as `--deps` does.
 
 Under the runner, a failing block **records its failure and execution
 continues**, so one red test doesn't hide the rest (in a normal

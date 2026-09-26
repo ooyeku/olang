@@ -248,6 +248,10 @@ enum Commands {
         /// Print each block's milliseconds, and the slowest five at the end
         #[arg(long)]
         times: bool,
+        /// Also run the test blocks of the project's dependencies (shelf and
+        /// lock packages, the runtime's embedded modules) as they are imported
+        #[arg(long)]
+        deps: bool,
     },
 
     /// Compile a program to a self-contained executable
@@ -562,6 +566,7 @@ fn run() -> i32 {
             watch,
             only,
             times,
+            deps,
         }) => {
             // Files under the runner get a bare argv — a program that branches
             // on os.args() takes its no-argument path.
@@ -584,6 +589,9 @@ fn run() -> i32 {
                 if times {
                     argv.push("--times".to_string());
                 }
+                if deps {
+                    argv.push("--deps".to_string());
+                }
                 let dir = if target.is_dir() {
                     target.clone()
                 } else {
@@ -599,7 +607,7 @@ fn run() -> i32 {
                 &target,
                 coverage || coverage_lines,
                 coverage_lines,
-                &olang::tools::test_runner::Options { only, times },
+                &olang::tools::test_runner::Options { only, times, deps },
             )
         }
 
