@@ -71,6 +71,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   a multi-consumer one now: every waiter waits on its own, a timeout
   bounds only its own wait, and each message still goes to exactly one
   receiver, in order.
+- **An error inside a module names the module's file.** On the
+  interpreter a raised error took its line from the innermost statement
+  but its file from the module being loaded, so `fs.join` failing in a
+  function of lib/config.ol called from main.ol was reported at
+  `main.ol:<the callee's line>`. The file now comes from the function
+  that owns the line (the tier's traced file, or the innermost
+  interpreted frame's), on both tiers.
 - **`otc install` picks up a re-shelved library.** A lock entry for a
   shelf library was matched by name alone, so after `otc lib add <path>
   --rev <sha>` moved the shelf to another commit — or re-registered the

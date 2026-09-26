@@ -159,3 +159,44 @@ fn deep_stacks_name_every_frame_identically() {
          println(drive(2000))",
     );
 }
+
+/// An error raised inside an imported module's function names the
+/// module's file with the module's line — on both tiers — never the
+/// entry file with the callee's line (Foundry: `fs.join` in
+/// lib/config.ol reported as main.ol:44, a comment).
+#[test]
+fn an_error_inside_a_module_names_the_modules_file() {
+    let dir = std::env::temp_dir().join("olang_error_span_module");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("lib")).expect("mkdir");
+    std::fs::write(
+        dir.join("lib/config.ol"),
+        "// config\n// two\n// three\n\nshare fn load(p) = {\n    let bad = Ok(\"x\")\n    Ok(map([p], (n) => #{ \"path\": fs.join([n, bad]) }))\n}\n",
+    )
+    .expect("write module");
+    std::fs::write(
+        dir.join("main.ol"),
+        "use lib.config { load }\n// padding\nprintln(\"start\")\nlet x = load(\"a\")\n",
+    )
+    .expect("write main");
+    for no_ovm in [false, true] {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_olang"));
+        if no_ovm {
+            cmd.arg("--no-ovm");
+        }
+        let out = cmd.arg("run").arg("main.ol").current_dir(&dir).output().expect("run");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            text.contains("config.ol:7:"),
+            "no_ovm={no_ovm}: the span must name the module's file and line:\n{text}"
+        );
+        assert!(
+            !text.contains("main.ol:7") && !text.contains("main.ol:5"),
+            "no_ovm={no_ovm}: the entry file paired with the callee's line:\n{text}"
+        );
+    }
+}

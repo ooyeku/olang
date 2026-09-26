@@ -189,6 +189,10 @@ pub struct Interpreter {
     /// Function names currently on the interpreter call stack
     /// (outermost first), for error reports.
     call_stack_names: Vec<String>,
+    /// The interpreted functions currently executing (outermost first),
+    /// pushed once a call is past its boundary check: the innermost one's
+    /// `def_file` is the file a raised error's line belongs to.
+    frame_funcs: Vec<Arc<Function>>,
     /// Manifest dependencies that failed to resolve at startup, by name,
     /// with the reason — so `use web` says why, and a module that never
     /// imports the missing package still runs.
@@ -395,6 +399,7 @@ impl Interpreter {
             deadline: None,
             stmt_span_stack: Vec::new(),
             call_stack_names: Vec::new(),
+            frame_funcs: Vec::new(),
             missing_dependencies: HashMap::new(),
             pending_error_location: None,
             entry_file: None,
@@ -921,15 +926,12 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                         let trace_file = self
                             .bytecode_tier
                             .as_mut()
-                            .and_then(|t| t.take_error_trace_file())
-                            .filter(|f| {
-                                !f.starts_with("__")
-                                    && self.entry_file.as_deref() != Some(f.as_str())
-                            });
+                            .and_then(|t| t.take_error_trace_file());
+                        let trace_file = self.trace_error_file(trace_file);
                         self.pending_error_location = Some(crate::ast::ErrorLocation {
                             line,
                             column,
-                            file: trace_file.or_else(|| self.error_file()),
+                            file: trace_file,
                             call_stack: self.splice_tier_stack(frames),
                             hint: self.pending_error_hint.take(),
                         });
@@ -979,6 +981,37 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// loaded at import runs with `current_module_path` set to its own
     /// file, so an error inside it names that file rather than the `use`
     /// line that triggered the load.
+    /// The file the innermost executing statement belongs to: the file
+    /// that defined the innermost interpreted function on the stack, or,
+    /// outside any function, the module whose top level is running. A
+    /// line and its file always come from the same place — an error in a
+    /// module's function called from the entry file names the module.
+    fn located_file(&self) -> Option<String> {
+        match self.frame_funcs.last().map(|f| f.def_file.as_deref()) {
+            Some(Some(file)) if !file.starts_with("__") => self.shown_file(file),
+            _ => self.error_file(),
+        }
+    }
+
+    /// `file` as a report names it: None for the entry program.
+    fn shown_file(&self, file: &str) -> Option<String> {
+        match self.entry_file.as_deref() {
+            Some(entry) if entry == file => None,
+            None => None,
+            _ => Some(file.to_string()),
+        }
+    }
+
+    /// The file the bytecode tier traced an error to, as a report names
+    /// it; where the tier knows none (or a synthetic one), the file of the
+    /// innermost interpreted frame.
+    fn trace_error_file(&self, traced: Option<String>) -> Option<String> {
+        match traced {
+            Some(f) if !f.starts_with("__") => self.shown_file(&f),
+            _ => self.located_file(),
+        }
+    }
+
     fn error_file(&self) -> Option<String> {
         let current = self.current_module_path.as_deref()?;
         if current.starts_with("__") {
@@ -1045,7 +1078,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     self.pending_error_location = Some(crate::ast::ErrorLocation {
                         line: *line,
                         column: *column,
-                        file: self.error_file(),
+                        file: self.located_file(),
                         call_stack: self
                             .pending_error_frames
                             .take()
@@ -3137,6 +3170,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             self.call_stack_names.push(frame);
 
             self.check_call_boundary(func, &arguments)?;
+            self.frame_funcs.push(func.clone());
 
             // Hot-function promotion: run on the bytecode tier when the
             // function is eligible, otherwise fall through to the AST walk
@@ -3161,6 +3195,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 if let crate::ovm::tier::TierOutcome::Ran(result) = outcome {
                     self.call_depth -= 1;
                     self.call_stack_names.pop();
+                    self.frame_funcs.pop();
                     return match result {
                         Ok(v) => Ok(v),
                         Err(message) => {
@@ -3183,15 +3218,21 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                                     let trace_file = self
                                         .bytecode_tier
                                         .as_mut()
-                                        .and_then(|t| t.take_error_trace_file())
-                                        .filter(|f| {
-                                            !f.starts_with("__")
-                                                && self.entry_file.as_deref() != Some(f.as_str())
-                                        });
+                                        .and_then(|t| t.take_error_trace_file());
+                                    // This frame is popped already: where
+                                    // the tier traced no file, the line is
+                                    // this function's, so is the file.
+                                    let trace_file = match trace_file {
+                                        Some(f) if !f.starts_with("__") => self.shown_file(&f),
+                                        _ => match func.def_file.as_deref() {
+                                            Some(f) if !f.starts_with("__") => self.shown_file(f),
+                                            _ => self.error_file(),
+                                        },
+                                    };
                                     self.pending_error_location = Some(crate::ast::ErrorLocation {
                                         line,
                                         column,
-                                        file: trace_file.or_else(|| self.error_file()),
+                                        file: trace_file,
                                         call_stack: self.splice_tier_stack(frames),
                                         hint: self.pending_error_hint.take(),
                                     });
@@ -3351,6 +3392,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             // Decrement call depth when function completes
             self.call_depth -= 1;
             self.call_stack_names.pop();
+            self.frame_funcs.pop();
 
             result
         }
@@ -3558,6 +3600,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         Self {
             stmt_span_stack: Vec::new(),
             call_stack_names: Vec::new(),
+            frame_funcs: Vec::new(),
             missing_dependencies: HashMap::new(),
             pending_error_location: None,
             // Frames keep their naming rule on a worker: "(lib/x.ol)"
@@ -3909,7 +3952,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     self.pending_error_location = Some(crate::ast::ErrorLocation {
                         line: *line,
                         column: *column,
-                        file: self.error_file(),
+                        file: self.located_file(),
                         call_stack: self
                             .pending_error_frames
                             .take()
@@ -4836,15 +4879,12 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                         let trace_file = self
                             .bytecode_tier
                             .as_mut()
-                            .and_then(|t| t.take_error_trace_file())
-                            .filter(|f| {
-                                !f.starts_with("__")
-                                    && self.entry_file.as_deref() != Some(f.as_str())
-                            });
+                            .and_then(|t| t.take_error_trace_file());
+                        let trace_file = self.trace_error_file(trace_file);
                         self.pending_error_location = Some(crate::ast::ErrorLocation {
                             line,
                             column,
-                            file: trace_file.or_else(|| self.error_file()),
+                            file: trace_file,
                             call_stack: self.splice_tier_stack(frames),
                             hint: self.pending_error_hint.take(),
                         });
