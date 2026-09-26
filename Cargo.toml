@@ -191,6 +191,11 @@ sha2 = "0.10"
 getrandom = "0.4"
 getrandom02 = { package = "getrandom", version = "0.2", features = ["custom"] }
 
+# Signalling a child's process group (`proc.kill(p, #{ tree: true })`,
+# `os.exec`'s timeout).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 criterion = "0.5"
 proptest = "1.3"

@@ -2181,6 +2181,7 @@ dependencies = [
  "hmac",
  "hostname",
  "im",
+ "libc",
  "lsp-server",
  "lsp-types",
  "md-5",

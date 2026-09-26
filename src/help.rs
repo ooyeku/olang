@@ -1907,7 +1907,7 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "proc.spawn(program, args, opts?)",
             "Result",
             "proc",
-            "start a child with piped stdin/stdout/stderr and return a live Process handle",
+            "start a child with piped stdin/stdout/stderr and return a live Process handle; opts: cwd, env, group (true: its own process group, for kill's tree)",
             &[r##"let p = unwrap(proc.spawn("sort", ["-n"]))"##],
         );
         self.doc_ex(
@@ -1968,11 +1968,11 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
         );
         self.doc_ex(
             "proc.kill",
-            "proc.kill(p)",
+            "proc.kill(p, opts?)",
             "Result",
             "proc",
-            "terminate the child immediately (SIGKILL)",
-            &[r##"unwrap(proc.kill(p))"##],
+            "terminate the child immediately (SIGKILL); #{ tree: true } kills its whole process group (spawned with #{ group: true })",
+            &[r##"unwrap(proc.kill(p, #{ "tree": true }))"##],
         );
         self.doc_ex(
             "proc.pid",
@@ -4044,7 +4044,7 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             "one line from stdin as Ok(line), or Err(\"eof\") at end-of-input",
             &[r##"match os.read_line() { Ok(line) => process(line), Err(e) => () }"##],
         );
-        self.doc_ex("os.exec", "os.exec(program, args, opts?)", "Result", "os", "run a program to completion, returning Ok(#{ code, stdout, stderr }); opts sets cwd/stdin/env",
+        self.doc_ex("os.exec", "os.exec(program, args, opts?)", "Result", "os", "run a program to completion, returning Ok(#{ code, stdout, stderr, timed_out }); opts sets cwd/stdin/env/timeout_ms (past it the program's process group is killed and timed_out is true)",
             &[r##"unwrap(os.exec("git", ["status", "--short"]))  // #{ code, stdout, stderr }"##],
         );
         self.doc_ex(

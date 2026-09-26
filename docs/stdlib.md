@@ -1289,9 +1289,17 @@ else.
 | Signals | `on_interrupt()` — trap Ctrl-C (SIGINT) instead of terminating (`Result`: installing the handler can fail); `interrupted()` — has it been pressed? (`Bool`); `reset_interrupt()` — clear the flag |
 
 `os.exec` runs an external program to completion and returns
-`Ok({ code, stdout, stderr })` — or `Err` if it could not be launched at
-all. An optional third argument configures the child:
-`#{ "cwd": dir, "stdin": text, "env": #{ name: value } }` (any subset).
+`Ok({ code, stdout, stderr, timed_out })` — or `Err` if it could not be
+launched at all (the program was not found, or `cwd` names no
+directory: the error says which). An optional third argument configures
+the child: `#{ "cwd": dir, "stdin": text, "env": #{ name: value },
+"timeout_ms": n }` (any subset). With `timeout_ms` the program runs in a
+process group of its own; if it has not exited and closed its output
+within `n` ms, the whole group is killed — a shell and everything it
+started — and the answer is `Ok` with `timed_out: true`, `code: -1`, and
+the output read before the kill. (Being in its own group, it does not
+receive the terminal's Ctrl-C.) Without `timeout_ms` the run is
+unbounded and `timed_out` is `false`.
 `os.args()` is the program's argv (`[script, arg1, ...]`).
 
 Most of `os` cannot fail, and as of 0.64 says so: `args`, `arch`,
@@ -1361,10 +1369,10 @@ deadlocks against a caller reading only one stream. Native-only.
 
 | Group | Functions |
 |---|---|
-| Spawn | `spawn(program, args)` / `spawn(program, args, #{ cwd, env })` → `Ok(Process)` |
+| Spawn | `spawn(program, args)` / `spawn(program, args, #{ cwd, env, group })` → `Ok(Process)`; a `cwd` that names no directory is an `Err` saying so |
 | Input | `write(p, s)` · `write_line(p, s)` · `close_stdin(p)` (signals EOF) |
 | Output | `read_line(p)` → `Ok(line)` \| `Err("eof")`; `read_all(p)` → the rest of stdout; `stderr(p)` → all stderr (complete after exit) |
-| Lifecycle | `wait(p)` → `Ok(#{ code })` · `kill(p)` · `pid(p)` |
+| Lifecycle | `wait(p)` → `Ok(#{ code })` · `kill(p)` / `kill(p, #{ tree: true })` · `pid(p)` |
 | Pipeline | `pipeline(stages)` / `pipeline(stages, #{ cwd, env, stdin })` |
 
 ```olang no-run
@@ -1375,6 +1383,20 @@ proc.write_line(p, "nope")
 proc.close_stdin(p)
 println(unwrap(proc.read_line(p)))     // "olang rules"
 println(show(unwrap(proc.wait(p)).code))
+```
+
+`proc.kill(p)` ends the child alone (SIGKILL); a shell's children
+outlive it. To end everything a child started, spawn it with
+`#{ "group": true }` — it leads a process group of its own — and kill
+it with `proc.kill(p, #{ "tree": true })`, which kills the whole group
+(`taskkill /T` on Windows). A tree kill of a child spawned without
+`group` is an `Err`. A grouped child does not receive the terminal's
+Ctrl-C with the program; that is the point, and the reason it is opt-in.
+
+```olang no-run
+let p = unwrap(proc.spawn("sh", ["-c", "make test"], #{ "group": true }))
+// … the deadline passes …
+unwrap(proc.kill(p, #{ "tree": true }))   // make, and everything it ran
 ```
 
 `proc.pipeline` chains commands the way the shell's `a | b | c` does —

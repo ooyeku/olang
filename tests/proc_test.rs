@@ -127,3 +127,99 @@ let b = os.interrupted()
         2,
     );
 }
+
+/// Is `pid` gone within two seconds? (A killed grandchild is reparented
+/// and reaped; give that a moment.)
+const GONE: &str = r#"
+fn gone(pid) = {
+    let mut left = 40
+    let mut alive = true
+    while alive && left > 0 {
+        alive = unwrap(os.exec("kill", ["-0", pid])).code == 0
+        if alive => time.sleep(50) else => ()
+        left = left - 1
+    }
+    !alive
+}
+"#;
+
+#[cfg(unix)]
+#[test]
+fn a_tree_kill_ends_the_grandchildren_too() {
+    // `sh -c "sleep 7 & …; sleep 7"`: the backgrounded sleep is the
+    // shell's child, the test's grandchild. A plain kill leaves it; a
+    // tree kill of a grouped spawn ends it.
+    assert_all_true(
+        &format!(
+            "{GONE}{}",
+            r#"
+let p = unwrap(proc.spawn("sh", ["-c", "sleep 7 & echo $!; sleep 7"], #{ "group": true }))
+let grandchild = str.trim(unwrap(proc.read_line(p)))
+let k = proc.kill(p, #{ "tree": true })
+let w = unwrap(proc.wait(p))
+[ is_ok(k), w.code == -1, gone(grandchild) ]
+"#
+        ),
+        3,
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_tree_kill_needs_a_grouped_spawn() {
+    assert_all_true(
+        r#"
+let p = unwrap(proc.spawn("sleep", ["5"]))
+let refused = match proc.kill(p, #{ "tree": true }) { Ok(u) => "", Err(e) => e }
+let plain = proc.kill(p)
+let w = proc.wait(p)
+[ str.contains(refused, "group: true"), is_ok(plain) ]
+"#,
+        2,
+    );
+}
+
+#[test]
+fn a_missing_cwd_is_named_not_the_program() {
+    assert_all_true(
+        r#"
+let s = match proc.spawn("sh", [], #{ "cwd": "/nonexistent/olang-dir" }) { Ok(p) => "", Err(e) => e }
+let pl = match proc.pipeline([["sh"]], #{ "cwd": "/nonexistent/olang-dir" }) { Ok(p) => "", Err(e) => e }
+let ex = match os.exec("sh", [], #{ "cwd": "/nonexistent/olang-dir" }) { Ok(p) => "", Err(e) => e }
+[ str.contains(s, "cwd '/nonexistent/olang-dir' does not exist"), !str.contains(s, "'sh'"),
+  str.contains(pl, "/nonexistent/olang-dir"), str.contains(ex, "cwd '/nonexistent/olang-dir' does not exist") ]
+"#,
+        4,
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn exec_with_a_timeout_kills_the_tree_and_says_so() {
+    assert_all_true(
+        &format!(
+            "{GONE}{}",
+            r#"
+let t0 = time.monotonic_ms()
+let r = unwrap(os.exec("sh", ["-c", "sleep 7 & echo $!; sleep 7"], #{ "timeout_ms": 300 }))
+let took = time.monotonic_ms() - t0
+[ r.timed_out, r.code == -1, took >= 290, took < 3000, gone(str.trim(r.stdout)) ]
+"#
+        ),
+        5,
+    );
+}
+
+#[test]
+fn exec_within_its_timeout_answers_as_without_one() {
+    assert_all_true(
+        r#"
+let r = unwrap(os.exec("sh", ["-c", "echo out; echo err >&2; exit 3"], #{ "timeout_ms": 10000 }))
+let fed = unwrap(os.exec("cat", [], #{ "timeout_ms": 10000, "stdin": "fed" }))
+let plain = unwrap(os.exec("sh", ["-c", "exit 0"]))
+[ r.timed_out == false, r.code == 3, str.trim(r.stdout) == "out", str.trim(r.stderr) == "err",
+  fed.stdout == "fed", plain.timed_out == false ]
+"#,
+        6,
+    );
+}

@@ -19,6 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   asked meanwhile lands after), and at once under reduced motion or
   without the API (docs/wasm.md).
 
+- **`os.exec` takes a deadline, and `proc` kills a process tree.**
+  `os.exec(program, args, #{ "timeout_ms": n })` runs the program in a
+  process group of its own and, when `n` ms pass before it exits and
+  closes its output, kills the whole group and answers `Ok` with
+  `timed_out: true`, `code: -1`, and the output read so far; every
+  `ExecResult` carries `timed_out` (`false` without a deadline).
+  `proc.spawn(program, args, #{ "group": true })` starts the child as
+  the leader of its own process group, and `proc.kill(p, #{ "tree":
+  true })` kills that group — a shell and everything it started, where
+  `proc.kill(p)` left `sh -c "…; sleep 7"`'s `sleep` running (Windows:
+  a new process group, and `taskkill /T /F`). A tree kill of an
+  ungrouped child is an `Err` that says how to spawn it.
+
 ### Changed
 
 - **Binary expressions are parsed flat and built by precedence
@@ -78,6 +91,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `main.ol:<the callee's line>`. The file now comes from the function
   that owns the line (the tier's traced file, or the innermost
   interpreted frame's), on both tiers.
+- **A missing `cwd` is named.** `proc.spawn`, `proc.pipeline`, and
+  `os.exec` with a `cwd` that names no directory answered `failed to
+  start 'sh': No such file or directory`, blaming the program; they
+  answer `spawn: cwd '/x' does not exist` (or `is not a directory`).
 - **`otc install` picks up a re-shelved library.** A lock entry for a
   shelf library was matched by name alone, so after `otc lib add <path>
   --rev <sha>` moved the shelf to another commit — or re-registered the

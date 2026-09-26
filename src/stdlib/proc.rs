@@ -43,6 +43,71 @@ struct Proc {
     out_rx: Mutex<Receiver<String>>,
     stderr: Arc<Mutex<String>>,
     pid: u32,
+    /// Spawned as the leader of its own process group (`#{ group: true }`),
+    /// so `kill(p, #{ tree: true })` can end everything it started.
+    group: bool,
+}
+
+/// Start `command` as the leader of a new process group (a new process
+/// group on Windows too), so the whole tree it starts can be signalled
+/// at once with [`kill_tree`].
+pub(crate) fn set_own_group(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        command.creation_flags(CREATE_NEW_PROCESS_GROUP);
+    }
+    #[cfg(not(any(unix, windows)))]
+    let _ = command;
+}
+
+/// Kill `child` and every process in the group it leads (spawned through
+/// [`set_own_group`]): SIGKILL to the group on Unix, `taskkill /T /F` on
+/// Windows. The child itself is killed too, so this is never weaker than
+/// `Child::kill`. A group already gone is not an error.
+pub(crate) fn kill_tree(child: &mut Child) {
+    let pid = child.id();
+    #[cfg(unix)]
+    {
+        if pid > 0 && pid <= i32::MAX as u32 {
+            // SAFETY: kill(2) with a negative pid signals the process
+            // group; it touches no memory of ours.
+            unsafe {
+                libc::kill(-(pid as i32), libc::SIGKILL);
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &pid.to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+}
+
+/// A `cwd` option that names no directory: said as such, before the
+/// spawn would blame the program ("failed to start 'sh': No such file
+/// or directory").
+pub(crate) fn missing_dir(who: &str, cwd: Option<&str>) -> Option<String> {
+    let dir = cwd?;
+    if std::path::Path::new(dir).is_dir() {
+        return None;
+    }
+    Some(if std::path::Path::new(dir).exists() {
+        format!("{}: cwd '{}' is not a directory", who, dir)
+    } else {
+        format!("{}: cwd '{}' does not exist", who, dir)
+    })
 }
 
 static NEXT_ID: AtomicI64 = AtomicI64::new(1);
@@ -173,29 +238,35 @@ fn as_args(v: &Value, who: &str) -> Result<Vec<String>, Value> {
     }
 }
 
-/// Parse the shared options map (`cwd`, `env`, and for pipelines `stdin`).
-/// Returns (cwd, env, stdin) — any subset may be present.
-#[allow(clippy::type_complexity)]
-fn parse_opts(
-    value: &Value,
-    who: &str,
-) -> Result<(Option<String>, Vec<(String, String)>, Option<String>), Value> {
+/// The options `spawn` and `pipeline` take. `stdin` is the pipeline's
+/// only; `group` is spawn's only.
+#[derive(Default)]
+struct Opts {
+    cwd: Option<String>,
+    env: Vec<(String, String)>,
+    stdin: Option<String>,
+    group: bool,
+}
+
+/// Parse the shared options map (`cwd`, `env`, and for pipelines `stdin`,
+/// for spawn `group`).
+fn parse_opts(value: &Value, who: &str) -> Result<Opts, Value> {
     let fields = match value {
         Value::Map(m) => m.as_ref().clone(),
         Value::Struct { fields, .. } => fields.as_ref().clone(),
         _ => return Err(err(format!("{}: options must be a map or object", who))),
     };
-    let mut cwd = None;
-    let mut env = Vec::new();
-    let mut stdin = None;
+    let pipeline = who.contains("pipeline");
+    let mut opts = Opts::default();
     for (key, val) in &fields {
         match (key.as_str(), val) {
-            ("cwd", Value::String(s)) => cwd = Some(s.as_ref().clone()),
-            ("stdin", Value::String(s)) => stdin = Some(s.as_ref().clone()),
+            ("cwd", Value::String(s)) => opts.cwd = Some(s.as_ref().clone()),
+            ("stdin", Value::String(s)) if pipeline => opts.stdin = Some(s.as_ref().clone()),
+            ("group", Value::Boolean(b)) if !pipeline => opts.group = *b,
             ("env", Value::Map(m)) => {
                 for (k, v) in m.iter() {
                     match v {
-                        Value::String(s) => env.push((k.clone(), s.as_ref().clone())),
+                        Value::String(s) => opts.env.push((k.clone(), s.as_ref().clone())),
                         other => {
                             return Err(err(format!(
                                 "{}: env values must be strings, got {}",
@@ -208,19 +279,15 @@ fn parse_opts(
             }
             (other, _) => {
                 return Err(err(format!(
-                    "{}: unknown option '{}' (supported: cwd, env{})",
+                    "{}: unknown or mistyped option '{}' (supported: cwd, env, {})",
                     who,
                     other,
-                    if who.contains("pipeline") {
-                        ", stdin"
-                    } else {
-                        ""
-                    }
+                    if pipeline { "stdin" } else { "group" }
                 )));
             }
         }
     }
-    Ok((cwd, env, stdin))
+    Ok(opts)
 }
 
 /// `proc.spawn(program, args)` / `proc.spawn(program, args, opts)` — start
@@ -240,13 +307,16 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Ok(a) => a,
         Err(e) => return Ok(e),
     };
-    let (cwd, env) = match args.get(2) {
+    let Opts { cwd, env, group, .. } = match args.get(2) {
         Some(opts) => match parse_opts(opts, "spawn") {
-            Ok((c, e, _)) => (c, e),
+            Ok(o) => o,
             Err(e) => return Ok(e),
         },
-        None => (None, Vec::new()),
+        None => Opts::default(),
     };
+    if let Some(msg) = missing_dir("spawn", cwd.as_deref()) {
+        return Ok(err(msg));
+    }
 
     let mut command = Command::new(&program);
     command
@@ -259,6 +329,9 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     }
     for (k, v) in &env {
         command.env(k, v);
+    }
+    if group {
+        set_own_group(&mut command);
     }
 
     let mut child = match command.spawn() {
@@ -305,6 +378,7 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         out_rx: Mutex::new(rx),
         stderr: stderr_buf,
         pid,
+        group,
     });
     let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
     procs().lock().unwrap().insert(id, proc);
@@ -428,13 +502,46 @@ fn proc_wait(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 }
 
 /// `proc.kill(p)` — terminate the child immediately (SIGKILL). Killing an
-/// already-exited child is not an error.
+/// already-exited child is not an error. `proc.kill(p, #{ tree: true })`
+/// ends everything the child started too: the child must have been
+/// spawned with `#{ group: true }`, and its whole process group is
+/// killed (`taskkill /T` on Windows).
 fn proc_kill(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if args.len() != 1 {
-        return Ok(err("kill expects (process)"));
+    if args.is_empty() || args.len() > 2 {
+        return Ok(err("kill expects (process) or (process, #{ tree: Bool })"));
     }
     let p = proc_of(&args[0])?;
-    let _ = p.child.lock().unwrap().kill();
+    let mut tree = false;
+    if let Some(opts) = args.get(1) {
+        let fields = match opts {
+            Value::Map(m) => m.as_ref().clone(),
+            Value::Struct { fields, .. } => fields.as_ref().clone(),
+            _ => return Ok(err("kill: options must be a map or object")),
+        };
+        for (key, val) in &fields {
+            match (key.as_str(), val) {
+                ("tree", Value::Boolean(b)) => tree = *b,
+                (other, _) => {
+                    return Ok(err(format!(
+                        "kill: unknown or mistyped option '{}' (supported: tree)",
+                        other
+                    )));
+                }
+            }
+        }
+    }
+    if tree && !p.group {
+        return Ok(err(
+            "kill: a tree kill needs a process spawned with #{ group: true } \
+             (proc.spawn(program, args, #{ group: true }))",
+        ));
+    }
+    let mut child = p.child.lock().unwrap();
+    if tree {
+        kill_tree(&mut child);
+    } else {
+        let _ = child.kill();
+    }
     Ok(unit_ok())
 }
 
@@ -497,13 +604,21 @@ fn proc_pipeline(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         }
         stages.push((program, cargs));
     }
-    let (cwd, env, mut stdin_data) = match args.get(1) {
+    let Opts {
+        cwd,
+        env,
+        stdin: mut stdin_data,
+        ..
+    } = match args.get(1) {
         Some(opts) => match parse_opts(opts, "pipeline") {
-            Ok(parts) => parts,
+            Ok(o) => o,
             Err(e) => return Ok(e),
         },
-        None => (None, Vec::new(), None),
+        None => Opts::default(),
     };
+    if let Some(msg) = missing_dir("pipeline", cwd.as_deref()) {
+        return Ok(err(msg));
+    }
 
     // Spawn every stage, threading stdout → stdin down the chain.
     let n = stages.len();

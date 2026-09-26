@@ -506,10 +506,16 @@ fn os_chdir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
 /// Run an external program to completion, capturing its output.
 /// Usage: os.exec("olang", ["script.ol", "arg"])
-///   -> Result<{ code: Int, stdout: String, stderr: String }, Error>
+///   -> Result<{ code: Int, stdout: String, stderr: String, timed_out: Bool }, Error>
 /// The program's exit code is captured (or -1 if it was killed by a signal);
 /// stdout/stderr are returned as strings. An Err is returned only when the
-/// program could not be started at all (e.g. it was not found).
+/// program could not be started at all (e.g. it was not found, or `cwd`
+/// names no directory).
+///
+/// `#{ timeout_ms: n }` bounds the run: the program starts in a process
+/// group of its own, and when `n` ms pass before it exits and closes its
+/// output, the whole group is killed and the answer says `timed_out:
+/// true`, with code -1 and whatever output arrived before the kill.
 fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 && args.len() != 3 {
         return Err(format!(
@@ -551,8 +557,10 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
     }
 
-    // Optional third argument: #{ "cwd": ..., "stdin": ..., "env": #{...} }.
+    // Optional third argument: #{ "cwd": ..., "stdin": ..., "env": #{...},
+    // "timeout_ms": n }.
     let mut cwd: Option<String> = None;
+    let mut timeout_ms: Option<u64> = None;
     let mut stdin_data: Option<String> = None;
     let mut env_vars: Vec<(String, String)> = Vec::new();
     if let Some(options) = args.get(2) {
@@ -569,6 +577,14 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             match (key.as_str(), value) {
                 ("cwd", Value::String(s)) => cwd = Some(s.as_ref().clone()),
                 ("stdin", Value::String(s)) => stdin_data = Some(s.as_ref().clone()),
+                ("timeout_ms", Value::Integer(n)) if *n >= 0 => timeout_ms = Some(*n as u64),
+                ("timeout_ms", other) => {
+                    return Err(format!(
+                        "os.exec: timeout_ms must be a non-negative Int, got {}",
+                        other.type_name()
+                    )
+                    .into());
+                }
                 ("env", Value::Map(m)) => {
                     for (k, v) in m.iter() {
                         match v {
@@ -585,13 +601,17 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                 }
                 (other_key, _) => {
                     return Err(format!(
-                        "os.exec: unknown or mistyped option '{}' (supported: cwd, stdin, env)",
+                        "os.exec: unknown or mistyped option '{}' (supported: cwd, stdin, env, timeout_ms)",
                         other_key
                     )
                     .into());
                 }
             }
         }
+    }
+
+    if let Some(msg) = crate::stdlib::proc::missing_dir("os.exec", cwd.as_deref()) {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(msg)))));
     }
 
     let mut command = process::Command::new(&program);
@@ -603,8 +623,44 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         command.env(k, v);
     }
 
-    // With stdin data the child is spawned piped and fed before collecting.
-    let output_result = if let Some(input) = stdin_data {
+    let outcome = match timeout_ms {
+        Some(ms) => exec_bounded(command, stdin_data, ms),
+        None => exec_unbounded(command, stdin_data).map(|o| (o, false)),
+    };
+
+    match outcome {
+        Ok((output, timed_out)) => {
+            let code = if timed_out {
+                -1
+            } else {
+                output.status.code().unwrap_or(-1) as i64
+            };
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let mut fields = HashMap::new();
+            fields.insert("code".to_string(), Value::Integer(code));
+            fields.insert("stdout".to_string(), Value::String(Arc::new(stdout)));
+            fields.insert("stderr".to_string(), Value::String(Arc::new(stderr)));
+            fields.insert("timed_out".to_string(), Value::Boolean(timed_out));
+            Ok(Value::Ok(Box::new(Value::Struct {
+                type_name: "ExecResult".to_string(),
+                fields: std::sync::Arc::new(fields),
+            })))
+        }
+        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "os.exec: failed to run '{}': {}",
+            program, e
+        )))))),
+    }
+}
+
+/// `os.exec` without a deadline: run to completion. With stdin data the
+/// child is spawned piped and fed before collecting.
+fn exec_unbounded(
+    mut command: process::Command,
+    stdin_data: Option<String>,
+) -> std::io::Result<process::Output> {
+    if let Some(input) = stdin_data {
         command
             .stdin(process::Stdio::piped())
             .stdout(process::Stdio::piped())
@@ -619,27 +675,115 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             })
     } else {
         command.output()
-    };
-
-    match output_result {
-        Ok(output) => {
-            let code = output.status.code().unwrap_or(-1) as i64;
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            let mut fields = HashMap::new();
-            fields.insert("code".to_string(), Value::Integer(code));
-            fields.insert("stdout".to_string(), Value::String(Arc::new(stdout)));
-            fields.insert("stderr".to_string(), Value::String(Arc::new(stderr)));
-            Ok(Value::Ok(Box::new(Value::Struct {
-                type_name: "ExecResult".to_string(),
-                fields: std::sync::Arc::new(fields),
-            })))
-        }
-        Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "os.exec: failed to run '{}': {}",
-            program, e
-        )))))),
     }
+}
+
+/// `os.exec` with `timeout_ms`: the child leads a process group of its
+/// own; both output streams drain on threads while this one waits for the
+/// exit and the streams' end together, up to the deadline. Past it the
+/// group is killed — the shell and whatever it started — and the output
+/// read so far is kept. Answers the output and whether it timed out.
+fn exec_bounded(
+    mut command: process::Command,
+    stdin_data: Option<String>,
+    timeout_ms: u64,
+) -> std::io::Result<(process::Output, bool)> {
+    use std::io::Read;
+    use std::time::{Duration, Instant};
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    command
+        .stdin(if stdin_data.is_some() {
+            process::Stdio::piped()
+        } else {
+            process::Stdio::null()
+        })
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::piped());
+    crate::stdlib::proc::set_own_group(&mut command);
+    let mut child = command.spawn()?;
+
+    if let (Some(input), Some(mut pipe)) = (stdin_data, child.stdin.take()) {
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let _ = pipe.write_all(input.as_bytes());
+        });
+    }
+    // Each stream arrives whole at its end-of-file: when the child (and
+    // everything holding the pipe) exits, or when the kill ends them.
+    let (tx, rx) = std::sync::mpsc::channel::<(bool, Vec<u8>)>();
+    for (is_err, stream) in [
+        (false, child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>)),
+        (true, child.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>)),
+    ] {
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut s) = stream {
+                let _ = s.read_to_end(&mut buf);
+            }
+            let _ = tx.send((is_err, buf));
+        });
+    }
+    drop(tx);
+
+    let mut stdout: Option<Vec<u8>> = None;
+    let mut stderr: Option<Vec<u8>> = None;
+    let mut status: Option<process::ExitStatus> = None;
+    let mut step = Duration::from_millis(1);
+    let mut timed_out = false;
+    loop {
+        if status.is_none() {
+            status = child.try_wait()?;
+        }
+        if status.is_some() && stdout.is_some() && stderr.is_some() {
+            break;
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            timed_out = true;
+            crate::stdlib::proc::kill_tree(&mut child);
+            status = child.wait().ok().or(status);
+            // The kill closes the pipes; what was read is on its way. A
+            // process that left the group may hold a pipe open: do not
+            // wait on it for long.
+            let grace = Instant::now() + Duration::from_millis(500);
+            while stdout.is_none() || stderr.is_none() {
+                let left = grace.saturating_duration_since(Instant::now());
+                match rx.recv_timeout(left) {
+                    Ok((true, b)) => stderr = Some(b),
+                    Ok((false, b)) => stdout = Some(b),
+                    Err(_) => break,
+                }
+            }
+            break;
+        }
+        // Wait on the streams (a finished stream wakes this at once), and
+        // poll the exit between waits, backing off to 25 ms.
+        match rx.recv_timeout(step.min(deadline - now)) {
+            Ok((true, b)) => stderr = Some(b),
+            Ok((false, b)) => stdout = Some(b),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                step = (step * 2).min(Duration::from_millis(25))
+            }
+            // Both streams answered already: only the exit is left.
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                std::thread::sleep(step.min(deadline - now));
+                step = (step * 2).min(Duration::from_millis(25));
+            }
+        }
+    }
+    let status = match status {
+        Some(s) => s,
+        None => child.wait()?,
+    };
+    Ok((
+        process::Output {
+            status,
+            stdout: stdout.unwrap_or_default(),
+            stderr: stderr.unwrap_or_default(),
+        },
+        timed_out,
+    ))
 }
 
 /// Read one line from stdin: Ok(line) without the trailing newline, or
