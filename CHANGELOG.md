@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`tty`: the terminal as an interactive device (Heddle's H0).**
+  `tty.enter(opts)` takes the terminal — raw mode by default, and on
+  request the alternate screen, mouse reporting (SGR), bracketed paste,
+  focus events, the kitty keyboard protocol, a hidden cursor — and
+  answers a handle, or `Err` when stdin or stdout is not a terminal;
+  one handle at a time. `tty.events(h)` is a channel of decoded events
+  (`key` with modifiers and a `chord` such as `"ctrl+d"`, `paste`,
+  `mouse`, `resize`, `focus`, `signal`); `tty.write(h, s)` writes now;
+  `tty.query(h, seq, ms)` asks the terminal and answers its reply, which
+  never reaches the events; `tty.size()`, `tty.is_tty()`,
+  `tty.suspend(h)` for ctrl+z, `tty.leave(h)`. Whatever `enter` changed
+  is restored on leave, when the program ends or raises (before the
+  error prints), on `os.exit`, on a panic, and on SIGTERM, SIGHUP and
+  SIGINT — unless the program trapped them, when they arrive as events
+  — without the program's help (docs/stdlib.md). Unix decodes the input
+  itself; Windows uses crossterm (compiled, not yet run there).
+
+- **`str.width(s)` and `str.cell_width(g)`.** Display width in terminal
+  cells, by grapheme cluster: wide and fullwidth characters and emoji 2,
+  combining and zero-width characters and controls 0, a flag or ZWJ
+  sequence one cluster of 2 (unicode-width 0.2, Unicode 17). In the
+  browser runtime too.
+
 - **An `intent` event, and view transitions, in the web SDK's shim.**
   `dom.on(root, "intent", f)` fires when the pointer rests on (about
   80 ms), or the keyboard reaches, the nearest `data-intent` carrier,

@@ -41,6 +41,7 @@ a file system, a network, or a browser.
 - [`proc` — child processes and pipelines](#proc--child-processes-and-pipelines)
 - [`cli` — command-line argument parsing](#cli--command-line-argument-parsing)
 - [`term` — the terminal toolkit](#term--the-terminal-toolkit)
+- [`tty` — the terminal as an interactive device](#tty--the-terminal-as-an-interactive-device)
 - [`http` — HTTP](#http--http)
 - [`db` — SQLite](#db--sqlite)
 - [`dom` — the browser](#dom--the-browser)
@@ -380,6 +381,8 @@ every function returns a new string.
 | `str.char_at(s, i)` | 1-char string, `""` out of bounds |
 | `str.chars(s)` | list of characters (codepoints) |
 | `str.graphemes(s)` | list of visible characters (UAX #29 clusters) |
+| `str.width(s)` | display width in terminal cells (see below) |
+| `str.cell_width(g)` | the cells one grapheme occupies: 0, 1 or 2; more than one grapheme raises |
 | `str.substring(s, from, to)` | half-open slice, clamped |
 | `str.index_of(s, sub)` / `str.last_index_of` | position, or `()` when absent |
 | `str.contains(s, sub)` / `str.count(s, sub)` | search |
@@ -405,6 +408,36 @@ println(str.replace("a-b-c", "-", "+"))
 println(to_string(str.chars("ok")))
 println(to_string(unwrap(str.parse_float("2.5")) * 2))
 println(str.fmt("{} scored {} ({}%)", "ada", 99, 97.5))
+```
+
+**Display width.** `str.length` counts code points and `str.graphemes`
+counts what a reader sees as characters; a terminal lays text out in
+*cells*, and `str.width` counts those — what padding, truncation, and
+column layout must use. The unit is the grapheme cluster, and each is
+0, 1, or 2 cells:
+
+- **0** if the cluster contains a control character (C0, DEL, C1 —
+  tab and newline included: expand tabs and escape controls before
+  measuring);
+- otherwise the width the `unicode-width` crate (0.2, Unicode 17.0
+  tables) gives it: East Asian Wide and Fullwidth are 2; emoji with
+  default emoji presentation, emoji presentation sequences (VS16),
+  emoji modifier sequences (skin tones), and fully-qualified ZWJ
+  sequences are 2; a text presentation sequence (VS15) of an emoji is
+  1; combining marks, default-ignorables (ZWJ, ZWSP, soft hyphen,
+  variation selectors), and Hangul medial vowels and final consonants
+  are 0; everything else — East Asian Ambiguous included, as terminals
+  treat it by default — is 1;
+- **capped at 2**, so a flag (two regional indicators) or any other
+  multi-character cluster takes the two cells a terminal gives it.
+
+`str.width(s)` is the sum of `str.cell_width(g)` over `str.graphemes(s)`.
+Both are pure and available in the browser runtime too.
+
+```olang
+println(str.width("中文 ok"))      // 7
+println(str.width("e\u{301}"))     // 1
+println(str.cell_width("🇯🇵"))      // 2
 ```
 
 ## `col` / `colx` — collections
@@ -1516,6 +1549,145 @@ The [`taskcli` example](../examples/tools/taskcli/) uses it for a colored
 summary and a `term.table` breakdown — both of which print plain when
 its output is piped (which is why the examples harness still sees clean
 text).
+
+## `tty` — the terminal as an interactive device
+
+`term` styles lines; `tty` takes the terminal over. It is the layer a
+full-screen program stands on — the Heddle terminal UI framework's
+runtime is built on it — and it gives four things: raw mode and the
+terminal's reporting modes, decoded input as events on a channel,
+unbuffered output and capability queries, and a **restore guarantee**:
+whatever `tty.enter` changes is changed back however the program ends.
+Native-only.
+
+| Function | Description |
+|---|---|
+| `tty.enter(opts)` | take the terminal → `Ok(handle)`; `Err` when stdin or stdout is not a terminal, or a handle is already entered (one at a time). `opts` below |
+| `tty.leave(h)` | give it back: cooked mode, the main screen, the cursor shown, reporting off, the events channel closed. Idempotent; returns `()` and never fails |
+| `tty.events(h)` | the channel of decoded events (below) |
+| `tty.size()` | `Ok((cols, rows))`, or `Err` when stdout is not a terminal. Needs no `enter` |
+| `tty.write(h, s)` | write a String or Bytes now — after anything `print` left buffered, without waiting for a newline → `Ok(())` / `Err` |
+| `tty.query(h, seq, timeout_ms)` | write a query (`"\u{1b}]11;?\u{1b}\\"` for the background colour, `"\u{1b}[c"` for DA1, `"\u{1b}[?u"` for the kitty flags) → `Ok(reply)` — the reply's raw bytes — or `Err("timeout")` |
+| `tty.is_tty()` | stdin and stdout are both terminals — what `enter` needs |
+| `tty.suspend(h)` | ctrl+z done right: restore, stop, and on `fg` re-enter and deliver `signal` `cont` and a `resize` |
+
+**Options.** `tty.enter` takes a map of Bools, each optional; an
+unknown key raises (a typo'd option is a bug, not a preference).
+
+| Option | Default | What it turns on | Undone by |
+|---|---|---|---|
+| `raw` | `true` | raw mode (`cfmakeraw`): no echo, no line editing; ctrl+c, ctrl+z, ctrl+\\ arrive as keys, not signals; output is not translated, so a line ends `"\r\n"` | the saved settings, restored exactly |
+| `alt_screen` | `false` | the alternate screen (`CSI ?1049h`) | `CSI ?1049l` |
+| `hide_cursor` | `false` | `CSI ?25l` | `CSI ?25h` (written on every leave) |
+| `mouse` | `false` | clicks, drags, and motion, SGR-encoded (`?1000 ?1002 ?1003 ?1006`) | each reset |
+| `paste` | `false` | bracketed paste (`?2004`) | `?2004l` |
+| `focus` | `false` | focus in/out reports (`?1004`) | `?1004l` |
+| `kitty_keys` | `false` | the [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/), flag 1 (disambiguate: ctrl+i is not tab, esc is unambiguous) — pushed with `CSI >1u`, ignored by a terminal without it | `CSI <u` (pop) |
+
+Every leave also writes `CSI ?2026l` (ends a synchronized update a
+crash left open) and `CSI 0m` (resets attributes), so a program that
+dies mid-frame leaves neither a frozen nor a coloured terminal.
+
+**Events** are maps with a `"kind"` (read them with `map_get`):
+
+| `kind` | Fields |
+|---|---|
+| `"key"` | `key` — the character (`"a"`, `"A"`, `"中"`, `"?"`) or a name: `space enter tab backspace esc up down left right home end pgup pgdown insert delete begin f1`…`f35` (and, under the kitty protocol, keypad and modifier keys by name); `text` — what the key types, `""` for a named key or with ctrl/alt/super; `ctrl` `alt` `shift` `super` — Bools; `chord` — the key in one spelling: modifiers in the order ctrl, alt, shift, super, then the key (`"ctrl+d"`, `"alt+enter"`, `"shift+tab"`, `"ctrl+shift+a"`; a capital typed plainly is itself, `"G"`) |
+| `"paste"` | `text` — one bracketed paste, whole, CR and CRLF turned into LF |
+| `"mouse"` | `action` — `"down"` `"up"` `"move"` (no button) `"drag"` (a button held) `"wheel"`; `button` — `"left"` `"middle"` `"right"` `"none"`, or `"up"` `"down"` `"left"` `"right"` for the wheel; `x`, `y` — zero-based cells; `mods` — `#{ ctrl, alt, shift }` |
+| `"resize"` | `cols`, `rows` — after SIGWINCH (Unix) or a console resize (Windows) |
+| `"focus"` | `on` — the window gained (`true`) or lost focus |
+| `"signal"` | `name` — `"tstp"` and `"cont"` around a stop; `"term"`, `"hup"`, `"int"` when the program trapped the signal (below); `"eof"` when the terminal hangs up (the channel closes after it) |
+
+A window size change arrives as `resize`, not as a `signal`. After
+`cont`, repaint everything: the screen may have been used by the shell.
+
+**Esc and alt.** Alt+x arrives as ESC then x, which is also what
+pressing Escape then x quickly would send. The decoder waits 25 ms
+after a lone ESC (250 ms after a longer partial sequence) for more bytes
+before deciding: ESC alone is `esc`; ESC and a key in the same moment is
+alt+key. The kitty protocol removes the ambiguity entirely where the
+terminal has it.
+
+**Queries.** A reply is taken out of the input stream wherever it
+arrives: OSC, DCS and APC strings, CSI replies with a private prefix
+(`?` `>` `=`) or an intermediate byte (DA1, DA2, DECRPM, the kitty flags
+reply), and cursor position reports while a query waits. A reply that
+arrives after its query timed out is dropped — never delivered as keys.
+`tty.query` needs `raw` (a cooked terminal echoes the reply and holds it
+for a newline). The answer is the first reply, with any that arrived in
+the same read; to fence a query the terminal may not answer, send it
+followed by DA1 (`"\u{1b}[?u\u{1b}[c"`), which every terminal answers.
+
+```olang no-run
+if !tty.is_tty() => { println("needs a terminal"); os.exit(0) }
+let h = unwrap(tty.enter(#{ "alt_screen": true, "hide_cursor": true, "mouse": true, "paste": true }))
+let events = tty.events(h)
+let (cols, rows) = unwrap(tty.size())
+tty.write(h, "\u{1b}[2J\u{1b}[H" + show(cols) + "x" + show(rows) + " — q quits\r\n")
+let mut going = true
+while going {
+    match chan.recv(events) {
+        Ok(ev) => {
+            if map_get(ev, "kind") == "key" && map_get(ev, "chord") == "q" => { going = false }
+            else if map_get(ev, "kind") == "key" && map_get(ev, "chord") == "ctrl+z" => { tty.suspend(h) }
+            else => { tty.write(h, show(ev) + "\r\n") }
+        },
+        Err(e) => { going = false }
+    }
+}
+tty.leave(h)
+```
+
+### The restore guarantee
+
+`tty.enter` records everything it is about to change — the terminal's
+settings and the bytes that undo each mode — in a process-wide guard
+*before* changing it. Restoring is one idempotent operation that
+exactly one caller performs, and every way a process ends reaches it
+without the program's help:
+
+| The program… | Restored by |
+|---|---|
+| calls `tty.leave(h)` | `leave` |
+| finishes without leaving | the runtime, as the program's evaluation returns |
+| raises and does not catch it | the runtime, *before* the error is printed — the report lands on the main screen, in a cooked terminal |
+| calls `os.exit(n)` | `os.exit`, before exiting |
+| ends any other way through `exit` (a deadlock abort, a broken pipe) | an `atexit` handler (Unix) |
+| hits a runtime panic, in any thread | the panic hook, before the panic message (also in release builds, where a panic aborts) |
+| receives SIGTERM, SIGHUP, or SIGINT | the signal action: restore, then die of the signal exactly as the default action would (the exit status says so) |
+| is stopped (SIGTSTP) | the signal action restores and stops; SIGCONT re-enters |
+
+The signal actions restore with `write(2)` and `tcsetattr(3)` on data
+recorded in advance — both async-signal-safe — so they work whatever
+the program's threads were doing. A program that **traps** the signals
+itself (`os.on_interrupt()` or `os.on_shutdown(f)`, called before
+`tty.enter`) owns them: the guard does not end the process, the signal
+arrives as a `signal` event (`"term"`, `"hup"`, `"int"`), and the
+program leaves when it chooses (or `os.exit`s, which restores).
+
+Nothing can restore after SIGKILL or a stack overflow (the runtime
+aborts without a hook); `reset` in the shell is the remedy there.
+
+`tests/tty_test.rs` holds the guarantee to account: a real olang
+program in a pseudo-terminal enters raw mode and the alternate screen,
+then raises, exits, ends, receives SIGTERM, SIGHUP, or SIGINT, panics,
+or suspends — and the test asserts the leave sequences reached the
+terminal after the enter, and that the terminal's settings are cooked
+again, exactly as before.
+
+**Platforms.** On Unix (macOS, Linux, the BSDs) the module reads and
+decodes stdin itself — the decoder is `src/stdlib/tty/decode.rs`, tested
+byte by byte — because crossterm's parser is private, consumes query
+replies, and has no Esc timeout. On Windows it uses crossterm: console
+raw mode and mouse capture, and the console's input records for keys,
+mouse, resize, and focus, output as VT sequences (Windows Terminal and
+ConPTY consoles). There, `tty.query` and `tty.suspend` answer `Err`,
+bracketed paste arrives as keys, `kitty_keys` has no effect, and the
+guard restores on leave, program end, `os.exit`, raise, and panic (a
+console process has no SIGTERM). The restore tests have run on macOS;
+Linux is compiled and clippy-clean, Windows is compiled against a
+stand-in of the crate paths and clippy-clean — neither has been run.
 
 ## `http` — HTTP
 

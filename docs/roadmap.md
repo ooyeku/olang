@@ -568,6 +568,23 @@ Tags as in W9.
 | `[olang]` The smaller ones | `fs.abs_path` documented among the pure helpers; `proc.spawn` with a missing `cwd` blamed the program; `assert_eq` of a JsonObject and an equal Map failed where `==` held; a promoted `shadow` advisory carried the type checker's label | **landed** — the fs table says `abs_path` answers a Result; spawn, pipeline, and exec name the missing directory; `assert_eq`/`assert_ne` compare as `==` does (total, through Results); each promoted class has its own label ("shadows the module from here") |
 | `[web-sdk]` An aborted view transition surfaced as an uncaught rejection | seen in the desktop preview pane: `InvalidStateError: Transition was aborted because of invalid state` | **landed** — the shim catches the transition's promises, applies the repaint once itself if the browser has not, and reports only a throw from the patch. Pinned by dom_harness stage 14 |
 
+## H0 — Heddle's terminal layer
+
+Heddle, a terminal UI framework written in olang (its SPEC.md, §14),
+needs a terminal layer the standard library did not have: `os.is_tty`,
+`os.read_line` and `term` are line-oriented. Milestone H0 is done when
+a raw-mode echo program restores the terminal after a raise, a SIGTERM,
+and a panic, on macOS, Linux, and Windows Terminal. Tags as in W9.
+
+| Item | Evidence | Status |
+|---|---|---|
+| `[olang]` Raw mode, the alternate screen, and the reporting modes, restored however the program ends | a TUI that raises mid-frame leaves the shell in raw mode on the alternate screen with the error printed where nobody sees it; one that is sent SIGTERM leaves it the same way | **landed** — `tty.enter(opts)` / `tty.leave(h)` (raw, alt_screen, mouse, paste, focus, kitty_keys, hide_cursor). A guard armed before anything changes restores on leave, on the program's end and on an uncaught raise (before the error prints), on `os.exit`, on any `exit(3)` (atexit), on a panic in any thread (the hook), and on SIGTERM/SIGHUP/SIGINT (async-signal-safe actions that then die of the signal) unless the program trapped them. Pinned in tests/tty_test.rs by olang programs in a pseudo-terminal — raise, `os.exit`, falling off the end, SIGTERM, SIGHUP, SIGINT, a forced panic (a debug-build hook), a trapped SIGTERM, suspend and resume — asserting the leave sequences and the pty's cooked settings. Run on macOS; Linux compiled and clippy-clean; Windows compiled against a stand-in of the crate and clippy-clean. Not run on Linux or Windows Terminal yet: the H0 criterion is met on macOS only |
+| `[olang]` Decoded input as events | `os.read_line` is all a program could read | **landed** — `tty.events(h)`: key (with modifiers and a `chord` in Heddle's spelling), paste, mouse (SGR and X10), resize (SIGWINCH), focus, signal (tstp, cont, term/hup/int when trapped, eof). Unix decodes stdin itself (crossterm's parser is private and eats query replies); Windows reads console records through crossterm. Esc against alt+key by a 25 ms wait. The decoder is pinned byte by byte (xterm, SS3, the kitty protocol, modifyOtherKeys, bracketed paste split across reads, replies) |
+| `[olang]` Unbuffered writes and capability queries | Heddle detects synchronized output, the background colour, and the kitty protocol by asking the terminal | **landed** — `tty.write(h, s)`; `tty.query(h, seq, ms)` answers the reply or `Err("timeout")`, and a reply never reaches the events, however late it arrives (pinned in a pty). Unix only; Windows answers `Err` |
+| `[olang]` Display width | truncating and padding by `str.length` splits wide characters and misaligns emoji | **landed** — `str.width(s)` and `str.cell_width(g)`: grapheme clusters, unicode-width 0.2 (Unicode 17), 0/1/2 cells, controls 0, clusters capped at 2 (flags). In the browser runtime too |
+| `[olang]` Suspend | ctrl+z in raw mode is a key, and a stop without a restore leaves the shell raw | **landed** — `tty.suspend(h)` restores, stops (SIGTSTP to the group), and on SIGCONT re-enters and sends `signal cont` and a resize; an outside SIGTSTP is restored the same way. Pinned in a pty |
+| `[olang]` Open | — | a capability for the terminal (a dependency may take it over today); record/replay does not capture tty input; `tty.query` and suspend on Windows; signals trapped with `os.on_interrupt` *after* `tty.enter` are the program's but arrive as no event |
+
 ## Process
 
 One lane at a time, each landing with its tests and documentation in
