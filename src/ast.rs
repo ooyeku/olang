@@ -779,6 +779,17 @@ impl RunRef {
         (*declared_at < position).then(|| value.clone())
     }
 
+    /// Will `get` answer the same for every name from now on? True for no
+    /// run and for a closed one; false while the run is still open (its
+    /// table is written once, when it ends) or after it was freed.
+    pub fn is_settled(&self) -> bool {
+        match self {
+            RunRef::None => true,
+            RunRef::Member(run, _) => run.table.get().is_some(),
+            RunRef::Sibling(run, _) => run.upgrade().is_some_and(|run| run.table.get().is_some()),
+        }
+    }
+
     fn identity(&self) -> Option<(*const FnRun, u32)> {
         match self {
             RunRef::None => None,

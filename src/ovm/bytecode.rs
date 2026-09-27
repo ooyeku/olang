@@ -199,7 +199,29 @@ pub struct BytecodeVm {
         std::sync::Weak<im::HashMap<String, crate::ast::Value>>,
         FunctionId,
     )>,
+    /// Compiled lambdas shared by every closure of one body whose
+    /// captures are the same, by body address (see `HofShared`). A
+    /// closure the interpreter makes is a new allocation on every
+    /// evaluation of its lambda expression, so `hof_cache` alone — keyed
+    /// on that allocation — compiled a lambda written in an interpreted
+    /// function once per CALL of the function, and the JIT gave each
+    /// compile machine code it can never free: ~1.3 KB a call, forever.
+    hof_shared: HashMap<usize, Vec<HofShared>>,
+    /// Closures compiled one by one (not shared), per body: past
+    /// `HOF_JIT_CLOSURES` the body is churning and its compiles stay on
+    /// the bytecode VM, whose artifacts are freed with the closure.
+    hof_churn: HashMap<usize, (std::sync::Weak<Expr>, u32)>,
+    /// Bumped whenever a declaration changes what a compile could resolve
+    /// a name to; a shared lambda compiled under an older epoch is not
+    /// reused.
+    hof_epoch: u64,
+    /// Closure compiles refused machine code (`HOF_JIT_CLOSURES`) — kept
+    /// off on-stack replacement too, which would JIT their loops.
+    jit_withheld: std::collections::HashSet<FunctionId>,
     /// The ids inserted while a closure compiles; `None` outside that.
+    /// While it is `Some`, native compilation is deferred: whether the
+    /// closure's code may take machine code is decided once the compile
+    /// is done (see `hof_function_id`).
     hof_track: Option<Vec<FunctionId>>,
     /// The `hof_cache` size at which the next sweep runs: what the last
     /// sweep left alive, plus a few.
@@ -1114,6 +1136,126 @@ const HOF_SWEEP_MIN: usize = 8;
 /// …and a LIVE set this large is retired from the index (as the old
 /// fixed bound of 512 did by clearing it).
 const HOF_LIVE_CAP: usize = 4096;
+/// Shared compiles kept per lambda body (distinct capture sets, or epochs).
+const HOF_SHARED_PER_BODY: usize = 8;
+/// A closure with more captures than this is not compared for sharing:
+/// the comparison runs on every cache miss and must stay cheap.
+const HOF_SHARED_MAX_CAPTURES: usize = 16;
+/// A captured string longer than this is not shareable: a shared compile
+/// keeps its captures for the life of the body.
+const HOF_SHARED_MAX_STRING: usize = 256;
+/// Closures of one body compiled one by one that may still take machine
+/// code. The JIT's code memory is never returned, so a body whose
+/// closures keep changing (a capture that differs on every call) stays on
+/// the bytecode VM past this many — where its artifacts die with it.
+const HOF_JIT_CLOSURES: u32 = 4;
+
+/// One compile of a lambda body shared by all its closures whose captures
+/// are the same (`BytecodeVm::hof_shared`).
+///
+/// A closure's captures are baked into its compiled code as constants,
+/// which is why `hof_cache` keys on the closure's allocation. But the
+/// compile reads nothing else from the closure: two closures of one body
+/// whose captures are the same values compile to the same code. The
+/// interpreter makes a new closure allocation every time it evaluates a
+/// lambda expression — once per call of the function holding it — so
+/// without this each call compiled (and JIT-compiled) the lambda again.
+///
+/// Only small closures of cheap, long-lived values share (scalars, short
+/// strings, builtins, modules, unit enum variants, and functions the
+/// program declared): the entry keeps its reference closure alive for the
+/// life of the body, which must never pin a request's data the way the
+/// per-closure artifacts once did (see `hof_owned`).
+struct HofShared {
+    body: std::sync::Weak<Expr>,
+    /// The closure the code was compiled under; a candidate matches when
+    /// its captures are the same values (`hof_value_same`).
+    closure: std::sync::Arc<im::HashMap<String, crate::ast::Value>>,
+    name: Option<String>,
+    def_file: Option<String>,
+    parameters: Vec<crate::ast::Parameter>,
+    param_checks: Vec<Option<crate::ast::FieldTypeCheck>>,
+    return_check: Option<crate::ast::FieldTypeCheck>,
+    run: crate::ast::RunRef,
+    /// Whether that run was closed at compile time. A name the closure
+    /// lacks may resolve through a closed run's sibling table, and
+    /// through the file's scope while it is open — the same values, but
+    /// a compile under one state is not reused under the other.
+    run_settled: bool,
+    epoch: u64,
+    /// The compiled root, or `None` for a body the tier refused under
+    /// these captures (a refusal is as deterministic as a compile).
+    root: Option<FunctionId>,
+    /// Every id the compile created (the root and its nested lambdas).
+    ids: Vec<FunctionId>,
+}
+
+impl HofShared {
+    fn matches(&self, func: &crate::ast::Function, epoch: u64) -> bool {
+        self.epoch == epoch
+            && self
+                .body
+                .upgrade()
+                .is_some_and(|body| Arc::ptr_eq(&body, &func.body))
+            && self.name == func.name
+            && self.def_file == func.def_file
+            && self.run == func.run
+            && self.run_settled == func.run.is_settled()
+            && self.parameters == func.parameters
+            && self.param_checks == func.param_checks
+            && self.return_check == func.return_check
+            && (Arc::ptr_eq(&self.closure, &func.closure)
+                || (self.closure.len() == func.closure.len()
+                    && self.closure.iter().all(|(name, value)| {
+                        func.closure
+                            .get(name)
+                            .is_some_and(|other| hof_value_same(value, other))
+                    })))
+    }
+}
+
+/// Are two captured values the same for a compile that bakes them in?
+/// Scalars by value (floats by bits: -0.0 and NaN stay distinct), the
+/// rest by allocation identity. Only the kinds `hof_shareable` admits
+/// are ever compared.
+fn hof_value_same(a: &crate::ast::Value, b: &crate::ast::Value) -> bool {
+    use crate::ast::Value as V;
+    match (a, b) {
+        (V::Integer(x), V::Integer(y)) => x == y,
+        (V::Float(x), V::Float(y)) => x.to_bits() == y.to_bits(),
+        (V::Boolean(x), V::Boolean(y)) => x == y,
+        (V::Unit, V::Unit) => true,
+        (
+            V::Range {
+                start: s1,
+                end: e1,
+                inclusive: i1,
+            },
+            V::Range {
+                start: s2,
+                end: e2,
+                inclusive: i2,
+            },
+        ) => s1 == s2 && e1 == e2 && i1 == i2,
+        (V::String(x), V::String(y)) => x == y,
+        (V::Builtin(x), V::Builtin(y)) => x.name == y.name && x.arity == y.arity,
+        (V::Function(x), V::Function(y)) => Arc::ptr_eq(x, y),
+        (
+            V::Struct {
+                type_name: t1,
+                fields: f1,
+            },
+            V::Struct {
+                type_name: t2,
+                fields: f2,
+            },
+        ) => t1 == t2 && Arc::ptr_eq(f1, f2),
+        (V::Enum(x), V::Enum(y)) => Arc::ptr_eq(x, y),
+        (V::EnumConstructor(x), V::EnumConstructor(y)) => Arc::ptr_eq(x, y),
+        (V::TypeInfo(x), V::TypeInfo(y)) => Arc::ptr_eq(x, y),
+        _ => false,
+    }
+}
 
 // Default implementations
 
@@ -1334,6 +1476,10 @@ impl BytecodeVm {
             hof_cache: HashMap::new(),
             hof_owned: HashMap::new(),
             hof_retired: Vec::new(),
+            hof_shared: HashMap::new(),
+            hof_churn: HashMap::new(),
+            hof_epoch: 0,
+            jit_withheld: std::collections::HashSet::new(),
             hof_track: None,
             hof_sweep_at: HOF_SWEEP_MIN,
             struct_defs: HashMap::new(),
@@ -1384,12 +1530,14 @@ impl BytecodeVm {
         match self.struct_defs.get(&name) {
             Some(existing) if *existing == fields => false,
             Some(_) => {
+                self.hof_epoch += 1;
                 self.struct_defs.remove(&name);
                 self.struct_field_checks.remove(&name);
                 self.poisoned_structs.insert(name);
                 true
             }
             None => {
+                self.hof_epoch += 1;
                 self.struct_field_checks.insert(name.clone(), field_checks);
                 self.struct_defs.insert(name, fields);
                 false
@@ -1399,7 +1547,9 @@ impl BytecodeVm {
 
     /// The tier's verdict that two different functions share `name`.
     pub fn mark_ambiguous(&mut self, name: &str) {
-        self.ambiguous_function_names.insert(name.to_string());
+        if self.ambiguous_function_names.insert(name.to_string()) {
+            self.hof_epoch += 1;
+        }
         self.compiler.ambiguous_names.insert(name.to_string());
     }
 
@@ -1411,6 +1561,13 @@ impl BytecodeVm {
         file: String,
         scope: std::sync::Arc<im::HashMap<String, crate::ast::Value>>,
     ) {
+        if !self
+            .module_scopes
+            .get(&file)
+            .is_some_and(|old| std::sync::Arc::ptr_eq(old, &scope))
+        {
+            self.hof_epoch += 1;
+        }
         self.module_scopes.insert(file, scope);
         self.bridge_landscape_version += 1;
     }
@@ -1420,11 +1577,18 @@ impl BytecodeVm {
         name: String,
         func: std::sync::Arc<crate::ast::Function>,
     ) {
-        if let Some(existing) = self.known_function_values.get(&name)
-            && !std::sync::Arc::ptr_eq(&existing.body, &func.body)
-        {
-            self.ambiguous_function_names.insert(name.clone());
-            self.compiler.ambiguous_names.insert(name.clone());
+        match self.known_function_values.get(&name) {
+            Some(existing) if !std::sync::Arc::ptr_eq(&existing.body, &func.body) => {
+                self.ambiguous_function_names.insert(name.clone());
+                self.compiler.ambiguous_names.insert(name.clone());
+                self.hof_epoch += 1;
+            }
+            // The same declaration re-closed over a fuller scope (a module
+            // re-noting its exports): a name resolves differently through it.
+            Some(existing) if !std::sync::Arc::ptr_eq(existing, &func) => self.hof_epoch += 1,
+            Some(_) => {}
+            // A name a lambda could not resolve before may resolve now.
+            None => self.hof_epoch += 1,
         }
         self.bridge_landscape_version += 1;
         self.known_function_values.insert(name, func);
@@ -1444,10 +1608,14 @@ impl BytecodeVm {
         // The bridge interpreter snapshots these tables at creation; a change
         // invalidates that snapshot.
         self.builtin_interpreter = None;
-        match self.trait_impls.insert((type_name, method), func.clone()) {
+        let changed = match self.trait_impls.insert((type_name, method), func.clone()) {
             Some(old) => !std::sync::Arc::ptr_eq(&old.body, &func.body),
             None => true,
+        };
+        if changed {
+            self.hof_epoch += 1;
         }
+        changed
     }
 
     /// Record a trait's default method. Same change-tracking as
@@ -1459,13 +1627,17 @@ impl BytecodeVm {
         func: crate::ast::Function,
     ) -> bool {
         self.builtin_interpreter = None;
-        match self
+        let changed = match self
             .trait_defaults
             .insert((trait_name, method), func.clone())
         {
             Some(old) => !std::sync::Arc::ptr_eq(&old.body, &func.body),
             None => true,
+        };
+        if changed {
+            self.hof_epoch += 1;
         }
+        changed
     }
 
     /// Record that a type implements a trait (registration order matters:
@@ -1477,6 +1649,7 @@ impl BytecodeVm {
             false
         } else {
             traits.push(trait_name);
+            self.hof_epoch += 1;
             true
         }
     }
@@ -1541,7 +1714,11 @@ impl BytecodeVm {
     pub fn note_unit_variant(&mut self, name: String) -> bool {
         self.bridge_landscape_version += 1;
         self.builtin_interpreter = None;
-        self.unit_variant_names.insert(name)
+        let new = self.unit_variant_names.insert(name);
+        if new {
+            self.hof_epoch += 1;
+        }
+        new
     }
 
     /// Record a `type Name = <annotation>` alias. The bridge interpreter,
@@ -1561,6 +1738,9 @@ impl BytecodeVm {
     }
 
     pub fn note_type_alias(&mut self, name: String, target: crate::ast::TypeAnnotation) {
+        if self.type_aliases.get(&name) != Some(&target) {
+            self.hof_epoch += 1;
+        }
         self.type_aliases.insert(name, target);
         if let Some(bridge) = self.builtin_interpreter.as_mut() {
             bridge.set_type_aliases(self.type_aliases.clone());
@@ -1570,7 +1750,11 @@ impl BytecodeVm {
     /// Mirror a declared enum's type name, so `is_declared_type` recognizes
     /// it and an annotation naming it is a real type, not an unknown one.
     pub fn note_enum_type(&mut self, name: String) -> bool {
-        self.enum_type_names.insert(name)
+        let new = self.enum_type_names.insert(name);
+        if new {
+            self.hof_epoch += 1;
+        }
+        new
     }
 
     /// A struct or enum the program declared. Shared by the four annotation
@@ -1607,7 +1791,9 @@ impl BytecodeVm {
     /// of the same name — matching the interpreter, where an environment
     /// lookup finds the user's definition first.
     pub fn shadow_builtin(&mut self, name: &str) {
-        self.builtin_names.remove(name);
+        if self.builtin_names.remove(name) {
+            self.hof_epoch += 1;
+        }
         #[cfg(feature = "native")]
         self.jit.note_shadow(name);
     }
@@ -1836,8 +2022,11 @@ impl BytecodeVm {
                 let lambda_bytecode = Arc::new(compiled?);
                 let idx = lambda_id.index();
                 self.mirror_hot(idx, &lambda_bytecode);
+                // A closure's compile defers this to `hof_function_id`.
                 #[cfg(feature = "native")]
-                self.jit.try_compile(lambda_id, &lambda_bytecode);
+                if self.hof_track.is_none() {
+                    self.jit.try_compile(lambda_id, &lambda_bytecode);
+                }
                 if let Ok(mut cache) = self.bytecode_cache.write() {
                     cache.insert(lambda_id, lambda_bytecode);
                 }
@@ -1851,7 +2040,9 @@ impl BytecodeVm {
         let idx = func_id.index();
         self.mirror_hot(idx, &bytecode);
         #[cfg(feature = "native")]
-        self.jit.try_compile(func_id, &bytecode);
+        if self.hof_track.is_none() {
+            self.jit.try_compile(func_id, &bytecode);
+        }
         if let Ok(mut cache) = self.bytecode_cache.write() {
             cache.insert(func_id, bytecode);
         }
@@ -2461,6 +2652,9 @@ impl BytecodeVm {
             return None;
         }
         let fid = bytecode.function_id;
+        if self.jit_withheld.contains(&fid) {
+            return None;
+        }
         if !self.osr_regions.contains_key(&(fid, head)) {
             let region = crate::ovm::osr::synthesize(bytecode, head).map(std::sync::Arc::new);
             match &region {
@@ -5806,6 +6000,7 @@ impl BytecodeVm {
             if let Some(slot) = self.bytecode_hot.get_mut(id.index()) {
                 *slot = None;
             }
+            self.jit_withheld.remove(id);
             #[cfg(feature = "native")]
             self.jit.forget(*id);
         }
@@ -5843,6 +6038,19 @@ impl BytecodeVm {
             }
             alive
         });
+        // Shared compiles go with their body; so does a body's churn count.
+        self.hof_shared.retain(|_, list| {
+            list.retain(|e| {
+                let alive = e.body.strong_count() > 0;
+                if !alive {
+                    dead.extend(e.ids.iter().copied());
+                }
+                alive
+            });
+            !list.is_empty()
+        });
+        self.hof_churn
+            .retain(|_, (body, _)| body.strong_count() > 0);
         if self.hof_cache.len() >= HOF_LIVE_CAP {
             for (_, (body, env, id)) in self.hof_cache.drain() {
                 if let Some(id) = id {
@@ -5875,6 +6083,83 @@ impl BytecodeVm {
         // between sweeps is a count of those. A sweep is a weak-count check
         // per entry, and it runs only beside a compile, which costs far more.
         self.hof_sweep_at = self.hof_cache.len() + HOF_SWEEP_MIN;
+    }
+
+    /// Register a closure compile's ids with the JIT, deferred from the
+    /// compile itself (see `hof_track`).
+    #[cfg_attr(not(feature = "native"), allow(unused_variables))]
+    fn jit_admit(&mut self, ids: &[FunctionId]) {
+        #[cfg(feature = "native")]
+        for id in ids {
+            let bytecode = self
+                .bytecode_cache
+                .read()
+                .ok()
+                .and_then(|cache| cache.get(id).cloned());
+            if let Some(bytecode) = bytecode {
+                self.jit.try_compile(*id, &bytecode);
+            }
+        }
+    }
+
+    /// Is there room for one more shared compile of the body at
+    /// `body_key`? Entries of a dead body (whose address a new body now
+    /// has) are evicted on the way.
+    fn hof_shared_room(&mut self, body_key: usize) -> bool {
+        let Some(list) = self.hof_shared.get_mut(&body_key) else {
+            return true;
+        };
+        let mut dead: Vec<FunctionId> = Vec::new();
+        list.retain(|e| {
+            let alive = e.body.strong_count() > 0;
+            if !alive {
+                dead.extend(e.ids.iter().copied());
+            }
+            alive
+        });
+        let room = list.len() < HOF_SHARED_PER_BODY;
+        self.evict_compiled(&dead);
+        room
+    }
+
+    /// May every closure of `func`'s body with the same captures share one
+    /// compile (`HofShared`)? Only a small closure of cheap values that
+    /// outlive it: a shared entry keeps its captures for the life of the
+    /// body.
+    fn hof_shareable(&self, func: &crate::ast::Function) -> bool {
+        use crate::ast::Value as V;
+        if func.closure.len() > HOF_SHARED_MAX_CAPTURES {
+            return false;
+        }
+        let module = func
+            .def_file
+            .as_deref()
+            .and_then(|file| self.module_scopes.get(file));
+        func.closure.iter().all(|(name, value)| match value {
+            V::Integer(_)
+            | V::Float(_)
+            | V::Boolean(_)
+            | V::Unit
+            | V::Range { .. }
+            | V::Builtin(_)
+            | V::EnumConstructor(_)
+            | V::TypeInfo(_) => true,
+            V::String(text) => text.len() <= HOF_SHARED_MAX_STRING,
+            V::Enum(e) => matches!(e.variant_data, crate::ast::EnumVariantData::Unit),
+            V::Struct { type_name, .. } => type_name == "Module",
+            // A function the program declared lives as long as the program
+            // anyway; a closure made per call (a local lambda) would pin its
+            // own captures, and never match again.
+            V::Function(f) => {
+                let same = |v: Option<&V>| matches!(v, Some(V::Function(g)) if Arc::ptr_eq(f, g));
+                self.known_function_values
+                    .get(name)
+                    .is_some_and(|g| Arc::ptr_eq(f, g))
+                    || same(module.and_then(|m| m.get(name)))
+                    || same(self.host_globals.as_ref().and_then(|g| g.get(name)))
+            }
+            _ => false,
+        })
     }
 
     /// Resolve a function *value* (a lambda constant or a function passed
@@ -5911,6 +6196,16 @@ impl BytecodeVm {
         {
             return *cached;
         }
+        // A new closure of a body already compiled under the same
+        // captures: the same code. This is the common case of a lambda
+        // written in an interpreted function — a new closure per call.
+        let body_key = key.0;
+        if let Some(shared) = self.hof_shared.get(&body_key)
+            && let Some(entry) = shared.iter().find(|e| e.matches(func, self.hof_epoch))
+        {
+            return entry.root;
+        }
+        let shareable = self.hof_shareable(func);
 
         let decl = FunctionDecl {
             name_span: None,
@@ -5966,14 +6261,67 @@ impl BytecodeVm {
             }
         }
         let created = self.hof_track.take().unwrap_or_default();
-        match result {
+        if result.is_none() {
             // What a failed or abandoned attempt inserted serves nothing.
-            None => self.evict_compiled(&created),
-            Some(root) => {
-                // An earlier attempt's nested lambdas are superseded by the
-                // successful one's; all of them go with the closure.
-                self.hof_owned.insert(root, created);
+            self.evict_compiled(&created);
+        }
+        if shareable && self.hof_shared_room(body_key) {
+            // Shared: the code (or the refusal) serves every closure of
+            // this body with these captures, for as long as the body
+            // lives, and takes machine code like any function compiled
+            // once.
+            if result.is_some() {
+                self.jit_admit(&created);
             }
+            self.hof_shared
+                .entry(body_key)
+                .or_default()
+                .push(HofShared {
+                    body: Arc::downgrade(&func.body),
+                    closure: func.closure.clone(),
+                    name: func.name.clone(),
+                    def_file: func.def_file.clone(),
+                    parameters: func.parameters.clone(),
+                    param_checks: func.param_checks.clone(),
+                    return_check: func.return_check.clone(),
+                    run: func.run.clone(),
+                    run_settled: func.run.is_settled(),
+                    epoch: self.hof_epoch,
+                    root: result,
+                    ids: if result.is_some() {
+                        created
+                    } else {
+                        Vec::new()
+                    },
+                });
+            return result;
+        }
+        if let Some(root) = result {
+            // Per closure: the artifacts go with the closure (below). Machine
+            // code never goes — the JIT cannot return code memory — so only
+            // a body's first few closures take it; past that the body is
+            // making a new closure per call, and native code per closure
+            // would grow without bound.
+            let churn = self
+                .hof_churn
+                .entry(body_key)
+                .or_insert_with(|| (Arc::downgrade(&func.body), 0));
+            if !churn
+                .0
+                .upgrade()
+                .is_some_and(|b| Arc::ptr_eq(&b, &func.body))
+            {
+                *churn = (Arc::downgrade(&func.body), 0);
+            }
+            churn.1 = churn.1.saturating_add(1);
+            if churn.1 <= HOF_JIT_CLOSURES {
+                self.jit_admit(&created);
+            } else {
+                self.jit_withheld.extend(created.iter().copied());
+            }
+            // An earlier attempt's nested lambdas are superseded by the
+            // successful one's; all of them go with the closure.
+            self.hof_owned.insert(root, created);
         }
         if self.hof_cache.len() >= self.hof_sweep_at {
             self.sweep_hof_cache();
