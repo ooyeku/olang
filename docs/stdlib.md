@@ -1815,18 +1815,29 @@ same server also delivering its own browser frontend from disk.
 ## `db` — SQLite
 
 A connection handle flows through every call. `:memory:` gives a fresh
-in-process database — the example below really runs.
+in-process database — the examples below really run.
 
 | Function | Description |
 |---|---|
-| `db.open(path)` | open or create (`":memory:"` for in-memory) |
-| `db.execute(conn, sql)` / `db.execute(conn, sql, params)` | run a statement; `?` placeholders |
+| `db.open(path)` / `db.open(path, opts)` | open or create (`":memory:"` for in-memory); options below |
+| `db.execute(conn, sql)` / `db.execute(conn, sql, params)` | run a statement; `?` placeholders — `Ok(rows changed)` |
 | `db.query(conn, sql)` / with `params` | rows as a list of maps |
 | `db.query_one(conn, sql)` | the first row as a map, or `Ok(())` when there is none — unambiguous, since a row is always a map |
+| `db.query_rows(conn, sql)` / with `params` | the columns and the rows as SQL has them: `#{ "columns": [#{ "name", "decltype", "index" }], "rows": [[value, …]] }` |
+| `db.cursor(conn, sql)` / with `params` | a statement to read a piece at a time — `Ok(cursor)` |
+| `db.next(cur, n)` | up to `n` more rows of a cursor, each a list; `[]` at the end |
+| `db.columns(cur)` | a cursor's columns, as `db.query_rows` has them |
+| `db.close_cursor(cur)` | finish a cursor now |
+| `db.interrupt(conn)` | stop the statement the connection is running, from any task |
 | `db.transaction(conn, f)` | `f(conn)` inside a transaction: commit unless `f` returns an `Err` or raises, which roll back; `f`'s result is handed through. Transactions on one connection are serialized across threads — a second `db.transaction` waits for the first to end — so the http workers of a served app may share a connection; plain statements from another thread do not wait, and join whatever transaction is open |
 | `db.migrate(conn, steps)` | bring the schema to the head of `steps` (a list of versions, each a list of SQL); a `schema_version` table records progress, each version runs in its own transaction, a failing statement is named — `Ok(version)` |
 | `db.begin(conn)` / `db.commit(conn)` / `db.rollback(conn)` | transactions by hand |
-| `db.close(conn)` | close the handle |
+| `db.close(conn)` | close the handle (its open cursors are finished first) |
+
+Values: NULL is `()`, INTEGER an `Int`, REAL a `Float`, TEXT a `String`.
+A BLOB is `Bytes` from `db.query_rows` and `db.next`; `db.query` and
+`db.query_one` answer it as a `String` (invalid UTF-8 replaced), as they
+always have. A `Bool` binds as `1`/`0`, `Bytes` as a BLOB.
 
 ```olang
 let conn = unwrap(db.open(":memory:"))
@@ -1842,6 +1853,126 @@ for row in rows {
 }
 unwrap(db.close(conn))
 ```
+
+**Opening.** `db.open(path, #{ "readonly": true, "create": false })` —
+both optional, and the defaults are read-write and create:
+
+- `readonly: true` opens with `SQLITE_OPEN_READ_ONLY`: SQLite refuses
+  every write (`Err("db.execute: attempt to write a readonly
+  database")`), and a missing file is refused rather than made.
+- `create: false` opens read-write but refuses a missing file:
+  `Err("db.open: no database at <path> (create: false)")`.
+- `readonly: true` with `create: true` is an `Err`.
+
+A SQLite URI filename is read as a URI, so its parameters work too:
+`db.open("file:/data/app.db?mode=ro")` (also `mode=rw`, `mode=rwc`,
+`mode=memory`, `cache=shared`, `immutable=1`). Escape `%`, `?`, and `#`
+in the path as `%25`, `%3F`, and `%23`. Under a capability manifest, a
+read-only open (either way) needs `fs = "read"`; any other file open
+needs full `fs`.
+
+**Rows as SQL has them.** A `db.query` row is a map, so its keys come
+back sorted, two columns of one name collapse into one, and a result
+with no rows says nothing about its columns. `db.query_rows` keeps all
+of it: the columns in order, each with its declared type (`decltype`,
+`()` for an expression), repeated names kept, known with zero rows; the
+rows as lists in the same order.
+
+```olang
+let c = unwrap(db.open(":memory:"))
+unwrap(db.execute(c, "CREATE TABLE p (name TEXT, photo BLOB)"))
+unwrap(db.execute(c, "INSERT INTO p VALUES (?, ?)", ["ann", bytes.from_list([0, 255])]))
+let r = unwrap(db.query_rows(c, "SELECT name, photo, 1 AS name FROM p"))
+assert_eq(map(map_get(r, "columns"), (k) => map_get(k, "name")), ["name", "photo", "name"])
+assert_eq(map(map_get(r, "columns"), (k) => map_get(k, "decltype")), ["TEXT", "BLOB", ()])
+assert_eq(map_get(r, "rows"), [["ann", bytes.from_list([0, 255]), 1]])
+unwrap(db.close(c))
+```
+
+**Cursors.** `db.query` and `db.query_rows` read a whole result before
+they answer. `db.cursor(conn, sql, params?, opts?)` prepares the
+statement and reads nothing; each `db.next(cur, n)` steps it for up to
+`n` more rows (lists, as `db.query_rows`'s), and answers `[]` once the
+rows run out. Reading the first screen of a ten-million-row SELECT
+costs that screen, not the rest.
+
+```olang
+let c = unwrap(db.open(":memory:"))
+let cur = unwrap(db.cursor(c, "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n LIMIT 10000000) SELECT i FROM n"))
+assert_eq(map(unwrap(db.columns(cur)), (k) => map_get(k, "name")), ["i"])
+assert_eq(unwrap(db.next(cur, 3)), [[1], [2], [3]])
+assert_eq(unwrap(db.next(cur, 2)), [[4], [5]])
+unwrap(db.close_cursor(cur))
+unwrap(db.close(c))
+```
+
+A cursor's lifetime:
+
+- It holds its statement until the rows run out (finished then, at
+  once), `db.close_cursor(cur)`, the last copy of the handle is dropped
+  (finished when the connection is next free — a drop never waits on a
+  running statement), or `db.close` of its connection. `db.next` on a
+  closed cursor answers `Err("db.next: the cursor is closed")`; after
+  `db.close`, `Err("db.next: connection is closed")`. `db.columns` works
+  throughout.
+- An open cursor is an active read. In SQLite's default
+  (rollback-journal) mode it holds a shared lock on the file, so another
+  connection's write waits for it (up to the 5 s busy timeout, then
+  `Err("… database is locked")`); in WAL mode (`PRAGMA
+  journal_mode=WAL`) readers and a writer do not block each other.
+  Close a cursor you have finished with.
+- The connection stays usable while a cursor is open: other statements
+  and other cursors run on it between reads. Writing to the table a
+  cursor reads leaves what the cursor reads next undefined (SQLite's
+  rule); read to the end, or use a second connection.
+- A `db.next` that fails — an SQL error, an interrupt, a timeout —
+  finishes the cursor: that call answers the `Err` (the rows it had
+  read are dropped), and every later one answers `Err("db.next: the
+  cursor failed: <why>")`.
+- A cursor may be read from any task; reads of one connection take turns.
+
+**Stopping a statement.** Every statement a connection runs can be
+stopped from outside it:
+
+- `db.interrupt(conn)` (or a cursor) stops the statement the connection
+  is running at that moment — a `db.query`, `db.execute`,
+  `db.query_rows`, or `db.next` on any task. It is meant to be called
+  from another task than the one running the statement: it takes no
+  lock, so it answers at once, and the stopped call answers
+  `Err("db.<fn>: interrupted")` within a few thousand SQLite
+  instructions. The connection stays usable, and an interrupt affects
+  nothing that starts after the statement it stopped (with nothing
+  running, it does nothing). An open cursor between reads is not
+  running: close it instead.
+- `timeout_ms` bounds one call: `db.query(conn, sql, params, #{
+  "timeout_ms": 500 })` answers `Err("db.query: timed out after 500
+  ms")` when the statement runs longer. It is taken by `db.execute`,
+  `db.query`, `db.query_one`, `db.query_rows`, and `db.cursor` (where
+  it bounds each `db.next`). The options map may stand where the params
+  would: `db.query(conn, sql, #{ "timeout_ms": 500 })`.
+
+Both work through a progress handler SQLite calls every thousand
+virtual-machine instructions, not `sqlite3_interrupt` (whose flag stays
+set while any statement on the connection is active — an open cursor
+would make one interrupt fail every later statement). A statement
+waiting for another connection's lock (the busy timeout) is not running
+instructions, so it is not stopped until it gets the lock or gives up.
+
+```olang
+let c = unwrap(db.open(":memory:"))
+let endless = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT count(*) FROM n"
+let t = spawn { time.sleep(50); db.interrupt(c) }
+assert_eq(db.query(c, endless), Err("db.query: interrupted"))
+task.join(t)
+assert_eq(db.query(c, endless, #{ "timeout_ms": 50 }), Err("db.query: timed out after 50 ms"))
+assert_eq(len(unwrap(db.query(c, "SELECT 1"))), 1)
+unwrap(db.close(c))
+```
+
+**Threads.** Each connection has its own lock, held for one statement
+(one `db.next`): tasks with their own connections run side by side, and
+tasks sharing a connection take turns. `db.interrupt` is the one call
+that never waits for that lock.
 
 ## `dom` — the browser
 

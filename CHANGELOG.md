@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`db`: interrupts, time limits, cursors, rows as SQL has them, and
+  open options (heddle-sql).** `db.interrupt(conn)` stops the statement
+  a connection is running, from any task, without waiting for it: the
+  stopped call answers `Err("db.<fn>: interrupted")` and the connection
+  goes on. `timeout_ms` (`db.query(conn, sql, params, #{ "timeout_ms":
+  500 })`, and on `execute`, `query_one`, `query_rows`, `cursor`)
+  answers `Err("db.<fn>: timed out after N ms")`. Both run through a
+  progress handler, not `sqlite3_interrupt`, whose flag an open cursor
+  would keep set. `db.cursor(conn, sql, params?, opts?)`, `db.next(cur,
+  n)` (up to `n` rows as lists, `[]` at the end), `db.columns(cur)`,
+  `db.close_cursor(cur)`: a result is read as far as it is shown, the
+  first rows of a ten-million-row SELECT without the rest; dropping the
+  handle finishes the statement. `db.query_rows` answers `#{ columns:
+  [#{ name, decltype, index }], rows: [[value]] }` — column order,
+  repeated names, declared types, the columns of an empty result, and
+  BLOBs as `Bytes`. `db.open(path, #{ "readonly": true, "create": false
+  })`, and SQLite URI filenames are documented. `Bytes` bind as a BLOB.
+  `db.query` still answers maps, and a BLOB there is still a (lossy)
+  String (docs/stdlib.md).
+
 - **`tty`: the terminal as an interactive device (Heddle's H0).**
   `tty.enter(opts)` takes the terminal — raw mode by default, and on
   request the alternate screen, mouse reporting (SGR), bracketed paste,
@@ -57,6 +77,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`db` connections no longer share one lock.** Every `db` call held
+  the module's global registry lock for its whole statement, so tasks
+  with their own connections took turns anyway; each connection now has
+  its own lock, held for one statement. `db.open`'s errors name the
+  path.
 - **`olang test` runs the project's own blocks; `--deps` the rest.** An
   imported module's test blocks ran whatever it was: Foundry's 13 tests
   were reported as 133, the other 120 Shuttle's. A module's blocks run
