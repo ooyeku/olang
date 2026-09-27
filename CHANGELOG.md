@@ -105,6 +105,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A lambda in a function the tier refuses no longer leaks on every
+  call.** A function with an early exit (`return`, `?`) runs on the
+  tree-walker, which makes a new closure each time it evaluates a
+  lambda; the tier compiles lambdas by closure identity, so a lambda
+  handed to `fold`, `map`, `filter`, `col.sort_by` or called directly
+  was compiled and JIT-compiled again on every call — and the JIT never
+  frees code. ~0.8–2.8 KB of heap a call, forever (heddle-sql's
+  FINDINGS: ~30 KB a frame in Heddle's layout), and ~80 µs a call
+  compiling. Closures of one body whose captures are the same values
+  (scalars, short strings, declared functions, builtins, modules) now
+  share one compile, and a body whose captures change on every call
+  keeps its compiles on the bytecode VM, freed with the closure, after
+  its first four. Every row of the finding's table is now under
+  10 B a call; the repro runs 30× faster. Escaping closures keep their
+  own captures (tests/early_exit_lambda_test.rs).
 - **Receivers on one channel wait side by side.** A channel's receiving
   end sat behind a lock held for the whole wait, so waiters took turns:
   a `chan.recv_timeout(c, 100)` waited out another thread's

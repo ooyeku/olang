@@ -585,6 +585,16 @@ and a panic, on macOS, Linux, and Windows Terminal. Tags as in W9.
 | `[olang]` Suspend | ctrl+z in raw mode is a key, and a stop without a restore leaves the shell raw | **landed** — `tty.suspend(h)` restores, stops (SIGTSTP to the group), and on SIGCONT re-enters and sends `signal cont` and a resize; an outside SIGTSTP is restored the same way. Pinned in a pty |
 | `[olang]` Open | — | a capability for the terminal (a dependency may take it over today); record/replay does not capture tty input; `tty.query` and suspend on Windows; signals trapped with `os.on_interrupt` *after* `tty.enter` are the program's but arrive as no event |
 
+## heddle-sql's reading
+
+heddle-sql, a SQLite explorer and the first program on Heddle, logged
+these in its FINDINGS.md (2026-09-26). Each was reproduced before it
+was fixed. Tags as in W9.
+
+| Item | Evidence | Status |
+|---|---|---|
+| `[olang]` A function with an early exit and a lambda leaked ~1 KB a call | paging a million-row table 300 times grew the heap 15 MB; bisected to `fn f(xs) = { if len(xs) == 0 => return 0; fold(xs, 0, (a, b) => a + b) }` at ~1.3 KB a call, where `break`, or the lambda in a helper, was flat. Heddle's `distribute` has the shape, once per box per frame | **landed** — the cause was not the early exit but the tier's refusal of it: an interpreted function makes a new closure per call, and the tier compiled lambdas by closure identity, JIT included, whose code is never freed. Closures of one body with the same captures share one compile; a body whose captures change every call keeps off the JIT after four closures. All twenty shapes measured in tests/early_exit_lambda_test.rs stay under 64 B a call (0–11 B measured), with the answers of `--no-ovm`. Not done: `return` on the bytecode tier, which would take such functions off the interpreter altogether |
+
 ## Process
 
 One lane at a time, each landing with its tests and documentation in
