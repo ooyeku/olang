@@ -420,12 +420,23 @@ fn portable(v: &Value) -> Value {
     match v {
         Value::Native(h) => {
             let kind = h.0.type_name();
-            if kind == "Channel" || kind == "Task" {
+            if matches!(kind, "Channel" | "Task" | "Cursor" | "Bytes") {
                 let mut fields = std::collections::HashMap::new();
                 fields.insert(
                     "kind".to_string(),
                     Value::String(Arc::new(kind.to_string())),
                 );
+                // Bytes are data, carried as hex and revived whole (a
+                // BLOB `db.query_rows` answered); a cursor keeps its
+                // statement's text, which its display (and so the
+                // argument fingerprint of every call on it) shows.
+                if let Ok(b) = crate::stdlib::bytes::bytes_of(v) {
+                    fields.insert("hex".to_string(), Value::String(Arc::new(hex::encode(b))));
+                }
+                #[cfg(feature = "native")]
+                if let Some(sql) = crate::stdlib::db::cursor_sql(v) {
+                    fields.insert("sql".to_string(), Value::String(Arc::new(sql)));
+                }
                 Value::Struct {
                     type_name: HANDLE_MARKER.to_string(),
                     fields: Arc::new(fields),
@@ -460,7 +471,7 @@ fn portable(v: &Value) -> Value {
 
 fn holds_handle(v: &Value) -> bool {
     match v {
-        Value::Native(h) => matches!(h.0.type_name(), "Channel" | "Task"),
+        Value::Native(h) => matches!(h.0.type_name(), "Channel" | "Task" | "Cursor" | "Bytes"),
         Value::Map(m) => m.values().any(holds_handle),
         Value::Struct { fields, .. } => fields.values().any(holds_handle),
         Value::List(items) => items.iter().any(holds_handle),
@@ -495,6 +506,21 @@ fn revive(v: &Value) -> Value {
             match fields.get("kind") {
                 #[cfg(feature = "native")]
                 Some(Value::String(k)) if k.as_str() == "Task" => crate::stdlib::task::handle(0),
+                #[cfg(feature = "native")]
+                Some(Value::String(k)) if k.as_str() == "Cursor" => {
+                    let sql = match fields.get("sql") {
+                        Some(Value::String(s)) => s.to_string(),
+                        _ => String::new(),
+                    };
+                    crate::stdlib::db::detached_cursor(&sql)
+                }
+                Some(Value::String(k)) if k.as_str() == "Bytes" => {
+                    let raw = match fields.get("hex") {
+                        Some(Value::String(h)) => hex::decode(h.as_str()).unwrap_or_default(),
+                        _ => Vec::new(),
+                    };
+                    crate::stdlib::bytes::to_value(raw)
+                }
                 _ => crate::stdlib::chan::fresh_channel(),
             }
         }

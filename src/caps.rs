@@ -145,7 +145,9 @@ fn has_attach(sql: &str) -> bool {
 /// this, `db` (and, for served files, `net`) would each be a latent
 /// filesystem capability — a program with `fs = false` could still touch
 /// the disk through them. `arg` is the call's relevant string argument (the
-/// path for `db.open`, the SQL for `db.execute`/`db.query`/`db.query_one`).
+/// path for `db.open`, the SQL for `db.execute`/`db.query`/`db.query_one`/
+/// `db.query_rows`/`db.cursor`). A read-only open is narrowed to `Read`
+/// by the caller, which sees the options ([`db_open_is_readonly`]).
 /// Returns the required `fs` level, or None when the call touches no file.
 pub fn implied_fs(full_name: &str, arg: Option<&str>) -> Option<FsCap> {
     let arg = arg?;
@@ -157,7 +159,7 @@ pub fn implied_fs(full_name: &str, arg: Option<&str>) -> Option<FsCap> {
                 Some(FsCap::Full) // opening a file db can create and write it
             }
         }
-        "db.execute" | "db.query" | "db.query_one" => {
+        "db.execute" | "db.query" | "db.query_one" | "db.query_rows" | "db.cursor" => {
             if has_attach(arg) {
                 Some(FsCap::Full)
             } else {
@@ -166,6 +168,17 @@ pub fn implied_fs(full_name: &str, arg: Option<&str>) -> Option<FsCap> {
         }
         _ => None,
     }
+}
+
+/// Does a `db.open` only read? True for `#{ "readonly": true }` and for a
+/// URI filename opened `mode=ro` — then the call needs `fs = "read"`, not
+/// full access.
+pub fn db_open_is_readonly(path: &str, readonly_option: bool) -> bool {
+    readonly_option
+        || (path.starts_with("file:")
+            && path
+                .split_once('?')
+                .is_some_and(|(_, q)| q.split('&').any(|kv| kv == "mode=ro")))
 }
 
 /// A capability value as written in TOML: `true`, `false`, or a level
@@ -578,6 +591,20 @@ mod tests {
             implied_fs("db.open", Some("file::memory:?cache=shared")),
             None
         );
+        // ATTACH through the row-keeping and streaming readers too.
+        assert_eq!(
+            implied_fs("db.query_rows", Some("ATTACH '/x' AS e")),
+            Some(FsCap::Full)
+        );
+        assert_eq!(
+            implied_fs("db.cursor", Some("attach '/x' as e")),
+            Some(FsCap::Full)
+        );
+        // A read-only open (an option, or a URI's mode=ro) only reads.
+        assert!(db_open_is_readonly("file:/x.db?mode=ro", false));
+        assert!(db_open_is_readonly("/x.db", true));
+        assert!(!db_open_is_readonly("/x.db", false));
+        assert!(!db_open_is_readonly("file:/x.db?mode=rw", false));
         // ATTACH in SQL reaches the filesystem; a benign query does not.
         assert_eq!(
             implied_fs("db.execute", Some("ATTACH DATABASE '/x' AS e")),

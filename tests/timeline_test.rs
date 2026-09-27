@@ -238,3 +238,49 @@ fn replay_reproduces_machine_identity() {
     );
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+/// A cursor handle and a BLOB's Bytes cross the trace: the cursor as a
+/// marker revived as a detached cursor (every call on it replays from the
+/// log), the Bytes as hex revived whole.
+#[test]
+fn replay_carries_db_cursors_and_blob_bytes() {
+    let ws = workspace("db_cursor");
+    write(
+        &ws.join("rows.ol"),
+        "\
+let c = unwrap(db.open(\":memory:\"))
+let r = unwrap(db.query_rows(c, \"SELECT x'00ff7f' AS b, random() AS r\"))
+println(show(map_get(r, \"rows\")))
+let cur = unwrap(db.cursor(c, \"SELECT random() UNION ALL SELECT 2\"))
+println(show(unwrap(db.columns(cur))))
+println(show(unwrap(db.next(cur, 5))))
+unwrap(db.close_cursor(cur))
+unwrap(db.close(c))
+",
+    );
+    let rec = Command::new(olang())
+        .current_dir(&ws)
+        .args(["--record", "rows.olt", "rows.ol"])
+        .output()
+        .unwrap();
+    assert!(
+        rec.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rec.stderr)
+    );
+    let recorded = stdout_of(&rec);
+    assert!(recorded.contains("b\"00ff7f\""), "{recorded}");
+    let replay = Command::new(olang())
+        .current_dir(&ws)
+        .args(["replay", "rows.olt"])
+        .output()
+        .unwrap();
+    assert!(
+        replay.status.success(),
+        "{}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
+    assert_eq!(stdout_of(&replay), recorded);
+    assert!(String::from_utf8_lossy(&replay.stderr).contains("clean"));
+    let _ = std::fs::remove_dir_all(&ws);
+}

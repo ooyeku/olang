@@ -119,6 +119,72 @@ fn manifest_grant_denies_writes_under_fs_read() {
     let _ = std::fs::remove_dir_all(&ws);
 }
 
+/// A read-only database open only reads, so `fs = "read"` allows it —
+/// by the option or by a URI's `mode=ro` — and still denies a read-write
+/// open of the same file.
+#[test]
+fn a_read_only_db_open_needs_only_fs_read() {
+    let ws = workspace("dbread");
+    let db_path = ws.join("data.db");
+    let p = db_path.to_string_lossy().replace('\\', "/");
+    let made = Command::new(olang())
+        .current_dir(&ws)
+        .args([
+            "eval",
+            &format!(
+                "let c = unwrap(db.open(\"{p}\"))\nunwrap(db.execute(c, \"CREATE TABLE t (x)\"))\nunwrap(db.close(c))"
+            ),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        made.status.success(),
+        "{}",
+        String::from_utf8_lossy(&made.stderr)
+    );
+    write(
+        &ws.join("olang.toml"),
+        "[package]\nname = \"t\"\nversion = \"1.0.0\"\n\n[capabilities]\nfs = \"read\"\n",
+    );
+    for (name, open) in [
+        (
+            "opt.ol",
+            format!("db.open(\"{p}\", #{{ \"readonly\": true }})"),
+        ),
+        ("uri.ol", format!("db.open(\"file:{p}?mode=ro\")")),
+    ] {
+        write(
+            &ws.join(name),
+            &format!(
+                "let c = unwrap({open})\nprintln(show(len(unwrap(db.query(c, \"SELECT * FROM t\")))))\n"
+            ),
+        );
+        let out = Command::new(olang())
+            .current_dir(&ws)
+            .arg(name)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{name}: a read-only open should be allowed under fs=read: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    write(&ws.join("rw.ol"), &format!("unwrap(db.open(\"{p}\"))\n"));
+    let rw = Command::new(olang())
+        .current_dir(&ws)
+        .arg("rw.ol")
+        .output()
+        .unwrap();
+    assert!(!rw.status.success(), "a read-write open must be denied");
+    assert!(
+        String::from_utf8_lossy(&rw.stderr).contains("capability 'fs' denied"),
+        "stderr: {}",
+        String::from_utf8_lossy(&rw.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
 #[test]
 fn dependency_attenuation_is_stricter_than_the_app() {
     let ws = workspace("atten");

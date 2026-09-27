@@ -5741,14 +5741,25 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         self.caps.as_ref()?;
         let relevant = match full_name {
             "db.open" => args.first(),
-            "db.execute" | "db.query" | "db.query_one" => args.get(1),
+            "db.execute" | "db.query" | "db.query_one" | "db.query_rows" | "db.cursor" => {
+                args.get(1)
+            }
             _ => return None,
         };
         let path = match relevant {
             Some(Value::String(s)) => Some(s.as_str().to_string()),
             _ => None,
         };
-        let needed = crate::caps::implied_fs(full_name, path.as_deref())?;
+        let mut needed = crate::caps::implied_fs(full_name, path.as_deref())?;
+        if full_name == "db.open" {
+            let readonly_option = matches!(
+                args.get(1),
+                Some(Value::Map(m)) if m.get("readonly") == Some(&Value::Boolean(true))
+            );
+            if crate::caps::db_open_is_readonly(path.as_deref().unwrap_or(""), readonly_option) {
+                needed = crate::caps::FsCap::Read;
+            }
+        }
         let (caps, package) = self.current_caps()?;
         if caps.fs.allows(needed) {
             return None;

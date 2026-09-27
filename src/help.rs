@@ -4773,18 +4773,24 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
     fn add_db_functions(&mut self) {
         self.add_function(FunctionDoc {
             name: "db.open".to_string(),
-            description: "Open a SQLite database. Use \":memory:\" for an in-memory database. Returns a Connection.".to_string(),
-            syntax: "db.open(path)".to_string(),
-            parameters: vec![],
-            return_type: "Result".to_string(),
-            examples: vec!["let c = unwrap(db.open(\":memory:\"))".to_string()],
+            description: "Open a SQLite database. Use \":memory:\" for an in-memory database; a SQLite URI filename (file:/path?mode=ro) is read as a URI. Options: readonly (default false: SQLite refuses every write) and create (default true, false when readonly: a missing file is an Err naming the path). Returns a Connection.".to_string(),
+            syntax: "db.open(path[, #{ \"readonly\": Bool, \"create\": Bool }])".to_string(),
+            parameters: vec![
+                "path: String".to_string(),
+                "opts: Map — readonly, create".to_string(),
+            ],
+            return_type: "Result<Connection, String>".to_string(),
+            examples: vec![
+                "let c = unwrap(db.open(\":memory:\"))".to_string(),
+                "db.open(\"app.db\", #{ \"readonly\": true })  // a missing file: Err(\"db.open: no database at app.db (…)\")".to_string(),
+            ],
             category: "Database".to_string(),
-            see_also: vec![],
+            see_also: vec!["db.close".to_string()],
         });
         self.add_function(FunctionDoc {
             name: "db.execute".to_string(),
             description: "Run a statement that changes data (CREATE/INSERT/UPDATE/DELETE). Returns rows affected. Bind values with ? placeholders.".to_string(),
-            syntax: "db.execute(conn, sql[, params])".to_string(),
+            syntax: "db.execute(conn, sql[, params][, #{ \"timeout_ms\": Int }])".to_string(),
             parameters: vec![],
             return_type: "Result".to_string(),
             examples: vec!["unwrap(db.execute(c, \"INSERT INTO t VALUES (?, ?)\", [1, \"ann\"]))".to_string()],
@@ -4794,9 +4800,9 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
         self.add_function(FunctionDoc {
             name: "db.query".to_string(),
             description:
-                "Run a SELECT. Returns a list of rows, each a map from column name to value."
+                "Run a SELECT. Returns a list of rows, each a map from column name to value (so the column order and a repeated name are lost, and a BLOB reads as a lossy String — db.query_rows keeps all three). timeout_ms stops the statement with Err(\"db.query: timed out after N ms\"); the options map may stand where the params would."
                     .to_string(),
-            syntax: "db.query(conn, sql[, params])".to_string(),
+            syntax: "db.query(conn, sql[, params][, #{ \"timeout_ms\": Int }])".to_string(),
             parameters: vec![],
             return_type: "Result".to_string(),
             examples: vec![
@@ -4809,7 +4815,7 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             name: "db.query_one".to_string(),
             description: "Like query but returns the first row (a map), or unit if none — Ok(()) is the absent shape, unambiguous because a row is always a map: `if r == () => ... else => map_get(r, ...)`."
                 .to_string(),
-            syntax: "db.query_one(conn, sql[, params])".to_string(),
+            syntax: "db.query_one(conn, sql[, params][, #{ \"timeout_ms\": Int }])".to_string(),
             parameters: vec![],
             return_type: "Result".to_string(),
             examples: vec!["unwrap(db.query_one(c, \"SELECT COUNT(*) AS n FROM t\"))".to_string()],
@@ -4841,8 +4847,85 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             see_also: vec!["db.transaction".to_string(), "db.open".to_string()],
         });
         self.add_function(FunctionDoc {
+            name: "db.query_rows".to_string(),
+            description: "Run a SELECT and keep what SQL says: the columns in order as #{ name, decltype, index } (decltype () for an expression; repeated names kept; known even with no rows), and each row a list in that order. BLOBs are Bytes; INTEGER, REAL, TEXT, and NULL as in db.query.".to_string(),
+            syntax: "db.query_rows(conn, sql[, params][, #{ \"timeout_ms\": Int }])".to_string(),
+            parameters: vec![
+                "conn: Connection".to_string(),
+                "sql: String (one statement)".to_string(),
+                "params: List".to_string(),
+                "opts: Map — timeout_ms".to_string(),
+            ],
+            return_type: "Result<#{ columns: List<Map>, rows: List<List> }, String>".to_string(),
+            examples: vec![
+                "unwrap(db.query_rows(c, \"SELECT 1 AS a, 2 AS a\"))  // #{ \"columns\": [#{ \"name\": \"a\", … }, #{ \"name\": \"a\", … }], \"rows\": [[1, 2]] }".to_string(),
+            ],
+            category: "Database".to_string(),
+            see_also: vec!["db.query".to_string(), "db.cursor".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "db.cursor".to_string(),
+            description: "Prepare a statement to read a piece at a time: db.next reads up to n rows, so a program reads a result only as far as it shows it. timeout_ms bounds each db.next. The cursor holds its statement (and, in rollback-journal mode, a read lock) until the rows run out, db.close_cursor, the last copy of the handle is dropped, or db.close of its connection.".to_string(),
+            syntax: "db.cursor(conn, sql[, params][, #{ \"timeout_ms\": Int }])".to_string(),
+            parameters: vec![
+                "conn: Connection".to_string(),
+                "sql: String (one statement)".to_string(),
+                "params: List".to_string(),
+                "opts: Map — timeout_ms".to_string(),
+            ],
+            return_type: "Result<Cursor, String>".to_string(),
+            examples: vec![
+                "let cur = unwrap(db.cursor(c, \"SELECT * FROM big\"))\nlet first = unwrap(db.next(cur, 200))".to_string(),
+            ],
+            category: "Database".to_string(),
+            see_also: vec!["db.next".to_string(), "db.columns".to_string(), "db.close_cursor".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "db.next".to_string(),
+            description: "Up to n more rows of a cursor, each a list in column order (as db.query_rows's rows), [] at the end. A read that fails — an SQL error, db.interrupt, a timeout — finishes the cursor: that call answers the Err, and every later one Err(\"db.next: the cursor failed: …\").".to_string(),
+            syntax: "db.next(cur, n)".to_string(),
+            parameters: vec!["cur: Cursor".to_string(), "n: Int (> 0)".to_string()],
+            return_type: "Result<List<List>, String>".to_string(),
+            examples: vec!["unwrap(db.next(cur, 100))  // [[1, \"ann\"], …] or [] at the end".to_string()],
+            category: "Database".to_string(),
+            see_also: vec!["db.cursor".to_string(), "db.columns".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "db.columns".to_string(),
+            description: "A cursor's columns, as db.query_rows answers them: #{ name, decltype, index } each, known before the first row and after the last.".to_string(),
+            syntax: "db.columns(cur)".to_string(),
+            parameters: vec!["cur: Cursor".to_string()],
+            return_type: "Result<List<Map>, String>".to_string(),
+            examples: vec!["map(unwrap(db.columns(cur)), (k) => map_get(k, \"name\"))".to_string()],
+            category: "Database".to_string(),
+            see_also: vec!["db.cursor".to_string(), "db.query_rows".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "db.close_cursor".to_string(),
+            description: "Finish a cursor now, releasing its statement and its read. Closing a closed cursor is no error; db.next on it answers Err(\"db.next: the cursor is closed\"). Dropping the last copy of the handle does the same.".to_string(),
+            syntax: "db.close_cursor(cur)".to_string(),
+            parameters: vec!["cur: Cursor".to_string()],
+            return_type: "Result<(), String>".to_string(),
+            examples: vec!["unwrap(db.close_cursor(cur))".to_string()],
+            category: "Database".to_string(),
+            see_also: vec!["db.cursor".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "db.interrupt".to_string(),
+            description: "Stop the statement a connection (or a cursor's connection) is running now. Callable from any task: it takes no lock, so it does not wait for the statement it stops, which answers Err(\"db.<fn>: interrupted\"). The connection stays usable. With nothing running it does nothing, and later statements are not affected.".to_string(),
+            syntax: "db.interrupt(conn_or_cursor)".to_string(),
+            parameters: vec!["conn_or_cursor: Connection | Cursor".to_string()],
+            return_type: "Result<(), String>".to_string(),
+            examples: vec![
+                "let t = spawn { db.query(c, slow_sql) }\nunwrap(db.interrupt(c))\ntask.join(t)  // Err(\"db.query: interrupted\")".to_string(),
+            ],
+            category: "Database".to_string(),
+            see_also: vec!["db.query".to_string(), "db.cursor".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "db.close".to_string(),
-            description: "Close a connection and release it.".to_string(),
+            description: "Close a connection and release it; its open cursors are finished first."
+                .to_string(),
             syntax: "db.close(conn)".to_string(),
             parameters: vec![],
             return_type: "Result".to_string(),
