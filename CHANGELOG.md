@@ -152,6 +152,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   converts without the check. Ten-million-link lists and enums cross
   both ways, on both tiers and in a spawned task.
 
+- **`show` and `json.stringify` of a deep value.** Both walked it a
+  stack frame per level and aborted on a million-deep list. `show` now
+  grows the stack as it goes. `json.stringify` serializes the value
+  directly instead of building a `serde_json::Value`, which serde_json
+  also printed and freed by recursion; its output is byte-for-byte what
+  it was. The error for a value with no JSON form names it by a
+  60-character preview of `show` rather than its full debug form —
+  `Cannot convert Ok(2) to JSON`, not `Ok(Integer(2))`, and `<function>`
+  instead of the function's whole environment — which also made a deep
+  enum's error overflow the stack.
+
 - **A lambda in a function the tier refuses no longer leaks on every
   call.** A function with an early exit (`return`, `?`) runs on the
   tree-walker, which makes a new closure each time it evaluates a

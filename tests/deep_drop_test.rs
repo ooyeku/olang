@@ -150,3 +150,61 @@ fn a_deep_value_crosses_the_tier_boundary_both_ways() {
         }
     });
 }
+
+// --- Printing and serializing ---
+//
+// `show` (the value's Display) and `json.stringify` walk a value as deep
+// as it is too, and overflowed the stack for a million-deep list. They
+// grow the stack as they go; stringify no longer builds a serde_json
+// tree, which serde_json prints and frees by recursion of its own.
+
+/// `json.stringify`'s answer: whether it was `Ok`, and the string inside.
+fn stringify(value: Value) -> (bool, String) {
+    let result =
+        olang::stdlib::json::call_json_function("stringify", vec![value]).expect("stringify");
+    let ok = matches!(result, Value::Ok(_));
+    match result.into_payload() {
+        Some(Value::String(ref s)) => (ok, s.to_string()),
+        other => panic!("not a result of a string: {other:?}"),
+    }
+}
+
+#[test]
+fn a_deep_value_prints_and_serializes() {
+    on_small_stack(|| {
+        let list = chain(|next| Value::List(Arc::new(vec![Value::Integer(1), next])));
+        let text = list.to_string();
+        assert!(text.starts_with("[1, [1, [1, "));
+        let (ok, json) = stringify(list);
+        assert!(ok, "{json}");
+        assert!(json.starts_with("[1,[1,[1,") && json.contains("[1,null]]]"));
+        assert_eq!(json.matches('[').count(), DEPTH);
+
+        let enum_chain = chain(|next| {
+            Value::enum_of(
+                "L".into(),
+                "Cons".into(),
+                EnumVariantData::Tuple(vec![Value::Integer(1), next]),
+            )
+        });
+        assert!(enum_chain.to_string().starts_with("L.Cons(1, L.Cons(1, "));
+        // An enum has no JSON form; the error names it in a short preview
+        // rather than printing a million levels of it.
+        let (ok, message) = stringify(enum_chain);
+        assert!(!ok, "an enum serialized");
+        assert!(message.contains("Cannot convert L.Cons(1, L.Cons(1, "), "{message}");
+        assert!(message.len() < 200, "{message}");
+    });
+}
+
+#[test]
+fn stringify_refuses_a_float_json_cannot_hold() {
+    for f in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let (ok, message) = stringify(Value::List(Arc::new(vec![Value::Float(f)])));
+        assert!(!ok, "{f} serialized");
+        assert_eq!(
+            message,
+            format!("Cannot convert to JSON: Type error: Invalid float value: {f}")
+        );
+    }
+}

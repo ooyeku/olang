@@ -161,18 +161,96 @@ fn json_stringify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
         return Err(format!("stringify expects 1 argument, got {}", args.len()).into());
     }
 
-    match olang_value_to_json(&args[0]) {
-        Ok(json_value) => match serde_json::to_string(&json_value) {
-            Ok(json_str) => Ok(Value::Ok(Box::new(Value::String(Arc::new(json_str))))),
-            Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-                "JSON stringify error: {}",
-                e
-            )))))),
-        },
+    // Straight from the value to text: no `serde_json::Value` in between,
+    // which serde_json builds, prints, and frees by recursion, a frame per
+    // level each time — a million-deep list overflowed the stack three
+    // ways. The only error serializing can raise is a value JSON has no
+    // form for.
+    match serde_json::to_string(&AsJson(&args[0])) {
+        Ok(json_str) => Ok(Value::Ok(Box::new(Value::String(Arc::new(json_str))))),
         Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
             "Cannot convert to JSON: {}",
             e
         )))))),
+    }
+}
+
+/// A value as `show` prints it, cut at 60 characters: enough to name
+/// the value in an error message. The message used to carry the value's
+/// debug form whole — a closure's entire environment, or megabytes for a
+/// deep enum, whose derived `Debug` then overflowed the stack. Printing
+/// stops at the limit, so a deep value costs no more than a short one.
+fn preview(value: &Value) -> String {
+    const LIMIT: usize = 60;
+    struct Bounded {
+        text: String,
+        chars: usize,
+    }
+    impl std::fmt::Write for Bounded {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            for c in s.chars() {
+                if self.chars == LIMIT {
+                    self.text.push('…');
+                    return Err(std::fmt::Error);
+                }
+                self.text.push(c);
+                self.chars += 1;
+            }
+            Ok(())
+        }
+    }
+    let mut out = Bounded { text: String::new(), chars: 0 };
+    let _ = std::fmt::write(&mut out, format_args!("{}", value));
+    out.text
+}
+
+/// An olang value as serde sees it, written exactly as
+/// `olang_value_to_json` then `serde_json::to_string` wrote it: object
+/// keys in sorted order, floats by the same shortest form, and the same
+/// `Type error: …` for a value with no JSON form. serde calls back into
+/// `serialize` for every element, so a nested value is serialized where
+/// the stack can grow.
+struct AsJson<'a>(&'a Value);
+
+impl serde::Serialize for AsJson<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0 {
+            Value::Unit => serializer.serialize_unit(),
+            Value::Boolean(b) => serializer.serialize_bool(*b),
+            Value::Integer(i) => serializer.serialize_i64(*i),
+            Value::Float(f) if f.is_finite() => serializer.serialize_f64(*f),
+            Value::String(s) => serializer.serialize_str(s),
+            nested => crate::interpreter::with_stack_headroom(|| serialize_nested(nested, serializer)),
+        }
+    }
+}
+
+fn serialize_nested<S: serde::Serializer>(value: &Value, serializer: S) -> Result<S::Ok, S::Error> {
+    use serde::ser::{Error, SerializeMap, SerializeSeq};
+    match value {
+        Value::List(items) | Value::Tuple(items) => {
+            let mut seq = serializer.serialize_seq(Some(items.len()))?;
+            for item in items.iter() {
+                seq.serialize_element(&AsJson(item))?;
+            }
+            seq.end()
+        }
+        // Structs, anonymous objects, and maps are all JSON objects.
+        Value::Struct { fields, .. } | Value::Map(fields) => {
+            let mut keys: Vec<&String> = fields.keys().collect();
+            keys.sort();
+            let mut map = serializer.serialize_map(Some(keys.len()))?;
+            for key in keys {
+                map.serialize_entry(key, &AsJson(&fields[key]))?;
+            }
+            map.end()
+        }
+        Value::Float(f) => Err(S::Error::custom(JsonError::TypeError {
+            message: format!("Invalid float value: {}", f),
+        })),
+        _ => Err(S::Error::custom(JsonError::TypeError {
+            message: format!("Cannot convert {} to JSON", preview(value)),
+        })),
     }
 }
 
@@ -880,7 +958,7 @@ pub(crate) fn olang_value_to_json(value: &Value) -> Result<serde_json::Value, Js
             Ok(serde_json::Value::Array(arr))
         }
         _ => Err(JsonError::TypeError {
-            message: format!("Cannot convert {:?} to JSON", value),
+            message: format!("Cannot convert {} to JSON", preview(value)),
         }),
     }
 }

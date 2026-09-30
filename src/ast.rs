@@ -1880,6 +1880,24 @@ pub fn format_float(x: f64) -> String {
 
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Printing is as deep as the value: a list, map, struct, tuple,
+        // enum or result prints where the stack can grow, or `show` of a
+        // million-deep list overflowed it.
+        match self {
+            Value::List(_)
+            | Value::Map(_)
+            | Value::Tuple(_)
+            | Value::Struct { .. }
+            | Value::Enum(_)
+            | Value::Ok(_)
+            | Value::Err(_) => crate::interpreter::with_stack_headroom(|| self.fmt_value(f)),
+            _ => self.fmt_value(f),
+        }
+    }
+}
+
+impl Value {
+    fn fmt_value(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Integer(n) => write!(f, "{}", n),
             Value::Float(x) => write!(f, "{}", format_float(*x)),
