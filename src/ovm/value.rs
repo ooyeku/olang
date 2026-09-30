@@ -1037,7 +1037,19 @@ impl OvmValue {
     }
 
     /// Enhanced from_ast conversion with better builtin support
-    pub fn from_ast(mut ast_value: Value) -> Self {
+    pub fn from_ast(ast_value: Value) -> Self {
+        // As deep as the value: nested values convert where the stack can
+        // grow, or a million-link list overflowed it at the boundary.
+        match ast_value {
+            Value::Integer(n) => Self::new_integer(n),
+            Value::Float(f) => Self::new_float(f),
+            Value::Boolean(b) => Self::new_boolean(b),
+            Value::Unit => Self::new_unit(),
+            nested => crate::interpreter::with_stack_headroom(|| Self::from_ast_nested(nested)),
+        }
+    }
+
+    fn from_ast_nested(mut ast_value: Value) -> Self {
         match ast_value {
             Value::Integer(n) => Self::new_integer(n),
             Value::Float(f) => Self::new_float(f),
@@ -1344,6 +1356,17 @@ impl OvmValue {
 
     /// Convert to AST Value (for compatibility)
     pub fn to_ast(&self) -> Result<Value, RuntimeError> {
+        match &self.data {
+            ValueData::Integer(i) => Ok(Value::Integer(*i)),
+            ValueData::Float(f) => Ok(Value::Float(*f)),
+            ValueData::Boolean(b) => Ok(Value::Boolean(*b)),
+            ValueData::Unit => Ok(Value::Unit),
+            // As deep as the value, like `from_ast`.
+            _ => crate::interpreter::with_stack_headroom(|| self.to_ast_nested()),
+        }
+    }
+
+    fn to_ast_nested(&self) -> Result<Value, RuntimeError> {
         match &self.data {
             ValueData::Integer(i) => Ok(Value::Integer(*i)),
             ValueData::Float(f) => Ok(Value::Float(*f)),

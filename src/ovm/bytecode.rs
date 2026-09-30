@@ -7917,6 +7917,16 @@ impl BytecodeVm {
     /// different type or to Unit. This is the single definition — the tier
     /// uses it too, rather than keeping a second copy that can drift.
     pub fn round_trips(value: &Value) -> bool {
+        // A walk as deep as the value: a scalar answers here, anything
+        // nested runs where the stack can grow, or a million-link list
+        // overflowed it crossing the boundary.
+        match value {
+            Value::Integer(_) | Value::Float(_) | Value::Boolean(_) | Value::Unit => true,
+            _ => crate::interpreter::with_stack_headroom(|| Self::round_trips_walk(value)),
+        }
+    }
+
+    fn round_trips_walk(value: &Value) -> bool {
         match value {
             Value::Integer(_)
             | Value::Float(_)

@@ -262,7 +262,9 @@ suits a language whose values are overwhelmingly immutable and acyclic.
 (`src/ovm/gc.rs` holds only the safepoint flags the interpreter polls in
 loops.) Freeing a nested value recurses only to a bounded depth and
 queues the rest, so its depth is bounded by memory, not by the stack; see
-[internals](internals.md#the-value-model).
+[internals](internals.md#the-value-model). The same holds at the tier
+boundary: `round_trips`, `OvmValue::from_ast` and `to_ast` walk a value
+as deep as it is, and grow the stack as they go.
 
 The next slimming rung — NaN-boxing to 8 bytes — has its primitives
 implemented and boundary-tested (`src/ovm/nanbox.rs`: canonicalized

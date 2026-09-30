@@ -120,3 +120,33 @@ fn a_program_built_list_frees_on_a_small_stack() {
     let value = Interpreter::new().eval_program(program).expect("eval");
     on_small_stack(move || drop(value));
 }
+
+// --- Crossing the tier boundary ---
+//
+// A value entering or leaving the bytecode tier is walked as deep as it
+// is: `round_trips` asks whether it may cross, `from_ast` and `to_ast`
+// convert it. Each recursed a frame per level and overflowed the stack
+// for a deep enough value — the crash freeing had, one step earlier. They
+// now grow the stack as they go, as the interpreter's own evaluation does.
+
+#[test]
+fn a_deep_value_crosses_the_tier_boundary_both_ways() {
+    on_small_stack(|| {
+        let enum_chain = chain(|next| {
+            Value::enum_of(
+                "L".into(),
+                "Cons".into(),
+                EnumVariantData::Tuple(vec![Value::Integer(1), next]),
+            )
+        });
+        let list_chain = chain(|next| Value::List(Arc::new(vec![Value::Integer(1), next])));
+        for value in [enum_chain, list_chain] {
+            assert!(olang::ovm::bytecode::BytecodeVm::round_trips(&value));
+            let back = OvmValue::from_ast(value.clone()).to_ast().expect("to_ast");
+            assert!(matches!(
+                (&value, &back),
+                (Value::Enum(_), Value::Enum(_)) | (Value::List(_), Value::List(_))
+            ));
+        }
+    });
+}

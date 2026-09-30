@@ -143,6 +143,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   a 256 KB stack (tests/deep_drop_test.rs). A shared or flat value
   returns at an inlined first check.
 
+- **A deep value crosses the tier boundary.** Handing a deep value to
+  compiled code, or taking one back — a million-link list returned from
+  a function called in a loop — aborted the same way, one step earlier:
+  `round_trips`, `OvmValue::from_ast` and `to_ast` walked it a stack
+  frame per level. They now grow the stack as they go
+  (`with_stack_headroom`, the interpreter's own discipline); a scalar
+  converts without the check. Ten-million-link lists and enums cross
+  both ways, on both tiers and in a spawned task.
+
 - **A lambda in a function the tier refuses no longer leaks on every
   call.** A function with an early exit (`return`, `?`) runs on the
   tree-walker, which makes a new closure each time it evaluates a
