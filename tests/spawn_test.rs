@@ -90,7 +90,7 @@ match task.join(p) {
 }
 "#;
     match eval(src).unwrap() {
-        Value::String(s) => {
+        Value::String(ref s) => {
             assert!(s.contains("handled: "), "got: {s}");
             assert!(s.contains("exploded"), "the cause should survive: {s}");
         }
@@ -106,7 +106,7 @@ let jobs = [spawn work(0), spawn work(1), spawn work(2)]
 jobs |> map((j) => match task.join(j) { Err(e) => 0 - 1, v => v })
 "#;
     match eval(src).unwrap() {
-        Value::List(items) => {
+        Value::List(ref items) => {
             assert_eq!(
                 items.as_ref().to_vec(),
                 vec![Value::Integer(0), Value::Integer(-1), Value::Integer(20)]

@@ -145,7 +145,7 @@ let o = { x: "anything", y: 2 }
 o.x
 "#;
     match eval(src).unwrap() {
-        Value::String(s) => assert_eq!(s.to_string(), "anything"),
+        Value::String(ref s) => assert_eq!(s.to_string(), "anything"),
         other => panic!("expected string, got {:?}", other),
     }
 }

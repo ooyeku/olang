@@ -400,7 +400,7 @@ fn fused_chains_match_the_eager_kernels_exactly() {
          [c[0], c[1], c[2], c[3], ods.sum(c)]\n",
     )
     .expect("fused chain evaluates");
-    let Value::List(items) = out else {
+    let Value::List(ref items) = out else {
         panic!("expected a list, got {:?}", out)
     };
     let expect = [3.625, 7.875, 14.125, 22.375];
@@ -433,7 +433,7 @@ fn fusion_never_defers_division_or_nulls() {
         None,
     )
     .expect("null chain evaluates");
-    let Value::List(items) = out else {
+    let Value::List(ref items) = out else {
         panic!("expected a list, got {:?}", out)
     };
     assert_eq!(items[0], Value::Boolean(true), "null propagates");
@@ -450,7 +450,7 @@ fn a_chain_past_the_depth_cap_still_computes() {
         None,
     )
     .expect("deep chain evaluates");
-    let Value::List(items) = out else {
+    let Value::List(ref items) = out else {
         panic!("expected a list, got {:?}", out)
     };
     assert_eq!(items[0], Value::Float(41.0));

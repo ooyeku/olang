@@ -581,7 +581,7 @@ fn call_meta_fn(
         .call_named_function(name, args)
         .map_err(|e| e.to_string())?;
     match result {
-        Value::String(s) => Ok(s.as_ref().clone()),
+        Value::String(ref s) => Ok(s.as_ref().clone()),
         other => Err(format!(
             "a meta fn must return source text as a String, got {}",
             other.type_name()

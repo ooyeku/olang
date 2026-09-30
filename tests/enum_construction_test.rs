@@ -39,7 +39,7 @@ fn area(s) = match s {
 [area(Circle(2.0)), area(Rectangle(3.0, 4.0))]
 "#;
     match eval(src) {
-        Value::List(items) => {
+        Value::List(ref items) => {
             assert_eq!(items[0], Value::Float(12.0));
             assert_eq!(items[1], Value::Float(12.0));
         }
@@ -54,7 +54,7 @@ type Color = enum { Red, Green }
 [Red == Red, Red == Green]
 "#;
     match eval(src) {
-        Value::List(items) => {
+        Value::List(ref items) => {
             assert_eq!(items[0], Value::Boolean(true));
             assert_eq!(items[1], Value::Boolean(false));
         }
@@ -69,7 +69,7 @@ type Point = enum { P(Int, Int) }
 [P(1, 2) == P(1, 2), P(1, 2) == P(1, 3)]
 "#;
     match eval(src) {
-        Value::List(items) => {
+        Value::List(ref items) => {
             assert_eq!(items[0], Value::Boolean(true));
             assert_eq!(items[1], Value::Boolean(false));
         }
@@ -161,7 +161,7 @@ fn dx(d) = match d {
 [dx(North), dx(South), dx(East), dx(West)]
 "#;
     match eval(src) {
-        Value::List(items) => {
+        Value::List(ref items) => {
             assert_eq!(items[0], Value::Integer(0));
             assert_eq!(items[1], Value::Integer(0));
             assert_eq!(items[2], Value::Integer(1));

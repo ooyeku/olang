@@ -403,7 +403,7 @@ pub const REQUEST_BIT: i64 = 1 << 41;
 #[cfg(target_arch = "wasm32")]
 fn value_to_json(value: &Value) -> Result<String, Box<dyn std::error::Error>> {
     match crate::stdlib::json::call_json_function("stringify", vec![value.clone()]) {
-        Ok(Value::Ok(inner)) => match *inner {
+        Ok(Value::Ok(ref inner)) => match &**inner {
             Value::String(s) => Ok(s.as_ref().clone()),
             other => Ok(format!("{}", other)),
         },
@@ -683,7 +683,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
                 "parse",
                 vec![Value::String(std::sync::Arc::new(raw))],
             ) {
-                Ok(Value::Ok(inner)) => Ok(*inner),
+                Ok(ok @ Value::Ok(_)) => Ok(ok.into_payload().unwrap_or(Value::Unit)),
                 _ => Err("dom.measure: host returned an unreadable rect".into()),
             }
         }
@@ -744,7 +744,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
             // page replays it onto the canvas 2D context.
             let json = match crate::stdlib::json::call_json_function("stringify", vec![ops.clone()])
             {
-                Ok(Value::Ok(inner)) => match *inner {
+                Ok(Value::Ok(ref inner)) => match &**inner {
                     Value::String(s) => s.as_ref().clone(),
                     other => format!("{}", other),
                 },
@@ -811,7 +811,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
             }
             let style_json =
                 match crate::stdlib::json::call_json_function("stringify", vec![style.clone()]) {
-                    Ok(Value::Ok(inner)) => match *inner {
+                    Ok(Value::Ok(ref inner)) => match &**inner {
                         Value::String(s) => s.as_ref().clone(),
                         other => format!("{}", other),
                     },
@@ -855,7 +855,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
                 "parse",
                 vec![Value::String(std::sync::Arc::new(raw))],
             ) {
-                Ok(Value::Ok(inner)) => Ok(*inner),
+                Ok(ok @ Value::Ok(_)) => Ok(ok.into_payload().unwrap_or(Value::Unit)),
                 _ => Err("dom.location: host returned an unreadable location".into()),
             }
         }
@@ -904,7 +904,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
                 "parse",
                 vec![Value::String(std::sync::Arc::new(raw))],
             ) {
-                Ok(Value::Ok(inner)) => Ok(*inner),
+                Ok(ok @ Value::Ok(_)) => Ok(ok.into_payload().unwrap_or(Value::Unit)),
                 _ => Ok(Value::Unit),
             }
         }
@@ -1220,7 +1220,7 @@ pub unsafe extern "C" fn olang_dispatch_event_json(
             "parse",
             vec![Value::String(std::sync::Arc::new(raw.clone()))],
         ) {
-            Ok(Value::Ok(inner)) => *inner,
+            Ok(ok @ Value::Ok(_)) => ok.into_payload().unwrap_or(Value::Unit),
             _ => Value::String(std::sync::Arc::new(raw)),
         }
     })

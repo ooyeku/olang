@@ -13,7 +13,7 @@ fn eval(src: &str) -> Value {
 
 fn ints(v: Value) -> Vec<i64> {
     match v {
-        Value::List(items) => items
+        Value::List(ref items) => items
             .iter()
             .map(|x| match x {
                 Value::Integer(n) => *n,

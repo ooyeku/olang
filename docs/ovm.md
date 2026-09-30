@@ -260,7 +260,9 @@ anything that widens the value slows every instruction.
 Values are reclaimed deterministically when the last reference drops, which
 suits a language whose values are overwhelmingly immutable and acyclic.
 (`src/ovm/gc.rs` holds only the safepoint flags the interpreter polls in
-loops.)
+loops.) Freeing a nested value recurses only to a bounded depth and
+queues the rest, so its depth is bounded by memory, not by the stack; see
+[internals](internals.md#the-value-model).
 
 The next slimming rung — NaN-boxing to 8 bytes — has its primitives
 implemented and boundary-tested (`src/ovm/nanbox.rs`: canonicalized

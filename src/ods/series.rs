@@ -476,7 +476,7 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
             let mut out: Vec<Option<String>> = Vec::with_capacity(s.len());
             for i in 0..s.len() {
                 match scalar_to_value(s.get(i as i64).map_err(e)?) {
-                    Value::String(text) => {
+                    Value::String(ref text) => {
                         if text.len() < width {
                             return Err(format!(
                                 "ods.date_part: {:?} is not an ISO date (row {})",

@@ -163,7 +163,7 @@ fn read_jsonl_reports_the_lowest_bad_line_in_parallel() {
         set_parallel(true);
         eval(&program).expect("eval")
     };
-    let Value::String(msg) = got else {
+    let Value::String(ref msg) = got else {
         panic!("expected the error string, got {:?}", got)
     };
     assert!(

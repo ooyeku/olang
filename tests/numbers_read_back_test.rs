@@ -120,7 +120,7 @@ fn json_oversized_integers_refuse_the_lossy_read() {
         "json.parse(\"{\\\"n\\\": 99999999999999999999999999}\")", // nested
     ] {
         match eval(src).unwrap() {
-            Value::Err(e) => {
+            Value::Err(ref e) => {
                 let msg = e.to_string();
                 assert!(msg.contains("does not fit Int"), "{src}: {msg}");
                 assert!(msg.contains("bigint"), "no bigint pointer: {msg}");
@@ -139,7 +139,7 @@ fn json_floats_keep_the_ieee_reading_and_never_go_infinite() {
     assert!(matches!(v, Value::Float(f) if f == 1.5e300), "{v:?}");
     // Overflowing float text errors instead of producing inf.
     match eval("json.parse(\"1e400\")").unwrap() {
-        Value::Err(e) => assert!(e.to_string().contains("does not fit Float"), "{e:?}"),
+        Value::Err(ref e) => assert!(e.to_string().contains("does not fit Float"), "{e:?}"),
         other => panic!("1e400 produced {other:?}"),
     }
 }

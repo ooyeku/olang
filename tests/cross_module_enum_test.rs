@@ -35,7 +35,7 @@ fn run(app: &Path, source: &str) -> Result<String, String> {
     let mut interp = Interpreter::new();
     interp.set_current_file(&app.join("main.ol"));
     match interp.eval_program(program).map_err(|e| e.to_string())? {
-        olang::Value::String(s) => Ok(s.to_string()),
+        olang::Value::String(ref s) => Ok(s.to_string()),
         other => Err(format!("expected string, got {:?}", other)),
     }
 }

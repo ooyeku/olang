@@ -202,7 +202,7 @@ fn test_list_creation() {
         .expect("Failed to evaluate");
 
     match result {
-        olang::ast::Value::List(items) => {
+        olang::ast::Value::List(ref items) => {
             assert_eq!(items.len(), 3);
             assert_eq!(items[0], olang::ast::Value::Integer(1));
             assert_eq!(items[1], olang::ast::Value::Integer(2));
@@ -224,7 +224,7 @@ fn test_tuple_creation() {
         .expect("Failed to evaluate");
 
     match result {
-        olang::ast::Value::Tuple(items) => {
+        olang::ast::Value::Tuple(ref items) => {
             assert_eq!(items.len(), 3);
             assert_eq!(items[0], olang::ast::Value::Integer(1));
             assert_eq!(
@@ -276,8 +276,8 @@ fn test_error_handling_result_creation() {
         .expect("Failed to evaluate");
 
     match result {
-        olang::ast::Value::Ok(inner) => {
-            assert_eq!(*inner, olang::ast::Value::Integer(42));
+        olang::ast::Value::Ok(ref inner) => {
+            assert_eq!(**inner, olang::ast::Value::Integer(42));
         }
         _ => panic!("Expected Ok result, got: {:?}", result),
     }
@@ -290,9 +290,9 @@ fn test_error_handling_result_creation() {
         .expect("Failed to evaluate");
 
     match result {
-        olang::ast::Value::Err(inner) => {
+        olang::ast::Value::Err(ref inner) => {
             assert_eq!(
-                *inner,
+                **inner,
                 olang::ast::Value::String("something went wrong".to_string().into())
             );
         }

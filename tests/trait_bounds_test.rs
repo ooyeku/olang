@@ -54,7 +54,7 @@ fn implements_builtin_reports_membership() {
 [implements(Point {{ x: 0, y: 0 }}, \"Show\"), implements(Circle {{ r: 1 }}, \"Show\")]"
     );
     match eval(&src) {
-        Value::List(items) => {
+        Value::List(ref items) => {
             assert_eq!(items[0], Value::Boolean(true));
             assert_eq!(items[1], Value::Boolean(false));
         }
@@ -103,7 +103,7 @@ fn identity<T>(x: T) -> T = x
 [identity(42), identity("hi")]
 "#;
     match eval(src) {
-        Value::List(items) => {
+        Value::List(ref items) => {
             assert_eq!(items[0], Value::Integer(42));
             assert_eq!(items[1], Value::String("hi".to_string().into()));
         }

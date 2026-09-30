@@ -35,7 +35,7 @@ unwrap(db.close(c))
 [map_get(row, "n"), map_get(row, "f"), map_get(row, "s")]
 "#;
     match eval(src) {
-        Value::List(items) => {
+        Value::List(ref items) => {
             assert_eq!(items[0], Value::Integer(42));
             assert_eq!(items[1], Value::Float(3.5));
             assert_eq!(items[2], Value::String("hi".to_string().into()));
@@ -84,7 +84,7 @@ unwrap(db.close(c))
 [found, total]
 "#;
     match eval(src) {
-        Value::List(items) => {
+        Value::List(ref items) => {
             assert_eq!(items[0], Value::Integer(1));
             assert_eq!(items[1], Value::Integer(1));
         }

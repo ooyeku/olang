@@ -960,7 +960,7 @@ fn cursor_of<'a>(func: &str, value: &'a Value) -> Result<&'a CursorObject, Value
 /// own transaction, so a failed step leaves the database at the version
 /// before it. Returns the version now recorded.
 fn db_migrate(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if let Err(e) = connection_id(args.first().unwrap_or(&Value::Unit)) {
+    if let Err(e) = connection_id(args.first().unwrap_or(&UNIT)) {
         return Ok(e);
     }
     let steps: Vec<Vec<String>> = match args.get(1) {
@@ -1190,7 +1190,7 @@ fn db_open(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// db.execute(conn, sql[, params][, opts]) -> Result<Int> (rows
 /// affected). For statements that change data (CREATE/INSERT/UPDATE/DELETE).
 fn db_execute(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if let Err(e) = connection_id(args.first().unwrap_or(&Value::Unit)) {
+    if let Err(e) = connection_id(args.first().unwrap_or(&UNIT)) {
         return Ok(e);
     }
     let sql = match sql_arg("execute", &args) {
@@ -1217,7 +1217,7 @@ fn db_execute(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// when there is no row.
 fn db_query(args: Vec<Value>, one: bool) -> Result<Value, Box<dyn std::error::Error>> {
     let func = if one { "query_one" } else { "query" };
-    if let Err(e) = connection_id(args.first().unwrap_or(&Value::Unit)) {
+    if let Err(e) = connection_id(args.first().unwrap_or(&UNIT)) {
         return Ok(e);
     }
     let sql = match sql_arg(func, &args) {
@@ -1265,7 +1265,7 @@ fn db_query(args: Vec<Value>, one: bool) -> Result<Value, Box<dyn std::error::Er
 /// the columns in order (repeated names kept, known with no rows), each
 /// row a list in that order, BLOBs as Bytes.
 fn db_query_rows(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if let Err(e) = connection_id(args.first().unwrap_or(&Value::Unit)) {
+    if let Err(e) = connection_id(args.first().unwrap_or(&UNIT)) {
         return Ok(e);
     }
     let sql = match sql_arg("query_rows", &args) {
@@ -1303,7 +1303,7 @@ fn db_query_rows(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 /// statement prepared and bound, not yet run. `timeout_ms` bounds each
 /// `db.next`.
 fn db_cursor(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    let id = match connection_id(args.first().unwrap_or(&Value::Unit)) {
+    let id = match connection_id(args.first().unwrap_or(&UNIT)) {
         Ok(id) => id,
         Err(e) => return Ok(e),
     };
@@ -1346,8 +1346,12 @@ fn db_cursor(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// db.next(cur, n) -> Result<List<List>>: up to `n` more rows, `[]` at
 /// the end. A failed read (an error, an interrupt, a timeout) finishes
 /// the cursor: that call and every later one answer the same Err.
+/// What a missing argument reads as. A named static because `Value`
+/// implements `Drop`, so `&Value::Unit` is no longer promoted to one.
+static UNIT: Value = Value::Unit;
+
 fn db_next(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    let cur = match cursor_of("next", args.first().unwrap_or(&Value::Unit)) {
+    let cur = match cursor_of("next", args.first().unwrap_or(&UNIT)) {
         Ok(c) => c,
         Err(e) => return Ok(e),
     };
@@ -1408,7 +1412,7 @@ fn db_next(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// db.columns(cur) -> Result<List<Map>>: the cursor's column descriptors.
 fn db_columns(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     Ok(
-        match cursor_of("columns", args.first().unwrap_or(&Value::Unit)) {
+        match cursor_of("columns", args.first().unwrap_or(&UNIT)) {
             Ok(c) => ok(c.columns.clone()),
             Err(e) => e,
         },
@@ -1418,7 +1422,7 @@ fn db_columns(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// db.close_cursor(cur) -> Result<Unit>: finalize now. Closing a closed
 /// cursor is no error.
 fn db_close_cursor(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    let cur = match cursor_of("close_cursor", args.first().unwrap_or(&Value::Unit)) {
+    let cur = match cursor_of("close_cursor", args.first().unwrap_or(&UNIT)) {
         Ok(c) => c,
         Err(e) => return Ok(e),
     };
@@ -1430,7 +1434,7 @@ fn db_close_cursor(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
 /// connection is running now, from any thread; it answers
 /// `Err("db.<fn>: interrupted")`. Takes no lock.
 fn db_interrupt(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    let target = args.first().unwrap_or(&Value::Unit);
+    let target = args.first().unwrap_or(&UNIT);
     let entry = match cursor_of("interrupt", target) {
         Ok(cur) => Some(cur.entry.clone()),
         Err(_) => match connection_id(target) {
@@ -1451,7 +1455,7 @@ fn db_interrupt(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// db.close(conn) -> Result<Unit>. Drops the connection from the registry,
 /// finalizing its cursors first.
 fn db_close(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    let id = match connection_id(args.first().unwrap_or(&Value::Unit)) {
+    let id = match connection_id(args.first().unwrap_or(&UNIT)) {
         Ok(id) => id,
         Err(e) => return Ok(e),
     };

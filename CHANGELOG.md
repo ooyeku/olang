@@ -130,6 +130,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Freeing a deep value no longer aborts the process.** Drop glue frees
+  nested values by recursion, a stack frame per level, so the last
+  reference to a long enough chain — a list built from an enum, nested
+  lists, maps, objects, `Ok`s — overflowed the stack when it went:
+  `fatal runtime error: stack overflow`, uncatchable. A 10,000,000-link
+  enum list did it on the main thread; a thread with a smaller stack (an
+  http worker's is 32 MB) did it sooner. `Value` and `OvmValue` now
+  recurse only 64 levels when freeing and queue anything deeper for the
+  outermost drop, so depth is bounded by memory: ten-million-link chains
+  of every container free on the main thread, and a million-link one on
+  a 256 KB stack (tests/deep_drop_test.rs). A shared or flat value
+  returns at an inlined first check.
+
 - **A lambda in a function the tier refuses no longer leaks on every
   call.** A function with an early exit (`return`, `?`) runs on the
   tree-walker, which makes a new closure each time it evaluates a

@@ -540,8 +540,9 @@ fn chan_ask(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     message.insert("req".to_string(), request);
     message.insert("reply".to_string(), reply.clone());
     let envelope = Value::Map(Arc::new(message));
-    if let Value::Err(e) = chan_send(vec![args[0].clone(), envelope])? {
-        return Ok(Value::Err(e));
+    let sent = chan_send(vec![args[0].clone(), envelope])?;
+    if matches!(sent, Value::Err(_)) {
+        return Ok(sent);
     }
     let _ = service;
     // Spin for the fast answer, then park for the slow one.

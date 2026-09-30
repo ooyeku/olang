@@ -607,6 +607,149 @@ const _: () = {
     assert_send_sync::<Value>()
 };
 
+// Freeing a value frees what it holds, and Rust's drop glue does that by
+// recursion: a list of a million links built from an enum was a million
+// nested drop calls, and it overflowed the stack — an abort, not an
+// error, and in an http worker's 32 MB stack at a fraction of that. A
+// value that owns nothing nested — a scalar, a string, anything shared —
+// returns at an inlined first check. One that does is freed by ordinary
+// recursion, counted, and a value met deeper than `FREE_DEPTH` is queued
+// for the outermost drop to free once the stack has unwound. Depth costs
+// heap, not stack, and a flat or shallow value costs what drop glue did.
+impl Drop for Value {
+    #[inline]
+    fn drop(&mut self) {
+        if self.owns_nested() {
+            free_bounded(self, Value::clear_children, &QUEUED_VALUES, || Value::Unit);
+        }
+    }
+}
+
+/// How deep freeing recurses before it queues instead: far below any
+/// thread's stack, far above what ordinary data nests.
+const FREE_DEPTH: u32 = 64;
+
+thread_local! {
+    /// How many frees deep this thread is: `Value`s and `OvmValue`s
+    /// both, since each holds the other.
+    static FREEING: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    static QUEUED_VALUES: std::cell::RefCell<Vec<Value>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Frees what `value` alone owns, recursing while this thread is
+/// shallower than `FREE_DEPTH` and queueing `value` on `queue` once it is
+/// not. The outermost call — depth 0 — drains the queue afterwards, at
+/// depth 1, so a queued value frees its own children and queues deeper
+/// ones but never drains: the stack stays bounded however deep the value.
+/// (While a thread is being torn down and its locals are gone, this falls
+/// back to plain recursion.)
+pub(crate) fn free_bounded<T>(
+    value: &mut T,
+    clear_children: fn(&mut T),
+    queue: &'static std::thread::LocalKey<std::cell::RefCell<Vec<T>>>,
+    empty: fn() -> T,
+) {
+    let Ok(depth) = FREEING.try_with(|d| d.get()) else {
+        clear_children(value);
+        return;
+    };
+    if depth >= FREE_DEPTH {
+        let queued = queue.try_with(|q| q.borrow_mut().push(std::mem::replace(value, empty())));
+        if queued.is_err() {
+            clear_children(value);
+        }
+        return;
+    }
+    FREEING.set(depth + 1);
+    clear_children(value);
+    if depth == 0 {
+        while let Some(next) = queue.try_with(|q| q.borrow_mut().pop()).ok().flatten() {
+            drop(next);
+        }
+        // A deep, wide value can leave the queue large; do not keep it.
+        let _ = queue.try_with(|q| {
+            let mut q = q.borrow_mut();
+            if q.capacity() > 1024 {
+                *q = Vec::new();
+            }
+        });
+    }
+    FREEING.set(depth);
+}
+
+impl Value {
+    /// An `Ok` or `Err`'s payload, moved out. `Value` implements `Drop`,
+    /// so a pattern cannot move out of its fields; this leaves `Unit`
+    /// behind instead.
+    pub fn into_payload(mut self) -> Option<Value> {
+        match &mut self {
+            Value::Ok(inner) | Value::Err(inner) => Some(std::mem::replace(&mut **inner, Value::Unit)),
+            _ => None,
+        }
+    }
+
+    /// A list's or tuple's elements, moved out: no copy when this value
+    /// is their only owner, one clone of the vector when it is not.
+    pub fn into_items(mut self) -> Option<Vec<Value>> {
+        match &mut self {
+            Value::List(items) | Value::Tuple(items) => Some(std::mem::take(Arc::make_mut(items))),
+            _ => None,
+        }
+    }
+
+    /// Whether dropping this value would free children of its own: a
+    /// non-empty container nobody else holds.
+    #[inline]
+    fn owns_nested(&self) -> bool {
+        match self {
+            Value::List(items) | Value::Tuple(items) => {
+                !items.is_empty() && Arc::strong_count(items) == 1
+            }
+            Value::Map(fields) | Value::Struct { fields, .. } => {
+                !fields.is_empty() && Arc::strong_count(fields) == 1
+            }
+            Value::Enum(e) => {
+                !matches!(e.variant_data, EnumVariantData::Unit) && Arc::strong_count(e) == 1
+            }
+            Value::Ok(inner) | Value::Err(inner) => matches!(
+                **inner,
+                Value::List(_)
+                    | Value::Tuple(_)
+                    | Value::Map(_)
+                    | Value::Struct { .. }
+                    | Value::Enum(_)
+                    | Value::Ok(_)
+                    | Value::Err(_)
+            ),
+            _ => false,
+        }
+    }
+
+    /// Frees this value's children in place, each through its own drop.
+    fn clear_children(&mut self) {
+        match self {
+            Value::List(items) | Value::Tuple(items) => {
+                if let Some(items) = Arc::get_mut(items) {
+                    items.clear();
+                }
+            }
+            Value::Map(fields) | Value::Struct { fields, .. } => {
+                if let Some(fields) = Arc::get_mut(fields) {
+                    fields.clear();
+                }
+            }
+            Value::Enum(e) => {
+                if let Some(e) = Arc::get_mut(e) {
+                    e.variant_data = EnumVariantData::Unit;
+                }
+            }
+            Value::Ok(inner) | Value::Err(inner) => **inner = Value::Unit,
+            _ => {}
+        }
+    }
+}
+
 /// An enum value: `Shape.Circle(2.0)`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EnumValue {
@@ -741,9 +884,9 @@ impl FnRun {
             .into_iter()
             .map(|(name, (position, value))| {
                 let value = match value {
-                    Value::Function(f) => Value::Function(Arc::new(Function {
+                    Value::Function(ref f) => Value::Function(Arc::new(Function {
                         run: RunRef::Sibling(Arc::downgrade(self), position),
-                        ..(*f).clone()
+                        ..Function::clone(f)
                     })),
                     other => other,
                 };

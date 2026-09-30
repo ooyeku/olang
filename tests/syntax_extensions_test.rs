@@ -13,7 +13,7 @@ fn eval(src: &str) -> Value {
 
 fn ints(v: Value) -> Vec<i64> {
     match v {
-        Value::List(items) => items
+        Value::List(ref items) => items
             .iter()
             .map(|x| match x {
                 Value::Integer(n) => *n,
@@ -26,7 +26,7 @@ fn ints(v: Value) -> Vec<i64> {
 
 fn s(v: Value) -> String {
     match v {
-        Value::String(s) => s.to_string(),
+        Value::String(ref s) => s.to_string(),
         other => panic!("expected string, got {:?}", other),
     }
 }
@@ -133,7 +133,7 @@ fn uninitialized_let_still_parses_and_is_unit() {
     // Unbound-until-assigned semantics are unchanged.
     let src = "let pending\ntypeof(pending)";
     match eval(src) {
-        Value::String(s) => assert_eq!(s.to_string(), "Unit"),
+        Value::String(ref s) => assert_eq!(s.to_string(), "Unit"),
         other => panic!("expected type name, got {:?}", other),
     }
 }
@@ -144,7 +144,7 @@ fn assertions_accept_multiline_arguments() {
     // parse as a call to an undefined `assert_eq` function.
     let src = "test \"multiline\" {\n    assert_eq(\n        1 + 1,\n        2\n    )\n    assert_eq(\"a\" + \"b\",\n        \"ab\", \"concat\")\n    assert(\n        true\n    )\n}\n\"done\"";
     match eval(src) {
-        Value::String(s) => assert_eq!(s.to_string(), "done"),
+        Value::String(ref s) => assert_eq!(s.to_string(), "done"),
         other => panic!("expected done, got {:?}", other),
     }
 }

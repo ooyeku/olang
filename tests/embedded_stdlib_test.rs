@@ -246,7 +246,7 @@ use colx { unique }
 [typeof(colx), colx.sort_by([3, 1, 2], (x) => x), unique([1, 1, 2])]
 "#;
     match eval(src) {
-        Value::List(items) => {
+        Value::List(ref items) => {
             assert_eq!(items[0], Value::String("Module".to_string().into()));
             assert_eq!(
                 items[1],

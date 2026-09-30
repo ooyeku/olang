@@ -33,7 +33,7 @@ fn assert_tier_transparent(source: &str) -> Result<Value, String> {
 
 fn shows(source: &str) -> String {
     match assert_tier_transparent(source) {
-        Ok(Value::String(s)) => s.as_ref().clone(),
+        Ok(Value::String(ref s)) => s.as_ref().clone(),
         other => panic!(
             "expected a string result, got {:?}\n  source: {}",
             other, source

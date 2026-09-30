@@ -26,7 +26,7 @@ fn eval(source: &str) -> Result<Value, String> {
 
 fn as_string(v: Value) -> String {
     match v {
-        Value::String(s) => s.as_ref().clone(),
+        Value::String(ref s) => s.as_ref().clone(),
         other => panic!("expected String, got {:?}", other),
     }
 }

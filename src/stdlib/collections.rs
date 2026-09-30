@@ -469,7 +469,7 @@ fn flat_map(args: Vec<Value>, interpreter: &mut Interpreter) -> Result<Value, In
     for item in list.iter() {
         let mapped = interpreter.call_function(func.clone(), vec![item.clone()])?;
         match mapped {
-            Value::List(items) => out.extend(items.iter().cloned()),
+            Value::List(ref items) => out.extend(items.iter().cloned()),
             other => out.push(other),
         }
     }

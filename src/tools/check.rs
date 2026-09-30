@@ -256,8 +256,8 @@ fn run_rules(rules_path: &Path, files: &[PathBuf]) -> usize {
             "parse",
             vec![Value::String(Arc::new(src))],
         ) {
-            Ok(Value::Ok(inner)) => match *inner {
-                Value::List(items) => (*items).clone(),
+            Ok(Value::Ok(ref inner)) => match &**inner {
+                Value::List(items) => items.as_ref().clone(),
                 _ => continue,
             },
             _ => continue,
@@ -720,7 +720,7 @@ pub fn shadow_warnings(program: &Program) -> Vec<CheckDiagnostic> {
     };
     let list_of = |v: Option<Value>| -> Vec<Value> {
         match v {
-            Some(Value::List(items)) => items.as_ref().clone(),
+            Some(Value::List(ref items)) => items.as_ref().clone(),
             _ => Vec::new(),
         }
     };
@@ -800,7 +800,7 @@ calls — the call reaches the argument, not the function; rename the parameter"
             }
             Some("use") => {
                 let path = match field(node, "path") {
-                    Some(Value::String(p)) => p.split('.').map(str::to_string).collect::<Vec<_>>(),
+                    Some(Value::String(ref p)) => p.split('.').map(str::to_string).collect::<Vec<_>>(),
                     other => list_of(other).iter().filter_map(str_of).collect::<Vec<_>>(),
                 };
                 if path.len() >= 2

@@ -23,7 +23,7 @@ fn exec_captures_exit_code_zero() {
 fn exec_captures_stdout() {
     let v = eval(r#"str.trim(unwrap(os.exec("echo", ["hello"])).stdout)"#);
     match v {
-        Value::String(s) => assert_eq!(s.to_string(), "hello"),
+        Value::String(ref s) => assert_eq!(s.to_string(), "hello"),
         other => panic!("expected string, got {:?}", other),
     }
 }
@@ -46,7 +46,7 @@ match os.exec("this_binary_does_not_exist_37f2", []) {
 }
 "#;
     match eval(src) {
-        Value::String(s) => assert_eq!(s.to_string(), "launch failed"),
+        Value::String(ref s) => assert_eq!(s.to_string(), "launch failed"),
         other => panic!("expected string, got {:?}", other),
     }
 }

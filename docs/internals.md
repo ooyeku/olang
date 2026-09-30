@@ -281,6 +281,21 @@ language constructs a cycle of values), so deterministic reclamation
 when the last reference drops is both sufficient and simpler than a GC —
 there are no pauses to tune and no object graphs to trace.
 
+Freeing is iterative. Rust's drop glue frees a nested value by
+recursion, a stack frame per level, so a list of a million links built
+from an enum aborted the process when it was freed — sooner in an http
+worker's smaller stack. `Value` and `OvmValue` each implement `Drop`:
+anything shared or flat returns at an inlined first check; a container
+the value alone owns is freed by ordinary recursion, counted per thread,
+and a value met more than 64 levels down is queued for the outermost
+drop to free once the stack has unwound (`ast::free_bounded`). The price
+is one check per value freed — measured at 2–3% on allocation-heavy
+programs — and that a `match`
+cannot move a field out of either type. Borrow it (`ref`), mutate through
+`&mut` (`Arc::make_mut`, as `map_set` does), or use the helpers that
+move out and leave `Unit` behind: `Value::into_payload`,
+`Value::into_items`, `OvmValue::into_data`.
+
 ## Modules
 
 `use` resolves a dot path to a file (embedded modules first, then package

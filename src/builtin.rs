@@ -1807,7 +1807,7 @@ impl BuiltinFunctions {
                                     // "map" is the right kernel either way.
                                     if let Some(result) = worker.tier_hof("map", &function, chunk) {
                                         return match result {
-                                            Ok(Value::List(items)) => Ok(items.as_ref().clone()),
+                                            Ok(Value::List(ref items)) => Ok(items.as_ref().clone()),
                                             Ok(other) => Ok(vec![other]),
                                             Err(e) => Err((chunk_idx * chunk_size, e)),
                                         };
@@ -3504,35 +3504,11 @@ impl BuiltinFunctions {
         // new value of the same kind with the field set. A sole-owner
         // receiver (the move-call fusion's whole point) inserts in place;
         // an aliased one copies, exactly like the list writes.
-        match args.swap_remove(0) {
-            Value::Map(mut map_ref) => {
-                match std::sync::Arc::get_mut(&mut map_ref) {
-                    Some(m) => {
-                        m.insert(key, value);
-                    }
-                    None => {
-                        let mut m = (*map_ref).clone();
-                        m.insert(key, value);
-                        map_ref = std::sync::Arc::new(m);
-                    }
-                }
-                Ok(Value::Map(map_ref))
-            }
-            Value::Struct {
-                type_name,
-                mut fields,
-            } => {
-                match std::sync::Arc::get_mut(&mut fields) {
-                    Some(f) => {
-                        f.insert(key, value);
-                    }
-                    None => {
-                        let mut f = fields.as_ref().clone();
-                        f.insert(key, value);
-                        fields = std::sync::Arc::new(f);
-                    }
-                }
-                Ok(Value::Struct { type_name, fields })
+        let mut target = args.swap_remove(0);
+        match &mut target {
+            Value::Map(fields) | Value::Struct { fields, .. } => {
+                std::sync::Arc::make_mut(fields).insert(key, value);
+                Ok(target)
             }
             _ => Err(InterpreterError::TypeError {
                 message: "map_set: first argument must be a map or object".to_string(),
@@ -3952,16 +3928,17 @@ fn db_transaction(
     // One transaction at a time on this connection, across threads: held
     // until this function returns, whichever way it ends.
     let _slot = crate::stdlib::db::transaction_enter(&conn);
-    if let Value::Err(e) = db("begin", vec![conn.clone()])? {
-        return Ok(Value::Err(e));
+    let begun = db("begin", vec![conn.clone()])?;
+    if matches!(begun, Value::Err(_)) {
+        return Ok(begun);
     }
     match interpreter.call_function(f, vec![conn.clone()]) {
-        Ok(Value::Err(e)) => {
+        Ok(failed @ Value::Err(_)) => {
             let _ = db("rollback", vec![conn]);
-            Ok(Value::Err(e))
+            Ok(failed)
         }
         Ok(value) => match db("commit", vec![conn])? {
-            Value::Err(e) => Ok(Value::Err(e)),
+            failed @ Value::Err(_) => Ok(failed),
             _ => Ok(value),
         },
         Err(raised) => {

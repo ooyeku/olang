@@ -74,7 +74,7 @@ fn distribution_functions_from_source() {
     )
     .unwrap();
     let items = match result {
-        Value::List(items) => items,
+        Value::List(ref items) => items,
         other => panic!("expected list, got {:?}", other),
     };
     close(as_float(&items[0]), 0.9750021048517795, 1e-9);
@@ -99,7 +99,7 @@ fn t_test_and_describe_from_source() {
     )
     .unwrap();
     let items = match result {
-        Value::List(items) => items,
+        Value::List(ref items) => items,
         other => panic!("expected list, got {:?}", other),
     };
     close(as_float(&items[0]), 4.15548385691924, 1e-9);
@@ -120,7 +120,7 @@ fn one_sample_t_test_by_scalar_second_argument() {
     )
     .unwrap();
     let items = match result {
-        Value::List(items) => items,
+        Value::List(ref items) => items,
         other => panic!("expected list, got {:?}", other),
     };
     close(as_float(&items[0]), 2.7406110459365625, 1e-9);
@@ -142,7 +142,7 @@ fn chi2_and_corr_from_source() {
     )
     .unwrap();
     let items = match result {
-        Value::List(items) => items,
+        Value::List(ref items) => items,
         other => panic!("expected list, got {:?}", other),
     };
     close(as_float(&items[0]), 5.04, 1e-9);
@@ -170,7 +170,7 @@ fn lm_from_source_matches_reference() {
     )
     .unwrap();
     let items = match result {
-        Value::List(items) => items,
+        Value::List(ref items) => items,
         other => panic!("expected list, got {:?}", other),
     };
     let coef = match &items[0] {
@@ -242,7 +242,7 @@ fn sampling_respects_random_seed_and_moments_are_sane() {
     )
     .unwrap();
     let items = match result {
-        Value::List(items) => items,
+        Value::List(ref items) => items,
         other => panic!("expected list, got {:?}", other),
     };
     close(as_float(&items[0]), 10.0, 0.02);

@@ -193,7 +193,7 @@ fn abs_path_and_home_dir_resolve() {
     // abs_path works for paths that don't exist and resolves dots.
     let v = eval("unwrap(fs.abs_path(\"./definitely/../not-created.txt\"))");
     match v {
-        Value::String(s) => {
+        Value::String(ref s) => {
             assert!(s.starts_with('/'), "absolute: {}", s);
             assert!(!s.contains(".."), "dots resolved: {}", s);
         }

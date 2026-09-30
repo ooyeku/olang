@@ -18,7 +18,7 @@ fn eval(source: &str) -> Value {
 
 fn eval_str(source: &str) -> String {
     match eval(source) {
-        Value::String(s) => s.to_string(),
+        Value::String(ref s) => s.to_string(),
         other => panic!("expected String, got {other:?}"),
     }
 }

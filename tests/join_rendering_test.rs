@@ -9,7 +9,7 @@ fn s(src: &str) -> String {
     let program = Parser::new().parse(src).expect("parse");
     let mut interp = Interpreter::new();
     match interp.eval_program(program).expect("eval") {
-        Value::String(s) => s.to_string(),
+        Value::String(ref s) => s.to_string(),
         other => panic!("expected string, got {:?}", other),
     }
 }

@@ -103,7 +103,7 @@ fn interrupt_is_callable_from_a_rust_thread_while_the_statement_holds_the_connec
     use olang::stdlib::db::call_db_function;
     let s = |t: &str| Value::String(t.to_string().into());
     let conn = match call_db_function("open", vec![s(":memory:")]).unwrap() {
-        Value::Ok(c) => *c,
+        ok @ Value::Ok(_) => ok.into_payload().unwrap(),
         other => panic!("open: {other:?}"),
     };
     let c2 = conn.clone();

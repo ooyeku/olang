@@ -116,7 +116,7 @@ fn sqrt_agrees_within_tolerance() {
 fn mathx_loads_and_binds_as_a_namespace() {
     let src = "use mathx { gcd }\n[typeof(mathx), mathx.factorial(5), gcd(12, 8)]";
     match eval(src) {
-        Value::List(items) => {
+        Value::List(ref items) => {
             assert_eq!(items[0], Value::String("Module".to_string().into()));
             assert_eq!(items[1], Value::Integer(120));
             assert_eq!(items[2], Value::Integer(4));

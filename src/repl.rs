@@ -561,7 +561,7 @@ impl Repl {
         // list — a new module is picked up automatically.
         for (module_name, module_value) in crate::stdlib::get_stdlib() {
             function_names.push(module_name.clone());
-            if let Value::Struct { fields, .. } = module_value {
+            if let Value::Struct { fields, .. } = &module_value {
                 for field in fields.values() {
                     if let Value::Builtin(func) = field {
                         // func.name is already "module.function"

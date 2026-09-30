@@ -69,8 +69,8 @@ fn native_value_crosses_tier_boundary_as_same_arc() {
     let back = crossed.to_ast().expect("to_ast");
 
     match back {
-        Value::Native(after) => assert!(
-            handle.ptr_eq(&after),
+        Value::Native(ref after) => assert!(
+            handle.ptr_eq(after),
             "the tier boundary must share the allocation, not convert it"
         ),
         other => panic!("native value came back as {:?}", other),
@@ -189,7 +189,7 @@ fn unsupported_probe_operation_errors_in_both_tiers() {
 fn ods_version_reports_phase() {
     let result = eval("ods.version()", None).expect("version");
     match result {
-        Value::String(s) => assert!(s.contains("phase"), "got {}", s),
+        Value::String(ref s) => assert!(s.contains("phase"), "got {}", s),
         other => panic!("ods.version() returned {:?}", other),
     }
 }

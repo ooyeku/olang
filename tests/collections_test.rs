@@ -43,7 +43,7 @@ fn eval_identical(source: &str) -> Value {
 
 fn shows(source: &str) -> String {
     match eval_identical(&format!("to_string({})", source.trim_end())) {
-        Value::String(s) => s.as_ref().clone(),
+        Value::String(ref s) => s.as_ref().clone(),
         other => panic!("expected a string, got {:?}", other),
     }
 }
@@ -86,7 +86,7 @@ for i in range(0, 200) {\n\
 }\n\
 to_string([a[0], a[25], a[49], snapshot[0], snapshot[25], len(snapshot)])";
     let got = eval_identical(src);
-    let Value::String(s) = got else { panic!() };
+    let Value::String(ref s) = got else { panic!() };
     // The snapshot stayed all zeros regardless of 400 fused writes.
     assert!(s.ends_with("0, 0, 50]"), "{}", s);
 }
@@ -116,7 +116,7 @@ to_string([h[0], held[0]])";
 
 fn shows_of(v: Value) -> String {
     match v {
-        Value::String(s) => s.as_ref().clone(),
+        Value::String(ref s) => s.as_ref().clone(),
         other => panic!("expected string, got {:?}", other),
     }
 }

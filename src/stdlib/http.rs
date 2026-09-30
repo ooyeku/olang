@@ -1799,7 +1799,7 @@ mod tests {
     #[test]
     fn test_create_http_module() {
         let module = create_http_module();
-        if let Value::Struct { fields, .. } = module {
+        if let Value::Struct { fields, .. } = &module {
             // Test that all expected functions are present
             let expected_functions = vec![
                 "get",
@@ -1849,7 +1849,7 @@ mod tests {
         // Test basic response creation
         let result = http_response(vec![int_val(200), string_val("Hello World")]).unwrap();
 
-        if let Value::Struct { type_name, fields } = result {
+        if let Value::Struct { type_name, fields } = &result {
             assert_eq!(type_name, "HttpResponse");
             assert_eq!(fields["status"], int_val(200));
             assert_eq!(fields["body"], string_val("Hello World"));
@@ -1870,7 +1870,7 @@ mod tests {
             http_response_with_headers(vec![int_val(201), string_val("Created"), headers_struct])
                 .unwrap();
 
-        if let Value::Struct { type_name, fields } = result {
+        if let Value::Struct { type_name, fields } = &result {
             assert_eq!(type_name, "HttpResponse");
             assert_eq!(fields["status"], int_val(201));
             assert_eq!(fields["body"], string_val("Created"));
@@ -2235,7 +2235,7 @@ mod tests {
             .unwrap();
 
             // We expect this to be an error due to network, but not due to unsupported method
-            if let Value::Err(error) = result
+            if let Value::Err(error) = &result
                 && let Value::String(error_msg) = error.as_ref()
             {
                 // Should not contain "Unsupported HTTP method"

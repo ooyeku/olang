@@ -13,7 +13,7 @@ fn eval(src: &str) -> Value {
 
 fn s(v: Value) -> String {
     match v {
-        Value::String(s) => s.to_string(),
+        Value::String(ref s) => s.to_string(),
         other => panic!("expected string, got {:?}", other),
     }
 }
@@ -91,7 +91,7 @@ fn re_matching() {
 fn re_find_all_and_split() {
     let list = eval(r#"unwrap(re.find_all("\\d+", "a1b22c333"))"#);
     match list {
-        Value::List(items) => {
+        Value::List(ref items) => {
             let got: Vec<String> = items.iter().cloned().map(s).collect();
             assert_eq!(got, vec!["1", "22", "333"]);
         }
@@ -107,7 +107,7 @@ fn re_find_all_and_split() {
 fn re_captures_groups() {
     let groups = eval(r#"unwrap(re.captures("(\\w+)@(\\w+)", "user@host"))"#);
     match groups {
-        Value::List(items) => {
+        Value::List(ref items) => {
             let got: Vec<String> = items.iter().cloned().map(s).collect();
             assert_eq!(got, vec!["user@host", "user", "host"]);
         }
@@ -155,7 +155,7 @@ fn os_args_returns_a_list() {
     // Without the CLI setting script args, os.args() falls back to the
     // process args — but it must always return Ok(list-of-strings).
     match eval(r#"os.args()"#) {
-        Value::List(items) => assert!(items.iter().all(|v| matches!(v, Value::String(_)))),
+        Value::List(ref items) => assert!(items.iter().all(|v| matches!(v, Value::String(_)))),
         other => panic!("expected list, got {:?}", other),
     }
 }
@@ -169,7 +169,7 @@ let groups = unwrap(re.captures("^(\\S+ \\S+) \\[(\\w+)\\] (.+)$", "2026-08-06 0
 [groups[1], groups[2], groups[3]]
 "#;
     match eval(src) {
-        Value::List(items) => {
+        Value::List(ref items) => {
             assert_eq!(s(items[0].clone()), "2026-08-06 09:13:15");
             assert_eq!(s(items[1].clone()), "ERROR");
             assert_eq!(s(items[2].clone()), "db failed: timeout");
@@ -198,9 +198,9 @@ let ts = range(1, 4) |> map((n) => spawn id(n))
 ts |> map(task.join)
 "#;
     match eval(src) {
-        Value::List(items) => assert_eq!(
-            items,
-            vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)].into()
+        Value::List(ref items) => assert_eq!(
+            items.as_slice(),
+            [Value::Integer(1), Value::Integer(2), Value::Integer(3)]
         ),
         other => panic!("expected list, got {:?}", other),
     }

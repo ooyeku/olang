@@ -555,6 +555,90 @@ impl Clone for OvmValue {
     }
 }
 
+// The interpreter's `Value` drops the same way, for the same reason:
+// recursive drop glue overflowed the stack freeing a deep enough list or
+// tree. See `crate::ast::free_bounded`.
+impl Drop for OvmValue {
+    #[inline]
+    fn drop(&mut self) {
+        if self.owns_nested() {
+            crate::ast::free_bounded(self, OvmValue::clear_children, &QUEUED, || OvmValue {
+                data: ValueData::Unit,
+            });
+        }
+    }
+}
+
+thread_local! {
+    static QUEUED: std::cell::RefCell<Vec<OvmValue>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+impl OvmValue {
+    /// The value's data, moved out. `OvmValue` implements `Drop`, so its
+    /// field cannot be moved out by a pattern; this leaves `Unit` behind.
+    #[inline]
+    pub fn into_data(mut self) -> ValueData {
+        std::mem::replace(&mut self.data, ValueData::Unit)
+    }
+
+    /// Whether dropping this value would free children of its own.
+    #[inline]
+    fn owns_nested(&self) -> bool {
+        match &self.data {
+            ValueData::List(items) | ValueData::Tuple(items) => {
+                !items.is_empty() && Arc::strong_count(items) == 1
+            }
+            ValueData::Map(map) => !map.is_empty() && Arc::strong_count(map) == 1,
+            ValueData::Struct(s) => !s.values.is_empty() && Arc::strong_count(s) == 1,
+            ValueData::Enum(e) => !matches!(e.data, EnumData::Unit) && Arc::strong_count(e) == 1,
+            ValueData::Result(r) => {
+                (r.ok.is_some() || r.err.is_some()) && Arc::strong_count(r) == 1
+            }
+            ValueData::Closure(c) => !c.captured.is_empty() && Arc::strong_count(c) == 1,
+            _ => false,
+        }
+    }
+
+    /// Frees this value's children in place, each through its own drop.
+    fn clear_children(&mut self) {
+        match &mut self.data {
+            ValueData::List(items) | ValueData::Tuple(items) => {
+                if let Some(items) = Arc::get_mut(items) {
+                    items.clear();
+                }
+            }
+            ValueData::Map(map) => {
+                if let Some(map) = Arc::get_mut(map) {
+                    map.clear();
+                }
+            }
+            ValueData::Struct(s) => {
+                if let Some(s) = Arc::get_mut(s) {
+                    s.values.clear();
+                }
+            }
+            ValueData::Enum(e) => {
+                if let Some(e) = Arc::get_mut(e) {
+                    e.data = EnumData::Unit;
+                }
+            }
+            ValueData::Result(r) => {
+                if let Some(r) = Arc::get_mut(r) {
+                    r.ok = None;
+                    r.err = None;
+                }
+            }
+            ValueData::Closure(c) => {
+                if let Some(c) = Arc::get_mut(c) {
+                    c.captured.clear();
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 impl PartialEq for OvmValue {
     fn eq(&self, other: &Self) -> bool {
         // Compare type tags first for quick rejection
@@ -953,15 +1037,15 @@ impl OvmValue {
     }
 
     /// Enhanced from_ast conversion with better builtin support
-    pub fn from_ast(ast_value: Value) -> Self {
+    pub fn from_ast(mut ast_value: Value) -> Self {
         match ast_value {
             Value::Integer(n) => Self::new_integer(n),
             Value::Float(f) => Self::new_float(f),
             Value::Boolean(b) => Self::new_boolean(b),
-            Value::String(s) => Self::new_string(s.as_ref().clone()),
+            Value::String(ref s) => Self::new_string(s.as_ref().clone()),
             Value::Unit => Self::new_unit(),
 
-            Value::List(items) => {
+            Value::List(ref items) => {
                 // Homogeneous scalar lists take the typed layout: the
                 // detection scan is one early-exit pass and the typed
                 // copy a contiguous fill. Large lists go through a
@@ -975,23 +1059,23 @@ impl OvmValue {
                 // interpreter's sole-owner in-place writes see the extra
                 // reference and copy instead of mutating.
                 if items.len() > AST_LIST_EAGER {
-                    if let Some(hit) = typed_cache_lookup(&items) {
+                    if let Some(hit) = typed_cache_lookup(items) {
                         return hit;
                     }
                     let detected =
-                        Self::detect_float_list(&items).or_else(|| Self::detect_int_list(&items));
+                        Self::detect_float_list(items).or_else(|| Self::detect_int_list(items));
                     if let Some(tl) = detected {
-                        typed_cache_insert(&items, &tl);
+                        typed_cache_insert(items, &tl);
                         return tl;
                     }
                     return OvmValue {
-                        data: ValueData::AstList(items),
+                        data: ValueData::AstList(items.clone()),
                     };
                 }
-                if let Some(fl) = Self::detect_float_list(&items) {
+                if let Some(fl) = Self::detect_float_list(items) {
                     return fl;
                 }
-                if let Some(il) = Self::detect_int_list(&items) {
+                if let Some(il) = Self::detect_int_list(items) {
                     return il;
                 }
                 if items.len() <= AST_LIST_EAGER {
@@ -1002,12 +1086,12 @@ impl OvmValue {
                     Self::new_list(ovm_items)
                 } else {
                     OvmValue {
-                        data: ValueData::AstList(items),
+                        data: ValueData::AstList(items.clone()),
                     }
                 }
             }
 
-            Value::Tuple(items) => {
+            Value::Tuple(ref items) => {
                 let ovm_items: Vec<Self> = items
                     .iter()
                     .map(|item| Self::from_ast(item.clone()))
@@ -1019,9 +1103,9 @@ impl OvmValue {
             // closure into a FunctionObject that could not convert back, so
             // no function value ever crossed the tier boundary. AstFunction
             // is lossless and O(1).
-            Value::Function(func) => Self::new_ast_function(func),
+            Value::Function(ref func) => Self::new_ast_function(func.clone()),
 
-            Value::Builtin(builtin) => {
+            Value::Builtin(ref builtin) => {
                 // Create a placeholder builtin function
                 // In a real implementation, this would map to actual builtin functions
                 Self::new_builtin(builtin.name.clone(), builtin.arity, |_args| {
@@ -1031,17 +1115,17 @@ impl OvmValue {
                 })
             }
 
-            Value::Ok(value) => Self {
+            Value::Ok(ref mut value) => Self {
                 data: ValueData::Result(Arc::new(ResultObject {
-                    ok: Some(Self::from_ast(*value)),
+                    ok: Some(Self::from_ast(std::mem::replace(&mut **value, Value::Unit))),
                     err: None,
                 })),
             },
 
-            Value::Err(value) => Self {
+            Value::Err(ref mut value) => Self {
                 data: ValueData::Result(Arc::new(ResultObject {
                     ok: None,
-                    err: Some(Self::from_ast(*value)),
+                    err: Some(Self::from_ast(std::mem::replace(&mut **value, Value::Unit))),
                 })),
             },
 
@@ -1065,7 +1149,7 @@ impl OvmValue {
                 }
             }
 
-            Value::Struct { type_name, fields } => {
+            Value::Struct { ref type_name, ref fields } => {
                 // The fields are behind an Arc now, so this borrows and
                 // clones each value rather than consuming the map — the
                 // caller's struct may still be alive and shared.
@@ -1073,7 +1157,7 @@ impl OvmValue {
                     .iter()
                     .map(|(k, v)| (k.clone(), Self::from_ast(v.clone())))
                     .collect();
-                let struct_obj = StructObject::from_pairs(&type_name, pairs);
+                let struct_obj = StructObject::from_pairs(type_name, pairs);
 
                 let gc_ptr = Arc::new(struct_obj);
 
@@ -1082,12 +1166,15 @@ impl OvmValue {
                 }
             }
 
-            Value::Enum(e) => {
-                let crate::ast::EnumValue {
-                    type_name,
-                    variant_name,
-                    variant_data,
-                } = Arc::unwrap_or_clone(e);
+            Value::Enum(ref mut e) => {
+                // Taken from a sole-owner enum in place, copied from a
+                // shared one: `Arc::unwrap_or_clone`, but `Value`
+                // implements `Drop`, so the Arc cannot be moved out.
+                let e = Arc::make_mut(e);
+                let type_name = std::mem::take(&mut e.type_name);
+                let variant_name = std::mem::take(&mut e.variant_name);
+                let variant_data =
+                    std::mem::replace(&mut e.variant_data, crate::ast::EnumVariantData::Unit);
                 let data = match variant_data {
                     crate::ast::EnumVariantData::Unit => EnumData::Unit,
                     crate::ast::EnumVariantData::Tuple(values) => {
@@ -1107,7 +1194,7 @@ impl OvmValue {
                 }))
             }
 
-            Value::Map(map) => {
+            Value::Map(ref map) => {
                 // A small record of scalars keeps the native layout (the
                 // fast paths, the JIT's typed maps); anything larger or
                 // nested crosses as a wrapper, in O(1).
@@ -1130,12 +1217,12 @@ impl OvmValue {
                     ))
                 } else {
                     OvmValue {
-                        data: ValueData::AstMap(map),
+                        data: ValueData::AstMap(map.clone()),
                     }
                 }
             }
 
-            Value::TypeInfo(t) => {
+            Value::TypeInfo(ref t) => {
                 // For now, represent types as string names
                 Self::new_string(t.name.clone())
             }
@@ -1145,8 +1232,8 @@ impl OvmValue {
 
             // The same Arc, shared verbatim: crossing the boundary is a
             // refcount bump, never a conversion.
-            Value::Native(handle) => Self {
-                data: ValueData::Native(handle),
+            Value::Native(ref handle) => Self {
+                data: ValueData::Native(handle.clone()),
             },
         }
     }

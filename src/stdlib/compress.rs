@@ -147,8 +147,8 @@ mod tests {
         let packed = call_compress_function("gzip", vec![s(&text)]).unwrap();
         assert!(bytes::bytes_of(&packed).unwrap().len() < text.len() / 10);
         let back = call_compress_function("gunzip", vec![packed]).unwrap();
-        match back {
-            Value::Ok(inner) => assert_eq!(bytes::bytes_of(&inner).unwrap(), text.as_bytes()),
+        match &back {
+            Value::Ok(inner) => assert_eq!(bytes::bytes_of(inner).unwrap(), text.as_bytes()),
             other => panic!("expected Ok, got {:?}", other),
         }
     }
@@ -166,7 +166,7 @@ mod tests {
     fn module_lists_its_functions() {
         // gzip, gzip_level, gunzip, deflate, inflate — and brotli natively.
         let expected = if cfg!(feature = "native") { 6 } else { 5 };
-        match create_compress_module() {
+        match &create_compress_module() {
             Value::Struct { fields, .. } => assert_eq!(fields.len(), expected),
             _ => panic!("module"),
         }

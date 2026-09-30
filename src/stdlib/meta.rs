@@ -246,8 +246,8 @@ fn names(v: &[String]) -> Value {
 fn stmt_to_value(stmt: &Statement) -> Value {
     match stmt {
         Statement::MetaFnDecl { decl, .. } => {
-            let mut m_v = match stmt_to_value(&Statement::FunctionDecl(decl.clone())) {
-                Value::Map(inner) => (*inner).clone(),
+            let mut m_v = match &stmt_to_value(&Statement::FunctionDecl(decl.clone())) {
+                Value::Map(inner) => inner.as_ref().clone(),
                 _ => std::collections::HashMap::new(),
             };
             m_v.insert("kind".to_string(), s("meta_fn"));
@@ -418,8 +418,8 @@ fn share_to_value(d: &ShareDecl) -> Value {
         ]),
         ShareDecl::Use(u) => {
             // A re-export: a use marked shared.
-            if let Value::Map(m) = use_to_value(u) {
-                let mut m = (*m).clone();
+            if let Value::Map(m) = &use_to_value(u) {
+                let mut m = m.as_ref().clone();
                 m.insert("shared".to_string(), Value::Boolean(true));
                 return Value::Map(std::sync::Arc::new(m));
             }
@@ -1389,9 +1389,9 @@ mod tests {
     use super::*;
 
     fn parse(src: &str) -> Vec<Value> {
-        match meta_parse(vec![s(src)]).unwrap() {
-            Value::Ok(inner) => match *inner {
-                Value::List(items) => (*items).clone(),
+        match &meta_parse(vec![s(src)]).unwrap() {
+            Value::Ok(inner) => match inner.as_ref() {
+                Value::List(items) => items.as_ref().clone(),
                 _ => panic!("expected a list"),
             },
             other => panic!("expected Ok(list), got {:?}", other),
@@ -1400,7 +1400,10 @@ mod tests {
 
     fn get<'a>(node: &'a Value, key: &str) -> &'a Value {
         match node {
-            Value::Map(m) => m.get(key).unwrap_or(&Value::Unit),
+            Value::Map(m) => {
+                static UNIT: Value = Value::Unit;
+                m.get(key).unwrap_or(&UNIT)
+            }
             _ => panic!("not a map"),
         }
     }

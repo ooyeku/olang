@@ -184,7 +184,7 @@ impl Interpreter {
             }
             (Value::Integer(a), BinaryOp::Equal, Value::Integer(b)) => Ok(Value::Boolean(a == b)),
             (Value::Float(a), BinaryOp::Equal, Value::Float(b)) => Ok(Value::Boolean(a == b)),
-            (Value::String(a), BinaryOp::Equal, Value::String(b)) => Ok(Value::Boolean(*a == *b)),
+            (Value::String(ref a), BinaryOp::Equal, Value::String(ref b)) => Ok(Value::Boolean(*a == *b)),
             (Value::Boolean(a), BinaryOp::Equal, Value::Boolean(b)) => Ok(Value::Boolean(a == b)),
             // Enum values compare structurally: same variant and payloads.
             // Value derives PartialEq, so this is the natural equality.
@@ -229,20 +229,20 @@ impl Interpreter {
                 Ok(Value::Boolean(a != b))
             }
             (Value::Float(a), BinaryOp::NotEqual, Value::Float(b)) => Ok(Value::Boolean(a != b)),
-            (Value::String(a), BinaryOp::NotEqual, Value::String(b)) => {
+            (Value::String(ref a), BinaryOp::NotEqual, Value::String(ref b)) => {
                 Ok(Value::Boolean(*a != *b))
             }
             // Strings order lexicographically, matching the bytecode tier — so
             // character-range checks like `c >= "0" && c <= "9"` work and
             // strings sort. Ordering is by Unicode scalar value.
-            (Value::String(a), BinaryOp::LessThan, Value::String(b)) => Ok(Value::Boolean(*a < *b)),
-            (Value::String(a), BinaryOp::LessThanEqual, Value::String(b)) => {
+            (Value::String(ref a), BinaryOp::LessThan, Value::String(ref b)) => Ok(Value::Boolean(*a < *b)),
+            (Value::String(ref a), BinaryOp::LessThanEqual, Value::String(ref b)) => {
                 Ok(Value::Boolean(*a <= *b))
             }
-            (Value::String(a), BinaryOp::GreaterThan, Value::String(b)) => {
+            (Value::String(ref a), BinaryOp::GreaterThan, Value::String(ref b)) => {
                 Ok(Value::Boolean(*a > *b))
             }
-            (Value::String(a), BinaryOp::GreaterThanEqual, Value::String(b)) => {
+            (Value::String(ref a), BinaryOp::GreaterThanEqual, Value::String(ref b)) => {
                 Ok(Value::Boolean(*a >= *b))
             }
             (Value::Boolean(a), BinaryOp::NotEqual, Value::Boolean(b)) => {
@@ -304,9 +304,9 @@ impl Interpreter {
             }
             (Value::Boolean(a), BinaryOp::And, Value::Boolean(b)) => Ok(Value::Boolean(a && b)),
             (Value::Boolean(a), BinaryOp::Or, Value::Boolean(b)) => Ok(Value::Boolean(a || b)),
-            (Value::String(a), BinaryOp::Add, Value::String(b)) => {
-                let mut s = (*a).clone();
-                s.push_str(&b);
+            (Value::String(ref a), BinaryOp::Add, Value::String(ref b)) => {
+                let mut s = String::clone(a);
+                s.push_str(b);
                 Ok(Value::String(std::sync::Arc::new(s)))
             }
             // Mixing a number and a string under `+` is a type error, not a
@@ -334,7 +334,7 @@ impl Interpreter {
                         .to_string(),
                 })
             }
-            (Value::List(a), BinaryOp::Add, Value::List(b)) => {
+            (Value::List(ref a), BinaryOp::Add, Value::List(ref b)) => {
                 let mut items = Vec::with_capacity(a.len() + b.len());
                 items.extend(a.iter().cloned());
                 items.extend(b.iter().cloned());

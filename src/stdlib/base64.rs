@@ -356,7 +356,7 @@ mod tests {
     fn test_base64_module_creation() {
         let module = create_base64_module();
 
-        if let Value::Struct { type_name, fields } = module {
+        if let Value::Struct { type_name, fields } = &module {
             assert_eq!(type_name, "Module");
 
             // Check that all expected functions are present

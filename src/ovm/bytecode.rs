@@ -3587,7 +3587,10 @@ impl BytecodeVm {
                     // Typed lists write the raw scalar in place when the
                     // element matches the layout; a mismatched element
                     // rebuilds the boxed form (correctness first).
-                    if let ValueData::FloatList(mut arc) = target_val.data {
+                    if let ValueData::FloatList(_) = target_val.data {
+                        let ValueData::FloatList(mut arc) = target_val.into_data() else {
+                            unreachable!()
+                        };
                         let at = crate::stdlib::collections::resolve_index("set", idx, arc.len())
                             .map_err(BytecodeError::RuntimeError)?;
                         if let ValueData::Float(f) = v.data {
@@ -3619,7 +3622,10 @@ impl BytecodeVm {
                         pc += 1;
                         continue;
                     }
-                    if let ValueData::IntList(mut arc) = target_val.data {
+                    if let ValueData::IntList(_) = target_val.data {
+                        let ValueData::IntList(mut arc) = target_val.into_data() else {
+                            unreachable!()
+                        };
                         let at = crate::stdlib::collections::resolve_index("set", idx, arc.len())
                             .map_err(BytecodeError::RuntimeError)?;
                         if let ValueData::Integer(n) = v.data {
@@ -3655,7 +3661,10 @@ impl BytecodeVm {
                     // one element converts, the arc stays shared with
                     // the interpreter side — the boundary-free write the
                     // collections' handles ride on.
-                    if let ValueData::AstList(mut arc) = target_val.data {
+                    if let ValueData::AstList(_) = target_val.data {
+                        let ValueData::AstList(mut arc) = target_val.into_data() else {
+                            unreachable!()
+                        };
                         if std::env::var_os("OLANG_DEBUG_ASTLIST").is_some()
                             && std::sync::Arc::strong_count(&arc) > 1
                         {
@@ -3708,7 +3717,7 @@ impl BytecodeVm {
                         self.execution_state.set_register(*target, target_val)?;
                         return Err(BytecodeError::TypeError(msg));
                     }
-                    let ValueData::List(mut arc) = target_val.data else {
+                    let ValueData::List(mut arc) = target_val.into_data() else {
                         unreachable!("matched above");
                     };
                     let at = crate::stdlib::collections::resolve_index("set", idx, arc.len())
@@ -3744,7 +3753,10 @@ impl BytecodeVm {
                     let ib = read_idx(self, *j)?;
                     let target_val = self.execution_state.take_register(*target)?;
                     // Typed lists swap raw scalars in place.
-                    if let ValueData::FloatList(mut arc) = target_val.data {
+                    if let ValueData::FloatList(_) = target_val.data {
+                        let ValueData::FloatList(mut arc) = target_val.into_data() else {
+                            unreachable!()
+                        };
                         let a = crate::stdlib::collections::resolve_index("swap", ia, arc.len())
                             .map_err(BytecodeError::RuntimeError)?;
                         let b = crate::stdlib::collections::resolve_index("swap", ib, arc.len())
@@ -3766,7 +3778,10 @@ impl BytecodeVm {
                         pc += 1;
                         continue;
                     }
-                    if let ValueData::IntList(mut arc) = target_val.data {
+                    if let ValueData::IntList(_) = target_val.data {
+                        let ValueData::IntList(mut arc) = target_val.into_data() else {
+                            unreachable!()
+                        };
                         let a = crate::stdlib::collections::resolve_index("swap", ia, arc.len())
                             .map_err(BytecodeError::RuntimeError)?;
                         let b = crate::stdlib::collections::resolve_index("swap", ib, arc.len())
@@ -3788,7 +3803,10 @@ impl BytecodeVm {
                         pc += 1;
                         continue;
                     }
-                    if let ValueData::AstList(mut arc) = target_val.data {
+                    if let ValueData::AstList(_) = target_val.data {
+                        let ValueData::AstList(mut arc) = target_val.into_data() else {
+                            unreachable!()
+                        };
                         if std::env::var_os("OLANG_DEBUG_ASTLIST").is_some()
                             && std::sync::Arc::strong_count(&arc) > 1
                         {
@@ -3830,7 +3848,7 @@ impl BytecodeVm {
                         self.execution_state.set_register(*target, target_val)?;
                         return Err(BytecodeError::TypeError(msg));
                     }
-                    let ValueData::List(mut arc) = target_val.data else {
+                    let ValueData::List(mut arc) = target_val.into_data() else {
                         unreachable!("matched above");
                     };
                     let a = crate::stdlib::collections::resolve_index("swap", ia, arc.len())
@@ -3860,7 +3878,7 @@ impl BytecodeVm {
                     // wrapper list.
                     let v = self.execution_state.get_register(*value)?;
                     let target_val = self.execution_state.take_register(*target)?;
-                    let out = match target_val.data {
+                    let out = match target_val.into_data() {
                         ValueData::FloatList(mut arc) => {
                             if let ValueData::Float(f) = v.data {
                                 match std::sync::Arc::get_mut(&mut arc) {
@@ -4085,7 +4103,7 @@ impl BytecodeVm {
                     // recognizable; aliased maps copy, exactly like the
                     // list writes.
                     let target_val = self.execution_state.take_register(*target)?;
-                    match target_val.data {
+                    match target_val.into_data() {
                         ValueData::Map(mut arc) => {
                             match std::sync::Arc::get_mut(&mut arc) {
                                 Some(m) => match m.get_mut(key_str) {
@@ -4163,7 +4181,7 @@ impl BytecodeVm {
                     if let (ValueData::String(_), ValueData::String(b)) =
                         (&target_val.data, &rhs_val.data)
                     {
-                        let ValueData::String(mut arc) = target_val.data else {
+                        let ValueData::String(mut arc) = target_val.into_data() else {
                             unreachable!("matched above");
                         };
                         match std::sync::Arc::get_mut(&mut arc) {
@@ -4190,7 +4208,7 @@ impl BytecodeVm {
                         // Extend the wrapped interpreter list in place:
                         // each appended element converts once.
                         let b = b.clone();
-                        let ValueData::AstList(mut arc) = target_val.data else {
+                        let ValueData::AstList(mut arc) = target_val.into_data() else {
                             unreachable!("matched above");
                         };
                         let mut appended = Vec::with_capacity(b.len());
@@ -4238,7 +4256,7 @@ impl BytecodeVm {
                             },
                             _ => unreachable!("matched above"),
                         };
-                        let ValueData::FloatList(mut arc) = target_val.data else {
+                        let ValueData::FloatList(mut arc) = target_val.into_data() else {
                             unreachable!("matched above");
                         };
                         match std::sync::Arc::get_mut(&mut arc) {
@@ -4267,7 +4285,7 @@ impl BytecodeVm {
                             },
                             _ => unreachable!("matched above"),
                         };
-                        let ValueData::IntList(mut arc) = target_val.data else {
+                        let ValueData::IntList(mut arc) = target_val.into_data() else {
                             unreachable!("matched above");
                         };
                         match std::sync::Arc::get_mut(&mut arc) {
@@ -4316,7 +4334,7 @@ impl BytecodeVm {
                         // another register, a constant, or a value sent
                         // elsewhere shares the Vec, and we copy exactly like
                         // Add would, so aliased accumulators stay correct.
-                        let ValueData::List(mut arc) = target_val.data else {
+                        let ValueData::List(mut arc) = target_val.into_data() else {
                             unreachable!("matched above");
                         };
                         match std::sync::Arc::get_mut(&mut arc) {
@@ -9298,7 +9316,7 @@ impl BytecodeCompiler {
                 // snapshot simply contains the global), the registry's
                 // direct CallFn stays.
                 let closure_disagrees = match self.lexical(&function_name) {
-                    Some(Value::Function(f)) => self
+                    Some(Value::Function(ref f)) => self
                         .known_function_values
                         .get(&function_name)
                         .is_none_or(|known| !std::sync::Arc::ptr_eq(&known.body, &f.body)),
@@ -9357,7 +9375,7 @@ impl BytecodeCompiler {
                 // `head` here and raised "argument must be a list".
                 let closure_shadows_builtin = match self.lexical(&function_name) {
                     None => false,
-                    Some(Value::Builtin(b)) => b.name != function_name,
+                    Some(Value::Builtin(ref b)) => b.name != function_name,
                     Some(_) => true,
                 };
                 if self.builtin_names.contains(&function_name) && !closure_shadows_builtin {
@@ -9383,7 +9401,7 @@ impl BytecodeCompiler {
                 // An enum tuple-variant constructor from the closure —
                 // `Circle(2.0)`. An argument-count mismatch refuses, and the
                 // interpreter raises its arity error.
-                if let Some(Value::EnumConstructor(constructor)) = self.lexical(&function_name) {
+                if let Some(Value::EnumConstructor(ref constructor)) = self.lexical(&function_name) {
                     if constructor.arity != arguments.len() {
                         return Err(BytecodeError::UnresolvedCallee(function_name));
                     }
@@ -11139,7 +11157,7 @@ impl BytecodeCompiler {
             }
             match self.lexical(name) {
                 None => {}
-                Some(Value::Builtin(b)) if b.name == "to_string" => {}
+                Some(Value::Builtin(ref b)) if b.name == "to_string" => {}
                 Some(_) => return None,
             }
             match &arguments[0] {
@@ -12567,7 +12585,7 @@ mod tests {
         let result = vm.execute_builtin_call("to_string", &[int_arg], false);
         assert!(result.is_ok());
         match result.unwrap().to_ast() {
-            Ok(Value::String(s)) => assert_eq!(*s, "42", "Should convert to string"),
+            Ok(Value::String(ref s)) => assert_eq!(s.as_str(), "42", "Should convert to string"),
             _ => panic!("Expected string result"),
         }
     }

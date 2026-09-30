@@ -66,7 +66,7 @@ fn read_csv_infers_types() {
     )
     .unwrap();
     let items = match result {
-        Value::List(items) => items,
+        Value::List(ref items) => items,
         other => panic!("expected list, got {:?}", other),
     };
     assert_eq!(items[0], Value::Integer(5));
@@ -99,7 +99,7 @@ fn tidyverse_pipeline_group_by_matches_reference() {
     // After filter (>6): east 10.5+30, west 20+15. Sorted desc by total:
     // east 40.5 (n=2), west 35 (n=2).
     let recs = match result {
-        Value::List(items) => items,
+        Value::List(ref items) => items,
         other => panic!("expected list, got {:?}", other),
     };
     assert_eq!(recs.len(), 2);
@@ -135,7 +135,7 @@ fn frame_construction_select_with_column() {
     )
     .unwrap();
     let items = match result {
-        Value::List(items) => items,
+        Value::List(ref items) => items,
         other => panic!("expected list, got {:?}", other),
     };
     assert_eq!(items[0], Value::Integer(2));
@@ -158,7 +158,7 @@ fn frame_from_records_bridges_json() {
     )
     .unwrap();
     let items = match result {
-        Value::List(items) => items,
+        Value::List(ref items) => items,
         other => panic!("expected list, got {:?}", other),
     };
     assert_eq!(items[0], Value::Integer(3));
@@ -200,7 +200,7 @@ fn joins_from_source() {
     )
     .unwrap();
     let items = match result {
-        Value::List(items) => items,
+        Value::List(ref items) => items,
         other => panic!("expected list, got {:?}", other),
     };
     assert_eq!(items[0], Value::Integer(2));
@@ -223,7 +223,7 @@ fn frame_equality_and_display() {
     )
     .unwrap();
     let items = match result {
-        Value::List(items) => items,
+        Value::List(ref items) => items,
         other => panic!("expected list, got {:?}", other),
     };
     assert_eq!(items[0], Value::Boolean(true));
@@ -258,7 +258,7 @@ fn take_and_head_and_string_masks() {
     )
     .unwrap();
     let items = match result {
-        Value::List(items) => items,
+        Value::List(ref items) => items,
         other => panic!("expected list, got {:?}", other),
     };
     assert_eq!(items[0], Value::Integer(1));

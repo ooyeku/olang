@@ -710,7 +710,7 @@ mod tests {
     #[test]
     fn test_math_constants() {
         let module = create_math_module();
-        if let Value::Struct { fields, .. } = module {
+        if let Value::Struct { fields, .. } = &module {
             assert_float_eq(fields.get("PI").unwrap(), consts::PI, 1e-15);
             assert_float_eq(fields.get("E").unwrap(), consts::E, 1e-15);
             assert_float_eq(fields.get("TAU").unwrap(), consts::TAU, 1e-15);

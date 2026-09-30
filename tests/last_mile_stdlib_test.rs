@@ -11,7 +11,7 @@ fn run(source: &str) -> Result<String, String> {
     Interpreter::new()
         .eval_program(program)
         .map(|v| match v {
-            olang::ast::Value::String(s) => s.to_string(),
+            olang::ast::Value::String(ref s) => s.to_string(),
             other => other.to_string(),
         })
         .map_err(|e| e.to_string())

@@ -656,7 +656,7 @@ mod tests {
     #[test]
     fn test_create_random_module() {
         let module = create_random_module();
-        if let Value::Struct { fields, .. } = module {
+        if let Value::Struct { fields, .. } = &module {
             // Test that all expected functions are present
             let expected_functions = vec![
                 "random",
@@ -777,7 +777,7 @@ mod tests {
         let list = list_val(vec![int_val(1), int_val(2), int_val(3)]);
         let result = random_choices(vec![list, int_val(5)]).unwrap();
 
-        if let Value::List(items) = result {
+        if let Value::List(items) = &result {
             assert_eq!(items.len(), 5);
             // All items should be from the original list
             for item in items.iter() {
@@ -802,7 +802,7 @@ mod tests {
         ]);
         let result = random_sample(vec![list, int_val(3)]).unwrap();
 
-        if let Value::List(items) = result {
+        if let Value::List(items) = &result {
             assert_eq!(items.len(), 3);
             // All items should be unique (no duplicates in sample without replacement)
             // Since we can't use HashSet with Value, we'll check for duplicates differently
@@ -828,7 +828,7 @@ mod tests {
     fn test_string_generation() {
         // Test randstr
         let result = random_randstr(vec![int_val(10)]).unwrap();
-        if let Value::String(s) = result {
+        if let Value::String(s) = &result {
             assert_eq!(s.len(), 10);
             // Should contain only alphanumeric characters
             for ch in s.chars() {
@@ -852,7 +852,7 @@ mod tests {
 
         // Test randstr_alnum
         let result = random_randstr_alnum(vec![int_val(12)]).unwrap();
-        if let Value::String(s) = result {
+        if let Value::String(s) = &result {
             assert_eq!(s.len(), 12);
             for ch in s.chars() {
                 assert!(ch.is_alphanumeric());
@@ -872,7 +872,7 @@ mod tests {
         let list = list_val(original.clone());
         let result = random_shuffle(vec![list]).unwrap();
 
-        if let Value::List(shuffled) = result {
+        if let Value::List(shuffled) = &result {
             assert_eq!(shuffled.len(), 5);
 
             // All original elements should be present
@@ -1010,7 +1010,7 @@ mod tests {
         // Test choices with k=0
         let list = list_val(vec![int_val(1), int_val(2)]);
         let result = random_choices(vec![list, int_val(0)]).unwrap();
-        if let Value::List(items) = result {
+        if let Value::List(items) = &result {
             assert_eq!(items.len(), 0);
         } else {
             panic!(
@@ -1022,7 +1022,7 @@ mod tests {
         // Test sample with k=0
         let list = list_val(vec![int_val(1), int_val(2)]);
         let result = random_sample(vec![list, int_val(0)]).unwrap();
-        if let Value::List(items) = result {
+        if let Value::List(items) = &result {
             assert_eq!(items.len(), 0);
         } else {
             panic!("Expected empty list for sample with k=0, got: {:?}", result);
@@ -1076,17 +1076,17 @@ mod tests {
         // Test string generation with different lengths
         for length in [0, 1, 5, 100] {
             let result = random_randstr(vec![int_val(length)]).unwrap();
-            if let Value::String(s) = result {
+            if let Value::String(s) = &result {
                 assert_eq!(s.len(), length as usize);
             }
 
             let result = random_randstr_alpha(vec![int_val(length)]).unwrap();
-            if let Value::String(s) = result {
+            if let Value::String(s) = &result {
                 assert_eq!(s.len(), length as usize);
             }
 
             let result = random_randstr_numeric(vec![int_val(length)]).unwrap();
-            if let Value::String(s) = result {
+            if let Value::String(s) = &result {
                 assert_eq!(s.len(), length as usize);
             }
         }
@@ -1112,7 +1112,7 @@ mod tests {
 
         // Test shuffle
         let result = random_shuffle(vec![mixed_list.clone()]).unwrap();
-        if let Value::List(shuffled) = result {
+        if let Value::List(shuffled) = &result {
             assert_eq!(shuffled.len(), 4);
         } else {
             panic!("Expected list from shuffle, got: {:?}", result);
@@ -1120,7 +1120,7 @@ mod tests {
 
         // Test sample
         let result = random_sample(vec![mixed_list, int_val(2)]).unwrap();
-        if let Value::List(sampled) = result {
+        if let Value::List(sampled) = &result {
             assert_eq!(sampled.len(), 2);
         } else {
             panic!("Expected list from sample, got: {:?}", result);

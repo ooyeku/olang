@@ -1992,7 +1992,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             Expr::Try(expr) => {
                 let value = self.eval_expr(expr)?;
                 match value {
-                    Value::Ok(inner) => Ok(*inner),
+                    ok @ Value::Ok(_) => Ok(ok.into_payload().unwrap_or(Value::Unit)),
                     // Early-return: unwind to the enclosing function call,
                     // which returns this Err to its caller.
                     err @ Value::Err(_) => Err(InterpreterError::ErrPropagation(err)),
@@ -2056,7 +2056,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                             let val = self.eval_expr(expr)?;
                             // For template interpolation, we want raw values without quotes
                             match val {
-                                Value::String(s) => result.push_str(&s),
+                                Value::String(ref s) => result.push_str(s),
                                 Value::Integer(n) => result.push_str(&n.to_string()),
                                 Value::Float(x) => result.push_str(&crate::ast::format_float(x)),
                                 Value::Boolean(b) => result.push_str(&b.to_string()),
@@ -2112,7 +2112,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 let index_value = self.eval_expr(index)?;
 
                 match (object_value, index_value) {
-                    (Value::List(list), Value::Integer(idx)) => {
+                    (Value::List(ref list), Value::Integer(idx)) => {
                         let index = if idx < 0 {
                             // Negative indexing from end
                             (list.len() as i64 + idx) as usize
@@ -2132,7 +2132,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                             })
                         }
                     }
-                    (Value::Tuple(tuple), Value::Integer(idx)) => {
+                    (Value::Tuple(ref tuple), Value::Integer(idx)) => {
                         let index = if idx < 0 {
                             // Negative indexing from end
                             (tuple.len() as i64 + idx) as usize
@@ -2152,7 +2152,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                             })
                         }
                     }
-                    (Value::String(string), Value::Integer(idx)) => {
+                    (Value::String(ref string), Value::Integer(idx)) => {
                         let string_len = string.chars().count();
                         let index = if idx < 0 {
                             // Negative indexing from end
@@ -2185,7 +2185,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     // subscript, before either generic error: a Frame
                     // indexed by a name it does not have can say which
                     // names it does have.
-                    (Value::Native(handle), key) => match handle.0.index(&key) {
+                    (Value::Native(ref handle), key) => match handle.0.index(&key) {
                         Some(Ok(value)) => Ok(value),
                         Some(Err(message)) => Err(InterpreterError::RuntimeError { message }),
                         None => Err(InterpreterError::TypeError {
@@ -2722,7 +2722,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // builtin — a user's own `col` binding takes the normal path.
         let is_builtin = matches!(
             self.environment.get("col"),
-            Some(Value::Struct { type_name, fields })
+            Some(Value::Struct { ref type_name, ref fields })
                 if type_name == "Module"
                     && matches!(
                         fields.get(field.as_str()),
@@ -3421,14 +3421,14 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         }
 
         match callee {
-            Value::Function(func) => self.call_user_function(&func, arguments),
-            Value::Builtin(builtin) => {
+            Value::Function(ref func) => self.call_user_function(func, arguments),
+            Value::Builtin(ref builtin) => {
                 let name = builtin.name.clone();
                 let builtin_functions = self.builtin_functions.clone();
                 BuiltinFunctions::call(&builtin_functions, &name, arguments, self)
             }
             // Applying a tuple-variant constructor builds the enum value
-            Value::EnumConstructor(constructor) => {
+            Value::EnumConstructor(ref constructor) => {
                 // call_depth is only incremented in the Function arm, so
                 // there is nothing to unwind here
                 if arguments.len() != constructor.arity {
@@ -3689,8 +3689,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     }
                 }
                 for (name, value) in self.environment.get_all_variables() {
-                    if let Value::Function(func) = value {
-                        tier.note_function(name, func);
+                    if let Value::Function(ref func) = value {
+                        tier.note_function(name, func.clone());
                     }
                 }
                 // The parent's whole function table, module functions
@@ -4287,7 +4287,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
 
             // Convert key to string (maps in Olang use string keys)
             let key_str = match key {
-                Value::String(s) => s.as_ref().clone(),
+                Value::String(ref s) => s.as_ref().clone(),
                 Value::Integer(i) => i.to_string(),
                 Value::Float(f) => crate::ast::format_float(f),
                 Value::Boolean(b) => b.to_string(),
@@ -4339,7 +4339,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         let object_value = self.eval_expr(object)?;
 
         match object_value {
-            Value::Struct { fields, type_name } => {
+            Value::Struct { ref fields, ref type_name } => {
                 if type_name == "Module" {
                     // Handle module function access (e.g., fs.read_file).
                     // A miss names the nearest member — `heap` for
@@ -4358,7 +4358,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                         .get(field)
                         .cloned()
                         .ok_or_else(|| InterpreterError::TypeError {
-                            message: self.no_field_or_method(&type_name, field),
+                            message: self.no_field_or_method(type_name, field),
                         })
                 }
             }
@@ -4379,7 +4379,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// imported modules are discoverable. Returns None for non-module bindings.
     pub fn module_members(&self, name: &str) -> Option<Vec<String>> {
         match self.environment.get(name)? {
-            Value::Struct { type_name, fields } if type_name == "Module" => {
+            Value::Struct { ref type_name, ref fields } if type_name == "Module" => {
                 let mut names: Vec<String> = fields.keys().cloned().collect();
                 names.sort();
                 Some(names)
@@ -4576,7 +4576,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         let iterable_value = self.eval_expr(iterable)?;
 
         match iterable_value {
-            Value::List(items) => {
+            Value::List(ref items) => {
                 let parent_env = std::mem::take(&mut self.environment);
                 self.environment.owner = parent_env.owner.clone();
                 self.environment.run = parent_env.run.clone();
@@ -4621,7 +4621,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             // group rather than a collection, so this is mostly for
             // `for (k, v) in entries(m)`-shaped code and for symmetry —
             // refusing it was a surprise with no reason behind it.
-            Value::Tuple(items) => {
+            Value::Tuple(ref items) => {
                 let parent_env = std::mem::take(&mut self.environment);
                 self.environment.owner = parent_env.owner.clone();
                 self.environment.run = parent_env.run.clone();
@@ -4641,7 +4641,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             }
             // Strings iterate by character, each a 1-character string —
             // consistent with 'a' literals being strings.
-            Value::String(s) => {
+            Value::String(ref s) => {
                 let parent_env = std::mem::take(&mut self.environment);
                 self.environment.owner = parent_env.owner.clone();
                 self.environment.run = parent_env.run.clone();
@@ -4853,7 +4853,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     (result, Vec::new())
                 } else {
                     match result {
-                        Value::Tuple(items) => {
+                        Value::Tuple(ref items) => {
                             let mut items = items.as_ref().clone();
                             let rest = items.split_off(1);
                             (items.pop().unwrap_or(Value::Unit), rest)
@@ -4934,7 +4934,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         }
         let iterable_value = self.eval_expr(iterable)?;
         let items: Vec<Value> = match iterable_value {
-            Value::List(items) => items.to_vec(),
+            Value::List(ref items) => items.to_vec(),
             Value::Range {
                 start,
                 end,
@@ -4947,7 +4947,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 };
                 (start..stop).map(Value::Integer).collect()
             }
-            Value::String(s) => s
+            Value::String(ref s) => s
                 .chars()
                 .map(|c| Value::String(Arc::new(c.to_string())))
                 .collect(),

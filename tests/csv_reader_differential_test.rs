@@ -34,7 +34,7 @@ fn both_readings(dir: &std::path::Path, name: &str, unquoted: &str) -> (String, 
     let program = Parser::new().parse(&src).expect("parse");
     let out = Interpreter::new().eval_program(program).expect("eval");
     let s = match out {
-        olang::ast::Value::String(s) => s.to_string(),
+        olang::ast::Value::String(ref s) => s.to_string(),
         other => panic!("expected String, got {other:?}"),
     };
     let (a, b) = s.split_once('\u{0}').expect("separator");

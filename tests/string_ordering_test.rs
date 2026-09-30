@@ -22,7 +22,7 @@ fn b(v: Value) -> bool {
 
 fn s(v: Value) -> String {
     match v {
-        Value::String(s) => s.to_string(),
+        Value::String(ref s) => s.to_string(),
         other => panic!("expected string, got {:?}", other),
     }
 }
