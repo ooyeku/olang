@@ -376,9 +376,10 @@ fn content_lets_a_list_scroll_past_its_laid_out_rows() {
         gui.input(w, #{ "kind": "wheel", "dy": -5000 })
         gui.input(w, #{ "kind": "wheel", "dy": -1000000 })
         let n = gui.read(w, "node", "l")
-        map_get(n, "offset")
+        // the row scrolled out of the list shows nowhere
+        [map_get(n, "offset"), map_get(n, "visible"), map_get(gui.read(w, "node", "r0"), "visible")]
     "##);
-    assert_eq!(text(&v), "(0.0, 31900.0)");
+    assert_eq!(text(&v), "[(0.0, 31900.0), (0.0, 0.0, 200.0, 100.0), ()]");
 }
 
 #[test]

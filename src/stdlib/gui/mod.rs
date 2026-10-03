@@ -400,7 +400,36 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
                 .ok_or("gui.read: \"hit\" needs a point (x, y)")?;
             opt_str(st.scene.hit(p[0], p[1]).as_deref())
         }
-        "node" => st.scene.node_value(&key_arg()?).unwrap_or(Value::Unit),
+        "node" => {
+            let k = key_arg()?;
+            match st.scene.node_value(&k) {
+                // and what of it shows, inside the window
+                Some(v) => {
+                    let (w, h) = (st.width, st.height);
+                    let shown = st.scene.visible(&k).and_then(|[x, y, bw, bh]| {
+                        let (x0, y0, x1, y1) =
+                            (x.max(0.0), y.max(0.0), (x + bw).min(w), (y + bh).min(h));
+                        (x1 > x0 && y1 > y0).then(|| {
+                            Value::Tuple(Arc::new(vec![
+                                float(x0),
+                                float(y0),
+                                float(x1 - x0),
+                                float(y1 - y0),
+                            ]))
+                        })
+                    });
+                    match &v {
+                        Value::Map(m) => {
+                            let mut m = (**m).clone();
+                            m.insert("visible".to_string(), shown.unwrap_or(Value::Unit));
+                            Value::Map(Arc::new(m))
+                        }
+                        _ => v,
+                    }
+                }
+                None => Value::Unit,
+            }
+        }
         "value" => {
             let k = key_arg()?;
             match st.editors.get(&k) {

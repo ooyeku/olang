@@ -665,6 +665,26 @@ impl Scene {
         Some([x, y, node.rect[2], node.rect[3]])
     }
 
+    /// What of a node shows: its absolute box cut by every ancestor
+    /// that scrolls or clips, `None` when nothing of it does.
+    pub fn visible(&self, key: &str) -> Option<[f32; 4]> {
+        let a = self.absolute(key)?;
+        let (mut x0, mut y0, mut x1, mut y1) = (a[0], a[1], a[0] + a[2], a[1] + a[3]);
+        let mut at = self.nodes.get(key)?.parent.clone();
+        while let Some(p) = at {
+            let pn = self.nodes.get(&p)?;
+            if pn.scrollable || pn.style.clip {
+                let b = self.absolute(&p)?;
+                x0 = x0.max(b[0]);
+                y0 = y0.max(b[1]);
+                x1 = x1.min(b[0] + b[2]);
+                y1 = y1.min(b[1] + b[3]);
+            }
+            at = pn.parent.clone();
+        }
+        (x1 > x0 && y1 > y0).then_some([x0, y0, x1 - x0, y1 - y0])
+    }
+
     /// The extent of a node's children, for clamping its scroll.
     fn content_size(&self, node: &Node) -> (f32, f32) {
         let (mut w, mut h) = node.content.unwrap_or((0.0, 0.0));
