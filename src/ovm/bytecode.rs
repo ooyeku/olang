@@ -510,6 +510,13 @@ pub enum Instruction {
         dst: Register,
         lhs: Register,
         rhs: Register,
+        /// Set by the liveness pass when `lhs` is not read after this
+        /// instruction (and is neither `rhs` nor `dst`'s alias in a way
+        /// that matters): the sum may then take `lhs` out of its register
+        /// and extend it in place — `cell.take(c) + [v]`, `f(x) + "s"` —
+        /// where it would otherwise copy. Numbers ignore it, and so does
+        /// the JIT.
+        lhs_dead: bool,
     },
     /// The fused accumulate pattern `x = x + rhs`. Semantically exactly
     /// Add{dst: target, lhs: target} followed by nothing (the result
@@ -817,6 +824,11 @@ pub enum Instruction {
         dst: Register,
         function_name: String,
         args: Vec<Register>,
+        /// As `CallFn`'s: argument registers dead after the call, taken
+        /// by move rather than cloned, so a builtin handed a temporary
+        /// (`map_set(cell.take(c), k, v)`) holds its only reference and
+        /// can extend it in place.
+        arg_moves: u64,
         /// Compile-time capability verdict (Campaign: caps-specialized
         /// compilation): true when the static manifest fully grants this
         /// call for the enclosing function's provenance, so the runtime
@@ -3552,7 +3564,31 @@ impl BytecodeVm {
                 }
 
                 // Arithmetic operations
-                Instruction::Add { dst, lhs, rhs } => {
+                Instruction::Add {
+                    dst,
+                    lhs,
+                    rhs,
+                    lhs_dead,
+                } if *lhs_dead
+                    && lhs != rhs
+                    && dst != rhs
+                    && matches!(
+                        self.execution_state.register_ref(*lhs)?.data,
+                        crate::ovm::value::ValueData::List(_)
+                            | crate::ovm::value::ValueData::AstList(_)
+                            | crate::ovm::value::ValueData::String(_)
+                            | crate::ovm::value::ValueData::FloatList(_)
+                            | crate::ovm::value::ValueData::IntList(_)
+                    ) =>
+                {
+                    // `lhs` is not read again: move it into `dst` and extend
+                    // it there, in place when nothing else holds it.
+                    let v = self.execution_state.take_register(*lhs)?;
+                    self.execution_state.set_register(*dst, v)?;
+                    self.add_into(*dst, *rhs)?;
+                }
+
+                Instruction::Add { dst, lhs, rhs, .. } => {
                     let (left, right) = self.execution_state.register_pair(*lhs, *rhs)?;
 
                     let result = match Self::binary_fast(left, right, BinaryOp::Add) {
@@ -4175,189 +4211,7 @@ impl BytecodeVm {
                 }
 
                 Instruction::AddAssign { target, rhs } => {
-                    use crate::ovm::value::ValueData;
-                    let rhs_val = self.execution_state.get_register(*rhs)?;
-                    let target_val = self.execution_state.take_register(*target)?;
-                    if let (ValueData::String(_), ValueData::String(b)) =
-                        (&target_val.data, &rhs_val.data)
-                    {
-                        let ValueData::String(mut arc) = target_val.into_data() else {
-                            unreachable!("matched above");
-                        };
-                        match std::sync::Arc::get_mut(&mut arc) {
-                            // Sole owner: append in place — O(1) amortized.
-                            Some(s) => s.push_str(b),
-                            // Aliased somewhere (another register, a constant,
-                            // a value already sent elsewhere): copy, exactly
-                            // like Add would.
-                            None => {
-                                let mut s = (*arc).clone();
-                                s.push_str(b);
-                                arc = std::sync::Arc::new(s);
-                            }
-                        }
-                        self.execution_state.set_register(
-                            *target,
-                            OvmValue {
-                                data: ValueData::String(arc),
-                            },
-                        )?;
-                    } else if let (ValueData::AstList(_), ValueData::List(b)) =
-                        (&target_val.data, &rhs_val.data)
-                    {
-                        // Extend the wrapped interpreter list in place:
-                        // each appended element converts once.
-                        let b = b.clone();
-                        let ValueData::AstList(mut arc) = target_val.into_data() else {
-                            unreachable!("matched above");
-                        };
-                        let mut appended = Vec::with_capacity(b.len());
-                        for v in b.iter() {
-                            appended
-                                .push(v.to_ast().map_err(|e| {
-                                    BytecodeError::RuntimeError(format!("{:?}", e))
-                                })?);
-                        }
-                        match std::sync::Arc::get_mut(&mut arc) {
-                            Some(items) => items.extend(appended),
-                            None => {
-                                if std::env::var_os("OLANG_DEBUG_ASTLIST").is_some() {
-                                    eprintln!(
-                                        "[astlist] extend copy rc={} len={}",
-                                        std::sync::Arc::strong_count(&arc),
-                                        arc.len()
-                                    );
-                                }
-                                let mut items = (*arc).clone();
-                                items.extend(appended);
-                                arc = std::sync::Arc::new(items);
-                            }
-                        }
-                        self.execution_state.set_register(
-                            *target,
-                            OvmValue {
-                                data: ValueData::AstList(arc),
-                            },
-                        )?;
-                    } else if matches!(target_val.data, ValueData::FloatList(_))
-                        && matches!(&rhs_val.data,
-                            ValueData::List(b) if b.len() == 1
-                                && matches!(b[0].data, ValueData::Float(_)))
-                    {
-                        // Typed accumulate fusion: appending a matching
-                        // scalar to a typed list pushes the raw value —
-                        // `preds = preds + [x]` in a training loop runs on
-                        // a Vec<f64>, not a Vec of boxed values. The rhs
-                        // arrives as a one-element boxed list; peel it.
-                        let f = match &rhs_val.data {
-                            ValueData::List(b) => match b[0].data {
-                                ValueData::Float(f) => f,
-                                _ => unreachable!("matched above"),
-                            },
-                            _ => unreachable!("matched above"),
-                        };
-                        let ValueData::FloatList(mut arc) = target_val.into_data() else {
-                            unreachable!("matched above");
-                        };
-                        match std::sync::Arc::get_mut(&mut arc) {
-                            Some(v) => v.push(f),
-                            None => {
-                                let mut v = (*arc).clone();
-                                v.push(f);
-                                arc = std::sync::Arc::new(v);
-                            }
-                        }
-                        self.execution_state.set_register(
-                            *target,
-                            OvmValue {
-                                data: ValueData::FloatList(arc),
-                            },
-                        )?;
-                    } else if matches!(target_val.data, ValueData::IntList(_))
-                        && matches!(&rhs_val.data,
-                            ValueData::List(b) if b.len() == 1
-                                && matches!(b[0].data, ValueData::Integer(_)))
-                    {
-                        let n = match &rhs_val.data {
-                            ValueData::List(b) => match b[0].data {
-                                ValueData::Integer(n) => n,
-                                _ => unreachable!("matched above"),
-                            },
-                            _ => unreachable!("matched above"),
-                        };
-                        let ValueData::IntList(mut arc) = target_val.into_data() else {
-                            unreachable!("matched above");
-                        };
-                        match std::sync::Arc::get_mut(&mut arc) {
-                            Some(v) => v.push(n),
-                            None => {
-                                let mut v = (*arc).clone();
-                                v.push(n);
-                                arc = std::sync::Arc::new(v);
-                            }
-                        }
-                        self.execution_state.set_register(
-                            *target,
-                            OvmValue {
-                                data: ValueData::IntList(arc),
-                            },
-                        )?;
-                    } else if matches!(
-                        (&target_val.data, &rhs_val.data),
-                        (
-                            ValueData::FloatList(_) | ValueData::IntList(_),
-                            ValueData::List(_)
-                                | ValueData::FloatList(_)
-                                | ValueData::IntList(_)
-                                | ValueData::AstList(_)
-                        )
-                    ) {
-                        // Mixed typed append: rebuild boxed and extend —
-                        // correctness first, the typed layout is only an
-                        // optimization.
-                        let mut items = (*target_val.to_boxed_list().expect("list")).clone();
-                        items.extend(rhs_val.to_boxed_list().expect("list").iter().cloned());
-                        self.execution_state.set_register(
-                            *target,
-                            OvmValue {
-                                data: ValueData::List(std::sync::Arc::new(items)),
-                            },
-                        )?;
-                    } else if let (ValueData::List(_), ValueData::List(b)) =
-                        (&target_val.data, &rhs_val.data)
-                    {
-                        // The same accumulate fusion for lists: `xs = xs + [v]'
-                        // in a loop is O(n²) as a copy per iteration; when `xs`
-                        // holds the only reference, extend in place for O(1)
-                        // amortized. The aliasing guard is identical to the
-                        // string case — `Arc::get_mut` returns None the moment
-                        // another register, a constant, or a value sent
-                        // elsewhere shares the Vec, and we copy exactly like
-                        // Add would, so aliased accumulators stay correct.
-                        let ValueData::List(mut arc) = target_val.into_data() else {
-                            unreachable!("matched above");
-                        };
-                        match std::sync::Arc::get_mut(&mut arc) {
-                            Some(v) => v.extend(b.iter().cloned()),
-                            None => {
-                                let mut v = (*arc).clone();
-                                v.extend(b.iter().cloned());
-                                arc = std::sync::Arc::new(v);
-                            }
-                        }
-                        self.execution_state.set_register(
-                            *target,
-                            OvmValue {
-                                data: ValueData::List(arc),
-                            },
-                        )?;
-                    } else {
-                        let result = match Self::binary_fast(&target_val, &rhs_val, BinaryOp::Add) {
-                            Some(v) => v,
-                            None => self.execute_binary_op(&target_val, &rhs_val, BinaryOp::Add)?,
-                        };
-                        self.execution_state.set_register(*target, result)?;
-                    }
+                    self.add_into(*target, *rhs)?;
                 }
 
                 Instruction::Sub { dst, lhs, rhs } => {
@@ -5033,6 +4887,7 @@ impl BytecodeVm {
                     dst,
                     function_name,
                     args,
+                    arg_moves,
                     pregranted,
                 } => {
                     // Pool the argument buffer: a hot loop calling a builtin
@@ -5041,8 +4896,14 @@ impl BytecodeVm {
                     let mut arg_values = self.arg_pool.pop().unwrap_or_default();
                     arg_values.clear();
                     arg_values.reserve(args.len());
-                    for arg_reg in args {
-                        arg_values.push(self.execution_state.get_register(*arg_reg)?);
+                    for (i, arg_reg) in args.iter().enumerate() {
+                        // A register dead after the call is taken, so the
+                        // builtin holds the value's only reference.
+                        arg_values.push(if i < 64 && arg_moves & (1 << i) != 0 {
+                            self.execution_state.take_register(*arg_reg)?
+                        } else {
+                            self.execution_state.get_register(*arg_reg)?
+                        });
                     }
 
                     // Check if it's a builtin function first
@@ -5051,6 +4912,10 @@ impl BytecodeVm {
                     let outcome = if let Some(&func_id) = self.function_registry.get(function_name)
                     {
                         self.execute(func_id, &arg_values)
+                    } else if function_name == "map_set"
+                        && let Some(r) = Self::map_set_owned(&mut arg_values)
+                    {
+                        r
                     } else if self.builtin_names.contains(function_name)
                         || function_name.contains('.')
                     {
@@ -7709,6 +7574,240 @@ impl BytecodeVm {
         }
     }
 
+    /// `target = target + rhs`, extending `target` in place when it is a
+    /// string or a list nothing else holds (AddAssign, and Add of a dead
+    /// left operand).
+    fn add_into(&mut self, target_reg: Register, rhs_reg: Register) -> Result<(), BytecodeError> {
+        let target = &target_reg;
+        let rhs = &rhs_reg;
+        use crate::ovm::value::ValueData;
+        let rhs_val = self.execution_state.get_register(*rhs)?;
+        let target_val = self.execution_state.take_register(*target)?;
+        if let (ValueData::String(_), ValueData::String(b)) = (&target_val.data, &rhs_val.data) {
+            let ValueData::String(mut arc) = target_val.into_data() else {
+                unreachable!("matched above");
+            };
+            match std::sync::Arc::get_mut(&mut arc) {
+                // Sole owner: append in place — O(1) amortized.
+                Some(s) => s.push_str(b),
+                // Aliased somewhere (another register, a constant,
+                // a value already sent elsewhere): copy, exactly
+                // like Add would.
+                None => {
+                    let mut s = (*arc).clone();
+                    s.push_str(b);
+                    arc = std::sync::Arc::new(s);
+                }
+            }
+            self.execution_state.set_register(
+                *target,
+                OvmValue {
+                    data: ValueData::String(arc),
+                },
+            )?;
+        } else if let (ValueData::AstList(_), ValueData::List(b)) =
+            (&target_val.data, &rhs_val.data)
+        {
+            // Extend the wrapped interpreter list in place:
+            // each appended element converts once.
+            let b = b.clone();
+            let ValueData::AstList(mut arc) = target_val.into_data() else {
+                unreachable!("matched above");
+            };
+            let mut appended = Vec::with_capacity(b.len());
+            for v in b.iter() {
+                appended.push(
+                    v.to_ast()
+                        .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?,
+                );
+            }
+            match std::sync::Arc::get_mut(&mut arc) {
+                Some(items) => items.extend(appended),
+                None => {
+                    if std::env::var_os("OLANG_DEBUG_ASTLIST").is_some() {
+                        eprintln!(
+                            "[astlist] extend copy rc={} len={}",
+                            std::sync::Arc::strong_count(&arc),
+                            arc.len()
+                        );
+                    }
+                    let mut items = (*arc).clone();
+                    items.extend(appended);
+                    arc = std::sync::Arc::new(items);
+                }
+            }
+            self.execution_state.set_register(
+                *target,
+                OvmValue {
+                    data: ValueData::AstList(arc),
+                },
+            )?;
+        } else if matches!(target_val.data, ValueData::FloatList(_))
+            && matches!(&rhs_val.data,
+                ValueData::List(b) if b.len() == 1
+                    && matches!(b[0].data, ValueData::Float(_)))
+        {
+            // Typed accumulate fusion: appending a matching
+            // scalar to a typed list pushes the raw value —
+            // `preds = preds + [x]` in a training loop runs on
+            // a Vec<f64>, not a Vec of boxed values. The rhs
+            // arrives as a one-element boxed list; peel it.
+            let f = match &rhs_val.data {
+                ValueData::List(b) => match b[0].data {
+                    ValueData::Float(f) => f,
+                    _ => unreachable!("matched above"),
+                },
+                _ => unreachable!("matched above"),
+            };
+            let ValueData::FloatList(mut arc) = target_val.into_data() else {
+                unreachable!("matched above");
+            };
+            match std::sync::Arc::get_mut(&mut arc) {
+                Some(v) => v.push(f),
+                None => {
+                    let mut v = (*arc).clone();
+                    v.push(f);
+                    arc = std::sync::Arc::new(v);
+                }
+            }
+            self.execution_state.set_register(
+                *target,
+                OvmValue {
+                    data: ValueData::FloatList(arc),
+                },
+            )?;
+        } else if matches!(target_val.data, ValueData::IntList(_))
+            && matches!(&rhs_val.data,
+                ValueData::List(b) if b.len() == 1
+                    && matches!(b[0].data, ValueData::Integer(_)))
+        {
+            let n = match &rhs_val.data {
+                ValueData::List(b) => match b[0].data {
+                    ValueData::Integer(n) => n,
+                    _ => unreachable!("matched above"),
+                },
+                _ => unreachable!("matched above"),
+            };
+            let ValueData::IntList(mut arc) = target_val.into_data() else {
+                unreachable!("matched above");
+            };
+            match std::sync::Arc::get_mut(&mut arc) {
+                Some(v) => v.push(n),
+                None => {
+                    let mut v = (*arc).clone();
+                    v.push(n);
+                    arc = std::sync::Arc::new(v);
+                }
+            }
+            self.execution_state.set_register(
+                *target,
+                OvmValue {
+                    data: ValueData::IntList(arc),
+                },
+            )?;
+        } else if matches!(
+            (&target_val.data, &rhs_val.data),
+            (
+                ValueData::FloatList(_) | ValueData::IntList(_),
+                ValueData::List(_)
+                    | ValueData::FloatList(_)
+                    | ValueData::IntList(_)
+                    | ValueData::AstList(_)
+            )
+        ) {
+            // Mixed typed append: rebuild boxed and extend —
+            // correctness first, the typed layout is only an
+            // optimization.
+            let mut items = (*target_val.to_boxed_list().expect("list")).clone();
+            items.extend(rhs_val.to_boxed_list().expect("list").iter().cloned());
+            self.execution_state.set_register(
+                *target,
+                OvmValue {
+                    data: ValueData::List(std::sync::Arc::new(items)),
+                },
+            )?;
+        } else if let (ValueData::List(_), ValueData::List(b)) = (&target_val.data, &rhs_val.data) {
+            // The same accumulate fusion for lists: `xs = xs + [v]'
+            // in a loop is O(n²) as a copy per iteration; when `xs`
+            // holds the only reference, extend in place for O(1)
+            // amortized. The aliasing guard is identical to the
+            // string case — `Arc::get_mut` returns None the moment
+            // another register, a constant, or a value sent
+            // elsewhere shares the Vec, and we copy exactly like
+            // Add would, so aliased accumulators stay correct.
+            let ValueData::List(mut arc) = target_val.into_data() else {
+                unreachable!("matched above");
+            };
+            match std::sync::Arc::get_mut(&mut arc) {
+                Some(v) => v.extend(b.iter().cloned()),
+                None => {
+                    let mut v = (*arc).clone();
+                    v.extend(b.iter().cloned());
+                    arc = std::sync::Arc::new(v);
+                }
+            }
+            self.execution_state.set_register(
+                *target,
+                OvmValue {
+                    data: ValueData::List(arc),
+                },
+            )?;
+        } else {
+            let result = match Self::binary_fast(&target_val, &rhs_val, BinaryOp::Add) {
+                Some(v) => v,
+                None => self.execute_binary_op(&target_val, &rhs_val, BinaryOp::Add)?,
+            };
+            self.execution_state.set_register(*target, result)?;
+        }
+        Ok(())
+    }
+
+    /// `map_set` on a map the call owns (its argument was moved in):
+    /// insert in place when nothing else holds the map, copy otherwise —
+    /// `Arc::make_mut` decides. `None` for anything the native `map_set`
+    /// handles otherwise (a struct, a bad key), so its checks and messages
+    /// stay the authority.
+    fn map_set_owned(args: &mut [OvmValue]) -> Option<Result<OvmValue, BytecodeError>> {
+        use crate::ovm::value::ValueData;
+        if args.len() != 3 {
+            return None;
+        }
+        let key = match &args[1].data {
+            ValueData::String(st) => st.as_ref().clone(),
+            ValueData::Integer(i) => i.to_string(),
+            ValueData::Float(f) => crate::ast::format_float(*f),
+            ValueData::Boolean(b) => b.to_string(),
+            _ => return None,
+        };
+        let value = std::mem::replace(&mut args[2], OvmValue::new_unit());
+        let map = std::mem::replace(&mut args[0], OvmValue::new_unit());
+        match map.into_data() {
+            ValueData::Map(mut m) => {
+                Arc::make_mut(&mut m).insert(key, value);
+                Some(Ok(OvmValue::new_map(m)))
+            }
+            ValueData::AstMap(mut m) => match value.to_ast() {
+                Ok(ast) => {
+                    Arc::make_mut(&mut m).insert(key, ast);
+                    Some(Ok(OvmValue {
+                        data: ValueData::AstMap(m),
+                    }))
+                }
+                Err(_) => {
+                    let mut new_map = OvmValue::force_ast_map(&m);
+                    new_map.insert(key, value);
+                    Some(Ok(OvmValue::new_map(Arc::new(new_map))))
+                }
+            },
+            other => {
+                // Not a map: put the arguments back for the native path.
+                args[0] = OvmValue { data: other };
+                args[2] = value;
+                None
+            }
+        }
+    }
+
     fn execute_builtin_call(
         &mut self,
         name: &str,
@@ -9236,6 +9335,7 @@ impl BytecodeCompiler {
                                 dst: dst_reg,
                                 function_name: builtin_name,
                                 args: arg_regs,
+                                arg_moves: 0,
                                 pregranted,
                             });
                             return Ok(dst_reg);
@@ -9418,6 +9518,7 @@ impl BytecodeCompiler {
                             dst: dst_reg,
                             function_name,
                             args: arg_regs,
+                            arg_moves: 0,
                             pregranted,
                         });
                     }
@@ -11634,7 +11735,12 @@ impl InstructionEmitter {
     }
 
     pub fn emit_add(&mut self, dst: Register, lhs: Register, rhs: Register) {
-        self.instructions.push(Instruction::Add { dst, lhs, rhs });
+        self.instructions.push(Instruction::Add {
+            dst,
+            lhs,
+            rhs,
+            lhs_dead: false,
+        });
     }
 
     pub fn emit_sub(&mut self, dst: Register, lhs: Register, rhs: Register) {
@@ -12059,6 +12165,32 @@ impl BytecodeOptimizer {
             // the caller's frame for the callee's whole run. Only
             // registers appearing once in the argument list qualify — a
             // duplicated register must still be cloned for its second use.
+            // The same for a builtin's arguments, and for the left side
+            // of a sum: dead after it, it may be taken and extended.
+            if let I::CallNamed {
+                args, arg_moves, ..
+            } = &mut instructions[pc]
+            {
+                let mut mask = 0u64;
+                for (i, r) in args.iter().enumerate().take(64) {
+                    let unique = args.iter().filter(|a| a.0 == r.0).count() == 1;
+                    let dead = !(pc + 1 < n && live_in[pc + 1][r.0 as usize]);
+                    if unique && dead {
+                        mask |= 1 << i;
+                    }
+                }
+                *arg_moves = mask;
+            }
+            if let I::Add {
+                dst,
+                lhs,
+                rhs,
+                lhs_dead,
+            } = &mut instructions[pc]
+            {
+                let dead = !(pc + 1 < n && live_in[pc + 1][lhs.0 as usize]);
+                *lhs_dead = dead && lhs != rhs && dst != rhs;
+            }
             if let I::CallFn {
                 args, arg_moves, ..
             } = &mut instructions[pc]
@@ -12160,7 +12292,7 @@ impl BytecodeOptimizer {
                     uses.push(r.0);
                 }
             }
-            I::Add { dst, lhs, rhs }
+            I::Add { dst, lhs, rhs, .. }
             | I::Sub { dst, lhs, rhs }
             | I::Mul { dst, lhs, rhs }
             | I::Div { dst, lhs, rhs }
@@ -12394,7 +12526,7 @@ impl fmt::Display for Instruction {
             Instruction::AddAssign { target, rhs } => {
                 write!(f, "ADD_ASSIGN r{}, r{}", target.0, rhs.0)
             }
-            Instruction::Add { dst, lhs, rhs } => {
+            Instruction::Add { dst, lhs, rhs, .. } => {
                 write!(f, "ADD r{}, r{}, r{}", dst.0, lhs.0, rhs.0)
             }
             Instruction::Sub { dst, lhs, rhs } => {

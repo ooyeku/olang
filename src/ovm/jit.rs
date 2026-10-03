@@ -3796,7 +3796,7 @@ pub(crate) fn for_each_reg(
             f(key);
             f(value);
         }
-        I::Add { dst, lhs, rhs }
+        I::Add { dst, lhs, rhs, .. }
         | I::Sub { dst, lhs, rhs }
         | I::Mul { dst, lhs, rhs }
         | I::Div { dst, lhs, rhs }
@@ -4510,6 +4510,7 @@ impl PlanFn {
                             dst: *target,
                             lhs: *target,
                             rhs: *rhs,
+                            lhs_dead: false,
                         };
                     }
                     Instruction::TakeMove { dst, src } => {
@@ -4731,7 +4732,7 @@ impl PlanFn {
                         narrow!(src.0, dst_allowed);
                     }
                 }
-                Instruction::Add { dst, lhs, rhs }
+                Instruction::Add { dst, lhs, rhs, .. }
                 | Instruction::Sub { dst, lhs, rhs }
                 | Instruction::Mul { dst, lhs, rhs }
                 | Instruction::Div { dst, lhs, rhs }
@@ -6165,7 +6166,7 @@ fn translate_body(
                 let val = r#gen.read(builder, src.0)?;
                 builder.def_var(Variable::from_u32(dst.0), val);
             }
-            Instruction::Add { dst, lhs, rhs }
+            Instruction::Add { dst, lhs, rhs, .. }
             | Instruction::Sub { dst, lhs, rhs }
             | Instruction::Mul { dst, lhs, rhs }
             | Instruction::Div { dst, lhs, rhs }

@@ -47,6 +47,19 @@ impl Interpreter {
                 _ => {}
             }
         }
+        // A list sum whose left side nothing else holds (a call's result:
+        // `cell.take(c) + [v]`, `f(x) + ys`) extends it in place; a shared
+        // one is copied once, as before.
+        if matches!(op, BinaryOp::Add)
+            && matches!(left, Value::List(_))
+            && matches!(right, Value::List(_))
+        {
+            let mut items = left.into_items().expect("a list");
+            if let Value::List(b) = &right {
+                items.extend(b.iter().cloned());
+            }
+            return Ok(Value::List(std::sync::Arc::new(items)));
+        }
         match (left, op, right) {
             (Value::Integer(a), BinaryOp::Add, Value::Integer(b)) => a
                 .checked_add(b)

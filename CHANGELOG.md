@@ -27,6 +27,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   hosts the platform's event loop (macOS requires it); a program that
   never opens a window never starts one (docs/stdlib.md, loom/SPEC.md).
 
+### Fixed
+
+- **A temporary handed to a builtin, or on the left of `+`, is extended
+  in place.** On the bytecode tier every builtin argument was cloned out
+  of its register and `map_set` cloned its map besides, so
+  `map_set(cell.take(c), k, v)` copied the table on every insert (8,000
+  inserts: 548 ms, against 12 ms interpreted); a list `+` copied its left
+  side however temporary it was, on both tiers. Builtin calls now move
+  argument registers that are dead after the call, `map_set` inserts
+  into a map it owns outright, and a sum whose left side nothing else
+  holds extends it. A value still held elsewhere is copied, as before.
+- **`cell.take(c)`** moves a cell's value out, so a table kept in a cell
+  grows in place (docs/stdlib.md).
+
 ## [0.87.0] - 2026-10-02
 
 ### Added
