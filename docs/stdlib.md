@@ -1721,7 +1721,7 @@ Native-only; on in the released binaries (the `gui` cargo feature).
 
 | `op` | Fields |
 |---|---|
-| `"node"` | insert or replace: `key`, `parent` (none for the window's one root; a parent comes before its children), `index` among the siblings, `role`, `box` `(x, y, w, h)` in logical pixels **relative to the parent's content origin**, `style`, `text`, `name`, `description`, `focusable`, `disabled`, `checked`, `selected`, `expanded`, `value`, `range` `(value, min, max)`, `level`, `live` (`"polite"`/`"assertive"`), `scroll` (the node scrolls its children; the wheel moves it without the program), `edit` (below) |
+| `"node"` | insert or replace: `key`, `parent` (none for the window's one root; a parent comes before its children), `index` among the siblings, `role`, `box` `(x, y, w, h)` in logical pixels **relative to the parent's content origin**, `style`, `text`, `name`, `description`, `focusable`, `disabled`, `checked`, `selected`, `expanded`, `value`, `range` `(value, min, max)`, `level`, `live` (`"polite"`/`"assertive"`), `scroll` (the node scrolls its children; the wheel moves it without the program, and says so with `scrolled`), `content` `(w, h)` (what a scrolling node scrolls through when its laid-out children reach less: a virtualized list), `modal` (a dialog, popover, or menu: while one is in the tree the pointer and Tab stay inside the topmost, the focus moves into it, and a press outside sends `outside`), `edit` (below) |
 | `"remove"` | `key`: the node and its subtree |
 | `"focus"` | `key`, or none to clear |
 | `"scroll"` | `key`, `to` `(x, y)` |
@@ -1771,6 +1771,7 @@ program catching up, not a reset. Send back the `rev` of the last
 | `"pointer"` | `action`, `x`, `y`, `button`, `clicks`, `target` |
 | `"scrolled"` | `key`, `x`, `y` |
 | `"a11y"` | `key`, `action` (`"set_value"`, `"increment"`, `"decrement"`), `value` |
+| `"outside"` | `key` (the modal layer), `x`, `y` — a press outside the topmost modal layer |
 | `"window_focus"` | `on` |
 | `"appearance"` | `dark` |
 | `"menu"` | `id` |

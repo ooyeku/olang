@@ -360,3 +360,49 @@ fn a_bad_patch_says_what_is_wrong() {
     assert!(t.contains("parent \"nope\", which does not exist"), "{t}");
     assert!(t.contains("unknown style \"colour\""), "{t}");
 }
+
+#[test]
+fn content_lets_a_list_scroll_past_its_laid_out_rows() {
+    // A virtualized list lays out a few rows but scrolls through all of
+    // them: the wheel is clamped to `content`, not to the children.
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (200, 100) })
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 200, 100) },
+          #{ "key": "l", "parent": "root", "role": "list", "box": (0, 0, 200, 100), "scroll": true, "content": (200, 32000) },
+          #{ "key": "r0", "parent": "l", "role": "listitem", "box": (0, 0, 200, 32), "text": "row 0" }
+        ])
+        gui.input(w, #{ "kind": "pointer", "action": "move", "x": 50, "y": 50 })
+        gui.input(w, #{ "kind": "wheel", "dy": -5000 })
+        gui.input(w, #{ "kind": "wheel", "dy": -1000000 })
+        let n = gui.read(w, "node", "l")
+        map_get(n, "offset")
+    "##);
+    assert_eq!(text(&v), "(0.0, 31900.0)");
+}
+
+#[test]
+fn a_modal_layer_keeps_the_focus_and_hears_a_press_outside() {
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (300, 200) })
+        let ev = gui.events()
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 300, 200) },
+          #{ "key": "behind", "parent": "root", "role": "button", "box": (10, 10, 80, 30), "text": "Behind" },
+          #{ "key": "dlg", "parent": "root", "role": "dialog", "modal": true, "box": (100, 60, 180, 120), "name": "Confirm" },
+          #{ "key": "ok", "parent": "dlg", "role": "button", "box": (10, 70, 70, 30), "text": "OK" },
+          #{ "key": "no", "parent": "dlg", "role": "button", "box": (90, 70, 70, 30), "text": "Cancel" }
+        ])
+        let first = gui.read(w, "focus")
+        gui.input(w, #{ "kind": "key", "key": "tab" })
+        gui.input(w, #{ "kind": "key", "key": "tab" })
+        let after_tabs = gui.read(w, "focus")
+        gui.input(w, #{ "kind": "pointer", "action": "down", "x": 20, "y": 20 })
+        gui.input(w, #{ "kind": "pointer", "action": "up", "x": 20, "y": 20 })
+        let mut kinds = []
+        let mut more = true
+        while more { match chan.try_recv(ev) { Ok(e) => { kinds = kinds + [map_get(e, "kind")] }, _ => { more = false } } }
+        [first, after_tabs, gui.read(w, "hit", (20, 20)), contains(kinds, "outside"), contains(kinds, "activate")]
+    "##);
+    assert_eq!(text(&v), r#"["ok", "ok", (), true, false]"#);
+}

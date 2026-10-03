@@ -204,6 +204,18 @@ impl WinState {
         let scene = &self.scene;
         self.editors
             .retain(|k, _| scene.nodes.get(k).is_some_and(|n| n.edit.is_some()));
+        // A modal layer that appeared takes the focus into it.
+        if let Some(m) = self.scene.modal_root() {
+            let inside = self
+                .scene
+                .focus
+                .as_ref()
+                .is_some_and(|f| self.scene.within(f, &m));
+            if !inside {
+                self.scene.focus = self.scene.focus_order().first().cloned();
+                applied.focus_set = true;
+            }
+        }
         if applied.focus_set && self.scene.focus != before_focus {
             if let Some(f) = self.scene.focus.clone() {
                 self.scene.reveal(&f);
@@ -587,6 +599,16 @@ impl WinState {
                 out.push(self.ev("pointer", vec![("action", s("leave"))]));
             }
             PointerAction::Down => {
+                // A press outside the modal layer: the layer hears of it
+                // (a popover or a menu closes; a dialog may ignore it).
+                if hit.is_none()
+                    && let Some(m) = self.scene.modal_root()
+                {
+                    out.push(self.ev(
+                        "outside",
+                        vec![("key", s(&m)), ("x", float(x)), ("y", float(y))],
+                    ));
+                }
                 let clicks = if clicks > 0 {
                     clicks
                 } else {

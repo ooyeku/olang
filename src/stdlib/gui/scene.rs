@@ -219,6 +219,13 @@ pub struct Node {
     pub offset: (f32, f32),
     pub level: Option<u32>,
     pub live: Option<String>,
+    /// The size of what a scrolling node scrolls through, when it is
+    /// larger than its children reach: a virtualized list lays out only
+    /// the rows on screen but scrolls through all of them.
+    pub content: Option<(f32, f32)>,
+    /// A modal layer (a dialog, a popover, a menu): while it is in the
+    /// tree, the pointer and the focus stay inside the topmost one.
+    pub modal: bool,
 }
 
 pub const HOVER: usize = 0;
@@ -279,6 +286,7 @@ pub fn activates(role: &str) -> bool {
             | "listitem"
             | "treeitem"
             | "row"
+            | "columnheader"
     )
 }
 
@@ -325,6 +333,8 @@ const NODE_KEYS: &[&str] = &[
     "scroll",
     "level",
     "live",
+    "content",
+    "modal",
 ];
 
 #[derive(Default)]
@@ -500,6 +510,8 @@ impl Scene {
             offset,
             level: get_num(op, "level", what)?.map(|n| n as u32),
             live: get_str(op, "live", what)?.map(str::to_string),
+            content: get_pair(op, "content", what)?,
+            modal: get_bool(op, "modal", what)?.unwrap_or(false),
         };
         // Detach from the old parent (or the root slot) when it moved.
         if previous.is_some() && old_parent != parent {
@@ -643,8 +655,7 @@ impl Scene {
 
     /// The extent of a node's children, for clamping its scroll.
     fn content_size(&self, node: &Node) -> (f32, f32) {
-        let mut w: f32 = 0.0;
-        let mut h: f32 = 0.0;
+        let (mut w, mut h) = node.content.unwrap_or((0.0, 0.0));
         for c in &node.children {
             if let Some(cn) = self.nodes.get(c) {
                 w = w.max(cn.rect[0] + cn.rect[2]);
@@ -669,8 +680,46 @@ impl Scene {
     /// The topmost node under a point (logical window coordinates),
     /// honouring clipping and scrolling. Later siblings are on top.
     pub fn hit(&self, x: f32, y: f32) -> Option<String> {
+        // Under a modal layer, only the layer answers.
+        if let Some(m) = self.modal_root() {
+            let n = self.nodes.get(&m)?;
+            let abs = self.absolute(&m)?;
+            return self.hit_in(&m, abs[0] - n.rect[0], abs[1] - n.rect[1], x, y);
+        }
         let root = self.root.as_ref()?;
         self.hit_in(root, 0.0, 0.0, x, y)
+    }
+
+    /// The topmost modal layer: the last modal node in tree order.
+    pub fn modal_root(&self) -> Option<String> {
+        fn walk(s: &Scene, key: &str, found: &mut Option<String>) {
+            let Some(n) = s.nodes.get(key) else {
+                return;
+            };
+            if n.modal {
+                *found = Some(key.to_string());
+            }
+            for c in &n.children {
+                walk(s, c, found);
+            }
+        }
+        let mut found = None;
+        if let Some(r) = &self.root {
+            walk(self, r, &mut found);
+        }
+        found
+    }
+
+    /// Whether `key` is `ancestor` or inside it.
+    pub fn within(&self, key: &str, ancestor: &str) -> bool {
+        let mut at = Some(key.to_string());
+        while let Some(k) = at {
+            if k == ancestor {
+                return true;
+            }
+            at = self.nodes.get(&k).and_then(|n| n.parent.clone());
+        }
+        false
     }
 
     fn hit_in(&self, key: &str, ox: f32, oy: f32, x: f32, y: f32) -> Option<String> {
@@ -718,7 +767,9 @@ impl Scene {
     /// Focusable nodes in tree order, skipping disabled ones.
     pub fn focus_order(&self) -> Vec<String> {
         let mut out = Vec::new();
-        if let Some(r) = &self.root {
+        // A modal layer traps the focus.
+        let start = self.modal_root().or_else(|| self.root.clone());
+        if let Some(r) = &start {
             self.collect_focusable(r, &mut out);
         }
         out
