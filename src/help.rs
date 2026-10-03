@@ -2256,6 +2256,14 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
             &[r##"cell.set(counter, 10)"##],
         );
         self.doc_ex(
+            "cell.take",
+            "cell.take(c)",
+            "Any",
+            "cell",
+            "move the value out, leaving (); nothing else then holds it, so extending it is in place: cell.set(c, map_set(cell.take(c), k, v))",
+            &[r##"cell.set(memo, map_set(cell.take(memo), "k", 1))"##],
+        );
+        self.doc_ex(
             "cell.update",
             "cell.update(c, f)",
             "Any",

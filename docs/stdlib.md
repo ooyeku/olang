@@ -866,6 +866,7 @@ the model; this is the API.
 | `cell.get(c)` | the current value |
 | `cell.set(c, v)` | `()` — replaces the contents |
 | `cell.update(c, f)` | the new value, after applying `f` to the current one and storing the result |
+| `cell.take(c)` | the value, moved out: the cell holds `()` until set again. Nothing else holds what it answers, so extending it is in place — `cell.set(c, map_set(cell.take(c), k, v))` grows a table in time proportional to its size, where `map_set(cell.get(c), k, v)` copies it on every insert |
 
 None of these return `Result`: there is no expected failure to report.
 They raise on misuse — reading a cell from a thread that does not own

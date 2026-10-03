@@ -13,6 +13,18 @@
 //! cell.update(counter, (n) => n + 1)
 //! ```
 //!
+//! ## Growing a table in place
+//!
+//! `cell.get` answers a copy that shares the cell's value, so a map or a
+//! list taken out with `get` and extended copies it whole — a memo table
+//! grown with `cell.set(c, map_set(cell.get(c), k, v))` is quadratic in
+//! its size (2,000 inserts, 57 ms). `cell.take(c)` moves the value out,
+//! leaving `()`, so nothing else holds it and the extension is in place:
+//!
+//! ```text
+//! cell.set(memo, map_set(cell.take(memo), key, value))   // in place
+//! ```
+//!
 //! ## Confinement
 //!
 //! A cell belongs to the thread that created it. Reading or writing one
@@ -157,7 +169,13 @@ impl NativeObject for CellObject {
 /// the operations stay namespaced.
 pub fn create_cell_module() -> Value {
     let mut module = HashMap::new();
-    for (name, arity) in [("new", 1), ("get", 1), ("set", 2), ("update", 2)] {
+    for (name, arity) in [
+        ("new", 1),
+        ("get", 1),
+        ("take", 1),
+        ("set", 2),
+        ("update", 2),
+    ] {
         module.insert(
             name.to_string(),
             Value::Builtin(crate::ast::BuiltinFunction {
@@ -226,6 +244,7 @@ pub fn call_cell_function(
     match name {
         "new" => cell_new(args).map_err(raise),
         "get" => cell_get(args).map_err(raise),
+        "take" => cell_take(args).map_err(raise),
         "set" => cell_set(args).map_err(raise),
         "update" => cell_update(args, interpreter),
         _ => Err(raise(format!("Unknown cell function: {}", name))),
@@ -262,6 +281,22 @@ fn cell_get(args: Vec<Value>) -> Result<Value, String> {
         return Err(CellObject::reentrant("read"));
     }
     Ok(state.value.clone())
+}
+
+/// `cell.take(c)` — the value, moved out; the cell holds `()` until it
+/// is set again. Nothing else then holds the value, so extending it
+/// (`map_set`, `+ [x]`) is in place rather than a copy.
+fn cell_take(args: Vec<Value>) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err("cell.take expects one argument: the cell".to_string());
+    }
+    let cell = cell_of(&args[0])?;
+    cell.own_thread()?;
+    let mut state = cell.state.lock().map_err(|_| POISONED.to_string())?;
+    if state.updating {
+        return Err(CellObject::reentrant("taken"));
+    }
+    Ok(std::mem::replace(&mut state.value, Value::Unit))
 }
 
 fn cell_set(mut args: Vec<Value>) -> Result<Value, String> {

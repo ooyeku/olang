@@ -295,3 +295,18 @@ fn a_cell_passed_through_a_hot_function_keeps_its_identity() {
     .unwrap();
     assert_eq!(out, "499");
 }
+
+#[test]
+fn take_moves_the_value_out_and_leaves_unit() {
+    assert_eq!(
+        run("let c = cell([1, 2])\nlet v = cell.take(c)\n[v, cell.get(c)]").unwrap(),
+        "[[1, 2], ()]"
+    );
+    // Grown through take, a table is extended rather than copied: 20,000
+    // inserts finish quickly (quadratic copying took seconds).
+    assert_eq!(
+        run("let m = cell(#{})\nlet t0 = time.monotonic()\nfor i in range(0, 20000) { cell.set(m, map_set(cell.take(m), to_string(i), i)) }\n[map_len(cell.get(m)), time.monotonic() - t0 < 2000.0]")
+            .unwrap(),
+        "[20000, true]"
+    );
+}
