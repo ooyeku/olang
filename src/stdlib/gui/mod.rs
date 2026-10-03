@@ -66,6 +66,7 @@ const FUNCTIONS: &[(&str, usize)] = &[
     ("clipboard_write", 1),
     ("dialog", 2),
     ("menu", 1),
+    ("compare", 3),
 ];
 
 pub fn create_gui_module() -> Value {
@@ -95,6 +96,7 @@ pub fn call_gui_function(name: &str, args: Vec<Value>) -> DynRes {
         "apply" => gui_apply(args),
         "measure" => gui_measure(args),
         "read" => gui_read(args),
+        "compare" => gui_compare(args),
         "input" => gui_input(args),
         "set" => gui_set(args),
         "fonts" => gui_fonts(args),
@@ -446,9 +448,18 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
             let dl = st.display_list();
             Value::Integer(dl.prims.len() as i64)
         }
+        "caret" => {
+            st.display_list();
+            match st.caret {
+                Some([x, y, w, h]) => {
+                    Value::Tuple(Arc::new(vec![float(x), float(y), float(w), float(h)]))
+                }
+                None => Value::Unit,
+            }
+        }
         other => {
             return Err(format!(
-                "gui.read: unknown \"{other}\" (focus, hover, size, hit, node, value, selection, keys, a11y, pixels, rgba, prims)"
+                "gui.read: unknown \"{other}\" (focus, hover, size, hit, node, value, selection, keys, a11y, pixels, rgba, prims, caret)"
             ));
         }
     })
@@ -544,7 +555,7 @@ fn input_of(v: &Value) -> Res<Input> {
         "window_focus" => Input::Focused(get_bool(v, "on", what)?.unwrap_or(true)),
         other => {
             return Err(format!(
-                "gui.input: unknown kind \"{other}\" (key, text, pointer, wheel, compose, commit, resize, window_focus)"
+                "gui.input: unknown kind \"{other}\" (key, text, pointer, wheel, compose, commit, resize, window_focus, close, menu, clipboard)"
             ));
         }
     })
@@ -554,6 +565,32 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
     arity("gui.input", &args, 2, 2)?;
     let id = window_id("gui.input", args.first())?;
     let w = window("gui.input", id)?;
+    // What a platform does around a window, for a test to do instead.
+    let what = "gui.input";
+    match get_str(&args[1], "kind", what)? {
+        Some("close") => {
+            emit(vec![event(
+                "close_requested",
+                vec![("window", Value::Integer(id as i64))],
+            )]);
+            return Ok(Value::Unit);
+        }
+        Some("menu") => {
+            let item = get_str(&args[1], "id", what)?
+                .ok_or("gui.input: \"menu\" needs the item's \"id\"")?;
+            emit(vec![event("menu", vec![("id", s(item))])]);
+            return Ok(Value::Unit);
+        }
+        Some("clipboard") => {
+            if !w.lock().map_err(|_| "gui: window poisoned")?.headless {
+                return Err("gui.input: \"clipboard\" sets a headless window's clipboard; a real window's is the platform's".into());
+            }
+            let t = get_str(&args[1], "text", what)?.unwrap_or("").to_string();
+            window::Clipboard::set(&mut HeadlessClipboard, t);
+            return Ok(Value::Unit);
+        }
+        _ => {}
+    }
     let input = input_of(&args[1])?;
     let mut out = Vec::new();
     let headless = {
@@ -688,4 +725,85 @@ fn gui_dialog(args: Vec<Value>) -> Res<Value> {
 fn gui_menu(args: Vec<Value>) -> Res<Value> {
     arity("gui.menu", &args, 1, 1)?;
     platform::menu(&args[0])
+}
+
+/// `gui.compare(a, b, opts)`: two PNGs (Bytes) compared pixel by pixel,
+/// as a pixel snapshot is checked. A pixel differs when a channel moves
+/// by more than `opts.threshold` (default 32 of 255, so antialiasing and
+/// a renderer's rounding pass); the images are the same when at most
+/// `opts.ratio` of their pixels differ (default 0.001). Answers `#{ same,
+/// differing, total, worst, diff }`, `diff` a PNG with each differing
+/// pixel red over a faded copy of `a` (`()` when the sizes differ).
+fn gui_compare(args: Vec<Value>) -> Res<Value> {
+    arity("gui.compare", &args, 2, 3)?;
+    let what = "gui.compare";
+    let decode = |v: &Value, which: &str| -> Res<tiny_skia::Pixmap> {
+        let b = crate::stdlib::bytes::bytes_of(v)
+            .map_err(|_| format!("{what}: {which} must be a PNG's Bytes"))?;
+        tiny_skia::Pixmap::decode_png(b).map_err(|e| format!("{what}: {which} is not a PNG ({e})"))
+    };
+    let a = decode(&args[0], "the first")?;
+    let b = decode(&args[1], "the second")?;
+    let opts = args.get(2).cloned().unwrap_or(Value::Unit);
+    let threshold = get_num(&opts, "threshold", what)?
+        .unwrap_or(32.0)
+        .clamp(0.0, 255.0) as u8;
+    let ratio = get_num(&opts, "ratio", what)?.unwrap_or(0.001).max(0.0) as f64;
+    if a.width() != b.width() || a.height() != b.height() {
+        return Ok(map(vec![
+            ("same", Value::Boolean(false)),
+            (
+                "differing",
+                Value::Integer((a.width() * a.height()).max(b.width() * b.height()) as i64),
+            ),
+            ("total", Value::Integer((a.width() * a.height()) as i64)),
+            ("worst", Value::Integer(255)),
+            ("diff", Value::Unit),
+            (
+                "sizes",
+                s(&format!(
+                    "{}×{} against {}×{}",
+                    a.width(),
+                    a.height(),
+                    b.width(),
+                    b.height()
+                )),
+            ),
+        ]));
+    }
+    let mut diff =
+        tiny_skia::Pixmap::new(a.width(), a.height()).ok_or("gui.compare: empty image")?;
+    let (mut differing, mut worst) = (0i64, 0u8);
+    for ((pa, pb), out) in a
+        .data()
+        .chunks(4)
+        .zip(b.data().chunks(4))
+        .zip(diff.data_mut().chunks_mut(4))
+    {
+        let d = (0..4).map(|i| pa[i].abs_diff(pb[i])).max().unwrap_or(0);
+        worst = worst.max(d);
+        if d > threshold {
+            differing += 1;
+            out.copy_from_slice(&[230, 0, 0, 255]);
+        } else {
+            // a faded copy, so the difference shows where it is
+            let g = ((pa[0] as u16 + pa[1] as u16 + pa[2] as u16) / 3) as u8;
+            let f = 255 - (255 - g) / 4;
+            out.copy_from_slice(&[f, f, f, 255]);
+        }
+    }
+    let total = (a.width() * a.height()) as i64;
+    let png = diff
+        .encode_png()
+        .map_err(|e| format!("gui.compare: encoding the difference: {e}"))?;
+    Ok(map(vec![
+        (
+            "same",
+            Value::Boolean(differing as f64 <= ratio * total as f64),
+        ),
+        ("differing", Value::Integer(differing)),
+        ("total", Value::Integer(total)),
+        ("worst", Value::Integer(worst as i64)),
+        ("diff", crate::stdlib::bytes::to_value(png)),
+    ]))
 }

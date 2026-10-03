@@ -2024,6 +2024,14 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "The macOS menu bar from [#{ title, items: [#{ id, label, keys?, enabled?, checked? } or \"separator\"] }]; a chosen item sends a menu event with its id. Elsewhere answers false.",
             &[r##"gui.menu([#{ "title": "File", "items": [#{ "id": "open", "label": "Open…", "keys": "mod+o" }] }])"##],
         );
+        self.doc_ex(
+            "gui.compare",
+            "gui.compare(a, b, opts?)",
+            "Map",
+            "gui",
+            "Two PNGs compared as a pixel snapshot is: #{ same, differing, total, worst, diff }. A pixel differs when a channel moves by more than opts.threshold (32); the images are the same when at most opts.ratio (0.001) of the pixels differ. diff is a PNG marking them in red, () when the sizes differ.",
+            &[r##"map_get(gui.compare(fs.read_bytes("want.png").unwrap(), gui.read(w, "pixels")), "same")"##],
+        );
     }
 
     /// The `tty` module: the terminal as an interactive device.

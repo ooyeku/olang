@@ -573,3 +573,47 @@ fn canvases_and_images_draw_alike_on_both_renderers() {
         );
     }
 }
+
+#[test]
+fn a_test_can_close_command_paste_and_see_the_caret() {
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (300, 100) })
+        let ev = gui.events()
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 300, 100) },
+          #{ "key": "f", "parent": "root", "role": "input", "box": (10, 10, 200, 30), "edit": #{ "value": "" } },
+          #{ "op": "focus", "key": "f" }
+        ])
+        let caret = gui.read(w, "caret")
+        gui.input(w, #{ "kind": "clipboard", "text": "pasted" })
+        gui.input(w, #{ "kind": "key", "key": "v", "mod": true })
+        gui.input(w, #{ "kind": "menu", "id": "save" })
+        gui.input(w, #{ "kind": "close" })
+        let mut kinds = []
+        let mut more = true
+        while more { match chan.try_recv(ev) { Ok(e) => { kinds = kinds + [map_get(e, "kind") + (if map_get(e, "id") == () => "" else => ":" + map_get(e, "id"))] }, _ => { more = false } } }
+        gui.apply(w, [#{ "op": "focus" }])
+        [caret != () && caret[0] >= 10.0 && caret[3] > 10.0, gui.read(w, "value", "f"), contains(kinds, "menu:save"), contains(kinds, "close_requested"), gui.read(w, "caret")]
+    "##);
+    assert_eq!(text(&v), r#"[true, "pasted", true, true, ()]"#);
+}
+
+#[test]
+fn compare_finds_what_changed_and_draws_where() {
+    let v = run(r##"
+        fn shot(label) = {
+            let w = gui.headless(#{ "size": (120, 40) })
+            gui.apply(w, [#{ "key": "root", "box": (0, 0, 120, 40), "style": #{ "bg": "#ffffff" } },
+                          #{ "key": "b", "parent": "root", "box": (10, 10, 100, 20), "style": #{ "bg": label } }])
+            let png = gui.read(w, "pixels")
+            gui.close(w)
+            png
+        }
+        let a = shot("#2563eb")
+        let same = gui.compare(a, shot("#2563eb"))
+        let moved = gui.compare(a, shot("#dc2626"))
+        let small = gui.compare(a, gui.read(gui.headless(#{ "size": (10, 10) }), "pixels"))
+        [map_get(same, "same"), map_get(same, "differing"), map_get(moved, "same"), map_get(moved, "differing"), bytes.len(map_get(moved, "diff")) > 100, map_get(small, "same"), map_get(small, "diff")]
+    "##);
+    assert_eq!(text(&v), "[true, 0, false, 2000, true, false, ()]");
+}

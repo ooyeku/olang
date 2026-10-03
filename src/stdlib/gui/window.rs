@@ -125,6 +125,9 @@ pub struct WinState {
     pub dirty: bool,
     /// The accessibility tree should be rebuilt.
     pub a11y_dirty: bool,
+    /// Where the last frame drew the caret, in logical pixels and
+    /// clipped to what shows: `None` when no caret was visible.
+    pub caret: Option<[f32; 4]>,
 }
 
 const WHITE: Color = [255, 255, 255, 255];
@@ -147,6 +150,7 @@ impl WinState {
             last_press: None,
             dirty: true,
             a11y_dirty: true,
+            caret: None,
         }
     }
 
@@ -785,6 +789,7 @@ impl WinState {
             clear: self.clear,
             prims: Vec::new(),
         };
+        self.caret = None;
         let Some(root) = self.scene.root.clone() else {
             return dl;
         };
@@ -1099,11 +1104,26 @@ impl WinState {
             && window_focused
             && let Some(c) = ed.ed.cursor_geometry((1.5 * s).max(1.0))
         {
+            let (cx, cy, cw, ch) = (
+                ox + c.x0 as f32,
+                oy + c.y0 as f32,
+                (c.x1 - c.x0) as f32,
+                (c.y1 - c.y0) as f32,
+            );
+            let shown = clip.intersect(Clip::rect(cx, cy, cx + cw, cy + ch));
+            if !shown.is_empty() {
+                self.caret = Some([
+                    shown.x0 / s,
+                    shown.y0 / s,
+                    (shown.x1 - shown.x0) / s,
+                    (shown.y1 - shown.y0) / s,
+                ]);
+            }
             dl.prims.push(Prim::Rect {
-                x: ox + c.x0 as f32,
-                y: oy + c.y0 as f32,
-                w: (c.x1 - c.x0) as f32,
-                h: (c.y1 - c.y0) as f32,
+                x: cx,
+                y: cy,
+                w: cw,
+                h: ch,
                 fill: fade(st.caret),
                 border: [0, 0, 0, 0],
                 border_width: 0.0,
