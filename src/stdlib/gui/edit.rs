@@ -401,7 +401,10 @@ impl Editor {
             } else if x - self.scroll_x < 0.0 {
                 self.scroll_x = x;
             }
-            self.scroll_x = self.scroll_x.max(0.0);
+            // A right-to-left line's trailing spaces hang left of its
+            // start, so the caret can sit before x = 0: scroll as far left
+            // as the caret, and no further.
+            self.scroll_x = self.scroll_x.max(x.min(0.0));
         }
     }
 }

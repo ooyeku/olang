@@ -643,3 +643,27 @@ fn a_node_that_grabs_is_found_before_the_siblings_over_it() {
     "##);
     assert_eq!(text(&v), r#"["div", "div", "b", ["a", "div", "b"]]"#);
 }
+
+#[test]
+fn a_trailing_space_after_right_to_left_text_keeps_the_caret_in_view() {
+    // A right-to-left line's trailing spaces hang left of its start; the
+    // field scrolled no further left than 0 and the caret went out of it.
+    let v = run(r##"
+        let mut out = []
+        for t in ["שלום עולם 123", "مرحبا", "abc"] {
+            let w = gui.headless(#{ "size": (300, 80) })
+            gui.apply(w, [
+              #{ "key": "root", "box": (0, 0, 300, 80) },
+              #{ "key": "f", "parent": "root", "role": "input", "box": (10, 10, 200, 34), "edit": #{ "value": "" }, "style": #{ "pad": (0, 10, 0, 10) } },
+              #{ "op": "focus", "key": "f" }
+            ])
+            gui.input(w, #{ "kind": "text", "text": t })
+            gui.input(w, #{ "kind": "key", "key": "space", "text": " " })
+            let c = gui.read(w, "caret")
+            out = out + [c != () && c[0] >= 10.0 && c[0] + c[2] <= 210.0]
+            gui.close(w)
+        }
+        out
+    "##);
+    assert_eq!(text(&v), "[true, true, true]");
+}
