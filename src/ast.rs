@@ -809,7 +809,7 @@ impl Value {
 const _: () = assert!(std::mem::size_of::<Value>() <= 40);
 
 /// Function value
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Function {
     pub name: Option<String>,
     pub parameters: Vec<Parameter>,
@@ -950,6 +950,40 @@ impl std::fmt::Debug for RunRef {
             Some((_, position)) => write!(f, "RunRef({position})"),
             None => write!(f, "RunRef(-)"),
         }
+    }
+}
+
+/// Two functions are equal when they are the same code, declared in the
+/// same scope, over equal captured values. The cheap facts are compared
+/// first, and a captured *function* is compared by identity: a closure's
+/// environment holds the prelude and the module's functions, each with its
+/// own environment, and comparing those structurally walked a graph of
+/// thousands of nodes in hash order — seconds, or nothing, depending on
+/// where the one differing capture happened to fall.
+impl PartialEq for Function {
+    fn eq(&self, other: &Self) -> bool {
+        if std::ptr::eq(self, other) {
+            return true;
+        }
+        self.name == other.name
+            && self.parent_scope == other.parent_scope
+            && self.parameters == other.parameters
+            && self.run == other.run
+            && self.param_bounds == other.param_bounds
+            && (Arc::ptr_eq(&self.body, &other.body) || self.body == other.body)
+            && (Arc::ptr_eq(&self.closure, &other.closure)
+                || (self.closure.len() == other.closure.len()
+                    && self
+                        .closure
+                        .iter()
+                        .all(|(k, v)| other.closure.get(k).is_some_and(|w| captured_eq(v, w)))))
+    }
+}
+
+fn captured_eq(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Function(f), Value::Function(g)) => Arc::ptr_eq(f, g),
+        _ => a == b,
     }
 }
 

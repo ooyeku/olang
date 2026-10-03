@@ -143,3 +143,41 @@ h()
 fn question_mark_at_top_level_is_an_error() {
     assert!(eval_res("let x = Err(\"e\")?\nx").is_err());
 }
+
+// ── functions ───────────────────────────────────────────────────────
+
+#[test]
+fn inside_a_value_a_function_equals_itself_and_not_one_over_other_values() {
+    let v = eval(
+        r#"
+        fn mk(x) = (y) => x + y
+        let f = mk(1)
+        let g = f
+        // `==` refuses two bare functions; inside a value they compare
+        [[f] == [g], [f] == [mk(2)], #{ "f": len } == #{ "f": len }, [len] == [str.length]]
+    "#,
+    );
+    assert_eq!(format!("{v}"), "[true, false, true, false]");
+}
+
+#[test]
+fn comparing_closures_does_not_walk_what_they_capture() {
+    // A closure captures the module's functions, each with its own
+    // environment; comparing them structurally took seconds or nothing,
+    // depending on hash order. Captured functions compare by identity.
+    let src = r#"
+        fn helper1(x) = x + 1
+        fn helper2(x) = helper1(x) * 2
+        fn helper3(x) = helper2(x) - helper1(x)
+        fn view(m) = #{ "rows": #{ "count": 1000000, "cell": (i, j) => helper3(m + i + j) } }
+        let mut same = 0
+        let t0 = time.monotonic()
+        for k in 0..2000 {
+            let a = view(k)
+            let b = view(k + 1)
+            if map_get(a, "rows") == map_get(b, "rows") => { same = same + 1 }
+        }
+        [same, time.monotonic() - t0 < 2000.0]
+    "#;
+    assert_eq!(format!("{}", eval(src)), "[0, true]");
+}

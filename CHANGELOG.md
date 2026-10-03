@@ -37,6 +37,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Comparing two closures no longer walks what they capture.** A
+  closure inside a compared value (a map holding a row source, as
+  Loom's layout memo compares) was compared by deriving equality over
+  its captured environment — the prelude and the module's functions,
+  each with its own environment — in hash order, stopping at the first
+  difference: 2 ms or 2 seconds, by chance. Functions now compare the
+  cheap facts first and captured functions by identity.
+- **`gui`: a trailing space after right-to-left text no longer hides the
+  caret.** The field never scrolled left of 0, and an RTL line's
+  trailing spaces hang left of its start.
+
 - **A temporary handed to a builtin, or on the left of `+`, is extended
   in place.** On the bytecode tier every builtin argument was cloned out
   of its register and `map_set` cloned its map besides, so
