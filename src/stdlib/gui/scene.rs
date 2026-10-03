@@ -226,6 +226,10 @@ pub struct Node {
     /// A modal layer (a dialog, a popover, a menu): while it is in the
     /// tree, the pointer and the focus stay inside the topmost one.
     pub modal: bool,
+    /// The pointer finds this node before its siblings, wherever it sits
+    /// among them (a divider whose target reaches over the panes beside
+    /// it); reading and focus keep its place in the tree.
+    pub grab: bool,
     /// A canvas's drawing operations (canvas.rs).
     pub draw: Option<Value>,
     /// An image's source: a PNG's path or its Bytes; and how it fits its
@@ -341,6 +345,7 @@ const NODE_KEYS: &[&str] = &[
     "live",
     "content",
     "modal",
+    "grab",
     "draw",
     "image",
     "fit",
@@ -521,6 +526,7 @@ impl Scene {
             live: get_str(op, "live", what)?.map(str::to_string),
             content: get_pair(op, "content", what)?,
             modal: get_bool(op, "modal", what)?.unwrap_or(false),
+            grab: get_bool(op, "grab", what)?.unwrap_or(false),
             draw: get(op, "draw").cloned(),
             image: get(op, "image").cloned(),
             fit: get_str(op, "fit", what)?.unwrap_or("contain").to_string(),
@@ -765,7 +771,16 @@ impl Scene {
         }
         let cx = rx - node.offset.0;
         let cy = ry - node.offset.1;
-        for child in node.children.iter().rev() {
+        // Children that grab the pointer first, then the rest, each topmost
+        // (last) first.
+        let grabs = |c: &&String| self.nodes.get(c.as_str()).is_some_and(|n| n.grab);
+        let order = node
+            .children
+            .iter()
+            .rev()
+            .filter(grabs)
+            .chain(node.children.iter().rev().filter(|c| !grabs(c)));
+        for child in order {
             if let Some(h) = self.hit_in(child, cx, cy, x, y) {
                 return Some(h);
             }

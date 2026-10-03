@@ -628,3 +628,18 @@ fn compare_finds_what_changed_and_draws_where() {
     "##);
     assert_eq!(text(&v), "[true, 0, false, 2000, true, false, ()]");
 }
+
+#[test]
+fn a_node_that_grabs_is_found_before_the_siblings_over_it() {
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (200, 100) })
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 200, 100) },
+          #{ "key": "a", "parent": "root", "role": "button", "box": (0, 0, 100, 100), "text": "A" },
+          #{ "key": "div", "parent": "root", "role": "separator", "box": (88, 0, 24, 100), "focusable": true, "grab": true },
+          #{ "key": "b", "parent": "root", "role": "button", "box": (100, 0, 100, 100), "text": "B" }
+        ])
+        [gui.read(w, "hit", (90, 50)), gui.read(w, "hit", (108, 50)), gui.read(w, "hit", (150, 50)), gui.read(w, "keys")]
+    "##);
+    assert_eq!(text(&v), r#"["div", "div", "b", ["a", "div", "b"]]"#);
+}
