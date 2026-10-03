@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.87.0] - 2026-10-02
+
 ### Added
 
 - **`db`: interrupts, time limits, cursors, rows as SQL has them, and
@@ -44,7 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   error prints), on `os.exit`, on a panic, and on SIGTERM, SIGHUP and
   SIGINT — unless the program trapped them, when they arrive as events
   — without the program's help (docs/stdlib.md). Unix decodes the input
-  itself; Windows uses crossterm (compiled, not yet run there).
+  itself; Windows uses crossterm (compiled, not yet run there). Run on
+  macOS and Linux.
 
 - **`str.width(s)` and `str.cell_width(g)`.** Display width in terminal
   cells, by grapheme cluster: wide and fullwidth characters and emoji 2,
@@ -74,6 +77,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `proc.kill(p)` left `sh -c "…; sleep 7"`'s `sleep` running (Windows:
   a new process group, and `taskkill /T /F`). A tree kill of an
   ungrouped child is an `Err` that says how to spawn it.
+
+- `olang check` reports what every run would refuse in unannotated
+  code: a number handed to a builtin that takes a collection, a non-map
+  to the `map_*` family, a function called with an argument its body
+  passes straight to one of those, adds to a string, or calls with
+  another arity.
+- `olang check` reports a name a file uses and never defines or imports
+  (an undefined variable natively, whatever a browser bundle makes of
+  it), knowing what a bare `use`, an imported type, and a module's own
+  name bring into scope.
+- `[check] promote = ["copy"]`: a loop that copies the collection it is
+  building — a temporary read again after the rebind, or a prepend.
 
 ### Changed
 
@@ -113,20 +128,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   positions were added — so nothing inside a block was resolved. The
   interpreter is a third faster for it (`sieve` 16.6 → 10.3 s, `wordfreq`
   6.9 → 4.8 s under `--no-ovm`).
-
-### Added
-
-- `olang check` reports what every run would refuse in unannotated
-  code: a number handed to a builtin that takes a collection, a non-map
-  to the `map_*` family, a function called with an argument its body
-  passes straight to one of those, adds to a string, or calls with
-  another arity.
-- `olang check` reports a name a file uses and never defines or imports
-  (an undefined variable natively, whatever a browser bundle makes of
-  it), knowing what a bare `use`, an imported type, and a module's own
-  name bring into scope.
-- `[check] promote = ["copy"]`: a loop that copies the collection it is
-  building — a temporary read again after the rebind, or a prepend.
 
 ### Fixed
 
