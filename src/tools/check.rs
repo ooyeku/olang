@@ -3079,6 +3079,16 @@ impl Checker {
             let (Some(need), Some(argument)) = (need, positional(i)) else {
                 continue;
             };
+            // An annotated parameter is checked against its annotation,
+            // which names the type it promises; one report, not two.
+            if self
+                .sigs
+                .get(name)
+                .and_then(|sig| sig.params.get(i))
+                .is_some_and(|ty| *ty != SType::Unknown)
+            {
+                continue;
+            }
             if let Some(why) = need.refuses(&self.infer(argument)) {
                 let via = match need {
                     Need::Callable(..) | Need::Text => String::new(),
