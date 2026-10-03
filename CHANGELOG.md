@@ -45,6 +45,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A dependency reached two ways is loaded once.** A path dependency's
+  module found as `app/../dep/lib/x.ol` through one `use` and
+  `dep/lib/x.ol` through another loaded twice: two copies of every
+  function, whose same names made the bytecode tier resolve a function's
+  later-declared helper through a closure that lacked it ("Undefined
+  variable" from code that ran interpreted). Resolved module paths are
+  normalized.
+
 - **Comparing two closures no longer walks what they capture.** A
   closure inside a compared value (a map holding a row source, as
   Loom's layout memo compares) was compared by deriving equality over

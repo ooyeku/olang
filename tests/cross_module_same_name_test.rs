@@ -94,3 +94,59 @@ if ok => "all-correct" else => "corrupted"
     assert_eq!(out.as_deref(), Ok("all-correct"));
     let _ = fs::remove_dir_all(&ws);
 }
+
+/// A dependency reached through its index (`use dep`) and by a dotted path
+/// (`use dep.lib.layout`) is one set of modules, loaded once: the path
+/// dependency's files were found as `app/../dep/lib/layout.ol` one way and
+/// `dep/lib/layout.ol` the other, and each spelling loaded its own copy.
+/// The copies' same-named functions made the bytecode tier resolve
+/// `place`'s helper declared below it through a closure that lacked it.
+#[test]
+fn a_dependency_reached_two_ways_is_loaded_once() {
+    let ws = workspace("twoways");
+    let dep = ws.join("dep");
+    let app = ws.join("app");
+    fs::create_dir_all(dep.join("lib")).unwrap();
+    fs::create_dir_all(app.join("lib")).unwrap();
+    fs::write(
+        dep.join("olang.toml"),
+        "[package]\nname = \"dep\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(dep.join("lib/layout.ol"), "println(\"loading the layout\")\nshare fn place(n) = if n <= 0 => \"placed\" else => ly_box(n)\nfn ly_box(n) = place(n - 1)\n").unwrap();
+    fs::write(
+        dep.join("lib/engine.ol"),
+        "use lib.layout { place }\nshare fn frame(n) = place(n)\n",
+    )
+    .unwrap();
+    fs::write(dep.join("index.ol"), "share use lib.engine { frame }\n").unwrap();
+    fs::write(
+        app.join("olang.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies.dep]\npath = \"../dep\"\n",
+    )
+    .unwrap();
+    // the app has a lib/layout.ol of its own, with the same names
+    fs::write(app.join("lib/layout.ol"), "share fn place(n) = if n <= 0 => \"mine\" else => ly_box(n)\nfn ly_box(n) = place(n - 1)\n").unwrap();
+    fs::write(
+        app.join("main.ol"),
+        "use dep { frame }\nuse dep.lib.layout { place as dep_place }\nuse lib.layout { place }\nlet mut out = []\nfor i in 0..50 { out = [frame(i % 4), dep_place(3), place(3)] }\nprintln(out)\n",
+    )
+    .unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_olang"))
+        .arg("main.ol")
+        .current_dir(&app)
+        .output()
+        .expect("run olang");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{stdout}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(stdout.matches("loading the layout").count(), 1, "{stdout}");
+    assert!(
+        stdout.contains(r#"["placed", "placed", "mine"]"#),
+        "{stdout}"
+    );
+    let _ = fs::remove_dir_all(&ws);
+}

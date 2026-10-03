@@ -917,7 +917,21 @@ impl Interpreter {
     /// 2. Relative to project root - `use utils.helpers { function }`
     /// 3. Standard library - `use std.io { println }` (built-in)
     /// 4. Current directory first - Always check same folder first
+    /// The file a `use` names, its path normalized: a module reached as
+    /// `app/../dep/lib/x.ol` through one import and `dep/lib/x.ol` through
+    /// another is one module, loaded once. (Keyed by the spelling, a
+    /// dependency's files loaded twice — two copies of every function,
+    /// whose same names then made the bytecode tier resolve them through
+    /// closures that lacked later siblings.)
     pub(crate) fn resolve_module_path(
+        &mut self,
+        module_path: &str,
+    ) -> Result<std::path::PathBuf, InterpreterError> {
+        self.resolve_module_path_as_spelled(module_path)
+            .map(|p| normalize_lexically(&p))
+    }
+
+    fn resolve_module_path_as_spelled(
         &mut self,
         module_path: &str,
     ) -> Result<std::path::PathBuf, InterpreterError> {
@@ -1477,4 +1491,25 @@ fn module_declares_macro(module: &Value, name: &str) -> bool {
         },
         _ => false,
     }
+}
+
+/// `a/b/../c/./d` as `a/c/d`: `.` dropped and `..` taken back, without
+/// touching the filesystem (a symlink keeps its name).
+fn normalize_lexically(p: &std::path::Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) {
+                    out.pop();
+                } else {
+                    out.push("..");
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
