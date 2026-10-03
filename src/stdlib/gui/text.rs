@@ -64,7 +64,10 @@ impl Font {
     pub fn family_source(&self) -> String {
         match self.family.as_str() {
             "body" | "" => "system-ui, sans-serif".to_string(),
-            "mono" => "ui-monospace, monospace".to_string(),
+            // The system's own monospace faces by name first: a generic
+            // `monospace` resolves to Courier on macOS. The bundled
+            // JetBrains Mono (Loom's fonts) comes before all of them.
+            "mono" => "JetBrains Mono, SF Mono, Menlo, Consolas, DejaVu Sans Mono, Noto Sans Mono, ui-monospace, monospace".to_string(),
             other => other.to_string(),
         }
     }
