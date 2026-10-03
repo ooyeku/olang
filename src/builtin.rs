@@ -702,7 +702,7 @@ impl BuiltinFunctions {
         // Without the native feature (the browser playground), whole module
         // families don't exist: say so plainly instead of "unknown function".
         #[cfg(not(feature = "native"))]
-        for gated in ["fs.", "http.", "os.", "db.", "tty."] {
+        for gated in ["fs.", "http.", "os.", "db.", "tty.", "gui."] {
             if name.starts_with(gated) {
                 return Err(InterpreterError::RuntimeError {
                     message: format!(
@@ -889,6 +889,13 @@ impl BuiltinFunctions {
         #[cfg(feature = "native")]
         if let Some(tty_function) = name.strip_prefix("tty.") {
             return crate::stdlib::tty::call_tty_function(tty_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
+        }
+
+        // Handle gui functions (windows drawn by olang: Loom's engine)
+        #[cfg(feature = "gui")]
+        if let Some(gui_function) = name.strip_prefix("gui.") {
+            return crate::stdlib::gui::call_gui_function(gui_function, arguments)
                 .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 

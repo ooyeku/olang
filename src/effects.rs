@@ -223,7 +223,7 @@ fn recorded_of(op: &str) -> bool {
 /// from expansion rather than "mostly absent, check the list".
 pub fn expansion_blocked(full_name: &str) -> bool {
     const BLOCKED_MODULE_PREFIXES: &[&str] = &[
-        "fs.", "http.", "db.", "proc.", "os.", "time.", "random.", "task.", "chan.", "tty.",
+        "fs.", "http.", "db.", "proc.", "os.", "time.", "random.", "task.", "chan.", "tty.", "gui.",
     ];
     const BLOCKED_NAMES: &[&str] = &["par_map", "par_filter"];
     if BLOCKED_MODULE_PREFIXES

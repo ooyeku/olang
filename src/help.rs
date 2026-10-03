@@ -1477,6 +1477,7 @@ impl HelpSystem {
         // packages cli/term/ui/viz/dash), plus recent additions to os/str.
         self.add_process_and_concurrency_docs();
         self.add_tty_docs();
+        self.add_gui_docs();
         self.add_time_and_encoding_docs();
         self.add_data_stack_docs();
         self.add_browser_and_toolkit_docs();
@@ -1899,6 +1900,130 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
                 see_also: vec![],
             });
         }
+    }
+
+    /// The `gui` module: windows drawn by olang (Loom's engine).
+    fn add_gui_docs(&mut self) {
+        self.doc_ex(
+            "gui.available",
+            "gui.available()",
+            "Bool",
+            "gui",
+            "Whether a window can be opened here: olang's own main thread and a display (on Linux, a Wayland display).",
+            &[r##"if !gui.available() => println("no display")"##],
+        );
+        self.doc_ex(
+            "gui.open",
+            "gui.open(opts?)",
+            "Result",
+            "gui",
+            "Open a window: Ok(window), or Err when there is no display. opts: title, size (w, h), min (w, h), resizable, renderer (\"gpu\" default, or \"software\"), background. A resize event with the real size and scale follows.",
+            &[r##"let w = unwrap(gui.open(#{ "title": "Hello", "size": (480, 320) }))"##],
+        );
+        self.doc_ex(
+            "gui.headless",
+            "gui.headless(opts?)",
+            "Window",
+            "gui",
+            "A window with no display, drawn in software and fed by gui.input: what tests drive. The options of gui.open, plus scale.",
+            &[r##"let w = gui.headless(#{ "size": (320, 200), "scale": 2 })"##],
+        );
+        self.doc_ex(
+            "gui.close",
+            "gui.close(w)",
+            "Unit",
+            "gui",
+            "Close a window. The close button only sends close_requested; closing is the program's decision.",
+            &[r##"gui.close(w)"##],
+        );
+        self.doc_ex(
+            "gui.events",
+            "gui.events()",
+            "Channel",
+            "gui",
+            "The channel every window's events arrive on: maps with kind and window (resize, close_requested, key, activate, focus, changed, submit, pointer, scrolled, a11y, window_focus, appearance, menu, files_dropped).",
+            &[r##"let e = unwrap(chan.recv(gui.events()))"##],
+        );
+        self.doc_ex(
+            "gui.apply",
+            "gui.apply(w, patch)",
+            "Result",
+            "gui",
+            "Apply a list of operations to the window's tree: nodes (key, parent, role, box relative to the parent, style, text, name, edit, ...), remove, focus, scroll, clear. Err names the operation and what is wrong with it.",
+            &[r##"gui.apply(w, [#{ "key": "root", "box": (0, 0, 480, 320), "style": #{ "bg": "#ffffff" } }])"##],
+        );
+        self.doc_ex(
+            "gui.measure",
+            "gui.measure(text, style?, opts?)",
+            "Map",
+            "gui",
+            "The size of a text as it would be drawn: #{ width, height, lines, baseline } in logical pixels. opts: width (wraps when the style wraps), scale.",
+            &[r##"gui.measure("Hello", #{ "size": 14 })"##],
+        );
+        self.doc_ex(
+            "gui.read",
+            "gui.read(w, what, arg?)",
+            "Value",
+            "gui",
+            "Read a window back: focus, hover, size, hit (x, y), node key, value key, selection key, keys (focus order), a11y (the accessibility tree), pixels (a PNG), rgba.",
+            &[r##"gui.read(w, "focus")"##],
+        );
+        self.doc_ex(
+            "gui.input",
+            "gui.input(w, event)",
+            "Unit",
+            "gui",
+            "Send input as the platform would: key, text, pointer, wheel, compose, commit (an input method), resize, window_focus.",
+            &[r##"gui.input(w, #{ "kind": "key", "key": "tab" })"##],
+        );
+        self.doc_ex(
+            "gui.set",
+            "gui.set(w, props)",
+            "Unit",
+            "gui",
+            "Change a window: title, size, min, visible, cursor, focus, background.",
+            &[r##"gui.set(w, #{ "title": "Saved" })"##],
+        );
+        self.doc_ex(
+            "gui.fonts",
+            "gui.fonts(sources)",
+            "Int",
+            "gui",
+            "Register fonts (paths or Bytes; TTF, OTF, TTC, optionally brotli-compressed) ahead of the system's; answers the faces added.",
+            &[r##"gui.fonts(["fonts/Inter.ttf"])"##],
+        );
+        self.doc_ex(
+            "gui.clipboard_read",
+            "gui.clipboard_read()",
+            "Result",
+            "gui",
+            "The platform clipboard's text.",
+            &[r##"gui.clipboard_read()"##],
+        );
+        self.doc_ex(
+            "gui.clipboard_write",
+            "gui.clipboard_write(text)",
+            "Result",
+            "gui",
+            "Put text on the platform clipboard.",
+            &[r##"gui.clipboard_write("copied")"##],
+        );
+        self.doc_ex(
+            "gui.dialog",
+            "gui.dialog(kind, opts?)",
+            "Value",
+            "gui",
+            "The platform's dialog: open, open_many, save, folder (title, directory, name, filters) answer a path, a list, or () when cancelled; message (title, text, level, buttons) answers the button.",
+            &[r##"gui.dialog("open", #{ "filters": [#{ "name": "Databases", "extensions": ["db"] }] })"##],
+        );
+        self.doc_ex(
+            "gui.menu",
+            "gui.menu(spec)",
+            "Bool",
+            "gui",
+            "The macOS menu bar from [#{ title, items: [#{ id, label, keys?, enabled?, checked? } or \"separator\"] }]; a chosen item sends a menu event with its id. Elsewhere answers false.",
+            &[r##"gui.menu([#{ "title": "File", "items": [#{ "id": "open", "label": "Open…", "keys": "mod+o" }] }])"##],
+        );
     }
 
     /// The `tty` module: the terminal as an interactive device.
@@ -10993,6 +11118,7 @@ mod tests {
             ("random", 14),
             ("os", 20),
             ("tty", 8),
+            ("gui", 15),
         ] {
             let fns = h.functions_in_module(module);
             assert!(

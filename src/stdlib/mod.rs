@@ -19,6 +19,8 @@ pub mod dom;
 pub mod embedded;
 #[cfg(feature = "native")]
 pub mod fs;
+#[cfg(feature = "gui")]
+pub mod gui;
 #[cfg(feature = "native")]
 pub mod http;
 pub mod json;
@@ -81,6 +83,8 @@ pub fn get_stdlib() -> HashMap<String, Value> {
     stdlib.insert("time".to_string(), time::create_time_module());
     #[cfg(feature = "native")]
     stdlib.insert("tty".to_string(), tty::create_tty_module());
+    #[cfg(feature = "gui")]
+    stdlib.insert("gui".to_string(), gui::create_gui_module());
     stdlib.insert("dom".to_string(), dom::create_dom_module());
     // OVM extension modules (ods, ...) contribute their namespaces through
     // the registry, so both tiers and the stdlib agree on one module set.

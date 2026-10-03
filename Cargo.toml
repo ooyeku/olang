@@ -15,7 +15,7 @@ categories = ["development-tools"]
 members = [".", "otc", "playground", "olang-ods", "xtask"]
 
 [features]
-default = ["native", "full"]
+default = ["native", "full", "gui"]
 # The whole stdlib. The browser profile the web SDK ships omits these
 # (`cargo build -p olang-playground` without `--features full`): the
 # regex engine and its Unicode tables, and the RSA suite, are a third of
@@ -30,6 +30,27 @@ full = ["regex-module", "rsa-crypto"]
 alloc-count = []
 regex-module = ["dep:regex"]
 rsa-crypto = ["dep:rsa"]
+# `gui`: windows drawn by olang (Loom's engine, src/stdlib/gui/): the
+# platform's windows and events (winit), the GPU renderer (wgpu), the
+# software renderer and reference (tiny-skia), text (parley), the
+# platform accessibility APIs (AccessKit), the clipboard, dialogs, and on
+# macOS the menu bar. Native only; on in the released binaries.
+gui = [
+    "native",
+    "dep:winit",
+    "dep:wgpu",
+    "dep:pollster",
+    "dep:bytemuck",
+    "dep:tiny-skia",
+    "dep:softbuffer",
+    "dep:parley",
+    "dep:swash",
+    "dep:accesskit",
+    "dep:accesskit_winit",
+    "dep:arboard",
+    "dep:rfd",
+    "dep:muda",
+]
 # Everything that cannot exist in a browser: sockets, SQLite's C library,
 # terminals, mmap, process/host introspection, thread pools. The playground
 # (wasm32) build compiles with --no-default-features; gated code falls back
@@ -164,6 +185,24 @@ cranelift-module = { version = "0.134.3", optional = true }
 # playground has no signals.
 ctrlc = { version = "3.4", features = ["termination"], optional = true }
 
+# `gui` (src/stdlib/gui/). Linux is Wayland only (no X11): winit, the
+# software presenter, and AccessKit's adapter are built without it.
+winit = { version = "0.30", default-features = false, features = ["rwh_06", "wayland", "wayland-dlopen", "wayland-csd-adwaita"], optional = true }
+wgpu = { version = "30", optional = true }
+pollster = { version = "0.4", optional = true }
+bytemuck = { version = "1", features = ["derive"], optional = true }
+tiny-skia = { version = "0.12", optional = true }
+softbuffer = { version = "0.4", default-features = false, features = ["wayland", "wayland-dlopen"], optional = true }
+# complex-scripts: dictionary word and line breaks for Chinese, Japanese,
+# Thai, Lao, Khmer, and Burmese (a field that cannot move by word in
+# Japanese is a broken field).
+parley = { version = "0.11", features = ["complex-scripts"], optional = true }
+swash = { version = "0.2", optional = true }
+accesskit = { version = "0.25", optional = true }
+accesskit_winit = { version = "0.34", default-features = false, features = ["accesskit_unix", "async-io", "rwh_06"], optional = true }
+arboard = { version = "3.6", default-features = false, optional = true }
+rfd = { version = "0.17", optional = true }
+
 # Optional: For better debugging and development
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -211,6 +250,10 @@ signal-hook = { version = "0.4", default-features = false }
 # byte stream itself (src/stdlib/tty/decode.rs) — see its header for why.
 [target.'cfg(windows)'.dependencies]
 crossterm = { version = "0.29", default-features = false, features = ["events", "windows", "bracketed-paste"] }
+
+# The native menu bar (macOS only: elsewhere Loom draws the window's menu).
+[target.'cfg(target_os = "macos")'.dependencies]
+muda = { version = "0.21", default-features = false, optional = true }
 
 [dev-dependencies]
 criterion = "0.5"

@@ -402,16 +402,23 @@ enum Commands {
 const INTERPRETER_STACK_SIZE: usize = 256 * 1024 * 1024;
 
 fn main() {
-    let exit_code = std::thread::Builder::new()
-        // Named, because it is the thread every program starts on and
-        // diagnostics that name a thread (cell confinement) should call it
-        // what the user would call it.
-        .name("main".to_string())
-        .stack_size(INTERPRETER_STACK_SIZE)
-        .spawn(run)
-        .expect("failed to spawn interpreter thread")
-        .join()
-        .unwrap_or(1);
+    let spawn = || {
+        std::thread::Builder::new()
+            // Named, because it is the thread every program starts on and
+            // diagnostics that name a thread (cell confinement) should call
+            // it what the user would call it.
+            .name("main".to_string())
+            .stack_size(INTERPRETER_STACK_SIZE)
+            .spawn(run)
+            .expect("failed to spawn interpreter thread")
+    };
+    // The process's first thread is left free for the platform's event
+    // loop, which macOS requires there: `gui` starts it when a program
+    // first opens a window (src/stdlib/gui/platform.rs).
+    #[cfg(feature = "gui")]
+    let exit_code = olang::stdlib::gui::platform::host(spawn);
+    #[cfg(not(feature = "gui"))]
+    let exit_code = spawn().join().unwrap_or(1);
     // Whatever ran, the terminal is given back before the process ends
     // (a no-op unless a program entered `tty` and is still in it).
     olang::stdlib::tty::restore_terminal();

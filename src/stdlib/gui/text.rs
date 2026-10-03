@@ -1,0 +1,324 @@
+//! Text: shaping, line breaking, and measurement (parley), shared by
+//! `gui.measure`, the scene's text nodes, and the editors.
+//!
+//! One process-wide [`TextSystem`] holds parley's font database and
+//! layout scratch space behind a lock. A shaped text is cached by
+//! everything that changes its glyphs — the text, the font, the width
+//! it wraps at, the alignment, and the display scale — so `gui.measure`
+//! followed by drawing the same text shapes it once.
+//!
+//! Positions in a [`Shaped`] are in *device* pixels (the layout is built
+//! at the display's scale, so hinting and quantization see the real
+//! size); its `width` and `height` are reported to programs in logical
+//! pixels by dividing by the scale.
+
+use parley::{
+    Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle, FontWeight, Layout,
+    LayoutContext, LineHeight, PositionedLayoutItem, StyleProperty,
+};
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Mutex, OnceLock};
+
+/// A straight (not premultiplied) sRGB colour.
+pub type Color = [u8; 4];
+
+/// What a text is set in. `family` is `"body"`, `"mono"`, or a CSS
+/// family list (`"Inter, sans-serif"`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Font {
+    pub family: String,
+    pub size: f32,
+    pub weight: f32,
+    pub italic: bool,
+    /// A multiple of the font size; 0 is the font's own line height.
+    pub line_height: f32,
+}
+
+impl Default for Font {
+    fn default() -> Self {
+        Font {
+            family: "body".to_string(),
+            size: 14.0,
+            weight: 400.0,
+            italic: false,
+            line_height: 0.0,
+        }
+    }
+}
+
+impl Eq for Font {}
+
+impl Hash for Font {
+    fn hash<H: Hasher>(&self, h: &mut H) {
+        self.family.hash(h);
+        self.size.to_bits().hash(h);
+        self.weight.to_bits().hash(h);
+        self.italic.hash(h);
+        self.line_height.to_bits().hash(h);
+    }
+}
+
+impl Font {
+    /// The CSS family list parley resolves.
+    pub fn family_source(&self) -> String {
+        match self.family.as_str() {
+            "body" | "" => "system-ui, sans-serif".to_string(),
+            "mono" => "ui-monospace, monospace".to_string(),
+            other => other.to_string(),
+        }
+    }
+
+    pub fn styles(&self) -> Vec<StyleProperty<'static, Color>> {
+        let mut v = vec![
+            StyleProperty::FontFamily(FontFamily::Source(self.family_source().into())),
+            StyleProperty::FontSize(self.size),
+            StyleProperty::FontWeight(FontWeight::new(self.weight)),
+            StyleProperty::FontStyle(if self.italic {
+                FontStyle::Italic
+            } else {
+                FontStyle::Normal
+            }),
+        ];
+        if self.line_height > 0.0 {
+            v.push(StyleProperty::LineHeight(LineHeight::FontSizeRelative(
+                self.line_height,
+            )));
+        }
+        v
+    }
+}
+
+/// Horizontal alignment of the lines of a text in its box.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum Align {
+    #[default]
+    Start,
+    Center,
+    End,
+}
+
+impl Align {
+    pub fn parse(s: &str) -> Option<Align> {
+        match s {
+            "start" | "left" => Some(Align::Start),
+            "center" => Some(Align::Center),
+            "end" | "right" => Some(Align::End),
+            _ => None,
+        }
+    }
+
+    pub fn parley(self) -> Alignment {
+        match self {
+            Align::Start => Alignment::Start,
+            Align::Center => Alignment::Center,
+            Align::End => Alignment::End,
+        }
+    }
+}
+
+/// A font face as the rasterizer needs it: the file's bytes and the
+/// face's index in a collection. Keyed by the bytes' identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FaceKey {
+    pub blob: u64,
+    pub index: u32,
+}
+
+/// One run of glyphs in one face, size, and colour.
+#[derive(Clone, Debug)]
+pub struct GlyphRun {
+    pub face: FaceKey,
+    /// Pixels per em, in device pixels.
+    pub size: f32,
+    pub coords: Arc<[i16]>,
+    pub embolden: bool,
+    pub skew: bool,
+    pub color: Color,
+    /// (glyph id, x, y), device pixels from the text's origin; y is the
+    /// baseline.
+    pub glyphs: Vec<(u16, f32, f32)>,
+}
+
+/// One line's metrics, device pixels from the text's origin.
+#[derive(Clone, Debug)]
+pub struct LineInfo {
+    pub top: f32,
+    pub height: f32,
+    pub baseline: f32,
+}
+
+/// A shaped, broken, aligned text.
+#[derive(Debug)]
+pub struct Shaped {
+    /// Device pixels.
+    pub width: f32,
+    pub height: f32,
+    pub scale: f32,
+    pub lines: Vec<LineInfo>,
+    pub runs: Vec<GlyphRun>,
+}
+
+impl Shaped {
+    pub fn logical_size(&self) -> (f32, f32) {
+        (self.width / self.scale, self.height / self.scale)
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct CacheKey {
+    text: String,
+    font: Font,
+    color: Color,
+    max_width: Option<u32>,
+    align: Align,
+    scale: u32,
+}
+
+pub struct TextSystem {
+    pub font_cx: FontContext,
+    pub layout_cx: LayoutContext<Color>,
+    cache: HashMap<CacheKey, Arc<Shaped>>,
+}
+
+/// Faces the rasterizer can read, by key. Filled as layouts are made.
+static FACES: OnceLock<Mutex<HashMap<FaceKey, parley::FontData>>> = OnceLock::new();
+
+fn faces() -> &'static Mutex<HashMap<FaceKey, parley::FontData>> {
+    FACES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// The bytes and index of a face seen in some layout.
+pub fn face_data(key: FaceKey) -> Option<parley::FontData> {
+    faces().lock().ok()?.get(&key).cloned()
+}
+
+pub fn remember_face(font: &parley::FontData) -> FaceKey {
+    let key = FaceKey {
+        blob: font.data.id(),
+        index: font.index,
+    };
+    if let Ok(mut f) = faces().lock() {
+        f.entry(key).or_insert_with(|| font.clone());
+    }
+    key
+}
+
+static SYSTEM: OnceLock<Mutex<TextSystem>> = OnceLock::new();
+
+/// The process's text system. Created on first use: discovering the
+/// system's fonts takes tens of milliseconds, paid once.
+pub fn system() -> &'static Mutex<TextSystem> {
+    SYSTEM.get_or_init(|| {
+        Mutex::new(TextSystem {
+            font_cx: FontContext::new(),
+            layout_cx: LayoutContext::new(),
+            cache: HashMap::new(),
+        })
+    })
+}
+
+/// The most shaped texts kept; past it the cache starts over. A frame
+/// re-shapes what it shows, so a full reset costs one frame's shaping.
+const CACHE_LIMIT: usize = 8192;
+
+impl TextSystem {
+    /// Register font files (the bundled set, a program's own). Answers
+    /// how many faces were added.
+    pub fn register(&mut self, bytes: Vec<u8>) -> usize {
+        let blob = parley::fontique::Blob::from(bytes);
+        let added = self.font_cx.collection.register_fonts(blob, None);
+        self.cache.clear();
+        added.iter().map(|(_, faces)| faces.len()).sum()
+    }
+
+    /// Shape `text` (cached).
+    pub fn shape(
+        &mut self,
+        text: &str,
+        font: &Font,
+        color: Color,
+        max_width: Option<f32>,
+        align: Align,
+        scale: f32,
+    ) -> Arc<Shaped> {
+        let key = CacheKey {
+            text: text.to_string(),
+            font: font.clone(),
+            color,
+            // Widths are logical; quantize to 1/64 px so float noise in a
+            // program's layout does not defeat the cache.
+            max_width: max_width.map(|w| (w.max(0.0) * 64.0).round() as u32),
+            align,
+            scale: (scale * 1000.0).round() as u32,
+        };
+        if let Some(s) = self.cache.get(&key) {
+            return s.clone();
+        }
+        if self.cache.len() >= CACHE_LIMIT {
+            self.cache.clear();
+        }
+        let mut builder = self
+            .layout_cx
+            .ranged_builder(&mut self.font_cx, text, scale, true);
+        for style in font.styles() {
+            builder.push_default(style);
+        }
+        builder.push_default(StyleProperty::Brush(color));
+        let mut layout: Layout<Color> = builder.build(text);
+        layout.break_all_lines(max_width.map(|w| w * scale));
+        // A line is aligned within the width it was broken at; with no
+        // width there is nothing to align within.
+        let alignment = if max_width.is_some() {
+            align.parley()
+        } else {
+            Alignment::Start
+        };
+        layout.align(alignment, AlignmentOptions::default());
+        let shaped = Arc::new(shaped_of(&layout, scale));
+        self.cache.insert(key, shaped.clone());
+        shaped
+    }
+}
+
+/// The glyph runs and line metrics of a broken, aligned layout.
+pub fn shaped_of(layout: &Layout<Color>, scale: f32) -> Shaped {
+    let mut runs = Vec::new();
+    let mut lines = Vec::new();
+    for line in layout.lines() {
+        let m = line.metrics();
+        lines.push(LineInfo {
+            top: m.block_min_coord,
+            height: m.block_max_coord - m.block_min_coord,
+            baseline: m.baseline,
+        });
+        for item in line.items() {
+            let PositionedLayoutItem::GlyphRun(run) = item else {
+                continue;
+            };
+            let style = run.style();
+            let r = run.run();
+            let synthesis = r.synthesis();
+            let face = remember_face(r.font());
+            runs.push(GlyphRun {
+                face,
+                size: r.font_size(),
+                coords: r.normalized_coords().into(),
+                embolden: synthesis.embolden(),
+                skew: synthesis.skew().is_some(),
+                color: style.brush,
+                glyphs: run
+                    .positioned_glyphs()
+                    .map(|g| (g.id as u16, g.x, g.y))
+                    .collect(),
+            });
+        }
+    }
+    Shaped {
+        width: layout.width(),
+        height: layout.height(),
+        scale,
+        lines,
+        runs,
+    }
+}
