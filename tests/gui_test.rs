@@ -12,6 +12,14 @@ use olang::stdlib::gui::{gpu, soft};
 use olang::{Interpreter, Parser, Value};
 use std::sync::Arc;
 
+/// The engine has one event channel for the process; tests that read it
+/// take turns, or one would take another's events.
+static EVENTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn events_turn() -> std::sync::MutexGuard<'static, ()> {
+    EVENTS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn run(src: &str) -> Value {
     let program = Parser::new().parse(src).expect("parses");
     Interpreter::new().eval_program(program).expect("runs")
@@ -384,6 +392,7 @@ fn content_lets_a_list_scroll_past_its_laid_out_rows() {
 
 #[test]
 fn a_modal_layer_keeps_the_focus_and_hears_a_press_outside() {
+    let _turn = events_turn();
     let v = run(r##"
         let w = gui.headless(#{ "size": (300, 200) })
         let ev = gui.events()
@@ -577,6 +586,7 @@ fn canvases_and_images_draw_alike_on_both_renderers() {
 
 #[test]
 fn a_test_can_close_command_paste_and_see_the_caret() {
+    let _turn = events_turn();
     let v = run(r##"
         let w = gui.headless(#{ "size": (300, 100) })
         let ev = gui.events()

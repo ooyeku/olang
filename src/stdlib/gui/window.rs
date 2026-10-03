@@ -128,6 +128,8 @@ pub struct WinState {
     /// Where the last frame drew the caret, in logical pixels and
     /// clipped to what shows: `None` when no caret was visible.
     pub caret: Option<[f32; 4]>,
+    /// The clipboard of input sent through `gui.input` (a test's).
+    pub clip: Option<String>,
 }
 
 const WHITE: Color = [255, 255, 255, 255];
@@ -151,6 +153,7 @@ impl WinState {
             dirty: true,
             a11y_dirty: true,
             caret: None,
+            clip: None,
         }
     }
 

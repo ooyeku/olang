@@ -494,19 +494,16 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
     })
 }
 
-/// The private clipboard of headless windows.
-static HEADLESS_CLIP: Mutex<Option<String>> = Mutex::new(None);
+/// The clipboard of input sent by `gui.input`: the window's own, so a
+/// test never reads or clobbers the user's, nor another test's.
+pub struct OwnClipboard(pub Option<String>);
 
-pub struct HeadlessClipboard;
-
-impl window::Clipboard for HeadlessClipboard {
+impl window::Clipboard for OwnClipboard {
     fn get(&mut self) -> Option<String> {
-        HEADLESS_CLIP.lock().ok()?.clone()
+        self.0.clone()
     }
     fn set(&mut self, text: String) {
-        if let Ok(mut c) = HEADLESS_CLIP.lock() {
-            *c = Some(text);
-        }
+        self.0 = Some(text);
     }
 }
 
@@ -615,7 +612,7 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
                 return Err("gui.input: \"clipboard\" sets a headless window's clipboard; a real window's is the platform's".into());
             }
             let t = get_str(&args[1], "text", what)?.unwrap_or("").to_string();
-            window::Clipboard::set(&mut HeadlessClipboard, t);
+            w.lock().map_err(|_| "gui: window poisoned")?.clip = Some(t);
             return Ok(Value::Unit);
         }
         _ => {}
@@ -625,8 +622,9 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
     let headless = {
         let mut st = w.lock().map_err(|_| "gui: window poisoned")?;
         let headless = st.headless;
-        let mut clip = HeadlessClipboard;
+        let mut clip = OwnClipboard(st.clip.take());
         st.input(input, &mut clip, &mut out);
+        st.clip = clip.0;
         headless
     };
     emit(out);
