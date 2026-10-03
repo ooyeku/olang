@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `image` is a PNG (a path or Bytes) fitted to its box (`fit`:
   `contain`, `cover`, `fill`). Both renderers draw them; the GPU keeps a
   texture per picture.
+- **`testing.snapshot_dir()`** answers the `__snapshots__` directory
+  beside the file under test, for a library keeping snapshots of its own
+  kind (Loom's pixel snapshots).
 
 ### Fixed
 

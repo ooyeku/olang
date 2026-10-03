@@ -5428,6 +5428,16 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             see_also: vec!["testing.assert_eq".to_string()],
         });
         self.add_function(FunctionDoc {
+            name: "testing.snapshot_dir".to_string(),
+            description: "The `__snapshots__` directory beside the file under test (whether or not it exists yet): where a library keeps snapshots of its own kind, such as images.".to_string(),
+            syntax: "testing.snapshot_dir()".to_string(),
+            parameters: vec![],
+            return_type: "String".to_string(),
+            examples: vec!["fs.join(testing.snapshot_dir(), \"home.png\")".to_string()],
+            category: "Testing".to_string(),
+            see_also: vec!["testing.snapshot".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "str.fixed".to_string(),
             description: "A number with exactly `digits` decimals, never in exponent form, rounded on the value's binary expansion (2.675 is 2.67) — the column form `to_string` is not: 12.5 prints \"12.50\" beside 3.0's \"3.00\". A rounded negative is never \"-0.00\". Ints with zero digits keep their exact digits.".to_string(),
             syntax: "str.fixed(x, digits)".to_string(),

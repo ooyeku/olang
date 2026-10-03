@@ -1006,6 +1006,13 @@ impl BuiltinFunctions {
         if name == "testing.snapshot" {
             return testing_snapshot(arguments, interpreter);
         }
+        // `testing.snapshot_dir()`: where snapshots of the file under test
+        // live, for a library keeping its own kind (Loom's pixels).
+        if name == "testing.snapshot_dir" {
+            return Ok(Value::String(std::sync::Arc::new(
+                snapshot_dir(interpreter).to_string_lossy().to_string(),
+            )));
+        }
 
         // Handle testing functions
         if let Some(testing_function) = name.strip_prefix("testing.") {
@@ -3957,6 +3964,15 @@ fn db_transaction(
     }
 }
 
+/// `__snapshots__` beside the file being run.
+fn snapshot_dir(interpreter: &mut crate::interpreter::Interpreter) -> std::path::PathBuf {
+    interpreter
+        .current_file_for_snapshots()
+        .and_then(|f| f.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("__snapshots__")
+}
+
 /// `testing.snapshot(name, value)`: the snapshot test. The value's display
 /// form is compared with `__snapshots__/<name>.snap` next to the file
 /// being run; a missing file is written and the assertion passes (the
@@ -3996,11 +4012,7 @@ fn testing_snapshot(
         });
     }
     let actual = format!("{}", arguments[1]);
-    let base = interpreter
-        .current_file_for_snapshots()
-        .and_then(|f| f.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let dir = base.join("__snapshots__");
+    let dir = snapshot_dir(interpreter);
     let path = dir.join(format!("{}.snap", name));
     let update = std::env::var("OLANG_UPDATE_SNAPSHOTS").is_ok_and(|v| !v.is_empty() && v != "0");
     let write = |text: &str| -> Result<(), InterpreterError> {

@@ -54,6 +54,10 @@ pub fn create_testing_module() -> Value {
         create_builtin_function("snapshot", 2),
     );
     module.insert(
+        "snapshot_dir".to_string(),
+        create_builtin_function("snapshot_dir", 0),
+    );
+    module.insert(
         "run_test".to_string(),
         create_builtin_function("run_test", 2),
     );
@@ -98,6 +102,7 @@ pub fn call_testing_function(
         // Reached only when no interpreter intercepted the call (it
         // needs the test file's directory).
         "snapshot" => Err("testing.snapshot needs the running program's file".into()),
+        "snapshot_dir" => Err("testing.snapshot_dir needs the running program's file".into()),
         "run_test" => run_test(args),
         "test_summary" => test_summary(args),
         "reset_tests" => reset_tests(args),
