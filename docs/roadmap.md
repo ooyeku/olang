@@ -622,6 +622,18 @@ agree on a reference scene. Tags as in W9.
 | `[stdlib]` Dialogs, clipboard, menu bar | — | **landed, run by hand only** — rfd dialogs on the loop's thread, arboard, muda's macOS menu bar from a spec |
 | `[olang]` Open | — | the L0 criterion is not yet met: run on macOS only (GPU renderer, accessibility tree checked through System Events). Not yet done: a person under VoiceOver, Narrator, and Orca; a Japanese input method typed by a person in a real window (the composition path is tested headless); Windows (compiled only); Linux on a Wayland compositor (built, and the headless tests pass in an arm64 container with no compositor and no GPU, where the renderer comparison skips). Caret blink, the client-side decorations under GNOME, and `gui.input` for real windows from a second process are later |
 
+## Loom L1's reading
+
+Loom's runtime (L1: the program, layout in olang, windows, effects, the
+command table) logged these while it was built (loom/FINDINGS.md,
+2026-10-03). Tags as in W9.
+
+| Item | Evidence | Status |
+|---|---|---|
+| `[stdlib]` A memo table in a cell copies itself on every insert | `cell.set(c, map_set(cell.get(c), k, v))` and `cell.update(c, (m) => map_set(m, k, v))` hand `map_set` a value the cell still holds: 2,000 inserts took 57 ms, quadratic | **landed** — `cell.take(c)` moves the value out (the cell holds `()`), so `cell.set(c, map_set(cell.take(c), k, v))` extends in place on the interpreter: 20,000 inserts in under 200 ms. Pinned in tests/cell_test.rs |
+| `[olang]` On the bytecode tier, a value a builtin returned is copied when extended | `map_set(cell.take(c), k, v)` and `cell.take(c) + [v]` cost 548 ms and 157 ms for 8,000 inserts compiled, 12 ms interpreted: the native `map_set` clones its map unless the call is the fused `m = map_set(m, …)` form, and a builtin's result is not solely owned in a register | **open** — Loom's layout collects its memo entries in lists and folds them into the table with `m = map_set(m, …)`. The fix is in the VM: move a temporary argument into a native call, and let `map_set`/`+` extend a solely-owned argument |
+| `[stdlib]` A covered window never drew | Loom's form, opened behind another application, stayed blank: the surface answered `Occluded`, the frame was skipped, and nothing asked for it again | **landed** — a skipped frame stays owed (the scene stays dirty), `Occluded(false)` asks for a redraw, a timeout retries; `GUI_TRACE=1` prints each frame and each skip |
+
 ## Process
 
 One lane at a time, each landing with its tests and documentation in
