@@ -3534,7 +3534,23 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     }
 
     /// Install the module tables a bridge interpreter resolves through.
+    /// The module scopes this interpreter holds (for tests of their
+    /// hand-off).
+    #[doc(hidden)]
+    pub fn module_scopes_for_test(&self) -> HashMap<String, Arc<ImHashMap<String, Value>>> {
+        self.module_scopes.clone()
+    }
+
     pub fn set_module_scopes(&mut self, scopes: HashMap<String, Arc<ImHashMap<String, Value>>>) {
+        // This interpreter's own tier needs them too: a bridge is a full
+        // interpreter, and the bridge its tier builds would otherwise
+        // start with no module's scope, so a module function it ran
+        // could not find a helper declared below it.
+        if let Some(tier) = self.bytecode_tier.as_mut() {
+            for (file, scope) in &scopes {
+                tier.note_module_scope(file.clone(), scope.clone());
+            }
+        }
         self.module_scopes = scopes;
     }
 

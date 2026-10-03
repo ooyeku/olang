@@ -150,3 +150,24 @@ fn a_dependency_reached_two_ways_is_loaded_once() {
     );
     let _ = fs::remove_dir_all(&ws);
 }
+
+/// A bridge interpreter is handed the program's module scopes; its own
+/// tier must know them too, or the bridge that tier builds starts with
+/// none, and a module function run there cannot find a helper declared
+/// below it ("Undefined variable" three layers down, in Loom's terminal
+/// face under Heddle's fuzzer).
+#[test]
+fn module_scopes_handed_to_an_interpreter_reach_its_tier() {
+    let program = Parser::new()
+        .parse("fn helper() = 1\nhelper")
+        .expect("parses");
+    let mut source = Interpreter::new();
+    source.eval_program(program).expect("runs");
+    source.note_root_as_module_scope("/app/lib/m.ol");
+    let scopes = source.module_scopes_for_test();
+    let mut bridge = Interpreter::new();
+    bridge.enable_bytecode_tier(1, false);
+    bridge.set_module_scopes(scopes);
+    let tier = bridge.bytecode_tier_mut().expect("a tier");
+    assert!(tier.knows_module_function("/app/lib/m.ol", "helper"));
+}

@@ -616,6 +616,13 @@ impl BytecodeTier {
     /// name it the way the interpreter's own frames do.
     /// A loaded module's complete top-level table, for the bridge: a
     /// module function that runs there resolves its siblings through it.
+    /// Is `name` a function in the scope this tier knows for the module
+    /// at `file`? (What a module function's later-declared helpers
+    /// resolve through.)
+    pub fn knows_module_function(&self, file: &str, name: &str) -> bool {
+        self.vm.module_scope_has_function(Some(file), name)
+    }
+
     pub fn note_module_scope(
         &mut self,
         file: String,

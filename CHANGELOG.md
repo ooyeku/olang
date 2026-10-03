@@ -45,6 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A bridge's own tier knows the program's modules.** A bridge
+  interpreter was given every module's finished scope, but its own
+  bytecode tier was not, so the bridge that tier built started with none:
+  a module function run there could not find a helper declared below it.
 - **A dependency reached two ways is loaded once.** A path dependency's
   module found as `app/../dep/lib/x.ol` through one `use` and
   `dep/lib/x.ol` through another loaded twice: two copies of every
