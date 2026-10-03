@@ -684,7 +684,9 @@ impl Value {
     /// behind instead.
     pub fn into_payload(mut self) -> Option<Value> {
         match &mut self {
-            Value::Ok(inner) | Value::Err(inner) => Some(std::mem::replace(&mut **inner, Value::Unit)),
+            Value::Ok(inner) | Value::Err(inner) => {
+                Some(std::mem::replace(&mut **inner, Value::Unit))
+            }
             _ => None,
         }
     }

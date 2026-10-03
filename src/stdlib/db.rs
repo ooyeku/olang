@@ -1411,12 +1411,10 @@ fn db_next(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
 /// db.columns(cur) -> Result<List<Map>>: the cursor's column descriptors.
 fn db_columns(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    Ok(
-        match cursor_of("columns", args.first().unwrap_or(&UNIT)) {
-            Ok(c) => ok(c.columns.clone()),
-            Err(e) => e,
-        },
-    )
+    Ok(match cursor_of("columns", args.first().unwrap_or(&UNIT)) {
+        Ok(c) => ok(c.columns.clone()),
+        Err(e) => e,
+    })
 }
 
 /// db.close_cursor(cur) -> Result<Unit>: finalize now. Closing a closed

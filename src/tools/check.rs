@@ -800,7 +800,9 @@ calls — the call reaches the argument, not the function; rename the parameter"
             }
             Some("use") => {
                 let path = match field(node, "path") {
-                    Some(Value::String(ref p)) => p.split('.').map(str::to_string).collect::<Vec<_>>(),
+                    Some(Value::String(ref p)) => {
+                        p.split('.').map(str::to_string).collect::<Vec<_>>()
+                    }
                     other => list_of(other).iter().filter_map(str_of).collect::<Vec<_>>(),
                 };
                 if path.len() >= 2

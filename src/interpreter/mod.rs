@@ -4339,7 +4339,10 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         let object_value = self.eval_expr(object)?;
 
         match object_value {
-            Value::Struct { ref fields, ref type_name } => {
+            Value::Struct {
+                ref fields,
+                ref type_name,
+            } => {
                 if type_name == "Module" {
                     // Handle module function access (e.g., fs.read_file).
                     // A miss names the nearest member — `heap` for
@@ -4379,7 +4382,10 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// imported modules are discoverable. Returns None for non-module bindings.
     pub fn module_members(&self, name: &str) -> Option<Vec<String>> {
         match self.environment.get(name)? {
-            Value::Struct { ref type_name, ref fields } if type_name == "Module" => {
+            Value::Struct {
+                ref type_name,
+                ref fields,
+            } if type_name == "Module" => {
                 let mut names: Vec<String> = fields.keys().cloned().collect();
                 names.sort();
                 Some(names)

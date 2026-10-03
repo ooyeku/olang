@@ -9411,7 +9411,8 @@ impl BytecodeCompiler {
                 // An enum tuple-variant constructor from the closure —
                 // `Circle(2.0)`. An argument-count mismatch refuses, and the
                 // interpreter raises its arity error.
-                if let Some(Value::EnumConstructor(ref constructor)) = self.lexical(&function_name) {
+                if let Some(Value::EnumConstructor(ref constructor)) = self.lexical(&function_name)
+                {
                     if constructor.arity != arguments.len() {
                         return Err(BytecodeError::UnresolvedCallee(function_name));
                     }

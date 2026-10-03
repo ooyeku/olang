@@ -1161,7 +1161,10 @@ impl OvmValue {
                 }
             }
 
-            Value::Struct { ref type_name, ref fields } => {
+            Value::Struct {
+                ref type_name,
+                ref fields,
+            } => {
                 // The fields are behind an Arc now, so this borrows and
                 // clones each value rather than consuming the map — the
                 // caller's struct may still be alive and shared.

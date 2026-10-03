@@ -184,7 +184,9 @@ impl Interpreter {
             }
             (Value::Integer(a), BinaryOp::Equal, Value::Integer(b)) => Ok(Value::Boolean(a == b)),
             (Value::Float(a), BinaryOp::Equal, Value::Float(b)) => Ok(Value::Boolean(a == b)),
-            (Value::String(ref a), BinaryOp::Equal, Value::String(ref b)) => Ok(Value::Boolean(*a == *b)),
+            (Value::String(ref a), BinaryOp::Equal, Value::String(ref b)) => {
+                Ok(Value::Boolean(*a == *b))
+            }
             (Value::Boolean(a), BinaryOp::Equal, Value::Boolean(b)) => Ok(Value::Boolean(a == b)),
             // Enum values compare structurally: same variant and payloads.
             // Value derives PartialEq, so this is the natural equality.
@@ -235,7 +237,9 @@ impl Interpreter {
             // Strings order lexicographically, matching the bytecode tier — so
             // character-range checks like `c >= "0" && c <= "9"` work and
             // strings sort. Ordering is by Unicode scalar value.
-            (Value::String(ref a), BinaryOp::LessThan, Value::String(ref b)) => Ok(Value::Boolean(*a < *b)),
+            (Value::String(ref a), BinaryOp::LessThan, Value::String(ref b)) => {
+                Ok(Value::Boolean(*a < *b))
+            }
             (Value::String(ref a), BinaryOp::LessThanEqual, Value::String(ref b)) => {
                 Ok(Value::Boolean(*a <= *b))
             }

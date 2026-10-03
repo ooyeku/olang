@@ -1807,7 +1807,9 @@ impl BuiltinFunctions {
                                     // "map" is the right kernel either way.
                                     if let Some(result) = worker.tier_hof("map", &function, chunk) {
                                         return match result {
-                                            Ok(Value::List(ref items)) => Ok(items.as_ref().clone()),
+                                            Ok(Value::List(ref items)) => {
+                                                Ok(items.as_ref().clone())
+                                            }
                                             Ok(other) => Ok(vec![other]),
                                             Err(e) => Err((chunk_idx * chunk_size, e)),
                                         };

@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use olang::ast::{EnumVariantData, Value};
 use olang::interpreter::Interpreter;
-use olang::ovm::value::{EnumData, EnumObject, ResultObject, StructObject, ValueData};
 use olang::ovm::OvmValue;
+use olang::ovm::value::{EnumData, EnumObject, ResultObject, StructObject, ValueData};
 use olang::parser::Parser;
 
 const DEPTH: usize = 1_000_000;
@@ -35,7 +35,12 @@ fn chain(link: impl Fn(Value) -> Value) -> Value {
 }
 
 fn ovm_chain(link: impl Fn(OvmValue) -> OvmValue) -> OvmValue {
-    (0..DEPTH).fold(OvmValue { data: ValueData::Unit }, |acc, _| link(acc))
+    (0..DEPTH).fold(
+        OvmValue {
+            data: ValueData::Unit,
+        },
+        |acc, _| link(acc),
+    )
 }
 
 #[test]
@@ -55,9 +60,13 @@ fn every_interpreter_container_frees_a_deep_chain() {
                 EnumVariantData::Struct(HashMap::from([("next".to_string(), next)])),
             )
         }));
-        drop(chain(|next| Value::List(Arc::new(vec![Value::Integer(1), next]))));
+        drop(chain(|next| {
+            Value::List(Arc::new(vec![Value::Integer(1), next]))
+        }));
         drop(chain(|next| Value::Tuple(Arc::new(vec![next]))));
-        drop(chain(|next| Value::Map(Arc::new(HashMap::from([("next".to_string(), next)])))));
+        drop(chain(|next| {
+            Value::Map(Arc::new(HashMap::from([("next".to_string(), next)])))
+        }));
         drop(chain(|next| Value::Struct {
             type_name: "N".into(),
             fields: Arc::new(HashMap::from([("next".to_string(), next)])),
@@ -70,12 +79,18 @@ fn every_interpreter_container_frees_a_deep_chain() {
 #[test]
 fn every_vm_container_frees_a_deep_chain() {
     on_small_stack(|| {
-        drop(ovm_chain(|next| OvmValue { data: ValueData::List(Arc::new(vec![next])) }));
-        drop(ovm_chain(|next| OvmValue { data: ValueData::Tuple(Arc::new(vec![next])) }));
+        drop(ovm_chain(|next| OvmValue {
+            data: ValueData::List(Arc::new(vec![next])),
+        }));
+        drop(ovm_chain(|next| OvmValue {
+            data: ValueData::Tuple(Arc::new(vec![next])),
+        }));
         drop(ovm_chain(|next| {
             let mut map = olang::ovm::value::OvmMap::default();
             map.insert("next".into(), next);
-            OvmValue { data: ValueData::Map(Arc::new(map)) }
+            OvmValue {
+                data: ValueData::Map(Arc::new(map)),
+            }
         }));
         drop(ovm_chain(|next| OvmValue {
             data: ValueData::Struct(Arc::new(StructObject::from_pairs(
@@ -91,7 +106,10 @@ fn every_vm_container_frees_a_deep_chain() {
             })),
         }));
         drop(ovm_chain(|next| OvmValue {
-            data: ValueData::Result(Arc::new(ResultObject { ok: Some(next), err: None })),
+            data: ValueData::Result(Arc::new(ResultObject {
+                ok: Some(next),
+                err: None,
+            })),
         }));
     });
 }
@@ -102,7 +120,9 @@ fn a_shared_child_survives_its_parent() {
         let shared = chain(|next| Value::List(Arc::new(vec![next])));
         let parent = Value::List(Arc::new(vec![shared.clone()]));
         drop(parent);
-        let Value::List(items) = &shared else { panic!("list") };
+        let Value::List(items) = &shared else {
+            panic!("list")
+        };
         assert_eq!(items.len(), 1);
         drop(shared);
     });
@@ -192,7 +212,10 @@ fn a_deep_value_prints_and_serializes() {
         // rather than printing a million levels of it.
         let (ok, message) = stringify(enum_chain);
         assert!(!ok, "an enum serialized");
-        assert!(message.contains("Cannot convert L.Cons(1, L.Cons(1, "), "{message}");
+        assert!(
+            message.contains("Cannot convert L.Cons(1, L.Cons(1, "),
+            "{message}"
+        );
         assert!(message.len() < 200, "{message}");
     });
 }

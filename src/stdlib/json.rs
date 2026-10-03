@@ -199,7 +199,10 @@ fn preview(value: &Value) -> String {
             Ok(())
         }
     }
-    let mut out = Bounded { text: String::new(), chars: 0 };
+    let mut out = Bounded {
+        text: String::new(),
+        chars: 0,
+    };
     let _ = std::fmt::write(&mut out, format_args!("{}", value));
     out.text
 }
@@ -220,7 +223,9 @@ impl serde::Serialize for AsJson<'_> {
             Value::Integer(i) => serializer.serialize_i64(*i),
             Value::Float(f) if f.is_finite() => serializer.serialize_f64(*f),
             Value::String(s) => serializer.serialize_str(s),
-            nested => crate::interpreter::with_stack_headroom(|| serialize_nested(nested, serializer)),
+            nested => {
+                crate::interpreter::with_stack_headroom(|| serialize_nested(nested, serializer))
+            }
         }
     }
 }
