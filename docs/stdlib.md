@@ -1689,6 +1689,135 @@ console process has no SIGTERM). The restore tests have run on macOS;
 Linux is compiled and clippy-clean, Windows is compiled against a
 stand-in of the crate paths and clippy-clean — neither has been run.
 
+## `gui` — windows drawn by olang
+
+The engine under Loom, olang's desktop framework (`loom/SPEC.md`): a
+program lays its view out itself and sends `gui` **positioned, keyed
+nodes**; `gui` draws them on the GPU (or with the software reference),
+edits text fields (input methods included), hit-tests, keeps the
+platform's accessibility tree, and sends back events on one channel.
+Loom's components, layout, commands, and tests are olang above it.
+Native-only; on in the released binaries (the `gui` cargo feature).
+
+| Function | Description |
+|---|---|
+| `gui.available()` | a window can be opened here: olang's own main thread, and a display (on Linux, a Wayland display) |
+| `gui.open(opts)` | open a window → `Ok(window)`, or `Err` when there is no display. `opts`: `title`, `size` `(w, h)`, `min` `(w, h)`, `resizable`, `renderer` (`"gpu"`, the default, or `"software"`; also `LOOM_RENDERER`), `background`. A `resize` event with the real size and scale follows at once |
+| `gui.headless(opts)` | a window with no display: drawn in software, fed by `gui.input`, read by `gui.read`. The same options, plus `scale` |
+| `gui.close(w)` | close a window. Closing is the program's: the close button only sends `close_requested` |
+| `gui.events()` | the channel every window's events arrive on (below) |
+| `gui.apply(w, patch)` | apply a list of operations to the window's tree → `Ok(())`, or `Err` naming the operation and what is wrong with it |
+| `gui.measure(text, style, opts?)` | the size of a text as it would be drawn → `#{ width, height, lines, baseline }`, logical pixels. `style` as a node's; `opts`: `width` (wraps when the style says `wrap`), `scale` |
+| `gui.read(w, what, arg?)` | read the window back: `"focus"`, `"hover"`, `"size"` → `(w, h, scale)`, `"hit"` `(x, y)` → a key, `"node"` key, `"value"` key and `"selection"` key of a field, `"keys"` (focus order), `"a11y"` (the accessibility tree as maps), `"pixels"` (a PNG, from the software renderer), `"rgba"` |
+| `gui.input(w, event)` | send input as the platform would: `#{ kind: "key", key, text?, mods? }` (`"mod": true` is the platform's command key), `"text"`, `"pointer"` (`action` down/up/move/leave, `x`, `y`, `button`, `clicks`), `"wheel"` (`dx`, `dy`), `"compose"` and `"commit"` (an input method), `"resize"`, `"window_focus"`. What tests drive |
+| `gui.set(w, props)` | `title`, `size`, `min`, `visible`, `cursor`, `focus`, `background` |
+| `gui.fonts(sources)` | register fonts: paths or Bytes, TTF/OTF/TTC, optionally brotli-compressed → the number of faces added. Registered fonts come before the system's |
+| `gui.clipboard_read()` / `gui.clipboard_write(text)` | the platform clipboard (headless windows' editing uses a private one) |
+| `gui.dialog(kind, opts)` | the platform's dialog: `"open"`, `"open_many"`, `"save"`, `"folder"` (`title`, `directory`, `name`, `filters: [#{ name, extensions }]`) → a path, a list, or `()` when cancelled; `"message"` (`title`, `text`, `level`, `buttons`: `ok`, `ok_cancel`, `yes_no`, `yes_no_cancel`) → the button |
+| `gui.menu(spec)` | the macOS menu bar: `[#{ title, items: [#{ id, label, keys?, enabled?, checked? } or "separator"] }]`; an item chosen sends `menu` with its `id`. Elsewhere answers `false` — Loom draws the window's menu |
+
+**The patch.** Each operation is a map; `op` defaults to `"node"`:
+
+| `op` | Fields |
+|---|---|
+| `"node"` | insert or replace: `key`, `parent` (none for the window's one root; a parent comes before its children), `index` among the siblings, `role`, `box` `(x, y, w, h)` in logical pixels **relative to the parent's content origin**, `style`, `text`, `name`, `description`, `focusable`, `disabled`, `checked`, `selected`, `expanded`, `value`, `range` `(value, min, max)`, `level`, `live` (`"polite"`/`"assertive"`), `scroll` (the node scrolls its children; the wheel moves it without the program), `edit` (below) |
+| `"remove"` | `key`: the node and its subtree |
+| `"focus"` | `key`, or none to clear |
+| `"scroll"` | `key`, `to` `(x, y)` |
+| `"clear"` | everything |
+
+Roles: `window group text heading image button checkbox radio switch
+slider input textarea search list listitem table row cell columnheader
+tree treeitem tablist tab tabpanel dialog menu menuitem tooltip status
+log progressbar region link separator figure`. A role decides what a
+pointer or Enter/Space activates and what takes focus by default, and
+what the screen reader is told.
+
+**Styles.** `bg`, `border`, `border_width`, `radius` (one or four,
+top-left first), `color`, `font` (`"body"`, `"mono"`, or a family list),
+`size`, `weight`, `italic`, `line_height`, `align`, `valign`, `wrap`,
+`pad` (one, two, or four), `clip` (children are clipped to the inside of
+the border, following its corners), `opacity`, `caret`, `selection`,
+`placeholder_color`, `focus_ring` (a colour, or `false`), and the
+variants `hover`, `pressed`, `focus` — style maps the engine applies as
+the pointer and focus move, with no turn of the program. Colours are
+`"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"`, or `(r, g, b[, a])`. A focusable
+node with no `focus` variant gets a focus ring drawn by the engine.
+
+**Text fields.** A node with `edit: #{ value, placeholder?, multiline?,
+secure?, rev? }` is edited by the engine: movement by grapheme, word
+(option on macOS, ctrl elsewhere), and line; selection by keyboard and
+pointer (double-click a word, triple-click a line); copy, cut, paste,
+select all, undo, redo; and the platform's input method, its
+composition drawn in place. Each committed edit sends `changed` with the
+value, the selection (character offsets), and a revision. The program's
+value is the authority: a patch whose value differs is adopted — unless
+it is the field's own earlier value at an earlier `rev`, which is the
+program catching up, not a reset. Send back the `rev` of the last
+`changed` you applied.
+
+**Events** are maps with a `kind` and the `window` they came from:
+
+| `kind` | Fields |
+|---|---|
+| `"resize"` | `width`, `height` (logical pixels), `scale` |
+| `"close_requested"` | — the window stays until `gui.close` |
+| `"key"` | `key` (`"a"`, `"enter"`, `"left"`, `"f5"`), `text`, `chord` (`"ctrl+shift+p"`, `"super+s"`), `mod_chord` (the platform's command key as `mod`: `"mod+s"` on every platform), `mods`, `repeat`, `target` (the focused key). A key a text field or the focus used is not sent |
+| `"activate"` | `key`, `source` (`"pointer"`, `"key"`, `"a11y"`) — a click, Enter or Space on a focused control, or an assistive press |
+| `"focus"` | `key` (or `()`) — focus moved (Tab, a click, an assistive action, or a `"focus"` op) |
+| `"changed"` | `key`, `value`, `selection`, `rev` |
+| `"submit"` | `key` — Enter in a single-line field |
+| `"pointer"` | `action`, `x`, `y`, `button`, `clicks`, `target` |
+| `"scrolled"` | `key`, `x`, `y` |
+| `"a11y"` | `key`, `action` (`"set_value"`, `"increment"`, `"decrement"`), `value` |
+| `"window_focus"` | `on` |
+| `"appearance"` | `dark` |
+| `"menu"` | `id` |
+| `"files_dropped"` | `paths` |
+
+```olang no-run
+let w = unwrap(gui.open(#{ "title": "Hello", "size": (360, 160) }))
+let events = gui.events()
+fn view(name) = [
+    #{ "key": "root", "box": (0, 0, 360, 160), "style": #{ "bg": "#ffffff" } },
+    #{ "key": "name", "parent": "root", "role": "input", "name": "Name", "box": (24, 24, 312, 36),
+       "edit": #{ "value": name, "placeholder": "Your name" },
+       "style": #{ "border": "#d4d4d8", "border_width": 1, "radius": 6, "pad": (0, 10, 0, 10) } },
+    #{ "key": "hi", "parent": "root", "role": "status", "box": (24, 80, 312, 20),
+       "text": if name == "" => "" else => "Hello, " + name }]
+gui.apply(w, view(""))
+gui.apply(w, [#{ "op": "focus", "key": "name" }])
+let mut going = true
+while going {
+    let e = unwrap(chan.recv(events))
+    let kind = map_get(e, "kind")
+    if kind == "changed" => { gui.apply(w, view(map_get(e, "value"))); () }
+    else if kind == "close_requested" => { going = false }
+}
+gui.close(w)
+```
+
+**The main thread.** macOS requires the platform's event loop on a
+process's first thread. olang runs every program on a thread of its
+own, so the first thread is free: the first `gui.open` starts the loop
+there, and a program that never opens a window never starts one. When
+the program ends — finishing, raising, `os.exit`, or a signal — its
+windows go with it. While a window is open, a program waiting on
+`gui.events()` is not reported as a deadlock: input can arrive.
+
+**Rendering.** The GPU renderer (wgpu: Metal, Direct3D 12, Vulkan) is
+the default; the software renderer (tiny-skia) is the reference it is
+checked against (`tests/gui_test.rs`), the fallback where no GPU adapter
+works, and what headless windows draw with. Both blend in sRGB-encoded
+space and draw glyphs from the same rasterizer, so they agree to within
+antialiasing. Text is shaped by parley — complex scripts, bidi, font
+fallback, dictionary word breaks for Chinese, Japanese, and Thai.
+
+**Platforms.** Run on macOS (the GPU renderer, the menu bar, the
+accessibility tree as NSAccessibility). Linux is Wayland only: with no
+`WAYLAND_DISPLAY`, `gui.open` answers `Err`. Windows is compiled, not
+yet run.
+
 ## `http` — HTTP
 
 Both sides of HTTP in one module: a client for calling APIs, and

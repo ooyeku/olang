@@ -598,6 +598,30 @@ was fixed. Tags as in W9.
 | `[stdlib]` `db.query` lost the column order, repeated names, the declared types, and BLOBs | `select name, age` answered `age` first; `select 1 as a, 2 as a` one `a`; no columns without a row; `x'00ff'` read as `"\0�"`. The workaround: a temporary view, `pragma_table_info`, and each column selected three times (`typeof`, a cut value or `hex()`, `length`) | **landed** — `db.query_rows(conn, sql, params?, opts?)` answers `#{ columns: [#{ name, decltype, index }], rows: [[value]] }`, BLOBs as `Bytes`; `db.next` answers rows in that shape. `db.query` is unchanged (a BLOB there is still a lossy String): no program in olang, shuttle, open-track, or foundry reads a BLOB through it, but one that reads a UTF-8 BLOB as text, or JSON-encodes rows, would break |
 | `[stdlib]` `db.open` always created, and could not open read-only | the explorer opens read-only by default and must not create a missing file; it opened through `file:…?mode=ro` URIs, which worked but were not documented | **landed** — `db.open(path, #{ "readonly": true, "create": false })`, a missing file refused with an `Err` naming it; URI filenames documented. A read-only open needs `fs = "read"` under a capability manifest |
 
+## L0 — Loom's engine
+
+Loom, olang's desktop framework (`loom/SPEC.md`), draws its own pixels:
+olang lays the view out, and an engine in the standard library draws
+it, edits text, and speaks to the platform. Milestone L0 is done when a
+window with a text field, a button, and a list works by keyboard, by
+pointer, under VoiceOver, Narrator, and Orca, and with a Japanese input
+method, on macOS, Windows, and Linux (Wayland); closes cleanly on its
+close button, a raise, and SIGTERM; and the GPU and software renderers
+agree on a reference scene. Tags as in W9.
+
+| Item | Evidence | Status |
+|---|---|---|
+| `[olang]` The platform's event loop on the first thread | macOS requires it there; olang ran the program on a spawned thread and parked the first in `join` | **landed** — `main` hands the first thread to `gui::platform::host`, which starts winit when the program first opens a window and answers the program's exit code when it ends; a program that never opens one never starts a loop. The loop holds a live guard, so a program waiting on `gui.events()` is not taken for a deadlock |
+| `[stdlib]` Windows, positioned nodes, and events | — | **landed** — `gui.open`/`close`/`set`, `gui.apply` (keyed nodes relative to their parent, roles, styles with hover/pressed/focus variants, scroll, focus), one events channel. `examples/gui/l0.ol` is the L0 window: a field, a button, a list, laid out by hand |
+| `[stdlib]` Text | — | **landed** — parley (shaping, bidi, fallback, `complex-scripts` for CJK and Thai word breaks), swash glyphs (outlines, COLR, bitmap emoji), `gui.measure`, `gui.fonts` |
+| `[stdlib]` Text fields and input methods | — | **landed** — parley's editor: graphemes, words, lines, selection by keyboard and pointer, copy/cut/paste/select all/undo/redo, composition drawn in place; `changed` carries a revision and a stale echo is ignored. Pinned in tests/gui_test.rs (typing, a composition committed, the controlled value) |
+| `[stdlib]` Two renderers, one picture | — | **landed** — the GPU renderer (one instanced pipeline: rounded rects by distance, glyphs from an atlas, rounded clips) and tiny-skia, both blending in sRGB-encoded space. tests/gui_test.rs draws a reference scene both ways at 1× and 2× and fails on more than 0.1% of pixels off by more than 48, or a mean difference of 1 |
+| `[stdlib]` Accessibility | — | **landed** — AccessKit trees from the scene (roles, names, values, states, bounds, actions), assistive actions as the events a pointer or key sends; `gui.read(w, "a11y")` for tests. On macOS, System Events reads the L0 window's heading, label, field, button, list, and status as NSAccessibility elements |
+| `[stdlib]` Headless windows | — | **landed** — `gui.headless`, `gui.input`, `gui.read` (`"pixels"` a PNG): what `loom.test` will drive |
+| `[stdlib]` Clean ends | — | **landed** — with a window open, the program ending, a raise (exit 1, the error printed), SIGTERM (143), and SIGINT (130) each end the process and its windows |
+| `[stdlib]` Dialogs, clipboard, menu bar | — | **landed, run by hand only** — rfd dialogs on the loop's thread, arboard, muda's macOS menu bar from a spec |
+| `[olang]` Open | — | the L0 criterion is not yet met: run on macOS only (GPU renderer, accessibility tree checked through System Events). Not yet done: a person under VoiceOver, Narrator, and Orca; a Japanese input method typed by a person in a real window (the composition path is tested headless); Windows (compiled only); Linux on a Wayland compositor (built, and the headless tests pass in an arm64 container with no compositor and no GPU, where the renderer comparison skips). Caret blink, the client-side decorations under GNOME, and `gui.input` for real windows from a second process are later |
+
 ## Process
 
 One lane at a time, each landing with its tests and documentation in

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`gui`: windows drawn by olang (Loom's L0).** A program lays its
+  view out and sends positioned, keyed nodes (`gui.apply`); the engine
+  draws them on the GPU (wgpu) or with the software reference
+  (tiny-skia), shapes text with parley (complex scripts, bidi, font
+  fallback, dictionary word breaks for Chinese, Japanese, and Thai),
+  edits text fields itself — movement, selection, the clipboard, undo,
+  the platform's input method — with the program's value as the
+  authority (`changed` carries a revision, so a stale echo never undoes
+  typing), hit-tests, scrolls, applies hover/pressed/focus variants
+  without a turn of the program, draws focus rings, and publishes the
+  accessibility tree (AccessKit: NSAccessibility, UI Automation,
+  AT-SPI). Events arrive on one channel (`gui.events()`). Headless
+  windows (`gui.headless`, `gui.input`, `gui.read`) draw in software and
+  are what tests drive. `gui.measure`, `gui.fonts`, the clipboard,
+  platform dialogs, and the macOS menu bar. The process's first thread
+  hosts the platform's event loop (macOS requires it); a program that
+  never opens a window never starts one (docs/stdlib.md, loom/SPEC.md).
+
 ## [0.87.0] - 2026-10-02
 
 ### Added
