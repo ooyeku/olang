@@ -406,3 +406,170 @@ fn a_modal_layer_keeps_the_focus_and_hears_a_press_outside() {
     "##);
     assert_eq!(text(&v), r#"["ok", "ok", (), true, false]"#);
 }
+
+/// A canvas (shapes and text) and two images, one fitted inside its box
+/// and one covering it.
+fn picture_scene(scale: f32, png: &str) -> WinState {
+    let mut st = WinState::new(1, true, "pictures", 300.0, 160.0, scale);
+    let op = |pairs: Vec<(&str, Value)>| m(pairs);
+    let n = |v: f64| Value::Float(v);
+    let draw = Value::List(Arc::new(vec![
+        op(vec![
+            ("op", s("rect")),
+            ("x", n(10.0)),
+            ("y", n(10.0)),
+            ("w", n(60.0)),
+            ("h", n(40.0)),
+            ("radius", n(6.0)),
+            ("fill", s("#dc2626")),
+        ]),
+        op(vec![
+            ("op", s("circle")),
+            ("cx", n(100.0)),
+            ("cy", n(40.0)),
+            ("r", n(24.0)),
+            ("stroke", s("#2563eb")),
+            ("width", n(3.0)),
+        ]),
+        op(vec![
+            ("op", s("line")),
+            ("x1", n(10.0)),
+            ("y1", n(90.0)),
+            ("x2", n(130.0)),
+            ("y2", n(70.0)),
+            ("color", s("#16a34a")),
+            ("width", n(2.0)),
+        ]),
+        op(vec![
+            ("op", s("path")),
+            (
+                "points",
+                Value::List(Arc::new(vec![
+                    tup(&[20.0, 130.0]),
+                    tup(&[60.0, 100.0]),
+                    tup(&[100.0, 130.0]),
+                ])),
+            ),
+            ("close", Value::Boolean(true)),
+            ("fill", s("#f59e0b")),
+        ]),
+        op(vec![
+            ("op", s("text")),
+            ("x", n(70.0)),
+            ("y", n(134.0)),
+            ("text", s("Q3")),
+            ("align", s("center")),
+            ("size", n(13.0)),
+        ]),
+    ]));
+    let ops = Value::List(Arc::new(vec![
+        m(vec![
+            ("key", s("root")),
+            ("box", tup(&[0.0, 0.0, 300.0, 160.0])),
+            ("style", m(vec![("bg", s("#ffffff"))])),
+        ]),
+        m(vec![
+            ("key", s("chart")),
+            ("parent", s("root")),
+            ("role", s("figure")),
+            ("name", s("Sales")),
+            ("box", tup(&[0.0, 0.0, 140.0, 160.0])),
+            ("draw", draw),
+        ]),
+        m(vec![
+            ("key", s("fit")),
+            ("parent", s("root")),
+            ("role", s("image")),
+            ("name", s("Logo")),
+            ("box", tup(&[150.0, 10.0, 140.0, 60.0])),
+            ("image", s(png)),
+            ("fit", s("contain")),
+        ]),
+        m(vec![
+            ("key", s("cover")),
+            ("parent", s("root")),
+            ("role", s("image")),
+            ("box", tup(&[150.0, 90.0, 140.0, 60.0])),
+            ("image", s(png)),
+            ("fit", s("cover")),
+        ]),
+    ]));
+    let mut out = Vec::new();
+    st.apply(&ops, &mut out).expect("the picture scene applies");
+    st
+}
+
+/// A 40×40 PNG: four coloured quarters.
+fn quarters_png(dir: &std::path::Path) -> String {
+    let mut pm = tiny_skia::Pixmap::new(40, 40).unwrap();
+    let quarters = [
+        (0, 0, [220, 38, 38]),
+        (20, 0, [37, 99, 235]),
+        (0, 20, [22, 163, 74]),
+        (20, 20, [245, 158, 11]),
+    ];
+    for (x, y, c) in quarters {
+        let mut p = tiny_skia::Paint::default();
+        p.set_color_rgba8(c[0], c[1], c[2], 255);
+        pm.fill_rect(
+            tiny_skia::Rect::from_xywh(x as f32, y as f32, 20.0, 20.0).unwrap(),
+            &p,
+            tiny_skia::Transform::identity(),
+            None,
+        );
+    }
+    let path = dir.join("quarters.png");
+    pm.save_png(&path).unwrap();
+    path.to_string_lossy().to_string()
+}
+
+#[test]
+fn canvases_and_images_draw_alike_on_both_renderers() {
+    let dir = tempfile::tempdir().unwrap();
+    let png = quarters_png(dir.path());
+    let px = |rgba: &[u8], w: u32, x: u32, y: u32| {
+        let i = ((y * w + x) * 4) as usize;
+        [rgba[i], rgba[i + 1], rgba[i + 2]]
+    };
+    for scale in [1.0f32, 2.0] {
+        let mut st = picture_scene(scale, &png);
+        let dl = st.display_list();
+        let soft_px = soft::rgba(&soft::render(&dl));
+        let w = dl.width;
+        let at = |x: f32, y: f32| px(&soft_px, w, (x * scale) as u32, (y * scale) as u32);
+        // The canvas's rectangle, its path, and the background between.
+        assert_eq!(at(40.0, 30.0), [220, 38, 38], "at {scale}x");
+        assert_eq!(at(60.0, 125.0), [245, 158, 11], "at {scale}x");
+        assert_eq!(at(100.0, 40.0), [255, 255, 255], "at {scale}x");
+        // Contained: a 60×60 square centred in 140×60, so its sides are
+        // background; its top-left quarter is red.
+        assert_eq!(at(160.0, 40.0), [255, 255, 255], "at {scale}x");
+        assert_eq!(at(200.0, 20.0), [220, 38, 38], "at {scale}x");
+        // Covered: 140×140 cropped to the middle 60 rows — left is red at
+        // the top, green at the bottom, and it reaches both sides.
+        assert_eq!(at(152.0, 92.0), [220, 38, 38], "at {scale}x");
+        assert_eq!(at(152.0, 148.0), [22, 163, 74], "at {scale}x");
+        assert_eq!(at(288.0, 148.0), [245, 158, 11], "at {scale}x");
+        // The canvas text is drawn as text (dark pixels near it).
+        let dark = (60..80).any(|x| (134..152).any(|y| at(x as f32, y as f32)[0] < 120));
+        assert!(dark, "the canvas text is drawn at {scale}x");
+
+        let Ok(g) = gpu::gpu(None, None) else {
+            eprintln!("skipped the GPU half: no GPU here");
+            continue;
+        };
+        let gpu_px = g.render_rgba(&dl);
+        let mut over = 0usize;
+        for (a, b) in soft_px.chunks(4).zip(gpu_px.chunks(4)) {
+            if (0..4).map(|i| a[i].abs_diff(b[i])).max().unwrap() > 48 {
+                over += 1;
+            }
+        }
+        let n = soft_px.len() / 4;
+        assert!(over * 200 <= n, "at {scale}x: {over} of {n} pixels differ");
+        assert_eq!(
+            px(&gpu_px, w, (200.0 * scale) as u32, (20.0 * scale) as u32),
+            [220, 38, 38]
+        );
+    }
+}

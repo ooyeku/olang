@@ -226,6 +226,12 @@ pub struct Node {
     /// A modal layer (a dialog, a popover, a menu): while it is in the
     /// tree, the pointer and the focus stay inside the topmost one.
     pub modal: bool,
+    /// A canvas's drawing operations (canvas.rs).
+    pub draw: Option<Value>,
+    /// An image's source: a PNG's path or its Bytes; and how it fits its
+    /// box ("contain", the default, "cover", or "fill").
+    pub image: Option<Value>,
+    pub fit: String,
 }
 
 pub const HOVER: usize = 0;
@@ -335,6 +341,9 @@ const NODE_KEYS: &[&str] = &[
     "live",
     "content",
     "modal",
+    "draw",
+    "image",
+    "fit",
 ];
 
 #[derive(Default)]
@@ -512,6 +521,9 @@ impl Scene {
             live: get_str(op, "live", what)?.map(str::to_string),
             content: get_pair(op, "content", what)?,
             modal: get_bool(op, "modal", what)?.unwrap_or(false),
+            draw: get(op, "draw").cloned(),
+            image: get(op, "image").cloned(),
+            fit: get_str(op, "fit", what)?.unwrap_or("contain").to_string(),
         };
         // Detach from the old parent (or the root slot) when it moved.
         if previous.is_some() && old_parent != parent {

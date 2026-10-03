@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   platform dialogs, and the macOS menu bar. The process's first thread
   hosts the platform's event loop (macOS requires it); a program that
   never opens a window never starts one (docs/stdlib.md, loom/SPEC.md).
+- **`gui`: canvases and images.** A node's `draw` is a list of shape
+  and text operations, rasterized at the window's scale and cached; its
+  `image` is a PNG (a path or Bytes) fitted to its box (`fit`:
+  `contain`, `cover`, `fill`). Both renderers draw them; the GPU keeps a
+  texture per picture.
 
 ### Fixed
 

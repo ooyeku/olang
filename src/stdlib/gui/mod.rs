@@ -29,6 +29,7 @@
 //! event loop, platform windows, dialogs, menus).
 
 pub mod a11y;
+pub mod canvas;
 pub mod edit;
 pub mod gpu;
 pub mod platform;

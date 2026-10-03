@@ -9,9 +9,13 @@
 //! borders lie inside the box, a fill sits under its border, and glyph
 //! images come from the same rasterizer at the same subpixel offsets.
 
+use super::canvas::Picture;
 use super::raster::{self, GlyphKey};
 use super::text::Color;
 use super::window::{DisplayList, Prim};
+
+/// A run of instances from its first, sampling the atlas or a picture.
+type Segment = (usize, Option<Arc<Picture>>);
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -270,7 +274,11 @@ pub struct Gpu {
     shader: wgpu::ShaderModule,
     pipelines: Mutex<HashMap<wgpu::TextureFormat, Arc<wgpu::RenderPipeline>>>,
     sampler: wgpu::Sampler,
+    /// Pictures (canvases, images) are scaled, so they sample smoothly.
+    linear: wgpu::Sampler,
     atlas: Mutex<Atlas>,
+    /// A texture per picture, by the picture's id.
+    pictures: Mutex<HashMap<u64, wgpu::TextureView>>,
 }
 
 static GPU: OnceLock<Result<Arc<Gpu>, String>> = OnceLock::new();
@@ -379,6 +387,12 @@ fn make(
         min_filter: wgpu::FilterMode::Nearest,
         ..Default::default()
     });
+    let linear = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("gui pictures"),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
     Ok(Gpu {
         instance,
         adapter,
@@ -389,6 +403,8 @@ fn make(
         shader,
         pipelines: Mutex::new(HashMap::new()),
         sampler,
+        linear,
+        pictures: Mutex::new(HashMap::new()),
         atlas: Mutex::new(Atlas {
             texture,
             slots: HashMap::new(),
@@ -447,13 +463,42 @@ impl Gpu {
             .clone()
     }
 
-    /// The instances of a display list, placing glyphs in the atlas.
-    fn instances(&self, dl: &DisplayList) -> Vec<Inst> {
+    /// The instances of a display list, placing glyphs in the atlas, and
+    /// the segments to draw them in: each starts at an instance and samples
+    /// the atlas (`None`) or a picture.
+    fn instances(&self, dl: &DisplayList) -> (Vec<Inst>, Vec<Segment>) {
         let mut atlas = self.atlas.lock().unwrap_or_else(|e| e.into_inner());
         let mut out = Vec::with_capacity(dl.prims.len());
+        let mut segments: Vec<Segment> = vec![(0, None)];
         let mut reset = false;
         for prim in &dl.prims {
             match prim {
+                Prim::Image {
+                    x,
+                    y,
+                    w,
+                    h,
+                    pic,
+                    clip,
+                } => {
+                    if clip.is_empty() || *w <= 0.0 || *h <= 0.0 {
+                        continue;
+                    }
+                    segments.push((out.len(), Some(pic.clone())));
+                    // Drawn as a colour glyph: premultiplied, sampled whole.
+                    out.push(Inst {
+                        rect: [*x, *y, *w, *h],
+                        clip: [clip.x0, clip.y0, clip.x1, clip.y1],
+                        fill: [1.0, 1.0, 1.0, 1.0],
+                        border: [0.0; 4],
+                        radii: [0.0; 4],
+                        uv: [0.0, 0.0, 1.0, 1.0],
+                        params: [2.0, 0.0, 0.0, 0.0],
+                        clip_radii: clip.radii,
+                    });
+                    // Back to the atlas for what follows.
+                    segments.push((out.len(), None));
+                }
                 Prim::Rect {
                     x,
                     y,
@@ -523,13 +568,57 @@ impl Gpu {
                 }
             }
         }
-        out
+        (out, segments)
+    }
+
+    /// The texture of a picture, uploaded once.
+    fn picture_view(&self, pic: &Picture) -> wgpu::TextureView {
+        let mut cache = self.pictures.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(v) = cache.get(&pic.id) {
+            return v.clone();
+        }
+        if cache.len() > 64 {
+            cache.clear();
+        }
+        let size = wgpu::Extent3d {
+            width: pic.width.max(1),
+            height: pic.height.max(1),
+            depth_or_array_layers: 1,
+        };
+        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("gui picture"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &pic.rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(pic.width * 4),
+                rows_per_image: Some(pic.height),
+            },
+            size,
+        );
+        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        cache.insert(pic.id, view.clone());
+        view
     }
 
     /// Draw a display list into a texture view of `format`.
     pub fn draw(&self, dl: &DisplayList, view: &wgpu::TextureView, format: wgpu::TextureFormat) {
         use wgpu::util::DeviceExt;
-        let insts = self.instances(dl);
+        let (insts, segments) = self.instances(dl);
         let globals = Globals {
             size: [dl.width as f32, dl.height as f32],
             atlas: [ATLAS as f32, ATLAS as f32],
@@ -557,24 +646,39 @@ impl Gpu {
             a.texture
                 .create_view(&wgpu::TextureViewDescriptor::default())
         };
-        let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("gui"),
-            layout: &self.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: ubuf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&atlas_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-            ],
-        });
+        let bind_for = |view: &wgpu::TextureView, sampler: &wgpu::Sampler| {
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("gui"),
+                layout: &self.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: ubuf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                ],
+            })
+        };
+        let atlas_bind = bind_for(&atlas_view, &self.sampler);
+        // Each segment's instances, and the picture it samples if not the atlas.
+        let mut draws: Vec<(std::ops::Range<u32>, Option<wgpu::BindGroup>)> = Vec::new();
+        for (i, (start, pic)) in segments.iter().enumerate() {
+            let end = segments.get(i + 1).map(|s| s.0).unwrap_or(insts.len());
+            if end <= *start {
+                continue;
+            }
+            let bind = pic
+                .as_ref()
+                .map(|p| bind_for(&self.picture_view(p), &self.linear));
+            draws.push((*start as u32..end as u32, bind));
+        }
         let pipeline = self.pipeline(format);
         let mut enc = self
             .device
@@ -601,9 +705,11 @@ impl Gpu {
             });
             if !insts.is_empty() {
                 pass.set_pipeline(&pipeline);
-                pass.set_bind_group(0, &bind, &[]);
                 pass.set_vertex_buffer(0, ibuf.slice(..));
-                pass.draw(0..4, 0..insts.len() as u32);
+                for (range, bind) in &draws {
+                    pass.set_bind_group(0, bind.as_ref().unwrap_or(&atlas_bind), &[]);
+                    pass.draw(0..4, range.clone());
+                }
             }
         }
         self.queue.submit([enc.finish()]);

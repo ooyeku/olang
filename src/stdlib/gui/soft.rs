@@ -44,6 +44,36 @@ pub fn render(dl: &DisplayList) -> Pixmap {
                     mask,
                 );
             }
+            Prim::Image {
+                x,
+                y,
+                w,
+                h,
+                pic,
+                clip,
+            } => {
+                if clip.is_empty() || *w <= 0.0 || *h <= 0.0 {
+                    continue;
+                }
+                let Some(src) = tiny_skia::PixmapRef::from_bytes(&pic.rgba, pic.width, pic.height)
+                else {
+                    continue;
+                };
+                let mask = clip_mask(&mut masks, *clip, dl.width, dl.height).cloned();
+                let paint = tiny_skia::PixmapPaint {
+                    quality: tiny_skia::FilterQuality::Bilinear,
+                    ..Default::default()
+                };
+                let tf = Transform::from_row(
+                    *w / pic.width as f32,
+                    0.0,
+                    0.0,
+                    *h / pic.height as f32,
+                    *x,
+                    *y,
+                );
+                pm.draw_pixmap(0, 0, src, &paint, tf, mask.as_ref());
+            }
             Prim::Glyph {
                 x,
                 y,

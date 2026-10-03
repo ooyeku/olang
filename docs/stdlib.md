@@ -1721,7 +1721,7 @@ Native-only; on in the released binaries (the `gui` cargo feature).
 
 | `op` | Fields |
 |---|---|
-| `"node"` | insert or replace: `key`, `parent` (none for the window's one root; a parent comes before its children), `index` among the siblings, `role`, `box` `(x, y, w, h)` in logical pixels **relative to the parent's content origin**, `style`, `text`, `name`, `description`, `focusable`, `disabled`, `checked`, `selected`, `expanded`, `value`, `range` `(value, min, max)`, `level`, `live` (`"polite"`/`"assertive"`), `scroll` (the node scrolls its children; the wheel moves it without the program, and says so with `scrolled`), `content` `(w, h)` (what a scrolling node scrolls through when its laid-out children reach less: a virtualized list), `modal` (a dialog, popover, or menu: while one is in the tree the pointer and Tab stay inside the topmost, the focus moves into it, and a press outside sends `outside`), `edit` (below) |
+| `"node"` | insert or replace: `key`, `parent` (none for the window's one root; a parent comes before its children), `index` among the siblings, `role`, `box` `(x, y, w, h)` in logical pixels **relative to the parent's content origin**, `style`, `text`, `name`, `description`, `focusable`, `disabled`, `checked`, `selected`, `expanded`, `value`, `range` `(value, min, max)`, `level`, `live` (`"polite"`/`"assertive"`), `scroll` (the node scrolls its children; the wheel moves it without the program, and says so with `scrolled`), `content` `(w, h)` (what a scrolling node scrolls through when its laid-out children reach less: a virtualized list), `modal` (a dialog, popover, or menu: while one is in the tree the pointer and Tab stay inside the topmost, the focus moves into it, and a press outside sends `outside`), `draw` (a canvas: a list of operations, below), `image` (a PNG's path or Bytes, decoded once), `fit` (`"contain"`, the default, `"cover"`, or `"fill"`), `edit` (below) |
 | `"remove"` | `key`: the node and its subtree |
 | `"focus"` | `key`, or none to clear |
 | `"scroll"` | `key`, `to` `(x, y)` |
@@ -1733,6 +1733,17 @@ tree treeitem tablist tab tabpanel dialog menu menuitem tooltip status
 log progressbar region link separator figure`. A role decides what a
 pointer or Enter/Space activates and what takes focus by default, and
 what the screen reader is told.
+
+**Canvases.** A node's `draw` is a list of operations in the node's own
+logical pixels, drawn in order, each an `op` with its fields: `"rect"`
+(`x`, `y`, `w`, `h`, `radius`), `"line"` (`x1`, `y1`, `x2`, `y2`),
+`"circle"` (`cx`, `cy`, `r`), `"path"` (`points`, a list of `(x, y)`;
+`close`), and `"text"` (`x`, `y` the top of the line, `text`, `size`,
+`weight`, `align` `"start"`/`"center"`/`"end"` about `x`). A shape takes
+`fill`, `stroke` and `width`; a line's colour is `color` (or `stroke`).
+Shapes are rasterized at the window's scale and kept while the list and
+the size are the same; text is drawn as text, so it stays sharp. Give a
+canvas a `name` (role `figure`) so a screen reader can say what it shows.
 
 **Styles.** `bg`, `border`, `border_width`, `radius` (one or four,
 top-left first), `color`, `font` (`"body"`, `"mono"`, or a family list),

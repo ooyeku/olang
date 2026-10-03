@@ -899,6 +899,59 @@ impl WinState {
         }
         let text = node.text.clone();
         let (children, offset, rect) = (node.children.clone(), node.offset, node.rect);
+        let (draw, image, fit) = (node.draw.clone(), node.image.clone(), node.fit.clone());
+        if let Some(ops) = &draw
+            && let Ok((pic, texts)) = super::canvas::draw(ops, rect[2], rect[3], s)
+        {
+            let cclip = inner_clip.intersect(Clip::rect(x, y, x + w, y + h));
+            if let Some(pic) = pic {
+                dl.prims.push(Prim::Image {
+                    x,
+                    y,
+                    w: pic.width as f32,
+                    h: pic.height as f32,
+                    pic,
+                    clip: cclip,
+                });
+            }
+            for t in texts {
+                let mut font = st.font.clone();
+                font.size = t.size;
+                font.weight = t.weight;
+                let shaped = ts.shape(&t.text, &font, fade(t.color), None, Align::Start, s);
+                let dx = match t.align {
+                    1 => shaped.width / 2.0,
+                    2 => shaped.width,
+                    _ => 0.0,
+                };
+                push_glyphs(&shaped, x + t.x * s - dx, y + t.y * s, cclip, dl);
+            }
+        }
+        if let Some(src) = &image
+            && let Ok(pic) = super::canvas::image(src)
+        {
+            // Fit the picture to the box, keeping its proportions unless
+            // told to fill.
+            let (iw, ih) = (pic.width as f32, pic.height as f32);
+            let (sx, sy) = (w / iw.max(1.0), h / ih.max(1.0));
+            let k = match fit.as_str() {
+                "cover" => sx.max(sy),
+                _ => sx.min(sy),
+            };
+            let (dw, dh) = if fit == "fill" {
+                (w, h)
+            } else {
+                (iw * k, ih * k)
+            };
+            dl.prims.push(Prim::Image {
+                x: x + (w - dw) / 2.0,
+                y: y + (h - dh) / 2.0,
+                w: dw,
+                h: dh,
+                pic,
+                clip: inner_clip.intersect(Clip::rect(x, y, x + w, y + h)),
+            });
+        }
         if self.editors.contains_key(key) {
             self.paint_editor(key, &st, content, inner_clip, focused, opacity, ts, dl);
         } else if let Some(t) = &text {
@@ -1167,6 +1220,15 @@ pub enum Prim {
         key: GlyphKey,
         coords: Arc<[i16]>,
         color: Color,
+        clip: Clip,
+    },
+    /// A picture (a canvas's drawing, an image) scaled into a box.
+    Image {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        pic: Arc<super::canvas::Picture>,
         clip: Clip,
     },
 }
