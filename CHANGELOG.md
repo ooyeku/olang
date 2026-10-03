@@ -31,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `image` is a PNG (a path or Bytes) fitted to its box (`fit`:
   `contain`, `cover`, `fill`). Both renderers draw them; the GPU keeps a
   texture per picture.
+- **`gui`: the system's settings and a text size.** `gui.context()`
+  reads the dark appearance, increased contrast, and reduced motion
+  (macOS); a window reports them as an `appearance` event when it opens,
+  when they change, and when it comes back to the front.
+  `gui.set(w, #{ zoom })` sets a window's text size: its pixels stay,
+  and its boxes, reads, and events are in units of `zoom` logical
+  pixels. `align` takes `left` and `right`, which ignore the text's
+  direction, beside `start` and `end`, which follow it.
 - **`testing.snapshot_dir()`** answers the `__snapshots__` directory
   beside the file under test, for a library keeping snapshots of its own
   kind (Loom's pixel snapshots).

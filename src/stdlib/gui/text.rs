@@ -95,18 +95,26 @@ impl Font {
 /// Horizontal alignment of the lines of a text in its box.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Align {
+    /// Where the text's own direction begins: the left of an English
+    /// line, the right of a Hebrew one.
     #[default]
     Start,
     Center,
     End,
+    /// The left whatever the text's direction (a right-to-left window
+    /// sets `right` on its English labels).
+    Left,
+    Right,
 }
 
 impl Align {
     pub fn parse(s: &str) -> Option<Align> {
         match s {
-            "start" | "left" => Some(Align::Start),
+            "start" => Some(Align::Start),
             "center" => Some(Align::Center),
-            "end" | "right" => Some(Align::End),
+            "end" => Some(Align::End),
+            "left" => Some(Align::Left),
+            "right" => Some(Align::Right),
             _ => None,
         }
     }
@@ -116,6 +124,18 @@ impl Align {
             Align::Start => Alignment::Start,
             Align::Center => Alignment::Center,
             Align::End => Alignment::End,
+            Align::Left => Alignment::Left,
+            Align::Right => Alignment::Right,
+        }
+    }
+
+    /// As a position along a box (vertical alignment, where there is no
+    /// direction): left is the start, right the end.
+    pub fn along(self) -> Align {
+        match self {
+            Align::Left => Align::Start,
+            Align::Right => Align::End,
+            other => other,
         }
     }
 }

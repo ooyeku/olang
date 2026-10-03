@@ -30,6 +30,7 @@
 
 pub mod a11y;
 pub mod canvas;
+pub mod context;
 pub mod edit;
 pub mod gpu;
 pub mod platform;
@@ -67,6 +68,7 @@ const FUNCTIONS: &[(&str, usize)] = &[
     ("dialog", 2),
     ("menu", 1),
     ("compare", 3),
+    ("context", 0),
 ];
 
 pub fn create_gui_module() -> Value {
@@ -97,6 +99,10 @@ pub fn call_gui_function(name: &str, args: Vec<Value>) -> DynRes {
         "measure" => gui_measure(args),
         "read" => gui_read(args),
         "compare" => gui_compare(args),
+        "context" => {
+            arity("gui.context", &args, 0, 0)?;
+            Ok(context::as_value(None))
+        }
         "input" => gui_input(args),
         "set" => gui_set(args),
         "fonts" => gui_fonts(args),
@@ -581,7 +587,7 @@ fn input_of(v: &Value) -> Res<Input> {
         "window_focus" => Input::Focused(get_bool(v, "on", what)?.unwrap_or(true)),
         other => {
             return Err(format!(
-                "gui.input: unknown kind \"{other}\" (key, text, pointer, wheel, compose, commit, resize, window_focus, close, menu, clipboard)"
+                "gui.input: unknown kind \"{other}\" (key, text, pointer, wheel, compose, commit, resize, window_focus, close, menu, clipboard, appearance)"
             ));
         }
     })
@@ -605,6 +611,20 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
             let item = get_str(&args[1], "id", what)?
                 .ok_or("gui.input: \"menu\" needs the item's \"id\"")?;
             emit(vec![event("menu", vec![("id", s(item))])]);
+            return Ok(Value::Unit);
+        }
+        // The system's settings changing, as a platform window reports them.
+        Some("appearance") => {
+            let b = |k: &str| -> Res<bool> { Ok(get_bool(&args[1], k, what)?.unwrap_or(false)) };
+            emit(vec![event(
+                "appearance",
+                vec![
+                    ("window", Value::Integer(id as i64)),
+                    ("dark", Value::Boolean(b("dark")?)),
+                    ("contrast", Value::Boolean(b("contrast")?)),
+                    ("reduce_motion", Value::Boolean(b("reduce_motion")?)),
+                ],
+            )]);
             return Ok(Value::Unit);
         }
         Some("clipboard") => {
@@ -648,6 +668,11 @@ fn gui_set(args: Vec<Value>) -> Res<Value> {
         if let Some(c) = get_color(v, "background", what)? {
             st.clear = c;
             st.dirty = true;
+        }
+        if let Some(z) = get_num(v, "zoom", what)? {
+            let mut out = Vec::new();
+            st.set_zoom(z, &mut out);
+            emit(out);
         }
         if st.headless
             && let Some((w, h)) = get_pair(v, "size", what)?

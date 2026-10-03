@@ -107,6 +107,15 @@ pub trait Clipboard {
     fn set(&mut self, text: String);
 }
 
+struct NoClipboard;
+
+impl Clipboard for NoClipboard {
+    fn get(&mut self) -> Option<String> {
+        None
+    }
+    fn set(&mut self, _: String) {}
+}
+
 pub struct WinState {
     pub id: u64,
     pub headless: bool,
@@ -130,6 +139,12 @@ pub struct WinState {
     pub caret: Option<[f32; 4]>,
     /// The clipboard of input sent through `gui.input` (a test's).
     pub clip: Option<String>,
+    /// The text size: the program's units are this many logical pixels.
+    /// `width`, `height`, and pointer positions are in units; `scale` is
+    /// the platform's scale times the zoom, so physical pixels stay put.
+    pub zoom: f32,
+    /// The platform's own scale factor.
+    pub platform_scale: f32,
 }
 
 const WHITE: Color = [255, 255, 255, 255];
@@ -154,6 +169,8 @@ impl WinState {
             a11y_dirty: true,
             caret: None,
             clip: None,
+            zoom: 1.0,
+            platform_scale: scale,
         }
     }
 
@@ -317,7 +334,67 @@ impl WinState {
         ((content_h - h) / 2.0).max(0.0)
     }
 
+    /// Set the text size: the window keeps its logical size and lays out
+    /// in units of `zoom` logical pixels (a resize event says the new size).
+    pub fn set_zoom(&mut self, zoom: f32, out: &mut Vec<Value>) {
+        let z = zoom.clamp(0.5, 3.0);
+        if (z - self.zoom).abs() < 1e-4 {
+            return;
+        }
+        let (lw, lh) = (self.width * self.zoom, self.height * self.zoom);
+        self.zoom = 1.0;
+        self.input(
+            Input::Resize {
+                width: lw,
+                height: lh,
+                scale: self.platform_scale,
+            },
+            &mut NoClipboard,
+            out,
+        );
+        self.zoom = z;
+        self.input(
+            Input::Resize {
+                width: lw,
+                height: lh,
+                scale: self.platform_scale,
+            },
+            &mut NoClipboard,
+            out,
+        );
+    }
+
     pub fn input(&mut self, input: Input, clip: &mut dyn Clipboard, out: &mut Vec<Value>) {
+        // What the platform says in logical pixels arrives in units.
+        let z = self.zoom;
+        let input = match input {
+            Input::Pointer {
+                action,
+                x,
+                y,
+                button,
+                clicks,
+            } => Input::Pointer {
+                action,
+                x: x / z,
+                y: y / z,
+                button,
+                clicks,
+            },
+            Input::Resize {
+                width,
+                height,
+                scale,
+            } => {
+                self.platform_scale = scale;
+                Input::Resize {
+                    width: width / z,
+                    height: height / z,
+                    scale: scale * z,
+                }
+            }
+            other => other,
+        };
         match input {
             Input::Resize {
                 width,
@@ -762,7 +839,8 @@ impl WinState {
         let ed = self.editors.get_mut(&f)?;
         ed.layout(&mut ts);
         let b = ed.ed.ime_cursor_area();
-        let s = self.scale;
+        // physical pixels to the platform's logical ones
+        let s = self.platform_scale.max(0.01);
         Some([
             (ox + b.x0 as f32 - ed.scroll_x) / s,
             (oy + dy + b.y0 as f32) / s,
@@ -970,10 +1048,10 @@ impl WinState {
                 max_w
             };
             let shaped = ts.shape(t, &st.font, fade(st.color), align_w, st.align, s);
-            let dy = match st.valign {
-                Align::Start => 0.0,
+            let dy = match st.valign.along() {
                 Align::Center => ((content[3] - shaped.height) / 2.0).max(0.0),
-                Align::End => (content[3] - shaped.height).max(0.0),
+                Align::End | Align::Right => (content[3] - shaped.height).max(0.0),
+                Align::Start | Align::Left => 0.0,
             };
             push_glyphs(&shaped, content[0], content[1] + dy, inner_clip, dl);
         }

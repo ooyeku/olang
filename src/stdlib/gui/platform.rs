@@ -328,6 +328,13 @@ impl App {
                 ("scale", float(scale)),
             ],
         )]);
+        // and in the appearance the system asks for
+        let dark = self
+            .windows
+            .get(&id)
+            .and_then(|pw| pw.win.theme())
+            .map(|t| t == winit::window::Theme::Dark);
+        emit(vec![super::context::event_for(id, dark)]);
         Ok(())
     }
 
@@ -771,13 +778,22 @@ impl ApplicationHandler<Cmd> for App {
                 Ime::Commit(t) => self.input(id, Input::ImeCommit(t)),
                 Ime::Enabled | Ime::Disabled => {}
             },
-            WindowEvent::Focused(on) => self.input(id, Input::Focused(on)),
-            WindowEvent::ThemeChanged(theme) => emit(vec![event(
-                "appearance",
-                vec![
-                    ("window", Value::Integer(id as i64)),
-                    ("dark", Value::Boolean(theme == winit::window::Theme::Dark)),
-                ],
+            WindowEvent::Focused(on) => {
+                self.input(id, Input::Focused(on));
+                // Contrast and motion have no change notice here: a window
+                // coming back to the front reads them again.
+                if on {
+                    let dark = self
+                        .windows
+                        .get(&id)
+                        .and_then(|pw| pw.win.theme())
+                        .map(|t| t == winit::window::Theme::Dark);
+                    emit(vec![super::context::event_for(id, dark)]);
+                }
+            }
+            WindowEvent::ThemeChanged(theme) => emit(vec![super::context::event_for(
+                id,
+                Some(theme == winit::window::Theme::Dark),
             )]),
             WindowEvent::DroppedFile(path) => emit(vec![event(
                 "files_dropped",

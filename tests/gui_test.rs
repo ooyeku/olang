@@ -667,3 +667,71 @@ fn a_trailing_space_after_right_to_left_text_keeps_the_caret_in_view() {
     "##);
     assert_eq!(text(&v), "[true, true, true]");
 }
+
+#[test]
+fn a_zoomed_window_lays_out_in_larger_units_at_the_same_pixels() {
+    let _turn = events_turn();
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (400, 200) })
+        let ev = gui.events()
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 400, 200) },
+          #{ "key": "b", "parent": "root", "role": "button", "box": (10, 10, 100, 40), "text": "B" }
+        ])
+        let before = gui.read(w, "rgba")
+        gui.set(w, #{ "zoom": 2.0 })
+        let size = gui.read(w, "size")
+        let after = gui.read(w, "rgba")
+        let mut resized = ()
+        let mut more = true
+        while more { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "resize" => { resized = (map_get(e, "width"), map_get(e, "height")) } }, _ => { more = false } } }
+        [size, resized, map_get(before, "width") == map_get(after, "width"), gui.read(w, "hit", (60, 30)), gui.read(w, "hit", (150, 30))]
+    "##);
+    // 400×200 logical pixels at zoom 2 are 200×100 units (what reads and
+    // the program's boxes are in); the pixels are the same.
+    assert_eq!(
+        text(&v),
+        r#"[(200.0, 100.0, 2.0), (200.0, 100.0), true, "b", "root"]"#
+    );
+}
+
+#[test]
+fn the_system_settings_are_read_and_a_change_is_an_event() {
+    let _turn = events_turn();
+    let v = run(r##"
+        let c = gui.context()
+        let w = gui.headless(#{ "size": (100, 100) })
+        let ev = gui.events()
+        gui.input(w, #{ "kind": "appearance", "dark": true, "contrast": true })
+        let mut got = ()
+        let mut more = true
+        while more { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "appearance" => { got = e } }, _ => { more = false } } }
+        [sort(map_keys(c)), map_get(got, "dark"), map_get(got, "contrast"), map_get(got, "reduce_motion")]
+    "##);
+    assert_eq!(
+        text(&v),
+        r#"[["contrast", "dark", "reduce_motion"], true, true, false]"#
+    );
+}
+
+#[test]
+fn under_a_zoom_the_pointer_lands_where_the_pixels_show() {
+    let _turn = events_turn();
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (400, 200) })
+        let ev = gui.events()
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 400, 200) },
+          #{ "key": "b", "parent": "root", "role": "button", "box": (10, 10, 100, 40), "text": "B" }
+        ])
+        gui.set(w, #{ "zoom": 2.0 })
+        // logical (120, 60) is (60, 30) in units: on the button
+        gui.input(w, #{ "kind": "pointer", "action": "down", "x": 120, "y": 60 })
+        gui.input(w, #{ "kind": "pointer", "action": "up", "x": 120, "y": 60 })
+        let mut hit = ()
+        let mut more = true
+        while more { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "activate" => { hit = map_get(e, "key") } }, _ => { more = false } } }
+        hit
+    "##);
+    assert_eq!(text(&v), r#""b""#);
+}
