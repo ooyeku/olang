@@ -487,6 +487,7 @@ mod tests {
                 "assert_err",
                 "fail",
                 "snapshot",
+                "snapshot_dir",
                 "run_test",
                 "test_summary",
                 "reset_tests",
