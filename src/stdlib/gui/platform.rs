@@ -354,6 +354,7 @@ impl App {
         let Some(pw) = self.windows.get_mut(&id) else {
             return;
         };
+        let trace = std::env::var_os("GUI_TRACE").is_some();
         let (dl, a11y_tree, wants_ime, ime_area) = {
             let Ok(mut st) = pw.state.lock() else {
                 return;
@@ -370,12 +371,34 @@ impl App {
             let area = if wants { st.ime_area() } else { None };
             (dl, tree, wants, area)
         };
+        if trace {
+            eprintln!(
+                "gui: window {id} frame {}x{}, {} prims",
+                dl.width,
+                dl.height,
+                dl.prims.len()
+            );
+        }
         match &mut pw.renderer {
-            Renderer::Gpu(s) => {
-                if let Err(e) = s.render(&dl) {
-                    eprintln!("gui: {e}");
+            Renderer::Gpu(s) => match s.render(&dl) {
+                Ok(()) => {}
+                // Not drawn: the window is covered or the compositor is
+                // busy. Keep the frame owed: the scene stays dirty, and the
+                // window draws when it shows again (`Occluded(false)`) or,
+                // after a timeout, on the next request.
+                Err(e) if e == "occluded" || e == "timeout" => {
+                    if trace {
+                        eprintln!("gui: window {id} frame skipped ({e})");
+                    }
+                    if let Ok(mut st) = pw.state.lock() {
+                        st.dirty = true;
+                    }
+                    if e == "timeout" {
+                        pw.win.request_redraw();
+                    }
                 }
-            }
+                Err(e) => eprintln!("gui: {e}"),
+            },
             Renderer::Soft { surface, .. } => present_soft(surface, &dl, &pw.win),
         }
         if let Some(tree) = a11y_tree {
@@ -503,6 +526,20 @@ impl ApplicationHandler<Cmd> for App {
     fn resumed(&mut self, _el: &ActiveEventLoop) {}
 
     fn user_event(&mut self, el: &ActiveEventLoop, cmd: Cmd) {
+        if std::env::var_os("GUI_TRACE").is_some() {
+            let what = match &cmd {
+                Cmd::Open { id, .. } => format!("open {id}"),
+                Cmd::Close(id) => format!("close {id}"),
+                Cmd::Redraw(id) => format!("redraw {id}"),
+                Cmd::Set(id, _) => format!("set {id}"),
+                Cmd::Dialog { kind, .. } => format!("dialog {kind}"),
+                Cmd::Menu { .. } => "menu".to_string(),
+                Cmd::Exit(c) => format!("exit {c}"),
+                Cmd::A11y(_) => "a11y".to_string(),
+                Cmd::MenuEvent(id) => format!("menu event {id}"),
+            };
+            eprintln!("gui: {what}");
+        }
         match cmd {
             Cmd::Open { id, opts, reply } => {
                 let r = self.open(el, id, opts);
@@ -643,6 +680,12 @@ impl ApplicationHandler<Cmd> for App {
                 }
             }
             WindowEvent::RedrawRequested => self.render(id),
+            // Shown again after being covered: draw what was skipped.
+            WindowEvent::Occluded(false) => {
+                if let Some(pw) = self.windows.get(&id) {
+                    pw.win.request_redraw();
+                }
+            }
             WindowEvent::ModifiersChanged(m) => {
                 let st = m.state();
                 self.input(

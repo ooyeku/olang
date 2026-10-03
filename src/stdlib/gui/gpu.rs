@@ -769,10 +769,10 @@ impl Surface {
                     frame = Some(f);
                     break;
                 }
-                // Hidden or busy: skip the frame; the next redraw draws.
-                wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                    return Ok(());
-                }
+                // Hidden or busy: skip the frame and say so; the platform
+                // loop draws again when the window shows (or retries).
+                wgpu::CurrentSurfaceTexture::Timeout => return Err("timeout".to_string()),
+                wgpu::CurrentSurfaceTexture::Occluded => return Err("occluded".to_string()),
                 wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                     self.surface.configure(&self.gpu.device, &self.config);
                 }
