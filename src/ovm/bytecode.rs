@@ -7320,7 +7320,22 @@ impl BytecodeVm {
                                 false
                             }
                         };
-                        if !jit_owned
+                        // A collection accumulator stays on this lane even
+                        // when the JIT owns the reducer: native code borrows
+                        // a caller's list and copies it on its first
+                        // append, so `(acc, x) => acc + [x]` copied the
+                        // whole accumulator on every step (quadratic). Here
+                        // it is handed over and extended in place.
+                        let collection_acc = matches!(
+                            acc.data,
+                            ValueData::List(_)
+                                | ValueData::AstList(_)
+                                | ValueData::IntList(_)
+                                | ValueData::FloatList(_)
+                                | ValueData::Map(_)
+                                | ValueData::AstMap(_)
+                        );
+                        if (!jit_owned || collection_acc)
                             // A lambda's check list is one `None` per
                             // parameter, not an empty list: "nothing to
                             // check" is what the lane needs, and asking
