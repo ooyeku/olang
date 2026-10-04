@@ -534,10 +534,17 @@ pub enum Pattern {
 /// Enum variant data for proper enum value representation
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum EnumVariantData {
-    Unit,                           // Simple variant: Red
-    Tuple(Vec<Value>),              // Tuple variant: Point(x, y)
-    Struct(HashMap<String, Value>), // Struct variant: Person { name, age }
+    Unit,              // Simple variant: Red
+    Tuple(Vec<Value>), // Tuple variant: Point(x, y)
+    Struct(ValueMap),  // Struct variant: Person { name, age }
 }
+
+/// A map's (and a struct's) fields: string keys under FxHash, as the
+/// VM's maps are (`ovm::value::OvmMap`). A program's maps are never an
+/// attacker's hash-flooding surface, and a lookup spent most of its time
+/// in SipHash; one hasher on both tiers also keeps a map crossing
+/// between them from changing its cost.
+pub type ValueMap = HashMap<String, Value, rustc_hash::FxBuildHasher>;
 
 /// Runtime values
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -551,7 +558,7 @@ pub enum Value {
     // the in-place-append fusion. Reads are unaffected: `Vec` derefs to
     // the same slice.
     List(Arc<Vec<Value>>),
-    Map(Arc<HashMap<String, Value>>),
+    Map(Arc<ValueMap>),
     Tuple(Arc<Vec<Value>>),
     /// Behind an `Arc`: a function value is copied into every scope, table
     /// and frame that names it, and inline it made `Value` 176 bytes —
@@ -567,7 +574,7 @@ pub enum Value {
         /// tree on every descent, and bare lists were the only way to get
         /// a tree that behaved like one. Reads are unaffected; `Arc`
         /// derefs to the same map.
-        fields: Arc<HashMap<String, Value>>,
+        fields: Arc<ValueMap>,
     },
     // Range values for range expressions like 1..50
     Range {

@@ -5,7 +5,6 @@
 use super::InterpreterError;
 use crate::ast::Value;
 use im::HashMap as ImHashMap;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -321,8 +320,8 @@ impl Environment {
 
     /// Get all variables in this environment (excluding parent environments)
     /// Returns a clone for compatibility with existing code
-    pub fn get_all_variables(&self) -> HashMap<String, Value> {
-        let mut all: HashMap<String, Value> = self
+    pub fn get_all_variables(&self) -> crate::ast::ValueMap {
+        let mut all: crate::ast::ValueMap = self
             .variables
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
@@ -355,7 +354,7 @@ impl Environment {
     }
 
     /// Get ownership of all variables in this environment (for scoped operations)
-    pub fn into_variables(self) -> HashMap<String, Value> {
+    pub fn into_variables(self) -> crate::ast::ValueMap {
         Arc::try_unwrap(self.variables)
             .unwrap_or_else(|arc| (*arc).clone())
             .into_iter()

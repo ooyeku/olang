@@ -7,10 +7,9 @@
 //! re-entered through olang_dispatch_event.
 
 use crate::ast::Value;
-use std::collections::HashMap;
 
 pub fn create_dom_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
     for (name, arity) in [
         ("query", 1),
         ("set_text", 2),

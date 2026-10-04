@@ -6550,7 +6550,7 @@ impl BytecodeVm {
         use crate::ovm::value::ValueData;
         enum Recv<'a> {
             Map(&'a crate::ovm::value::OvmMap),
-            Ast(&'a std::collections::HashMap<String, crate::ast::Value>),
+            Ast(&'a crate::ast::ValueMap),
             Struct(&'a crate::ovm::value::StructObject),
         }
         let recv = match &receiver.data {
@@ -6605,7 +6605,7 @@ impl BytecodeVm {
         use crate::ovm::value::ValueData;
         enum Recv<'a> {
             Map(&'a crate::ovm::value::OvmMap),
-            Ast(&'a std::collections::HashMap<String, crate::ast::Value>),
+            Ast(&'a crate::ast::ValueMap),
             Struct(&'a crate::ovm::value::StructObject),
         }
         let recv = match &receiver.data {
@@ -12756,12 +12756,12 @@ mod tests {
         // VALUE (a promise-free stand-in: a map containing a map is fine, so
         // use a TypeInfo, which never converts).
         let mut vm = BytecodeVm::new();
-        let mut fields = std::collections::HashMap::new();
+        let mut fields = crate::ast::ValueMap::default();
         fields.insert("a".to_string(), Value::Integer(1));
         assert!(BytecodeVm::round_trips(&Value::Map(Arc::new(
             fields.clone()
         ))));
-        let mut bad = std::collections::HashMap::new();
+        let mut bad = crate::ast::ValueMap::default();
         bad.insert(
             "t".to_string(),
             Value::type_info(

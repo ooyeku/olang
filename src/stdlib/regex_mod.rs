@@ -7,12 +7,11 @@
 
 use crate::ast::Value;
 use regex::Regex;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Creates the regex module.
 pub fn create_regex_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
 
     module.insert(
         "is_valid".to_string(),

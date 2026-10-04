@@ -164,7 +164,7 @@ pub enum ValueData {
     /// `map_set` does and stays a wrapper. A small map of scalars (at or
     /// under AST_MAP_EAGER entries) still converts eagerly, so a record
     /// built and read in compiled code keeps the native layout.
-    AstMap(Arc<HashMap<String, crate::ast::Value>>),
+    AstMap(Arc<crate::ast::ValueMap>),
     Tuple(Arc<Vec<OvmValue>>),
     Function(Arc<FunctionObject>),
     /// An interpreter function held verbatim, so it converts back losslessly.
@@ -1256,7 +1256,7 @@ impl OvmValue {
     /// The native layout of a wrapped map, one level deep: each value
     /// converts by `from_ast`, so a nested map is itself a wrapper. For
     /// the operations that need to own or iterate the native form.
-    pub fn force_ast_map(map: &HashMap<String, Value>) -> OvmMap {
+    pub fn force_ast_map(map: &crate::ast::ValueMap) -> OvmMap {
         map.iter()
             .map(|(k, v)| (k.clone(), Self::from_ast(v.clone())))
             .collect()
@@ -1400,7 +1400,7 @@ impl OvmValue {
             }
             ValueData::AstFunction(func) => Ok(Value::Function(func.clone())),
             ValueData::Map(m) => {
-                let mut out = HashMap::new();
+                let mut out = crate::ast::ValueMap::default();
                 for (k, v) in m.iter() {
                     out.insert(k.clone(), v.to_ast()?);
                 }
@@ -1481,7 +1481,7 @@ impl OvmValue {
                 Ok(Value::Unit)
             }
             ValueData::Struct(gc_ptr) => {
-                let mut fields = HashMap::new();
+                let mut fields = crate::ast::ValueMap::default();
                 for (name, val) in gc_ptr.iter() {
                     fields.insert(name.clone(), val.to_ast()?);
                 }

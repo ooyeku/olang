@@ -30,10 +30,9 @@ use crate::ast::{
     Argument, Expr, FieldValue, FunctionDecl, LetDecl, MatchArm, Parameter, Pattern, ShareDecl,
     Statement, TemplatePart, UseDecl, UseItem, Value,
 };
-use std::collections::HashMap;
 
 pub fn create_meta_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
     module.insert("parse".to_string(), builtin("parse", 1));
     module.insert("eval".to_string(), builtin("eval", 1));
     module.insert("lit".to_string(), builtin("lit", 1));
@@ -232,7 +231,7 @@ fn list(items: Vec<Value>) -> Value {
     Value::List(std::sync::Arc::new(items))
 }
 fn map(pairs: Vec<(&str, Value)>) -> Value {
-    let mut m = HashMap::new();
+    let mut m = crate::ast::ValueMap::default();
     for (k, v) in pairs {
         m.insert(k.to_string(), v);
     }
@@ -248,7 +247,7 @@ fn stmt_to_value(stmt: &Statement) -> Value {
         Statement::MetaFnDecl { decl, .. } => {
             let mut m_v = match &stmt_to_value(&Statement::FunctionDecl(decl.clone())) {
                 Value::Map(inner) => inner.as_ref().clone(),
-                _ => std::collections::HashMap::new(),
+                _ => crate::ast::ValueMap::default(),
             };
             m_v.insert("kind".to_string(), s("meta_fn"));
             Value::Map(std::sync::Arc::new(m_v))
@@ -1314,11 +1313,11 @@ fn meta_fresh(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 // for the same reason the fresh counter is: expansion is single-threaded
 // and per-thread state is exactly per-expansion state.
 thread_local! {
-    static EXPORTS: std::cell::RefCell<Option<std::collections::HashMap<String, Value>>> =
+    static EXPORTS: std::cell::RefCell<Option<crate::ast::ValueMap>> =
         const { std::cell::RefCell::new(None) };
 }
 
-pub fn set_exports(table: std::collections::HashMap<String, Value>) {
+pub fn set_exports(table: crate::ast::ValueMap) {
     EXPORTS.with(|e| *e.borrow_mut() = Some(table));
 }
 
@@ -1328,7 +1327,7 @@ pub struct ExportsGuard;
 
 impl ExportsGuard {
     pub fn new() -> Self {
-        EXPORTS.with(|e| *e.borrow_mut() = Some(std::collections::HashMap::new()));
+        EXPORTS.with(|e| *e.borrow_mut() = Some(crate::ast::ValueMap::default()));
         ExportsGuard
     }
 }

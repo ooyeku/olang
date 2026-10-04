@@ -57,7 +57,10 @@ fn every_interpreter_container_frees_a_deep_chain() {
             Value::enum_of(
                 "L".into(),
                 "Cons".into(),
-                EnumVariantData::Struct(HashMap::from([("next".to_string(), next)])),
+                EnumVariantData::Struct(olang::ast::ValueMap::from_iter([(
+                    "next".to_string(),
+                    next,
+                )])),
             )
         }));
         drop(chain(|next| {
@@ -65,11 +68,17 @@ fn every_interpreter_container_frees_a_deep_chain() {
         }));
         drop(chain(|next| Value::Tuple(Arc::new(vec![next]))));
         drop(chain(|next| {
-            Value::Map(Arc::new(HashMap::from([("next".to_string(), next)])))
+            Value::Map(Arc::new(olang::ast::ValueMap::from_iter([(
+                "next".to_string(),
+                next,
+            )])))
         }));
         drop(chain(|next| Value::Struct {
             type_name: "N".into(),
-            fields: Arc::new(HashMap::from([("next".to_string(), next)])),
+            fields: Arc::new(olang::ast::ValueMap::from_iter([(
+                "next".to_string(),
+                next,
+            )])),
         }));
         drop(chain(|next| Value::Ok(Box::new(next))));
         drop(chain(|next| Value::Err(Box::new(next))));

@@ -38,7 +38,6 @@ use crate::interpreter::InterpreterError;
 use crate::interpreter::spawn_registry::{self, SpawnGuard};
 use crate::native::{NativeHandle, NativeObject};
 use std::any::Any;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// A handle to one spawned thread. The `Arc<SpawnGuard>` is what ties the
@@ -88,7 +87,7 @@ pub fn handle(id: u64) -> Value {
 }
 
 pub fn create_task_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
     for (name, arity) in [
         ("join", 1),
         ("join_timeout", 2),
@@ -161,7 +160,7 @@ fn task_list(args: Vec<Value>) -> Result<Value, InterpreterError> {
     let rows = spawn_registry::list()
         .into_iter()
         .map(|(id, state, elapsed_ms)| {
-            let mut m = HashMap::new();
+            let mut m = crate::ast::ValueMap::default();
             m.insert("id".to_string(), Value::Integer(id as i64));
             m.insert(
                 "state".to_string(),
@@ -184,7 +183,7 @@ fn task_parked(args: Vec<Value>) -> Result<Value, InterpreterError> {
     let rows = crate::stdlib::chan::parked_sites()
         .into_iter()
         .map(|(thread, what, waited_ms)| {
-            let mut m = HashMap::new();
+            let mut m = crate::ast::ValueMap::default();
             m.insert("thread".to_string(), Value::String(Arc::new(thread)));
             m.insert("on".to_string(), Value::String(Arc::new(what)));
             m.insert("waited_ms".to_string(), Value::Integer(waited_ms as i64));

@@ -33,14 +33,13 @@ mod windows;
 use crate::ast::Value;
 use crate::stdlib::chan::ChannelSender;
 use decode::Input;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 type Res = Result<Value, Box<dyn std::error::Error>>;
 
 pub fn create_tty_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
     for (name, arity) in [
         ("enter", 1),
         ("leave", 1),
@@ -375,7 +374,7 @@ fn s(text: &str) -> Value {
 }
 
 fn event(kind: &str, fields: Vec<(&str, Value)>) -> Value {
-    let mut m = HashMap::new();
+    let mut m = crate::ast::ValueMap::default();
     m.insert("kind".to_string(), s(kind));
     for (k, v) in fields {
         m.insert(k.to_string(), v);
@@ -401,7 +400,7 @@ pub fn input_value(input: &Input) -> Value {
         ),
         Input::Paste(text) => event("paste", vec![("text", s(text))]),
         Input::Mouse(m) => {
-            let mut mods = HashMap::new();
+            let mut mods = crate::ast::ValueMap::default();
             mods.insert("ctrl".to_string(), Value::Boolean(m.ctrl));
             mods.insert("alt".to_string(), Value::Boolean(m.alt));
             mods.insert("shift".to_string(), Value::Boolean(m.shift));
@@ -430,7 +429,7 @@ fn err(msg: impl Into<String>) -> Value {
 }
 
 fn handle(id: i64) -> Value {
-    let mut fields = HashMap::new();
+    let mut fields = crate::ast::ValueMap::default();
     fields.insert("id".to_string(), Value::Integer(id));
     Value::Struct {
         type_name: "Tty".to_string(),

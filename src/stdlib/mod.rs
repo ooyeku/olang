@@ -1,5 +1,4 @@
 use crate::ast::Value;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 pub mod asset;
@@ -45,8 +44,8 @@ pub mod toml_mod;
 pub mod tty;
 pub mod vec;
 
-pub fn get_stdlib() -> HashMap<String, Value> {
-    let mut stdlib = HashMap::new();
+pub fn get_stdlib() -> crate::ast::ValueMap {
+    let mut stdlib = crate::ast::ValueMap::default();
     stdlib.insert("asset".to_string(), asset::create_asset_module());
     stdlib.insert("base64".to_string(), base64::create_base64_module());
     stdlib.insert("bigint".to_string(), bigint::create_bigint_module());

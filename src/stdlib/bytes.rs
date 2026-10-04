@@ -25,7 +25,6 @@
 use crate::ast::Value;
 use crate::native::{NativeHandle, NativeObject};
 use std::any::Any;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Owned for bytes a program made; borrowed for bytes the binary already
@@ -120,7 +119,7 @@ pub fn bytes_of(value: &Value) -> Result<&[u8], String> {
 }
 
 pub fn create_bytes_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
     for (name, arity) in [
         ("from_list", 1),
         ("to_list", 1),

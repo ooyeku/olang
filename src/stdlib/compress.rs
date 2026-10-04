@@ -9,12 +9,11 @@
 
 use crate::ast::Value;
 use crate::stdlib::bytes;
-use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::Arc;
 
 pub fn create_compress_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
     for (name, arity) in [
         ("gzip", 1),
         ("gunzip", 1),

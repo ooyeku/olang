@@ -421,7 +421,7 @@ fn portable(v: &Value) -> Value {
         Value::Native(h) => {
             let kind = h.0.type_name();
             if matches!(kind, "Channel" | "Task" | "Cursor" | "Bytes") {
-                let mut fields = std::collections::HashMap::new();
+                let mut fields = crate::ast::ValueMap::default();
                 fields.insert(
                     "kind".to_string(),
                     Value::String(Arc::new(kind.to_string())),
@@ -739,17 +739,17 @@ mod tests {
         use std::collections::HashMap;
         // Two maps with the same entries inserted in different orders must
         // fingerprint identically (sorted-key canonicalization).
-        let mut a = HashMap::new();
+        let mut a = crate::ast::ValueMap::default();
         a.insert("x".to_string(), Value::Integer(1));
         a.insert("y".to_string(), Value::Integer(2));
-        let mut b = HashMap::new();
+        let mut b = crate::ast::ValueMap::default();
         b.insert("y".to_string(), Value::Integer(2));
         b.insert("x".to_string(), Value::Integer(1));
         let fa = Timeline::fingerprint(&[Value::Map(Arc::new(a))]);
         let fb = Timeline::fingerprint(&[Value::Map(Arc::new(b))]);
         assert_eq!(fa, fb);
         // Different contents fingerprint differently.
-        let mut c = HashMap::new();
+        let mut c = crate::ast::ValueMap::default();
         c.insert("x".to_string(), Value::Integer(9));
         let fc = Timeline::fingerprint(&[Value::Map(Arc::new(c))]);
         assert_ne!(fa, fc);

@@ -4,14 +4,13 @@
 
 use super::{Interpreter, InterpreterError};
 use crate::ast::{EnumVariantData, Pattern, Value};
-use std::collections::HashMap;
 
 impl Interpreter {
     pub(crate) fn pattern_matches_bind(
         &self,
         pattern: &Pattern,
         value: &Value,
-        bindings: &mut HashMap<String, Value>,
+        bindings: &mut crate::ast::ValueMap,
     ) -> Result<bool, InterpreterError> {
         match (pattern, value) {
             (Pattern::Literal(lit), val) => Ok(lit == val),
@@ -242,7 +241,7 @@ impl Interpreter {
             // Or patterns
             (Pattern::Or { alternatives }, val) => {
                 for alt_pattern in alternatives {
-                    let mut alt_bindings = HashMap::new();
+                    let mut alt_bindings = crate::ast::ValueMap::default();
                     if self.pattern_matches_bind(alt_pattern, val, &mut alt_bindings)? {
                         // Merge bindings from the matching alternative
                         bindings.extend(alt_bindings);

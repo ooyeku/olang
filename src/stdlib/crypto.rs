@@ -33,7 +33,6 @@ use rsa::{
 };
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha512};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Error types for Crypto operations
@@ -55,7 +54,7 @@ pub enum CryptoError {
 
 /// Creates the crypto module with all cryptographic functions
 pub fn create_crypto_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
 
     // Hash functions
     module.insert("md5".to_string(), create_builtin_function("md5", 1));
@@ -1009,7 +1008,7 @@ fn crypto_generate_key_pair(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
         }
     };
 
-    let mut key_pair = HashMap::new();
+    let mut key_pair = crate::ast::ValueMap::default();
     key_pair.insert(
         "private_key".to_string(),
         Value::String(Arc::new(private_key_pem.to_string())),
@@ -1080,7 +1079,7 @@ fn crypto_import_public_key(args: Vec<Value>) -> Result<Value, Box<dyn std::erro
     // Validate the PEM string by parsing it
     match RsaPublicKey::from_public_key_pem(pem_string) {
         Ok(_) => {
-            let mut key_struct = HashMap::new();
+            let mut key_struct = crate::ast::ValueMap::default();
             key_struct.insert(
                 "pem".to_string(),
                 Value::String(Arc::new(pem_string.to_string())),

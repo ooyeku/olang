@@ -21,7 +21,6 @@ pub use series::{OdsSeries, make_series_value, series_of};
 use crate::ast::{BinaryOp, BuiltinFunction, Value};
 use crate::native::{NativeHandle, NativeObject, OvmModule};
 use std::any::Any;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// A minimal native value: an integer tag. `probe + Int` produces a new
@@ -71,7 +70,7 @@ impl OvmModule for OdsModule {
     }
 
     fn namespaces(&self) -> Vec<(String, Value)> {
-        let mut module = HashMap::new();
+        let mut module = crate::ast::ValueMap::default();
         let seam_probes = [("version", 0), ("probe", 1), ("probe_tag", 1)];
         for (name, arity) in seam_probes
             .iter()
@@ -169,7 +168,7 @@ impl OvmModule for PlotModule {
     }
 
     fn namespaces(&self) -> Vec<(String, Value)> {
-        let mut module = HashMap::new();
+        let mut module = crate::ast::ValueMap::default();
         for (name, arity) in plot::FUNCTIONS {
             module.insert(
                 name.to_string(),

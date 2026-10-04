@@ -241,7 +241,7 @@ fn a_struct_shares_its_fields_rather_than_copying_them() {
     // asserts the representation directly, since the cost is invisible in
     // a result.
     use olang::ast::Value;
-    let mut fields = std::collections::HashMap::new();
+    let mut fields = olang::ast::ValueMap::default();
     fields.insert("payload".to_string(), Value::Integer(1));
     let original = Value::Struct {
         type_name: "Box".to_string(),

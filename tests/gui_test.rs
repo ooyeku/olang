@@ -38,7 +38,7 @@ impl Clipboard for NoClip {
 }
 
 fn m(fields: Vec<(&str, Value)>) -> Value {
-    let mut h = std::collections::HashMap::new();
+    let mut h = olang::ast::ValueMap::default();
     for (k, v) in fields {
         h.insert(k.to_string(), v);
     }

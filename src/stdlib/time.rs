@@ -8,7 +8,6 @@
 use crate::ast::Value;
 #[cfg(any(feature = "native", test))]
 use crate::clock::Instant;
-use std::collections::HashMap;
 #[cfg(feature = "native")]
 use std::sync::OnceLock;
 
@@ -17,7 +16,7 @@ use std::sync::OnceLock;
 static MONOTONIC_ORIGIN: OnceLock<Instant> = OnceLock::new();
 
 pub fn create_time_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
 
     module.insert("now_ms".to_string(), create_builtin_function("now_ms", 0));
     module.insert(

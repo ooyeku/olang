@@ -118,7 +118,7 @@ fn procs() -> &'static Mutex<HashMap<i64, Arc<Proc>>> {
 }
 
 pub fn create_proc_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
     // Arities are advisory: module-prefixed builtins dispatch straight to
     // their handler, which validates its own argument count (so `spawn`
     // and `pipeline` each accept an optional trailing options map).
@@ -170,7 +170,7 @@ pub fn call_proc_function(
 }
 
 fn handle(id: i64) -> Value {
-    let mut fields = HashMap::new();
+    let mut fields = crate::ast::ValueMap::default();
     fields.insert("id".to_string(), Value::Integer(id));
     Value::Struct {
         type_name: "Process".to_string(),
@@ -492,7 +492,7 @@ fn proc_wait(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     match child.wait() {
         Ok(status) => {
             let code = status.code().unwrap_or(-1) as i64;
-            let mut fields = HashMap::new();
+            let mut fields = crate::ast::ValueMap::default();
             fields.insert("code".to_string(), Value::Integer(code));
             Ok(ok(Value::Struct {
                 type_name: "Exit".to_string(),
@@ -711,7 +711,7 @@ fn proc_pipeline(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     }
 
     let final_code = *codes.last().unwrap_or(&-1);
-    let mut fields = HashMap::new();
+    let mut fields = crate::ast::ValueMap::default();
     fields.insert("code".to_string(), Value::Integer(final_code));
     fields.insert("stdout".to_string(), Value::String(Arc::new(final_out)));
     fields.insert("stderr".to_string(), Value::String(Arc::new(stderr_all)));

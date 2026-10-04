@@ -1,7 +1,6 @@
 use crate::ast::Value;
 use crate::native::{NativeHandle, NativeObject};
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
-use std::collections::HashMap;
 
 /// Error types for date operations
 #[derive(Debug, thiserror::Error)]
@@ -174,7 +173,7 @@ fn date_out(d: NaiveDate, native: bool) -> Value {
 
 /// Creates the dates module with all date and time functions
 pub fn create_dates_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
 
     // Current date/time functions
     module.insert("now".to_string(), create_builtin_function("now", 0));

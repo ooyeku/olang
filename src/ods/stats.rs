@@ -16,7 +16,6 @@
 use super::series::{make_series_value, series_of};
 use crate::ast::{BuiltinFunction, Value};
 use olang_ods::{Series, dist, stats};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// (name, arity) of the flat stats functions.
@@ -60,12 +59,12 @@ fn builtin(name: &str, arity: usize) -> Value {
 /// The `stats` module value: flat functions plus one nested module per
 /// distribution family.
 pub fn namespace() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
     for (name, arity) in FUNCTIONS {
         module.insert(name.to_string(), builtin(name, *arity));
     }
     for family in ["norm", "t", "chi2", "f"] {
-        let mut fam = HashMap::new();
+        let mut fam = crate::ast::ValueMap::default();
         for (f, func, arity) in DIST_FUNCTIONS {
             if *f == family {
                 fam.insert(

@@ -463,7 +463,7 @@ impl Interpreter {
 /// The map kinds a value may be compared as: a `#{}` map, a parsed JSON
 /// object, or an anonymous `{ ... }` record. A declared struct is not one:
 /// its name is part of its identity.
-fn map_like(v: &Value) -> Option<&std::collections::HashMap<String, Value>> {
+fn map_like(v: &Value) -> Option<&crate::ast::ValueMap> {
     match v {
         Value::Map(m) => Some(m),
         Value::Struct { type_name, fields }

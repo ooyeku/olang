@@ -4,7 +4,6 @@
 //! forms without a file on disk.
 
 use crate::ast::{BuiltinFunction, Value};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 fn builtin(name: &str, arity: usize) -> Value {
@@ -15,7 +14,7 @@ fn builtin(name: &str, arity: usize) -> Value {
 }
 
 pub fn create_runtime_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
     module.insert("wasm".to_string(), builtin("wasm", 0));
     module.insert("version".to_string(), builtin("version", 0));
     module.insert("memory".to_string(), builtin("memory", 0));
@@ -89,7 +88,7 @@ fn runtime_profile_stop(args: Vec<Value>) -> Result<Value, Box<dyn std::error::E
         .rows
         .iter()
         .map(|(function, tier, samples)| {
-            let mut row = HashMap::new();
+            let mut row = crate::ast::ValueMap::default();
             row.insert(
                 "function".to_string(),
                 Value::String(Arc::new(function.clone())),
@@ -106,7 +105,7 @@ fn runtime_profile_stop(args: Vec<Value>) -> Result<Value, Box<dyn std::error::E
             Value::Map(Arc::new(row))
         })
         .collect();
-    let mut out = HashMap::new();
+    let mut out = crate::ast::ValueMap::default();
     out.insert(
         "interval_us".to_string(),
         Value::Integer(summary.interval_us as i64),
@@ -146,13 +145,13 @@ fn runtime_memory(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
     let tasks: Vec<Value> = crate::memory::tasks()
         .into_iter()
         .map(|(name, bytes)| {
-            let mut row = HashMap::new();
+            let mut row = crate::ast::ValueMap::default();
             row.insert("name".to_string(), Value::String(Arc::new(name)));
             row.insert("bytes".to_string(), Value::Integer(bytes as i64));
             Value::Map(Arc::new(row))
         })
         .collect();
-    let mut out = HashMap::new();
+    let mut out = crate::ast::ValueMap::default();
     out.insert("heap".to_string(), Value::Integer(heap as i64));
     out.insert("program".to_string(), Value::Integer(program as i64));
     out.insert(
@@ -185,7 +184,7 @@ fn runtime_wasm(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if let Some(answer) = ANSWER.get() {
         return Ok(Value::Ok(Box::new(answer.clone())));
     }
-    let mut out = HashMap::new();
+    let mut out = crate::ast::ValueMap::default();
     out.insert(
         "bytes".to_string(),
         crate::stdlib::bytes::static_value(bytes),

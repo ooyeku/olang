@@ -1,5 +1,4 @@
 use crate::ast::Value;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Error types for testing operations
@@ -17,7 +16,7 @@ pub enum TestError {
 
 /// Creates the testing module with all testing functions
 pub fn create_testing_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
 
     // Basic assertion functions
     module.insert(
@@ -318,7 +317,7 @@ fn run_test(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// `reset_tests()`).
 fn test_summary(_args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let (passed, failed) = TALLY.with(|t| *t.borrow());
-    let mut map = std::collections::HashMap::new();
+    let mut map = crate::ast::ValueMap::default();
     map.insert("passed".to_string(), Value::Integer(passed));
     map.insert("failed".to_string(), Value::Integer(failed));
     map.insert("total".to_string(), Value::Integer(passed + failed));
@@ -407,7 +406,7 @@ fn values_equal(a: &Value, b: &Value) -> bool {
 
 /// A map, a parsed JSON object, or an anonymous record: the kinds `==`
 /// compares by contents with one another.
-fn map_like(v: &Value) -> Option<&std::collections::HashMap<String, Value>> {
+fn map_like(v: &Value) -> Option<&crate::ast::ValueMap> {
     match v {
         Value::Map(m) => Some(m),
         Value::Struct { type_name, fields }

@@ -1,6 +1,5 @@
 use crate::ast::Value;
 use base64::{Engine as _, engine::general_purpose};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Error types for Base64 operations
@@ -26,7 +25,7 @@ impl From<base64::DecodeError> for Base64Error {
 
 /// Creates the base64 module with all Base64 functions
 pub fn create_base64_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
 
     // Core encoding and decoding
     module.insert("encode".to_string(), create_builtin_function("encode", 1));

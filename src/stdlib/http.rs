@@ -41,7 +41,7 @@ impl From<url::ParseError> for HttpError {
 
 /// Creates the http module with all HTTP functions
 pub fn create_http_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
 
     // HTTP Client operations
     module.insert("get".to_string(), create_builtin_function("get", 1));
@@ -293,7 +293,7 @@ fn perform(
             let status = response.status().as_u16() as i64;
             // Response headers, lowercased for predictable lookup; the
             // first value wins for a repeated header.
-            let mut headers = HashMap::new();
+            let mut headers = crate::ast::ValueMap::default();
             for (name, value) in response.headers() {
                 let key = name.as_str().to_lowercase();
                 if let Ok(v) = value.to_str() {
@@ -304,7 +304,7 @@ fn perform(
             }
             match response.text() {
                 Ok(response_body) => {
-                    let mut response_map = HashMap::new();
+                    let mut response_map = crate::ast::ValueMap::default();
                     response_map.insert("status".to_string(), Value::Integer(status));
                     response_map.insert("body".to_string(), Value::String(Arc::new(response_body)));
                     response_map.insert("headers".to_string(), Value::Map(Arc::new(headers)));
@@ -574,18 +574,18 @@ fn read_request(
 /// The request value handed to the olang handler: a struct with dot access,
 /// with `query` and `headers` as maps so `map_get` reads them.
 fn request_to_value(req: &ParsedRequest, remote_addr: &str) -> Value {
-    let query_map: HashMap<String, Value> = req
+    let query_map: crate::ast::ValueMap = req
         .query
         .iter()
         .map(|(k, v)| (k.clone(), Value::String(Arc::new(v.clone()))))
         .collect();
-    let header_map: HashMap<String, Value> = req
+    let header_map: crate::ast::ValueMap = req
         .headers
         .iter()
         .map(|(k, v)| (k.clone(), Value::String(Arc::new(v.clone()))))
         .collect();
 
-    let mut fields = HashMap::new();
+    let mut fields = crate::ast::ValueMap::default();
     fields.insert(
         "method".to_string(),
         Value::String(Arc::new(req.method.clone())),
@@ -920,7 +920,7 @@ fn default_worker_count() -> usize {
 }
 
 fn option_usize(
-    fields: &HashMap<String, Value>,
+    fields: &crate::ast::ValueMap,
     name: &str,
     default: usize,
     min: usize,
@@ -1088,7 +1088,7 @@ fn http_defer(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if id == 0 {
         return Err("http.defer: no request is being handled on this thread".into());
     }
-    let mut fields = HashMap::new();
+    let mut fields = crate::ast::ValueMap::default();
     fields.insert("ticket".to_string(), Value::Integer(id as i64));
     Ok(Value::Struct {
         type_name: "HttpDeferred".to_string(),
@@ -1532,7 +1532,7 @@ fn http_response(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         _ => return Err("response: body must be a string".into()),
     };
 
-    let mut response_map = HashMap::new();
+    let mut response_map = crate::ast::ValueMap::default();
     response_map.insert("status".to_string(), Value::Integer(status));
     response_map.insert(
         "body".to_string(),
@@ -1542,7 +1542,7 @@ fn http_response(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         "headers".to_string(),
         Value::Struct {
             type_name: "Headers".to_string(),
-            fields: std::sync::Arc::new(HashMap::new()),
+            fields: std::sync::Arc::new(crate::ast::ValueMap::default()),
         },
     );
 
@@ -1581,7 +1581,7 @@ fn http_response_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::er
         _ => return Err("response_with_headers: headers must be a map or object".into()),
     };
 
-    let mut response_map = HashMap::new();
+    let mut response_map = crate::ast::ValueMap::default();
     response_map.insert("status".to_string(), Value::Integer(status));
     response_map.insert(
         "body".to_string(),
@@ -1617,7 +1617,7 @@ fn parse_url(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
     match url::Url::parse(url_str) {
         Ok(url) => {
-            let mut url_map = HashMap::new();
+            let mut url_map = crate::ast::ValueMap::default();
             url_map.insert(
                 "scheme".to_string(),
                 Value::String(Arc::new(url.scheme().to_string())),
@@ -1713,7 +1713,7 @@ fn decode_query(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
     };
 
-    let mut params = HashMap::new();
+    let mut params = crate::ast::ValueMap::default();
 
     for pair in query_str.split('&') {
         if let Some((key, value)) = pair.split_once('=') {
@@ -1752,7 +1752,7 @@ mod tests {
         Value::Boolean(b)
     }
 
-    fn struct_val(type_name: &str, fields: HashMap<String, Value>) -> Value {
+    fn struct_val(type_name: &str, fields: crate::ast::ValueMap) -> Value {
         Value::Struct {
             type_name: type_name.to_string(),
             fields: std::sync::Arc::new(fields),
@@ -1861,7 +1861,7 @@ mod tests {
 
     #[test]
     fn test_http_response_with_headers() {
-        let mut headers = HashMap::new();
+        let mut headers = crate::ast::ValueMap::default();
         headers.insert("Content-Type".to_string(), string_val("application/json"));
         headers.insert("X-Custom-Header".to_string(), string_val("test-value"));
         let headers_struct = struct_val("Headers", headers.clone());
@@ -1952,7 +1952,7 @@ mod tests {
 
     #[test]
     fn test_encode_query() {
-        let mut params = HashMap::new();
+        let mut params = crate::ast::ValueMap::default();
         params.insert("name".to_string(), string_val("John Doe"));
         params.insert("age".to_string(), int_val(30));
         params.insert("active".to_string(), bool_val(true));
@@ -2063,7 +2063,7 @@ mod tests {
 
     #[test]
     fn test_render_handler_result_bytes_body_is_raw() {
-        let mut fields = HashMap::new();
+        let mut fields = crate::ast::ValueMap::default();
         fields.insert("status".to_string(), int_val(200));
         fields.insert(
             "body".to_string(),
@@ -2089,7 +2089,7 @@ mod tests {
     /// refused with a 403 instead of serving the file's bytes.
     #[test]
     fn test_body_file_denied_without_fs() {
-        let mut fields = HashMap::new();
+        let mut fields = crate::ast::ValueMap::default();
         fields.insert("status".to_string(), int_val(200));
         fields.insert("body_file".to_string(), string_val("/etc/hostname"));
         let resp = Value::Struct {
@@ -2183,14 +2183,14 @@ mod tests {
         let result = http_response_with_headers(vec![
             string_val("not an int"),
             string_val("body"),
-            struct_val("Headers", HashMap::new()),
+            struct_val("Headers", crate::ast::ValueMap::default()),
         ]);
         assert!(result.is_err());
 
         let result = http_response_with_headers(vec![
             int_val(200),
             int_val(123),
-            struct_val("Headers", HashMap::new()),
+            struct_val("Headers", crate::ast::ValueMap::default()),
         ]);
         assert!(result.is_err());
 
@@ -2246,7 +2246,7 @@ mod tests {
 
     #[test]
     fn test_encode_query_with_special_characters() {
-        let mut params = HashMap::new();
+        let mut params = crate::ast::ValueMap::default();
         params.insert("name".to_string(), string_val("John & Jane"));
         params.insert("email".to_string(), string_val("test@example.com"));
         params.insert("path".to_string(), string_val("/path/with spaces"));
@@ -2289,7 +2289,7 @@ mod tests {
 
     #[test]
     fn test_query_encode_decode_roundtrip() {
-        let mut original_params = HashMap::new();
+        let mut original_params = crate::ast::ValueMap::default();
         original_params.insert("name".to_string(), string_val("Test User"));
         original_params.insert("age".to_string(), int_val(25));
         original_params.insert("active".to_string(), bool_val(true));
@@ -2318,12 +2318,12 @@ mod tests {
 
     #[test]
     fn test_encode_query_skips_complex_types() {
-        let mut params = HashMap::new();
+        let mut params = crate::ast::ValueMap::default();
         params.insert("simple_string".to_string(), string_val("hello"));
         params.insert("simple_int".to_string(), int_val(42));
         params.insert(
             "complex_struct".to_string(),
-            struct_val("ComplexType", HashMap::new()),
+            struct_val("ComplexType", crate::ast::ValueMap::default()),
         );
         params.insert(
             "list".to_string(),

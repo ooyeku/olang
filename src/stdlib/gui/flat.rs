@@ -34,16 +34,16 @@ const PAD: usize = 80;
 // ── reading the spec ─────────────────────────────────────────────────
 
 struct Spec<'a> {
-    theme: &'a HashMap<String, Value>,
+    theme: &'a crate::ast::ValueMap,
     lifted: HashSet<&'a str>,
     fills: HashSet<&'a str>,
     ctx: HashSet<&'a str>,
     shrinks: HashSet<&'a str>,
     placed: HashSet<&'a str>,
-    leaves: &'a HashMap<String, Value>,
+    leaves: &'a crate::ast::ValueMap,
     heading: Vec<Value>,
     label: &'a Value,
-    looks: &'a HashMap<String, Value>,
+    looks: &'a crate::ast::ValueMap,
     /// The font style of a text that sets none of its own, by role
     /// (heading level): most texts share one, built once a call.
     plain: RefCell<HashMap<usize, Value>>,
@@ -64,7 +64,7 @@ fn strs(v: Option<&Value>) -> HashSet<&str> {
     out
 }
 
-fn a_map<'a>(v: Option<&'a Value>, what: &str) -> Res<&'a HashMap<String, Value>> {
+fn a_map<'a>(v: Option<&'a Value>, what: &str) -> Res<&'a crate::ast::ValueMap> {
     match v {
         Some(Value::Map(m)) => Ok(m),
         _ => Err(format!("gui.flatten: the spec's \"{what}\" must be a map")),
@@ -125,7 +125,7 @@ struct UnitValue(Value);
 unsafe impl Sync for UnitValue {}
 static UNIT: UnitValue = UnitValue(Value::Unit);
 
-fn props_of(node: &Value) -> Option<&HashMap<String, Value>> {
+fn props_of(node: &Value) -> Option<&crate::ast::ValueMap> {
     match node {
         Value::Map(m) => match m.get("props") {
             Some(Value::Map(p)) => Some(p),
@@ -136,12 +136,12 @@ fn props_of(node: &Value) -> Option<&HashMap<String, Value>> {
 }
 
 /// `map_get`: the value, or `()`.
-fn mget<'a>(m: Option<&'a HashMap<String, Value>>, k: &str) -> &'a Value {
+fn mget<'a>(m: Option<&'a crate::ast::ValueMap>, k: &str) -> &'a Value {
     m.and_then(|m| m.get(k)).unwrap_or(&UNIT.0)
 }
 
 /// `map_get_or`.
-fn mget_or<'a>(m: Option<&'a HashMap<String, Value>>, k: &str, d: &'a Value) -> &'a Value {
+fn mget_or<'a>(m: Option<&'a crate::ast::ValueMap>, k: &str, d: &'a Value) -> &'a Value {
     match mget(m, k) {
         Value::Unit => d,
         v => v,
@@ -193,12 +193,12 @@ fn st(text: &str) -> Value {
     Value::String(Arc::new(text.to_string()))
 }
 
-fn vmap(m: HashMap<String, Value>) -> Value {
+fn vmap(m: crate::ast::ValueMap) -> Value {
     Value::Map(Arc::new(m))
 }
 
-fn hm(fields: Vec<(&str, Value)>) -> HashMap<String, Value> {
-    let mut m = HashMap::with_capacity(fields.len());
+fn hm(fields: Vec<(&str, Value)>) -> crate::ast::ValueMap {
+    let mut m = crate::ast::ValueMap::with_capacity_and_hasher(fields.len(), Default::default());
     for (k, v) in fields {
         m.insert(k.to_string(), v);
     }
@@ -293,7 +293,7 @@ fn pad4(p: &Value) -> (f64, f64, f64, f64) {
     }
 }
 
-fn border_of(p: Option<&HashMap<String, Value>>) -> f64 {
+fn border_of(p: Option<&crate::ast::ValueMap>) -> f64 {
     match mget(p, "style") {
         Value::Map(st) => match st.get("border") {
             None | Some(Value::Unit) => 0.0,
@@ -318,11 +318,7 @@ fn tok(spec: &Spec, v: &Value) -> Value {
     }
 }
 
-fn font_style(
-    spec: &Spec,
-    p: Option<&HashMap<String, Value>>,
-    role: &str,
-) -> HashMap<String, Value> {
+fn font_style(spec: &Spec, p: Option<&crate::ast::ValueMap>, role: &str) -> crate::ast::ValueMap {
     let mut s = if role == "heading" {
         let at = match mget(p, "level") {
             Value::Integer(1) => 0,
@@ -379,7 +375,7 @@ const FONT_PROPS: &[&str] = &[
 
 /// `font_style` as a value, shared among the texts that set none of
 /// their own.
-fn font_style_v(spec: &Spec, p: Option<&HashMap<String, Value>>, role: &str) -> Value {
+fn font_style_v(spec: &Spec, p: Option<&crate::ast::ValueMap>, role: &str) -> Value {
     if FONT_PROPS.iter().any(|k| *mget(p, k) != Value::Unit) {
         return vmap(font_style(spec, p, role));
     }
@@ -403,11 +399,11 @@ fn with_style(spec: &Spec, look: Value, style: &Value) -> Value {
         Value::Map(m) => {
             let mut s = match &look {
                 Value::Map(l) => (**l).clone(),
-                _ => HashMap::new(),
+                _ => crate::ast::ValueMap::default(),
             };
             for (k, v) in m.iter() {
                 let v2 = if matches!(v, Value::Map(_)) {
-                    with_style(spec, vmap(HashMap::new()), v)
+                    with_style(spec, vmap(crate::ast::ValueMap::default()), v)
                 } else {
                     tok(spec, v)
                 };
@@ -886,7 +882,7 @@ fn ints_of(v: &Value, what: &str) -> Res<Vec<i64>> {
     }
 }
 
-fn list_of<'a>(f: &'a HashMap<String, Value>, k: &str) -> Res<&'a [Value]> {
+fn list_of<'a>(f: &'a crate::ast::ValueMap, k: &str) -> Res<&'a [Value]> {
     match f.get(k) {
         Some(Value::List(l)) => Ok(l),
         _ => Err(format!("gui.flat_emit: \"{k}\" must be a list")),
@@ -902,7 +898,7 @@ fn rec(
     b: (f64, f64, f64, f64),
     origin: (f64, f64),
     node: &Value,
-    op: HashMap<String, Value>,
+    op: crate::ast::ValueMap,
     focusable: bool,
     path: &str,
 ) -> Value {
@@ -913,7 +909,7 @@ fn rec(
         Value::Float(w),
         Value::Float(h),
     ]);
-    let mut gop = HashMap::with_capacity(op.len() + 4);
+    let mut gop = crate::ast::ValueMap::with_capacity_and_hasher(op.len() + 4, Default::default());
     gop.insert("key".to_string(), st(gkey));
     gop.insert("box".to_string(), rel.clone());
     if *parent != Value::Unit {
@@ -949,16 +945,20 @@ fn rec(
 
 fn group_op(
     spec: &Spec,
-    p: Option<&HashMap<String, Value>>,
+    p: Option<&crate::ast::ValueMap>,
     default_role: &str,
-) -> HashMap<String, Value> {
+) -> crate::ast::ValueMap {
     let dr = st(default_role);
     hm(vec![
         ("role", mget_or(p, "a11y_role", &dr).clone()),
         ("name", mget(p, "name").clone()),
         (
             "style",
-            with_style(spec, vmap(HashMap::new()), mget(p, "style")),
+            with_style(
+                spec,
+                vmap(crate::ast::ValueMap::default()),
+                mget(p, "style"),
+            ),
         ),
     ])
 }

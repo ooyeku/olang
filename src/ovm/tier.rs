@@ -37,8 +37,8 @@ use crate::ovm::{FunctionId, OvmValue};
 /// pointer must never be listed here; every variant below is immutable.
 enum CachedOwner {
     Tuple(Weak<Vec<Value>>),
-    Map(Weak<std::collections::HashMap<String, Value>>),
-    Struct(Weak<std::collections::HashMap<String, Value>>),
+    Map(Weak<crate::ast::ValueMap>),
+    Struct(Weak<crate::ast::ValueMap>),
 }
 
 impl CachedOwner {
@@ -1290,7 +1290,7 @@ mod tests {
     fn a_cached_owner_rejects_a_different_variant() {
         // A struct and a map share a payload type, so without the variant
         // check a struct entry could answer for a map at a reused address.
-        let mut fields = std::collections::HashMap::new();
+        let mut fields = crate::ast::ValueMap::default();
         fields.insert("a".to_string(), Value::Integer(1));
         let fields = Arc::new(fields);
         let as_struct = Value::Struct {

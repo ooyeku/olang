@@ -58,7 +58,6 @@ use crate::ast::Value;
 use crate::interpreter::InterpreterError;
 use crate::native::{NativeHandle, NativeObject};
 use std::any::Any;
-use std::collections::HashMap;
 use std::sync::Mutex;
 use std::thread::ThreadId;
 
@@ -168,7 +167,7 @@ impl NativeObject for CellObject {
 /// is why the constructor reads as a one-word noun at the use site while
 /// the operations stay namespaced.
 pub fn create_cell_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
     for (name, arity) in [
         ("new", 1),
         ("get", 1),

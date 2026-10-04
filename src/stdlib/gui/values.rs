@@ -3,7 +3,6 @@
 
 use super::text::Color;
 use crate::ast::Value;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 pub type Res<T> = Result<T, String>;
@@ -25,7 +24,7 @@ pub fn float(f: f32) -> Value {
 }
 
 pub fn map(fields: Vec<(&str, Value)>) -> Value {
-    let mut m = HashMap::new();
+    let mut m = crate::ast::ValueMap::default();
     for (k, v) in fields {
         m.insert(k.to_string(), v);
     }
@@ -46,7 +45,7 @@ pub fn opt_str(v: Option<&str>) -> Value {
 }
 
 /// The fields of a map or an object, or `None` for anything else.
-pub fn fields(v: &Value) -> Option<&HashMap<String, Value>> {
+pub fn fields(v: &Value) -> Option<&crate::ast::ValueMap> {
     match v {
         Value::Map(m) => Some(m),
         Value::Struct { fields, .. } => Some(fields),
@@ -213,7 +212,7 @@ pub fn window_id(function: &str, v: Option<&Value>) -> Res<u64> {
 }
 
 pub fn window_value(id: u64, headless: bool) -> Value {
-    let mut f = HashMap::new();
+    let mut f = crate::ast::ValueMap::default();
     f.insert("id".to_string(), Value::Integer(id as i64));
     f.insert("headless".to_string(), Value::Boolean(headless));
     Value::Struct {

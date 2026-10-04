@@ -56,7 +56,7 @@ impl Default for ReplConfig {
 #[derive(Debug, Clone)]
 pub struct CallFrame {
     pub function_name: String,
-    pub local_variables: HashMap<String, Value>,
+    pub local_variables: crate::ast::ValueMap,
     pub line_number: Option<usize>,
     pub file_name: Option<String>,
 }
@@ -65,7 +65,7 @@ impl CallFrame {
     pub fn new(function_name: String) -> Self {
         Self {
             function_name,
-            local_variables: HashMap::new(),
+            local_variables: crate::ast::ValueMap::default(),
             line_number: None,
             file_name: None,
         }
@@ -101,7 +101,7 @@ pub struct InteractiveDebugger {
     traced_functions: HashSet<String>,
 
     /// Previous variable values for change detection
-    variable_history: HashMap<String, Value>,
+    variable_history: crate::ast::ValueMap,
 
     /// Profiling data for performance analysis
     profiling_data: HashMap<String, Vec<f64>>,
@@ -121,7 +121,7 @@ impl InteractiveDebugger {
             debug_mode: false,
             breakpoints: HashSet::new(),
             traced_functions: HashSet::new(),
-            variable_history: HashMap::new(),
+            variable_history: crate::ast::ValueMap::default(),
             profiling_data: HashMap::new(),
         }
     }
@@ -185,7 +185,7 @@ impl InteractiveDebugger {
         self.profiling_data.clear();
     }
 
-    pub fn check_watched_variables(&self, current_vars: &HashMap<String, Value>) -> Vec<String> {
+    pub fn check_watched_variables(&self, current_vars: &crate::ast::ValueMap) -> Vec<String> {
         let mut changes = Vec::new();
 
         for var_name in &self.watched_variables {
@@ -2254,8 +2254,8 @@ impl Repl {
         if watching_vars {
             let user_vars_after = self.interpreter.get_user_variables();
 
-            // Convert HashMap<String, &Value> to HashMap<String, Value> for compatibility
-            let user_vars_owned: HashMap<String, Value> = user_vars_after
+            // Convert HashMap<String, &Value> to crate::ast::ValueMap for compatibility
+            let user_vars_owned: crate::ast::ValueMap = user_vars_after
                 .iter()
                 .map(|(k, v)| (k.clone(), (*v).clone()))
                 .collect();
@@ -3010,8 +3010,8 @@ impl Repl {
                         // Check for watched variable changes
                         let user_vars_after = self.interpreter.get_user_variables();
 
-                        // Convert HashMap<String, &Value> to HashMap<String, Value> for compatibility
-                        let user_vars_owned: HashMap<String, Value> = user_vars_after
+                        // Convert HashMap<String, &Value> to crate::ast::ValueMap for compatibility
+                        let user_vars_owned: crate::ast::ValueMap = user_vars_after
                             .iter()
                             .map(|(k, v)| (k.clone(), (*v).clone()))
                             .collect();

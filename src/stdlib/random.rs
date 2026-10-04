@@ -3,7 +3,6 @@ use rand::SeedableRng;
 use rand::distr::Alphanumeric;
 use rand::prelude::*;
 use rand::rngs::StdRng;
-use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 /// Thread-safe random number generator
@@ -35,7 +34,7 @@ pub enum RandomError {
 
 /// Creates the random module with all random generation functions
 pub fn create_random_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
 
     // Random number generation
     module.insert("random".to_string(), create_builtin_function("random", 0));

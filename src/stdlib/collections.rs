@@ -20,7 +20,7 @@ use std::sync::Arc;
 /// `call_collections_function`, which — unlike other modules — needs the
 /// interpreter to invoke the function arguments.
 pub fn create_collections_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
 
     let two = [
         "min_by",
@@ -427,7 +427,7 @@ fn frequencies(args: Vec<Value>) -> Result<Value, InterpreterError> {
 
 /// Build an olang map (Struct-backed) from string keys to integer counts.
 fn map_of_counts(counts: HashMap<String, i64>) -> Value {
-    let fields: HashMap<String, Value> = counts
+    let fields: crate::ast::ValueMap = counts
         .into_iter()
         .map(|(k, v)| (k, Value::Integer(v)))
         .collect();

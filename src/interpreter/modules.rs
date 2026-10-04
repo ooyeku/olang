@@ -678,7 +678,7 @@ impl Interpreter {
 
         // Execute the module and collect exports
         let result = {
-            let mut exports = std::collections::HashMap::new();
+            let mut exports = crate::ast::ValueMap::default();
             let mut dependencies = Vec::new();
 
             // Names that arrived via `share use` re-export: their

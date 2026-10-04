@@ -17,7 +17,6 @@ use crate::ast::Value;
 use crate::native::{NativeHandle, NativeObject};
 use num_bigint::BigInt;
 use num_traits::{Pow, Signed, ToPrimitive, Zero};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// A *misused* call — wrong arity, wrong argument type. Raised rather
@@ -85,7 +84,7 @@ fn as_bigint_operand(v: &Value) -> Option<BigInt> {
 }
 
 pub fn create_bigint_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
     for (name, arity) in [
         ("of", 1),
         ("parse", 1),

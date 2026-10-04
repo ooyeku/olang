@@ -171,7 +171,7 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
     // top-level bindings of each imported module, by import path. The
     // table lives for this expansion and is cleared when it ends.
     let _exports_guard = crate::stdlib::meta::ExportsGuard::new();
-    let mut exports: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+    let mut exports: crate::ast::ValueMap = crate::ast::ValueMap::default();
     // Only names declared `meta fn` — locally or in an imported module —
     // are invocable as macros. Without this registry, an `@` call would
     // fall through to ANY global binding: `@json` found the stdlib json
@@ -826,8 +826,8 @@ fn trailing_comment_hint(out: &str) -> &'static str {
 fn collect_literal_bindings(
     interp: &mut crate::interpreter::Interpreter,
     module: &Program,
-) -> std::collections::HashMap<String, Value> {
-    let mut out = std::collections::HashMap::new();
+) -> crate::ast::ValueMap {
+    let mut out = crate::ast::ValueMap::default();
     for st in &module.statements {
         let decl = match st.unwrapped() {
             crate::ast::Statement::LetDecl(l) => l,

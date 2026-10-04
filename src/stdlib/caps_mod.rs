@@ -31,14 +31,13 @@
 
 use crate::ast::{BuiltinFunction, Value};
 use crate::caps::{Caps, FsCap};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// The capability names a program can ask about, in report order.
 pub const NAMES: &[&str] = &["fs", "net", "proc", "db", "env"];
 
 pub fn create_caps_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
     for (name, arity) in [("allowed", 1usize), ("granted", 0), ("level", 1)] {
         module.insert(
             name.to_string(),
@@ -123,7 +122,7 @@ pub fn call(function: &str, args: Vec<Value>, caps: &Caps) -> Result<Value, Stri
         // The whole grant at once, for reporting it rather than branching
         // on it. `fs` carries its level; the rest are Bool.
         "granted" => {
-            let mut map = HashMap::new();
+            let mut map = crate::ast::ValueMap::default();
             map.insert(
                 "fs".to_string(),
                 Value::String(Arc::new(fs_level(caps).to_string())),

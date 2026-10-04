@@ -1,5 +1,4 @@
 use crate::ast::Value;
-use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
@@ -43,7 +42,7 @@ impl From<io::Error> for FsError {
 
 /// Creates the fs module with all filesystem functions
 pub fn create_fs_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
 
     // Essential file operations
     module.insert(
@@ -876,7 +875,7 @@ fn file_info(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
     match fs::metadata(path_str) {
         Ok(metadata) => {
-            let mut info = HashMap::new();
+            let mut info = crate::ast::ValueMap::default();
             info.insert("size".to_string(), Value::Integer(metadata.len() as i64));
             info.insert("is_file".to_string(), Value::Boolean(metadata.is_file()));
             info.insert("is_dir".to_string(), Value::Boolean(metadata.is_dir()));

@@ -5,11 +5,10 @@
 //! `assets`).
 
 use crate::ast::Value;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 pub fn create_asset_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
     for (name, arity) in [("read", 2), ("exists", 2), ("path", 2)] {
         module.insert(
             name.to_string(),

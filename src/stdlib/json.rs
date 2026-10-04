@@ -1,6 +1,5 @@
 use crate::ast::Value;
 use serde_json;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Error types for JSON operations
@@ -28,7 +27,7 @@ impl From<serde_json::Error> for JsonError {
 
 /// Creates the json module with all JSON functions
 pub fn create_json_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
 
     // Core parsing and serialization
     module.insert("parse".to_string(), create_builtin_function("parse", 1));
@@ -904,7 +903,7 @@ pub(crate) fn json_to_olang_value(json_value: serde_json::Value) -> Result<Value
             Value::List(values.into())
         }
         serde_json::Value::Object(obj) => {
-            let mut fields = HashMap::new();
+            let mut fields = crate::ast::ValueMap::default();
             for (key, value) in obj {
                 fields.insert(key, json_to_olang_value(value)?);
             }

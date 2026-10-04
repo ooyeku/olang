@@ -284,7 +284,7 @@ impl NativeObject for ChanObject {
 }
 
 pub fn create_chan_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
     for (name, arity) in [
         ("new", 0),
         ("bounded", 1),
@@ -536,7 +536,7 @@ fn chan_ask(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let (tx, rx) = crossbeam_channel::unbounded();
     let reply = register(Tx::Unbounded(tx), rx);
     let reply_chan = chan_of(&reply)?;
-    let mut message = HashMap::new();
+    let mut message = crate::ast::ValueMap::default();
     message.insert("req".to_string(), request);
     message.insert("reply".to_string(), reply.clone());
     let envelope = Value::Map(Arc::new(message));
@@ -665,7 +665,7 @@ fn chan_stat(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Err("chan.stat expects a channel".into());
     }
     let chan = chan_of(&args[0])?;
-    let mut m = HashMap::new();
+    let mut m = crate::ast::ValueMap::default();
     m.insert("id".to_string(), Value::Integer(chan.id as i64));
     m.insert(
         "queued".to_string(),

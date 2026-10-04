@@ -592,11 +592,10 @@ fn probe() = {
 /// A store-shaped interpreter map: big enough and nested enough to cross
 /// the tier boundary as an `AstMap` wrapper, not a converted native map.
 fn store_value() -> Value {
-    use std::collections::HashMap;
     use std::sync::Arc;
     let s = |t: &str| Value::String(Arc::new(t.to_string()));
     let record = |i: i64| {
-        let mut r = HashMap::new();
+        let mut r = olang::ast::ValueMap::default();
         r.insert("id".to_string(), Value::Integer(i));
         r.insert("title".to_string(), s(&format!("issue {i}")));
         r.insert(
@@ -605,11 +604,11 @@ fn store_value() -> Value {
         );
         Value::Map(Arc::new(r))
     };
-    let mut by_id = HashMap::new();
+    let mut by_id = olang::ast::ValueMap::default();
     for i in 0..20 {
         by_id.insert(format!("id{i}"), record(i));
     }
-    let mut store = HashMap::new();
+    let mut store = olang::ast::ValueMap::default();
     store.insert("count".to_string(), Value::Integer(3));
     store.insert(
         "recent".to_string(),

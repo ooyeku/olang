@@ -78,7 +78,7 @@ const FUNCTIONS: &[(&str, usize)] = &[
 ];
 
 pub fn create_gui_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
     for (name, arity) in FUNCTIONS {
         module.insert(
             name.to_string(),

@@ -1,6 +1,5 @@
 use crate::ast::Value;
 use csv::{ReaderBuilder, WriterBuilder};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Error types for CSV operations
@@ -35,7 +34,7 @@ impl From<csv::Error> for CsvError {
 
 /// Creates the csv module with all CSV functions
 pub fn create_csv_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
 
     // Core parsing and serialization
     module.insert("parse".to_string(), create_builtin_function("parse", 1));
@@ -226,7 +225,7 @@ fn csv_parse_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
     for result in reader.records() {
         match result {
             Ok(record) => {
-                let mut obj = HashMap::new();
+                let mut obj = crate::ast::ValueMap::default();
                 for (i, field) in record.iter().enumerate() {
                     if i < headers.len() {
                         obj.insert(
@@ -1211,7 +1210,7 @@ mod tests {
         Value::List(items.into())
     }
 
-    fn struct_val(type_name: &str, fields: HashMap<String, Value>) -> Value {
+    fn struct_val(type_name: &str, fields: crate::ast::ValueMap) -> Value {
         Value::Struct {
             type_name: type_name.to_string(),
             fields: std::sync::Arc::new(fields),
@@ -1441,11 +1440,11 @@ mod tests {
     #[test]
     fn test_csv_stringify_with_headers() {
         // Test successful stringification with headers
-        let mut alice_fields = HashMap::new();
+        let mut alice_fields = crate::ast::ValueMap::default();
         alice_fields.insert("name".to_string(), string_val("Alice"));
         alice_fields.insert("age".to_string(), int_val(30));
 
-        let mut bob_fields = HashMap::new();
+        let mut bob_fields = crate::ast::ValueMap::default();
         bob_fields.insert("name".to_string(), string_val("Bob"));
         bob_fields.insert("age".to_string(), int_val(25));
 

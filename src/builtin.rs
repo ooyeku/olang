@@ -3305,7 +3305,7 @@ impl BuiltinFunctions {
     /// Lets the `map_*` accessors work uniformly on maps, anonymous objects,
     /// structs, and parsed JSON objects — anything with named fields reads the
     /// same way, so dynamic key access on parsed JSON is possible.
-    fn field_map(value: &Value) -> Option<&HashMap<String, Value>> {
+    fn field_map(value: &Value) -> Option<&crate::ast::ValueMap> {
         match value {
             Value::Map(m) => Some(m.as_ref()),
             Value::Struct { fields, .. } => Some(fields),
@@ -3705,7 +3705,7 @@ impl BuiltinFunctions {
             Value::Map(_) => {
                 // Return an empty map
                 Ok(Value::Map(std::sync::Arc::new(
-                    std::collections::HashMap::new(),
+                    crate::ast::ValueMap::default(),
                 )))
             }
             _ => Err(InterpreterError::TypeError {

@@ -11,7 +11,6 @@ use crate::ast::Value;
 use crate::native::{NativeHandle, NativeObject};
 use olang_ods::{AggOp, AggSpec, Frame, JoinHow, Scalar, Series};
 use std::any::Any;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -614,7 +613,7 @@ pub fn dispatch(func: &str, mut args: Vec<Value>) -> Result<Value, String> {
             let f = want_frame(func, &args, 0)?;
             let mut out = Vec::with_capacity(f.n_rows());
             for row in 0..f.n_rows() {
-                let mut m = HashMap::new();
+                let mut m = crate::ast::ValueMap::default();
                 for (name, col) in f.names().iter().zip(f.columns()) {
                     m.insert(name.clone(), scalar_to_value(col.scalar_at(row)));
                 }

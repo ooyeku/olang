@@ -6,11 +6,10 @@
 //! truncation.
 
 use crate::ast::Value;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 pub fn create_vec_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
     for (name, arity) in [
         ("dot", 2),
         ("add", 2),

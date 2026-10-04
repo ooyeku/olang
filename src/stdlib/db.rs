@@ -252,7 +252,7 @@ static NEXT_CURSOR: AtomicU64 = AtomicU64::new(1);
 
 /// Creates the db module.
 pub fn create_db_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
     // The arity registered is the fewest arguments a call takes; the
     // optional ones (params, options) are read when they are there.
     for (name, arity) in [
@@ -767,7 +767,7 @@ unsafe fn columns(stmt: &RawStmt) -> Vec<Value> {
         .map(|i| {
             let name = text(unsafe { ffi::sqlite3_column_name(s, i) }).unwrap_or_default();
             let decltype = text(unsafe { ffi::sqlite3_column_decltype(s, i) });
-            let mut m = HashMap::new();
+            let mut m = crate::ast::ValueMap::default();
             m.insert("name".to_string(), string(name));
             m.insert(
                 "decltype".to_string(),
@@ -1178,7 +1178,7 @@ fn db_open(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     reg.next_id += 1;
     reg.connections.insert(id, entry);
 
-    let mut fields = HashMap::new();
+    let mut fields = crate::ast::ValueMap::default();
     fields.insert("id".to_string(), Value::Integer(id));
     fields.insert("path".to_string(), string(path));
     Ok(ok(Value::Struct {
@@ -1237,7 +1237,7 @@ fn db_query(args: Vec<Value>, one: bool) -> Result<Value, Box<dyn std::error::Er
         let mut rows = stmt.query(bound.as_slice())?;
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {
-            let mut map = HashMap::new();
+            let mut map = crate::ast::ValueMap::default();
             for (i, name) in column_names.iter().enumerate() {
                 let cell = row.get_ref(i).map(sql_to_value).unwrap_or(Value::Unit);
                 map.insert(name.clone(), cell);
@@ -1290,7 +1290,7 @@ fn db_query_rows(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     });
     Ok(match outcome {
         Ok((cols, rows)) => {
-            let mut m = HashMap::new();
+            let mut m = crate::ast::ValueMap::default();
             m.insert("columns".to_string(), list(cols));
             m.insert("rows".to_string(), list(rows));
             ok(Value::Map(Arc::new(m)))

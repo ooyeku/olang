@@ -6,11 +6,10 @@
 //! modules cannot drift on how values convert.
 
 use crate::ast::Value;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 pub fn create_toml_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
     module.insert("parse".to_string(), create_builtin_function("parse", 1));
     module.insert(
         "stringify".to_string(),

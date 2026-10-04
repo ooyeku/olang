@@ -1,5 +1,4 @@
 use crate::ast::Value;
-use std::collections::HashMap;
 
 /// Error types for mathematical operations
 #[derive(Debug, thiserror::Error)]
@@ -16,7 +15,7 @@ pub enum MathError {
 
 /// Creates the math module with all mathematical functions and constants
 pub fn create_math_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
 
     // Mathematical constants
     module.insert("PI".to_string(), Value::Float(std::f64::consts::PI));

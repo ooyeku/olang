@@ -9,12 +9,11 @@
 //! indexing and `len`, so multibyte text behaves intuitively.
 
 use crate::ast::Value;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Creates the string module.
 pub fn create_string_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
 
     let unary = [
         "to_upper",

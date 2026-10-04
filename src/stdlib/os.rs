@@ -1,5 +1,4 @@
 use crate::ast::Value;
-use std::collections::HashMap;
 use std::env;
 use std::process;
 use std::sync::Arc;
@@ -21,7 +20,7 @@ pub enum OsError {
 
 /// Creates the os module with all OS functions
 pub fn create_os_module() -> Value {
-    let mut module = HashMap::new();
+    let mut module = crate::ast::ValueMap::default();
 
     // Environment variables
     module.insert("get_env".to_string(), create_builtin_function("get_env", 1));
@@ -295,7 +294,7 @@ fn os_list_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Err(format!("os.list_env expects 0 arguments, got {}", args.len()).into());
     }
 
-    let mut env_vars = HashMap::new();
+    let mut env_vars = crate::ast::ValueMap::default();
     for (key, value) in env::vars() {
         env_vars.insert(key, Value::String(Arc::new(value)));
     }
@@ -637,7 +636,7 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             };
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            let mut fields = HashMap::new();
+            let mut fields = crate::ast::ValueMap::default();
             fields.insert("code".to_string(), Value::Integer(code));
             fields.insert("stdout".to_string(), Value::String(Arc::new(stdout)));
             fields.insert("stderr".to_string(), Value::String(Arc::new(stderr)));
@@ -1174,7 +1173,7 @@ mod tests {
     }
 
     // Helper function to extract struct fields from Value
-    fn extract_struct_fields(value: &Value) -> &HashMap<String, Value> {
+    fn extract_struct_fields(value: &Value) -> &crate::ast::ValueMap {
         match value {
             Value::Struct { fields, .. } => fields,
             _ => {

@@ -148,7 +148,7 @@ pub struct Interpreter {
     pending_top_level: HashMap<String, Statement>,
     /// Functions `lookup_name` declared ahead of their statement; the
     /// statement binds this very value instead of building another.
-    declared_early: HashMap<String, Value>,
+    declared_early: crate::ast::ValueMap,
     /// Every loaded module's complete top-level table, by file. A frame
     /// whose function belongs to that file resolves a name here after
     /// its lexical scopes and before the program's root — so a module's
@@ -386,7 +386,7 @@ impl Interpreter {
             owners: HashMap::new(),
             fallback_globals: None,
             pending_top_level: HashMap::new(),
-            declared_early: HashMap::new(),
+            declared_early: crate::ast::ValueMap::default(),
             module_scopes: HashMap::new(),
             fn_run: None,
             lambda_shapes: HashMap::new(),
@@ -1468,7 +1468,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         }
 
         // Use pattern matching to bind variables from the pattern
-        let mut bindings = HashMap::new();
+        let mut bindings = crate::ast::ValueMap::default();
         if !self.pattern_matches_bind(&let_decl.pattern, &value, &mut bindings)? {
             return Err(InterpreterError::PatternMatchFailed);
         }
@@ -3660,7 +3660,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             owners: self.owners.clone(),
             fallback_globals: self.fallback_globals.clone(),
             pending_top_level: HashMap::new(),
-            declared_early: HashMap::new(),
+            declared_early: crate::ast::ValueMap::default(),
             module_scopes: self.module_scopes.clone(),
             fn_run: None,
             lambda_shapes: HashMap::new(),
@@ -4017,7 +4017,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         me: &Function,
     ) -> Result<TailFlow, InterpreterError> {
         for arm in arms {
-            let mut bindings = HashMap::new();
+            let mut bindings = crate::ast::ValueMap::default();
             if self.pattern_matches_bind(&arm.pattern, &value, &mut bindings)? {
                 let guard_passed = if let Some(guard_expr) = &arm.guard {
                     let parent = self.environment.clone();
@@ -4055,7 +4055,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
 
     fn eval_match(&mut self, value: Value, arms: &[MatchArm]) -> Result<Value, InterpreterError> {
         for arm in arms {
-            let mut bindings = HashMap::new();
+            let mut bindings = crate::ast::ValueMap::default();
             if self.pattern_matches_bind(&arm.pattern, &value, &mut bindings)? {
                 // Pattern matched, now check guard clause if present
                 let guard_passed = if let Some(guard_expr) = &arm.guard {
@@ -4248,7 +4248,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             }
         }
 
-        let mut fields = std::collections::HashMap::new();
+        let mut fields = crate::ast::ValueMap::default();
         for field_value in &struct_literal.fields {
             let value = self.eval_expr(&field_value.value)?;
             // Enforce the declared field type where the runtime can check it.
@@ -4292,7 +4292,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         &mut self,
         field_values: &[crate::ast::FieldValue],
     ) -> Result<Value, InterpreterError> {
-        let mut fields = std::collections::HashMap::new();
+        let mut fields = crate::ast::ValueMap::default();
 
         for field_value in field_values {
             let value = self.eval_expr(&field_value.value)?;
@@ -4310,7 +4310,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         &mut self,
         entries: &[crate::ast::MapEntry],
     ) -> Result<Value, InterpreterError> {
-        let mut map = std::collections::HashMap::new();
+        let mut map = crate::ast::ValueMap::default();
 
         for entry in entries {
             let key = self.eval_expr(&entry.key)?;
@@ -5960,7 +5960,7 @@ mod tests {
         // Cache a module
         let test_module = Value::Struct {
             type_name: "Module".to_string(),
-            fields: std::sync::Arc::new(HashMap::new()),
+            fields: std::sync::Arc::new(crate::ast::ValueMap::default()),
         };
 
         interpreter
@@ -6035,11 +6035,11 @@ mod tests {
         // Cache some modules with dependencies
         let module_a = Value::Struct {
             type_name: "Module".to_string(),
-            fields: std::sync::Arc::new(HashMap::new()),
+            fields: std::sync::Arc::new(crate::ast::ValueMap::default()),
         };
         let module_b = Value::Struct {
             type_name: "Module".to_string(),
-            fields: std::sync::Arc::new(HashMap::new()),
+            fields: std::sync::Arc::new(crate::ast::ValueMap::default()),
         };
 
         interpreter
@@ -6102,7 +6102,7 @@ mod tests {
         // Cache some modules
         let test_module = Value::Struct {
             type_name: "Module".to_string(),
-            fields: std::sync::Arc::new(HashMap::new()),
+            fields: std::sync::Arc::new(crate::ast::ValueMap::default()),
         };
 
         interpreter
