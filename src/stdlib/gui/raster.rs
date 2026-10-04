@@ -106,8 +106,23 @@ pub fn glyph(key: &GlyphKey, coords: &[i16]) -> Option<Arc<GlyphImage>> {
 fn render(context: &mut ScaleContext, key: &GlyphKey, coords: &[i16]) -> Option<GlyphImage> {
     let data = super::text::face_data(key.face)?;
     let bytes: &[u8] = data.data.data();
-    let font = swash::FontRef::from_index(bytes, key.face.index as usize)?;
     let size = key.size as f32 / 64.0;
+    // A COLRv1 glyph (Noto's emoji) is painted from its paint graph; swash
+    // would draw only its outline.
+    if !key.embolden
+        && !key.skew
+        && let Some(img) = super::colr::render(
+            bytes,
+            key.face.index,
+            key.glyph,
+            size,
+            coords,
+            key.subpixel as f32 / SUBPIXEL_STEPS,
+        )
+    {
+        return Some(img);
+    }
+    let font = swash::FontRef::from_index(bytes, key.face.index as usize)?;
     let mut scaler = context
         .builder(font)
         .size(size)

@@ -30,6 +30,7 @@
 
 pub mod a11y;
 pub mod canvas;
+pub mod colr;
 pub mod context;
 pub mod edit;
 pub mod gpu;

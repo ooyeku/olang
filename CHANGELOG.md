@@ -39,6 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and its boxes, reads, and events are in units of `zoom` logical
   pixels. `align` takes `left` and `right`, which ignore the text's
   direction, beside `start` and `end`, which follow it.
+- **`gui`: COLRv1 colour glyphs, and the bundled fonts first.** A
+  COLRv1 emoji (Noto Color Emoji, Segoe UI Emoji) is painted from its
+  paint graph — gradients, transforms, clips, layers and their composite
+  modes — where swash drew only its outline. `body` text is Inter, then
+  the emoji font, before the system's, when Loom has registered them; a
+  character followed by U+FE0F ("❤️", "1️⃣") is drawn from an emoji font.
 - **`testing.snapshot_dir()`** answers the `__snapshots__` directory
   beside the file under test, for a library keeping snapshots of its own
   kind (Loom's pixel snapshots).

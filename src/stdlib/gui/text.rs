@@ -63,11 +63,13 @@ impl Font {
     /// The CSS family list parley resolves.
     pub fn family_source(&self) -> String {
         match self.family.as_str() {
-            "body" | "" => "system-ui, sans-serif".to_string(),
+            // The bundled Inter and emoji (Loom's fonts) before the
+            // system's: a window looks the same on every machine.
+            "body" | "" => "Inter Variable, Inter, Noto Color Emoji, system-ui, sans-serif".to_string(),
             // The system's own monospace faces by name first: a generic
             // `monospace` resolves to Courier on macOS. The bundled
             // JetBrains Mono (Loom's fonts) comes before all of them.
-            "mono" => "JetBrains Mono, SF Mono, Menlo, Consolas, DejaVu Sans Mono, Noto Sans Mono, ui-monospace, monospace".to_string(),
+            "mono" => "JetBrains Mono, SF Mono, Menlo, Consolas, DejaVu Sans Mono, Noto Sans Mono, Noto Color Emoji, ui-monospace, monospace".to_string(),
             other => other.to_string(),
         }
     }
@@ -241,6 +243,26 @@ pub fn system() -> &'static Mutex<TextSystem> {
     })
 }
 
+/// The emoji fonts, bundled first.
+const EMOJI_FAMILIES: &str = "Noto Color Emoji, Apple Color Emoji, Segoe UI Emoji, emoji";
+
+/// The byte ranges of the characters followed by the emoji presentation
+/// selector, with the selector (and a keycap's combining mark).
+fn emoji_presentation_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let mut out = Vec::new();
+    for (i, &(at, _c)) in chars.iter().enumerate() {
+        if let Some(&(sel, '\u{FE0F}')) = chars.get(i + 1) {
+            let mut end = sel + '\u{FE0F}'.len_utf8();
+            if let Some(&(k, '\u{20E3}')) = chars.get(i + 2) {
+                end = k + '\u{20E3}'.len_utf8();
+            }
+            out.push(at..end);
+        }
+    }
+    out
+}
+
 /// The most shaped texts kept; past it the cache starts over. A frame
 /// re-shapes what it shows, so a full reset costs one frame's shaping.
 const CACHE_LIMIT: usize = 8192;
@@ -288,6 +310,15 @@ impl TextSystem {
             builder.push_default(style);
         }
         builder.push_default(StyleProperty::Brush(color));
+        // A character asked for in emoji presentation (followed by U+FE0F:
+        // "❤️", "1️⃣") is drawn from an emoji font, though the text font
+        // has a plain glyph for it.
+        for range in emoji_presentation_ranges(text) {
+            builder.push(
+                StyleProperty::FontFamily(FontFamily::Source(EMOJI_FAMILIES.into())),
+                range,
+            );
+        }
         let mut layout: Layout<Color> = builder.build(text);
         layout.break_all_lines(max_width.map(|w| w * scale));
         // A line is aligned within the width it was broken at; with no
@@ -343,5 +374,20 @@ pub fn shaped_of(layout: &Layout<Color>, scale: f32) -> Shaped {
         scale,
         lines,
         runs,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::emoji_presentation_ranges;
+
+    #[test]
+    fn a_character_asked_for_as_emoji_is_sent_to_the_emoji_font() {
+        let t = "a ❤️ b 1️⃣ c ❤";
+        let got: Vec<&str> = emoji_presentation_ranges(t)
+            .into_iter()
+            .map(|r| &t[r])
+            .collect();
+        assert_eq!(got, vec!["❤\u{FE0F}", "1\u{FE0F}\u{20E3}"]);
     }
 }

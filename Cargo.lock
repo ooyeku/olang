@@ -3518,6 +3518,7 @@ dependencies = [
  "sha1",
  "sha2",
  "signal-hook 0.4.4",
+ "skrifa",
  "softbuffer",
  "stacker",
  "swash",
