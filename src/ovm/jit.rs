@@ -3506,6 +3506,14 @@ fn list_write_targets_unaliased(bytecode: &CompiledBytecode) -> bool {
             _ => false,
         };
         if aliased {
+            if jit_debug() {
+                eprintln!(
+                    "[jit] alias scan: '{}' at pc {} — {} copies or hands on a list it writes in place",
+                    bytecode.debug_info.function_name.as_deref().unwrap_or("?"),
+                    pc,
+                    instruction_name(inst)
+                );
+            }
             return false;
         }
     }
