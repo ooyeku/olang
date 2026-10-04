@@ -14,6 +14,7 @@ pub mod ast;
 pub mod builtin;
 pub mod caps;
 pub mod clock;
+pub mod vfs;
 pub mod effects;
 pub mod expand;
 pub mod help;

@@ -29,7 +29,7 @@ language server has [its own chapter](editors.md).
 | `olang eval SOURCE` | Evaluate one expression and print its value, with the working directory's project libraries in scope |
 | `olang fmt [path]` | Format sources in place; `--check` reports instead of writing |
 | `olang test [path]` | Discover and run `test` blocks; `--coverage` reports coverage |
-| `olang build <file>` | Compile to a self-contained executable; `-o OUT` names it |
+| `olang build <file>` | Compile to a self-contained executable; `-o OUT` names it; `--app` carries the program's modules, its dependencies', and their assets |
 | `olang inspect <binary>` | Read a built binary's source, manifest, capabilities, provenance |
 | `olang caps [path]` | Show the capability grant a program or binary carries |
 | `olang record <file>` | Run a program and record its inputs to a `.olt` trace |
@@ -621,10 +621,21 @@ program never produces a binary.
 
 Because the runtime is baked in, the whole standard library and the
 embedded packages (`cli`, `term`, `ui`, `viz`, `dash`, `colx`,
-`mathx`) travel with the executable. A program that `use`s local
-`.ol` files is the one limitation — `build` bundles a single source
-file, so keep a shippable tool to stdlib and the embedded packages
-(or inline its helpers). The trade for zero-dependency distribution is
+`mathx`) travel with the executable. A plain `build` bundles a single
+source file; a program that `use`s local `.ol` files or depends on
+packages is built as an application:
+
+```bash
+olang build --app main.ol -o myapp   # its modules, its dependencies', and their assets
+```
+
+`--app` loads the modules the entry's `use`s name (without running the
+entry), and carries every one of them — the project's and each
+dependency's — with each package's `olang.toml` and the files it lists
+under `assets` (`assets = ["fonts", "data/index.json"]`). The
+application runs them from itself, resolving its `use`s exactly as it
+did on the build machine, and reads its assets with
+`asset.read(package, path)`. The trade for zero-dependency distribution is
 size: the binary carries the runtime, so it is tens of megabytes (much
 smaller from a `--release` olang than a debug one). On macOS the
 appended data invalidates any code signature; re-sign the output if you

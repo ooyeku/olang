@@ -161,6 +161,10 @@ impl Interpreter {
         if as_str.starts_with("__embedded__/") || as_str.starts_with("__stdlib__/") {
             return Ok(self.calculate_string_hash(&as_str));
         }
+        // A built application's module: its bytes are in the binary.
+        if let Some(bytes) = crate::vfs::read(file_path) {
+            return Ok(format!("{:x}", sha2::Sha256::digest(&bytes[..])));
+        }
 
         let mut file =
             std::fs::File::open(file_path).map_err(|e| InterpreterError::RuntimeError {
@@ -614,7 +618,8 @@ impl Interpreter {
                 }
             }
         } else {
-            let content = std::fs::read_to_string(&file_path).map_err(|e| {
+            // A built application carries its modules (crate::vfs).
+            let content = crate::vfs::read_to_string(&file_path).map_err(|e| {
                 InterpreterError::RuntimeError {
                     message: format!("Failed to read module file {}: {}", file_path.display(), e),
                 }
@@ -928,7 +933,7 @@ impl Interpreter {
         module_path: &str,
     ) -> Result<std::path::PathBuf, InterpreterError> {
         self.resolve_module_path_as_spelled(module_path)
-            .map(|p| normalize_lexically(&p))
+            .map(|p| crate::vfs::normalize(&p))
     }
 
     fn resolve_module_path_as_spelled(
@@ -1053,12 +1058,14 @@ impl Interpreter {
     }
 
     pub fn set_dependency_map(&mut self, map: HashMap<String, std::path::PathBuf>) {
+        crate::vfs::note_package_roots(&map);
         self.dependency_map = map;
     }
 
     /// Merge entries into the dependency map without clearing existing ones,
     /// so several packages can be made available by path (e.g. `:pkg load`).
     pub fn add_to_dependency_map(&mut self, map: HashMap<String, std::path::PathBuf>) {
+        crate::vfs::note_package_roots(&map);
         self.dependency_map.extend(map);
     }
 
@@ -1131,7 +1138,7 @@ impl Interpreter {
         }
 
         for candidate in candidates {
-            if candidate.exists() {
+            if crate::vfs::exists(&candidate) {
                 return Ok(candidate);
             }
         }
@@ -1209,7 +1216,7 @@ impl Interpreter {
         let start = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
         let mut dir = start.parent()?.to_path_buf();
         loop {
-            if dir.join("olang.toml").exists() || dep_roots.contains(&dir) {
+            if crate::vfs::exists(&dir.join("olang.toml")) || dep_roots.contains(&dir) {
                 return Some(dir);
             }
             dir = dir.parent()?.to_path_buf();
@@ -1279,7 +1286,7 @@ impl Interpreter {
             ];
 
             for indicator in indicators {
-                if dir.join(indicator).exists() {
+                if crate::vfs::exists(&dir.join(indicator)) {
                     return Ok(dir);
                 }
             }
@@ -1329,7 +1336,7 @@ impl Interpreter {
             // resolves to a user-written index.ol / mod.ol — never a generated
             // one.
             let target_dir = base_dir.join(module_path);
-            if target_dir.exists() && target_dir.is_dir() {
+            if crate::vfs::is_dir(&target_dir) {
                 candidates.push(target_dir.join("index.ol"));
                 candidates.push(target_dir.join("mod.ol"));
             }
@@ -1347,7 +1354,7 @@ impl Interpreter {
 
         // Check each candidate
         for candidate in &candidates {
-            if candidate.exists() && candidate.is_file() {
+            if crate::vfs::is_file(candidate) {
                 return Ok(candidate.clone());
             }
         }
@@ -1491,25 +1498,4 @@ fn module_declares_macro(module: &Value, name: &str) -> bool {
         },
         _ => false,
     }
-}
-
-/// `a/b/../c/./d` as `a/c/d`: `.` dropped and `..` taken back, without
-/// touching the filesystem (a symlink keeps its name).
-fn normalize_lexically(p: &std::path::Path) -> std::path::PathBuf {
-    use std::path::Component;
-    let mut out = std::path::PathBuf::new();
-    for c in p.components() {
-        match c {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if matches!(out.components().next_back(), Some(Component::Normal(_))) {
-                    out.pop();
-                } else {
-                    out.push("..");
-                }
-            }
-            other => out.push(other.as_os_str()),
-        }
-    }
-    out
 }

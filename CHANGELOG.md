@@ -45,6 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   modes — where swash drew only its outline. `body` text is Inter, then
   the emoji font, before the system's, when Loom has registered them; a
   character followed by U+FE0F ("❤️", "1️⃣") is drawn from an emoji font.
+- **`olang build --app` and `asset`.** An application carries every
+  module its entry uses — its own package's and its dependencies' — with
+  each package's manifest and the files it lists under `assets`, and runs
+  them from itself, resolving `use`s as on the build machine.
+  `asset.read(package, path)` reads a package's file from its directory
+  or from the application.
 - **`testing.snapshot_dir()`** answers the `__snapshots__` directory
   beside the file under test, for a library keeping snapshots of its own
   kind (Loom's pixel snapshots).

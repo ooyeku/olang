@@ -10091,6 +10091,40 @@ For function-specific syntax, use: {}:help <function_name>{}",
             see_also: vec!["crypto.hex_decode".to_string(), "base64.encode".to_string()],
         });
 
+        for (name, syntax, ret, desc) in [
+            (
+                "asset.read",
+                "asset.read(package, path)",
+                "Result<Bytes, String>",
+                "A file the package ships beside its code (fonts, images, data), by the package's name: from its directory, or from the application built with `olang build --app` (the package lists it under `assets`).",
+            ),
+            (
+                "asset.exists",
+                "asset.exists(package, path)",
+                "Bool",
+                "Whether the package carries the file.",
+            ),
+            (
+                "asset.path",
+                "asset.path(package, path)",
+                "String",
+                "Where the package's file is.",
+            ),
+        ] {
+            self.add_function(FunctionDoc {
+                name: name.to_string(),
+                description: desc.to_string(),
+                syntax: syntax.to_string(),
+                parameters: vec![
+                    "package: String - this project's name or a dependency's".to_string(),
+                    "path: String - inside the package".to_string(),
+                ],
+                return_type: ret.to_string(),
+                examples: vec!["asset.read(\"loom\", \"fonts/Inter.ttf.br\")".to_string()],
+                category: "Packages".to_string(),
+                see_also: vec!["asset.read".to_string()],
+            });
+        }
         self.add_function(FunctionDoc {
             name: "crypto.hex_decode".to_string(),
             description: "Decode a hexadecimal string back to text".to_string(),

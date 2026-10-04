@@ -262,6 +262,11 @@ enum Commands {
         /// Output path (default: the program's file stem)
         #[arg(short, long, value_name = "OUT")]
         output: Option<PathBuf>,
+        /// An application: carry every module the program uses (its own
+        /// and its dependencies') and the assets its packages declare
+        /// (`assets` in olang.toml), so it runs where none of them exist
+        #[arg(long)]
+        app: bool,
     },
 
     /// Inspect a built binary: embedded source, manifest, capabilities, provenance
@@ -683,8 +688,8 @@ fn run() -> i32 {
             olang::tools::fmt::run(&paths, check)
         }
 
-        Some(Commands::Build { file, output }) => {
-            match build_executable(&file, output.as_deref()) {
+        Some(Commands::Build { file, output, app }) => {
+            match build_executable(&file, output.as_deref(), app) {
                 Ok(out) => {
                     println!("built {}", out);
                     0
@@ -1461,6 +1466,99 @@ struct BundleMeta {
     /// integrity — and deliberately outside the digest, like `built_os`.
     #[serde(default)]
     warm: Option<String>,
+    /// An application's section (`olang build --app`): its length (it sits
+    /// just before the source), its sha256, and the absolute path its
+    /// entry had, which the program runs as so its `use`s resolve as they
+    /// did when it was built.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    app: Option<AppMeta>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+struct AppMeta {
+    len: u64,
+    sha256: String,
+    entry: String,
+    files: usize,
+}
+
+/// The files an application carries and its dependency map: every module
+/// the entry's `use`s load (found by loading them, not running the
+/// entry), each package's olang.toml, and the assets they declare.
+fn collect_app(
+    source_abs: &std::path::Path,
+    program: &olang::ast::Program,
+) -> anyhow::Result<(
+    Vec<(PathBuf, Vec<u8>)>,
+    std::collections::HashMap<String, PathBuf>,
+)> {
+    use std::collections::{BTreeSet, HashMap};
+    let mut interp = olang::Interpreter::new();
+    interp.set_current_file(source_abs);
+    let mut deps: HashMap<String, PathBuf> = HashMap::new();
+    let root = olang::pkg::manifest::Manifest::find_root(source_abs);
+    if let Some(root) = &root {
+        let (map, missing) =
+            olang::pkg::install_lenient(root, &olang::pkg::InstallOptions::default());
+        if let Some((name, reason)) = missing.into_iter().next() {
+            anyhow::bail!("dependency '{}' cannot be resolved: {}", name, reason);
+        }
+        deps.extend(map);
+        if let Ok(m) = olang::pkg::manifest::Manifest::load(root) {
+            deps.entry(m.package.name.clone())
+                .or_insert_with(|| root.clone());
+        }
+    }
+    interp.set_dependency_map(deps.clone());
+    let loaded = interp
+        .preload_uses(program)
+        .map_err(|e| anyhow::anyhow!("loading the program's modules: {}", e))?;
+    let mut paths: BTreeSet<PathBuf> = loaded.into_iter().filter(|p| p.is_file()).collect();
+    paths.insert(source_abs.to_path_buf());
+    let mut roots: BTreeSet<PathBuf> = deps.values().cloned().collect();
+    if let Some(r) = &root {
+        roots.insert(r.clone());
+    }
+    for r in &roots {
+        for f in ["olang.toml", "olang.lock"] {
+            if r.join(f).is_file() {
+                paths.insert(r.join(f));
+            }
+        }
+        if let Ok(m) = olang::pkg::manifest::Manifest::load(r) {
+            for a in &m.package.assets {
+                let at = r.join(a);
+                if at.is_file() {
+                    paths.insert(at);
+                } else if at.is_dir() {
+                    let mut stack = vec![at];
+                    while let Some(d) = stack.pop() {
+                        for entry in std::fs::read_dir(&d)?.flatten() {
+                            let p = entry.path();
+                            if p.is_dir() {
+                                stack.push(p);
+                            } else if p.is_file() {
+                                paths.insert(p);
+                            }
+                        }
+                    }
+                } else {
+                    anyhow::bail!(
+                        "{}: the asset \"{}\" does not exist",
+                        r.join("olang.toml").display(),
+                        a
+                    );
+                }
+            }
+        }
+    }
+    let mut files = Vec::new();
+    for p in paths {
+        let bytes =
+            std::fs::read(&p).map_err(|e| anyhow::anyhow!("reading {}: {}", p.display(), e))?;
+        files.push((p, bytes));
+    }
+    Ok((files, deps))
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -1537,6 +1635,8 @@ enum Bundle {
         program: Box<olang::ast::Program>,
         source: String,
         ast_bytes: Vec<u8>,
+        /// An application's section, its checksum verified.
+        app: Option<Vec<u8>>,
     },
 }
 
@@ -1629,11 +1729,30 @@ fn read_bundle(path: &std::path::Path) -> Option<Bundle> {
         // the digest is checked *using* these fields, so a malformed
         // record must be refused here rather than steering the check.
         validate_meta(&meta)?;
+        // An application's section sits just before the source; a
+        // section whose checksum fails is no application.
+        let app = match &meta.app {
+            Some(a) => {
+                let start = payload.checked_add(32)?.checked_add(a.len)?;
+                if start > total {
+                    return None;
+                }
+                f.seek(SeekFrom::End(-(start as i64))).ok()?;
+                let mut buf = vec![0u8; a.len as usize];
+                f.read_exact(&mut buf).ok()?;
+                if sha256_hex(&buf) != a.sha256 {
+                    return None;
+                }
+                Some(buf)
+            }
+            None => None,
+        };
         return Some(Bundle::Ast {
             meta: Some(Box::new(meta)),
             program: Box::new(program),
             source,
             ast_bytes: ast_buf,
+            app,
         });
     }
 
@@ -1666,6 +1785,7 @@ fn read_bundle(path: &std::path::Path) -> Option<Bundle> {
             program: Box::new(program),
             source,
             ast_bytes: ast_buf,
+            app: None,
         });
     }
 
@@ -1706,8 +1826,26 @@ fn run_embedded(bundle: Bundle, logger: &Logger) -> i32 {
             meta,
             program,
             source,
+            app,
             ..
         } => {
+            // An application: its modules and assets, from the binary,
+            // and its entry run as the file it was built from.
+            let mut path = path.clone();
+            if let (Some(bytes), Some(m)) =
+                (app.as_ref(), meta.as_ref().and_then(|m| m.app.as_ref()))
+            {
+                match olang::vfs::decode(bytes) {
+                    Some((files, deps)) => {
+                        olang::vfs::install(files, deps);
+                        path = PathBuf::from(&m.entry);
+                    }
+                    None => {
+                        eprintln!("olang: this application's files do not read back");
+                        return 1;
+                    }
+                }
+            }
             // Install the build-time tier profile before execution; a
             // sidecar left by a previous run here still wins inside
             // warm::load.
@@ -2174,6 +2312,7 @@ fn inspect_against(
 fn build_executable(
     source_path: &std::path::Path,
     output_arg: Option<&std::path::Path>,
+    app: bool,
 ) -> anyhow::Result<String> {
     let src = std::fs::read_to_string(source_path)
         .map_err(|e| anyhow::anyhow!("cannot read {}: {}", source_path.display(), e))?;
@@ -2220,7 +2359,22 @@ fn build_executable(
                 .map_err(|e| anyhow::anyhow!("olang.toml: {}", e))?;
         }
     }
+    // An application carries its modules and assets (a section before
+    // the source); a plain build, one file.
+    let app_section = if app {
+        let (files, deps) = collect_app(&source_abs, &program)?;
+        let count = files.len();
+        Some((olang::vfs::encode(&files, &deps), count))
+    } else {
+        None
+    };
     let meta = BundleMeta {
+        app: app_section.as_ref().map(|(bytes, count)| AppMeta {
+            len: bytes.len() as u64,
+            sha256: sha256_hex(bytes),
+            entry: source_abs.to_string_lossy().to_string(),
+            files: *count,
+        }),
         format: 3,
         olang_version: olang::VERSION.to_string(),
         source_path: source_path.to_string_lossy().to_string(),
@@ -2257,6 +2411,9 @@ fn build_executable(
         // The source travels as a feature, not a debugging convenience:
         // an olang binary is open by construction.
         let mut f = std::fs::OpenOptions::new().append(true).open(&output)?;
+        if let Some((bytes, _)) = &app_section {
+            f.write_all(bytes)?;
+        }
         f.write_all(src.as_bytes())?;
         f.write_all(&ast_json)?;
         f.write_all(&meta_json)?;
@@ -2603,7 +2760,12 @@ fn execute_program(
         // module: the resolvable ones are handed over, and the missing
         // ones are named — by package and reason — at the `use` that
         // needs them.
-        let (map, missing) = olang::pkg::install_lenient(&root, &opts);
+        // A built application knows its dependencies already: their
+        // directories are in the binary, not on this machine.
+        let (map, missing) = match olang::vfs::dependencies() {
+            Some(deps) => (deps.into_iter().collect(), Vec::new()),
+            None => olang::pkg::install_lenient(&root, &opts),
+        };
         if verbose {
             for (name, reason) in &missing {
                 logger.warn("main", &format!("dependency '{}': {}", name, reason));

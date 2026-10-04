@@ -571,6 +571,24 @@ Floats never mix implicitly: a Float has 53 bits of mantissa, so
 The operator refuses with a pointer to `bigint.to_float`, the one
 sanctioned, explicitly lossy conversion.
 
+## `asset` — a package's files
+
+The files a package ships beside its code — fonts, images, data — read
+by the package's name: from its directory when the program runs from
+source, and from the application itself when it was built with `olang
+build --app` (the package lists them under `assets` in `olang.toml`).
+A path stays inside its package.
+
+| function | |
+|---|---|
+| `asset.read(package, path)` | `Ok(Bytes)`, or `Err` naming the package or file it could not find |
+| `asset.exists(package, path)` | whether the package carries the file |
+| `asset.path(package, path)` | where the file is (the application's own copy has the path it was built from) |
+
+```olang no-run
+let font = unwrap(asset.read("loom", "fonts/Inter.ttf.br"))
+```
+
 ## Collections, in olang
 
 One module — `collections` — of six submodules, written entirely in

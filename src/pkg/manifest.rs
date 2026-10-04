@@ -48,6 +48,11 @@ pub struct PackageMeta {
     pub authors: Vec<String>,
     #[serde(default)]
     pub license: Option<String>,
+    /// Files and directories (relative to the package) an application
+    /// built with `olang build --app` carries for `asset.read`: fonts,
+    /// images, data.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assets: Vec<String>,
 }
 
 /// A dependency's source. `toml` distinguishes these by which key is present,
@@ -130,10 +135,10 @@ impl Manifest {
     /// Load `olang.toml` from a directory.
     pub fn load(dir: &Path) -> Result<Self, ManifestError> {
         let path = dir.join("olang.toml");
-        if !path.exists() {
+        if !crate::vfs::exists(&path) {
             return Err(ManifestError::NotFound(path.display().to_string()));
         }
-        let text = std::fs::read_to_string(&path).map_err(ManifestError::Io)?;
+        let text = crate::vfs::read_to_string(&path).map_err(ManifestError::Io)?;
         Self::from_toml(&text)
     }
 
@@ -150,13 +155,13 @@ impl Manifest {
     /// Walk upward from `start` to find the nearest directory containing an
     /// `olang.toml`, returning that directory (the project root).
     pub fn find_root(start: &Path) -> Option<std::path::PathBuf> {
-        let mut dir = if start.is_file() {
+        let mut dir = if crate::vfs::is_file(start) {
             start.parent()?.to_path_buf()
         } else {
             start.to_path_buf()
         };
         loop {
-            if dir.join("olang.toml").exists() {
+            if crate::vfs::exists(&dir.join("olang.toml")) {
                 return Some(dir);
             }
             if !dir.pop() {

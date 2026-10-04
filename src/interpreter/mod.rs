@@ -2485,6 +2485,21 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// Files backing the modules this run has loaded — the REPL's
     /// `:help` scans them for `///` doc comments, so a user's own
     /// documented functions are as reachable as the builtins.
+    /// Load the modules `program`'s `use` declarations name, transitively,
+    /// without running the rest of it: the module graph an application
+    /// built with `olang build --app` carries. Answers every file loaded.
+    pub fn preload_uses(
+        &mut self,
+        program: &Program,
+    ) -> Result<Vec<std::path::PathBuf>, InterpreterError> {
+        for st in &program.statements {
+            if let Statement::UseDecl(u) = st.unwrapped() {
+                self.eval_use_decl(u.clone())?;
+            }
+        }
+        Ok(self.loaded_module_files())
+    }
+
     pub fn loaded_module_files(&self) -> Vec<std::path::PathBuf> {
         let mut out: Vec<std::path::PathBuf> = self
             .module_cache

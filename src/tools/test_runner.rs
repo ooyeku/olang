@@ -162,7 +162,16 @@ pub fn run_with(path: &Path, coverage: bool, show_missing: bool, options: &Optio
             interpreter.set_test_scope(root, dirs);
         }
         if let Some(map) = deps_map {
-            interpreter.set_dependency_map(map.into_iter().collect());
+            let mut map: std::collections::HashMap<_, _> = map.into_iter().collect();
+            // A package is known by its own name from within itself, as
+            // under `olang <file>` (`use own_name`, `asset.read(own_name, …)`).
+            if let Some(root) = package_root.as_deref()
+                && let Ok(m) = crate::pkg::manifest::Manifest::load(root)
+            {
+                map.entry(m.package.name.clone())
+                    .or_insert_with(|| root.to_path_buf());
+            }
+            interpreter.set_dependency_map(map);
         }
 
         // Run from the file's own directory so relative imports and file

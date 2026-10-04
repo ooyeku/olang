@@ -825,6 +825,10 @@ impl BuiltinFunctions {
         }
 
         // Handle base64 functions
+        if let Some(asset_function) = name.strip_prefix("asset.") {
+            return crate::stdlib::asset::call_asset_function(asset_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
+        }
         if let Some(base64_function) = name.strip_prefix("base64.") {
             // Remove "base64." prefix
             return crate::stdlib::base64::call_base64_function(base64_function, arguments)
