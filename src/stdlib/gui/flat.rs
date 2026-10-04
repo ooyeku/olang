@@ -1077,17 +1077,17 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
         let mut pr: Vec<Value> = Vec::new();
         let mut placed = true;
         match kind {
-            0 => mine.push(rec(
-                &gk,
-                &parent,
-                index,
-                b,
-                origin,
-                node,
-                group_op(&spec, p, "group"),
-                false,
-                path,
-            )),
+            0 => {
+                // a group with a `msg` is one control: a button unless it
+                // says otherwise, focusable unless disabled
+                let active = *mget(p, "msg") != Value::Unit;
+                let disabled = is_true(mget(p, "disabled"));
+                let mut op = group_op(&spec, p, if active { "button" } else { "group" });
+                if active {
+                    op.insert("disabled".into(), Value::Boolean(disabled));
+                }
+                mine.push(rec(&gk, &parent, index, b, origin, node, op, active && !disabled, path));
+            }
             1 => {
                 let mut op = group_op(&spec, p, "group");
                 let region = st("region");
