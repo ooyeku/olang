@@ -25,6 +25,8 @@ pub struct Style {
     /// Vertical placement of a text in its content box.
     pub valign: Align,
     pub wrap: bool,
+    /// One line cut to its box with an ellipsis when it does not fit.
+    pub truncate: bool,
     /// top, right, bottom, left.
     pub pad: [f32; 4],
     pub clip: bool,
@@ -53,6 +55,7 @@ impl Default for Style {
             align: Align::Start,
             valign: Align::Start,
             wrap: false,
+            truncate: false,
             pad: [0.0; 4],
             clip: false,
             opacity: 1.0,
@@ -78,6 +81,7 @@ const STYLE_KEYS: &[&str] = &[
     "align",
     "valign",
     "wrap",
+    "truncate",
     "pad",
     "clip",
     "opacity",
@@ -147,6 +151,9 @@ impl Style {
             self.valign = Align::parse(a)
                 .ok_or_else(|| format!("{what}: \"valign\" is start, center, or end"))?;
         }
+        if let Some(b) = get_bool(m, "truncate", what)? {
+            self.truncate = b;
+        }
         if let Some(b) = get_bool(m, "wrap", what)? {
             self.wrap = b;
         }
@@ -187,6 +194,9 @@ pub struct EditProps {
     /// The edit revision the program last saw (from a `changed` event),
     /// so a value it has not yet caught up with is not taken for a reset.
     pub rev: Option<i64>,
+    /// Plain keys the field hands to the program instead of editing with
+    /// them (a completion's up and down, its tab): `"up"`, `"down"`, `"tab"`.
+    pub pass_keys: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -476,6 +486,19 @@ impl Scene {
                 placeholder: get_str(e, "placeholder", what)?.unwrap_or("").to_string(),
                 secure: get_bool(e, "secure", what)?.unwrap_or(false),
                 rev: get_num(e, "rev", what)?.map(|n| n as i64),
+                pass_keys: match get(e, "pass_keys") {
+                    Some(Value::List(l)) => l
+                        .iter()
+                        .filter_map(|k| {
+                            if let Value::String(s) = k {
+                                Some(s.as_str().to_string())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                },
             }),
         };
         if edit.is_some() {

@@ -353,6 +353,9 @@ fn font_style(spec: &Spec, p: Option<&crate::ast::ValueMap>, role: &str) -> crat
     if is_true(mget(p, "wrap")) {
         s.insert("wrap".into(), Value::Boolean(true));
     }
+    if is_true(mget(p, "truncate")) {
+        s.insert("truncate".into(), Value::Boolean(true));
+    }
     let a = mget(p, "align");
     if *a != Value::Unit && role != "group" {
         s.insert("align".into(), a.clone());
@@ -363,6 +366,7 @@ fn font_style(spec: &Spec, p: Option<&crate::ast::ValueMap>, role: &str) -> crat
 // The props `font_style` reads beyond `level`.
 const FONT_PROPS: &[&str] = &[
     "muted",
+    "truncate",
     "size",
     "weight",
     "font",
@@ -1085,8 +1089,20 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
                 let mut op = group_op(&spec, p, if active { "button" } else { "group" });
                 if active {
                     op.insert("disabled".into(), Value::Boolean(disabled));
+                    // the engine takes the focus to it whatever role it presents
+                    op.insert("focusable".into(), Value::Boolean(!disabled));
                 }
-                mine.push(rec(&gk, &parent, index, b, origin, node, op, active && !disabled, path));
+                mine.push(rec(
+                    &gk,
+                    &parent,
+                    index,
+                    b,
+                    origin,
+                    node,
+                    op,
+                    active && !disabled,
+                    path,
+                ));
             }
             1 => {
                 let mut op = group_op(&spec, p, "group");

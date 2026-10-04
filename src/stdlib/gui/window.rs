@@ -504,7 +504,17 @@ impl WinState {
     ) {
         self.mods = mods;
         let plain = !mods.ctrl && !mods.alt && !mods.super_;
-        if key == "tab" && plain {
+        // a key the focused field hands to the program: no editing, no focus move
+        let passed = plain
+            && !mods.shift
+            && self
+                .scene
+                .focus
+                .as_ref()
+                .and_then(|f| self.scene.nodes.get(f))
+                .and_then(|n| n.edit.as_ref())
+                .is_some_and(|e| e.pass_keys.iter().any(|k| *k == key));
+        if key == "tab" && plain && !passed {
             self.move_focus(!mods.shift, out);
             return;
         }
@@ -515,6 +525,7 @@ impl WinState {
             .is_some_and(|n| n.disabled);
         if let Some(f) = focus.clone()
             && !disabled
+            && !passed
             && self.editors.contains_key(&f)
             && let Some(outcome) = self.edit_key(&f, &key, text.as_deref(), mods, clip)
             && outcome != Outcome::Pass
@@ -1047,7 +1058,37 @@ impl WinState {
             } else {
                 max_w
             };
-            let shaped = ts.shape(t, &st.font, fade(st.color), align_w, st.align, s);
+            let mut shaped = ts.shape(t, &st.font, fade(st.color), align_w, st.align, s);
+            // a line wider than its box, cut to fit with an ellipsis
+            if st.truncate && !st.wrap && shaped.width > content[2] + 0.5 && content[2] > 0.0 {
+                let chars: Vec<char> = t.chars().collect();
+                let (mut lo, mut hi) = (0usize, chars.len());
+                while lo < hi {
+                    let mid = (lo + hi).div_ceil(2);
+                    let cut: String = chars[..mid]
+                        .iter()
+                        .collect::<String>()
+                        .trim_end()
+                        .to_string()
+                        + "…";
+                    if ts
+                        .shape(&cut, &st.font, fade(st.color), None, Align::Start, s)
+                        .width
+                        <= content[2]
+                    {
+                        lo = mid;
+                    } else {
+                        hi = mid - 1;
+                    }
+                }
+                let cut: String = chars[..lo]
+                    .iter()
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+                    + "…";
+                shaped = ts.shape(&cut, &st.font, fade(st.color), align_w, st.align, s);
+            }
             let dy = match st.valign.along() {
                 Align::Center => ((content[3] - shaped.height) / 2.0).max(0.0),
                 Align::End | Align::Right => (content[3] - shaped.height).max(0.0),
