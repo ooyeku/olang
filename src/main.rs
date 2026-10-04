@@ -267,6 +267,11 @@ enum Commands {
         /// (`assets` in olang.toml), so it runs where none of them exist
         #[arg(long)]
         app: bool,
+        /// Write the program alone to this file, without the runtime: a
+        /// macOS application's Contents/Resources/app.olb, beside a plain
+        /// (signable) runtime in Contents/MacOS
+        #[arg(long, value_name = "FILE")]
+        payload: Option<PathBuf>,
     },
 
     /// Inspect a built binary: embedded source, manifest, capabilities, provenance
@@ -688,8 +693,17 @@ fn run() -> i32 {
             olang::tools::fmt::run(&paths, check)
         }
 
-        Some(Commands::Build { file, output, app }) => {
-            match build_executable(&file, output.as_deref(), app) {
+        Some(Commands::Build {
+            file,
+            output,
+            app,
+            payload,
+        }) => {
+            let (out, only) = match payload {
+                Some(p) => (Some(p), true),
+                None => (output, false),
+            };
+            match build_executable(&file, out.as_deref(), app, only) {
                 Ok(out) => {
                     println!("built {}", out);
                     0
@@ -1645,7 +1659,26 @@ enum Bundle {
 /// source (rung A). `None` for the plain `olang` binary.
 fn embedded_program() -> Option<Bundle> {
     let exe = std::env::current_exe().ok()?;
-    read_bundle(&exe)
+    read_bundle(&exe).or_else(|| app_sidecar(&exe).and_then(|p| read_bundle(&p)))
+}
+
+/// A macOS application's program, beside its executable: a signed
+/// executable must end where its Mach-O ends, so `loom bundle` puts the
+/// plain runtime in `Contents/MacOS/` and the program (`olang build
+/// --payload`) in `Contents/Resources/app.olb`. Only that layout: a
+/// stray file beside an ordinary `olang` never runs in its place.
+fn app_sidecar(exe: &std::path::Path) -> Option<PathBuf> {
+    let macos = exe.parent()?;
+    let contents = macos.parent()?;
+    let bundle = contents.parent()?;
+    if macos.file_name()? != "MacOS"
+        || contents.file_name()? != "Contents"
+        || bundle.extension()? != "app"
+    {
+        return None;
+    }
+    let sidecar = contents.join("Resources").join("app.olb");
+    sidecar.is_file().then_some(sidecar)
 }
 
 /// Read a bundled program from any file — the shared reader behind both
@@ -2313,6 +2346,7 @@ fn build_executable(
     source_path: &std::path::Path,
     output_arg: Option<&std::path::Path>,
     app: bool,
+    payload_only: bool,
 ) -> anyhow::Result<String> {
     let src = std::fs::read_to_string(source_path)
         .map_err(|e| anyhow::anyhow!("cannot read {}: {}", source_path.display(), e))?;
@@ -2402,8 +2436,13 @@ fn build_executable(
     let meta_json =
         serde_json::to_vec(&meta).map_err(|e| anyhow::anyhow!("serialize meta: {}", e))?;
 
-    let exe = std::env::current_exe()?;
-    std::fs::copy(&exe, &output)?;
+    if payload_only {
+        // the program alone: the runtime is shipped beside it
+        std::fs::write(&output, b"")?;
+    } else {
+        let exe = std::env::current_exe()?;
+        std::fs::copy(&exe, &output)?;
+    }
     {
         use std::io::Write;
         // Transparent-binary footer:
@@ -2424,7 +2463,7 @@ fn build_executable(
         f.flush()?;
     }
     #[cfg(unix)]
-    {
+    if !payload_only {
         use std::os::unix::fs::PermissionsExt;
         let mut perms = std::fs::metadata(&output)?.permissions();
         perms.set_mode(0o755);
