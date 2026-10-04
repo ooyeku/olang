@@ -370,6 +370,10 @@ pub struct Scene {
     pub nodes: HashMap<String, Node>,
     pub root: Option<String>,
     pub focus: Option<String>,
+    /// Whether the focus is shown on a control that is not a text field:
+    /// after a key, not after a press of the pointer (a text field always
+    /// shows it, as the platform's do).
+    pub focus_visible: bool,
     pub hover: Option<String>,
     pub pressed: Option<String>,
 }
@@ -674,7 +678,7 @@ impl Scene {
         let states = [
             self.hover.as_deref() == k && !node.disabled,
             self.pressed.as_deref() == k && !node.disabled,
-            self.focus.as_deref() == k,
+            self.focus.as_deref() == k && (self.focus_visible || node.edit.is_some()),
         ];
         for (i, on) in states.iter().enumerate() {
             if *on && let Some(v) = &node.variants[i] {

@@ -504,6 +504,11 @@ impl WinState {
     ) {
         self.mods = mods;
         let plain = !mods.ctrl && !mods.alt && !mods.super_;
+        // keyboard navigation shows where the focus is; a shortcut does not
+        if !mods.ctrl && !mods.super_ && !self.scene.focus_visible {
+            self.scene.focus_visible = true;
+            self.dirty = true;
+        }
         // a key the focused field hands to the program: no editing, no focus move
         let passed = plain
             && !mods.shift
@@ -694,6 +699,8 @@ impl WinState {
                 out.push(self.ev("pointer", vec![("action", s("leave"))]));
             }
             PointerAction::Down => {
+                // a press: the focus follows the pointer without a ring
+                self.scene.focus_visible = false;
                 // A press outside the modal layer: the layer hears of it
                 // (a popover or a menu closes; a dialog may ignore it).
                 if hit.is_none()
@@ -943,6 +950,7 @@ impl WinState {
         let focused = self.scene.focus.as_deref() == Some(key);
         if focused
             && self.focused_window
+            && (self.scene.focus_visible || node.edit.is_some())
             && node.variants[scene::FOCUS].is_none()
             && let Some(ring) = st.focus_ring
         {
