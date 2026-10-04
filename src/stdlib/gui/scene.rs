@@ -240,6 +240,9 @@ pub struct Node {
     /// among them (a divider whose target reaches over the panes beside
     /// it); reading and focus keep its place in the tree.
     pub grab: bool,
+    /// Drawn but not said: left out of the accessibility tree (a chevron,
+    /// a checkbox's tick, an icon beside a named control).
+    pub decorative: bool,
     /// A canvas's drawing operations (canvas.rs).
     pub draw: Option<Value>,
     /// An image's source: a PNG's path or its Bytes; and how it fits its
@@ -356,6 +359,7 @@ const NODE_KEYS: &[&str] = &[
     "content",
     "modal",
     "grab",
+    "decorative",
     "draw",
     "image",
     "fit",
@@ -550,6 +554,7 @@ impl Scene {
             content: get_pair(op, "content", what)?,
             modal: get_bool(op, "modal", what)?.unwrap_or(false),
             grab: get_bool(op, "grab", what)?.unwrap_or(false),
+            decorative: get_bool(op, "decorative", what)?.unwrap_or(false),
             draw: get(op, "draw").cloned(),
             image: get(op, "image").cloned(),
             fit: get_str(op, "fit", what)?.unwrap_or("contain").to_string(),

@@ -108,7 +108,11 @@ pub fn tree(st: &WinState) -> TreeUpdate {
         window.set_children(vec![node_id(r)]);
     }
     nodes.push((WINDOW_NODE, window));
+    let said = |c: &String| st.scene.nodes.get(c).is_some_and(|n| !n.decorative);
     for (key, n) in &st.scene.nodes {
+        if n.decorative {
+            continue;
+        }
         let mut node = accesskit::Node::new(role_of(n));
         if let Some(l) = label_of(n) {
             node.set_label(l);
@@ -132,7 +136,13 @@ pub fn tree(st: &WinState) -> TreeUpdate {
                 y1: (abs[1] + abs[3]) as f64 * s,
             });
         }
-        node.set_children(n.children.iter().map(|c| node_id(c)).collect::<Vec<_>>());
+        node.set_children(
+            n.children
+                .iter()
+                .filter(|c| said(c))
+                .map(|c| node_id(c))
+                .collect::<Vec<_>>(),
+        );
         if n.disabled {
             node.set_disabled();
         }
@@ -267,6 +277,9 @@ fn walk(st: &WinState, key: &str, depth: i64, out: &mut Vec<Value>) {
     let Some(n) = st.scene.nodes.get(key) else {
         return;
     };
+    if n.decorative {
+        return;
+    }
     let mut actions = Vec::new();
     if n.focusable && !n.disabled {
         actions.push(s("focus"));
