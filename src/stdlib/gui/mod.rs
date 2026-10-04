@@ -33,6 +33,7 @@ pub mod canvas;
 pub mod colr;
 pub mod context;
 pub mod edit;
+pub mod flat;
 pub mod gpu;
 pub mod platform;
 pub mod raster;
@@ -71,6 +72,9 @@ const FUNCTIONS: &[(&str, usize)] = &[
     ("compare", 3),
     ("context", 0),
     ("wake", 0),
+    ("flatten", 3),
+    ("flat_emit", 5),
+    ("flat_join", 4),
 ];
 
 pub fn create_gui_module() -> Value {
@@ -99,6 +103,9 @@ pub fn call_gui_function(name: &str, args: Vec<Value>) -> DynRes {
         "events" => gui_events(args),
         "apply" => gui_apply(args),
         "measure" => gui_measure(args),
+        "flatten" => flat::gui_flatten(args),
+        "flat_emit" => flat::gui_flat_emit(args),
+        "flat_join" => flat::gui_flat_join(args),
         "read" => gui_read(args),
         "compare" => gui_compare(args),
         // A `wake` event on the channel: what lets a task blocked on
