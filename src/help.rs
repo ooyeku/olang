@@ -2025,6 +2025,14 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             &[r##"gui.menu([#{ "title": "File", "items": [#{ "id": "open", "label": "Open…", "keys": "mod+o" }] }])"##],
         );
         self.doc_ex(
+            "gui.wake",
+            "gui.wake()",
+            "Unit",
+            "gui",
+            "Send a `wake` event on gui.events(): a task blocked reading the channel sees it and can check whether it should stop, with no polling.",
+            &["gui.wake()"],
+        );
+        self.doc_ex(
             "gui.compare",
             "gui.compare(a, b, opts?)",
             "Map",

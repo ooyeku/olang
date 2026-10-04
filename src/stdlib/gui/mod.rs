@@ -70,6 +70,7 @@ const FUNCTIONS: &[(&str, usize)] = &[
     ("menu", 1),
     ("compare", 3),
     ("context", 0),
+    ("wake", 0),
 ];
 
 pub fn create_gui_module() -> Value {
@@ -100,6 +101,13 @@ pub fn call_gui_function(name: &str, args: Vec<Value>) -> DynRes {
         "measure" => gui_measure(args),
         "read" => gui_read(args),
         "compare" => gui_compare(args),
+        // A `wake` event on the channel: what lets a task blocked on
+        // gui.events() see that it should stop, with no polling.
+        "wake" => {
+            arity("gui.wake", &args, 0, 0)?;
+            emit(vec![event("wake", vec![])]);
+            Ok(Value::Unit)
+        }
         "context" => {
             arity("gui.context", &args, 0, 0)?;
             Ok(context::as_value(None))
