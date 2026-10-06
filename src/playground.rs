@@ -570,7 +570,7 @@ fn dom_call_inner(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
                 .into_iter()
                 .map(|k| Value::String(std::sync::Arc::new(k)))
                 .collect();
-            let mut out = std::collections::HashMap::new();
+            let mut out = crate::ast::ValueMap::default();
             out.insert(
                 "missing".to_string(),
                 Value::List(std::sync::Arc::new(missing)),
