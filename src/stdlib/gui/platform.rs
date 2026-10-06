@@ -386,6 +386,7 @@ impl App {
             return;
         };
         let trace = std::env::var_os("GUI_TRACE").is_some();
+        let started = std::time::Instant::now();
         let (dl, a11y_tree, wants_ime, ime_area) = {
             let Ok(mut st) = pw.state.lock() else {
                 return;
@@ -402,14 +403,7 @@ impl App {
             let area = if wants { st.ime_area() } else { None };
             (dl, tree, wants, area)
         };
-        if trace {
-            eprintln!(
-                "gui: window {id} frame {}x{}, {} prims",
-                dl.width,
-                dl.height,
-                dl.prims.len()
-            );
-        }
+        let listed = started.elapsed();
         match &mut pw.renderer {
             Renderer::Gpu(s) => match s.render(&dl) {
                 Ok(()) => {}
@@ -431,6 +425,17 @@ impl App {
                 Err(e) => eprintln!("gui: {e}"),
             },
             Renderer::Soft { surface, .. } => present_soft(surface, &dl, &pw.win),
+        }
+        // the frame: its display list made, and drawn and presented
+        if trace {
+            eprintln!(
+                "gui: window {id} frame {}x{}, {} prims, listed in {:.2} ms, drawn in {:.2} ms",
+                dl.width,
+                dl.height,
+                dl.prims.len(),
+                listed.as_secs_f64() * 1000.0,
+                (started.elapsed() - listed).as_secs_f64() * 1000.0
+            );
         }
         if let Some(tree) = a11y_tree {
             pw.a11y.update_if_active(|| tree);
