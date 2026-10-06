@@ -1375,7 +1375,7 @@ fn group_op(
     default_role: &str,
 ) -> crate::ast::ValueMap {
     let dr = st(default_role);
-    hm(vec![
+    let mut op = hm(vec![
         ("role", mget_or(p, "a11y_role", &dr).clone()),
         ("name", mget(p, "name").clone()),
         (
@@ -1386,7 +1386,13 @@ fn group_op(
                 mget(p, "style"),
             ),
         ),
-    ])
+    ]);
+    // `inert`: drawn and said, never under the pointer (a stand-in for a
+    // shape on a canvas, placed over it)
+    if is_true(mget(p, "inert")) {
+        op.insert("inert".into(), Value::Boolean(true));
+    }
+    op
 }
 
 /// `gui.flat_emit(flat, geo, spec, keep, prev)`: each node's placements
