@@ -1293,6 +1293,29 @@ fn rec(
     ]))
 }
 
+/// A node's `a11y_role`, or `default` when it gives none. A role the
+/// engine does not know would make `gui.apply` refuse the whole patch, so
+/// the frame drew nothing new and nothing said why: here it is the
+/// default instead, with a problem that names the node.
+fn checked_role(p: Option<&crate::ast::ValueMap>, default: &str, gk: &str, pr: &mut Vec<Value>) -> Value {
+    match mget(p, "a11y_role") {
+        Value::Unit => st(default),
+        Value::String(r) if super::scene::ROLES.contains(&r.as_str()) => Value::String(r.clone()),
+        other => {
+            pr.push(st(&format!(
+                "node \"{gk}\" has the a11y_role {other}, which is not a role; it is presented as \"{default}\" (the roles are {})",
+                super::scene::ROLES.join(", ")
+            )));
+            st(default)
+        }
+    }
+}
+
+/// `gui.roles()`: the roles a node may have, as the engine knows them.
+pub fn gui_roles(_args: Vec<Value>) -> Res<Value> {
+    Ok(list(super::scene::ROLES.iter().map(|r| st(r)).collect()))
+}
+
 fn group_op(
     spec: &Spec,
     p: Option<&crate::ast::ValueMap>,
@@ -1443,7 +1466,9 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
                 // says otherwise, focusable unless disabled
                 let active = *mget(p, "msg") != Value::Unit;
                 let disabled = is_true(mget(p, "disabled"));
-                let mut op = group_op(&spec, p, if active { "button" } else { "group" });
+                let default_role = if active { "button" } else { "group" };
+                let mut op = group_op(&spec, p, default_role);
+                op.insert("role".into(), checked_role(p, default_role, &gk, &mut pr));
                 if active {
                     op.insert("disabled".into(), Value::Boolean(disabled));
                     // the engine takes the focus to it whatever role it presents
@@ -1463,8 +1488,7 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
             }
             1 => {
                 let mut op = group_op(&spec, p, "group");
-                let region = st("region");
-                op.insert("role".into(), mget_or(p, "a11y_role", &region).clone());
+                op.insert("role".into(), checked_role(p, "region", &gk, &mut pr));
                 op.insert("scroll".into(), Value::Boolean(true));
                 mine.push(rec(&gk, &parent, index, b, origin, node, op, false, path));
             }

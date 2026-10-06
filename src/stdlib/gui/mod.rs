@@ -78,6 +78,7 @@ const FUNCTIONS: &[(&str, usize)] = &[
     ("flat_arrays", 1),
     ("flat_keep", 2),
     ("flat_geo", 1),
+    ("roles", 0),
 ];
 
 pub fn create_gui_module() -> Value {
@@ -112,6 +113,7 @@ pub fn call_gui_function(name: &str, args: Vec<Value>) -> DynRes {
         "flat_arrays" => flat::gui_flat_arrays(args),
         "flat_keep" => flat::gui_flat_keep(args),
         "flat_geo" => flat::gui_flat_geo(args),
+        "roles" => flat::gui_roles(args),
         "read" => gui_read(args),
         "compare" => gui_compare(args),
         // A `wake` event on the channel: what lets a task blocked on
