@@ -3361,6 +3361,7 @@ pub(crate) fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         | Instruction::JumpIfTrue { .. }
         | Instruction::JumpIfFalse { .. }
         | Instruction::MatchFail
+        | Instruction::TryFail
         | Instruction::Nop
         | Instruction::GetField { .. }
         | Instruction::IndexGet { .. }
@@ -3829,7 +3830,7 @@ pub(crate) fn for_each_reg(
             f(dst);
             f(lhs);
         }
-        I::Jump { .. } | I::MatchFail | I::Nop => {}
+        I::Jump { .. } | I::MatchFail | I::TryFail | I::Nop => {}
         I::JumpIfTrue { condition, .. } | I::JumpIfFalse { condition, .. } => f(condition),
         I::CallFn { dst, args, .. }
         | I::CallNamed { dst, args, .. }
@@ -4461,7 +4462,7 @@ pub(crate) fn live_in_at(bytecode: &CompiledBytecode, nregs: usize, at: usize) -
                     succ(pc + 1);
                 }
                 Instruction::TailCallSelf { .. } => succ(bytecode.entry_point),
-                Instruction::Return { .. } | Instruction::MatchFail => {}
+                Instruction::Return { .. } | Instruction::MatchFail | Instruction::TryFail => {}
                 _ => succ(pc + 1),
             }
             uses.clear();
@@ -5399,7 +5400,7 @@ impl PlanFn {
                     }
                     grow!(self.writes[dst.0 as usize], K_FLOAT);
                 }
-                Instruction::Jump { .. } | Instruction::MatchFail | Instruction::Nop => {}
+                Instruction::Jump { .. } | Instruction::MatchFail | Instruction::TryFail | Instruction::Nop => {}
                 Instruction::JumpIfTrue { condition, .. }
                 | Instruction::JumpIfFalse { condition, .. } => {
                     narrow!(condition.0, K_BOOL);
@@ -5829,6 +5830,7 @@ pub(crate) fn instruction_name(inst: &Instruction) -> &'static str {
         Instruction::BinImm { .. } => "BinImm",
         Instruction::Return { .. } => "Return",
         Instruction::MatchFail => "MatchFail",
+        Instruction::TryFail => "TryFail",
         Instruction::MakeResult { .. } => "MakeResult",
         Instruction::PatternTestResult { .. } => "PatternTestResult",
         Instruction::ExtractResult { .. } => "ExtractResult",
@@ -6120,9 +6122,10 @@ fn translate_body(
                 };
                 builder.def_var(Variable::from_u32(dst.0), val);
             }
-            Instruction::MatchFail => {
+            Instruction::MatchFail | Instruction::TryFail => {
                 // Unreachable on real paths; if control ever got here the
-                // deopt re-run raises the canonical match-failure error.
+                // deopt re-run raises the canonical error (a failed match,
+                // or `?` on a value that is not a Result).
                 builder.ins().jump(deopt_block, &[]);
                 terminated = true;
             }

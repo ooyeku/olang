@@ -747,3 +747,27 @@ fn early_return_compiles_and_agrees() {
         }
     }
 }
+
+#[test]
+fn try_operator_compiles_and_agrees() {
+    // `?` unwraps an Ok, ends the call with an Err, and on anything else
+    // raises the interpreter's TypeError — on both tiers, compiled.
+    let defs = "fn half(n) = if n % 2 == 0 => Ok(n / 2) else => Err(n)\n";
+    let cases = [
+        "fn f(k) = { let a = half(k)?; let b = half(a)?; Ok(b) }",
+        "fn f(k) = { let mut t = 0; for x in [2, k, 6] { t = t + half(x)? }; Ok(t) }",
+        "fn f(k) = { let v = (if k > 0 => Ok(k) else => Err(k))?; v * 3 }",
+        "fn f(k) = { let v = k?; v }",
+    ];
+    for body in cases {
+        let src = format!("{defs}{body}");
+        for a in [8, 6, 5, 0, -2] {
+            assert_same(&src, "f", &ints(&[a]));
+        }
+    }
+    // compiled, not refused: the bytecode tier accepts every case
+    for body in cases {
+        let src = format!("{defs}{body}");
+        assert!(bytecode_result(&src, "f", &ints(&[8])).is_ok() || body.contains("k?"), "refused: {body}");
+    }
+}

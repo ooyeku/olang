@@ -943,6 +943,9 @@ pub enum Instruction {
     },
     /// No match arm applied to the scrutinee.
     MatchFail,
+    /// `?` applied to a value that is neither `Ok` nor `Err`: the
+    /// interpreter's TypeError, word for word.
+    TryFail,
 
     // Range operations
     MakeRange {
@@ -5205,6 +5208,12 @@ impl BytecodeVm {
                 Instruction::MatchFail => {
                     return Err(BytecodeError::RuntimeError(
                         "Pattern match failed".to_string(),
+                    ));
+                }
+
+                Instruction::TryFail => {
+                    return Err(BytecodeError::TypeError(
+                        "Try operator can only be used on Result values".to_string(),
                     ));
                 }
 
@@ -9924,6 +9933,44 @@ impl BytecodeCompiler {
                 self.unit_register()
             }
 
+            // `expr?`: an `Ok`'s payload; an `Err` ends the call with that
+            // `Err` (the interpreter's ErrPropagation, caught at the
+            // nearest function boundary — this function's, as for
+            // `return`); anything else is the interpreter's TypeError.
+            Expr::Try(inner) => {
+                let value_reg = self.compile_expression(inner)?;
+                let dst = self.register_allocator.allocate_register();
+                let not_ok = self.emitter.create_label();
+                let not_result = self.emitter.create_label();
+                let done = self.emitter.create_label();
+                let is_ok = self.register_allocator.allocate_register();
+                self.emitter.instructions.push(Instruction::PatternTestResult {
+                    dst: is_ok,
+                    value: value_reg,
+                    want_ok: true,
+                });
+                self.emitter.emit_branch_if_false(is_ok, not_ok);
+                self.emitter.instructions.push(Instruction::ExtractResult {
+                    dst,
+                    value: value_reg,
+                    want_ok: true,
+                });
+                self.emitter.emit_jump(done);
+                self.emitter.place_label(not_ok);
+                let is_err = self.register_allocator.allocate_register();
+                self.emitter.instructions.push(Instruction::PatternTestResult {
+                    dst: is_err,
+                    value: value_reg,
+                    want_ok: false,
+                });
+                self.emitter.emit_branch_if_false(is_err, not_result);
+                self.emitter.emit_return(Some(value_reg));
+                self.emitter.place_label(not_result);
+                self.emitter.instructions.push(Instruction::TryFail);
+                self.emitter.place_label(done);
+                Ok(dst)
+            }
+
             Expr::Break(None) => {
                 let (_, break_target) = *self.loop_targets.last().ok_or_else(|| {
                     BytecodeError::CompilationFailed("'break' outside of a loop".to_string())
@@ -12086,7 +12133,7 @@ impl BytecodeOptimizer {
                     work.push(pc + 1);
                 }
                 I::TailCallSelf { .. } => work.push(0),
-                I::Return { .. } | I::MatchFail => {}
+                I::Return { .. } | I::MatchFail | I::TryFail => {}
                 _ => work.push(pc + 1),
             }
         }
@@ -12162,7 +12209,7 @@ impl BytecodeOptimizer {
                         succ(pc + 1);
                     }
                     I::TailCallSelf { .. } => succ(0),
-                    I::Return { .. } | I::MatchFail => {}
+                    I::Return { .. } | I::MatchFail | I::TryFail => {}
                     _ => succ(pc + 1),
                 }
                 let mut new_in = out;
@@ -12307,7 +12354,7 @@ impl BytecodeOptimizer {
                 defs.push(dst.0);
                 defs.push(src.0);
             }
-            I::Nop | I::MatchFail => {}
+            I::Nop | I::MatchFail | I::TryFail => {}
             I::Jump { .. } => {}
             I::JumpIfTrue { condition, .. } | I::JumpIfFalse { condition, .. } => {
                 uses.push(condition.0)

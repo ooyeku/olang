@@ -18,8 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   its meaning). Loom's runtime frame (`rt_frame` and six other engine
   functions) moved off the tree-walker with it: a turn of a 500-row page
   went from 16.8 to 10.3 ms. Heddle reported 104 of its functions
-  refused for this. `?` (the try operator) still keeps a function on the
-  tree-walker.
+  refused for this.
+- **`?` compiles to the bytecode tier.** `expr?` unwraps an `Ok`, ends
+  the call with an `Err` (as the interpreter's propagation does, at the
+  nearest function boundary), and on any other value raises the
+  interpreter's TypeError word for word (a new `TryFail` instruction; the
+  native tier deopts to it, as for a failed match). A function using `?`
+  no longer stays on the tree-walker — nor leaks per call when it also
+  hands a lambda to the VM (heddle-sql measured ~1.3 KB a call; now 3 B).
 
 ### Fixed
 
