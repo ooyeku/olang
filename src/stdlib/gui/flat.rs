@@ -530,6 +530,9 @@ fn leaf_size(
 /// `gui.flatten(root, spec, prev)`: the view read into the core's arrays
 /// — `#{ n, id, nodes, paths, index, gkeys, glifts, wraps, changed }` — or
 /// `()` when the view holds a `memo` node (Loom expands those first).
+/// A fourth argument names the root's path (`"0"` without one): a
+/// subtree laid out on its own — a row of a virtual list — keeps the
+/// paths, and so the keys of its keyless nodes, it has in the whole.
 /// `changed` marks (1) each node whose role, key, or props differ from
 /// `prev`'s (last frame's answer) at the same index, when the two trees
 /// have one shape; otherwise it is `()`.
@@ -542,14 +545,18 @@ fn leaf_size(
 /// changed nodes are read, and `paths`, `index`, `wraps` are last frame's
 /// lists (and `gkeys`, `glifts`, unless a changed node's differ).
 pub fn gui_flatten(args: Vec<Value>) -> Res<Value> {
-    if args.len() < 2 || args.len() > 3 {
+    if args.len() < 2 || args.len() > 4 {
         return Err(format!(
-            "gui.flatten: expected 2 or 3 arguments, got {}",
+            "gui.flatten: expected 2 to 4 arguments, got {}",
             args.len()
         ));
     }
     let spec = Spec::read(&args[1])?;
     let root = &args[0];
+    let base = match args.get(3) {
+        Some(Value::String(s)) => s.as_str().to_string(),
+        _ => "0".to_string(),
+    };
     let mut ts = text::system().lock().map_err(|_| "gui: text poisoned")?;
     let prev = Prev::read(args.get(2));
     if let Some(pv) = &prev {
@@ -557,7 +564,7 @@ pub fn gui_flatten(args: Vec<Value>) -> Res<Value> {
             return Ok(answer);
         }
     }
-    flatten_full(root, &spec, &mut ts, prev.as_ref())
+    flatten_full(root, &spec, &mut ts, prev.as_ref(), &base)
 }
 
 /// The core's kind for a node of `role` (0 group, 1 region, 2 split, 3
@@ -872,7 +879,7 @@ fn flatten_aligned(root: &Value, spec: &Spec, ts: &mut TextSystem, pv: &Prev) ->
 /// The arrays built afresh: each node read (props parsed, leaves
 /// measured) unless last frame's answer holds it unchanged at the same
 /// place in a tree of the same shape so far.
-fn flatten_full(root: &Value, spec: &Spec, ts: &mut TextSystem, prev: Option<&Prev>) -> Res<Value> {
+fn flatten_full(root: &Value, spec: &Spec, ts: &mut TextSystem, prev: Option<&Prev>, base: &str) -> Res<Value> {
     let mut ints: Vec<i64> = Vec::new();
     let mut floats: Vec<f64> = Vec::new();
     let mut ks: Vec<i64> = Vec::new();
@@ -892,7 +899,7 @@ fn flatten_full(root: &Value, spec: &Spec, ts: &mut TextSystem, prev: Option<&Pr
     while let Some((node, parent, ppath, j_at, index, slot)) = stack.pop() {
         let spell = || match &ppath {
             Value::String(pp) => format!("{pp}.{j_at}"),
-            _ => "0".to_string(),
+            _ => base.to_string(),
         };
         let idx = nodes.len() as i64;
         if slot >= 0 {
@@ -1022,7 +1029,10 @@ struct Kept {
     states: VecDeque<(i64, Arc<FlatState>)>,
 }
 
-const KEPT_STATES: usize = 32;
+// A frame lays out its windows' pages and, on its own, each row of a
+// virtual list it had not laid out before (a page down: a screenful):
+// enough room that last frame's pages outlive a frame of new rows.
+const KEPT_STATES: usize = 256;
 
 fn kept() -> &'static Mutex<Kept> {
     static KEPT: OnceLock<Mutex<Kept>> = OnceLock::new();

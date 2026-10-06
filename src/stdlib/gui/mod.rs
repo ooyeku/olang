@@ -72,7 +72,7 @@ const FUNCTIONS: &[(&str, usize)] = &[
     ("compare", 3),
     ("context", 0),
     ("wake", 0),
-    ("flatten", 3),
+    ("flatten", 4),
     ("flat_emit", 5),
     ("flat_join", 4),
     ("flat_arrays", 1),
