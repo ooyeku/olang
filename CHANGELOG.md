@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **gui: a canvas drawn as primitives, with clips, transforms, gradients,
+  hit regions, the wheel and the pinch.** A canvas's rectangles, lines
+  along an axis, and text are the window's own primitives (a pan redraws
+  without rasterizing the canvas; a 1000 × 700 canvas was a 2.8-megapixel
+  raster and upload a frame); paths and circles are rasterized on their
+  own box and kept by shape. New operations: `push` / `pop` (a stack of
+  clips and transforms: geometry scales, strokes, corners, and text
+  sizes do not), a rectangle's `gradient`, text cut to `max_w` with an
+  ellipsis, and `image`. An operation's `hit` makes it a hit region,
+  named by the pointer events over the canvas. A node with `wheel: true`
+  hears the wheel (`wheel`, with the modifiers held) and a trackpad's
+  pinch (`pinch`, from winit's `PinchGesture`; macOS) before any scroller
+  around it; `gui.input` sends both, the wheel with modifiers. A node's
+  `active` names its active descendant to assistive output, and a
+  group's `inert` reaches the engine from the flat layout. (Loom's
+  timeline in open-track desktop is the first user.)
+
 ### Changed
 
 - **`return` compiles to the bytecode tier.** A function with an early
