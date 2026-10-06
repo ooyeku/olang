@@ -850,7 +850,25 @@ impl ApplicationHandler<Cmd> for App {
                         (l.x, l.y)
                     }
                 };
-                self.input(id, Input::Wheel { dx, dy });
+                self.input(id, Input::Wheel { dx, dy, mods: None });
+            }
+            // A trackpad's pinch (macOS; the other platforms send none).
+            WindowEvent::PinchGesture { delta, phase, .. } => {
+                if delta.is_finite() {
+                    let phase = match phase {
+                        winit::event::TouchPhase::Started => "start",
+                        winit::event::TouchPhase::Moved => "move",
+                        winit::event::TouchPhase::Ended => "end",
+                        winit::event::TouchPhase::Cancelled => "cancel",
+                    };
+                    self.input(
+                        id,
+                        Input::Pinch {
+                            delta: delta as f32,
+                            phase: phase.to_string(),
+                        },
+                    );
+                }
             }
             WindowEvent::Ime(ime) => match ime {
                 Ime::Preedit(t, cursor) => self.input(id, Input::ImePreedit(t, cursor)),

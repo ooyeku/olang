@@ -371,6 +371,9 @@ fn a_bad_patch_says_what_is_wrong() {
 
 #[test]
 fn content_lets_a_list_scroll_past_its_laid_out_rows() {
+    // its pointer and wheel events go to the one channel: another test
+    // reading it meanwhile would read them
+    let _turn = events_turn();
     // A virtualized list lays out a few rows but scrolls through all of
     // them: the wheel is clamped to `content`, not to the children.
     let v = run(r##"
@@ -928,4 +931,135 @@ fn files_dropped_on_a_window_say_where_they_landed() {
         text(&v),
         r#"[("hover", "right", ["/tmp/a.png"]), ("drop", "left", ["/tmp/a.png", "/tmp/b.txt"]), ("cancel", (), [])]"#
     );
+}
+
+/// A canvas's operations as the window draws them: rectangles and lines
+/// along an axis are the renderers' own rectangles, a clip and a
+/// transform are kept on a stack (a transform moves and sizes geometry,
+/// not a stroke or a text), and hit regions answer the topmost.
+#[test]
+fn a_canvas_is_drawn_as_primitives_with_clips_transforms_and_hit_regions() {
+    use olang::stdlib::gui::canvas::{self, Item};
+    let n = |v: f64| Value::Float(v);
+    let ops = Value::List(Arc::new(vec![
+        m(vec![("op", s("rect")), ("x", n(0.0)), ("y", n(0.0)), ("w", n(200.0)), ("h", n(100.0)), ("fill", s("#ffffff")), ("hit", s("ground"))]),
+        m(vec![("op", s("push")), ("clip", tup(&[20.0, 0.0, 180.0, 100.0])), ("translate", tup(&[20.0, 10.0])), ("scale", tup(&[4.0, 1.0]))]),
+        // days 2..5 at 4 px a day, from x 20: 28..48
+        m(vec![("op", s("rect")), ("x", n(2.0)), ("y", n(0.0)), ("w", n(5.0)), ("h", n(20.0)), ("radius", n(4.0)), ("fill", s("#2563eb")), ("hit", s("bar"))]),
+        // a line down the clip's left edge and one past it, cut
+        m(vec![("op", s("line")), ("x1", n(-10.0)), ("y1", n(0.0)), ("x2", n(-10.0)), ("y2", n(80.0)), ("color", s("#dc2626")), ("width", n(2.0))]),
+        m(vec![("op", s("text")), ("x", n(2.0)), ("y", n(30.0)), ("text", s("OT-1")), ("size", n(12.0)), ("max_w", n(40.0))]),
+        m(vec![("op", s("pop"))]),
+        m(vec![("op", s("path")), ("points", Value::List(Arc::new(vec![tup(&[0.0, 90.0]), tup(&[8.0, 94.0]), tup(&[0.0, 98.0])]))), ("close", Value::Boolean(true)), ("fill", s("#16a34a"))]),
+        m(vec![("op", s("rect")), ("x", n(100.0)), ("y", n(60.0)), ("w", n(80.0)), ("h", n(20.0)), ("gradient", Value::List(Arc::new(vec![s("#000000"), s("#ffffff")])))]),
+    ]));
+    let d = canvas::draw(&ops, 200.0, 100.0, 2.0).expect("draws");
+    // the ground, the bar, the line, the text, the arrowhead, the gradient
+    assert_eq!(d.items.len(), 6, "{:?}", d.items);
+    match &d.items[1] {
+        Item::Rect { x, y, w, h, radii, clip, .. } => {
+            assert_eq!((*x, *y, *w, *h), (28.0, 10.0, 20.0, 20.0));
+            assert_eq!(radii[0], 4.0, "a radius is not scaled");
+            assert_eq!(*clip, [20.0, 0.0, 200.0, 100.0]);
+        }
+        other => panic!("the bar is a rectangle: {other:?}"),
+    }
+    match &d.items[2] {
+        Item::Rect { x, w, .. } => assert_eq!((*x, *w), (-21.0, 2.0)),
+        other => panic!("an upright line is a rectangle: {other:?}"),
+    }
+    match &d.items[3] {
+        Item::Text(t) => assert_eq!((t.x, t.y, t.size, t.max_w), (28.0, 40.0, 12.0, Some(40.0))),
+        other => panic!("text: {other:?}"),
+    }
+    match &d.items[4] {
+        Item::Pic { x, y, pic, .. } => {
+            assert!(*x <= 0.0 && *y <= 90.0 && pic.width <= 24 && pic.height <= 24, "a piece the size of the arrowhead");
+        }
+        other => panic!("a path is a raster piece: {other:?}"),
+    }
+    // the same shape a whole pixel along is the same picture
+    let moved = Value::List(Arc::new(vec![m(vec![
+        ("op", s("path")),
+        ("points", Value::List(Arc::new(vec![tup(&[30.0, 90.0]), tup(&[38.0, 94.0]), tup(&[30.0, 98.0])]))),
+        ("close", Value::Boolean(true)),
+        ("fill", s("#16a34a")),
+    ])]));
+    let d2 = canvas::draw(&moved, 200.0, 100.0, 2.0).expect("draws");
+    match (&d.items[4], &d2.items[0]) {
+        (Item::Pic { pic: a, x: xa, .. }, Item::Pic { pic: b, x: xb, .. }) => {
+            assert_eq!(a.id, b.id, "one raster for the shape");
+            assert_eq!(xb - xa, 30.0);
+        }
+        _ => panic!("pieces"),
+    }
+    assert!(matches!(&d.items[5], Item::Pic { pic, .. } if pic.width == 256 && pic.height == 1));
+    // hits: the bar over the ground; outside the clip the bar is not there
+    assert_eq!(text(&canvas::hit(&ops, 200.0, 100.0, 30.0, 20.0)), r#""bar""#);
+    assert_eq!(text(&canvas::hit(&ops, 200.0, 100.0, 60.0, 20.0)), r#""ground""#);
+    assert_eq!(text(&canvas::hit(&ops, 200.0, 100.0, 250.0, 20.0)), "()");
+
+    // drawn: the gradient dark at its left, light at its right; the bar blue
+    let mut st = WinState::new(1, true, "canvas", 200.0, 100.0, 2.0);
+    let scene = Value::List(Arc::new(vec![
+        m(vec![("key", s("root")), ("box", tup(&[0.0, 0.0, 200.0, 100.0])), ("style", m(vec![("bg", s("#ffffff"))]))]),
+        m(vec![("key", s("cv")), ("parent", s("root")), ("role", s("figure")), ("name", s("Timeline")), ("box", tup(&[0.0, 0.0, 200.0, 100.0])), ("draw", ops)]),
+    ]));
+    let mut out = Vec::new();
+    st.apply(&scene, &mut out).expect("applies");
+    let dl = st.display_list();
+    let px = soft::rgba(&soft::render(&dl));
+    let at = |x: f32, y: f32| {
+        let i = (((y * 2.0) as u32 * dl.width + (x * 2.0) as u32) * 4) as usize;
+        [px[i], px[i + 1], px[i + 2]]
+    };
+    assert!(at(102.0, 70.0)[0] < 30, "the gradient starts dark: {:?}", at(102.0, 70.0));
+    assert!(at(178.0, 70.0)[0] > 225, "and ends light: {:?}", at(178.0, 70.0));
+    assert_eq!(at(38.0, 20.0), [37, 99, 235], "the bar");
+    assert_eq!(at(19.0, 40.0), [255, 255, 255], "the line is clipped away");
+    assert_eq!(at(3.0, 94.0), [22, 163, 74], "the arrowhead");
+    if let Ok(g) = gpu::gpu(None, None) {
+        let gp = g.render_rgba(&dl);
+        let over = px.chunks(4).zip(gp.chunks(4)).filter(|(a, b)| (0..4).map(|i| a[i].abs_diff(b[i])).max().unwrap() > 48).count();
+        assert!(over * 200 <= px.len() / 4, "{over} pixels differ between the renderers");
+    } else {
+        eprintln!("skipped the GPU half: no GPU here");
+    }
+}
+
+/// A canvas that hears the wheel and the pinch (`wheel`) gets them as
+/// its own events, with the modifiers held, before a region around it
+/// scrolls; a pointer over it says which hit region it is over; and a
+/// node's active descendant is said in its place.
+#[test]
+fn a_canvas_hears_the_wheel_the_pinch_and_says_what_is_under_the_pointer() {
+    let _turn = events_turn();
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (300, 200) })
+        let ev = gui.events()
+        let mut stale = true
+        while stale { match chan.try_recv(ev) { Ok(e) => (), Err(e) => { stale = false } } }
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 300, 200) },
+          #{ "key": "sc", "parent": "root", "role": "region", "box": (0, 0, 300, 200), "content": (300, 800) },
+          #{ "key": "cv", "parent": "sc", "role": "figure", "name": "Timeline", "box": (0, 0, 300, 200), "wheel": true, "focusable": true, "active": "follow",
+             "draw": [#{ "op": "rect", "x": 10, "y": 10, "w": 50, "h": 20, "fill": "#2563eb", "hit": "bar:7" }] },
+          #{ "key": "follow", "parent": "root", "role": "button", "name": "OT-7, 3 to 9 Oct", "box": (10, 10, 50, 20), "inert": true }
+        ])
+        gui.input(w, #{ "kind": "pointer", "action": "move", "x": 20, "y": 20 })
+        gui.input(w, #{ "kind": "wheel", "dx": -12, "dy": 30 })
+        gui.input(w, #{ "kind": "wheel", "dx": 0, "dy": 10, "mod": true })
+        gui.input(w, #{ "kind": "pinch", "delta": 0.25, "phase": "move" })
+        let mut got = []
+        let mut more = true
+        while more { match chan.try_recv(ev) { Ok(e) => { got = got + [e] }, Err(e) => { more = false } } }
+        let moves = filter(got, (e) => map_get(e, "kind") == "pointer")
+        let wheels = filter(got, (e) => map_get(e, "kind") == "wheel")
+        let pinches = filter(got, (e) => map_get(e, "kind") == "pinch")
+        let scrolled = filter(got, (e) => map_get(e, "kind") == "scrolled")
+        let cv = filter(gui.read(w, "a11y"), (n) => map_get(n, "key") == "cv")[0]
+        [map_get(moves[0], "hit"), len(wheels), map_get(wheels[0], "key"), map_get(wheels[0], "dx"), map_get(wheels[0], "mod"), map_get(wheels[1], "mod"),
+         map_get(pinches[0], "delta"), map_get(pinches[0], "key"), len(scrolled), map_get(cv, "active")]
+    "##);
+    assert_eq!(text(&v), r#"["bar:7", 2, "cv", -12.0, false, true, 0.25, "cv", 0, "follow"]"#);
 }

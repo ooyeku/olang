@@ -1728,7 +1728,7 @@ Native-only; on in the released binaries (the `gui` cargo feature).
 | `gui.apply(w, patch)` | apply a list of operations to the window's tree → `Ok(())`, or `Err` naming the operation and what is wrong with it |
 | `gui.measure(text, style, opts?)` | the size of a text as it would be drawn → `#{ width, height, lines, baseline }`, logical pixels. `style` as a node's; `opts`: `width` (wraps when the style says `wrap`), `scale` |
 | `gui.read(w, what, arg?)` | read the window back: `"focus"`, `"hover"`, `"size"` → `(w, h, scale)`, `"hit"` `(x, y)` → a key, `"node"` key (its role, text, name, children, scroll `offset`, `bounds`, and `visible`: what of it shows once scrolling and clipping ancestors and the window cut it, or `()`), `"value"` key and `"selection"` key of a field, `"keys"` (focus order), `"a11y"` (the accessibility tree as maps), `"pixels"` (a PNG, from the software renderer), `"rgba"`, `"caret"` → `(x, y, w, h)` of the caret as the last frame showed it, clipped, or `()` |
-| `gui.input(w, event)` | send input as the platform would: `#{ kind: "key", key, text?, mods? }` (`"mod": true` is the platform's command key), `"text"`, `"pointer"` (`action` down/up/move/leave, `x`, `y`, `button`, `clicks`), `"wheel"` (`dx`, `dy`), `"compose"` and `"commit"` (an input method), `"resize"`, `"window_focus"`, `"files"` (`action` hover/drop/cancel, `paths`, `x`, `y`: files from another program); and what the platform does around a window: `"close"` (sends `close_requested`), `"menu"` with an `id` (sends `menu`), `"clipboard"` with a `text` (the clipboard input through `gui.input` uses, the window's own), `"appearance"` with `dark`, `contrast`, `reduce_motion` (sends `appearance`, as a settings change would). What tests drive |
+| `gui.input(w, event)` | send input as the platform would: `#{ kind: "key", key, text?, mods? }` (`"mod": true` is the platform's command key), `"text"`, `"pointer"` (`action` down/up/move/leave, `x`, `y`, `button`, `clicks`), `"wheel"` (`dx`, `dy`, and the modifiers held: `mods` or `mod`, `shift`, `alt`, `ctrl`), `"pinch"` (`delta`, `phase`), `"compose"` and `"commit"` (an input method), `"resize"`, `"window_focus"`, `"files"` (`action` hover/drop/cancel, `paths`, `x`, `y`: files from another program); and what the platform does around a window: `"close"` (sends `close_requested`), `"menu"` with an `id` (sends `menu`), `"clipboard"` with a `text` (the clipboard input through `gui.input` uses, the window's own), `"appearance"` with `dark`, `contrast`, `reduce_motion` (sends `appearance`, as a settings change would). What tests drive |
 | `gui.wake()` | a `wake` event on the channel, so a task blocked on `gui.events()` can stop without polling |
 | `gui.context()` | the system's settings now: `#{ dark, contrast, reduce_motion }` (macOS reads increased contrast and reduced motion; elsewhere they are false, and `dark` follows a window's theme). A window reports the same as an `appearance` event when it opens, when the system's appearance changes, and when it comes back to the front |
 | `gui.compare(a, b, opts?)` | two PNGs compared as a pixel snapshot is: `#{ same, differing, total, worst, diff }`; a pixel differs past `threshold` (32 of 255), the images are the same while at most `ratio` (0.001) of the pixels differ; `diff` is a PNG with the differing pixels in red |
@@ -1744,7 +1744,7 @@ Native-only; on in the released binaries (the `gui` cargo feature).
 
 | `op` | Fields |
 |---|---|
-| `"node"` | insert or replace: `key`, `parent` (none for the window's one root; a parent comes before its children), `index` among the siblings, `role`, `box` `(x, y, w, h)` in logical pixels **relative to the parent's content origin**, `style`, `text`, `name`, `description`, `focusable`, `disabled`, `checked`, `selected`, `expanded`, `value`, `range` `(value, min, max)`, `level`, `live` (`"polite"`/`"assertive"`), `scroll` (the node scrolls its children; the wheel moves it without the program, and says so with `scrolled`; a focused `region` that scrolls is moved by the arrows, page keys, space, home and end too, and the key goes on to the program only at its edge), `content` `(w, h)` (what a scrolling node scrolls through when its laid-out children reach less: a virtualized list), `modal` (a dialog, popover, or menu: while one is in the tree the pointer and Tab stay inside the topmost, the focus moves into it, and a press outside sends `outside`), `grab` (the pointer finds the node before its siblings, wherever it sits among them: a divider whose target reaches over the panes beside it; reading and focus keep its place), `draw` (a canvas: a list of operations, below), `image` (a picture's path or Bytes: below), `fit` (`"contain"`, the default, `"cover"`, `"fill"`, or `"none"`: its own size, below), `edit` (below) |
+| `"node"` | insert or replace: `key`, `parent` (none for the window's one root; a parent comes before its children), `index` among the siblings, `role`, `box` `(x, y, w, h)` in logical pixels **relative to the parent's content origin**, `style`, `text`, `name`, `description`, `focusable`, `disabled`, `checked`, `selected`, `expanded`, `value`, `range` `(value, min, max)`, `level`, `live` (`"polite"`/`"assertive"`), `scroll` (the node scrolls its children; the wheel moves it without the program, and says so with `scrolled`; a focused `region` that scrolls is moved by the arrows, page keys, space, home and end too, and the key goes on to the program only at its edge), `content` `(w, h)` (what a scrolling node scrolls through when its laid-out children reach less: a virtualized list), `modal` (a dialog, popover, or menu: while one is in the tree the pointer and Tab stay inside the topmost, the focus moves into it, and a press outside sends `outside`), `grab` (the pointer finds the node before its siblings, wherever it sits among them: a divider whose target reaches over the panes beside it; reading and focus keep its place), `draw` (a canvas: a list of operations, below), `wheel` (it hears the wheel and the pinch itself: below), `active` (the key of the node said as its focus: below), `inert` (drawn and said, never under the pointer), `image` (a picture's path or Bytes: below), `fit` (`"contain"`, the default, `"cover"`, `"fill"`, or `"none"`: its own size, below), `edit` (below) |
 | `"remove"` | `key`: the node and its subtree |
 | `"focus"` | `key`, or none to clear |
 | `"scroll"` | `key`, `to` `(x, y)` |
@@ -1759,14 +1759,31 @@ what the screen reader is told.
 
 **Canvases.** A node's `draw` is a list of operations in the node's own
 logical pixels, drawn in order, each an `op` with its fields: `"rect"`
-(`x`, `y`, `w`, `h`, `radius`), `"line"` (`x1`, `y1`, `x2`, `y2`),
-`"circle"` (`cx`, `cy`, `r`), `"path"` (`points`, a list of `(x, y)`;
-`close`), and `"text"` (`x`, `y` the top of the line, `text`, `size`,
-`weight`, `align` `"start"`/`"center"`/`"end"` about `x`). A shape takes
-`fill`, `stroke` and `width`; a line's colour is `color` (or `stroke`).
-Shapes are rasterized at the window's scale and kept while the list and
-the size are the same; text is drawn as text, so it stays sharp. Give a
-canvas a `name` (role `figure`) so a screen reader can say what it shows.
+(`x`, `y`, `w`, `h`, `radius`, one or four; `gradient`, a list of
+colours, across or with `dir: "y"` down), `"line"` (`x1`, `y1`, `x2`,
+`y2`), `"circle"` (`cx`, `cy`, `r`), `"path"` (`points`, a list of `(x,
+y)`; `close`), `"text"` (`x`, `y` the top of the line, `text`, `size`,
+`weight`, `align` `"start"`/`"center"`/`"end"` about `x`, `max_w`: cut
+with an ellipsis to that width), `"image"` (`src`, a picture's path or
+Bytes, `x`, `y`, `w`, `h`, `fit`), and `"push"` (`clip` `(x, y, w, h)`,
+`translate` `(x, y)`, `scale` `(kx, ky)` or one number) and `"pop"`, a
+stack of clips and transforms. A transform moves and sizes geometry,
+never a stroke's width, a corner's radius, or a text's size (a timeline
+zooms its days, its labels stay readable). A shape takes `fill`,
+`stroke` and `width`; a line's colour is `color` (or `stroke`).
+Rectangles, lines along an axis, and text become the window's own
+primitives, so a canvas is drawn like as many boxes, and a program draws
+what is visible each frame. Paths, circles, and slanted lines are
+rasterized on their own bounding box at the window's scale, and kept by
+their shape there (the same arrowhead anywhere, or moved by whole
+pixels, is one raster); a gradient is a strip of its stops stretched
+over its rectangle. An operation with a `hit` value is a hit region: a
+`pointer` event over the canvas carries the topmost one under it as
+`hit`. A canvas with `wheel: true` hears the wheel and a trackpad's pinch
+itself (`wheel`, `pinch` events) before any scrolling node around it. Give
+a canvas a `name` (role `figure`) so a screen reader can say what it
+shows, and `active: <key>` to have the element `key` (one placed over its
+focused shape) said as its focus: its active descendant.
 
 **Pictures.** An `image` node's source is a file's path or its Bytes:
 PNG, JPEG (turned as its EXIF orientation says), WebP, GIF (its first
@@ -1818,7 +1835,9 @@ program catching up, not a reset. Send back the `rev` of the last
 | `"focus"` | `key` (or `()`) — focus moved (Tab, a click, an assistive action, or a `"focus"` op) |
 | `"changed"` | `key`, `value`, `selection`, `rev` |
 | `"submit"` | `key` — Enter in a single-line field |
-| `"pointer"` | `action`, `x`, `y`, `button`, `clicks`, `target` |
+| `"pointer"` | `action`, `x`, `y`, `button`, `clicks`, `target`, `hit` (over a canvas: its topmost hit region there) |
+| `"wheel"` | `key` (a node with `wheel: true` under the pointer), `dx`, `dy` (logical pixels; positive moves the view up and left), `x`, `y`, `mod`, `shift`, `alt`, `ctrl` — the wheel or a trackpad's two fingers |
+| `"pinch"` | `key` (as `wheel`), `delta` (the change of magnification; positive zooms in), `phase` (`"start"`, `"move"`, `"end"`, `"cancel"`), `x`, `y` — a trackpad's pinch (macOS) |
 | `"scrolled"` | `key`, `x`, `y` |
 | `"a11y"` | `key`, `action` (`"set_value"`, `"increment"`, `"decrement"`), `value` |
 | `"outside"` | `key` (the modal layer), `x`, `y` — a press outside the topmost modal layer |

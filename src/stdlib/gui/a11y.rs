@@ -121,6 +121,11 @@ pub fn tree(st: &WinState) -> TreeUpdate {
         if let Some(d) = &n.description {
             node.set_description(d.clone());
         }
+        if let Some(a) = &n.active
+            && st.scene.nodes.contains_key(a)
+        {
+            node.set_active_descendant(node_id(a));
+        }
         if let Some(v) = value_of(st, n) {
             node.set_value(v);
         }
@@ -355,6 +360,7 @@ fn walk(st: &WinState, key: &str, depth: i64, out: &mut Vec<Value>) {
         ("actions", Value::List(Arc::new(actions))),
         ("custom", Value::List(Arc::new(custom))),
         ("description", opt_str(n.description.as_deref())),
+        ("active", opt_str(n.active.as_deref())),
     ]));
     for c in &n.children {
         walk(st, c, depth + 1, out);

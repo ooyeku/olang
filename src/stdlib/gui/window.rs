@@ -87,6 +87,15 @@ pub enum Input {
     Wheel {
         dx: f32,
         dy: f32,
+        /// The modifiers held, when the event says (a test's); else the
+        /// window's last.
+        mods: Option<Mods>,
+    },
+    /// A pinch on a trackpad: `delta` the change of magnification
+    /// (positive zooms in), `phase` start, move, end, or cancel.
+    Pinch {
+        delta: f32,
+        phase: String,
     },
     ImePreedit(String, Option<(usize, usize)>),
     ImeCommit(String),
@@ -482,7 +491,24 @@ impl WinState {
                 button,
                 clicks,
             } => self.pointer(action, x, y, &button, clicks, out),
-            Input::Wheel { dx, dy } => self.wheel(dx, dy, out),
+            Input::Wheel { dx, dy, mods } => self.wheel(dx, dy, mods, out),
+            Input::Pinch { delta, phase } => {
+                let (x, y) = self.pointer;
+                if let Some(hit) = self.scene.hit(x, y)
+                    && let Some(k) = self.scene.target_up(&hit, |n| n.wheel)
+                {
+                    out.push(self.ev(
+                        "pinch",
+                        vec![
+                            ("key", s(&k)),
+                            ("delta", float(delta)),
+                            ("phase", s(&phase)),
+                            ("x", float(x)),
+                            ("y", float(y)),
+                        ],
+                    ));
+                }
+            }
             Input::ImePreedit(t, cursor) => {
                 if let Some(f) = self.scene.focus.clone()
                     && let Some(ed) = self.editors.get_mut(&f)
@@ -792,6 +818,7 @@ impl WinState {
                         ("sx", float(self.screen_pointer.0)),
                         ("sy", float(self.screen_pointer.1)),
                         ("target", opt_str(hit.as_deref())),
+                        ("hit", self.canvas_hit(hit.as_deref(), x, y)),
                     ],
                 ));
             }
@@ -870,6 +897,7 @@ impl WinState {
                         ("button", s(button)),
                         ("clicks", Value::Integer(clicks as i64)),
                         ("target", opt_str(hit.as_deref())),
+                        ("hit", self.canvas_hit(hit.as_deref(), x, y)),
                     ],
                 ));
             }
@@ -890,6 +918,7 @@ impl WinState {
                         ("sy", float(self.screen_pointer.1)),
                         ("button", s(button)),
                         ("target", opt_str(hit.as_deref())),
+                        ("hit", self.canvas_hit(hit.as_deref(), x, y)),
                     ],
                 ));
                 // A click: pressed and released on the same activating node.
@@ -918,11 +947,31 @@ impl WinState {
         }
     }
 
-    fn wheel(&mut self, dx: f32, dy: f32, out: &mut Vec<Value>) {
+    fn wheel(&mut self, dx: f32, dy: f32, mods: Option<Mods>, out: &mut Vec<Value>) {
         let (x, y) = self.pointer;
         let Some(hit) = self.scene.hit(x, y) else {
             return;
         };
+        // A node that hears the wheel itself (a canvas that pans and
+        // zooms) takes it before any scroller around it.
+        if let Some(k) = self.scene.target_up(&hit, |n| n.wheel) {
+            let m = mods.unwrap_or(self.mods);
+            out.push(self.ev(
+                "wheel",
+                vec![
+                    ("key", s(&k)),
+                    ("dx", float(dx)),
+                    ("dy", float(dy)),
+                    ("x", float(x)),
+                    ("y", float(y)),
+                    ("mod", Value::Boolean(m.command())),
+                    ("shift", Value::Boolean(m.shift)),
+                    ("alt", Value::Boolean(m.alt)),
+                    ("ctrl", Value::Boolean(m.ctrl)),
+                ],
+            ));
+            return;
+        }
         let mut at = self.scene.scroller_up(&hit);
         while let Some(k) = at {
             let before = self.scene.nodes[&k].offset;
@@ -1110,31 +1159,9 @@ impl WinState {
         let (children, offset, rect) = (node.children.clone(), node.offset, node.rect);
         let (draw, image, fit) = (node.draw.clone(), node.image.clone(), node.fit.clone());
         if let Some(ops) = &draw
-            && let Ok((pic, texts)) = super::canvas::draw(ops, rect[2], rect[3], s)
+            && let Ok(drawing) = super::canvas::draw(ops, rect[2], rect[3], s)
         {
-            let cclip = inner_clip.intersect(Clip::rect(x, y, x + w, y + h));
-            if let Some(pic) = pic {
-                dl.prims.push(Prim::Image {
-                    x,
-                    y,
-                    w: pic.width as f32,
-                    h: pic.height as f32,
-                    pic,
-                    clip: cclip,
-                });
-            }
-            for t in texts {
-                let mut font = st.font.clone();
-                font.size = t.size;
-                font.weight = t.weight;
-                let shaped = ts.shape(&t.text, &font, fade(t.color), None, Align::Start, s);
-                let dx = match t.align {
-                    1 => shaped.width / 2.0,
-                    2 => shaped.width,
-                    _ => 0.0,
-                };
-                push_glyphs(&shaped, x + t.x * s - dx, y + t.y * s, cclip, dl);
-            }
+            self.paint_canvas(drawing, x, y, w, h, inner_clip, &st, opacity, ts, dl);
         }
         if let Some(src) = &image {
             // The picture at the size it shows (a real window's comes from
@@ -1242,6 +1269,199 @@ impl WinState {
                 clip,
             });
         }
+    }
+
+    /// A canvas's drawing (canvas.rs) at `(x, y)`, `w × h` device pixels,
+    /// as the window's own primitives.
+    #[allow(clippy::too_many_arguments)]
+    fn paint_canvas(
+        &self,
+        drawing: super::canvas::Drawing,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        inner_clip: Clip,
+        st: &scene::Style,
+        opacity: f32,
+        ts: &mut TextSystem,
+        dl: &mut DisplayList,
+    ) {
+        use super::canvas::Item;
+        let s = self.scale;
+        let fade =
+            |c: Color| -> Color { [c[0], c[1], c[2], (c[3] as f32 * opacity).round() as u8] };
+        let cclip = inner_clip.intersect(Clip::rect(x, y, x + w, y + h));
+        let sub = |a: [f32; 4]| {
+            cclip.intersect(Clip::rect(
+                x + a[0] * s,
+                y + a[1] * s,
+                x + a[2] * s,
+                y + a[3] * s,
+            ))
+        };
+        for item in drawing.items {
+            match item {
+                Item::Rect {
+                    x: rx,
+                    y: ry,
+                    w: rw,
+                    h: rh,
+                    fill,
+                    border,
+                    border_width,
+                    radii,
+                    clip,
+                } => {
+                    let c = sub(clip);
+                    if c.is_empty() {
+                        continue;
+                    }
+                    dl.prims.push(Prim::Rect {
+                        x: x + rx * s,
+                        y: y + ry * s,
+                        w: rw * s,
+                        h: rh * s,
+                        fill: fade(fill),
+                        border: fade(border),
+                        border_width: border_width * s,
+                        radii: radii.map(|r| r * s),
+                        clip: c,
+                    });
+                }
+                Item::Pic {
+                    x: px,
+                    y: py,
+                    w: pw,
+                    h: ph,
+                    pic,
+                    radii,
+                    clip,
+                } => {
+                    let (bx, by, bw, bh) = (x + px * s, y + py * s, pw * s, ph * s);
+                    let mut c = sub(clip);
+                    if radii.iter().any(|r| *r > 0.0) {
+                        let max = bw.min(bh) / 2.0;
+                        c = c.intersect(Clip {
+                            x0: bx,
+                            y0: by,
+                            x1: bx + bw,
+                            y1: by + bh,
+                            radii: radii.map(|r| (r * s).min(max)),
+                        });
+                    }
+                    if c.is_empty() {
+                        continue;
+                    }
+                    dl.prims.push(Prim::Image {
+                        x: bx,
+                        y: by,
+                        w: bw,
+                        h: bh,
+                        pic,
+                        clip: c,
+                    });
+                }
+                Item::Image {
+                    x: ix,
+                    y: iy,
+                    w: iw,
+                    h: ih,
+                    src,
+                    fit,
+                    clip,
+                } => {
+                    let (bx, by, bw, bh) = (x + ix * s, y + iy * s, iw * s, ih * s);
+                    let waiter = if self.headless { None } else { Some(self.id) };
+                    if let Ok(Some((pic, _))) = super::picture::get(&src, Some((bw, bh)), waiter) {
+                        let (pw, ph) = (pic.width as f32, pic.height as f32);
+                        let (kx, ky) = (bw / pw.max(1.0), bh / ph.max(1.0));
+                        let k = if fit == "cover" {
+                            kx.max(ky)
+                        } else {
+                            kx.min(ky)
+                        };
+                        let (dx, dy, dw, dh) = if fit == "fill" {
+                            (bx, by, bw, bh)
+                        } else {
+                            (
+                                bx + (bw - pw * k) / 2.0,
+                                by + (bh - ph * k) / 2.0,
+                                pw * k,
+                                ph * k,
+                            )
+                        };
+                        dl.prims.push(Prim::Image {
+                            x: dx,
+                            y: dy,
+                            w: dw,
+                            h: dh,
+                            pic,
+                            clip: sub(clip).intersect(Clip::rect(bx, by, bx + bw, by + bh)),
+                        });
+                    }
+                }
+                Item::Text(t) => {
+                    let c = sub(t.clip);
+                    if c.is_empty() || t.text.is_empty() {
+                        continue;
+                    }
+                    let mut font = st.font.clone();
+                    font.size = t.size;
+                    font.weight = t.weight;
+                    let color = fade(t.color);
+                    let mut shaped = ts.shape(&t.text, &font, color, None, Align::Start, s);
+                    // longer than it may be: cut with an ellipsis
+                    if let Some(mw) = t.max_w
+                        && shaped.width > mw * s + 0.5
+                    {
+                        let chars: Vec<char> = t.text.chars().collect();
+                        let cut_at = |n: usize| {
+                            chars[..n].iter().collect::<String>().trim_end().to_string() + "…"
+                        };
+                        let (mut lo, mut hi) = (0usize, chars.len());
+                        while lo < hi {
+                            let mid = (lo + hi).div_ceil(2);
+                            if ts
+                                .shape(&cut_at(mid), &font, color, None, Align::Start, s)
+                                .width
+                                <= mw * s
+                            {
+                                lo = mid;
+                            } else {
+                                hi = mid - 1;
+                            }
+                        }
+                        if lo == 0 {
+                            continue;
+                        }
+                        shaped = ts.shape(&cut_at(lo), &font, color, None, Align::Start, s);
+                    }
+                    let dx = match t.align {
+                        1 => shaped.width / 2.0,
+                        2 => shaped.width,
+                        _ => 0.0,
+                    };
+                    push_glyphs(&shaped, x + t.x * s - dx, y + t.y * s, c, dl);
+                }
+            }
+        }
+    }
+
+    /// The hit region of canvas `key` under the pointer at `(x, y)`
+    /// (logical, in the window), or `()`.
+    fn canvas_hit(&self, key: Option<&str>, x: f32, y: f32) -> Value {
+        let Some(k) = key else { return Value::Unit };
+        let Some(n) = self.scene.nodes.get(k) else {
+            return Value::Unit;
+        };
+        let Some(ops) = &n.draw else {
+            return Value::Unit;
+        };
+        let Some(abs) = self.scene.absolute(k) else {
+            return Value::Unit;
+        };
+        super::canvas::hit(ops, n.rect[2], n.rect[3], x - abs[0], y - abs[1])
     }
 
     #[allow(clippy::too_many_arguments)]

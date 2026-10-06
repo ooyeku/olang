@@ -605,6 +605,21 @@ fn input_of(v: &Value) -> Res<Input> {
         "wheel" => Input::Wheel {
             dx: get_num(v, "dx", what)?.unwrap_or(0.0),
             dy: get_num(v, "dy", what)?.unwrap_or(0.0),
+            // a test's modifiers, when it says any
+            mods: if ["mods", "mod", "shift", "alt", "ctrl", "super"]
+                .iter()
+                .any(|k| get(v, k).is_some())
+            {
+                Some(mods_of(v)?)
+            } else {
+                None
+            },
+        },
+        // A trackpad's pinch: `delta` the change of magnification
+        // (positive zooms in), `phase` start, move, end, or cancel.
+        "pinch" => Input::Pinch {
+            delta: get_num(v, "delta", what)?.unwrap_or(0.0),
+            phase: get_str(v, "phase", what)?.unwrap_or("move").to_string(),
         },
         "compose" => Input::ImePreedit(get_str(v, "text", what)?.unwrap_or("").to_string(), None),
         "commit" => Input::ImeCommit(get_str(v, "text", what)?.unwrap_or("").to_string()),
@@ -646,7 +661,7 @@ fn input_of(v: &Value) -> Res<Input> {
         }
         other => {
             return Err(format!(
-                "gui.input: unknown kind \"{other}\" (key, text, pointer, wheel, compose, commit, resize, window_focus, files, close, menu, clipboard, appearance, place, a11y)"
+                "gui.input: unknown kind \"{other}\" (key, text, pointer, wheel, pinch, compose, commit, resize, window_focus, files, close, menu, clipboard, appearance, place, a11y)"
             ));
         }
     })

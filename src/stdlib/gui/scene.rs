@@ -253,6 +253,14 @@ pub struct Node {
     pub actions: Vec<String>,
     /// A canvas's drawing operations (canvas.rs).
     pub draw: Option<Value>,
+    /// It hears the wheel and the pinch itself (a canvas that pans and
+    /// zooms): the window sends `wheel` and `pinch` events for it rather
+    /// than scrolling what is around it.
+    pub wheel: bool,
+    /// The node that stands for this one's focus to assistive output (its
+    /// active descendant): a canvas's focused shape, said by an element
+    /// placed over it.
+    pub active: Option<String>,
     /// An image's source: a file's path or its Bytes (PNG, JPEG, WebP,
     /// GIF, SVG: picture.rs); and how it fits its box ("contain", the
     /// default, "cover", "fill", or "none": its own size, one image
@@ -373,6 +381,8 @@ const NODE_KEYS: &[&str] = &[
     "inert",
     "actions",
     "draw",
+    "wheel",
+    "active",
     "image",
     "fit",
 ];
@@ -590,6 +600,8 @@ impl Scene {
                 }
             },
             draw: get(op, "draw").cloned(),
+            wheel: get_bool(op, "wheel", what)?.unwrap_or(false),
+            active: get_str(op, "active", what)?.map(str::to_string),
             image: get(op, "image").cloned(),
             fit: get_str(op, "fit", what)?.unwrap_or("contain").to_string(),
         };
