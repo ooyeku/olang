@@ -347,6 +347,21 @@ fn font_style(spec: &Spec, p: Option<&crate::ast::ValueMap>, role: &str) -> crat
             s.insert(k.into(), v.clone());
         }
     }
+    // a text's styled runs: their looks' tokens resolved
+    if let Value::List(l) = mget(p, "spans") {
+        let resolved: Vec<Value> = l
+            .iter()
+            .map(|sp| match sp {
+                Value::Tuple(t) if t.len() >= 3 => Value::Tuple(Arc::new(vec![
+                    t[0].clone(),
+                    t[1].clone(),
+                    with_style(spec, vmap(crate::ast::ValueMap::default()), &t[2]),
+                ])),
+                other => other.clone(),
+            })
+            .collect();
+        s.insert("spans".into(), Value::List(Arc::new(resolved)));
+    }
     let c = mget(p, "color");
     if *c != Value::Unit {
         s.insert("color".into(), tok(spec, c));
@@ -373,6 +388,7 @@ const FONT_PROPS: &[&str] = &[
     "font",
     "italic",
     "line_height",
+    "spans",
     "color",
     "wrap",
     "align",

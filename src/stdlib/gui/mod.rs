@@ -38,6 +38,7 @@ pub mod gpu;
 pub mod picture;
 pub mod platform;
 pub mod raster;
+pub mod rich;
 pub mod scene;
 pub mod soft;
 pub mod text;
@@ -512,6 +513,12 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
             let dl = st.display_list();
             Value::Integer(dl.prims.len() as i64)
         }
+        "ime" => match st.ime_area() {
+            Some([x, y, w, h]) => {
+                Value::Tuple(Arc::new(vec![float(x), float(y), float(w), float(h)]))
+            }
+            None => Value::Unit,
+        },
         "caret" => {
             st.display_list();
             match st.caret {
@@ -523,7 +530,7 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
         }
         other => {
             return Err(format!(
-                "gui.read: unknown \"{other}\" (focus, hover, size, hit, node, value, selection, keys, a11y, pixels, rgba, prims, caret)"
+                "gui.read: unknown \"{other}\" (focus, hover, size, hit, node, value, selection, keys, a11y, pixels, rgba, prims, caret, ime)"
             ));
         }
     })

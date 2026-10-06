@@ -7,8 +7,9 @@
 //! Nothing in this file touches the platform: the platform loop and
 //! `gui.input` (tests) feed it the same [`Input`] values.
 
-use super::edit::{Editor, Outcome};
+use super::edit::{Editor, Field, Outcome};
 use super::raster::GlyphKey;
+use super::rich::RichEditor;
 use super::scene::{self, Applied, Scene};
 use super::text::{self, Align, Color, Shaped, TextSystem};
 use super::values::*;
@@ -139,7 +140,7 @@ pub struct WinState {
     pub headless: bool,
     pub title: String,
     pub scene: Scene,
-    pub editors: HashMap<String, Editor>,
+    pub editors: HashMap<String, Field>,
     pub width: f32,
     pub height: f32,
     pub scale: f32,
@@ -233,28 +234,80 @@ impl WinState {
             };
             let props = node.edit.clone().expect("an edit node");
             let style = node.style.clone();
+            // a field that became styled, or plain again, starts over
+            if self
+                .editors
+                .get(k)
+                .is_some_and(|e| e.rich().is_some() != props.rich)
+            {
+                self.editors.remove(k);
+            }
             match self.editors.get_mut(k) {
                 Some(ed) => {
-                    ed.multiline = props.multiline;
-                    ed.secure = props.secure;
+                    ed.set_flags(props.multiline, props.secure);
                     ed.set_font(&style.font, style.color);
-                    if ed.offer(&props.value, props.rev, &mut ts) {
-                        // Adopted the program's value: say so, with the
-                        // revision it now has.
+                    let adopted = ed.offer(&props.value, props.rev, &mut ts);
+                    let mut reselected = false;
+                    if let Some(r) = ed.rich_mut() {
+                        r.own_undo = props.undo;
+                        if adopted || r.value() == props.value {
+                            r.set_spans(props.styles.as_ref(), props.spans.as_ref());
+                        }
+                        if let Some((a, f, seq)) = props.select
+                            && seq != r.select_seq
+                            && (adopted || r.value() == props.value)
+                        {
+                            r.select_seq = seq;
+                            r.select_chars(a.max(0) as usize, f.max(0) as usize);
+                            reselected = true;
+                        }
+                        if adopted {
+                            r.mark_reported();
+                        }
+                    }
+                    if adopted || reselected {
+                        // Adopted the program's value (or its selection):
+                        // say so, with the revision it now has.
                         let (a, f) = ed.selection_chars();
-                        let (v, rev) = (ed.value(), ed.rev);
-                        let e = self.changed_event(k, v, rev, a, f);
+                        let (v, rev) = (ed.value(), ed.rev());
+                        let mut e = self.changed_event(k, v, rev, a, f);
+                        if let Some(r) = self.editors.get_mut(k).and_then(|e| e.rich_mut()) {
+                            r.said_selection = (a, f);
+                        }
+                        if !adopted {
+                            e = self.ev(
+                                "select",
+                                vec![
+                                    ("key", s(k)),
+                                    ("selection", pair(a, f)),
+                                    ("rev", Value::Integer(rev)),
+                                ],
+                            );
+                        }
                         out.push(e);
                     }
                 }
                 None => {
-                    let ed = Editor::new(
-                        &props.value,
-                        &style.font,
-                        style.color,
-                        props.multiline,
-                        props.secure,
-                    );
+                    let ed = if props.rich {
+                        let mut r = RichEditor::new(&props.value, &style.font, style.color);
+                        r.secure = props.secure;
+                        r.own_undo = props.undo;
+                        r.set_spans(props.styles.as_ref(), props.spans.as_ref());
+                        if let Some((a, f, seq)) = props.select {
+                            r.select_seq = seq;
+                            r.select_chars(a.max(0) as usize, f.max(0) as usize);
+                            r.said_selection = r.selection_chars();
+                        }
+                        Field::Rich(Box::new(r))
+                    } else {
+                        Field::Plain(Editor::new(
+                            &props.value,
+                            &style.font,
+                            style.color,
+                            props.multiline,
+                            props.secure,
+                        ))
+                    };
                     self.editors.insert(k.clone(), ed);
                 }
             }
@@ -293,15 +346,99 @@ impl WinState {
                 ("key", s(key)),
                 ("value", s(&value)),
                 ("rev", Value::Integer(rev)),
-                (
-                    "selection",
-                    Value::Tuple(Arc::new(vec![
-                        Value::Integer(a as i64),
-                        Value::Integer(f as i64),
-                    ])),
-                ),
+                ("selection", pair(a, f)),
             ],
         )
+    }
+
+    /// A styled field's edit, said: the value, the selection, what
+    /// changed by line and by character, and where the caret is.
+    fn rich_changed_event(&mut self, key: &str) -> Option<Value> {
+        let caret = self.caret_rect(key);
+        let r = self.editors.get_mut(key)?.rich_mut()?;
+        let d = r.take_delta();
+        let (a, f) = r.selection_chars();
+        r.said_selection = (a, f);
+        let (v, rev) = (r.value(), r.rev);
+        let lines = Value::List(Arc::new(d.lines.iter().map(|l| s(l)).collect()));
+        Some(self.ev(
+            "changed",
+            vec![
+                ("key", s(key)),
+                ("value", s(&v)),
+                ("rev", Value::Integer(rev)),
+                ("selection", pair(a, f)),
+                (
+                    "delta",
+                    map(vec![
+                        ("first", Value::Integer(d.first as i64)),
+                        ("removed", Value::Integer(d.removed as i64)),
+                        ("lines", lines),
+                        ("at", Value::Integer(d.at as i64)),
+                        ("old_len", Value::Integer(d.old_len as i64)),
+                        ("inserted", s(&d.inserted)),
+                    ]),
+                ),
+                ("caret", rect_value(caret)),
+            ],
+        ))
+    }
+
+    /// A styled field whose selection moved without an edit, said when
+    /// the program asked (`report`).
+    fn report_selection(&mut self, key: &str, out: &mut Vec<Value>) {
+        let wants = self
+            .scene
+            .nodes
+            .get(key)
+            .and_then(|n| n.edit.as_ref())
+            .is_some_and(|e| e.report);
+        if !wants {
+            return;
+        }
+        let Some(r) = self.editors.get(key).and_then(|e| e.rich()) else {
+            return;
+        };
+        let sel = r.selection_chars();
+        if sel == r.said_selection {
+            return;
+        }
+        let rev = r.rev;
+        let caret = self.caret_rect(key);
+        if let Some(r) = self.editors.get_mut(key).and_then(|e| e.rich_mut()) {
+            r.said_selection = sel;
+        }
+        out.push(self.ev(
+            "select",
+            vec![
+                ("key", s(key)),
+                ("selection", pair(sel.0, sel.1)),
+                ("rev", Value::Integer(rev)),
+                ("caret", rect_value(caret)),
+            ],
+        ));
+    }
+
+    /// A selection an assistive client set, said as the pointer's would be.
+    pub fn said_selection_of(&mut self, key: &str, out: &mut Vec<Value>) {
+        self.report_selection(key, out);
+    }
+
+    /// Where a styled field's caret is, logical pixels in the window,
+    /// whether or not it shows (scrolled as the next frame will be).
+    pub fn caret_rect(&mut self, key: &str) -> Option<[f32; 4]> {
+        let (ox, oy, _, h) = self.edit_origin(key)?;
+        let s = self.scale.max(0.01);
+        let mut ts = text::system().lock().ok()?;
+        let r = self.editors.get_mut(key)?.rich_mut()?;
+        r.follow_caret(h, &mut ts);
+        let b = r.caret_box(1.0, &mut ts);
+        Some([
+            (ox + b.x0 as f32) / s,
+            (oy + b.y0 as f32 - r.scroll_y) / s,
+            ((b.x1 - b.x0) as f32).max(1.0) / s,
+            ((b.y1 - b.y0) as f32) / s,
+        ])
     }
 
     fn set_focus(&mut self, key: Option<String>, out: &mut Vec<Value>) {
@@ -359,7 +496,7 @@ impl WinState {
     /// Vertical offset of a single-line field's text, centring its line
     /// in the content box.
     fn edit_text_dy(&mut self, key: &str, content_h: f32, ts: &mut TextSystem) -> f32 {
-        let Some(ed) = self.editors.get_mut(key) else {
+        let Some(ed) = self.editors.get_mut(key).and_then(|e| e.plain_mut()) else {
             return 0.0;
         };
         if ed.multiline {
@@ -466,12 +603,19 @@ impl WinState {
             Input::Modifiers(m) => self.mods = m,
             Input::Files { action, paths, at } => {
                 let (x, y) = at.unwrap_or(self.pointer);
-                let target = if action == "cancel" { None } else { self.scene.hit(x, y) };
+                let target = if action == "cancel" {
+                    None
+                } else {
+                    self.scene.hit(x, y)
+                };
                 out.push(self.ev(
                     "files",
                     vec![
                         ("action", s(&action)),
-                        ("paths", Value::List(Arc::new(paths.iter().map(|p| s(p)).collect()))),
+                        (
+                            "paths",
+                            Value::List(Arc::new(paths.iter().map(|p| s(p)).collect())),
+                        ),
                         ("x", float(x)),
                         ("y", float(y)),
                         ("target", opt_str(target.as_deref())),
@@ -538,13 +682,23 @@ impl WinState {
     fn after_edit(&mut self, key: &str, outcome: Outcome, out: &mut Vec<Value>) {
         match outcome {
             Outcome::Changed => {
-                let ed = &self.editors[key];
-                let (a, f) = ed.selection_chars();
-                out.push(self.changed_event(key, ed.value(), ed.rev, a, f));
+                if self.editors[key].rich().is_some() {
+                    if let Some(e) = self.rich_changed_event(key) {
+                        out.push(e);
+                    }
+                } else {
+                    let ed = &self.editors[key];
+                    let (a, f) = ed.selection_chars();
+                    out.push(self.changed_event(key, ed.value(), ed.rev(), a, f));
+                }
                 self.a11y_dirty = true;
             }
             Outcome::Submit => out.push(self.ev("submit", vec![("key", s(key))])),
-            Outcome::Moved | Outcome::Pass => {}
+            Outcome::Moved => {
+                self.report_selection(key, out);
+                self.a11y_dirty = true;
+            }
+            Outcome::Pass => {}
         }
         self.dirty = true;
     }
@@ -584,15 +738,28 @@ impl WinState {
             self.dirty = true;
         }
         // a key the focused field hands to the program: no editing, no focus move
+        // (a chord with shift says so: "shift+tab"; never while the input
+        // method composes, which owns the keys until it commits)
+        let composing = self
+            .scene
+            .focus
+            .as_ref()
+            .and_then(|f| self.editors.get(f))
+            .is_some_and(|e| e.is_composing());
+        let spelled = if mods.shift {
+            format!("shift+{key}")
+        } else {
+            key.clone()
+        };
         let passed = plain
-            && !mods.shift
+            && !composing
             && self
                 .scene
                 .focus
                 .as_ref()
                 .and_then(|f| self.scene.nodes.get(f))
                 .and_then(|n| n.edit.as_ref())
-                .is_some_and(|e| e.pass_keys.iter().any(|k| *k == key));
+                .is_some_and(|e| e.pass_keys.iter().any(|k| *k == spelled));
         if key == "tab" && plain && !passed {
             self.move_focus(!mods.shift, out);
             return;
@@ -742,6 +909,7 @@ impl WinState {
                     Some(t) => ed.insert(&t, &mut ts),
                     None => Outcome::Moved,
                 },
+                ("z" | "y", _) if !ed.own_undo() => Outcome::Pass,
                 ("z", false) => ed.undo(&mut ts),
                 ("z", true) | ("y", false) => ed.redo(&mut ts),
                 ("left" | "right" | "up" | "down" | "backspace" | "delete", _) => {
@@ -796,17 +964,20 @@ impl WinState {
         match action {
             PointerAction::Move => {
                 if let Some(p) = self.scene.pressed.clone()
-                    && self.editors.get(&p).is_some_and(|e| e.dragging)
+                    && self.editors.get(&p).is_some_and(|e| e.dragging())
                     && let Some((ox, oy, _, h)) = self.edit_origin(&p)
                     && let Ok(mut ts) = text::system().lock()
                 {
                     let dy = self.edit_text_dy(&p, h, &mut ts);
                     let ed = self.editors.get_mut(&p).expect("present");
+                    let (sx, sy) = ed.scrolled();
                     ed.drag(
-                        x * self.scale - ox + ed.scroll_x,
-                        y * self.scale - oy - dy,
+                        x * self.scale - ox + sx,
+                        y * self.scale - oy - dy + sy,
                         &mut ts,
                     );
+                    drop(ts);
+                    self.report_selection(&p, out);
                     self.dirty = true;
                 }
                 out.push(self.ev(
@@ -876,13 +1047,17 @@ impl WinState {
                         let dy = self.edit_text_dy(f, h, &mut ts);
                         let shift = self.mods.shift;
                         let ed = self.editors.get_mut(f).expect("present");
+                        let (sx, sy) = ed.scrolled();
                         ed.press(
-                            x * self.scale - ox + ed.scroll_x,
-                            y * self.scale - oy - dy,
+                            x * self.scale - ox + sx,
+                            y * self.scale - oy - dy + sy,
                             clicks,
                             shift,
                             &mut ts,
                         );
+                        drop(ts);
+                        let f = f.clone();
+                        self.report_selection(&f, out);
                     }
                     self.dirty = true;
                 }
@@ -906,7 +1081,7 @@ impl WinState {
                 if let Some(p) = &pressed
                     && let Some(ed) = self.editors.get_mut(p)
                 {
-                    ed.dragging = false;
+                    ed.stop_drag();
                 }
                 out.push(self.ev(
                     "pointer",
@@ -952,6 +1127,17 @@ impl WinState {
         let Some(hit) = self.scene.hit(x, y) else {
             return;
         };
+        // A styled field scrolls its own text, until it is at an end.
+        if let Some(k) = self
+            .scene
+            .target_up(&hit, |n| n.edit.as_ref().is_some_and(|e| e.rich))
+            && let Ok(mut ts) = text::system().lock()
+            && let Some(r) = self.editors.get_mut(&k).and_then(|e| e.rich_mut())
+            && r.wheel(dy, &mut ts)
+        {
+            self.dirty = true;
+            return;
+        }
         // A node that hears the wheel itself (a canvas that pans and
         // zooms) takes it before any scroller around it.
         if let Some(k) = self.scene.target_up(&hit, |n| n.wheel) {
@@ -1007,11 +1193,20 @@ impl WinState {
         let (ox, oy, _, h) = self.edit_origin(&f)?;
         let mut ts = text::system().lock().ok()?;
         let dy = self.edit_text_dy(&f, h, &mut ts);
-        let ed = self.editors.get_mut(&f)?;
+        let s = self.platform_scale.max(0.01);
+        if let Some(r) = self.editors.get_mut(&f)?.rich_mut() {
+            let b = r.ime_box(&mut ts);
+            return Some([
+                (ox + b.x0 as f32) / s,
+                (oy + b.y0 as f32 - r.scroll_y) / s,
+                ((b.x1 - b.x0) as f32).max(1.0) / s,
+                ((b.y1 - b.y0) as f32) / s,
+            ]);
+        }
+        let ed = self.editors.get_mut(&f)?.plain_mut()?;
         ed.layout(&mut ts);
         let b = ed.ed.ime_cursor_area();
         // physical pixels to the platform's logical ones
-        let s = self.platform_scale.max(0.01);
         Some([
             (ox + b.x0 as f32 - ed.scroll_x) / s,
             (oy + dy + b.y0 as f32) / s,
@@ -1205,7 +1400,9 @@ impl WinState {
                 });
             }
         }
-        if self.editors.contains_key(key) {
+        if self.editors.get(key).is_some_and(|e| e.rich().is_some()) {
+            self.paint_rich(key, &st, content, inner_clip, focused, opacity, ts, dl);
+        } else if self.editors.contains_key(key) {
             self.paint_editor(key, &st, content, inner_clip, focused, opacity, ts, dl);
         } else if let Some(t) = &text {
             let max_w = if st.wrap { Some(content[2] / s) } else { None };
@@ -1464,6 +1661,223 @@ impl WinState {
         super::canvas::hit(ops, n.rect[2], n.rect[3], x - abs[0], y - abs[1])
     }
 
+    /// A styled field: the paragraphs in view, their spans' and lines'
+    /// backgrounds, the selection, the glyphs, underlines and strikes,
+    /// the composition, the caret, and a scroll mark when the text is
+    /// longer than the box.
+    #[allow(clippy::too_many_arguments)]
+    fn paint_rich(
+        &mut self,
+        key: &str,
+        st: &scene::Style,
+        content: [f32; 4],
+        clip: Clip,
+        focused: bool,
+        opacity: f32,
+        ts: &mut TextSystem,
+        dl: &mut DisplayList,
+    ) {
+        let s = self.scale;
+        let placeholder = self.scene.nodes[key]
+            .edit
+            .as_ref()
+            .map(|e| e.placeholder.clone())
+            .unwrap_or_default();
+        let window_focused = self.focused_window;
+        let fade =
+            |c: Color| -> Color { [c[0], c[1], c[2], (c[3] as f32 * opacity).round() as u8] };
+        let r = self
+            .editors
+            .get_mut(key)
+            .and_then(|e| e.rich_mut())
+            .expect("present");
+        r.set_font(&st.font, st.color);
+        r.set_geometry(content[2] / s, s);
+        r.follow_caret(content[3], ts);
+        let ox = content[0];
+        let oy = content[1] - r.scroll_y;
+        let clip = clip.intersect(Clip::rect(
+            content[0] - 1.0,
+            content[1],
+            content[0] + content[2] + 1.0,
+            content[1] + content[3],
+        ));
+        let shown = r.visible(r.scroll_y, r.scroll_y + content[3], ts);
+        // backgrounds: a code block's lines edge to edge, a code span's
+        // glyphs
+        for i in shown.clone() {
+            let (py, _, ph) = r.para(i);
+            for (sp, look) in r.para_spans(i) {
+                if let Some(c) = look.line_bg {
+                    dl.prims.push(solid(
+                        content[0] - 4.0 * s,
+                        oy + py,
+                        content[2] + 8.0 * s,
+                        ph,
+                        fade(c),
+                        clip,
+                    ));
+                }
+                if let Some(c) = look.bg {
+                    for b in r.range_boxes(i, sp.start, sp.end) {
+                        dl.prims.push(Prim::Rect {
+                            x: ox + b.x0 as f32 - 2.0 * s,
+                            y: oy + py + b.y0 as f32,
+                            w: (b.x1 - b.x0) as f32 + 4.0 * s,
+                            h: (b.y1 - b.y0) as f32,
+                            fill: fade(c),
+                            border: [0, 0, 0, 0],
+                            border_width: 0.0,
+                            radii: [3.0 * s; 4],
+                            clip,
+                        });
+                    }
+                }
+            }
+        }
+        if focused {
+            for i in shown.clone() {
+                let Some((a, b, more)) = r.para_selection(i) else {
+                    continue;
+                };
+                let (py, _, ph) = r.para(i);
+                let boxes = r.range_boxes(i, a, b);
+                let mut end_x = 0.0f32;
+                for bx in &boxes {
+                    dl.prims.push(solid(
+                        ox + bx.x0 as f32,
+                        oy + py + bx.y0 as f32,
+                        (bx.x1 - bx.x0) as f32,
+                        (bx.y1 - bx.y0) as f32,
+                        fade(st.selection),
+                        clip,
+                    ));
+                    end_x = bx.x1 as f32;
+                }
+                if more {
+                    // the line break is selected too
+                    let last = boxes.last().map(|b| (b.y0 as f32, (b.y1 - b.y0) as f32));
+                    let (y0, h) =
+                        last.unwrap_or((ph - st.font.size * s * 1.2, st.font.size * s * 1.2));
+                    dl.prims.push(solid(
+                        ox + end_x,
+                        oy + py + y0,
+                        st.font.size * s * 0.4,
+                        h,
+                        fade(st.selection),
+                        clip,
+                    ));
+                }
+            }
+        }
+        if r.value().is_empty() && !placeholder.is_empty() {
+            let shaped = ts.shape(
+                &placeholder,
+                &st.font,
+                fade(st.placeholder),
+                Some(content[2] / s),
+                Align::Start,
+                s,
+            );
+            push_glyphs(&shaped, ox, oy, clip, dl);
+        }
+        for i in shown.clone() {
+            let (py, layout, _) = r.para(i);
+            let shaped = text::shaped_of(layout, s);
+            push_glyphs(&shaped, ox, oy + py, clip, dl);
+            // underlines and strikes
+            for (sp, look) in r.para_spans(i) {
+                if !look.underline && !look.strike {
+                    continue;
+                }
+                let c = fade(look.color.unwrap_or(st.color));
+                for b in r.range_boxes(i, sp.start, sp.end) {
+                    let (x, w) = (ox + b.x0 as f32, (b.x1 - b.x0) as f32);
+                    if look.underline {
+                        dl.prims.push(solid(
+                            x,
+                            (oy + py + b.y1 as f32 - 2.0 * s).round(),
+                            w,
+                            s.max(1.0),
+                            c,
+                            clip,
+                        ));
+                    }
+                    if look.strike {
+                        dl.prims.push(solid(
+                            x,
+                            (oy + py + ((b.y0 + b.y1) / 2.0) as f32).round(),
+                            w,
+                            s.max(1.0),
+                            c,
+                            clip,
+                        ));
+                    }
+                }
+            }
+            if let Some((a, b)) = r.para_compose(i) {
+                for bx in r.range_boxes(i, a, b) {
+                    dl.prims.push(solid(
+                        ox + bx.x0 as f32,
+                        oy + py + bx.y1 as f32 - s,
+                        (bx.x1 - bx.x0) as f32,
+                        s,
+                        fade(st.color),
+                        clip,
+                    ));
+                }
+            }
+        }
+        // a scroll mark when the text is longer than its box
+        let total = r.content_height(ts);
+        if total > content[3] + 1.0 && content[3] > 0.0 {
+            let track = content[3];
+            let h = (track * track / total).max(24.0 * s).min(track);
+            let y = content[1] + (track - h) * (r.scroll_y / (total - track).max(1.0));
+            let mut c = st.placeholder;
+            c[3] = (c[3] as f32 * 0.45) as u8;
+            dl.prims.push(Prim::Rect {
+                x: content[0] + content[2] + 2.0 * s,
+                y,
+                w: 3.0 * s,
+                h,
+                fill: fade(c),
+                border: [0, 0, 0, 0],
+                border_width: 0.0,
+                radii: [1.5 * s; 4],
+                clip: clip.intersect(Clip::rect(
+                    content[0],
+                    content[1],
+                    content[0] + content[2] + 6.0 * s,
+                    content[1] + content[3],
+                )),
+            });
+        }
+        let caret = if focused && window_focused && r.show_cursor() {
+            let c = r.caret_box((1.5 * s).max(1.0), ts);
+            Some((
+                ox + c.x0 as f32,
+                oy + c.y0 as f32,
+                (c.x1 - c.x0) as f32,
+                (c.y1 - c.y0) as f32,
+            ))
+        } else {
+            None
+        };
+        if let Some((cx, cy, cw, ch)) = caret {
+            let shown = clip.intersect(Clip::rect(cx, cy, cx + cw, cy + ch));
+            if !shown.is_empty() {
+                self.caret = Some([
+                    shown.x0 / s,
+                    shown.y0 / s,
+                    (shown.x1 - shown.x0) / s,
+                    (shown.y1 - shown.y0) / s,
+                ]);
+            }
+            dl.prims.push(solid(cx, cy, cw, ch, fade(st.caret), clip));
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn paint_editor(
         &mut self,
@@ -1485,7 +1899,11 @@ impl WinState {
             .unwrap_or_default();
         let secure = node.edit.as_ref().is_some_and(|e| e.secure);
         let window_focused = self.focused_window;
-        let ed = self.editors.get_mut(key).expect("present");
+        let ed = self
+            .editors
+            .get_mut(key)
+            .and_then(|e| e.plain_mut())
+            .expect("present");
         ed.set_font(&st.font, st.color);
         ed.set_geometry(content[2] / s, s);
         let dy = if ed.multiline {
@@ -1602,6 +2020,34 @@ impl WinState {
                 clip,
             });
         }
+    }
+}
+
+fn pair(a: usize, f: usize) -> Value {
+    Value::Tuple(Arc::new(vec![
+        Value::Integer(a as i64),
+        Value::Integer(f as i64),
+    ]))
+}
+
+fn rect_value(r: Option<[f32; 4]>) -> Value {
+    match r {
+        Some(r) => Value::Tuple(Arc::new(r.iter().map(|v| float(*v)).collect())),
+        None => Value::Unit,
+    }
+}
+
+fn solid(x: f32, y: f32, w: f32, h: f32, fill: Color, clip: Clip) -> Prim {
+    Prim::Rect {
+        x,
+        y,
+        w,
+        h,
+        fill,
+        border: [0, 0, 0, 0],
+        border_width: 0.0,
+        radii: [0.0; 4],
+        clip,
     }
 }
 

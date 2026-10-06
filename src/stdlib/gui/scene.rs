@@ -78,6 +78,7 @@ const STYLE_KEYS: &[&str] = &[
     "weight",
     "italic",
     "line_height",
+    "spans",
     "align",
     "valign",
     "wrap",
@@ -143,6 +144,23 @@ impl Style {
         if let Some(n) = get_num(m, "line_height", what)? {
             self.font.line_height = n.max(0.0);
         }
+        if let Some(Value::List(l)) = get(m, "spans") {
+            let mut v = Vec::new();
+            for sp in l.iter() {
+                if let Value::Tuple(t) = sp
+                    && t.len() >= 3
+                    && let (Some(a), Some(b)) = (num(&t[0]), num(&t[1]))
+                    && b > a
+                {
+                    v.push((a as usize, b as usize, super::rich::SpanStyle::parse(&t[2])));
+                }
+            }
+            self.font.spans = if v.is_empty() {
+                None
+            } else {
+                Some(Arc::new(v))
+            };
+        }
         if let Some(a) = get_str(m, "align", what)? {
             self.align = Align::parse(a)
                 .ok_or_else(|| format!("{what}: \"align\" is start, center, or end"))?;
@@ -197,6 +215,19 @@ pub struct EditProps {
     /// Plain keys the field hands to the program instead of editing with
     /// them (a completion's up and down, its tab): `"up"`, `"down"`, `"tab"`.
     pub pass_keys: Vec<String>,
+    /// A styled field (`rich.rs`): paragraphs laid out each on its own,
+    /// `spans` a list a line of `(start, end, style)`, `styles` the looks.
+    pub rich: bool,
+    pub spans: Option<Value>,
+    pub styles: Option<Value>,
+    /// The program's selection `(anchor, focus, seq)`: applied when `seq`
+    /// is new.
+    pub select: Option<(i64, i64, i64)>,
+    /// The field keeps its own undo; `false` hands ⌘Z and ⌘⇧Z to the
+    /// program.
+    pub undo: bool,
+    /// Report moves of the selection (`select` events).
+    pub report: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -529,6 +560,17 @@ impl Scene {
                         .collect(),
                     _ => Vec::new(),
                 },
+                rich: get_bool(e, "rich", what)?.unwrap_or(false),
+                spans: get(e, "spans").cloned(),
+                styles: get(e, "styles").cloned(),
+                select: match get(e, "select") {
+                    Some(v) => nums(v)
+                        .filter(|n| n.len() >= 3)
+                        .map(|n| (n[0] as i64, n[1] as i64, n[2] as i64)),
+                    None => None,
+                },
+                undo: get_bool(e, "undo", what)?.unwrap_or(true),
+                report: get_bool(e, "report", what)?.unwrap_or(false),
             }),
         };
         if edit.is_some() {

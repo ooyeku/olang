@@ -393,12 +393,10 @@ impl App {
             };
             let dl = st.display_list();
             st.dirty = false;
-            let tree = if st.a11y_dirty {
-                st.a11y_dirty = false;
-                Some(a11y::tree(&st))
-            } else {
-                None
-            };
+            // the tree is built only when a client is listening (a long
+            // styled text is a run a paragraph)
+            let tree = st.a11y_dirty;
+            st.a11y_dirty = false;
             let wants = st.wants_ime();
             let area = if wants { st.ime_area() } else { None };
             (dl, tree, wants, area)
@@ -437,8 +435,12 @@ impl App {
                 (started.elapsed() - listed).as_secs_f64() * 1000.0
             );
         }
-        if let Some(tree) = a11y_tree {
-            pw.a11y.update_if_active(|| tree);
+        if a11y_tree {
+            let state = pw.state.clone();
+            pw.a11y.update_if_active(|| match state.lock() {
+                Ok(st) => a11y::tree(&st),
+                Err(e) => a11y::tree(&e.into_inner()),
+            });
         }
         if wants_ime != pw.ime_on {
             pw.win.set_ime_allowed(wants_ime);

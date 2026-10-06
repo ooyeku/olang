@@ -408,3 +408,206 @@ impl Editor {
         }
     }
 }
+
+/// A field's editor: a plain one (parley's, the whole text one layout)
+/// or a styled one (`rich.rs`, a layout a paragraph).
+pub enum Field {
+    Plain(Editor),
+    Rich(Box<super::rich::RichEditor>),
+}
+
+impl Field {
+    pub fn rich(&self) -> Option<&super::rich::RichEditor> {
+        match self {
+            Field::Rich(r) => Some(r),
+            Field::Plain(_) => None,
+        }
+    }
+
+    pub fn rich_mut(&mut self) -> Option<&mut super::rich::RichEditor> {
+        match self {
+            Field::Rich(r) => Some(r),
+            Field::Plain(_) => None,
+        }
+    }
+
+    pub fn plain_mut(&mut self) -> Option<&mut Editor> {
+        match self {
+            Field::Plain(e) => Some(e),
+            Field::Rich(_) => None,
+        }
+    }
+
+    pub fn multiline(&self) -> bool {
+        match self {
+            Field::Plain(e) => e.multiline,
+            Field::Rich(_) => true,
+        }
+    }
+
+    pub fn secure(&self) -> bool {
+        match self {
+            Field::Plain(e) => e.secure,
+            Field::Rich(r) => r.secure,
+        }
+    }
+
+    pub fn set_flags(&mut self, multiline: bool, secure: bool) {
+        match self {
+            Field::Plain(e) => {
+                e.multiline = multiline;
+                e.secure = secure;
+            }
+            Field::Rich(r) => r.secure = secure,
+        }
+    }
+
+    pub fn rev(&self) -> i64 {
+        match self {
+            Field::Plain(e) => e.rev,
+            Field::Rich(r) => r.rev,
+        }
+    }
+
+    pub fn set_font(&mut self, font: &Font, color: Color) {
+        match self {
+            Field::Plain(e) => e.set_font(font, color),
+            Field::Rich(r) => r.set_font(font, color),
+        }
+    }
+
+    pub fn value(&self) -> String {
+        match self {
+            Field::Plain(e) => e.value(),
+            Field::Rich(r) => r.value(),
+        }
+    }
+
+    pub fn selection_chars(&self) -> (usize, usize) {
+        match self {
+            Field::Plain(e) => e.selection_chars(),
+            Field::Rich(r) => r.selection_chars(),
+        }
+    }
+
+    pub fn offer(&mut self, value: &str, rev: Option<i64>, ts: &mut TextSystem) -> bool {
+        match self {
+            Field::Plain(e) => e.offer(value, rev, ts),
+            Field::Rich(r) => r.offer(value, rev, ts),
+        }
+    }
+
+    pub fn is_composing(&self) -> bool {
+        match self {
+            Field::Plain(e) => e.is_composing(),
+            Field::Rich(r) => r.is_composing(),
+        }
+    }
+
+    pub fn compose(&mut self, text: &str, cursor: Option<(usize, usize)>, ts: &mut TextSystem) {
+        match self {
+            Field::Plain(e) => e.compose(text, cursor, ts),
+            Field::Rich(r) => r.compose(text, cursor, ts),
+        }
+    }
+
+    pub fn insert(&mut self, text: &str, ts: &mut TextSystem) -> Outcome {
+        match self {
+            Field::Plain(e) => e.insert(text, ts),
+            Field::Rich(r) => r.insert(text, ts),
+        }
+    }
+
+    pub fn key(
+        &mut self,
+        key: &str,
+        shift: bool,
+        word: bool,
+        line: bool,
+        ts: &mut TextSystem,
+    ) -> Outcome {
+        match self {
+            Field::Plain(e) => e.key(key, shift, word, line, ts),
+            Field::Rich(r) => r.key(key, shift, word, line, ts),
+        }
+    }
+
+    pub fn select_all(&mut self, ts: &mut TextSystem) {
+        match self {
+            Field::Plain(e) => e.select_all(ts),
+            Field::Rich(r) => r.select_all(ts),
+        }
+    }
+
+    pub fn selected_text(&self) -> Option<String> {
+        match self {
+            Field::Plain(e) => e.selected_text(),
+            Field::Rich(r) => r.selected_text(),
+        }
+    }
+
+    pub fn delete_selection(&mut self, ts: &mut TextSystem) -> Outcome {
+        match self {
+            Field::Plain(e) => e.delete_selection(ts),
+            Field::Rich(r) => r.delete_selection(ts),
+        }
+    }
+
+    /// The field keeps its own undo (else ⌘Z is the program's).
+    pub fn own_undo(&self) -> bool {
+        match self {
+            Field::Plain(_) => true,
+            Field::Rich(r) => r.own_undo,
+        }
+    }
+
+    pub fn undo(&mut self, ts: &mut TextSystem) -> Outcome {
+        match self {
+            Field::Plain(e) => e.undo(ts),
+            Field::Rich(r) => r.undo(ts),
+        }
+    }
+
+    pub fn redo(&mut self, ts: &mut TextSystem) -> Outcome {
+        match self {
+            Field::Plain(e) => e.redo(ts),
+            Field::Rich(r) => r.redo(ts),
+        }
+    }
+
+    pub fn press(&mut self, x: f32, y: f32, clicks: u32, shift: bool, ts: &mut TextSystem) {
+        match self {
+            Field::Plain(e) => e.press(x, y, clicks, shift, ts),
+            Field::Rich(r) => r.press(x, y, clicks, shift, ts),
+        }
+    }
+
+    pub fn drag(&mut self, x: f32, y: f32, ts: &mut TextSystem) {
+        match self {
+            Field::Plain(e) => e.drag(x, y, ts),
+            Field::Rich(r) => r.drag(x, y, ts),
+        }
+    }
+
+    pub fn dragging(&self) -> bool {
+        match self {
+            Field::Plain(e) => e.dragging,
+            Field::Rich(r) => r.dragging,
+        }
+    }
+
+    pub fn stop_drag(&mut self) {
+        match self {
+            Field::Plain(e) => e.dragging = false,
+            Field::Rich(r) => r.dragging = false,
+        }
+    }
+
+    /// How far the text is scrolled (device pixels): a press lands there.
+    pub fn scrolled(&self) -> (f32, f32) {
+        match self {
+            Field::Plain(e) => (e.scroll_x, 0.0),
+            Field::Rich(r) => (0.0, r.scroll_y),
+        }
+    }
+}

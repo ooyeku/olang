@@ -33,6 +33,9 @@ pub struct Font {
     pub italic: bool,
     /// A multiple of the font size; 0 is the font's own line height.
     pub line_height: f32,
+    /// Styled runs within the text (characters): a preview's bold, code,
+    /// links (`rich.rs`'s looks).
+    pub spans: Option<Arc<Vec<(usize, usize, super::rich::SpanStyle)>>>,
 }
 
 impl Default for Font {
@@ -43,6 +46,7 @@ impl Default for Font {
             weight: 400.0,
             italic: false,
             line_height: 0.0,
+            spans: None,
         }
     }
 }
@@ -56,6 +60,17 @@ impl Hash for Font {
         self.weight.to_bits().hash(h);
         self.italic.hash(h);
         self.line_height.to_bits().hash(h);
+        if let Some(sp) = &self.spans {
+            sp.len().hash(h);
+            for (a, b, st) in sp.iter() {
+                (a, b).hash(h);
+                st.weight.map(f32::to_bits).hash(h);
+                st.italic.hash(h);
+                st.mono.hash(h);
+                st.size.map(f32::to_bits).hash(h);
+                st.color.hash(h);
+            }
+        }
     }
 }
 
@@ -313,6 +328,18 @@ impl TextSystem {
         // A character asked for in emoji presentation (followed by U+FE0F:
         // "❤️", "1️⃣") is drawn from an emoji font, though the text font
         // has a plain glyph for it.
+        if let Some(spans) = &font.spans {
+            let mut at: Vec<usize> = text.char_indices().map(|(b, _)| b).collect();
+            at.push(text.len());
+            for (a, b, st) in spans.iter() {
+                let (a, b) = (at[(*a).min(at.len() - 1)], at[(*b).min(at.len() - 1)]);
+                if a < b {
+                    for prop in st.props(1.0) {
+                        builder.push(prop, a..b);
+                    }
+                }
+            }
+        }
         for range in emoji_presentation_ranges(text) {
             builder.push(
                 StyleProperty::FontFamily(FontFamily::Source(EMOJI_FAMILIES.into())),

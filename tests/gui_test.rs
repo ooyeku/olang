@@ -305,13 +305,13 @@ fn a_stale_value_from_the_program_does_not_undo_typing() {
             &mut out,
         );
     }
-    let rev_of_a = st.editors["field"].rev - 1;
+    let rev_of_a = st.editors["field"].rev() - 1;
     // The program answers the first keystroke after the second landed.
     st.apply(&field_patch("a", Some(rev_of_a)), &mut out)
         .unwrap();
     assert_eq!(st.editors["field"].value(), "ab");
     // A program that transforms the value is obeyed.
-    let rev = st.editors["field"].rev;
+    let rev = st.editors["field"].rev();
     st.apply(&field_patch("AB", Some(rev)), &mut out).unwrap();
     assert_eq!(st.editors["field"].value(), "AB");
 }
@@ -1062,4 +1062,86 @@ fn a_canvas_hears_the_wheel_the_pinch_and_says_what_is_under_the_pointer() {
          map_get(pinches[0], "delta"), map_get(pinches[0], "key"), len(scrolled), map_get(cv, "active")]
     "##);
     assert_eq!(text(&v), r#"["bar:7", 2, "cv", -12.0, false, true, 0.25, "cv", 0, "follow"]"#);
+}
+
+#[test]
+fn a_styled_field_edits_a_paragraph_at_a_time_and_says_what_changed() {
+    let _turn = events_turn();
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (300, 120) })
+        let ev = gui.events()
+        let mut lines = []
+        for i in 0..400 { lines = lines + ["line " + to_string(i)] }
+        let text = join(lines, "\n")
+        let styles = [#{ "weight": 700 }, #{ "font": "mono", "line_bg": "#eeeeee" }]
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 300, 120) },
+          #{ "key": "f", "parent": "root", "role": "textarea", "box": (10, 10, 260, 100),
+             "edit": #{ "value": text, "rich": true, "styles": styles, "spans": [[(0, 4, 0)], [(0, 0, 1)]], "select": (0, 0, 1), "undo": false } },
+          #{ "op": "focus", "key": "f" }
+        ])
+        let mut drain = true
+        while drain { match chan.try_recv(ev) { Ok(e) => (), _ => { drain = false } } }
+        // typed in the first line: one line changed, the caret after it
+        gui.input(w, #{ "kind": "text", "text": "X" })
+        let mut changed = ()
+        let mut more = true
+        while more { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "changed" => { changed = e } }, _ => { more = false } } }
+        let d = map_get(changed, "delta")
+        let caret = map_get(changed, "caret")
+        // the end of the text, by key: the field scrolls to its caret
+        gui.input(w, #{ "kind": "key", "key": "down", "mod": true })
+        let shown = gui.read(w, "caret")
+        // ⌘Z is the program's here (undo: false): the value stays
+        gui.input(w, #{ "kind": "key", "key": "z", "mod": true })
+        // the program selects: the field takes it, and says so
+        gui.apply(w, [#{ "key": "f", "parent": "root", "role": "textarea", "box": (10, 10, 260, 100),
+             "edit": #{ "value": "X" + text, "rich": true, "styles": styles, "spans": [], "select": (1, 3, 2), "undo": false } }])
+        let mut sel = ()
+        let mut more2 = true
+        while more2 { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "select" => { sel = map_get(e, "selection") } }, _ => { more2 = false } } }
+        [map_get(d, "first"), map_get(d, "removed"), map_get(d, "lines"), map_get(d, "at"), map_get(d, "inserted"), map_get(changed, "selection"),
+         caret[0] > 10.0 && caret[1] >= 8.0, shown != () && shown[1] > 10.0 && shown[1] < 110.0, gui.read(w, "value", "f") == "X" + text, sel]
+    "##);
+    assert_eq!(
+        text(&v),
+        r#"[0, 1, ["Xline 0"], 0, "X", (1, 1), true, true, true, (1, 3)]"#
+    );
+}
+
+#[test]
+fn a_styled_field_composes_in_place_and_is_read_as_runs() {
+    let _turn = events_turn();
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (300, 120) })
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 300, 120) },
+          #{ "key": "f", "parent": "root", "role": "textarea", "box": (10, 10, 260, 100),
+             "edit": #{ "value": "ab\ncd", "rich": true, "styles": [], "spans": [] } },
+          #{ "op": "focus", "key": "f" }
+        ])
+        gui.input(w, #{ "kind": "key", "key": "down", "mod": true })
+        gui.input(w, #{ "kind": "compose", "text": "にほ" })
+        // composing: the value is not yet changed, the input method's
+        // window is at the composition
+        let during = gui.read(w, "value", "f")
+        let ime = gui.read(w, "ime")
+        gui.input(w, #{ "kind": "commit", "text": "日本" })
+        let node = filter(gui.read(w, "a11y"), (n) => map_get(n, "key") == "f")[0]
+        [during, ime != () && ime[0] > 10.0 && ime[1] > 20.0, gui.read(w, "value", "f"), map_get(node, "text_runs"), map_get(node, "text_selection")]
+    "##);
+    assert_eq!(
+        text(&v),
+        "[\"ab\ncd\", true, \"ab\ncd日本\", 2, (1, 4, 1, 4)]"
+    );
+}
+
+#[test]
+fn a_text_with_a_bold_run_is_wider_and_measured_so() {
+    let v = run(r##"
+        let plain = gui.measure("make it bold", #{ "size": 14 })
+        let bold = gui.measure("make it bold", #{ "size": 14, "spans": [(8, 12, #{ "weight": 800 })] })
+        map_get(bold, "width") > map_get(plain, "width")
+    "##);
+    assert_eq!(text(&v), "true");
 }

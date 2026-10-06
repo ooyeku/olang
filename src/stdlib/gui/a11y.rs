@@ -91,7 +91,7 @@ fn label_of(n: &Node) -> Option<String> {
 /// The value assistive output reads for a node.
 fn value_of(st: &WinState, n: &Node) -> Option<String> {
     if let Some(ed) = st.editors.get(&n.key) {
-        if ed.secure {
+        if ed.secure() {
             return None;
         }
         return Some(ed.value());
@@ -142,13 +142,28 @@ pub fn tree(st: &WinState) -> TreeUpdate {
                 y1: (abs[1] + abs[3]) as f64 * s,
             });
         }
-        node.set_children(
-            n.children
-                .iter()
-                .filter(|c| said(c))
-                .map(|c| node_id(c))
-                .collect::<Vec<_>>(),
-        );
+        let mut kids: Vec<NodeId> = n
+            .children
+            .iter()
+            .filter(|c| said(c))
+            .map(|c| node_id(c))
+            .collect();
+        // a styled field's text as runs: lines, words, characters, and
+        // the selection a screen reader reads and moves
+        if let Some(r) = st.editors.get(key).and_then(|e| e.rich())
+            && !r.secure
+        {
+            let (runs, sel) = text_runs(st, key, r);
+            for (id, run) in runs {
+                kids.push(id);
+                nodes.push((id, run));
+            }
+            if let Some(sel) = sel {
+                node.set_text_selection(sel);
+            }
+            node.add_action(Action::SetTextSelection);
+        }
+        node.set_children(kids);
         if n.disabled {
             node.set_disabled();
         }
@@ -227,6 +242,110 @@ pub fn tree(st: &WinState) -> TreeUpdate {
     }
 }
 
+/// The id of paragraph `i`'s run from character `c` of field `key`.
+fn run_id(key: &str, i: usize, c: usize) -> NodeId {
+    node_id(&format!("{key}\u{0}run:{i}:{c}"))
+}
+
+/// The runs of a styled field: a run a paragraph (in pieces of at most
+/// 255 characters, AccessKit's limit), each ending with its line break,
+/// and the selection as positions in them.
+fn text_runs(
+    st: &WinState,
+    key: &str,
+    r: &super::rich::RichEditor,
+) -> (
+    Vec<(NodeId, accesskit::Node)>,
+    Option<accesskit::TextSelection>,
+) {
+    let s = st.scale as f64;
+    let origin = st.scene.absolute(key);
+    let n = r.para_count();
+    let ((ai, ac), (fi, fc)) = r.selection_in_paras();
+    let mut out = Vec::new();
+    let (mut anchor, mut focus) = (None, None);
+    for i in 0..n {
+        let text = r.para_text(i);
+        let mut chars: Vec<char> = text.chars().collect();
+        if i + 1 < n {
+            chars.push('\n');
+        }
+        let pieces = if chars.is_empty() {
+            1
+        } else {
+            chars.len().div_ceil(255)
+        };
+        for k in 0..pieces {
+            let c0 = k * 255;
+            let c1 = ((k + 1) * 255).min(chars.len());
+            let piece: String = chars[c0..c1].iter().collect();
+            let id = run_id(key, i, c0);
+            let mut run = accesskit::Node::new(Role::TextRun);
+            run.set_character_lengths(
+                chars[c0..c1]
+                    .iter()
+                    .map(|c| c.len_utf8() as u8)
+                    .collect::<Vec<_>>(),
+            );
+            let mut starts = Vec::new();
+            let mut prev_space = true;
+            for (j, c) in chars[c0..c1].iter().enumerate() {
+                let space = c.is_whitespace();
+                if !space && prev_space {
+                    starts.push(j as u8);
+                }
+                prev_space = space;
+            }
+            run.set_word_starts(starts);
+            run.set_value(piece);
+            if let (Some(abs), Some((top, h))) = (origin, r.para_top(i)) {
+                let y = abs[1] as f64 * s + (top - r.scroll_y) as f64;
+                run.set_bounds(Rect {
+                    x0: abs[0] as f64 * s,
+                    y0: y,
+                    x1: (abs[0] + abs[2]) as f64 * s,
+                    y1: y + h as f64,
+                });
+            }
+            let last = k + 1 == pieces;
+            let at = |c: usize| -> Option<accesskit::TextPosition> {
+                (c >= c0 && (c < c1 || (last && c <= c1))).then(|| accesskit::TextPosition {
+                    node: id,
+                    character_index: c - c0,
+                })
+            };
+            if ai == i && anchor.is_none() {
+                anchor = at(ac);
+            }
+            if fi == i && focus.is_none() {
+                focus = at(fc);
+            }
+            out.push((id, run));
+        }
+    }
+    let sel = match (anchor, focus) {
+        (Some(anchor), Some(focus)) => Some(accesskit::TextSelection { anchor, focus }),
+        _ => None,
+    };
+    (out, sel)
+}
+
+/// A run's id as (paragraph, character), for a selection a client sets.
+fn run_place(st: &WinState, key: &str, id: NodeId) -> Option<(usize, usize)> {
+    let r = st.editors.get(key)?.rich()?;
+    for i in 0..r.para_count() {
+        let n = r.para_text(i).chars().count() + 1;
+        let mut c = 0;
+        while c < n.max(1) {
+            if run_id(key, i, c) == id {
+                return Some((i, c));
+            }
+            c += 255;
+        }
+    }
+    None
+}
+
 /// An assistive action, as the events a pointer or key would send.
 pub fn action(st: &mut WinState, req: &ActionRequest, out: &mut Vec<Value>) {
     let Some(key) = key_of(st, req.target_node) else {
@@ -253,6 +372,21 @@ pub fn action(st: &mut WinState, req: &ActionRequest, out: &mut Vec<Value>) {
         Action::ScrollIntoView => {
             st.scene.reveal(&key);
             st.dirty = true;
+        }
+        Action::SetTextSelection => {
+            if let Some(ActionData::SetTextSelection(sel)) = &req.data
+                && let Some((ai, ac)) = run_place(st, &key, sel.anchor.node)
+                && let Some((fi, fc)) = run_place(st, &key, sel.focus.node)
+                && let Some(r) = st.editors.get_mut(&key).and_then(|e| e.rich_mut())
+            {
+                r.select_paras(
+                    (ai, ac + sel.anchor.character_index),
+                    (fi, fc + sel.focus.character_index),
+                );
+                st.dirty = true;
+                st.a11y_dirty = true;
+                st.said_selection_of(&key, out);
+            }
         }
         Action::SetValue => {
             if let Some(ActionData::Value(v)) = &req.data {
@@ -361,6 +495,28 @@ fn walk(st: &WinState, key: &str, depth: i64, out: &mut Vec<Value>) {
         ("custom", Value::List(Arc::new(custom))),
         ("description", opt_str(n.description.as_deref())),
         ("active", opt_str(n.active.as_deref())),
+        (
+            "text_runs",
+            match st.editors.get(key).and_then(|e| e.rich()) {
+                Some(r) => Value::Integer(text_runs(st, key, r).0.len() as i64),
+                None => Value::Unit,
+            },
+        ),
+        (
+            "text_selection",
+            match st.editors.get(key).and_then(|e| e.rich()) {
+                Some(r) => {
+                    let ((ai, ac), (fi, fc)) = r.selection_in_paras();
+                    Value::Tuple(Arc::new(vec![
+                        Value::Integer(ai as i64),
+                        Value::Integer(ac as i64),
+                        Value::Integer(fi as i64),
+                        Value::Integer(fc as i64),
+                    ]))
+                }
+                None => Value::Unit,
+            },
+        ),
     ]));
     for c in &n.children {
         walk(st, c, depth + 1, out);
