@@ -207,6 +207,7 @@ fn run_loop(reply: crossbeam_channel::Sender<Result<(), String>>) -> Option<i32>
         exit: None,
         _live: crate::stdlib::chan::live_guard(),
         clipboard: None,
+        files: Vec::new(),
         #[cfg(target_os = "macos")]
         menu: None,
     };
@@ -240,6 +241,10 @@ struct App {
     exit: Option<i32>,
     _live: crate::stdlib::chan::LiveGuard,
     clipboard: Option<arboard::Clipboard>,
+    /// Files hovered over or dropped on a window, one platform event a
+    /// file: gathered and sent as one `files` event when the loop next
+    /// waits (`(window, action, path)`).
+    files: Vec<(u64, &'static str, String)>,
     #[cfg(target_os = "macos")]
     menu: Option<(muda::Menu, HashMap<muda::MenuId, String>)>,
 }
@@ -548,8 +553,61 @@ fn key_input(event: &KeyEvent, mods: Mods) -> Option<Input> {
     })
 }
 
+impl App {
+    /// The files gathered since the loop last waited, as one `files`
+    /// event a window and action, at the pointer's place.
+    fn flush_files(&mut self) {
+        let mut groups: Vec<(u64, &'static str, Vec<String>)> = Vec::new();
+        for (id, action, path) in std::mem::take(&mut self.files) {
+            match groups.last_mut() {
+                Some(g) if g.0 == id && g.1 == action => g.2.push(path),
+                _ => groups.push((id, action, vec![path])),
+            }
+        }
+        for (id, action, paths) in groups {
+            let at = self.windows.get(&id).and_then(|pw| pointer_now(&pw.win));
+            self.input(
+                id,
+                Input::Files {
+                    action: action.into(),
+                    paths,
+                    at,
+                },
+            );
+        }
+    }
+}
+
+/// Where the pointer is now in `win`'s content, in logical pixels, when
+/// the platform can say: a file dragged in from another program moves
+/// no pointer the window hears (macOS sends nothing between the drag
+/// entering and the drop), so its place is asked for.
+#[cfg(target_os = "macos")]
+fn pointer_now(win: &Window) -> Option<(f32, f32)> {
+    // points, from the bottom left of the primary display
+    let p = objc2_app_kit::NSEvent::mouseLocation();
+    let primary = win.primary_monitor().or_else(|| win.current_monitor())?;
+    let ph = primary.size().height as f64 / primary.scale_factor();
+    let sf = win.scale_factor();
+    let inner = win.inner_position().ok()?;
+    let (ix, iy) = (inner.x as f64 / sf, inner.y as f64 / sf);
+    Some(((p.x - ix) as f32, ((ph - p.y) - iy) as f32))
+}
+
+/// Elsewhere the pointer's last place in the window is used.
+#[cfg(not(target_os = "macos"))]
+fn pointer_now(_win: &Window) -> Option<(f32, f32)> {
+    None
+}
+
 impl ApplicationHandler<Cmd> for App {
     fn resumed(&mut self, _el: &ActiveEventLoop) {}
+
+    fn about_to_wait(&mut self, _el: &ActiveEventLoop) {
+        if !self.files.is_empty() {
+            self.flush_files();
+        }
+    }
 
     fn user_event(&mut self, el: &ActiveEventLoop, cmd: Cmd) {
         if std::env::var_os("GUI_TRACE").is_some() {
@@ -816,16 +874,25 @@ impl ApplicationHandler<Cmd> for App {
                 id,
                 Some(theme == winit::window::Theme::Dark),
             )]),
-            WindowEvent::DroppedFile(path) => emit(vec![event(
-                "files_dropped",
-                vec![
-                    ("window", Value::Integer(id as i64)),
-                    (
-                        "paths",
-                        Value::List(Arc::new(vec![s(&path.to_string_lossy())])),
-                    ),
-                ],
-            )]),
+            WindowEvent::HoveredFile(path) => {
+                self.files
+                    .push((id, "hover", path.to_string_lossy().to_string()));
+            }
+            WindowEvent::DroppedFile(path) => {
+                self.files
+                    .push((id, "drop", path.to_string_lossy().to_string()));
+            }
+            WindowEvent::HoveredFileCancelled => {
+                self.flush_files();
+                self.input(
+                    id,
+                    Input::Files {
+                        action: "cancel".into(),
+                        paths: vec![],
+                        at: None,
+                    },
+                );
+            }
             _ => {}
         }
     }
@@ -869,6 +936,39 @@ pub fn set(id: u64, v: Value) {
 
 pub fn clipboard_get() -> Option<String> {
     arboard::Clipboard::new().ok()?.get_text().ok()
+}
+
+/// The clipboard's image as PNG bytes: a PNG put there as one (a
+/// screenshot), or a TIFF (what most macOS programs copy) turned into a
+/// PNG. macOS only so far; elsewhere an `Err` that says so.
+pub fn clipboard_image() -> Result<Vec<u8>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::{
+            NSBitmapImageFileType, NSBitmapImageRep, NSPasteboard, NSPasteboardTypePNG,
+            NSPasteboardTypeTIFF,
+        };
+        let pb = NSPasteboard::generalPasteboard();
+        // SAFETY: AppKit's constant pasteboard types, read only.
+        let (png_t, tiff_t) = unsafe { (NSPasteboardTypePNG, NSPasteboardTypeTIFF) };
+        if let Some(d) = pb.dataForType(png_t) {
+            return Ok(d.to_vec());
+        }
+        if let Some(d) = pb.dataForType(tiff_t) {
+            let rep = NSBitmapImageRep::imageRepWithData(&d)
+                .ok_or("the clipboard's image could not be read")?;
+            let props = objc2_foundation::NSDictionary::new();
+            // SAFETY: an empty properties dictionary of the declared type.
+            let png = unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &props) }
+                .ok_or("the clipboard's image could not be turned into a PNG")?;
+            return Ok(png.to_vec());
+        }
+        Err("the clipboard holds no image".into())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("an image is read from the clipboard on macOS only so far".into())
+    }
 }
 
 pub fn clipboard_set(t: String) -> Result<(), String> {

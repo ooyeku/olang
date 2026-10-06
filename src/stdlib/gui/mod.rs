@@ -35,6 +35,7 @@ pub mod context;
 pub mod edit;
 pub mod flat;
 pub mod gpu;
+pub mod picture;
 pub mod platform;
 pub mod raster;
 pub mod scene;
@@ -67,6 +68,8 @@ const FUNCTIONS: &[(&str, usize)] = &[
     ("fonts", 1),
     ("clipboard_read", 0),
     ("clipboard_write", 1),
+    ("clipboard_image", 0),
+    ("image_info", 1),
     ("dialog", 2),
     ("menu", 1),
     ("compare", 3),
@@ -132,6 +135,8 @@ pub fn call_gui_function(name: &str, args: Vec<Value>) -> DynRes {
         "fonts" => gui_fonts(args),
         "clipboard_read" => gui_clipboard_read(args),
         "clipboard_write" => gui_clipboard_write(args),
+        "clipboard_image" => gui_clipboard_image(args),
+        "image_info" => gui_image_info(args),
         "dialog" => gui_dialog(args),
         "menu" => gui_menu(args),
         _ => Err(format!("Unknown gui function: {name}")),
@@ -609,9 +614,39 @@ fn input_of(v: &Value) -> Res<Input> {
             scale: get_num(v, "scale", what)?.unwrap_or(1.0),
         },
         "window_focus" => Input::Focused(get_bool(v, "on", what)?.unwrap_or(true)),
+        // Files from another program: `action` hover, drop, or cancel,
+        // `paths`, and where (`x`, `y`; else the pointer's last place).
+        "files" => {
+            let action = get_str(v, "action", what)?.unwrap_or("drop");
+            if !["hover", "drop", "cancel"].contains(&action) {
+                return Err(format!(
+                    "gui.input: unknown files action \"{action}\" (hover, drop, cancel)"
+                ));
+            }
+            let paths = match get(v, "paths") {
+                Some(Value::List(l)) => l
+                    .iter()
+                    .map(|p| match p {
+                        Value::String(t) => Ok(t.to_string()),
+                        other => Err(format!("gui.input: a file's path is a String, got {other}")),
+                    })
+                    .collect::<Res<Vec<_>>>()?,
+                None => vec![],
+                Some(other) => return Err(format!("gui.input: \"paths\" is a list, got {other}")),
+            };
+            let at = match (get_num(v, "x", what)?, get_num(v, "y", what)?) {
+                (Some(x), Some(y)) => Some((x, y)),
+                _ => None,
+            };
+            Input::Files {
+                action: action.to_string(),
+                paths,
+                at,
+            }
+        }
         other => {
             return Err(format!(
-                "gui.input: unknown kind \"{other}\" (key, text, pointer, wheel, compose, commit, resize, window_focus, close, menu, clipboard, appearance, place, a11y)"
+                "gui.input: unknown kind \"{other}\" (key, text, pointer, wheel, compose, commit, resize, window_focus, files, close, menu, clipboard, appearance, place, a11y)"
             ));
         }
     })
@@ -846,6 +881,40 @@ fn gui_clipboard_write(args: Vec<Value>) -> Res<Value> {
     };
     Ok(match platform::clipboard_set(t) {
         Ok(()) => ok(Value::Unit),
+        Err(e) => err(e),
+    })
+}
+
+/// The image on the clipboard as PNG Bytes (a screenshot copied, an
+/// image copied from another program): `Ok(#{ png, width, height })`,
+/// or `Err` when it holds none. Callable from any thread.
+fn gui_clipboard_image(args: Vec<Value>) -> Res<Value> {
+    arity("gui.clipboard_image", &args, 0, 0)?;
+    Ok(match platform::clipboard_image() {
+        Ok(png) => match picture::info_of(&png) {
+            Ok(i) => ok(map(vec![
+                ("png", crate::stdlib::bytes::to_value(png)),
+                ("width", Value::Integer(i.width as i64)),
+                ("height", Value::Integer(i.height as i64)),
+            ])),
+            Err(e) => err(format!("gui.clipboard_image: {e}")),
+        },
+        Err(e) => err(format!("gui.clipboard_image: {e}")),
+    })
+}
+
+/// A picture's size and format from its header: `Ok(#{ width, height,
+/// format })` (`"png"`, `"jpeg"`, `"webp"`, `"gif"`, `"svg"`; an SVG's
+/// size in its own units), or `Err` when it cannot be read. For a task:
+/// it reads the file.
+fn gui_image_info(args: Vec<Value>) -> Res<Value> {
+    arity("gui.image_info", &args, 1, 1)?;
+    Ok(match picture::info(&args[0]) {
+        Ok(i) => ok(map(vec![
+            ("width", Value::Integer(i.width as i64)),
+            ("height", Value::Integer(i.height as i64)),
+            ("format", s(i.format.name())),
+        ])),
         Err(e) => err(e),
     })
 }

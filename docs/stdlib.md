@@ -1728,13 +1728,15 @@ Native-only; on in the released binaries (the `gui` cargo feature).
 | `gui.apply(w, patch)` | apply a list of operations to the window's tree → `Ok(())`, or `Err` naming the operation and what is wrong with it |
 | `gui.measure(text, style, opts?)` | the size of a text as it would be drawn → `#{ width, height, lines, baseline }`, logical pixels. `style` as a node's; `opts`: `width` (wraps when the style says `wrap`), `scale` |
 | `gui.read(w, what, arg?)` | read the window back: `"focus"`, `"hover"`, `"size"` → `(w, h, scale)`, `"hit"` `(x, y)` → a key, `"node"` key (its role, text, name, children, scroll `offset`, `bounds`, and `visible`: what of it shows once scrolling and clipping ancestors and the window cut it, or `()`), `"value"` key and `"selection"` key of a field, `"keys"` (focus order), `"a11y"` (the accessibility tree as maps), `"pixels"` (a PNG, from the software renderer), `"rgba"`, `"caret"` → `(x, y, w, h)` of the caret as the last frame showed it, clipped, or `()` |
-| `gui.input(w, event)` | send input as the platform would: `#{ kind: "key", key, text?, mods? }` (`"mod": true` is the platform's command key), `"text"`, `"pointer"` (`action` down/up/move/leave, `x`, `y`, `button`, `clicks`), `"wheel"` (`dx`, `dy`), `"compose"` and `"commit"` (an input method), `"resize"`, `"window_focus"`; and what the platform does around a window: `"close"` (sends `close_requested`), `"menu"` with an `id` (sends `menu`), `"clipboard"` with a `text` (the clipboard input through `gui.input` uses, the window's own), `"appearance"` with `dark`, `contrast`, `reduce_motion` (sends `appearance`, as a settings change would). What tests drive |
+| `gui.input(w, event)` | send input as the platform would: `#{ kind: "key", key, text?, mods? }` (`"mod": true` is the platform's command key), `"text"`, `"pointer"` (`action` down/up/move/leave, `x`, `y`, `button`, `clicks`), `"wheel"` (`dx`, `dy`), `"compose"` and `"commit"` (an input method), `"resize"`, `"window_focus"`, `"files"` (`action` hover/drop/cancel, `paths`, `x`, `y`: files from another program); and what the platform does around a window: `"close"` (sends `close_requested`), `"menu"` with an `id` (sends `menu`), `"clipboard"` with a `text` (the clipboard input through `gui.input` uses, the window's own), `"appearance"` with `dark`, `contrast`, `reduce_motion` (sends `appearance`, as a settings change would). What tests drive |
 | `gui.wake()` | a `wake` event on the channel, so a task blocked on `gui.events()` can stop without polling |
 | `gui.context()` | the system's settings now: `#{ dark, contrast, reduce_motion }` (macOS reads increased contrast and reduced motion; elsewhere they are false, and `dark` follows a window's theme). A window reports the same as an `appearance` event when it opens, when the system's appearance changes, and when it comes back to the front |
 | `gui.compare(a, b, opts?)` | two PNGs compared as a pixel snapshot is: `#{ same, differing, total, worst, diff }`; a pixel differs past `threshold` (32 of 255), the images are the same while at most `ratio` (0.001) of the pixels differ; `diff` is a PNG with the differing pixels in red |
 | `gui.set(w, props)` | `title`, `size`, `min`, `visible`, `cursor`, `focus`, `background`, `zoom` (the text size, 0.5 to 3: the window keeps its pixels and its boxes, reads, and events are in units of `zoom` logical pixels, so a program lays out in less room at a larger size; a `resize` event says the new size) |
 | `gui.fonts(sources)` | register fonts: paths or Bytes, TTF/OTF/TTC, optionally brotli-compressed → the number of faces added. Registered fonts come before the system's |
 | `gui.clipboard_read()` / `gui.clipboard_write(text)` | the platform clipboard (headless windows' editing uses a private one) |
+| `gui.clipboard_image()` | the clipboard's image (a screenshot copied, an image copied in another program) → `Ok(#{ png, width, height })`, `png` its PNG Bytes (a TIFF is turned into one), or `Err` when it holds none. macOS only so far: elsewhere an `Err` that says so |
+| `gui.image_info(source)` | a picture's size and format from its header, a path or Bytes → `Ok(#{ width, height, format })` (`"png"`, `"jpeg"`, `"webp"`, `"gif"`, `"svg"`; a JPEG's turned as its EXIF orientation says, an SVG's in its own units), or `Err`. It reads the file: call it from a task |
 | `gui.dialog(kind, opts)` | the platform's dialog: `"open"`, `"open_many"`, `"save"`, `"folder"` (`title`, `directory`, `name`, `filters: [#{ name, extensions }]`) → a path, a list, or `()` when cancelled; `"message"` (`title`, `text`, `level`, `buttons`: `ok`, `ok_cancel`, `yes_no`, `yes_no_cancel`) → the button |
 | `gui.menu(spec)` | the macOS menu bar: `[#{ title, items: [#{ id, label, keys?, enabled?, checked? } or "separator"] }]`; an item chosen sends `menu` with its `id`. Elsewhere answers `false` — Loom draws the window's menu |
 
@@ -1742,7 +1744,7 @@ Native-only; on in the released binaries (the `gui` cargo feature).
 
 | `op` | Fields |
 |---|---|
-| `"node"` | insert or replace: `key`, `parent` (none for the window's one root; a parent comes before its children), `index` among the siblings, `role`, `box` `(x, y, w, h)` in logical pixels **relative to the parent's content origin**, `style`, `text`, `name`, `description`, `focusable`, `disabled`, `checked`, `selected`, `expanded`, `value`, `range` `(value, min, max)`, `level`, `live` (`"polite"`/`"assertive"`), `scroll` (the node scrolls its children; the wheel moves it without the program, and says so with `scrolled`), `content` `(w, h)` (what a scrolling node scrolls through when its laid-out children reach less: a virtualized list), `modal` (a dialog, popover, or menu: while one is in the tree the pointer and Tab stay inside the topmost, the focus moves into it, and a press outside sends `outside`), `grab` (the pointer finds the node before its siblings, wherever it sits among them: a divider whose target reaches over the panes beside it; reading and focus keep its place), `draw` (a canvas: a list of operations, below), `image` (a PNG's path or Bytes, decoded once), `fit` (`"contain"`, the default, `"cover"`, or `"fill"`), `edit` (below) |
+| `"node"` | insert or replace: `key`, `parent` (none for the window's one root; a parent comes before its children), `index` among the siblings, `role`, `box` `(x, y, w, h)` in logical pixels **relative to the parent's content origin**, `style`, `text`, `name`, `description`, `focusable`, `disabled`, `checked`, `selected`, `expanded`, `value`, `range` `(value, min, max)`, `level`, `live` (`"polite"`/`"assertive"`), `scroll` (the node scrolls its children; the wheel moves it without the program, and says so with `scrolled`), `content` `(w, h)` (what a scrolling node scrolls through when its laid-out children reach less: a virtualized list), `modal` (a dialog, popover, or menu: while one is in the tree the pointer and Tab stay inside the topmost, the focus moves into it, and a press outside sends `outside`), `grab` (the pointer finds the node before its siblings, wherever it sits among them: a divider whose target reaches over the panes beside it; reading and focus keep its place), `draw` (a canvas: a list of operations, below), `image` (a picture's path or Bytes: below), `fit` (`"contain"`, the default, `"cover"`, `"fill"`, or `"none"`: its own size, below), `edit` (below) |
 | `"remove"` | `key`: the node and its subtree |
 | `"focus"` | `key`, or none to clear |
 | `"scroll"` | `key`, `to` `(x, y)` |
@@ -1765,6 +1767,22 @@ logical pixels, drawn in order, each an `op` with its fields: `"rect"`
 Shapes are rasterized at the window's scale and kept while the list and
 the size are the same; text is drawn as text, so it stays sharp. Give a
 canvas a `name` (role `figure`) so a screen reader can say what it shows.
+
+**Pictures.** An `image` node's source is a file's path or its Bytes:
+PNG, JPEG (turned as its EXIF orientation says), WebP, GIF (its first
+frame), or SVG (shapes; text in an SVG is not drawn). A real window
+decodes on a decoding thread of the engine's, draws without the picture
+until it is ready, then draws again: the window's thread never waits on
+a decode. A headless window decodes at once. A picture is kept at the
+size it shows — a photo as a thumbnail is held scaled down to the power
+of two above the thumbnail's size in display pixels — in a cache of
+384 MB of pixels by source and size (a path with its length and
+modification time, so a file written again is read again). `fit:
+"none"` draws it at its own size from the box's top left, one image
+pixel to one display pixel (sharp on every display: on a 2× display
+it is half as many logical pixels), an SVG's units as logical pixels
+drawn at the display's scale. A picture of more than 100 million pixels
+is refused, and one is kept at most 8192 pixels a side.
 
 **Styles.** `bg`, `border`, `border_width`, `radius` (one or four,
 top-left first), `color`, `font` (`"body"`, `"mono"`, or a family list),
@@ -1807,7 +1825,7 @@ program catching up, not a reset. Send back the `rev` of the last
 | `"window_focus"` | `on` |
 | `"appearance"` | `dark` |
 | `"menu"` | `id` |
-| `"files_dropped"` | `paths` |
+| `"files"` | `action` (`"hover"`: files from another program are over the window; `"drop"`: they were dropped; `"cancel"`: the hover went away), `paths`, `x`, `y` (where: on macOS the pointer's place as the files arrive; elsewhere the pointer's last place in the window), `target` (the node there). The platform sends a file at a time; the engine sends the files of one gesture as one event |
 
 ```olang no-run
 let w = unwrap(gui.open(#{ "title": "Hello", "size": (360, 160) }))
@@ -1885,6 +1903,7 @@ how a request carries headers, a timeout, and authentication:
 | `"timeout_ms"` | whole-request timeout in milliseconds |
 | `"bearer"` | sets `Authorization: Bearer <token>` |
 | `"basic"` | `(user, password)` tuple: HTTP basic auth |
+| `"bytes"` | `true`: the response `body` is `Bytes`, not text (an image, an archive) |
 
 An unknown option key raises rather than being ignored — a typo'd option
 must not become a request that quietly lacked its auth header.

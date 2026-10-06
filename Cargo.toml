@@ -53,6 +53,10 @@ gui = [
     "dep:objc2-app-kit",
     "dep:objc2-foundation",
     "dep:skrifa",
+    "dep:zune-jpeg",
+    "dep:image-webp",
+    "dep:gif",
+    "dep:resvg",
 ]
 # Everything that cannot exist in a browser: sockets, SQLite's C library,
 # terminals, mmap, process/host introspection, thread pools. The playground
@@ -205,6 +209,14 @@ accesskit = { version = "0.25", optional = true }
 accesskit_winit = { version = "0.34", default-features = false, features = ["accesskit_unix", "async-io", "rwh_06"], optional = true }
 arboard = { version = "3.6", default-features = false, optional = true }
 rfd = { version = "0.17", optional = true }
+# Pictures (gui/picture.rs): JPEG, WebP, and GIF (its first frame)
+# decoded beside tiny-skia's PNG; SVG drawn by resvg onto tiny-skia
+# (resvg's own raster-image feature is these same three crates; its
+# text and system fonts are left out). Versions resvg 0.48 uses.
+zune-jpeg = { version = "0.5", optional = true }
+image-webp = { version = "0.2", optional = true }
+gif = { version = "0.14", default-features = false, features = ["std"], optional = true }
+resvg = { version = "0.48", default-features = false, optional = true }
 
 # Optional: For better debugging and development
 tracing = "0.1"
@@ -261,8 +273,8 @@ muda = { version = "0.21", default-features = false, optional = true }
 # version parley already uses.
 skrifa = { version = "0.44", optional = true }
 # The system's appearance, contrast, and motion settings (gui/context.rs).
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSAccessibility"], optional = true }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSUserDefaults", "NSString"], optional = true }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSAccessibility", "NSPasteboard", "NSBitmapImageRep", "NSImageRep", "NSEvent"], optional = true }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSUserDefaults", "NSString", "NSData", "NSArray", "NSDictionary"], optional = true }
 
 [dev-dependencies]
 criterion = "0.5"

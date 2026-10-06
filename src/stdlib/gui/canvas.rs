@@ -4,8 +4,8 @@
 //! A canvas is a list of operations (rectangles, lines, paths, circles)
 //! rasterized with tiny-skia at the window's scale and cached by what it
 //! draws; its text operations are drawn as text over it by the window, so
-//! they stay sharp and are measured like any other text. An image is a
-//! PNG (a path or Bytes), decoded once and cached by its source.
+//! they stay sharp and are measured like any other text. An image's
+//! file is decoded by picture.rs.
 
 use super::text::Color;
 use super::values::*;
@@ -185,43 +185,7 @@ pub fn draw(ops: &Value, w: f32, h: f32, scale: f32) -> Res<Drawing> {
     Ok(out)
 }
 
-/// An image's picture from its source: a PNG file's path, or its Bytes.
-pub fn image(src: &Value) -> Res<Arc<Picture>> {
-    static CACHE: OnceLock<Mutex<HashMap<u64, Arc<Picture>>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let bytes: Vec<u8> = match src {
-        Value::String(p) => {
-            let key = hash_value(src, (0, 0, 0));
-            if let Some(hit) = cache.lock().ok().and_then(|c| c.get(&key).cloned()) {
-                return Ok(hit);
-            }
-            std::fs::read(p.as_str()).map_err(|e| format!("image: reading {p}: {e}"))?
-        }
-        other => crate::stdlib::bytes::bytes_of(other)
-            .map_err(|_| "image: the source is a path or Bytes".to_string())?
-            .to_vec(),
-    };
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut h);
-    let key = h.finish();
-    if let Some(hit) = cache.lock().ok().and_then(|c| c.get(&key).cloned()) {
-        return Ok(hit);
-    }
-    let pm = Pixmap::decode_png(&bytes).map_err(|e| format!("image: not a PNG ({e})"))?;
-    let pic = Arc::new(Picture {
-        id: NEXT.fetch_add(1, Ordering::SeqCst),
-        width: pm.width(),
-        height: pm.height(),
-        rgba: pm.data().to_vec(),
-    });
-    if let Ok(mut c) = cache.lock() {
-        if c.len() > 256 {
-            c.clear();
-        }
-        c.insert(key, pic.clone());
-        if let Value::String(_) = src {
-            c.insert(hash_value(src, (0, 0, 0)), pic.clone());
-        }
-    }
-    Ok(pic)
+/// A fresh picture id (the GPU keys a picture's texture by it).
+pub fn next_picture_id() -> u64 {
+    NEXT.fetch_add(1, Ordering::SeqCst)
 }

@@ -783,3 +783,149 @@ fn under_a_zoom_the_pointer_lands_where_the_pixels_show() {
     "##);
     assert_eq!(text(&v), r#""b""#);
 }
+
+// ── pictures and files ───────────────────────────────────────────────
+
+const QUADS: [[u8; 3]; 4] = [[220, 38, 38], [37, 99, 235], [22, 163, 74], [250, 204, 21]];
+
+/// A window of `size` at `scale` showing image `src` at (0, 0) in a box
+/// of `bw × bh` as `fit` says, drawn by the software renderer: its RGBA
+/// and its width in pixels.
+fn picture_pixels(src: Value, fit: &str, size: (f32, f32), bw: f32, bh: f32, scale: f32) -> (Vec<u8>, u32) {
+    let mut st = WinState::new(7, true, "pictures", size.0, size.1, scale);
+    let patch = Value::List(Arc::new(vec![
+        m(vec![
+            ("key", s("root")),
+            ("box", tup(&[0.0, 0.0, size.0 as f64, size.1 as f64])),
+            ("style", m(vec![("bg", s("#ffffff"))])),
+        ]),
+        m(vec![
+            ("key", s("pic")),
+            ("parent", s("root")),
+            ("role", s("image")),
+            ("name", s("quads")),
+            ("box", tup(&[0.0, 0.0, bw as f64, bh as f64])),
+            ("image", src),
+            ("fit", s(fit)),
+        ]),
+    ]));
+    let mut out = Vec::new();
+    st.apply(&patch, &mut out).expect("applies");
+    let dl = st.display_list();
+    (soft::rgba(&soft::render(&dl)), dl.width)
+}
+
+fn near(a: [u8; 3], b: [u8; 3], tol: i32) -> bool {
+    (0..3).all(|i| (a[i] as i32 - b[i] as i32).abs() <= tol)
+}
+
+fn at(rgba: &[u8], w: u32, x: u32, y: u32) -> [u8; 3] {
+    let i = ((y * w + x) * 4) as usize;
+    [rgba[i], rgba[i + 1], rgba[i + 2]]
+}
+
+#[test]
+fn pictures_in_every_format_show_the_same_quadrants() {
+    for f in ["png", "jpg", "webp", "gif", "svg"] {
+        let path = s(&format!("tests/fixtures/pictures/quads.{f}"));
+        let (px, w) = picture_pixels(path, "none", (60.0, 40.0), 60.0, 40.0, 1.0);
+        let tol = if f == "jpg" { 24 } else { 6 };
+        for (i, (x, y)) in [(5, 4), (34, 4), (5, 25), (34, 25)].into_iter().enumerate() {
+            let got = at(&px, w, x, y);
+            assert!(near(got, QUADS[i], tol), "{f}: quadrant {i} at ({x}, {y}) is {got:?}, not {:?}", QUADS[i]);
+        }
+        // its own size: nothing past 40 × 30
+        assert!(near(at(&px, w, 50, 35), [255, 255, 255], 2), "{f}: drawn past its size");
+    }
+}
+
+#[test]
+fn its_own_size_is_one_pixel_to_one_display_pixel_and_an_svg_is_drawn_at_the_scale() {
+    // a raster at 2×: 40 × 30 display pixels, unscaled
+    let (px, w) = picture_pixels(s("tests/fixtures/pictures/quads.png"), "none", (60.0, 40.0), 60.0, 40.0, 2.0);
+    assert_eq!(at(&px, w, 39, 29), QUADS[3]);
+    assert_eq!(at(&px, w, 0, 0), QUADS[0]);
+    assert!(near(at(&px, w, 45, 10), [255, 255, 255], 0), "a raster at its own size is not scaled up");
+    // an SVG's units are logical pixels: 80 × 60 display pixels, sharp
+    let (px, w) = picture_pixels(s("tests/fixtures/pictures/quads.svg"), "none", (60.0, 40.0), 60.0, 40.0, 2.0);
+    assert!(near(at(&px, w, 70, 50), QUADS[3], 2));
+    assert!(near(at(&px, w, 41, 31), QUADS[3], 2));
+    assert!(near(at(&px, w, 38, 28), QUADS[0], 2));
+    // contained in a smaller box, the picture keeps its proportions
+    let (px, w) = picture_pixels(s("tests/fixtures/pictures/quads.png"), "contain", (60.0, 40.0), 20.0, 30.0, 1.0);
+    assert!(near(at(&px, w, 2, 9), QUADS[0], 30));
+    assert!(near(at(&px, w, 2, 2), [255, 255, 255], 2), "letterboxed above");
+}
+
+#[test]
+fn a_large_picture_is_kept_at_its_thumbnail_size_and_decoded_off_the_thread_that_asks() {
+    use olang::stdlib::gui::picture;
+    let mut pm = tiny_skia::Pixmap::new(2400, 1800).expect("pixmap");
+    pm.fill(tiny_skia::Color::from_rgba8(37, 99, 235, 255));
+    let src = olang::stdlib::bytes::to_value(pm.encode_png().expect("png"));
+    // a window (one that is not real: nothing to redraw) asks: not yet
+    let first = picture::get(&src, Some((120.0, 90.0)), Some(987_654)).expect("readable");
+    assert!(first.is_none(), "a window's picture comes from a decoding thread");
+    let mut got = None;
+    for _ in 0..400 {
+        if let Some(hit) = picture::get(&src, Some((120.0, 90.0)), Some(987_654)).expect("readable") {
+            got = Some(hit);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let (pic, info) = got.expect("decoded within four seconds");
+    assert_eq!((info.width, info.height), (2400, 1800));
+    // 120 across: kept at the power of two above it, not 2400
+    assert_eq!((pic.width, pic.height), (128, 96));
+    // asked again, the same picture: the cache answers
+    let again = picture::get(&src, Some((110.0, 80.0)), None).expect("readable").expect("held");
+    assert_eq!(again.0.id, pic.id);
+    // its own size is a picture of its own
+    let whole = picture::get(&src, None, None).expect("readable").expect("decoded");
+    assert_eq!((whole.0.width, whole.0.height), (2400, 1800));
+}
+
+#[test]
+fn a_picture_that_is_not_one_says_so() {
+    use olang::stdlib::gui::picture;
+    let junk = olang::stdlib::bytes::to_value(b"not a picture at all".to_vec());
+    let e = picture::get(&junk, None, None).expect_err("refused");
+    assert!(e.contains("not a PNG, JPEG, WebP, GIF, or SVG"), "{e}");
+    let v = run(r##"
+        [gui.image_info("tests/fixtures/pictures/quads.jpg"), gui.image_info("tests/fixtures/pictures/quads.svg"),
+         gui.image_info("tests/fixtures/pictures/quads.webp"), gui.image_info("tests/fixtures/pictures/quads.gif"),
+         is_err(gui.image_info("tests/fixtures/pictures/none.png"))]
+    "##);
+    let t = text(&v);
+    assert!(t.contains(r#""format": "jpeg""#) && t.contains(r#""format": "svg""#), "{t}");
+    assert!(t.contains(r#""width": 40"#) && t.contains(r#""height": 30"#), "{t}");
+    assert!(t.ends_with("true]"), "{t}");
+}
+
+#[test]
+fn files_dropped_on_a_window_say_where_they_landed() {
+    let _turn = events_turn();
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (300, 200) })
+        let ev = gui.events()
+        let mut stale = true
+        while stale { match chan.try_recv(ev) { Ok(e) => (), Err(e) => { stale = false } } }
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 300, 200) },
+          #{ "key": "left", "parent": "root", "role": "region", "box": (0, 0, 150, 200) },
+          #{ "key": "right", "parent": "root", "role": "region", "box": (150, 0, 150, 200) }
+        ])
+        gui.input(w, #{ "kind": "files", "action": "hover", "paths": ["/tmp/a.png"], "x": 200, "y": 50 })
+        gui.input(w, #{ "kind": "files", "action": "drop", "paths": ["/tmp/a.png", "/tmp/b.txt"], "x": 40, "y": 50 })
+        gui.input(w, #{ "kind": "files", "action": "cancel" })
+        let mut got = []
+        let mut more = true
+        while more { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "files" => { got = got + [(map_get(e, "action"), map_get(e, "target"), map_get(e, "paths"))] } }, Err(e) => { more = false } } }
+        got
+    "##);
+    assert_eq!(
+        text(&v),
+        r#"[("hover", "right", ["/tmp/a.png"]), ("drop", "left", ["/tmp/a.png", "/tmp/b.txt"]), ("cancel", (), [])]"#
+    );
+}

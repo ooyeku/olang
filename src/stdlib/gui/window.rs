@@ -97,6 +97,15 @@ pub enum Input {
     },
     Focused(bool),
     Modifiers(Mods),
+    /// Files from another program (a file manager): hovering over the
+    /// window (`"hover"`), dropped on it (`"drop"`), or the hover gone
+    /// (`"cancel"`); `at` the place, in logical pixels, when known (else
+    /// the pointer's last).
+    Files {
+        action: String,
+        paths: Vec<String>,
+        at: Option<(f32, f32)>,
+    },
 }
 
 /// The clipboard as the window sees it: the platform's for a real
@@ -413,6 +422,11 @@ impl WinState {
                     scale: scale * z,
                 }
             }
+            Input::Files { action, paths, at } => Input::Files {
+                action,
+                paths,
+                at: at.map(|(x, y)| (x / z, y / z)),
+            },
             other => other,
         };
         match input {
@@ -441,6 +455,20 @@ impl WinState {
                 out.push(self.ev("window_focus", vec![("on", Value::Boolean(on))]));
             }
             Input::Modifiers(m) => self.mods = m,
+            Input::Files { action, paths, at } => {
+                let (x, y) = at.unwrap_or(self.pointer);
+                let target = if action == "cancel" { None } else { self.scene.hit(x, y) };
+                out.push(self.ev(
+                    "files",
+                    vec![
+                        ("action", s(&action)),
+                        ("paths", Value::List(Arc::new(paths.iter().map(|p| s(p)).collect()))),
+                        ("x", float(x)),
+                        ("y", float(y)),
+                        ("target", opt_str(target.as_deref())),
+                    ],
+                ));
+            }
             Input::Key {
                 key,
                 text,
@@ -1058,30 +1086,47 @@ impl WinState {
                 push_glyphs(&shaped, x + t.x * s - dx, y + t.y * s, cclip, dl);
             }
         }
-        if let Some(src) = &image
-            && let Ok(pic) = super::canvas::image(src)
-        {
-            // Fit the picture to the box, keeping its proportions unless
-            // told to fill.
-            let (iw, ih) = (pic.width as f32, pic.height as f32);
-            let (sx, sy) = (w / iw.max(1.0), h / ih.max(1.0));
-            let k = match fit.as_str() {
-                "cover" => sx.max(sy),
-                _ => sx.min(sy),
-            };
-            let (dw, dh) = if fit == "fill" {
-                (w, h)
-            } else {
-                (iw * k, ih * k)
-            };
-            dl.prims.push(Prim::Image {
-                x: x + (w - dw) / 2.0,
-                y: y + (h - dh) / 2.0,
-                w: dw,
-                h: dh,
-                pic,
-                clip: inner_clip.intersect(Clip::rect(x, y, x + w, y + h)),
-            });
+        if let Some(src) = &image {
+            // The picture at the size it shows (a real window's comes from
+            // a decoding thread, and the window draws again when it has it).
+            let natural = fit == "none";
+            let want = if natural { None } else { Some((w, h)) };
+            let waiter = if self.headless { None } else { Some(self.id) };
+            if let Ok(Some((pic, info))) = super::picture::get(src, want, waiter) {
+                // Its own size: one image pixel to one display pixel (an
+                // SVG's units are logical pixels), from the top left, on
+                // whole pixels so nothing is resampled.
+                let (iw, ih) = if natural {
+                    if info.format == super::picture::Format::Svg {
+                        (info.width as f32 * s, info.height as f32 * s)
+                    } else {
+                        (info.width as f32, info.height as f32)
+                    }
+                } else {
+                    (pic.width as f32, pic.height as f32)
+                };
+                let (sx, sy) = (w / iw.max(1.0), h / ih.max(1.0));
+                let k = match fit.as_str() {
+                    "cover" => sx.max(sy),
+                    _ => sx.min(sy),
+                };
+                let (dx, dy, dw, dh) = if natural {
+                    (x.round(), y.round(), iw, ih)
+                } else if fit == "fill" {
+                    (x, y, w, h)
+                } else {
+                    let (dw, dh) = (iw * k, ih * k);
+                    (x + (w - dw) / 2.0, y + (h - dh) / 2.0, dw, dh)
+                };
+                dl.prims.push(Prim::Image {
+                    x: dx,
+                    y: dy,
+                    w: dw,
+                    h: dh,
+                    pic,
+                    clip: inner_clip.intersect(Clip::rect(x, y, x + w, y + h)),
+                });
+            }
         }
         if self.editors.contains_key(key) {
             self.paint_editor(key, &st, content, inner_clip, focused, opacity, ts, dl);

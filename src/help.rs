@@ -2009,6 +2009,22 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             &[r##"gui.clipboard_write("copied")"##],
         );
         self.doc_ex(
+            "gui.clipboard_image",
+            "gui.clipboard_image()",
+            "Result",
+            "gui",
+            "The image on the platform clipboard (a screenshot copied) as #{ png, width, height }, png its PNG Bytes; Err when it holds none.",
+            &[r##"gui.clipboard_image()"##],
+        );
+        self.doc_ex(
+            "gui.image_info",
+            "gui.image_info(source)",
+            "Result",
+            "gui",
+            "A picture's size and format from its header (a path or Bytes; PNG, JPEG, WebP, GIF, SVG): #{ width, height, format }.",
+            &[r##"gui.image_info("shot.png")"##],
+        );
+        self.doc_ex(
             "gui.dialog",
             "gui.dialog(kind, opts?)",
             "Value",

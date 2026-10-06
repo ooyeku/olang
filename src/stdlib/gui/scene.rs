@@ -253,8 +253,10 @@ pub struct Node {
     pub actions: Vec<String>,
     /// A canvas's drawing operations (canvas.rs).
     pub draw: Option<Value>,
-    /// An image's source: a PNG's path or its Bytes; and how it fits its
-    /// box ("contain", the default, "cover", or "fill").
+    /// An image's source: a file's path or its Bytes (PNG, JPEG, WebP,
+    /// GIF, SVG: picture.rs); and how it fits its box ("contain", the
+    /// default, "cover", "fill", or "none": its own size, one image
+    /// pixel to one display pixel, from the top left).
     pub image: Option<Value>,
     pub fit: String,
 }
