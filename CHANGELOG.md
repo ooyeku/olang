@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **gui: a styled, editable text — a paragraph laid out at a time.** A
+  `textarea` with `rich: true` (src/stdlib/gui/rich.rs) keeps a parley
+  layout a hard line: an edit lays out the lines it touched (a keystroke
+  in 2,000 lines 0.6 ms in the engine; the plain field takes 36 ms), a
+  width change re-breaks without shaping, a frame draws the lines in
+  view, and the field scrolls itself. Each line takes `spans` (`(start,
+  end, style)` in characters, `styles` the looks: weight, italic, mono,
+  size, colour, underline, strike, a background behind the run or the
+  whole line). The program may set the selection (`select: (a, f,
+  seq)`), keep undo itself (`undo: false` hands ⌘Z over), and hear
+  selection moves (`select` events); `changed` says the edit by line and
+  by character and where the caret is. The input method's window
+  follows the composition (`gui.read(w, "ime")`). Its text reaches
+  AccessKit as a run a paragraph with the selection in them, and a
+  client's selection is taken; the tree is built only while a client
+  listens. A field's `pass_keys` may name `shift+tab` and are never in
+  force while the input method composes. A text node's style may carry
+  `spans` too, measured as drawn. (Loom's editor in open-track desktop
+  is the first user.)
+
 - **gui: a canvas drawn as primitives, with clips, transforms, gradients,
   hit regions, the wheel and the pinch.** A canvas's rectangles, lines
   along an axis, and text are the window's own primitives (a pan redraws
