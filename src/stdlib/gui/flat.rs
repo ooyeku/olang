@@ -17,9 +17,10 @@ use super::scene::Style;
 use super::text::{self, TextSystem};
 use super::values::*;
 use crate::ast::Value;
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub const FI: usize = 14;
 pub const FF: usize = 22;
@@ -53,7 +54,7 @@ struct Spec<'a> {
 }
 
 fn strs(v: Option<&Value>) -> HashSet<&str> {
-    let mut out = HashSet::new();
+    let mut out = HashSet::default();
     if let Some(Value::List(l)) = v {
         for x in l.iter() {
             if let Value::String(s) = x {
@@ -100,8 +101,8 @@ impl<'a> Spec<'a> {
             heading,
             label: f.get("label").unwrap_or(&UNIT.0),
             looks: a_map(f.get("looks"), "looks")?,
-            plain: RefCell::new(HashMap::new()),
-            parsed: RefCell::new(HashMap::new()),
+            plain: RefCell::new(HashMap::default()),
+            parsed: RefCell::new(HashMap::default()),
         })
     }
 
@@ -526,12 +527,20 @@ fn leaf_size(
 
 // ── gui.flatten ──────────────────────────────────────────────────────
 
-/// `gui.flatten(root, spec, prev)`: the view as the core's arrays —
-/// `#{ n, I, F, kids, nodes, paths, index, gkeys, glifts, wraps, changed }`
-/// — or `()` when the view holds a `memo` node (Loom expands those
-/// first). `changed` marks (1) each node whose role, key, or props differ
-/// from `prev`'s (last frame's answer) at the same index, when the two
-/// trees have one shape; otherwise it is `()`.
+/// `gui.flatten(root, spec, prev)`: the view read into the core's arrays
+/// — `#{ n, id, nodes, paths, index, gkeys, glifts, wraps, changed }` — or
+/// `()` when the view holds a `memo` node (Loom expands those first).
+/// `changed` marks (1) each node whose role, key, or props differ from
+/// `prev`'s (last frame's answer) at the same index, when the two trees
+/// have one shape; otherwise it is `()`.
+///
+/// The arrays themselves stay in the engine, under the answer's `id`:
+/// `gui.flat_arrays(id)` hands them over (to the VM without a copy), and
+/// the next frame's `gui.flatten` and this frame's `gui.flat_emit` read
+/// them where they are. Crossing as boxed lists, they cost more than the
+/// layout they serve. When the view keeps last frame's shape, only the
+/// changed nodes are read, and `paths`, `index`, `wraps` are last frame's
+/// lists (and `gkeys`, `glifts`, unless a changed node's differ).
 pub fn gui_flatten(args: Vec<Value>) -> Res<Value> {
     if args.len() < 2 || args.len() > 3 {
         return Err(format!(
@@ -542,7 +551,328 @@ pub fn gui_flatten(args: Vec<Value>) -> Res<Value> {
     let spec = Spec::read(&args[1])?;
     let root = &args[0];
     let mut ts = text::system().lock().map_err(|_| "gui: text poisoned")?;
+    let prev = Prev::read(args.get(2));
+    if let Some(pv) = &prev {
+        if let Some(answer) = flatten_aligned(root, &spec, &mut ts, pv)? {
+            return Ok(answer);
+        }
+    }
+    flatten_full(root, &spec, &mut ts, prev.as_ref())
+}
 
+/// The core's kind for a node of `role` (0 group, 1 region, 2 split, 3
+/// leaf, 4 wrapping text).
+fn kind_of(role: &str, p: Option<&crate::ast::ValueMap>) -> i64 {
+    match role {
+        "group" => 0,
+        "region" => 1,
+        "split" => 2,
+        "text" | "heading" if is_true(mget(p, "wrap")) => 4,
+        _ => 3,
+    }
+}
+
+/// Whether a group lifts any child to a layer (most do not, and the
+/// answer's `glifts` entry is then an empty list).
+fn lifts_any(spec: &Spec, role: &str, all: &[Value]) -> bool {
+    role == "group"
+        && all
+            .iter()
+            .any(|c| *c != Value::Unit && spec.lifted.contains(role_of(c)))
+}
+
+/// A node's laid-out children and the ones it lifts to a layer, each
+/// lifted one as `(child, "<path>.L<i>")`.
+fn split_kids<'v>(spec: &Spec, role: &str, all: &'v [Value], path: &dyn Fn() -> String) -> (Vec<&'v Value>, Value) {
+    let mut kids: Vec<&Value> = Vec::new();
+    let mut lifted: Vec<Value> = Vec::new();
+    if role == "group" {
+        for (i, c) in all.iter().enumerate() {
+            if *c != Value::Unit && spec.lifted.contains(role_of(c)) {
+                lifted.push(tuple(vec![c.clone(), st(&format!("{}.L{i}", path()))]));
+            } else {
+                kids.push(c);
+            }
+        }
+    } else if role == "region" || role == "split" {
+        kids = all.iter().collect();
+    }
+    (kids, list(lifted))
+}
+
+/// A node's entry in the arrays (`ly_fentry`): FI ints and FF floats.
+#[allow(clippy::too_many_arguments)]
+fn node_entry(
+    spec: &Spec,
+    ts: &mut TextSystem,
+    node: &Value,
+    p: Option<&crate::ast::ValueMap>,
+    role: &str,
+    kind: i64,
+    cnt: i64,
+    first: i64,
+    parent: i64,
+) -> Res<([i64; FI], [f64; FF])> {
+    let (row, column, stretch) = (st("row"), st("column"), st("stretch"));
+    let (wk, wv) = fspec(mget(p, "width"));
+    let (hk, hv) = fspec(mget(p, "height"));
+    let (rk, rv, ck, cv) = if kind == 0 {
+        if is_true(mget(p, "spacer")) {
+            let v = match mget(p, "weight") {
+                Value::Integer(w) => (*w as f64).max(1.0),
+                _ => 1.0,
+            };
+            (2, v, 2, v)
+        } else {
+            (3, 0.0, 3, 0.0)
+        }
+    } else if spec.fills.contains(role) {
+        (2, 1.0, 2, 1.0)
+    } else if role == "input" || role == "textarea" {
+        (2, 1.0, 3, 0.0)
+    } else {
+        (3, 0.0, 3, 0.0)
+    };
+    let (pt, pr, pb, pl) = if kind == 0 {
+        pad4(mget(p, "pad"))
+    } else {
+        (0.0, 0.0, 0.0, 0.0)
+    };
+    let border = if kind == 0 { border_of(p) } else { 0.0 };
+    let gap = if kind == 0 { fnum(mget(p, "gap")) } else { 0.0 };
+    let sa = mget(p, "align_self");
+    let (nw, nh, fullw) = if kind == 3 {
+        let (a, b) = leaf_size(spec, ts, node, role, 1000000.0)?;
+        (a, b, 0.0)
+    } else if kind == 4 {
+        let fs = font_style_v(spec, p, role);
+        (
+            0.0,
+            0.0,
+            measure(spec, ts, &text_of(mget(p, "text")), &fs, 1000000.0)?.0,
+        )
+    } else {
+        (0.0, 0.0, 0.0)
+    };
+    let dir = if kind == 0 {
+        mget_or(p, "dir", &column)
+    } else if kind == 2 {
+        mget_or(p, "dir", &row)
+    } else {
+        &column
+    };
+    let dir = match dir {
+        Value::String(s) if s.as_str() == "row" => 1,
+        Value::String(s) if s.as_str() == "stack" => 2,
+        _ => 0,
+    };
+    let (align, justify) = if kind == 0 {
+        (
+            falign(mget_or(p, "align", &stretch)),
+            fjustify(mget(p, "justify")),
+        )
+    } else {
+        (0, 0)
+    };
+    let opt = |k: &str| match mget(p, k) {
+        Value::Unit => -1.0,
+        v => fnum(v),
+    };
+    let mn = mget(p, "min");
+    Ok((
+        [
+            kind,
+            dir,
+            first,
+            cnt,
+            align,
+            justify,
+            if *sa == Value::Unit { -1 } else { falign(sa) },
+            wk,
+            hk,
+            rk,
+            ck,
+            spec.shrinks.contains(role) as i64,
+            parent,
+            (kind == 2 || spec.ctx.contains(role)) as i64,
+        ],
+        [
+            wv,
+            hv,
+            rv,
+            cv,
+            border,
+            pt,
+            pr,
+            pb,
+            pl,
+            gap,
+            opt("min"),
+            opt("max"),
+            opt("min_width"),
+            opt("max_width"),
+            opt("min_height"),
+            opt("max_height"),
+            nw,
+            nh,
+            fullw,
+            if kind == 2 {
+                match mget(p, "ratio") {
+                    Value::Unit => 0.5,
+                    v => fnum(v),
+                }
+            } else {
+                0.5
+            },
+            if *mn == Value::Unit { 80.0 } else { fnum(mn) },
+            0.0,
+        ],
+    ))
+}
+
+/// A view laid out against last frame's, when the two keep one shape:
+/// every node at the same index with the same kind, child count, and
+/// parent. Answers the patch (see `gui_flatten`), or `None` when the
+/// shape changed (or a `memo` node appears) and the arrays must be built
+/// afresh.
+fn flatten_aligned(root: &Value, spec: &Spec, ts: &mut TextSystem, pv: &Prev) -> Res<Option<Value>> {
+    let last = &pv.st;
+    let mut nodes: Vec<Value> = Vec::with_capacity(last.n);
+    let mut patch_idx: Vec<i64> = Vec::new();
+    let mut patch_i: Vec<i64> = Vec::new();
+    let mut patch_f: Vec<f64> = Vec::new();
+    let mut gkey_over: Vec<(usize, Value)> = Vec::new();
+    let mut lift_over: Vec<(usize, Value)> = Vec::new();
+    let mut changed = vec![Value::Integer(0); last.n.max(PAD)];
+    // the tree is walked by reference: a node is cloned once, into the
+    // answer's `nodes`
+    let mut stack: Vec<(&Value, i64)> = Vec::with_capacity(64);
+    stack.push((root, -1));
+    while let Some((node, parent)) = stack.pop() {
+        let i = nodes.len();
+        if i >= last.n {
+            return Ok(None);
+        }
+        let role: &str = role_of(node);
+        if role == "memo" {
+            return Ok(None);
+        }
+        let p = props_of(node);
+        let all = children_of(node);
+        let kind = kind_of(role, p);
+        let lays_out = role == "group" || role == "region" || role == "split";
+        let lifts = lifts_any(spec, role, all);
+        // a node's path is last frame's at its index (the shape is the
+        // same); spelled only for a node read again
+        let path = || match &pv.paths[i] {
+            Value::String(s) => s.as_str().to_string(),
+            _ => String::new(),
+        };
+        let (lifted_kids, lifted) = if lifts {
+            let (k, l) = split_kids(spec, role, all, &path);
+            (Some(k), l)
+        } else {
+            (None, Value::Unit)
+        };
+        let cnt = match &lifted_kids {
+            Some(k) => k.len(),
+            None if lays_out => all.len(),
+            None => 0,
+        } as i64;
+        if last.int(i, I_KIND) != kind || last.int(i, I_COUNT) != cnt || last.int(i, I_PARENT) != parent {
+            return Ok(None);
+        }
+        let lifted_same = if lifts {
+            lifted == pv.glifts[i]
+        } else {
+            matches!(&pv.glifts[i], Value::List(l) if l.is_empty())
+        };
+        if !(lifted_same && own_eq(node, &pv.nodes[i])) {
+            let (ints, floats) = node_entry(spec, ts, node, p, role, kind, cnt, last.int(i, I_FIRST), parent)?;
+            patch_idx.push(i as i64);
+            patch_i.extend_from_slice(&ints);
+            patch_f.extend_from_slice(&floats);
+            changed[i] = Value::Integer(1);
+            let gk = st(&gkey_of(node, &path()));
+            if gk != pv.gkeys[i] {
+                gkey_over.push((i, gk));
+            }
+            if !lifted_same {
+                lift_over.push((i, if lifts { lifted } else { list(Vec::new()) }));
+            }
+        }
+        match lifted_kids {
+            Some(k) => {
+                for c in k.into_iter().rev() {
+                    stack.push((c, i as i64));
+                }
+            }
+            None if lays_out => {
+                for c in all.iter().rev() {
+                    stack.push((c, i as i64));
+                }
+            }
+            None => {}
+        }
+        nodes.push(node.clone());
+    }
+    if nodes.len() != last.n {
+        return Ok(None);
+    }
+    let n = last.n;
+    // this frame's arrays: last frame's, shared when nothing changed, with
+    // the changed nodes written over a copy otherwise
+    let (ints, floats) = if patch_idx.is_empty() {
+        (last.ints.clone(), last.floats.clone())
+    } else {
+        let mut ints = last.ints.as_ref().clone();
+        let mut floats = last.floats.as_ref().clone();
+        for (c, &at) in patch_idx.iter().enumerate() {
+            let at = at as usize;
+            ints[at * FI..(at + 1) * FI].copy_from_slice(&patch_i[c * FI..(c + 1) * FI]);
+            floats[at * FF..(at + 1) * FF].copy_from_slice(&patch_f[c * FF..(c + 1) * FF]);
+        }
+        (Arc::new(ints), Arc::new(floats))
+    };
+    let id = keep_state(FlatState {
+        n,
+        ints,
+        floats,
+        kids: last.kids.clone(),
+        geo: Mutex::new(None),
+    });
+    let overridden = |base: &Value, over: Vec<(usize, Value)>| -> Value {
+        if over.is_empty() {
+            return base.clone();
+        }
+        let mut items = match base {
+            Value::List(l) => l.as_ref().clone(),
+            _ => Vec::new(),
+        };
+        for (i, v) in over {
+            if i < items.len() {
+                items[i] = v;
+            }
+        }
+        list(items)
+    };
+    Ok(Some(map(vec![
+        ("n", Value::Integer(n as i64)),
+        ("id", Value::Integer(id)),
+        ("nodes", list(nodes)),
+        ("paths", pv.paths_v.clone()),
+        ("index", pv.index_v.clone()),
+        ("gkeys", overridden(pv.gkeys_v, gkey_over)),
+        ("glifts", overridden(pv.glifts_v, lift_over)),
+        ("wraps", pv.wraps_v.clone()),
+        ("changed", list(changed)),
+    ])))
+}
+
+/// The arrays built afresh: each node read (props parsed, leaves
+/// measured) unless last frame's answer holds it unchanged at the same
+/// place in a tree of the same shape so far.
+fn flatten_full(root: &Value, spec: &Spec, ts: &mut TextSystem, prev: Option<&Prev>) -> Res<Value> {
     let mut ints: Vec<i64> = Vec::new();
     let mut floats: Vec<f64> = Vec::new();
     let mut ks: Vec<i64> = Vec::new();
@@ -552,17 +882,11 @@ pub fn gui_flatten(args: Vec<Value>) -> Res<Value> {
     let mut gkeys: Vec<Value> = Vec::new();
     let mut glifts: Vec<Value> = Vec::new();
     let mut wraps: Vec<Value> = Vec::new();
-    // Last frame's answer, walked in step with this one while the two
-    // trees keep one shape: a node whose own role, key, props, and
-    // layers are unchanged copies its entries instead of reading and
-    // measuring again.
-    let prev = Prev::read(args.get(2));
     let mut aligned = prev.is_some();
     let mut changed: Vec<Value> = Vec::new();
     // (node, parent index, the parent's path, its place j among the
     // parent's children, its index among siblings, its slot in kids);
     // a path is spelled only for a node read afresh
-    let (row, column, stretch) = (st("row"), st("column"), st("stretch"));
     let mut stack: Vec<(Value, i64, Value, usize, i64, i64)> =
         vec![(root.clone(), -1, Value::Unit, 0, 0, -1)];
     while let Some((node, parent, ppath, j_at, index, slot)) = stack.pop() {
@@ -579,39 +903,18 @@ pub fn gui_flatten(args: Vec<Value>) -> Res<Value> {
             return Ok(Value::Unit);
         }
         let p = props_of(&node);
-        // the children laid out here, and those lifted to a layer
         let all = children_of(&node);
-        let mut kids: Vec<&Value> = Vec::new();
-        let mut lifted: Vec<Value> = Vec::new();
-        if role == "group" {
-            for (i, c) in all.iter().enumerate() {
-                if *c != Value::Unit && spec.lifted.contains(role_of(c)) {
-                    lifted.push(tuple(vec![c.clone(), st(&format!("{}.L{i}", spell()))]));
-                } else {
-                    kids.push(c);
-                }
-            }
-        } else if role == "region" || role == "split" {
-            kids = all.iter().collect();
-        }
-        let kind: i64 = match role {
-            "group" => 0,
-            "region" => 1,
-            "split" => 2,
-            "text" | "heading" if is_true(mget(p, "wrap")) => 4,
-            _ => 3,
-        };
+        let (kids, lifted) = split_kids(spec, role, all, &spell);
+        let kind = kind_of(role, p);
         let cnt = kids.len() as i64;
         let first = ks.len() as i64;
-
-        let lifted = list(lifted);
         let i = idx as usize;
-        let reuse = match &prev {
+        let reuse = match prev {
             Some(pv) if aligned => {
-                if i >= pv.n
-                    || pv.int(i, I_KIND) != kind
-                    || pv.int(i, I_COUNT) != cnt
-                    || pv.int(i, I_PARENT) != parent
+                if i >= pv.st.n
+                    || pv.st.int(i, I_KIND) != kind
+                    || pv.st.int(i, I_COUNT) != cnt
+                    || pv.st.int(i, I_PARENT) != parent
                 {
                     aligned = false;
                     false
@@ -622,128 +925,18 @@ pub fn gui_flatten(args: Vec<Value>) -> Res<Value> {
             _ => false,
         };
         if reuse {
-            let pv = prev.as_ref().expect("reuse implies a last frame");
-            ints.extend_from_slice(&pv.ints[i * FI..(i + 1) * FI]);
+            let pv = prev.expect("reuse implies a last frame");
+            ints.extend_from_slice(&pv.st.ints[i * FI..(i + 1) * FI]);
             ints[i * FI + I_FIRST] = first;
-            floats.extend_from_slice(&pv.floats[i * FF..(i + 1) * FF]);
+            floats.extend_from_slice(&pv.st.floats[i * FF..(i + 1) * FF]);
             gkeys.push(pv.gkeys[i].clone());
             paths.push(pv.paths[i].clone());
             changed.push(Value::Integer(0));
         } else {
             let path = spell();
-            // ── the node's entry (`ly_fentry`) ──
-            let (wk, wv) = fspec(mget(p, "width"));
-            let (hk, hv) = fspec(mget(p, "height"));
-            let (rk, rv, ck, cv) = if kind == 0 {
-                if is_true(mget(p, "spacer")) {
-                    let v = match mget(p, "weight") {
-                        Value::Integer(w) => (*w as f64).max(1.0),
-                        _ => 1.0,
-                    };
-                    (2, v, 2, v)
-                } else {
-                    (3, 0.0, 3, 0.0)
-                }
-            } else if spec.fills.contains(role) {
-                (2, 1.0, 2, 1.0)
-            } else if role == "input" || role == "textarea" {
-                (2, 1.0, 3, 0.0)
-            } else {
-                (3, 0.0, 3, 0.0)
-            };
-            let (pt, pr, pb, pl) = if kind == 0 {
-                pad4(mget(p, "pad"))
-            } else {
-                (0.0, 0.0, 0.0, 0.0)
-            };
-            let border = if kind == 0 { border_of(p) } else { 0.0 };
-            let gap = if kind == 0 { fnum(mget(p, "gap")) } else { 0.0 };
-            let sa = mget(p, "align_self");
-            let (nw, nh, fullw) = if kind == 3 {
-                let (a, b) = leaf_size(&spec, &mut ts, &node, role, 1000000.0)?;
-                (a, b, 0.0)
-            } else if kind == 4 {
-                let fs = font_style_v(&spec, p, role);
-                (
-                    0.0,
-                    0.0,
-                    measure(&spec, &mut ts, &text_of(mget(p, "text")), &fs, 1000000.0)?.0,
-                )
-            } else {
-                (0.0, 0.0, 0.0)
-            };
-            let dir = if kind == 0 {
-                mget_or(p, "dir", &column)
-            } else if kind == 2 {
-                mget_or(p, "dir", &row)
-            } else {
-                &column
-            };
-            let dir = match dir {
-                Value::String(s) if s.as_str() == "row" => 1,
-                Value::String(s) if s.as_str() == "stack" => 2,
-                _ => 0,
-            };
-            let (align, justify) = if kind == 0 {
-                (
-                    falign(mget_or(p, "align", &stretch)),
-                    fjustify(mget(p, "justify")),
-                )
-            } else {
-                (0, 0)
-            };
-            let opt = |k: &str| match mget(p, k) {
-                Value::Unit => -1.0,
-                v => fnum(v),
-            };
-            let mn = mget(p, "min");
-            ints.extend_from_slice(&[
-                kind,
-                dir,
-                first,
-                cnt,
-                align,
-                justify,
-                if *sa == Value::Unit { -1 } else { falign(sa) },
-                wk,
-                hk,
-                rk,
-                ck,
-                spec.shrinks.contains(role) as i64,
-                parent,
-                (kind == 2 || spec.ctx.contains(role)) as i64,
-            ]);
-            floats.extend_from_slice(&[
-                wv,
-                hv,
-                rv,
-                cv,
-                border,
-                pt,
-                pr,
-                pb,
-                pl,
-                gap,
-                opt("min"),
-                opt("max"),
-                opt("min_width"),
-                opt("max_width"),
-                opt("min_height"),
-                opt("max_height"),
-                nw,
-                nh,
-                fullw,
-                if kind == 2 {
-                    match mget(p, "ratio") {
-                        Value::Unit => 0.5,
-                        v => fnum(v),
-                    }
-                } else {
-                    0.5
-                },
-                if *mn == Value::Unit { 80.0 } else { fnum(mn) },
-                0.0,
-            ]);
+            let (ie, fe) = node_entry(spec, ts, &node, p, role, kind, cnt, first, parent)?;
+            ints.extend_from_slice(&ie);
+            floats.extend_from_slice(&fe);
             gkeys.push(st(&gkey_of(&node, &path)));
             paths.push(st(&path));
             changed.push(Value::Integer(1));
@@ -769,8 +962,8 @@ pub fn gui_flatten(args: Vec<Value>) -> Res<Value> {
     }
     let n = nodes.len();
     // which nodes changed: known only when the trees kept one shape
-    let changed = match &prev {
-        Some(pv) if aligned && pv.n == n => {
+    let changed = match prev {
+        Some(pv) if aligned && pv.st.n == n => {
             changed.resize(n.max(PAD), Value::Integer(0));
             list(changed)
         }
@@ -783,11 +976,16 @@ pub fn gui_flatten(args: Vec<Value>) -> Res<Value> {
     ints.resize(ints.len().max(PAD), 0);
     floats.resize(floats.len().max(PAD), 0.0);
     ks.resize(ks.len().max(PAD), 0);
+    let id = keep_state(FlatState {
+        n,
+        ints: Arc::new(ints),
+        floats: Arc::new(floats),
+        kids: Arc::new(ks),
+        geo: Mutex::new(None),
+    });
     Ok(map(vec![
         ("n", Value::Integer(n as i64)),
-        ("I", list(ints.into_iter().map(Value::Integer).collect())),
-        ("F", list(floats.into_iter().map(Value::Float).collect())),
-        ("kids", list(ks.into_iter().map(Value::Integer).collect())),
+        ("id", Value::Integer(id)),
         ("nodes", list(nodes)),
         ("paths", list(paths)),
         ("index", list(indexes)),
@@ -798,54 +996,199 @@ pub fn gui_flatten(args: Vec<Value>) -> Res<Value> {
     ]))
 }
 
-/// Last frame's answer from `gui.flatten`, decoded.
-struct Prev<'a> {
+// ── the arrays the engine keeps ──────────────────────────────────────
+
+/// One answer's arrays, kept by the engine under the answer's `id`, and
+/// the boxes the core computed over them (`gui.flat_keep`).
+struct FlatState {
     n: usize,
-    ints: Vec<i64>,
-    floats: Vec<f64>,
+    ints: Arc<Vec<i64>>,
+    floats: Arc<Vec<f64>>,
+    kids: Arc<Vec<i64>>,
+    geo: Mutex<Option<Arc<Vec<f64>>>>,
+}
+
+impl FlatState {
+    fn int(&self, i: usize, f: usize) -> i64 {
+        self.ints[i * FI + f]
+    }
+}
+
+/// The last answers' arrays, newest last. A layout reads its own last
+/// frame and this frame, so a few windows' worth is plenty; an answer
+/// whose arrays were let go is laid out afresh, never wrongly.
+struct Kept {
+    next: i64,
+    states: VecDeque<(i64, Arc<FlatState>)>,
+}
+
+const KEPT_STATES: usize = 32;
+
+fn kept() -> &'static Mutex<Kept> {
+    static KEPT: OnceLock<Mutex<Kept>> = OnceLock::new();
+    KEPT.get_or_init(|| {
+        Mutex::new(Kept {
+            next: 1,
+            states: VecDeque::new(),
+        })
+    })
+}
+
+fn keep_state(s: FlatState) -> i64 {
+    let mut k = match kept().lock() {
+        Ok(k) => k,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let id = k.next;
+    k.next += 1;
+    k.states.push_back((id, Arc::new(s)));
+    while k.states.len() > KEPT_STATES {
+        k.states.pop_front();
+    }
+    id
+}
+
+/// The arrays an answer's `id` names, while the engine keeps them.
+fn state_of(answer: &crate::ast::ValueMap) -> Option<Arc<FlatState>> {
+    match answer.get("id") {
+        Some(Value::Integer(i)) => state_by_id(*i),
+        _ => None,
+    }
+}
+
+fn state_by_id(id: i64) -> Option<Arc<FlatState>> {
+    let k = kept().lock().ok()?;
+    k.states.iter().rev().find(|(i, _)| *i == id).map(|(_, s)| s.clone())
+}
+
+fn geo_of(st: &FlatState) -> Option<Arc<Vec<f64>>> {
+    st.geo.lock().ok().and_then(|g| g.clone())
+}
+
+fn id_arg(v: Option<&Value>, what: &str) -> Res<i64> {
+    match v {
+        Some(Value::Integer(i)) => Ok(*i),
+        _ => Err(format!("{what}: expected an answer's id")),
+    }
+}
+
+/// `gui.flat_arrays(id)`: `(I, F, kids)`, the arrays the engine keeps for
+/// answer `id`, or `()` once it let them go. In olang's VM they arrive as
+/// typed lists sharing the engine's memory (`flat_vm_native`); here, on
+/// the tree-walker, as lists.
+pub fn gui_flat_arrays(args: Vec<Value>) -> Res<Value> {
+    let id = id_arg(args.first(), "gui.flat_arrays")?;
+    Ok(match state_by_id(id) {
+        Some(st) => tuple(vec![
+            list(st.ints.iter().map(|&i| Value::Integer(i)).collect()),
+            list(st.floats.iter().map(|&f| Value::Float(f)).collect()),
+            list(st.kids.iter().map(|&i| Value::Integer(i)).collect()),
+        ]),
+        None => Value::Unit,
+    })
+}
+
+/// `gui.flat_keep(id, geo)`: the core's boxes for answer `id` (x, y, w, h
+/// a node), kept beside its arrays for `gui.flat_emit` and the next
+/// frame's `gui.flat_geo`.
+pub fn gui_flat_keep(args: Vec<Value>) -> Res<Value> {
+    let id = id_arg(args.first(), "gui.flat_keep")?;
+    let geo = nums_of(args.get(1).unwrap_or(&Value::Unit), "the boxes")?;
+    keep_geo(id, Arc::new(geo));
+    Ok(Value::Unit)
+}
+
+fn keep_geo(id: i64, geo: Arc<Vec<f64>>) {
+    if let Some(st) = state_by_id(id) {
+        if let Ok(mut g) = st.geo.lock() {
+            *g = Some(geo);
+        }
+    }
+}
+
+/// `gui.flat_geo(id)`: the boxes kept for answer `id`, or `()`.
+pub fn gui_flat_geo(args: Vec<Value>) -> Res<Value> {
+    let id = id_arg(args.first(), "gui.flat_geo")?;
+    Ok(match state_by_id(id).and_then(|st| geo_of(&st)) {
+        Some(g) => list(g.iter().map(|&f| Value::Float(f)).collect()),
+        None => Value::Unit,
+    })
+}
+
+/// The VM's own `gui.flat_arrays`, `gui.flat_keep`, and `gui.flat_geo`:
+/// the arrays and boxes cross as typed lists that share the engine's
+/// memory — no list of numbers is boxed or copied either way. `None` for
+/// any other name, and for arguments of another shape (the call then
+/// goes the usual way).
+pub fn flat_vm_native(
+    name: &str,
+    args: &[crate::ovm::value::OvmValue],
+) -> Option<Result<crate::ovm::value::OvmValue, String>> {
+    use crate::ovm::value::{OvmValue, ValueData};
+    let id = match args.first().map(|a| &a.data) {
+        Some(ValueData::Integer(i)) => *i,
+        _ => return None,
+    };
+    match name {
+        "gui.flat_arrays" => Some(Ok(match state_by_id(id) {
+            Some(st) => OvmValue::new_tuple(vec![
+                OvmValue { data: ValueData::IntList(st.ints.clone()) },
+                OvmValue { data: ValueData::FloatList(st.floats.clone()) },
+                OvmValue { data: ValueData::IntList(st.kids.clone()) },
+            ]),
+            None => OvmValue::new_unit(),
+        })),
+        "gui.flat_keep" => match args.get(1).map(|a| &a.data) {
+            Some(ValueData::FloatList(g)) => {
+                keep_geo(id, g.clone());
+                Some(Ok(OvmValue::new_unit()))
+            }
+            _ => None,
+        },
+        "gui.flat_geo" => Some(Ok(match state_by_id(id).and_then(|st| geo_of(&st)) {
+            Some(g) => OvmValue { data: ValueData::FloatList(g) },
+            None => OvmValue::new_unit(),
+        })),
+        _ => None,
+    }
+}
+
+/// Last frame's answer from `gui.flatten`: the arrays the engine kept
+/// for it, and its lists.
+struct Prev<'a> {
+    st: Arc<FlatState>,
     nodes: &'a [Value],
     paths: &'a [Value],
     gkeys: &'a [Value],
     glifts: &'a [Value],
+    paths_v: &'a Value,
+    index_v: &'a Value,
+    gkeys_v: &'a Value,
+    glifts_v: &'a Value,
+    wraps_v: &'a Value,
 }
 
 impl<'a> Prev<'a> {
     fn read(v: Option<&'a Value>) -> Option<Prev<'a>> {
         let f = fields(v?)?;
-        let n = match f.get("n")? {
-            Value::Integer(n) => *n as usize,
-            _ => return None,
-        };
+        let st = state_of(f)?;
+        let n = st.n;
         let l = |k: &str| match f.get(k) {
             Some(Value::List(l)) if l.len() >= n => Some(&l[..]),
             _ => None,
         };
-        let (pi, pf) = (l("I")?, l("F")?);
-        if pi.len() < n * FI || pf.len() < n * FF {
-            return None;
-        }
         Some(Prev {
-            n,
-            ints: pi
-                .iter()
-                .map(|v| {
-                    if let Value::Integer(i) = v {
-                        *i
-                    } else {
-                        i64::MIN
-                    }
-                })
-                .collect(),
-            floats: pf.iter().map(fnum).collect(),
             nodes: l("nodes")?,
             paths: l("paths")?,
             gkeys: l("gkeys")?,
             glifts: l("glifts")?,
+            paths_v: f.get("paths")?,
+            index_v: f.get("index")?,
+            gkeys_v: f.get("gkeys")?,
+            glifts_v: f.get("glifts")?,
+            wraps_v: f.get("wraps")?,
+            st,
         })
-    }
-
-    fn int(&self, i: usize, f: usize) -> i64 {
-        self.ints[i * FI + f]
     }
 }
 
@@ -857,7 +1200,10 @@ fn own_eq(a: &Value, b: &Value) -> bool {
             Arc::ptr_eq(x, y)
                 || (x.get("role") == y.get("role")
                     && x.get("key") == y.get("key")
-                    && x.get("props") == y.get("props"))
+                    && match (x.get("props"), y.get("props")) {
+                        (Some(Value::Map(a)), Some(Value::Map(b))) => Arc::ptr_eq(a, b) || a == b,
+                        (a, b) => a == b,
+                    })
         }
         _ => a == b,
     }
@@ -983,7 +1329,6 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
         ));
     }
     let flat = fields(&args[0]).ok_or("gui.flat_emit: the arrays must be a map")?;
-    let geo = nums_of(&args[1], "the boxes")?;
     let spec = Spec::read(&args[2])?;
     let keep = match &args[3] {
         Value::Unit => None,
@@ -997,14 +1342,26 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
         Some(Value::Integer(n)) => *n as usize,
         _ => return Err("gui.flat_emit: the arrays have no \"n\"".into()),
     };
-    let iv = ints_of(flat.get("I").unwrap_or(&Value::Unit), "I")?;
-    let kids = ints_of(flat.get("kids").unwrap_or(&Value::Unit), "kids")?;
+    // the arrays and boxes the engine keeps for this answer (the boxes
+    // given here when Loom hands them over, else those `gui.flat_keep` kept)
+    let held = state_of(flat).ok_or("gui.flat_emit: the engine no longer holds this answer's arrays; lay the view out again")?;
+    let geo_read: Vec<f64>;
+    let geo_kept = geo_of(&held);
+    let geo: &[f64] = match (&args[1], &geo_kept) {
+        (Value::Unit, Some(g)) => g,
+        (Value::Unit, None) => return Err("gui.flat_emit: no boxes given or kept for this answer".into()),
+        (v, _) => {
+            geo_read = nums_of(v, "the boxes")?;
+            &geo_read
+        }
+    };
+    let (iv, kids): (&[i64], &[i64]) = (&held.ints, &held.kids);
     let nodes = list_of(flat, "nodes")?;
     let paths = list_of(flat, "paths")?;
     let indexes = list_of(flat, "index")?;
     let fgkeys = list_of(flat, "gkeys")?;
     let glifts = list_of(flat, "glifts")?;
-    let fv = nums_of(flat.get("F").unwrap_or(&Value::Unit), "F")?;
+    let fv: &[f64] = &held.floats;
     if iv.len() < n * FI || geo.len() < n * 4 || nodes.len() < n {
         return Err("gui.flat_emit: the arrays and the boxes disagree on the node count".into());
     }

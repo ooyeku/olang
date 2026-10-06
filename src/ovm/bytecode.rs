@@ -7814,6 +7814,15 @@ impl BytecodeVm {
         args: &[OvmValue],
         pregranted: bool,
     ) -> Result<OvmValue, BytecodeError> {
+        // The flat layout's arrays and boxes, handed between Loom's native
+        // passes and the engine as typed lists sharing one allocation —
+        // bridged, every number would be boxed one way and detected back.
+        #[cfg(feature = "gui")]
+        if name.starts_with("gui.flat_") {
+            if let Some(result) = crate::stdlib::gui::flat::flat_vm_native(name, args) {
+                return result.map_err(BytecodeError::RuntimeError);
+            }
+        }
         // Higher-order builtins loop natively when the function argument
         // compiles — otherwise everything below bridges to the interpreter.
         if let Some(result) = self.try_native_higher_order(name, args) {

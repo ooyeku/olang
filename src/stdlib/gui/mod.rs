@@ -75,6 +75,9 @@ const FUNCTIONS: &[(&str, usize)] = &[
     ("flatten", 3),
     ("flat_emit", 5),
     ("flat_join", 4),
+    ("flat_arrays", 1),
+    ("flat_keep", 2),
+    ("flat_geo", 1),
 ];
 
 pub fn create_gui_module() -> Value {
@@ -106,6 +109,9 @@ pub fn call_gui_function(name: &str, args: Vec<Value>) -> DynRes {
         "flatten" => flat::gui_flatten(args),
         "flat_emit" => flat::gui_flat_emit(args),
         "flat_join" => flat::gui_flat_join(args),
+        "flat_arrays" => flat::gui_flat_arrays(args),
+        "flat_keep" => flat::gui_flat_keep(args),
+        "flat_geo" => flat::gui_flat_geo(args),
         "read" => gui_read(args),
         "compare" => gui_compare(args),
         // A `wake` event on the channel: what lets a task blocked on
