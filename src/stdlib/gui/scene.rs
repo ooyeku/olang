@@ -243,6 +243,14 @@ pub struct Node {
     /// Drawn but not said: left out of the accessibility tree (a chevron,
     /// a checkbox's tick, an icon beside a named control).
     pub decorative: bool,
+    /// Drawn but never under the pointer: the pointer finds what is
+    /// beneath it (a dragged item's image following the pointer, a drop
+    /// target's outline).
+    pub inert: bool,
+    /// Assistive actions of the node's own, by label ("Move right"): the
+    /// platform lists them beside its standard actions, and choosing one
+    /// sends an `a11y` event with `action: "custom"` and its index.
+    pub actions: Vec<String>,
     /// A canvas's drawing operations (canvas.rs).
     pub draw: Option<Value>,
     /// An image's source: a PNG's path or its Bytes; and how it fits its
@@ -360,6 +368,8 @@ const NODE_KEYS: &[&str] = &[
     "modal",
     "grab",
     "decorative",
+    "inert",
+    "actions",
     "draw",
     "image",
     "fit",
@@ -559,6 +569,24 @@ impl Scene {
             modal: get_bool(op, "modal", what)?.unwrap_or(false),
             grab: get_bool(op, "grab", what)?.unwrap_or(false),
             decorative: get_bool(op, "decorative", what)?.unwrap_or(false),
+            inert: get_bool(op, "inert", what)?.unwrap_or(false),
+            actions: match get(op, "actions") {
+                None | Some(Value::Unit) => Vec::new(),
+                Some(Value::List(l)) => l
+                    .iter()
+                    .map(|v| match v {
+                        Value::String(t) => Ok(t.to_string()),
+                        other => Err(format!(
+                            "{what}: \"actions\" must be a list of labels, got {other}"
+                        )),
+                    })
+                    .collect::<Res<Vec<_>>>()?,
+                Some(other) => {
+                    return Err(format!(
+                        "{what}: \"actions\" must be a list of labels, got {other}"
+                    ));
+                }
+            },
             draw: get(op, "draw").cloned(),
             image: get(op, "image").cloned(),
             fit: get_str(op, "fit", what)?.unwrap_or("contain").to_string(),
@@ -794,6 +822,9 @@ impl Scene {
 
     fn hit_in(&self, key: &str, ox: f32, oy: f32, x: f32, y: f32) -> Option<String> {
         let node = self.nodes.get(key)?;
+        if node.inert {
+            return None;
+        }
         let rx = ox + node.rect[0];
         let ry = oy + node.rect[1];
         let inside = x >= rx && y >= ry && x < rx + node.rect[2] && y < ry + node.rect[3];

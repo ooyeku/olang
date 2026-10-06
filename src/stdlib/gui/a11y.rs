@@ -11,7 +11,8 @@ use super::values::*;
 use super::window::WinState;
 use crate::ast::Value;
 use accesskit::{
-    Action, ActionData, ActionRequest, NodeId, Rect, Role, Toggled, TreeId, TreeInfo, TreeUpdate,
+    Action, ActionData, ActionRequest, CustomAction, NodeId, Rect, Role, Toggled, TreeId, TreeInfo,
+    TreeUpdate,
 };
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -186,6 +187,23 @@ pub fn tree(st: &WinState) -> TreeUpdate {
             node.set_scroll_x(n.offset.0 as f64);
             node.set_scroll_y(n.offset.1 as f64);
         }
+        // The node's own actions (a card's "Move right"). AccessKit hands
+        // them to UI Automation and AT-SPI; its macOS adapter does not yet
+        // publish custom actions, so on macOS they are reached through the
+        // program's commands and the node's action menu (Loom).
+        if !n.actions.is_empty() && !n.disabled {
+            node.set_custom_actions(
+                n.actions
+                    .iter()
+                    .enumerate()
+                    .map(|(i, label)| CustomAction {
+                        id: i as i32,
+                        description: label.clone(),
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            node.add_action(Action::CustomAction);
+        }
         node.add_action(Action::ScrollIntoView);
         nodes.push((node_id(key), node));
     }
@@ -260,6 +278,26 @@ pub fn action(st: &mut WinState, req: &ActionRequest, out: &mut Vec<Value>) {
             "a11y",
             vec![("key", s(&key)), ("action", s("decrement"))],
         )),
+        Action::CustomAction => {
+            if let Some(ActionData::CustomAction(i)) = &req.data {
+                let label = st
+                    .scene
+                    .nodes
+                    .get(&key)
+                    .and_then(|n| n.actions.get(*i as usize).cloned());
+                if let Some(label) = label {
+                    out.push(ev(
+                        "a11y",
+                        vec![
+                            ("key", s(&key)),
+                            ("action", s("custom")),
+                            ("index", Value::Integer(*i as i64)),
+                            ("label", s(&label)),
+                        ],
+                    ));
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -290,6 +328,11 @@ fn walk(st: &WinState, key: &str, depth: i64, out: &mut Vec<Value>) {
     if n.edit.is_some() && !n.disabled {
         actions.push(s("set_value"));
     }
+    let custom: Vec<Value> = if n.disabled {
+        Vec::new()
+    } else {
+        n.actions.iter().map(|a| s(a)).collect()
+    };
     out.push(map(vec![
         ("key", s(key)),
         ("role", s(&format!("{:?}", role_of(n)))),
@@ -310,6 +353,8 @@ fn walk(st: &WinState, key: &str, depth: i64, out: &mut Vec<Value>) {
             n.selected.map(Value::Boolean).unwrap_or(Value::Unit),
         ),
         ("actions", Value::List(Arc::new(actions))),
+        ("custom", Value::List(Arc::new(custom))),
+        ("description", opt_str(n.description.as_deref())),
     ]));
     for c in &n.children {
         walk(st, c, depth + 1, out);

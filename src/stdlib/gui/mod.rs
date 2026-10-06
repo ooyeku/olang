@@ -611,7 +611,7 @@ fn input_of(v: &Value) -> Res<Input> {
         "window_focus" => Input::Focused(get_bool(v, "on", what)?.unwrap_or(true)),
         other => {
             return Err(format!(
-                "gui.input: unknown kind \"{other}\" (key, text, pointer, wheel, compose, commit, resize, window_focus, close, menu, clipboard, appearance)"
+                "gui.input: unknown kind \"{other}\" (key, text, pointer, wheel, compose, commit, resize, window_focus, close, menu, clipboard, appearance, place, a11y)"
             ));
         }
     })
@@ -649,6 +649,72 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
                     ("reduce_motion", Value::Boolean(b("reduce_motion")?)),
                 ],
             )]);
+            return Ok(Value::Unit);
+        }
+        // A headless window put at a place on the screen (a real one is
+        // where the platform says): `moved` follows, as when a person
+        // drags a window.
+        Some("place") => {
+            let mut out = Vec::new();
+            {
+                let mut st = w.lock().map_err(|_| "gui: window poisoned")?;
+                if !st.headless {
+                    return Err("gui.input: \"place\" places a headless window; a real window's place is the platform's".into());
+                }
+                let x = get_num(&args[1], "x", what)?.unwrap_or(0.0);
+                let y = get_num(&args[1], "y", what)?.unwrap_or(0.0);
+                st.place(x, y, &mut out);
+            }
+            emit(out);
+            return Ok(Value::Unit);
+        }
+        // An assistive action, as a screen reader asks for it: `action`
+        // ("click", "focus", "set_value" with `value`, "increment",
+        // "decrement", "custom" with `index`) on the node `key`.
+        Some("a11y") => {
+            use accesskit::{Action, ActionData, ActionRequest, TreeId};
+            let key = get_str(&args[1], "key", what)?
+                .ok_or("gui.input: \"a11y\" needs the node's \"key\"")?;
+            let (action, data) = match get_str(&args[1], "action", what)?.unwrap_or("click") {
+                "click" => (Action::Click, None),
+                "focus" => (Action::Focus, None),
+                "increment" => (Action::Increment, None),
+                "decrement" => (Action::Decrement, None),
+                "set_value" => (
+                    Action::SetValue,
+                    Some(ActionData::Value(
+                        get_str(&args[1], "value", what)?.unwrap_or("").into(),
+                    )),
+                ),
+                "custom" => (
+                    Action::CustomAction,
+                    Some(ActionData::CustomAction(
+                        get_num(&args[1], "index", what)?.unwrap_or(0.0) as i32,
+                    )),
+                ),
+                other => {
+                    return Err(format!(
+                        "gui.input: unknown assistive action \"{other}\" (click, focus, set_value, increment, decrement, custom)"
+                    ));
+                }
+            };
+            let mut out = Vec::new();
+            {
+                let mut st = w.lock().map_err(|_| "gui: window poisoned")?;
+                if !st.scene.nodes.contains_key(key) {
+                    return Err(format!(
+                        "gui.input: no node \"{key}\" for the assistive action"
+                    ));
+                }
+                let req = ActionRequest {
+                    action,
+                    target_tree: TreeId::ROOT,
+                    target_node: a11y::node_id(key),
+                    data,
+                };
+                a11y::action(&mut st, &req, &mut out);
+            }
+            emit(out);
             return Ok(Value::Unit);
         }
         Some("clipboard") => {

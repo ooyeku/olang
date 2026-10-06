@@ -1249,6 +1249,40 @@ fn list_of<'a>(f: &'a crate::ast::ValueMap, k: &str) -> Res<&'a [Value]> {
     }
 }
 
+/// What a node says of itself on its own placement (not on the parts
+/// placed for it, a list's body or a split's divider): its `description`,
+/// and its assistive `actions` (`[#{ label, … }]`) as their labels.
+fn with_own(op: &mut crate::ast::ValueMap, gkey: &str, node: &Value) {
+    let own = match node {
+        Value::Map(m) => matches!(m.get("key"), Some(Value::String(k)) if k.as_str() == gkey),
+        _ => false,
+    };
+    if !own {
+        return;
+    }
+    let p = props_of(node);
+    if let Value::String(d) = mget(p, "description")
+        && !op.contains_key("description")
+    {
+        op.insert("description".into(), Value::String(d.clone()));
+    }
+    if let Value::List(acts) = mget(p, "actions")
+        && !op.contains_key("actions")
+    {
+        let labels: Vec<Value> = acts
+            .iter()
+            .filter_map(|a| match a {
+                Value::Map(m) => match m.get("label") {
+                    Some(Value::String(l)) => Some(Value::String(l.clone())),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        op.insert("actions".into(), list(labels));
+    }
+}
+
 /// One placement (`ly_rec`), with the engine's operation (`ly_gop`).
 #[allow(clippy::too_many_arguments)]
 fn rec(
@@ -1262,6 +1296,8 @@ fn rec(
     focusable: bool,
     path: &str,
 ) -> Value {
+    let mut op = op;
+    with_own(&mut op, gkey, node);
     let (x, y, w, h) = b;
     let rel = tuple(vec![
         Value::Float(x - origin.0),

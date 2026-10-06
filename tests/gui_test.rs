@@ -417,6 +417,54 @@ fn a_modal_layer_keeps_the_focus_and_hears_a_press_outside() {
     assert_eq!(text(&v), r#"["ok", "ok", (), true, false]"#);
 }
 
+#[test]
+fn a_drag_is_followed_across_windows_and_a_node_has_actions_of_its_own() {
+    let _turn = events_turn();
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (300, 200) })
+        let ev = gui.events()
+        let mut stale = true
+        while stale { match chan.try_recv(ev) { Ok(e) => (), _ => { stale = false } } }
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 300, 200) },
+          #{ "key": "card", "parent": "root", "role": "button", "box": (10, 10, 100, 40), "text": "Card",
+             "actions": ["Move left", "Move right"], "description": "To do, 1 of 3" },
+          #{ "key": "ghost", "parent": "root", "role": "group", "box": (0, 0, 300, 200), "inert": true }
+        ])
+        // the picture over everything is never under the pointer
+        let hit = gui.read(w, "hit", (20, 20))
+        gui.input(w, #{ "kind": "place", "x": 400, "y": 300 })
+        gui.input(w, #{ "kind": "pointer", "action": "down", "x": 20, "y": 20 })
+        // a drag past the window's edge still reports, with its place on the screen
+        gui.input(w, #{ "kind": "pointer", "action": "move", "x": 350, "y": -30 })
+        gui.input(w, #{ "kind": "a11y", "key": "card", "action": "custom", "index": 1 })
+        let mut got = []
+        let mut more = true
+        while more { match chan.try_recv(ev) { Ok(e) => { got = got + [e] }, _ => { more = false } } }
+        let moved = filter(got, (e) => map_get(e, "kind") == "moved")
+        let far = filter(got, (e) => map_get(e, "kind") == "pointer" && map_get(e, "action") == "move")
+        let acted = filter(got, (e) => map_get(e, "kind") == "a11y")
+        let card = filter(gui.read(w, "a11y"), (n) => map_get(n, "key") == "card")[0]
+        [hit, map_get(moved[0], "x"), map_get(far[0], "sx"), map_get(far[0], "sy"), map_get(acted[0], "action"), map_get(acted[0], "index"),
+         map_get(acted[0], "label"), map_get(card, "custom"), map_get(card, "description")]
+    "##);
+    assert_eq!(
+        text(&v),
+        r#"["card", 400.0, 750.0, 270.0, "custom", 1, "Move right", ["Move left", "Move right"], "To do, 1 of 3"]"#
+    );
+    // the platform's tree carries them as custom actions
+    let mut st = reference_scene(1.0);
+    let n = st.scene.nodes.values_mut().find(|n| n.role == "button").expect("a button");
+    n.actions = vec!["Move right".into()];
+    let tree = olang::stdlib::gui::a11y::tree(&st);
+    assert!(
+        tree.nodes
+            .iter()
+            .any(|(_, n)| n.custom_actions().iter().any(|a| a.description == "Move right")),
+        "a custom action in the tree"
+    );
+}
+
 /// A canvas (shapes and text) and two images, one fitted inside its box
 /// and one covering it.
 fn picture_scene(scale: f32, png: &str) -> WinState {

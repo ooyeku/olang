@@ -145,6 +145,12 @@ pub struct WinState {
     pub zoom: f32,
     /// The platform's own scale factor.
     pub platform_scale: f32,
+    /// Where the window's content sits on the screen, in the platform's
+    /// logical pixels: a pointer event carries its place on the screen
+    /// too (`sx`, `sy`), so a drag can be followed into another window.
+    pub origin: (f32, f32),
+    /// The last pointer event's place on the screen.
+    screen_pointer: (f32, f32),
 }
 
 const WHITE: Color = [255, 255, 255, 255];
@@ -171,6 +177,17 @@ impl WinState {
             clip: None,
             zoom: 1.0,
             platform_scale: scale,
+            origin: (0.0, 0.0),
+            screen_pointer: (-1.0, -1.0),
+        }
+    }
+
+    /// The window's content moved on the screen (or a test placed a
+    /// headless one): `moved` with its new origin.
+    pub fn place(&mut self, x: f32, y: f32, out: &mut Vec<Value>) {
+        if self.origin != (x, y) {
+            self.origin = (x, y);
+            out.push(self.ev("moved", vec![("x", float(x)), ("y", float(y))]));
         }
     }
 
@@ -374,13 +391,16 @@ impl WinState {
                 y,
                 button,
                 clicks,
-            } => Input::Pointer {
-                action,
-                x: x / z,
-                y: y / z,
-                button,
-                clicks,
-            },
+            } => {
+                self.screen_pointer = (self.origin.0 + x, self.origin.1 + y);
+                Input::Pointer {
+                    action,
+                    x: x / z,
+                    y: y / z,
+                    button,
+                    clicks,
+                }
+            }
             Input::Resize {
                 width,
                 height,
@@ -691,6 +711,8 @@ impl WinState {
                         ("action", s("move")),
                         ("x", float(x)),
                         ("y", float(y)),
+                        ("sx", float(self.screen_pointer.0)),
+                        ("sy", float(self.screen_pointer.1)),
                         ("target", opt_str(hit.as_deref())),
                     ],
                 ));
@@ -765,6 +787,8 @@ impl WinState {
                         ("action", s("down")),
                         ("x", float(x)),
                         ("y", float(y)),
+                        ("sx", float(self.screen_pointer.0)),
+                        ("sy", float(self.screen_pointer.1)),
                         ("button", s(button)),
                         ("clicks", Value::Integer(clicks as i64)),
                         ("target", opt_str(hit.as_deref())),
@@ -784,6 +808,8 @@ impl WinState {
                         ("action", s("up")),
                         ("x", float(x)),
                         ("y", float(y)),
+                        ("sx", float(self.screen_pointer.0)),
+                        ("sy", float(self.screen_pointer.1)),
                         ("button", s(button)),
                         ("target", opt_str(hit.as_deref())),
                     ],

@@ -335,7 +335,26 @@ impl App {
             .and_then(|pw| pw.win.theme())
             .map(|t| t == winit::window::Theme::Dark);
         emit(vec![super::context::event_for(id, dark)]);
+        self.sync_origin(id);
         Ok(())
+    }
+
+    /// The window's content origin on the screen, read again (opened,
+    /// moved, resized): the window's state keeps it, and the program hears
+    /// `moved` when it changed.
+    fn sync_origin(&mut self, id: u64) {
+        let Some(pw) = self.windows.get(&id) else {
+            return;
+        };
+        let Ok(p) = pw.win.inner_position() else {
+            return;
+        };
+        let l = p.to_logical::<f32>(pw.win.scale_factor());
+        let mut out = Vec::new();
+        if let Ok(mut st) = pw.state.lock() {
+            st.place(l.x, l.y, &mut out);
+        }
+        emit(out);
     }
 
     fn input(&mut self, id: u64, input: Input) {
@@ -662,7 +681,9 @@ impl ApplicationHandler<Cmd> for App {
                 "close_requested",
                 vec![("window", Value::Integer(id as i64))],
             )]),
+            WindowEvent::Moved(_) => self.sync_origin(id),
             WindowEvent::Resized(size) => {
+                self.sync_origin(id);
                 let l = size.to_logical::<f32>(scale);
                 self.input(
                     id,
