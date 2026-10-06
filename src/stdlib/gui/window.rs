@@ -599,6 +599,34 @@ impl WinState {
             out.push(self.ev("activate", vec![("key", s(f)), ("source", s("key"))]));
             return;
         }
+        // The arrows, page keys, home and end scroll a focused region
+        // (a picture at its own size, a long text): the keyboard's way
+        // to what the wheel and the trackpad move. At its edge the key
+        // goes on to the program.
+        if plain
+            && let Some(f) = &focus
+            && let Some(n) = self.scene.nodes.get(f)
+            && n.role == "region"
+            && n.scrollable
+            && let Some(to) = Self::region_step(&key, mods.shift, n.offset, (n.rect[2], n.rect[3]))
+        {
+            let before = n.offset;
+            let k = f.clone();
+            if let Some(n) = self.scene.nodes.get_mut(&k) {
+                n.offset = to;
+            }
+            self.scene.clamp_scroll(&k);
+            let after = self.scene.nodes[&k].offset;
+            if after != before {
+                self.dirty = true;
+                self.a11y_dirty = true;
+                out.push(self.ev(
+                    "scrolled",
+                    vec![("key", s(&k)), ("x", float(after.0)), ("y", float(after.1))],
+                ));
+                return;
+            }
+        }
         let mod_chord = {
             let mut m = mods;
             if cfg!(target_os = "macos") {
@@ -625,6 +653,28 @@ impl WinState {
                 ("target", opt_str(focus.as_deref())),
             ],
         ));
+    }
+
+    /// Where a key moves a region's scroll from `at` (its box `size`):
+    /// 40 pixels an arrow, a page less a line, to either end; `None`
+    /// for a key that does not scroll.
+    fn region_step(key: &str, shift: bool, at: (f32, f32), size: (f32, f32)) -> Option<(f32, f32)> {
+        let line = 40.0;
+        let page = (size.1 - line).max(line);
+        let (x, y) = at;
+        Some(match key {
+            "up" => (x, y - line),
+            "down" => (x, y + line),
+            "left" => (x - line, y),
+            "right" => (x + line, y),
+            "pageup" => (x, y - page),
+            "pagedown" => (x, y + page),
+            "space" if shift => (x, y - page),
+            "space" => (x, y + page),
+            "home" => (0.0, 0.0),
+            "end" => (x, f32::MAX / 4.0),
+            _ => return None,
+        })
     }
 
     /// A key in a focused text field. `None` when the field does not

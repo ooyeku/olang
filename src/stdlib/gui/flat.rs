@@ -673,6 +673,13 @@ fn node_entry(
         Value::String(s) if s.as_str() == "stack" => 2,
         _ => 0,
     };
+    // a region that scrolls across too (`axis: "both"`): its child is as
+    // wide as it is wide, not as the region (lib/flex.ol)
+    let dir = if kind == 1 && matches!(mget(p, "axis"), Value::String(a) if a.as_str() == "both" || a.as_str() == "x") {
+        3
+    } else {
+        dir
+    };
     let (align, justify) = if kind == 0 {
         (
             falign(mget_or(p, "align", &stretch)),
@@ -1536,7 +1543,12 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
                 let mut op = group_op(&spec, p, "group");
                 op.insert("role".into(), checked_role(p, "region", &gk, &mut pr));
                 op.insert("scroll".into(), Value::Boolean(true));
-                mine.push(rec(&gk, &parent, index, b, origin, node, op, false, path));
+                // `focusable`: the keys scroll it (a picture at its own size)
+                let keys = is_true(mget(p, "focusable"));
+                if keys {
+                    op.insert("focusable".into(), Value::Boolean(true));
+                }
+                mine.push(rec(&gk, &parent, index, b, origin, node, op, keys, path));
             }
             2 => {
                 // the split, its divider, and the divider's line
