@@ -39,6 +39,7 @@ fn root_or_init() -> anyhow::Result<PathBuf> {
             description: None,
             authors: Vec::new(),
             license: None,
+            assets: Vec::new(),
         },
         dependencies: Default::default(),
         capabilities: None,
