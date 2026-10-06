@@ -181,3 +181,26 @@ fn comparing_closures_does_not_walk_what_they_capture() {
     "#;
     assert_eq!(format!("{}", eval(src)), "[0, true]");
 }
+
+// Compiled code (a function hot enough for the bytecode tier) compares
+// collections in place: a value with itself at once, others element by
+// element, with the interpreter's answers — `[1] != [1.0]` inside a
+// collection, `1 == 1.0` at the top.
+#[test]
+fn compiled_equality_reads_collections_in_place() {
+    let v = eval(
+        r#"
+fn same(a, b) = a == b
+let big = map(range(0, 2000), (i) => #{ "a": i, "b": [i, "x"] })
+let other = map(range(0, 2000), (i) => #{ "a": i, "b": [i, "x"] })
+let off = map(range(0, 2000), (i) => #{ "a": i, "b": [i, if i == 1999 => "y" else => "x"] })
+let mut out = []
+for i in range(0, 200) {
+    out = [same(big, big), same(big, other), same(big, off), same([1], [1.0]), same(#{ "k": [1, 2] }, #{ "k": [1, 2] }),
+           same((1, "a"), (1, "b")), same(1, 1.0), same(#{ "m": #{ "n": 1 } }, #{ "m": #{ "n": 1.0 } })]
+}
+show(out)
+"#,
+    );
+    assert_eq!(s(v), "[true, true, false, false, true, false, true, false]");
+}

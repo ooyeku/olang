@@ -530,6 +530,16 @@ fn deep_eq(a: &Value, b: &Value) -> bool {
 /// with Float numerically, at every depth. What `==` means for maps,
 /// lists, tuples, and records on both tiers.
 pub fn loose_eq(a: &Value, b: &Value) -> bool {
+    // A collection is equal to itself without a walk.
+    match (a, b) {
+        (Value::List(x), Value::List(y)) | (Value::Tuple(x), Value::Tuple(y))
+            if std::sync::Arc::ptr_eq(x, y) =>
+        {
+            return true;
+        }
+        (Value::Map(x), Value::Map(y)) if std::sync::Arc::ptr_eq(x, y) => return true,
+        _ => {}
+    }
     if let (Some(x), Some(y)) = (map_like(a), map_like(b)) {
         return x.len() == y.len()
             && x.iter()
