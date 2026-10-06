@@ -8696,8 +8696,11 @@ impl BytecodeCompiler {
         // Compile function body
         let result_reg = self.compile_expression(&func.body)?;
 
-        // Ensure function returns
-        if !self.emitter.has_return() {
+        // Every path ends in a Return: the body's value at the end, unless
+        // the last instruction already returns. A `return` elsewhere in the
+        // body ends only its own path (checking for any Return let the
+        // other paths fall off the end with Unit).
+        if !matches!(self.emitter.instructions.last(), Some(Instruction::Return { .. })) {
             self.emitter.emit_return(Some(result_reg));
         }
 
@@ -9897,16 +9900,29 @@ impl BytecodeCompiler {
                 Ok(result_reg)
             }
 
-            // `break value` changes what the loop evaluates to and `return`
-            // unwinds the call — the bytecode loops don't model either;
-            // refuse so the function stays on the interpreter (never diverge).
+            // `break value` changes what the loop evaluates to — the bytecode
+            // loops don't model it; refuse so the function stays on the
+            // interpreter (never diverge).
             Expr::Break(Some(_)) => Err(BytecodeError::CompilationFailed(
                 "'break' with a value is not supported in the bytecode tier".to_string(),
             )),
 
-            Expr::Return(_) => Err(BytecodeError::CompilationFailed(
-                "'return' is not supported in the bytecode tier".to_string(),
-            )),
+            // `return` ends the call with its value, as the interpreter's
+            // ReturnSignal does at the nearest function boundary: only
+            // function bodies (lambdas included) are compiled here, so the
+            // nearest boundary is this function's, and `Return` checks the
+            // declared return type as the end of the body does. Code that
+            // wraps a region as a function of its own (a promoted loop, an
+            // OSR region) refuses a `Return` inside it.
+            Expr::Return(value) => {
+                let reg = match value {
+                    Some(e) => Some(self.compile_expression(e)?),
+                    None => None,
+                };
+                self.emitter.emit_return(reg);
+                // Unreachable, but every expression must yield a register
+                self.unit_register()
+            }
 
             Expr::Break(None) => {
                 let (_, break_target) = *self.loop_targets.last().ok_or_else(|| {

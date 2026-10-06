@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`return` compiles to the bytecode tier.** A function with an early
+  `return` used to stay on the tree-walker, silently — and every value it
+  handed a compiled function crossed the tier boundary. It now compiles:
+  `return` ends the call with its value, its declared return type checked
+  as at the body's end, on the VM and the native tier alike (a promoted
+  loop or an OSR region holding one still refuses, so the return keeps
+  its meaning). Loom's runtime frame (`rt_frame` and six other engine
+  functions) moved off the tree-walker with it: a turn of a 500-row page
+  went from 16.8 to 10.3 ms. Heddle reported 104 of its functions
+  refused for this. `?` (the try operator) still keeps a function on the
+  tree-walker.
+
+### Fixed
+
+- **A function with an early `return` answers its body's value on every
+  other path.** The compiler emitted the closing `Return` only when the
+  body held none; with early returns compiled, the paths that did not
+  return would have fallen off the end with `()`. It now ends the body
+  with a `Return` unless the last instruction already is one.
+  (`tests/bytecode_differential_test.rs`: `early_return_compiles_and_agrees`.)
+
 ### Added
 
 - **`gui`: windows drawn by olang (Loom's L0).** A program lays its

@@ -725,3 +725,25 @@ fn a_wrapped_map_compares_shows_and_travels_like_a_map() {
     );
     assert_same("fn f(m) = m[\"count\"]", "f", std::slice::from_ref(&store));
 }
+
+#[test]
+fn early_return_compiles_and_agrees() {
+    // `return` ends the call with its value on both tiers: from inside a
+    // loop, a nested loop, a match arm, a block, with no value, and on
+    // the path that does not return (the function's value at its end —
+    // an early `return` must not suppress the final one).
+    let cases = [
+        ("fn f(k) = { for x in [1, 5, 9] { if x > k => return x }; -1 }", vec![4, 20]),
+        ("fn f(k) = { for r in [[1, 2], [3, k]] { for v in r { if v == 0 => return v + 100 } }; 7 }", vec![0, 1]),
+        ("fn f(k) = match k { 0 => return 10, n => { if n < 0 => return -1; n * 2 } }", vec![0, -3, 4]),
+        ("fn f(k) = { let a = { if k > 5 => return 99; k + 1 }; a * 10 }", vec![9, 2]),
+        ("fn f(k) = { if k == 0 => return; k * 2 }", vec![0, 4]),
+        ("fn f(k) = { let mut i = 0; while true { i = i + 1; if i >= k => return i }; 0 }", vec![1, 7]),
+        ("fn f(k) = { if k > 0 => return k; 0 - k }", vec![3, -3]),
+    ];
+    for (src, args) in cases {
+        for a in args {
+            assert_same(src, "f", &ints(&[a]));
+        }
+    }
+}
