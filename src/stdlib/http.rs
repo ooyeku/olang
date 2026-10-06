@@ -150,6 +150,9 @@ struct RequestOpts {
     timeout_ms: Option<u64>,
     bearer: Option<String>,
     basic: Option<(String, String)>,
+    /// The response body as `Bytes` rather than text (an image, an
+    /// archive: text decoding would replace what is not UTF-8).
+    bytes: bool,
 }
 
 fn parse_opts(v: &Value, fname: &str) -> Result<RequestOpts, Box<dyn std::error::Error>> {
@@ -231,9 +234,19 @@ fn parse_opts(v: &Value, fname: &str) -> Result<RequestOpts, Box<dyn std::error:
                     .into());
                 }
             },
+            "bytes" => match value {
+                Value::Boolean(b) => opts.bytes = *b,
+                other => {
+                    return Err(format!(
+                        "{fname}: \"bytes\" must be true or false, got {}",
+                        other.type_name()
+                    )
+                    .into());
+                }
+            },
             other => {
                 return Err(format!(
-                    "{fname}: unknown option \"{other}\" — the options are \"headers\", \"timeout_ms\", \"bearer\", and \"basic\""
+                    "{fname}: unknown option \"{other}\" — the options are \"headers\", \"timeout_ms\", \"bearer\", \"basic\", and \"bytes\""
                 )
                 .into());
             }
@@ -302,11 +315,18 @@ fn perform(
                         .or_insert_with(|| Value::String(Arc::new(v.to_string())));
                 }
             }
-            match response.text() {
+            let body = if opts.bytes {
+                response
+                    .bytes()
+                    .map(|b| crate::stdlib::bytes::to_value(b.to_vec()))
+            } else {
+                response.text().map(|t| Value::String(Arc::new(t)))
+            };
+            match body {
                 Ok(response_body) => {
                     let mut response_map = crate::ast::ValueMap::default();
                     response_map.insert("status".to_string(), Value::Integer(status));
-                    response_map.insert("body".to_string(), Value::String(Arc::new(response_body)));
+                    response_map.insert("body".to_string(), response_body);
                     response_map.insert("headers".to_string(), Value::Map(Arc::new(headers)));
                     response_map.insert(
                         "success".to_string(),

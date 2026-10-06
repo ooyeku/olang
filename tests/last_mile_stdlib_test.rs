@@ -194,6 +194,13 @@ fn http_option_misuse_raises_before_any_network_io() {
     assert!(e.contains("timeout_ms"), "{e}");
     let e = err("http.get(\"http://localhost:1\", #{ \"basic\": \"user\" })");
     assert!(e.contains("basic"), "{e}");
+    let e = err("http.get(\"http://localhost:1\", #{ \"bytes\": \"yes\" })");
+    assert!(e.contains("\"bytes\" must be true or false"), "{e}");
+    // a valid one passes validation: the request itself fails, as a value
+    assert_eq!(
+        run("show(is_err(http.get(\"http://127.0.0.1:1/x\", #{ \"bytes\": true, \"timeout_ms\": 500 })))").unwrap(),
+        "true"
+    );
     let e = err("http.get(\"http://localhost:1\", 42)");
     assert!(e.contains("options must be a map"), "{e}");
 }
