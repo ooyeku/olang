@@ -38,6 +38,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`gui` pictures in five formats.** An `image` node reads PNG, JPEG (its
+  EXIF orientation), WebP, GIF (the first frame), and SVG (resvg), from a
+  path or Bytes. A real window decodes on the engine's two decoding
+  threads and draws again when the picture is ready (never on the
+  window's thread); a picture is kept at the power of two above the size
+  it shows, in a 384 MB cache by source and size. `fit: "none"` draws one
+  image pixel to one display pixel. `gui.image_info(src)` reads a header.
+- **`gui` files from other programs.** Files hovered over and dropped on a
+  window arrive as one `files` event a gesture (`action`, `paths`, `x`,
+  `y`, `target`); on macOS the place is asked of the pointer. `gui.input`
+  takes `files` for tests.
+- **`gui.clipboard_image()`**: the clipboard's picture as PNG Bytes
+  (macOS so far).
+- **A focused region scrolls by the keys**: the arrows, page keys, space,
+  home and end; `gui.flatten` reads a region's `axis` (`"both"`) and
+  `focusable`.
+- **`http` responses as Bytes**: `#{ "bytes": true }` among a request's
+  options.
+
 - **`gui`: windows drawn by olang (Loom's L0).** A program lays its
   view out and sends positioned, keyed nodes (`gui.apply`); the engine
   draws them on the GPU (wgpu) or with the software reference
