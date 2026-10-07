@@ -7554,6 +7554,56 @@ impl BytecodeVm {
             }
             // Read in place, as `map_get` is: bridged, a VM map converted
             // whole into the interpreter's form for one key.
+            // Read and copied in place: bridged, a VM map (a frame with its
+            // memo in it) converted whole to drop one key.
+            "map_remove" if args.len() == 2 => Some((|| {
+                let key = match &args[1].data {
+                    ValueData::String(st) => st.as_ref().clone(),
+                    ValueData::Integer(i) => i.to_string(),
+                    ValueData::Float(f) => f.to_string(),
+                    ValueData::Boolean(b) => b.to_string(),
+                    _ => {
+                        return Err(BytecodeError::TypeError(
+                            "map_remove: key must be string, integer, float, or boolean"
+                                .to_string(),
+                        ));
+                    }
+                };
+                match &args[0].data {
+                    ValueData::Map(m) => {
+                        let mut new_map = (**m).clone();
+                        new_map.remove(&key);
+                        Ok(OvmValue::new_map(Arc::new(new_map)))
+                    }
+                    ValueData::AstMap(m) => {
+                        let mut new_map = (**m).clone();
+                        new_map.remove(&key);
+                        Ok(OvmValue {
+                            data: ValueData::AstMap(Arc::new(new_map)),
+                        })
+                    }
+                    ValueData::AstStruct(m, kind) => {
+                        let mut new_map = (**m).clone();
+                        new_map.remove(&key);
+                        Ok(OvmValue {
+                            data: ValueData::AstStruct(Arc::new(new_map), *kind),
+                        })
+                    }
+                    ValueData::Struct(st) => {
+                        let pairs: Vec<(String, OvmValue)> = st
+                            .iter()
+                            .filter(|(name, _)| **name != key)
+                            .map(|(name, v)| (name.clone(), v.clone()))
+                            .collect();
+                        Ok(OvmValue::new_struct(Arc::new(
+                            crate::ovm::value::StructObject::from_pairs(st.type_name(), pairs),
+                        )))
+                    }
+                    _ => Err(BytecodeError::TypeError(
+                        "map_remove: first argument must be a map or object".to_string(),
+                    )),
+                }
+            })()),
             "map_get_or" if args.len() == 3 => Some(
                 Self::native_map_get(&args[0], &args[1], "map_get_or").map(|v| match v.data {
                     ValueData::Unit => args[2].clone(),

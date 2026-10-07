@@ -891,3 +891,21 @@ fn list_layouts_compare_as_one_kind() {
         assert_same(src, "f", &args);
     }
 }
+
+#[test]
+fn map_remove_reads_every_map_kind_in_place() {
+    // Native on the VM now (it bridged, converting a native map whole to
+    // drop one key): every kind answers its own kind without the key, and
+    // the one it came from keeps it.
+    let row = json_row(2);
+    let store = store_value();
+    for src in [
+        "fn f(r, s) = { let n = map_remove(r, \"key\")\n [map_has_key(n, \"key\"), map_has_key(r, \"key\"), typeof(n), n.id] }",
+        "fn f(r, s) = { let n = map_remove(s, \"count\")\n [map_has_key(n, \"count\"), map_get(s, \"count\"), map_len(n)] }",
+        "fn f(r, s) = { let mut m = #{}\n for i in range(0, 20) { m = map_set(m, to_string(i), [i]) }\n let n = map_remove(m, 3)\n [map_len(n), map_len(m), map_get(n, \"3\"), map_get(m, \"3\")] }",
+        "fn f(r, s) = map_remove(#{ \"a\": 1 }, [1])",
+        "fn f(r, s) = map_remove([1, 2], \"a\")",
+    ] {
+        assert_same(src, "f", &[row.clone(), store.clone()]);
+    }
+}
