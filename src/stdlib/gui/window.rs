@@ -175,6 +175,10 @@ pub struct WinState {
     /// The last pointer event's place on the screen, when the origin is
     /// known.
     screen_pointer: Option<(f32, f32)>,
+    /// The system's settings as this window last heard them (a headless
+    /// window's from `gui.input`'s `appearance`): reduced motion stops
+    /// its pictures' animations.
+    pub settings: super::context::Settings,
 }
 
 const WHITE: Color = [255, 255, 255, 255];
@@ -205,6 +209,16 @@ impl WinState {
             // places it; a real one waits for the platform
             origin: if headless { Some((0.0, 0.0)) } else { None },
             screen_pointer: None,
+            settings: super::context::Settings::default(),
+        }
+    }
+
+    /// The system's settings changed: kept, and the window drawn again
+    /// (a picture that animated stops under reduced motion).
+    pub fn set_settings(&mut self, s: super::context::Settings) {
+        if self.settings != s {
+            self.settings = s;
+            self.dirty = true;
         }
     }
 

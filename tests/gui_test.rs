@@ -824,7 +824,7 @@ fn the_system_settings_are_read_and_a_change_is_an_event() {
     "##);
     assert_eq!(
         text(&v),
-        r#"[["contrast", "dark", "reduce_motion"], true, true, false]"#
+        r#"[["accent", "contrast", "dark", "reduce_motion", "reduce_transparency"], true, true, false]"#
     );
 }
 
@@ -967,6 +967,31 @@ fn a_picture_that_is_not_one_says_so() {
     assert!(t.contains(r#""format": "jpeg""#) && t.contains(r#""format": "svg""#), "{t}");
     assert!(t.contains(r#""width": 40"#) && t.contains(r#""height": 30"#), "{t}");
     assert!(t.ends_with("true]"), "{t}");
+}
+
+#[test]
+fn the_systems_settings_reach_a_window_and_its_program() {
+    let _turn = events_turn();
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (120, 80) })
+        let ev = gui.events()
+        let mut stale = true
+        while stale { match chan.try_recv(ev) { Ok(e) => (), Err(e) => { stale = false } } }
+        let before = gui.read(w, "settings")
+        gui.input(w, #{ "kind": "appearance", "dark": true, "reduce_motion": true, "reduce_transparency": true, "accent": "#ff2d55" })
+        let mut got = ()
+        let mut more = true
+        while more { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "appearance" => { got = e } }, Err(e) => { more = false } } }
+        let bad = attempt(() => gui.input(w, #{ "kind": "appearance", "accent": "pink" }))
+        let ctx = gui.context()
+        [map_get(before, "reduce_motion"), gui.read(w, "settings"),
+         (map_get(got, "dark"), map_get(got, "contrast"), map_get(got, "reduce_motion"), map_get(got, "reduce_transparency"), map_get(got, "accent"), map_get(got, "why")),
+         is_err(bad), sort(map_keys(ctx))]
+    "##);
+    assert_eq!(
+        text(&v),
+        r##"[false, #{"accent": "#ff2d55", "contrast": false, "dark": true, "reduce_motion": true, "reduce_transparency": true}, (true, false, true, true, "#ff2d55", "test"), true, ["accent", "contrast", "dark", "reduce_motion", "reduce_transparency"]]"##
+    );
 }
 
 #[test]

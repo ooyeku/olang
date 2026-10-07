@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **gui: the system's settings, live.** `gui.context()` and the
+  `appearance` event carry reduced transparency and the accent colour
+  too, and a real window hears `appearance` the moment the person
+  changes Appearance (Auto included: the application's effective
+  appearance is read, not the `AppleInterfaceStyle` default), Increase
+  Contrast, Reduce Motion, Reduce Transparency, or the accent — AppKit's
+  `NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification` and
+  `NSSystemColorsDidChangeNotification` are observed, no restart. The
+  event says `why`. A window keeps what it heard (`gui.read(w,
+  "settings")`); `gui.input`'s `appearance` sets it for a headless one.
+  `gui.set(w, #{ appearance })` puts the title bar in the appearance a
+  program chose.
+
 - **gui: `gui.platform()` — what this platform's windows can do.**
   `#{ os, native_menu, clipboard_image, file_drop, drop_position,
   window_position, system_settings, ime, accessibility }`, so a program

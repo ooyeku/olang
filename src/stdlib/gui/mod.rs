@@ -533,9 +533,21 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
                 None => Value::Unit,
             }
         }
+        // the system's settings as this window last heard them
+        "settings" => {
+            let set = st.settings;
+            let mut f = vec![("dark", Value::Boolean(set.dark.unwrap_or(false)))];
+            f.extend([
+                ("contrast", Value::Boolean(set.contrast)),
+                ("reduce_motion", Value::Boolean(set.reduce_motion)),
+                ("reduce_transparency", Value::Boolean(set.reduce_transparency)),
+                ("accent", set.accent.map(|c| s(&context::hex(c))).unwrap_or(Value::Unit)),
+            ]);
+            map(f)
+        }
         other => {
             return Err(format!(
-                "gui.read: unknown \"{other}\" (focus, hover, size, hit, node, value, selection, keys, a11y, pixels, rgba, prims, caret, ime)"
+                "gui.read: unknown \"{other}\" (focus, hover, size, hit, node, value, selection, keys, a11y, pixels, rgba, prims, caret, ime, settings)"
             ));
         }
     })
@@ -699,18 +711,28 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
             emit(vec![event("menu", vec![("id", s(item))])]);
             return Ok(Value::Unit);
         }
-        // The system's settings changing, as a platform window reports them.
+        // The system's settings changing, as a platform window reports
+        // them: `dark`, `contrast`, `reduce_motion`, `reduce_transparency`
+        // (each false when left out), `accent` ("#rrggbb", or none). The
+        // window takes them (its pictures stop under reduced motion) and
+        // the program hears `appearance`.
         Some("appearance") => {
             let b = |k: &str| -> Res<bool> { Ok(get_bool(&args[1], k, what)?.unwrap_or(false)) };
-            emit(vec![event(
-                "appearance",
-                vec![
-                    ("window", Value::Integer(id as i64)),
-                    ("dark", Value::Boolean(b("dark")?)),
-                    ("contrast", Value::Boolean(b("contrast")?)),
-                    ("reduce_motion", Value::Boolean(b("reduce_motion")?)),
-                ],
-            )]);
+            let accent = match get_str(&args[1], "accent", what)? {
+                Some(t) => Some(context::parse_hex(t).ok_or_else(|| {
+                    format!("{what}: \"accent\" is a colour \"#rrggbb\", not \"{t}\"")
+                })?),
+                None => None,
+            };
+            let set = context::Settings {
+                dark: Some(b("dark")?),
+                contrast: b("contrast")?,
+                reduce_motion: b("reduce_motion")?,
+                reduce_transparency: b("reduce_transparency")?,
+                accent,
+            };
+            w.lock().map_err(|_| "gui: window poisoned")?.set_settings(set);
+            emit(vec![context::event_of(id, set, None, "test")]);
             return Ok(Value::Unit);
         }
         // A headless window put at a place on the screen (a real one is

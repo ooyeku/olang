@@ -7,6 +7,12 @@
 //! rotor lists), and runs one; the program must hear the same `a11y`
 //! `custom` event that a keyboard-free assistive request sends.
 //!
+//! The same window hears the system's settings live: the test posts, in
+//! this process, the notice AppKit sends when an accessibility display
+//! option changes (`NSWorkspaceAccessibilityDisplayOptionsDidChange`;
+//! the person's settings are not touched), and the program must hear an
+//! `appearance` event for it.
+//!
 //! When this process is trusted for Accessibility, the actions are also
 //! read through the AX client API (`AXUIElementCopyActionNames`), the way
 //! VoiceOver reads another process; untrusted, that half says so and is
@@ -47,6 +53,7 @@ mod mac {
           #{ "key": "row1", "parent": "col", "role": "listitem", "box": (0, 40, 140, 40), "text": "Row one" }
         ])
         let mut got = []
+        let mut notices = 0
         let mut tries = 0
         let mut moved = false
         let mut done = false
@@ -54,6 +61,7 @@ mod mac {
           tries = tries + 1
           match chan.recv_timeout(ev, 200) {
             Ok(e) => {
+              if map_get(e, "kind") == "appearance" && map_get(e, "why") == "settings" => { notices = notices + 1 } else => ()
               if map_get(e, "kind") == "a11y" && map_get(e, "action") == "custom" => {
                 got = got + [[map_get(e, "key"), map_get(e, "index"), map_get(e, "label")]]
                 if moved => { done = true } else => ()
@@ -69,7 +77,9 @@ mod mac {
           }
         }
         gui.close(w)
-        got
+        // AppKit answers the notice with its own (the system's colours are
+        // read again): one or more
+        got + [["settings heard", notices > 0]]
     "##;
 
     unsafe extern "C" {
@@ -257,6 +267,31 @@ mod mac {
         }
     }
 
+    /// Whether the AX client API is served for this process's own
+    /// elements: its window reads as an `AXWindow`. On some macOS builds a
+    /// process reading itself is answered with the application element
+    /// for every element (its window's role is `AXApplication`), and the
+    /// walk to the card cannot happen; that half is then skipped and said.
+    fn ax_served() -> bool {
+        unsafe {
+            let app = AXUIElementCreateApplication(std::process::id() as i32);
+            let mut ok = false;
+            if let Some(ws) = ax_attr(app, "AXWindows") {
+                let arr = &*(ws as *const NSArray<AnyObject>);
+                if arr.count() > 0 {
+                    let w = &*arr.objectAtIndex(0) as *const AnyObject as *const c_void;
+                    if let Some(rv) = ax_attr(w, "AXRole") {
+                        ok = (&*(rv as *const NSString)).to_string() == "AXWindow";
+                        CFRelease(rv);
+                    }
+                }
+                CFRelease(ws);
+            }
+            CFRelease(app);
+            ok
+        }
+    }
+
     static HEARD: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
     extern "C" fn heard(
@@ -311,6 +346,7 @@ mod mac {
         let r = unsafe {
             AXUIElementCopyAttributeValue(e, Retained::as_ptr(&attr) as *const c_void, &mut v)
         };
+
         (r == 0 && !v.is_null()).then_some(v)
     }
 
@@ -322,6 +358,15 @@ mod mac {
         let mut out = None;
         for i in 0..arr.count() {
             let c = &*arr.objectAtIndex(i) as *const AnyObject as *const c_void;
+            // an element that lists the application (or its menu bar) as
+            // its child leads back up: not where the window's nodes are
+            if let Some(rv) = unsafe { ax_attr(c, "AXRole") } {
+                let role = unsafe { &*(rv as *const NSString) }.to_string();
+                unsafe { CFRelease(rv) };
+                if role == "AXApplication" || role == "AXMenuBar" {
+                    continue;
+                }
+            }
             if let Some(t) = unsafe { ax_attr(c, "AXTitle") } {
                 let s = unsafe { &*(t as *const NSString) }.to_string();
                 unsafe { CFRelease(t) };
@@ -374,7 +419,8 @@ mod mac {
                     let row = on_main(|| look("Row one"));
                     let other_row = on_main(|| look("Row zero"));
                     let trusted = unsafe { AXIsProcessTrusted() };
-                    let ax = if trusted { ax_client_actions("Move to To do") } else { None };
+                    let served = trusted && ax_served();
+                    let ax = if served { ax_client_actions("Move to To do") } else { None };
                     let observer = if trusted { listen() } else { None };
                     let ran = on_main(|| perform("Card", "Move to In progress"));
                     let ran_row = on_main(|| perform("Row one", "Move to Done"));
@@ -385,13 +431,15 @@ mod mac {
                         std::thread::sleep(Duration::from_millis(500));
                         None
                     };
+                    // the system's settings "changed": the loop hears AppKit's notice
+                    on_main(olang::stdlib::gui::platform::post_settings_notice);
                     // and ends at the next action
                     let ran_last = on_main(|| perform("Card", "Move to To do"));
                     if let Some(o) = observer {
                         unsafe { CFRelease(o) };
                     }
                     *SEEN.lock().unwrap() = Some(format!(
-                        "card={card:?}\nplain={plain:?}\nrow={row:?}\nother_row={other_row:?}\ntrusted={trusted} ax={ax:?}\nran={ran} ran_row={ran_row} ran_last={ran_last}\nheard={heard:?}"
+                        "card={card:?}\nplain={plain:?}\nrow={row:?}\nother_row={other_row:?}\ntrusted={trusted} served={served} ax={ax:?}\nran={ran} ran_row={ran_row} ran_last={ran_last}\nheard={heard:?}"
                     ));
                 });
                 let program = Parser::new().parse(PROGRAM).expect("parses");
@@ -416,22 +464,26 @@ mod mac {
         has(r#"row=Some(Seen { names: ["Move to Backlog", "Move to Done"], help: None, allowed: true })"#);
         has(r#"other_row=Some(Seen { names: [], help: None, allowed: false })"#);
         has("ran=true ran_row=true ran_last=true");
-        if seen.contains("trusted=true") {
+        if seen.contains("served=true") {
             assert!(
                 seen.lines().any(|l| l.starts_with("trusted=")
                     && l.contains(r#""Name:Move to In progress\n"#)
                     && l.ends_with(", 0))")),
                 "the AX client did not see or run the custom actions: {seen}"
             );
+        } else if seen.contains("trusted=true") {
+            println!("note: the AX client API answers this process's own elements with the application (this macOS build); the client half was skipped");
+        } else {
+            println!("note: this process is not trusted for Accessibility; the AX client half was skipped");
+        }
+        let expect = r#"["card", 1, "Move to In progress"], ["col", 1, "Move to Done"], ["card", 0, "Move to To do"], ["settings heard", true]]"#;
+        if seen.contains("trusted=true") {
             assert!(
                 seen.lines().any(|l| l.starts_with("heard=Some(") && l.contains(r#""Row one moved to Done""#)),
                 "the announcement was not heard: {seen}"
             );
-        } else {
-            println!("note: this process is not trusted for Accessibility; the AX client half was skipped");
         }
-        let expect = r#"["card", 1, "Move to In progress"], ["col", 1, "Move to Done"], ["card", 0, "Move to To do"]]"#;
-        if seen.contains("trusted=true") {
+        if seen.contains("served=true") {
             assert_eq!(result, format!(r#"[["card", 0, "Move to To do"], {expect}"#));
         } else {
             assert_eq!(result, format!("[{expect}"));

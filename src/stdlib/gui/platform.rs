@@ -52,6 +52,9 @@ pub enum Cmd {
     Exit(i32),
     A11y(accesskit_winit::Event),
     MenuEvent(String),
+    /// The system's settings may have changed (an AppKit notice, or a
+    /// test posting one): read them again; `why` goes on the event.
+    Settings(&'static str),
 }
 
 impl From<accesskit_winit::Event> for Cmd {
@@ -185,8 +188,10 @@ pub fn available() -> bool {
 /// - `window_position`: a window learns where it is on the screen, so
 ///   pointer events carry `sx`/`sy` and a drag follows into another
 ///   window (macOS, Windows); on Wayland a drag stays in its window.
-/// - `system_settings`: `gui.context` reads increased contrast, reduced
-///   motion, and the dark appearance from the system (macOS).
+/// - `system_settings`: `gui.context` reads the dark appearance (Auto
+///   included), increased contrast, reduced motion, reduced transparency,
+///   and the accent colour from the system, and a window hears
+///   `appearance` as soon as one changes — no restart (macOS).
 /// - `ime`: input methods (composition, a candidate window placed at the
 ///   caret) — everywhere winit has them (Wayland's text-input-v3).
 /// - `accessibility`: the platform's accessibility API through AccessKit
@@ -240,6 +245,11 @@ fn run_loop(reply: crossbeam_channel::Sender<Result<(), String>>) -> Option<i32>
         }
     }
     let _ = reply.send(Ok(()));
+    // The system's settings, read here (the main thread) and kept; AppKit
+    // says when they change.
+    super::context::set_live(super::context::read());
+    #[cfg(target_os = "macos")]
+    observe_settings(&proxy);
     let mut app = App {
         windows: HashMap::new(),
         by_winit: HashMap::new(),
@@ -257,6 +267,53 @@ fn run_loop(reply: crossbeam_channel::Sender<Result<(), String>>) -> Option<i32>
     Some(app.exit.unwrap_or(0))
 }
 
+/// Ask AppKit to say when the accessibility display options (contrast,
+/// motion, transparency) or the system's colours (the accent) change:
+/// each notice reaches the loop as [`Cmd::Settings`]. The appearance's
+/// change arrives as a window's `ThemeChanged`. Observers live as long as
+/// the process.
+#[cfg(target_os = "macos")]
+fn observe_settings(proxy: &EventLoopProxy<Cmd>) {
+    use objc2_app_kit::{
+        NSSystemColorsDidChangeNotification, NSWorkspace,
+        NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification,
+    };
+    use objc2_foundation::{NSNotification, NSNotificationCenter};
+    use std::ptr::NonNull;
+    let on = |center: &NSNotificationCenter, name: &objc2_foundation::NSString| {
+        let p = proxy.clone();
+        let block = block2::RcBlock::new(move |_n: NonNull<NSNotification>| {
+            let _ = p.send_event(Cmd::Settings("settings"));
+        });
+        let token = unsafe {
+            center.addObserverForName_object_queue_usingBlock(Some(name), None, None, &block)
+        };
+        std::mem::forget(token);
+    };
+    let ws = NSWorkspace::sharedWorkspace();
+    on(&ws.notificationCenter(), unsafe {
+        NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification
+    });
+    on(&NSNotificationCenter::defaultCenter(), unsafe {
+        NSSystemColorsDidChangeNotification
+    });
+}
+
+/// Post the notice AppKit sends when an accessibility display option
+/// changes, in this process, from the main thread — what a test does to
+/// check the loop hears it without changing the person's settings.
+#[cfg(target_os = "macos")]
+pub fn post_settings_notice() {
+    use objc2_app_kit::{NSWorkspace, NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification};
+    let ws = NSWorkspace::sharedWorkspace();
+    unsafe {
+        ws.notificationCenter().postNotificationName_object(
+            NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification,
+            None,
+        )
+    };
+}
+
 enum Renderer {
     Gpu(gpu::Surface),
     Soft {
@@ -267,6 +324,9 @@ enum Renderer {
 
 struct PWin {
     win: Arc<Window>,
+    /// The appearance the program chose for this window (`gui.set`'s
+    /// `appearance`), or `None` to follow the system's.
+    forced_theme: Option<winit::window::Theme>,
     state: Shared,
     renderer: Renderer,
     a11y: accesskit_winit::Adapter,
@@ -344,6 +404,7 @@ impl App {
         if let Some(c) = opts.clear {
             st.clear = c;
         }
+        st.settings = super::context::system();
         let state = Arc::new(Mutex::new(st));
         windows()
             .lock()
@@ -356,6 +417,7 @@ impl App {
             id,
             PWin {
                 win,
+                forced_theme: None,
                 state,
                 renderer,
                 a11y,
@@ -379,7 +441,7 @@ impl App {
             .get(&id)
             .and_then(|pw| pw.win.theme())
             .map(|t| t == winit::window::Theme::Dark);
-        emit(vec![super::context::event_for(id, dark)]);
+        emit(vec![super::context::event_for(id, dark, "open")]);
         self.sync_origin(id);
         Ok(())
     }
@@ -419,6 +481,30 @@ impl App {
         if dirty {
             pw.win.request_redraw();
         }
+    }
+
+    /// Read the system's settings again (`dark` as a window that follows
+    /// the system said): every window takes them and its program hears
+    /// `appearance`.
+    fn settings_changed(&mut self, why: &'static str, dark: Option<bool>) {
+        let mut now = super::context::read();
+        if let Some(d) = dark {
+            now.dark = Some(d);
+        }
+        // a notice is rare and answered always (a test posts one); a
+        // window coming forward only tells of a change
+        if !super::context::set_live(now) && why == "focus" {
+            return;
+        }
+        let mut out = Vec::new();
+        for (id, pw) in &self.windows {
+            if let Ok(mut st) = pw.state.lock() {
+                st.set_settings(now);
+            }
+            out.push(super::context::event_of(*id, now, None, why));
+            pw.win.request_redraw();
+        }
+        emit(out);
     }
 
     fn render(&mut self, id: u64) {
@@ -668,6 +754,7 @@ impl ApplicationHandler<Cmd> for App {
                 Cmd::Exit(c) => format!("exit {c}"),
                 Cmd::A11y(_) => "a11y".to_string(),
                 Cmd::MenuEvent(id) => format!("menu event {id}"),
+                Cmd::Settings(why) => format!("settings ({why})"),
             };
             eprintln!("gui: {what}");
         }
@@ -721,6 +808,21 @@ impl ApplicationHandler<Cmd> for App {
                     }
                     pw.win.request_redraw();
                 }
+                if let Ok(Some(a)) = get_str(&v, "appearance", "gui.set")
+                    && let Some(pw) = self.windows.get_mut(&id)
+                {
+                    // the title bar and the platform's own controls in the
+                    // appearance the program draws in
+                    let t = match a {
+                        "dark" => Some(winit::window::Theme::Dark),
+                        "light" => Some(winit::window::Theme::Light),
+                        _ => None,
+                    };
+                    if pw.forced_theme != t {
+                        pw.forced_theme = t;
+                        pw.win.set_theme(t);
+                    }
+                }
             }
             Cmd::Dialog { kind, opts, reply } => {
                 let _ = reply.send(run_dialog(&kind, &opts));
@@ -729,6 +831,7 @@ impl ApplicationHandler<Cmd> for App {
                 let _ = reply.send(self.set_menu(&spec));
             }
             Cmd::MenuEvent(id) => emit(vec![event("menu", vec![("id", s(&id))])]),
+            Cmd::Settings(why) => self.settings_changed(why, None),
             Cmd::Exit(code) => {
                 self.exit = Some(code);
                 self.windows.clear();
@@ -924,21 +1027,21 @@ impl ApplicationHandler<Cmd> for App {
             },
             WindowEvent::Focused(on) => {
                 self.input(id, Input::Focused(on));
-                // Contrast and motion have no change notice here: a window
-                // coming back to the front reads them again.
+                // A notice missed (the settings changed while the process
+                // was suspended) is caught when a window comes forward.
                 if on {
-                    let dark = self
-                        .windows
-                        .get(&id)
-                        .and_then(|pw| pw.win.theme())
-                        .map(|t| t == winit::window::Theme::Dark);
-                    emit(vec![super::context::event_for(id, dark)]);
+                    self.settings_changed("focus", None);
                 }
             }
-            WindowEvent::ThemeChanged(theme) => emit(vec![super::context::event_for(
-                id,
-                Some(theme == winit::window::Theme::Dark),
-            )]),
+            // The system's appearance changed (Auto at dusk, or by hand):
+            // a window that follows it says so first.
+            WindowEvent::ThemeChanged(theme) => {
+                let follows = self.windows.get(&id).is_some_and(|pw| pw.forced_theme.is_none());
+                self.settings_changed(
+                    "theme",
+                    follows.then_some(theme == winit::window::Theme::Dark),
+                );
+            }
             WindowEvent::HoveredFile(path) => {
                 self.files
                     .push((id, "hover", path.to_string_lossy().to_string()));
