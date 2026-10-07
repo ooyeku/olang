@@ -11,6 +11,8 @@ pub mod doctor; // `olang doctor` — audit a project
 pub mod fmt;
 #[cfg(feature = "native")]
 pub mod lsp; // `olang lsp` — the language server over stdio
+#[cfg(feature = "native")]
+pub mod semantic; // the language server's semantic tokens
 pub mod test_runner;
 
 use std::path::{Path, PathBuf};

@@ -831,3 +831,97 @@ fn every_undefined_name_is_reported_in_one_pass() {
         ]
     );
 }
+
+/// Semantic tokens (full and by range) and incremental edits: the legend
+/// is advertised, a range answers only its lines, and a ranged
+/// `didChange` edits the server's copy in place (the tokens and the
+/// diagnostics see the edit).
+#[test]
+fn semantic_tokens_and_incremental_edits() {
+    let mut c = Client::start();
+    let uri = "file:///tokens.ol";
+    c.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {} }
+    }));
+    let init = c.recv_until(|m| m["id"] == 1);
+    let caps = &init["result"]["capabilities"];
+    assert_eq!(caps["textDocumentSync"], 2, "incremental sync");
+    let legend = &caps["semanticTokensProvider"]["legend"];
+    let types: Vec<&str> = legend["tokenTypes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t.as_str().unwrap())
+        .collect();
+    assert_eq!(caps["semanticTokensProvider"]["range"], true);
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+            "textDocument":{"uri":uri,"languageId":"olang","version":1,
+                            "text":"fn add(a, b) = a + b\nlet x = add(1, 2)\nprintln(x)\n"}}
+    }));
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"textDocument/semanticTokens/full","params":{
+            "textDocument":{"uri":uri}}
+    }));
+    let full = c.recv_until(|m| m["id"] == 2);
+    let data: Vec<u64> = full["result"]["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_u64().unwrap())
+        .collect();
+    assert_eq!(data.len() % 5, 0);
+    // `fn` a keyword at 0:0, then `add` a function declared at 0:3
+    assert_eq!(&data[..4], &[0, 0, 2, types.iter().position(|t| *t == "keyword").unwrap() as u64]);
+    assert_eq!(data[5..9], [0, 3, 3, types.iter().position(|t| *t == "function").unwrap() as u64]);
+    assert_eq!(data[9] & 1, 1, "declaration modifier");
+
+    // only line 2 by range: the first token's delta is from line 0
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":3,"method":"textDocument/semanticTokens/range","params":{
+            "textDocument":{"uri":uri},
+            "range":{"start":{"line":2,"character":0},"end":{"line":2,"character":10}}}
+    }));
+    let ranged = c.recv_until(|m| m["id"] == 3);
+    let rd = ranged["result"]["data"].as_array().unwrap();
+    assert_eq!(rd[0], 2, "first token on line 2");
+    assert_eq!(rd.len(), 5 * 2, "println(x): a function and a variable (brackets are not tokens)");
+
+    // an incremental edit: `x` renamed `total` on line 1 and its use on
+    // line 2, then an error typed at the end
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"textDocument/didChange","params":{
+            "textDocument":{"uri":uri,"version":2},
+            "contentChanges":[
+                {"range":{"start":{"line":1,"character":4},"end":{"line":1,"character":5}},"text":"total"},
+                {"range":{"start":{"line":2,"character":8},"end":{"line":2,"character":9}},"text":"total"},
+                {"range":{"start":{"line":3,"character":0},"end":{"line":3,"character":0}},"text":"let = \n"}
+            ]}
+    }));
+    let m = c.recv_until(|m| diagnostics_of(m).is_some());
+    let ds = diagnostics_of(&m).unwrap();
+    assert!(ds.iter().any(|d| d["range"]["start"]["line"] == 3), "the error typed on line 3: {ds:?}");
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":4,"method":"textDocument/hover","params":{
+            "textDocument":{"uri":uri},"position":{"line":2,"character":10}}
+    }));
+    let hov = c.recv_until(|m| m["id"] == 4);
+    assert!(hov.get("result").is_some());
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":5,"method":"textDocument/semanticTokens/range","params":{
+            "textDocument":{"uri":uri},
+            "range":{"start":{"line":1,"character":0},"end":{"line":1,"character":40}}}
+    }));
+    let r2 = c.recv_until(|m| m["id"] == 5);
+    let d2: Vec<u64> = r2["result"]["data"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap()).collect();
+    // `let` then `total` (5 long) declared
+    assert_eq!(&d2[5..8], &[0, 4, 5]);
+
+    c.send(&serde_json::json!({"jsonrpc":"2.0","id":9,"method":"shutdown","params":null}));
+    c.recv_until(|m| m["id"] == 9);
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"exit","params":null}));
+    drop(c.stdin);
+    assert!(c.child.wait().expect("server exit").success());
+}

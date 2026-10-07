@@ -140,7 +140,30 @@ pub fn run() -> Result<(), Box<dyn Error + Sync + Send>> {
     let (connection, io_threads) = Connection::stdio();
 
     let capabilities = ServerCapabilities {
-        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+        // Incremental: an edit sends its range and its text, so a keystroke
+        // in a 50,000-line file is a few bytes on the wire, not the file.
+        text_document_sync: Some(TextDocumentSyncCapability::Kind(
+            TextDocumentSyncKind::INCREMENTAL,
+        )),
+        semantic_tokens_provider: Some(
+            lsp_types::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                lsp_types::SemanticTokensOptions {
+                    legend: lsp_types::SemanticTokensLegend {
+                        token_types: super::semantic::TOKEN_TYPES
+                            .iter()
+                            .map(|t| lsp_types::SemanticTokenType::new(t))
+                            .collect(),
+                        token_modifiers: super::semantic::TOKEN_MODIFIERS
+                            .iter()
+                            .map(|t| lsp_types::SemanticTokenModifier::new(t))
+                            .collect(),
+                    },
+                    full: Some(lsp_types::SemanticTokensFullOptions::Bool(true)),
+                    range: Some(true),
+                    ..Default::default()
+                },
+            ),
+        ),
         completion_provider: Some(CompletionOptions {
             trigger_characters: Some(vec![".".to_string()]),
             ..Default::default()
@@ -186,8 +209,35 @@ fn main_loop(
 ) -> Result<(), Box<dyn Error + Sync + Send>> {
     // Open documents: uri -> current text.
     let mut docs: HashMap<Uri, String> = HashMap::new();
+    // Documents edited since their diagnostics were last published: they
+    // are checked once the client goes quiet (a burst of keystrokes is
+    // checked once, and a request typed after an edit — a completion — is
+    // answered before the check, not behind it).
+    let mut stale: Vec<Uri> = Vec::new();
 
-    for msg in &connection.receiver {
+    loop {
+        let msg = if stale.is_empty() {
+            match connection.receiver.recv() {
+                Ok(m) => m,
+                Err(_) => break,
+            }
+        } else {
+            match connection
+                .receiver
+                .recv_timeout(std::time::Duration::from_millis(DIAGNOSTICS_QUIET_MS))
+            {
+                Ok(m) => m,
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                    for uri in std::mem::take(&mut stale) {
+                        if let Some(text) = docs.get(&uri) {
+                            publish(connection, &uri, text)?;
+                        }
+                    }
+                    continue;
+                }
+                Err(_) => break,
+            }
+        };
         match msg {
             Message::Request(req) => {
                 if connection.handle_shutdown(&req)? {
@@ -207,17 +257,23 @@ fn main_loop(
                 DidChangeTextDocument::METHOD => {
                     let params: lsp_types::DidChangeTextDocumentParams =
                         serde_json::from_value(note.params)?;
-                    // FULL sync: the last change carries the whole text.
-                    if let Some(change) = params.content_changes.into_iter().last() {
-                        let uri = params.text_document.uri;
-                        publish(connection, &uri, &change.text)?;
-                        docs.insert(uri, change.text);
+                    // Each change is a range and its text (or, with no
+                    // range, the whole text), applied in order.
+                    let uri = params.text_document.uri;
+                    let mut text = docs.remove(&uri).unwrap_or_default();
+                    for change in params.content_changes {
+                        apply_change(&mut text, change);
+                    }
+                    docs.insert(uri.clone(), text);
+                    if !stale.contains(&uri) {
+                        stale.push(uri);
                     }
                 }
                 DidCloseTextDocument::METHOD => {
                     let params: lsp_types::DidCloseTextDocumentParams =
                         serde_json::from_value(note.params)?;
                     docs.remove(&params.text_document.uri);
+                    stale.retain(|u| u != &params.text_document.uri);
                     // Clear diagnostics for closed files.
                     send_diagnostics(connection, params.text_document.uri, Vec::new())?;
                 }
@@ -401,6 +457,36 @@ fn handle_request(
             let symbols = workspace_symbols(root, &params.query);
             respond(connection, id, &symbols)?;
         }
+        lsp_types::request::SemanticTokensFullRequest::METHOD => {
+            let (id, params): (RequestId, lsp_types::SemanticTokensParams) =
+                req.extract(lsp_types::request::SemanticTokensFullRequest::METHOD)?;
+            let text = docs
+                .get(&params.text_document.uri)
+                .map(String::as_str)
+                .unwrap_or("");
+            respond(
+                connection,
+                id,
+                &lsp_types::SemanticTokensResult::Tokens(semantic_tokens(text, 0, u32::MAX)),
+            )?;
+        }
+        lsp_types::request::SemanticTokensRangeRequest::METHOD => {
+            let (id, params): (RequestId, lsp_types::SemanticTokensRangeParams) =
+                req.extract(lsp_types::request::SemanticTokensRangeRequest::METHOD)?;
+            let text = docs
+                .get(&params.text_document.uri)
+                .map(String::as_str)
+                .unwrap_or("");
+            respond(
+                connection,
+                id,
+                &lsp_types::SemanticTokensRangeResult::Tokens(semantic_tokens(
+                    text,
+                    params.range.start.line,
+                    params.range.end.line,
+                )),
+            )?;
+        }
         Formatting::METHOD => {
             let (id, params): (RequestId, lsp_types::DocumentFormattingParams) =
                 req.extract(Formatting::METHOD)?;
@@ -421,6 +507,86 @@ fn handle_request(
         }
     }
     Ok(())
+}
+
+/// A file larger than this (about 6,000 lines) has its declarations
+/// scanned rather than parsed.
+const BIG_FILE_BYTES: usize = 256 * 1024;
+
+/// How long the client must be quiet before an edited document's
+/// diagnostics are published.
+const DIAGNOSTICS_QUIET_MS: u64 = 40;
+
+/// Byte offset of a wire position in `text` (UTF-16 column, clamped to
+/// its line's end; a line past the end is the end).
+fn offset_of(text: &str, pos: Position) -> usize {
+    let mut at = 0usize;
+    let mut line = 0u32;
+    if pos.line > 0 {
+        for (i, b) in text.bytes().enumerate() {
+            if b == b'\n' {
+                line += 1;
+                if line == pos.line {
+                    at = i + 1;
+                    break;
+                }
+            }
+        }
+        if line < pos.line {
+            return text.len();
+        }
+    }
+    let rest = &text[at..];
+    let end = rest.find('\n').unwrap_or(rest.len());
+    let mut units = 0u32;
+    for (b, ch) in rest[..end].char_indices() {
+        if units >= pos.character {
+            return at + b;
+        }
+        units += ch.len_utf16() as u32;
+    }
+    at + end
+}
+
+/// Apply one `didChange` content change to `text`.
+fn apply_change(text: &mut String, change: lsp_types::TextDocumentContentChangeEvent) {
+    match change.range {
+        None => *text = change.text,
+        Some(r) => {
+            let a = offset_of(text, r.start);
+            let b = offset_of(text, r.end).max(a);
+            text.replace_range(a..b, &change.text);
+        }
+    }
+}
+
+/// The semantic tokens of `text`, those on lines `lo..=hi`.
+fn semantic_tokens(text: &str, lo: u32, hi: u32) -> lsp_types::SemanticTokens {
+    let builtin = |w: &str| help().get_function(w).is_some();
+    let mut modules: Vec<&str> = MODULES.to_vec();
+    modules.extend_from_slice(USE_MODULES);
+    // a range is lexed from the top (a string or a template may have
+    // opened above it) to its last line, not to the file's end
+    let cut = if hi == u32::MAX {
+        text.len()
+    } else {
+        offset_of(text, Position::new(hi.saturating_add(1), 0))
+    };
+    let toks = super::semantic::tokens(&text[..cut], &builtin, &modules);
+    let data = super::semantic::encode(&toks, lo, hi);
+    lsp_types::SemanticTokens {
+        result_id: None,
+        data: data
+            .chunks(5)
+            .map(|c| lsp_types::SemanticToken {
+                delta_line: c[0],
+                delta_start: c[1],
+                length: c[2],
+                token_type: c[3],
+                token_modifiers_bitset: c[4],
+            })
+            .collect(),
+    }
 }
 
 fn respond<T: serde::Serialize>(
@@ -1086,6 +1252,12 @@ fn doc_markup(d: &crate::help::FunctionDoc) -> lsp_types::Documentation {
 /// mid-keystroke — falls back to a line scan, so hover, definition, and
 /// completion keep working while the user types.
 fn declarations(text: &str) -> Vec<(String, String, (u32, u32))> {
+    // A very large file is scanned, not parsed: the parse of 50,000 lines
+    // is half a second, and completion and the outline ask on every edit.
+    // The scan keeps what the parse would (the top level).
+    if text.len() > BIG_FILE_BYTES {
+        return scan_declarations_at(text, true);
+    }
     let parser = OlangParser::new();
     let Ok(program) = parser.parse_raw(text) else {
         return scan_declarations(text);
@@ -1162,10 +1334,18 @@ fn declarations(text: &str) -> Vec<(String, String, (u32, u32))> {
 /// Declarations by text scan — the mid-edit fallback. 1-based spans,
 /// like the parser's.
 fn scan_declarations(text: &str) -> Vec<(String, String, (u32, u32))> {
+    scan_declarations_at(text, false)
+}
+
+/// The scan; `top_only` keeps the declarations in the first column.
+fn scan_declarations_at(text: &str, top_only: bool) -> Vec<(String, String, (u32, u32))> {
     let mut out = Vec::new();
     for (ln, line) in text.lines().enumerate() {
         let trimmed = line.trim_start();
         let indent = line.chars().count() - trimmed.chars().count();
+        if top_only && indent > 0 {
+            continue;
+        }
         for (prefix, label) in [
             ("meta fn ", "meta fn"),
             ("share fn ", "share fn"),
@@ -1212,6 +1392,16 @@ fn document_symbols(text: &str) -> Vec<lsp_types::DocumentSymbol> {
             children: None,
         });
     };
+    // the lines once: a range from the line in hand, not a walk from the
+    // top for each symbol (which made a 50,000-line outline a second)
+    let lines: Vec<&str> = text.lines().collect();
+    let line_range = |ln: u32, a: usize, b: usize| {
+        let l = lines.get(ln as usize).copied().unwrap_or("");
+        Range::new(
+            Position::new(ln, char_to_utf16_col(l, a)),
+            Position::new(ln, char_to_utf16_col(l, b)),
+        )
+    };
     for (name, detail, span) in declarations(text) {
         let kind = if detail.starts_with("fn ") || detail.starts_with("meta fn ") {
             lsp_types::SymbolKind::FUNCTION
@@ -1220,11 +1410,12 @@ fn document_symbols(text: &str) -> Vec<lsp_types::DocumentSymbol> {
         } else {
             lsp_types::SymbolKind::VARIABLE
         };
+        let (line, col) = (span.0.saturating_sub(1), span.1.saturating_sub(1) as usize);
         push(
             name.clone(),
             detail,
             kind,
-            span_range(text, span, name.chars().count()),
+            line_range(line, col, col + name.chars().count()),
         );
     }
     // Test blocks, by text scan — like the declarations fallback, this
@@ -1235,7 +1426,7 @@ fn document_symbols(text: &str) -> Vec<lsp_types::DocumentSymbol> {
             && let Some(name) = rest.trim_start().strip_prefix('"')
             && let Some((name, _)) = name.split_once('"')
         {
-            let range = utf16_range(text, ln as u32, 0, 4);
+            let range = line_range(ln as u32, 0, 4);
             push(
                 format!("test \"{name}\""),
                 "test block".to_string(),
@@ -1290,7 +1481,10 @@ fn occurrences(text: &str, name: &str) -> Vec<Range> {
                 let after = chars.get(i + target.len());
                 let after_ok = !after.is_some_and(|c| c.is_alphanumeric() || *c == '_');
                 if before_ok && after_ok {
-                    out.push(utf16_range(text, ln as u32, i, i + target.len()));
+                    out.push(Range::new(
+                        Position::new(ln as u32, char_to_utf16_col(line, i)),
+                        Position::new(ln as u32, char_to_utf16_col(line, i + target.len())),
+                    ));
                     i += target.len();
                     continue;
                 }
