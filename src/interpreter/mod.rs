@@ -5452,15 +5452,19 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     ///   calls `timeline_record`).
     /// - No timeline, or a deterministic op: returns None.
     pub fn timeline_replay(&mut self, op: &str, args: &[Value]) -> Option<Result<Value, String>> {
-        if !crate::timeline::Timeline::is_recorded(op) {
+        // Fingerprint only when a recorded op is actually being replayed:
+        // the fingerprint renders and hashes every argument, and with no
+        // timeline attached it was computed and dropped on every
+        // nondeterministic builtin — a `gui` call's whole view, each frame.
+        let replaying = self
+            .timeline
+            .as_ref()
+            .is_some_and(|t| t.mode() == crate::timeline::Mode::Replay);
+        if !replaying || !crate::timeline::Timeline::is_recorded(op) {
             return None;
         }
-        // Fingerprint only when a recorded op is actually being replayed.
         let fp = crate::timeline::Timeline::fingerprint(args);
         let timeline = self.timeline.as_mut()?;
-        if timeline.mode() != crate::timeline::Mode::Replay {
-            return None;
-        }
         Some(
             timeline
                 .replay_next(op, &fp)
