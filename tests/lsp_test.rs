@@ -925,3 +925,32 @@ fn semantic_tokens_and_incremental_edits() {
     drop(c.stdin);
     assert!(c.child.wait().expect("server exit").success());
 }
+
+/// Signature help for a function another module declares, while the call
+/// is being typed (the file does not parse yet).
+#[test]
+fn signature_help_reaches_an_imported_function_mid_edit() {
+    let dir = std::env::temp_dir().join(format!("olang-lsp-sig-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("lib")).unwrap();
+    std::fs::write(dir.join("lib/util.ol"), "share fn double(n) = n * 2\n").unwrap();
+    let main = dir.join("main.ol");
+    let text = "use lib.util { double }\nlet q = double(\n";
+    std::fs::write(&main, text).unwrap();
+    let uri = format!("file://{}", main.display());
+    let mut c = Client::start();
+    c.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}));
+    c.recv_until(|m| m["id"] == 1);
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+        "textDocument":{"uri":uri,"languageId":"olang","version":1,"text":text}}}));
+    c.send(&serde_json::json!({"jsonrpc":"2.0","id":2,"method":"textDocument/signatureHelp","params":{
+        "textDocument":{"uri":uri},"position":{"line":1,"character":15}}}));
+    let r = c.recv_until(|m| m["id"] == 2);
+    assert_eq!(r["result"]["signatures"][0]["label"], "share fn double(n)", "{r}");
+    c.send(&serde_json::json!({"jsonrpc":"2.0","id":9,"method":"shutdown","params":null}));
+    c.recv_until(|m| m["id"] == 9);
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"exit","params":null}));
+    drop(c.stdin);
+    assert!(c.child.wait().unwrap().success());
+    let _ = std::fs::remove_dir_all(&dir);
+}

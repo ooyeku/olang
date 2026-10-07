@@ -1043,8 +1043,25 @@ fn modules_used(
     let Some(dir) = doc_dir else {
         return Vec::new();
     };
-    let Ok(program) = crate::parser::Parser::new().parse(text) else {
-        return Vec::new();
+    // A file being typed does not parse (a call opened, not closed): its
+    // `use` lines alone still say which modules it reads — what the
+    // language server's signature help needs most when the file is
+    // mid-edit.
+    let program = match crate::parser::Parser::new().parse(text) {
+        Ok(p) => p,
+        Err(_) => {
+            let uses: Vec<&str> = text
+                .lines()
+                .filter(|l| {
+                    let t = l.trim_start();
+                    t.starts_with("use ") || t.starts_with("share use ")
+                })
+                .collect();
+            match crate::parser::Parser::new().parse(&uses.join("\n")) {
+                Ok(p) => p,
+                Err(_) => return Vec::new(),
+            }
+        }
     };
     // The modules the file names, and apart from them the modules those
     // re-export. Re-exports are returned FIRST: a later signature replaces

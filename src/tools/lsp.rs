@@ -394,7 +394,8 @@ fn handle_request(
                 .get(&pos.text_document.uri)
                 .map(String::as_str)
                 .unwrap_or("");
-            respond(connection, id, &signature_help(text, pos.position))?;
+            let dir = doc_dir(&pos.text_document.uri);
+            respond(connection, id, &signature_help(text, pos.position, dir.as_deref()))?;
         }
         lsp_types::request::HoverRequest::METHOD => {
             let (id, params): (RequestId, lsp_types::HoverParams) =
@@ -2029,7 +2030,11 @@ fn rename(text: &str, pos: Position, new_name: &str) -> Result<Vec<TextEdit>, St
 /// The callee and active-parameter index for the innermost unclosed call
 /// at the cursor, then its signature from a local declaration or the
 /// registry.
-fn signature_help(text: &str, pos: Position) -> Option<lsp_types::SignatureHelp> {
+fn signature_help(
+    text: &str,
+    pos: Position,
+    doc_dir: Option<&std::path::Path>,
+) -> Option<lsp_types::SignatureHelp> {
     let line = text.lines().nth(pos.line as usize)?;
     let chars: Vec<char> = line.chars().collect();
     let cursor = utf16_to_char_col(line, pos.character).min(chars.len());
@@ -2089,7 +2094,20 @@ fn signature_help(text: &str, pos: Position) -> Option<lsp_types::SignatureHelp>
         )
     } else {
         let bare = callee.rsplit('.').next().unwrap_or(&callee);
-        let (_, detail, _) = declarations(text).into_iter().find(|(n, _, _)| n == bare)?;
+        // declared here, or in a module this file uses (as definition
+        // finds it: `use lib.util { greet }` and then `greet(`)
+        let here = declarations(text).into_iter().find(|(n, _, _)| n == bare);
+        let detail = match here {
+            Some((_, detail, _)) => detail,
+            None => crate::tools::check::module_programs(text, doc_dir)
+                .into_iter()
+                .find_map(|(_, src, _)| {
+                    declarations(&src)
+                        .into_iter()
+                        .find(|(n, _, _)| n == bare)
+                        .map(|(_, d, _)| d)
+                })?,
+        };
         (detail, None)
     };
 
