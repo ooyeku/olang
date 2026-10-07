@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **gui: animated GIF and WebP play.** An `image` of an animated GIF or
+  WebP shows its first frame, then plays: frames decoded off the
+  window's thread, composited (a GIF's disposal, WebP's blending), kept
+  at the size shown, with their delays and loop count. A window draws a
+  frame only when one is due and only for a picture in view, and not
+  while it is covered, minimized, or hidden. Under Reduce Motion the
+  picture stands on its first frame with a play button (a press or an
+  assistive press plays and pauses it). An animation past 48 MB at the
+  size shown, or 1,000 frames, stays still. A headless window has a
+  clock (`gui.input`'s `clock`) and says what it drew (`gui.read`'s
+  `animation`, `next_frame`). The GPU keeps picture textures by bytes
+  (256 MB, least recently drawn out) instead of dropping all past 64.
+
 - **gui: the system's settings, live.** `gui.context()` and the
   `appearance` event carry reduced transparency and the accent colour
   too, and a real window hears `appearance` the moment the person

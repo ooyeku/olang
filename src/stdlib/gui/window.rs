@@ -179,6 +179,94 @@ pub struct WinState {
     /// window's from `gui.input`'s `appearance`): reduced motion stops
     /// its pictures' animations.
     pub settings: super::context::Settings,
+    /// When the window was made: a real window's clock for animations.
+    born: std::time::Instant,
+    /// A headless window's clock, in ms (`gui.input`'s `clock`): its
+    /// animations move only when a test moves it. `None` for a real one.
+    pub test_clock: Option<f64>,
+    /// Each animated picture's playing, by node key.
+    plays: HashMap<String, Play>,
+    /// The animated pictures the last frame drew.
+    pub shown_anims: Vec<AnimShown>,
+    /// When the next frame of a playing animation in view is due, on
+    /// this window's clock (ms): the platform draws again then. `None`
+    /// when nothing in view moves.
+    pub next_frame: Option<f64>,
+    /// The press that played or paused an animation: its release is not
+    /// the program's.
+    swallow_up: bool,
+}
+
+/// An animated picture's playing: since when, and where it stopped.
+#[derive(Clone, Copy, Debug)]
+struct Play {
+    /// The animation it plays (its first frame's picture id): a new
+    /// source starts again.
+    id: u64,
+    /// When it started, on the window's clock.
+    start: f64,
+    /// Paused this many ms in, or playing.
+    paused: Option<f64>,
+    /// Played or paused by the person (under reduced motion it otherwise
+    /// stands on its first frame).
+    chosen: bool,
+}
+
+/// An animated picture as the last frame drew it.
+#[derive(Clone, Debug)]
+pub struct AnimShown {
+    pub key: String,
+    pub frames: usize,
+    pub frame: usize,
+    pub paused: bool,
+    /// Where a press plays or pauses it (logical pixels), when it has a
+    /// button: under reduced motion, or once the person used it.
+    pub badge: Option<[f32; 4]>,
+}
+
+/// The play (or pause) button over a still animation, `side` device
+/// pixels square: a dark disc, a white glyph.
+fn badge_picture(side: u32, play: bool) -> Arc<super::canvas::Picture> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<(u32, bool), Arc<super::canvas::Picture>>>> =
+        std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    if let Ok(c) = cache.lock()
+        && let Some(p) = c.get(&(side, play))
+    {
+        return p.clone();
+    }
+    let side = side.max(8);
+    let mut pm = tiny_skia::Pixmap::new(side, side).expect("a small pixmap");
+    let f = side as f32;
+    let mut paint = tiny_skia::Paint { anti_alias: true, ..Default::default() };
+    paint.set_color_rgba8(0, 0, 0, 150);
+    if let Some(disc) = tiny_skia::PathBuilder::from_circle(f / 2.0, f / 2.0, f / 2.0) {
+        pm.fill_path(&disc, &paint, tiny_skia::FillRule::Winding, tiny_skia::Transform::identity(), None);
+    }
+    paint.set_color_rgba8(255, 255, 255, 255);
+    let mut pb = tiny_skia::PathBuilder::new();
+    if play {
+        pb.move_to(f * 0.40, f * 0.30);
+        pb.line_to(f * 0.72, f * 0.50);
+        pb.line_to(f * 0.40, f * 0.70);
+        pb.close();
+    } else {
+        pb.push_rect(tiny_skia::Rect::from_xywh(f * 0.36, f * 0.31, f * 0.10, f * 0.38).expect("a bar"));
+        pb.push_rect(tiny_skia::Rect::from_xywh(f * 0.54, f * 0.31, f * 0.10, f * 0.38).expect("a bar"));
+    }
+    if let Some(path) = pb.finish() {
+        pm.fill_path(&path, &paint, tiny_skia::FillRule::Winding, tiny_skia::Transform::identity(), None);
+    }
+    let pic = Arc::new(super::canvas::Picture {
+        id: super::canvas::next_picture_id(),
+        width: pm.width(),
+        height: pm.height(),
+        rgba: pm.take(),
+    });
+    if let Ok(mut c) = cache.lock() {
+        c.insert((side, play), pic.clone());
+    }
+    pic
 }
 
 const WHITE: Color = [255, 255, 255, 255];
@@ -210,7 +298,65 @@ impl WinState {
             origin: if headless { Some((0.0, 0.0)) } else { None },
             screen_pointer: None,
             settings: super::context::Settings::default(),
+            born: std::time::Instant::now(),
+            test_clock: if headless { Some(0.0) } else { None },
+            plays: HashMap::new(),
+            shown_anims: Vec::new(),
+            next_frame: None,
+            swallow_up: false,
         }
+    }
+
+    /// This window's clock for animations, in ms: a headless window's is
+    /// the test's.
+    pub fn clock_ms(&self) -> f64 {
+        self.test_clock
+            .unwrap_or_else(|| self.born.elapsed().as_secs_f64() * 1000.0)
+    }
+
+    /// A headless window's clock moved (`gui.input`'s `clock`).
+    pub fn set_clock(&mut self, ms: f64) {
+        if self.test_clock != Some(ms) {
+            self.test_clock = Some(ms);
+            if !self.shown_anims.is_empty() {
+                self.dirty = true;
+            }
+        }
+    }
+
+    /// The animated picture `key` played (or paused) as by its button.
+    pub fn toggle_play(&mut self, key: &str) {
+        let now = self.clock_ms();
+        let rm = self.settings.reduce_motion;
+        if let Some(p) = self.plays.get_mut(key) {
+            let held = p.paused.or(if rm && !p.chosen { Some(0.0) } else { None });
+            match held {
+                Some(e) => {
+                    p.start = now - e;
+                    p.paused = None;
+                }
+                None => p.paused = Some(now - p.start),
+            }
+            p.chosen = true;
+            self.dirty = true;
+            self.a11y_dirty = true;
+        }
+    }
+
+    /// The animated picture whose button is at `(x, y)` with nothing over
+    /// it (`hit` the node there), if any.
+    fn badge_at(&self, x: f32, y: f32, hit: Option<&str>) -> Option<String> {
+        let hit = hit?;
+        self.shown_anims.iter().find_map(|a| {
+            let [bx, by, bw, bh] = a.badge?;
+            let inside = x >= bx && y >= by && x < bx + bw && y < by + bh;
+            (inside && (hit == a.key || self.scene.within(&a.key, hit))).then(|| a.key.clone())
+        })
+    }
+
+    /// The animation `key` as the last frame drew it.
+    pub fn anim_shown(&self, key: &str) -> Option<&AnimShown> {
+        self.shown_anims.iter().find(|a| a.key == key)
     }
 
     /// The system's settings changed: kept, and the window drawn again
@@ -988,6 +1134,29 @@ impl WinState {
             self.scene.hover = hover;
             self.dirty = true;
         }
+        // An animation's button: a press plays or pauses it, and neither
+        // the press nor its release is the program's.
+        if action == PointerAction::Down && button == "left" && self.headless && self.dirty {
+            // a headless window draws when read: what the press lands on
+            // is what it would show now
+            let _ = self.display_list();
+        }
+        if action == PointerAction::Down
+            && button == "left"
+            && let Some(k) = self.badge_at(x, y, hit.as_deref())
+        {
+            self.toggle_play(&k);
+            self.swallow_up = true;
+            return;
+        }
+        if action == PointerAction::Up && self.swallow_up {
+            self.swallow_up = false;
+            return;
+        }
+        // the pointer over a playing animation shows its pause button
+        if action == PointerAction::Move && self.shown_anims.iter().any(|a| a.badge.is_some() && !a.paused) {
+            self.dirty = true;
+        }
         match action {
             PointerAction::Move => {
                 if let Some(p) = self.scene.pressed.clone()
@@ -1264,6 +1433,8 @@ impl WinState {
             prims: Vec::new(),
         };
         self.caret = None;
+        self.shown_anims.clear();
+        self.next_frame = None;
         let Some(root) = self.scene.root.clone() else {
             return dl;
         };
@@ -1391,7 +1562,53 @@ impl WinState {
             let natural = fit == "none";
             let want = if natural { None } else { Some((w, h)) };
             let waiter = if self.headless { None } else { Some(self.id) };
-            if let Ok(Some((pic, info))) = super::picture::get(src, want, waiter) {
+            if let Ok(Some((still, info))) = super::picture::get(src, want, waiter) {
+                // An animation: the frame its clock says (once its frames
+                // are decoded; its still until then).
+                let mut pic = still;
+                let mut badge = None;
+                if info.animated
+                    && let Some(anim) = super::picture::animation(src, info, want, waiter)
+                {
+                    let now = self.clock_ms();
+                    let rm = self.settings.reduce_motion;
+                    let first = anim.frames[0].id;
+                    let p = self.plays.entry(key.to_string()).or_insert(Play { id: first, start: now, paused: None, chosen: false });
+                    if p.id != first {
+                        *p = Play { id: first, start: now, paused: None, chosen: false };
+                    }
+                    let p = *p;
+                    let held = p.paused.or(if rm && !p.chosen { Some(0.0) } else { None });
+                    let (i, next) = anim.at(held.unwrap_or(now - p.start));
+                    pic = anim.frames[i].clone();
+                    // what of it shows: only a picture in view asks for frames
+                    let seen = inner_clip.intersect(Clip::rect(x, y, x + w, y + h));
+                    if held.is_none()
+                        && seen.x1 > seen.x0
+                        && seen.y1 > seen.y0
+                        && let Some(n) = next
+                    {
+                        let due = p.start + n;
+                        self.next_frame = Some(self.next_frame.map_or(due, |d| d.min(due)));
+                    }
+                    // its button: under reduced motion, or once used; on
+                    // a picture large enough to hold one
+                    let side_l = (w.min(h) / s * 0.4).clamp(0.0, 44.0);
+                    let brect = if (rm || p.chosen) && side_l >= 20.0 {
+                        let (bx, by) = (ox + rect[0] + rect[2] / 2.0 - side_l / 2.0, oy + rect[1] + rect[3] / 2.0 - side_l / 2.0);
+                        Some([bx, by, side_l, side_l])
+                    } else {
+                        None
+                    };
+                    let (px, py) = self.pointer;
+                    let over = px >= ox + rect[0] && py >= oy + rect[1] && px < ox + rect[0] + rect[2] && py < oy + rect[1] + rect[3];
+                    if let Some(r) = brect
+                        && (held.is_some() || over)
+                    {
+                        badge = Some((r, held.is_some()));
+                    }
+                    self.shown_anims.push(AnimShown { key: key.to_string(), frames: anim.frames.len(), frame: i, paused: held.is_some(), badge: brect });
+                }
                 // Its own size: one image pixel to one display pixel (an
                 // SVG's units are logical pixels), from the top left, on
                 // whole pixels so nothing is resampled.
@@ -1425,6 +1642,18 @@ impl WinState {
                     pic,
                     clip: inner_clip.intersect(Clip::rect(x, y, x + w, y + h)),
                 });
+                // the button that plays a still animation (or pauses it)
+                if let Some((r, play)) = badge {
+                    let side = (r[2] * s).round().max(8.0);
+                    dl.prims.push(Prim::Image {
+                        x: (r[0] * s).round(),
+                        y: (r[1] * s).round(),
+                        w: side,
+                        h: side,
+                        pic: badge_picture(side as u32, play),
+                        clip: inner_clip.intersect(Clip::rect(x, y, x + w, y + h)),
+                    });
+                }
             }
         }
         if self.editors.get(key).is_some_and(|e| e.rich().is_some()) {

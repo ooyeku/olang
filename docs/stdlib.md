@@ -1743,8 +1743,8 @@ Native-only; on in the released binaries (the `gui` cargo feature).
 | `gui.events()` | the channel every window's events arrive on (below) |
 | `gui.apply(w, patch)` | apply a list of operations to the window's tree → `Ok(())`, or `Err` naming the operation and what is wrong with it |
 | `gui.measure(text, style, opts?)` | the size of a text as it would be drawn → `#{ width, height, lines, baseline }`, logical pixels. `style` as a node's; `opts`: `width` (wraps when the style says `wrap`), `scale` |
-| `gui.read(w, what, arg?)` | read the window back: `"focus"`, `"hover"`, `"size"` → `(w, h, scale)`, `"hit"` `(x, y)` → a key, `"node"` key (its role, text, name, children, scroll `offset`, `bounds`, and `visible`: what of it shows once scrolling and clipping ancestors and the window cut it, or `()`), `"value"` key and `"selection"` key of a field, `"keys"` (focus order), `"a11y"` (the accessibility tree as maps), `"pixels"` (a PNG, from the software renderer), `"rgba"`, `"caret"` → `(x, y, w, h)` of the caret as the last frame showed it, clipped, or `()`, `"settings"` (the system's settings as the window last heard them) |
-| `gui.input(w, event)` | send input as the platform would: `#{ kind: "key", key, text?, mods? }` (`"mod": true` is the platform's command key), `"text"`, `"pointer"` (`action` down/up/move/leave, `x`, `y`, `button`, `clicks`), `"wheel"` (`dx`, `dy`, and the modifiers held: `mods` or `mod`, `shift`, `alt`, `ctrl`), `"pinch"` (`delta`, `phase`), `"compose"` and `"commit"` (an input method), `"resize"`, `"window_focus"`, `"files"` (`action` hover/drop/cancel, `paths`, `x`, `y`: files from another program); and what the platform does around a window: `"close"` (sends `close_requested`), `"menu"` with an `id` (sends `menu`), `"clipboard"` with a `text` (the clipboard input through `gui.input` uses, the window's own), `"appearance"` with `dark`, `contrast`, `reduce_motion`, `reduce_transparency`, `accent` (`"#rrggbb"`) — the window takes them (its pictures stop animating under reduced motion) and sends `appearance`, as a settings change would. What tests drive |
+| `gui.read(w, what, arg?)` | read the window back: `"focus"`, `"hover"`, `"size"` → `(w, h, scale)`, `"hit"` `(x, y)` → a key, `"node"` key (its role, text, name, children, scroll `offset`, `bounds`, and `visible`: what of it shows once scrolling and clipping ancestors and the window cut it, or `()`), `"value"` key and `"selection"` key of a field, `"keys"` (focus order), `"a11y"` (the accessibility tree as maps), `"pixels"` (a PNG, from the software renderer), `"rgba"`, `"caret"` → `(x, y, w, h)` of the caret as the last frame showed it, clipped, or `()`, `"settings"` (the system's settings as the window last heard them), `"animation"` key (an animated picture: `#{ frames, frame, paused, button }`), `"next_frame"` (when an animation in view next changes, on the window's clock) |
+| `gui.input(w, event)` | send input as the platform would: `#{ kind: "key", key, text?, mods? }` (`"mod": true` is the platform's command key), `"text"`, `"pointer"` (`action` down/up/move/leave, `x`, `y`, `button`, `clicks`), `"wheel"` (`dx`, `dy`, and the modifiers held: `mods` or `mod`, `shift`, `alt`, `ctrl`), `"pinch"` (`delta`, `phase`), `"compose"` and `"commit"` (an input method), `"resize"`, `"window_focus"`, `"files"` (`action` hover/drop/cancel, `paths`, `x`, `y`: files from another program); and what the platform does around a window: `"close"` (sends `close_requested`), `"menu"` with an `id` (sends `menu`), `"clipboard"` with a `text` (the clipboard input through `gui.input` uses, the window's own), `"clock"` with `ms` (a headless window's clock: its animations move only with it), `"appearance"` with `dark`, `contrast`, `reduce_motion`, `reduce_transparency`, `accent` (`"#rrggbb"`) — the window takes them (its pictures stop animating under reduced motion) and sends `appearance`, as a settings change would. What tests drive |
 | `gui.wake()` | a `wake` event on the channel, so a task blocked on `gui.events()` can stop without polling |
 | `gui.context()` | the system's settings now: `#{ dark, contrast, reduce_motion, reduce_transparency, accent }` (`accent` the colour chosen in System Settings, `"#rrggbb"`, or `()`). macOS reads them from AppKit — the application's effective appearance (Auto included) and NSWorkspace's accessibility display options — and keeps them live: a window hears `appearance` the moment one changes (AppKit's notices for the display options and the system's colours, and a window's theme changing), with no restart. Elsewhere they are false and `dark` follows a window's theme |
 | `gui.platform()` | what this platform's windows can do, to check rather than find out: `#{ os, native_menu, clipboard_image, file_drop, drop_position, window_position, system_settings, ime, accessibility }`. On macOS all are `true`; on Windows `native_menu`, `clipboard_image`, `drop_position`, and `system_settings` are `false`; on Linux (Wayland) `file_drop` and `window_position` are `false` too (winit has no Wayland drag and drop, and a Wayland window is never told where it is). `ime` and `accessibility` are `true` everywhere |
@@ -1803,8 +1803,8 @@ shows, and `active: <key>` to have the element `key` (one placed over its
 focused shape) said as its focus: its active descendant.
 
 **Pictures.** An `image` node's source is a file's path or its Bytes:
-PNG, JPEG (turned as its EXIF orientation says), WebP, GIF (its first
-frame), or SVG (shapes; text in an SVG is not drawn). A real window
+PNG, JPEG (turned as its EXIF orientation says), WebP, GIF, or SVG
+(shapes; text in an SVG is not drawn). A real window
 decodes on a decoding thread of the engine's, draws without the picture
 until it is ready, then draws again: the window's thread never waits on
 a decode. A headless window decodes at once. A picture is kept at the
@@ -1817,6 +1817,24 @@ pixel to one display pixel (sharp on every display: on a 2× display
 it is half as many logical pixels), an SVG's units as logical pixels
 drawn at the display's scale. A picture of more than 100 million pixels
 is refused, and one is kept at most 8192 pixels a side.
+
+**Animations.** An animated GIF or WebP shows its first frame, then
+plays once its frames are decoded (on the decoding thread; at once in a
+headless window): each composited as the format says (a GIF's disposal,
+WebP's blending), kept at the size it shows, with its delay (under 20 ms
+is 100 ms, as browsers do) and its loop count (a GIF with no loop block
+plays once; it rests on its last frame). An animation of more than 48 MB
+of frames at that size, or of more than 1,000 frames, stays on its first
+frame. The window draws a frame only when one is due and only for a
+picture in view — not scrolled away or clipped, the window neither
+covered, minimized, nor hidden. Under Reduce Motion it stands on its
+first frame with a play button over it (on a picture at least 50 pixels
+a side): a press, or an assistive press, plays it, and pauses it again;
+neither the press nor its release reaches the program. A headless
+window's clock stands still until `gui.input(w, #{ kind: "clock", ms })`
+moves it; `gui.read(w, "animation", key)` answers `#{ frames, frame,
+paused, button }` and `gui.read(w, "next_frame")` when the next frame
+is due.
 
 **Styles.** `bg`, `border`, `border_width`, `radius` (one or four,
 top-left first), `color`, `font` (`"body"`, `"mono"`, or a family list),

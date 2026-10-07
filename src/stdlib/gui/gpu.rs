@@ -278,8 +278,21 @@ pub struct Gpu {
     linear: wgpu::Sampler,
     atlas: Mutex<Atlas>,
     /// A texture per picture, by the picture's id.
-    pictures: Mutex<HashMap<u64, wgpu::TextureView>>,
+    pictures: Mutex<Textures>,
 }
+
+/// The pictures' textures, the least recently drawn dropped past a
+/// budget of bytes (an animation's frames are each a picture: a long one
+/// cycles through its own without pushing out every other picture).
+#[derive(Default)]
+struct Textures {
+    views: HashMap<u64, (wgpu::TextureView, usize, u64)>,
+    bytes: usize,
+    clock: u64,
+}
+
+/// The bytes of picture textures kept on the GPU.
+const TEXTURE_BUDGET: usize = 256 << 20;
 
 static GPU: OnceLock<Result<Arc<Gpu>, String>> = OnceLock::new();
 
@@ -404,7 +417,7 @@ fn make(
         pipelines: Mutex::new(HashMap::new()),
         sampler,
         linear,
-        pictures: Mutex::new(HashMap::new()),
+        pictures: Mutex::new(Textures::default()),
         atlas: Mutex::new(Atlas {
             texture,
             slots: HashMap::new(),
@@ -574,11 +587,20 @@ impl Gpu {
     /// The texture of a picture, uploaded once.
     fn picture_view(&self, pic: &Picture) -> wgpu::TextureView {
         let mut cache = self.pictures.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(v) = cache.get(&pic.id) {
-            return v.clone();
+        cache.clock += 1;
+        let now = cache.clock;
+        if let Some(v) = cache.views.get_mut(&pic.id) {
+            v.2 = now;
+            return v.0.clone();
         }
-        if cache.len() > 64 {
-            cache.clear();
+        let size_of = pic.rgba.len();
+        while cache.bytes + size_of > TEXTURE_BUDGET && !cache.views.is_empty() {
+            let Some(old) = cache.views.iter().min_by_key(|(_, v)| v.2).map(|(k, _)| *k) else {
+                break;
+            };
+            if let Some(v) = cache.views.remove(&old) {
+                cache.bytes -= v.1;
+            }
         }
         let size = wgpu::Extent3d {
             width: pic.width.max(1),
@@ -611,7 +633,8 @@ impl Gpu {
             size,
         );
         let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-        cache.insert(pic.id, view.clone());
+        cache.views.insert(pic.id, (view.clone(), size_of, now));
+        cache.bytes += size_of;
         view
     }
 

@@ -533,6 +533,33 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
                 None => Value::Unit,
             }
         }
+        // an animated picture as the last frame drew it: `#{ frames,
+        // frame, paused, button }` (`button` its place, when it has one),
+        // or () for a picture that does not animate (or not yet)
+        "animation" => {
+            let k = key_arg()?;
+            st.display_list();
+            match st.anim_shown(&k) {
+                Some(a) => map(vec![
+                    ("frames", Value::Integer(a.frames as i64)),
+                    ("frame", Value::Integer(a.frame as i64)),
+                    ("paused", Value::Boolean(a.paused)),
+                    (
+                        "button",
+                        a.badge
+                            .map(|b| Value::Tuple(Arc::new(b.iter().map(|v| float(*v)).collect())))
+                            .unwrap_or(Value::Unit),
+                    ),
+                ]),
+                None => Value::Unit,
+            }
+        }
+        // when the next frame of an animation in view is due (ms, the
+        // window's clock), or ()
+        "next_frame" => {
+            st.display_list();
+            st.next_frame.map(|t| float(t as f32)).unwrap_or(Value::Unit)
+        }
         // the system's settings as this window last heard them
         "settings" => {
             let set = st.settings;
@@ -547,7 +574,7 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
         }
         other => {
             return Err(format!(
-                "gui.read: unknown \"{other}\" (focus, hover, size, hit, node, value, selection, keys, a11y, pixels, rgba, prims, caret, ime, settings)"
+                "gui.read: unknown \"{other}\" (focus, hover, size, hit, node, value, selection, keys, a11y, pixels, rgba, prims, caret, ime, settings, animation, next_frame)"
             ));
         }
     })
@@ -799,6 +826,18 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
                 a11y::action(&mut st, &req, &mut out);
             }
             emit(out);
+            return Ok(Value::Unit);
+        }
+        // A headless window's clock for its animations, in ms: they move
+        // only when a test moves it (a real window's is the time).
+        Some("clock") => {
+            let ms = get_num(&args[1], "ms", what)?
+                .ok_or("gui.input: \"clock\" needs \"ms\"")?;
+            let mut st = w.lock().map_err(|_| "gui: window poisoned")?;
+            if !st.headless {
+                return Err("gui.input: \"clock\" sets a headless window's clock; a real window's is the time".into());
+            }
+            st.set_clock(ms as f64);
             return Ok(Value::Unit);
         }
         Some("clipboard") => {

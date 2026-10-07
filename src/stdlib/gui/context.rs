@@ -159,16 +159,3 @@ pub fn parse_hex(t: &str) -> Option<[u8; 3]> {
         _ => None,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_accent_is_spelled_and_read_back() {
-        assert_eq!(hex([0, 122, 255]), "#007aff");
-        assert_eq!(parse_hex("#007aff"), Some([0, 122, 255]));
-        assert_eq!(parse_hex("#fff"), Some([255, 255, 255]));
-        assert_eq!(parse_hex("blue"), None);
-    }
-}

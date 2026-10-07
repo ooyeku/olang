@@ -327,6 +327,10 @@ struct PWin {
     /// The appearance the program chose for this window (`gui.set`'s
     /// `appearance`), or `None` to follow the system's.
     forced_theme: Option<winit::window::Theme>,
+    /// Covered, minimized, or on another space: its animations wait.
+    occluded: bool,
+    /// When an animation in view next changes: the loop draws again then.
+    wake: Option<std::time::Instant>,
     state: Shared,
     renderer: Renderer,
     a11y: accesskit_winit::Adapter,
@@ -418,6 +422,8 @@ impl App {
             PWin {
                 win,
                 forced_theme: None,
+                occluded: false,
+                wake: None,
                 state,
                 renderer,
                 a11y,
@@ -518,6 +524,18 @@ impl App {
                 return;
             };
             let dl = st.display_list();
+            // an animation in view: the next frame when it is due (none
+            // while the window cannot be seen)
+            let unseen = pw.occluded
+                || pw.win.is_visible() == Some(false)
+                || pw.win.is_minimized() == Some(true);
+            pw.wake = match st.next_frame {
+                Some(t) if !unseen => {
+                    let ms = (t - st.clock_ms()).clamp(1.0, 60_000.0);
+                    Some(started + std::time::Duration::from_micros((ms * 1000.0) as u64))
+                }
+                _ => None,
+            };
             st.dirty = false;
             // the tree is built only when a client is listening (a long
             // styled text is a run a paragraph)
@@ -736,10 +754,28 @@ fn pointer_now(_win: &Window) -> Option<(f32, f32)> {
 impl ApplicationHandler<Cmd> for App {
     fn resumed(&mut self, _el: &ActiveEventLoop) {}
 
-    fn about_to_wait(&mut self, _el: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, el: &ActiveEventLoop) {
         if !self.files.is_empty() {
             self.flush_files();
         }
+        // Animations: a window whose next frame is due draws; the loop
+        // sleeps until the soonest of the rest.
+        let now = std::time::Instant::now();
+        let mut soonest: Option<std::time::Instant> = None;
+        for pw in self.windows.values_mut() {
+            match pw.wake {
+                Some(t) if t <= now => {
+                    pw.wake = None;
+                    pw.win.request_redraw();
+                }
+                Some(t) => soonest = Some(soonest.map_or(t, |s| s.min(t))),
+                None => {}
+            }
+        }
+        el.set_control_flow(match soonest {
+            Some(t) => winit::event_loop::ControlFlow::WaitUntil(t),
+            None => winit::event_loop::ControlFlow::Wait,
+        });
     }
 
     fn user_event(&mut self, el: &ActiveEventLoop, cmd: Cmd) {
@@ -916,10 +952,19 @@ impl ApplicationHandler<Cmd> for App {
                 }
             }
             WindowEvent::RedrawRequested => self.render(id),
-            // Shown again after being covered: draw what was skipped.
+            // Shown again after being covered: draw what was skipped (and
+            // the animations go on).
             WindowEvent::Occluded(false) => {
-                if let Some(pw) = self.windows.get(&id) {
+                if let Some(pw) = self.windows.get_mut(&id) {
+                    pw.occluded = false;
                     pw.win.request_redraw();
+                }
+            }
+            // Covered, minimized, or on another space: nothing to animate.
+            WindowEvent::Occluded(true) => {
+                if let Some(pw) = self.windows.get_mut(&id) {
+                    pw.occluded = true;
+                    pw.wake = None;
                 }
             }
             WindowEvent::ModifiersChanged(m) => {

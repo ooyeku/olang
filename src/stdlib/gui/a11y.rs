@@ -202,6 +202,17 @@ pub fn tree(st: &WinState) -> TreeUpdate {
         if scene::activates(&n.role) && !n.disabled {
             node.add_action(Action::Click);
         }
+        // an animation with a play button: pressed, it plays or pauses
+        if let Some(a) = st.anim_shown(key)
+            && a.badge.is_some()
+        {
+            node.add_action(Action::Click);
+            let said = if a.paused { "Animation, paused" } else { "Animation, playing" };
+            node.set_description(match &n.description {
+                Some(d) => format!("{d}. {said}"),
+                None => said.to_string(),
+            });
+        }
         if n.edit.is_some() && !n.disabled {
             node.add_action(Action::SetValue);
         }
@@ -392,6 +403,9 @@ pub fn action(st: &mut WinState, req: &ActionRequest, out: &mut Vec<Value>) {
         event(kind, fields)
     };
     match req.action {
+        Action::Click if st.anim_shown(&key).is_some_and(|a| a.badge.is_some()) => {
+            st.toggle_play(&key);
+        }
         Action::Click => out.push(ev(
             "activate",
             vec![("key", s(&key)), ("source", s("a11y"))],
@@ -497,7 +511,9 @@ fn walk(st: &WinState, key: &str, depth: i64, out: &mut Vec<Value>) {
     if n.focusable && !n.disabled {
         actions.push(s("focus"));
     }
-    if scene::activates(&n.role) && !n.disabled {
+    if scene::activates(&n.role) && !n.disabled
+        || st.anim_shown(key).is_some_and(|a| a.badge.is_some())
+    {
         actions.push(s("click"));
     }
     if n.edit.is_some() && !n.disabled {

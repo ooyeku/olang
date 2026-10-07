@@ -952,6 +952,155 @@ fn a_large_picture_is_kept_at_its_thumbnail_size_and_decoded_off_the_thread_that
     assert_eq!((whole.0.width, whole.0.height), (2400, 1800));
 }
 
+/// A headless window showing image `src` (at its own size, 40 × 30, or
+/// filling `bw × bh`) at the top of a 160 × 120 scroll region over a
+/// 400-tall page.
+fn anim_window(src: Value, bw: f64, bh: f64) -> WinState {
+    let mut st = WinState::new(9, true, "animations", 160.0, 120.0, 1.0);
+    let patch = Value::List(Arc::new(vec![
+        m(vec![("key", s("root")), ("box", tup(&[0.0, 0.0, 160.0, 120.0])), ("style", m(vec![("bg", s("#ffffff"))]))]),
+        m(vec![("key", s("sc")), ("parent", s("root")), ("role", s("region")), ("box", tup(&[0.0, 0.0, 160.0, 120.0]))]),
+        m(vec![("key", s("page")), ("parent", s("sc")), ("box", tup(&[0.0, 0.0, 160.0, 400.0]))]),
+        m(vec![
+            ("key", s("pic")),
+            ("parent", s("page")),
+            ("role", s("image")),
+            ("name", s("spinner")),
+            ("box", tup(&[0.0, 0.0, bw, bh])),
+            ("image", src),
+            ("fit", s(if bw == 40.0 { "none" } else { "fill" })),
+        ]),
+    ]));
+    let mut out = Vec::new();
+    st.apply(&patch, &mut out).expect("applies");
+    st
+}
+
+/// The colour at (10, 10) at clock `ms`, and when the next frame is due.
+fn frame_at(st: &mut WinState, ms: f64) -> ([u8; 3], Option<f64>) {
+    st.set_clock(ms);
+    let dl = st.display_list();
+    let px = soft::rgba(&soft::render(&dl));
+    (at(&px, dl.width, 10, 10), st.next_frame)
+}
+
+#[test]
+fn an_animation_shows_its_frames_by_their_delays_and_rests_after_its_plays() {
+    use olang::stdlib::gui::canvas::Picture;
+    use olang::stdlib::gui::picture::{Anim, delay_ms};
+    let pic = |i: u64| Arc::new(Picture { id: 900_000 + i, width: 1, height: 1, rgba: vec![0; 4] });
+    let a = Anim { frames: vec![pic(0), pic(1), pic(2)], delays: vec![100, 50, 200], plays: 2, total: 350, bytes: 12 };
+    assert_eq!(a.at(0.0), (0, Some(100.0)));
+    assert_eq!(a.at(120.0), (1, Some(150.0)));
+    assert_eq!(a.at(349.0), (2, Some(350.0)));
+    assert_eq!(a.at(360.0), (0, Some(450.0)));
+    // two plays, then the last frame for good
+    assert_eq!(a.at(700.0), (2, None));
+    let forever = Anim { plays: 0, ..a };
+    assert_eq!(forever.at(7_000.0 + 125.0), (1, Some(7_000.0 + 150.0)));
+    assert_eq!((delay_ms(0), delay_ms(10), delay_ms(40)), (100, 100, 40));
+    // an accent as the event spells it
+    use olang::stdlib::gui::context::{hex, parse_hex};
+    assert_eq!(hex([0, 122, 255]), "#007aff");
+    assert_eq!(parse_hex("#007aff"), Some([0, 122, 255]));
+    assert_eq!(parse_hex("#fff"), Some([255, 255, 255]));
+    assert_eq!(parse_hex("blue"), None);
+}
+
+#[test]
+fn an_animated_gif_or_webp_plays_by_the_windows_clock_and_rests_after_its_plays() {
+    for f in ["spin.gif", "spin.webp"] {
+        let mut st = anim_window(s(&format!("tests/fixtures/pictures/{f}")), 40.0, 30.0);
+        // four frames of 100 ms: red, blue, green, yellow, for ever
+        let (c, next) = frame_at(&mut st, 0.0);
+        assert!(near(c, QUADS[0], 6), "{f}: {c:?} first");
+        assert_eq!(next, Some(100.0), "{f}: the next frame is due at 100 ms");
+        for (ms, q) in [(150.0, 1), (250.0, 2), (399.0, 3), (420.0, 0), (1_050.0, 2)] {
+            let (c, _) = frame_at(&mut st, ms);
+            assert!(near(c, QUADS[q], 6), "{f} at {ms} ms: {c:?}, not frame {q}");
+        }
+        let a = st.anim_shown("pic").expect("an animation drawn");
+        assert_eq!((a.frames, a.paused, a.badge), (4, false, None));
+        // scrolled out of view: nothing asks for its next frame
+        let mut out = Vec::new();
+        st.apply(&Value::List(Arc::new(vec![m(vec![("op", s("scroll")), ("key", s("sc")), ("to", tup(&[0.0, 200.0]))])])), &mut out)
+            .expect("scrolls");
+        assert_eq!(frame_at(&mut st, 1_100.0).1, None, "{f}: out of view, no frames");
+    }
+    // a GIF with no loop block plays once and rests on its last frame
+    let mut once = anim_window(s("tests/fixtures/pictures/once.gif"), 40.0, 30.0);
+    // it starts when it is first drawn
+    assert!(near(frame_at(&mut once, 1_000.0).0, QUADS[0], 6));
+    assert!(near(frame_at(&mut once, 1_150.0).0, QUADS[1], 6));
+    let (c, next) = frame_at(&mut once, 5_000.0);
+    assert!(near(c, QUADS[3], 6), "after its play: {c:?}");
+    assert_eq!(next, None);
+}
+
+#[test]
+fn reduced_motion_shows_the_first_frame_with_a_button_that_plays_it() {
+    use olang::stdlib::gui::context::Settings;
+    let mut st = anim_window(s("tests/fixtures/pictures/spin.gif"), 120.0, 90.0);
+    st.set_settings(Settings { reduce_motion: true, ..Settings::default() });
+    let (c, next) = frame_at(&mut st, 250.0);
+    assert!(near(c, QUADS[0], 6), "still on the first frame: {c:?}");
+    assert_eq!(next, None, "a still picture asks for no frames");
+    let a = st.anim_shown("pic").expect("drawn").clone();
+    assert!(a.paused);
+    let [bx, by, bw, bh] = a.badge.expect("a play button");
+    // the button is drawn over the middle: a dark disc
+    let dl = st.display_list();
+    let px = soft::rgba(&soft::render(&dl));
+    let mid = at(&px, dl.width, (bx + bw / 2.0 + 6.0) as u32, (by + bh / 2.0 - 6.0) as u32);
+    assert!(mid[0] < 200, "the button's disc darkens the picture: {mid:?}");
+    // its accessible node says so and can be pressed
+    let tree = text(&olang::stdlib::gui::a11y::as_value(&mut st));
+    assert!(tree.contains(r#""key": "pic""#) && tree.contains(r#""actions": ["click"]"#), "{tree}");
+    // a press on it plays; the program hears neither the press nor its release
+    let (cx, cy) = (bx + bw / 2.0, by + bh / 2.0);
+    let mut out = Vec::new();
+    let mut clip = NoClip;
+    st.input(Input::Pointer { action: PointerAction::Down, x: cx, y: cy, button: "left".into(), clicks: 1 }, &mut clip, &mut out);
+    st.input(Input::Pointer { action: PointerAction::Up, x: cx, y: cy, button: "left".into(), clicks: 1 }, &mut clip, &mut out);
+    assert!(out.iter().all(|e| !text(e).contains(r#""action": "down""#)), "{out:?}");
+    let (c, next) = frame_at(&mut st, 400.0);
+    assert!(near(c, QUADS[1], 6), "playing from where it stood: 150 ms in, {c:?}");
+    assert_eq!(next, Some(450.0));
+    // pressed again it pauses where it is
+    st.input(Input::Pointer { action: PointerAction::Down, x: cx, y: cy, button: "left".into(), clicks: 1 }, &mut clip, &mut out);
+    assert!(near(frame_at(&mut st, 900.0).0, QUADS[1], 6));
+    assert_eq!(st.next_frame, None);
+    // the system's setting off again: the person's choice stands (paused)
+    st.set_settings(Settings::default());
+    assert!(near(frame_at(&mut st, 1_000.0).0, QUADS[1], 6));
+}
+
+#[test]
+fn an_animation_too_large_to_keep_shows_its_first_frame() {
+    use olang::stdlib::gui::picture;
+    // two frames of 3000 × 2100: 50 MB at their own size, past the cap
+    let (w, h) = (3000u16, 2100u16);
+    let mut bytes = Vec::new();
+    {
+        let palette = [220u8, 38, 38, 37, 99, 235];
+        let mut e = gif::Encoder::new(&mut bytes, w, h, &palette).expect("encoder");
+        e.set_repeat(gif::Repeat::Infinite).expect("repeat");
+        for i in 0..2u8 {
+            let mut f = gif::Frame::from_indexed_pixels(w, h, vec![i; w as usize * h as usize], None);
+            f.delay = 10;
+            e.write_frame(&f).expect("frame");
+        }
+    }
+    let src = olang::stdlib::bytes::to_value(bytes);
+    let info = picture::info(&src).expect("readable");
+    assert!(info.animated);
+    assert!(picture::animation(&src, info, None, None).is_none(), "at its own size: a still");
+    // shown small it is kept small, and animates
+    let small = picture::animation(&src, info, Some((150.0, 105.0)), None).expect("animates small");
+    assert_eq!(small.frames.len(), 2);
+    assert!(small.frames[0].width <= 256 && small.bytes < picture::ANIM_BYTES);
+}
+
 #[test]
 fn a_picture_that_is_not_one_says_so() {
     use olang::stdlib::gui::picture;
