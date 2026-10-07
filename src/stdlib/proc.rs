@@ -365,8 +365,11 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     // Drain stdout into a line channel: read_line pops from the channel,
     // never from the pipe, so the child can outrun a slow reader.
     let (tx, rx) = mpsc::channel::<String>();
-    if let Some(out) = child.stdout.take()
-        && framed
+    // `framed` first: the pipe is taken only by the branch that drains it
+    // (taking it in the test of the first branch left a plain child's
+    // stdout undrained — no lines, no EOF until it exited).
+    if framed
+        && let Some(out) = child.stdout.take()
     {
         std::thread::spawn(move || {
             let mut r = BufReader::new(out);

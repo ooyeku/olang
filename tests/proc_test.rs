@@ -223,3 +223,30 @@ let plain = unwrap(os.exec("sh", ["-c", "exit 0"]))
         6,
     );
 }
+
+/// The plain (unframed) path beside the framed one: a grouped child's
+/// lines, its exit code, a stream read to its end, a cancel by tree kill —
+/// what a framed spawn must not take from (it once took a plain child's
+/// stdout before checking `framing`, so no line or exit code arrived).
+#[test]
+fn a_plain_grouped_child_streams_lines_and_exits_beside_a_framed_one() {
+    assert_all_true(
+        r#"
+let p = unwrap(proc.spawn("sh", ["-c", "echo one; echo two; exit 3"], #{ "group": true }))
+let a = unwrap(proc.read_line(p))
+let b = unwrap(proc.read_line(p))
+let end_ = proc.read_line(p)
+let code = unwrap(proc.wait(p)).code
+let q = unwrap(proc.spawn("sh", ["-c", "sleep 30"], #{ "group": true }))
+let killed = is_ok(proc.kill(q, #{ "tree": true }))
+let gone = unwrap(proc.wait(q)).code != 0
+let f = unwrap(proc.spawn("cat", [], #{ "framing": "content-length" }))
+unwrap(proc.write_frame(f, "{\"a\":1}"))
+let framed = unwrap(proc.read_line(f))
+proc.close_stdin(f)
+let fend = proc.read_line(f)
+[a == "one", b == "two", is_err(end_), code == 3, killed, gone, framed == "{\"a\":1}", is_err(fend)]
+"#,
+        8,
+    );
+}
