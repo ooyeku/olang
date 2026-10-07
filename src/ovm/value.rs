@@ -641,8 +641,22 @@ impl OvmValue {
 
 impl PartialEq for OvmValue {
     fn eq(&self, other: &Self) -> bool {
-        // Compare type tags first for quick rejection
-        if std::mem::discriminant(&self.data) != std::mem::discriminant(&other.data) {
+        // Compare type tags first for quick rejection — except between the
+        // list layouts, which the mixed arms below compare by element (the
+        // rejection used to make those arms unreachable: a typed list never
+        // equalled the boxed list of the same numbers).
+        let list_layout = |d: &ValueData| {
+            matches!(
+                d,
+                ValueData::List(_)
+                    | ValueData::AstList(_)
+                    | ValueData::FloatList(_)
+                    | ValueData::IntList(_)
+            )
+        };
+        if std::mem::discriminant(&self.data) != std::mem::discriminant(&other.data)
+            && !(list_layout(&self.data) && list_layout(&other.data))
+        {
             return false;
         }
 

@@ -771,3 +771,22 @@ fn try_operator_compiles_and_agrees() {
         assert!(bytecode_result(&src, "f", &ints(&[8])).is_ok() || body.contains("k?"), "refused: {body}");
     }
 }
+
+#[test]
+fn list_layouts_compare_as_one_kind() {
+    // A long list of ints crosses typed; one built in compiled code is
+    // boxed; a long list of strings crosses wrapped. `==` between any two
+    // layouts of equal contents is true, as on the tree-walker.
+    use std::sync::Arc;
+    let zeros = Value::List(Arc::new(vec![Value::Integer(0); 80]));
+    let blanks = Value::List(Arc::new(vec![Value::String(Arc::new(" ".to_string())); 80]));
+    let args = [zeros, blanks];
+    for src in [
+        "fn f(a, b) = { let mut z = []\n for i in range(0, 80) { z = z + [0] }\n [a == z, z == a, a != z] }",
+        "fn f(a, b) = { let mut s = []\n for i in range(0, 80) { s = s + [\" \"] }\n [b == s, s == b, b != s] }",
+        "fn f(a, b) = { let mut z = []\n for i in range(0, 80) { z = z + [0.0] }\n [a == z, a != z] }",
+        "fn f(a, b) = [a == b, a != b, a == map(a, (x) => x), b == map(b, (x) => x)]",
+    ] {
+        assert_same(src, "f", &args);
+    }
+}

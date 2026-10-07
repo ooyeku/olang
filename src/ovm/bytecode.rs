@@ -5403,11 +5403,26 @@ impl BytecodeVm {
                     ValueData::Map(_) | ValueData::AstMap(_) | ValueData::Struct(_)
                 )
             };
+            // And the list layouts: a list the boundary wrapped, a typed
+            // one, and a boxed one are one kind to the program. (Without
+            // this, `[0, 0] != [0, 0]` held when one side had crossed the
+            // boundary and the other had not — a typed row read out of an
+            // interpreter map against one built here.)
+            let list_like = |d: &ValueData| {
+                matches!(
+                    d,
+                    ValueData::List(_)
+                        | ValueData::AstList(_)
+                        | ValueData::IntList(_)
+                        | ValueData::FloatList(_)
+                )
+            };
             let same_kind =
                 std::mem::discriminant(&left.data) == std::mem::discriminant(&right.data);
             if !same_kind
                 && !(numeric(&left.data) && numeric(&right.data))
                 && !(map_like(&left.data) && map_like(&right.data))
+                && !(list_like(&left.data) && list_like(&right.data))
             {
                 return Ok(OvmValue::new_boolean(matches!(op, BinaryOp::NotEqual)));
             }
