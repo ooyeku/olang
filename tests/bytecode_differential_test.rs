@@ -772,6 +772,107 @@ fn try_operator_compiles_and_agrees() {
     }
 }
 
+/// A parsed JSON object as `json.parse` answers it: a `JsonObject` struct
+/// with more fields than the eager threshold and nested values — a server
+/// row — so it crosses the tier boundary wrapped (`AstStruct`).
+fn json_row(i: i64) -> Value {
+    use std::sync::Arc;
+    let s = |t: &str| Value::String(Arc::new(t.to_string()));
+    let mut owner = olang::ast::ValueMap::default();
+    owner.insert("name".to_string(), s("ann"));
+    owner.insert("id".to_string(), Value::Integer(7));
+    let mut r = olang::ast::ValueMap::default();
+    r.insert("id".to_string(), Value::Integer(i));
+    r.insert("key".to_string(), s(&format!("OT-{i}")));
+    r.insert("summary".to_string(), s("a row"));
+    r.insert(
+        "tags".to_string(),
+        Value::List(Arc::new(vec![s("a"), s("b")])),
+    );
+    r.insert(
+        "owner".to_string(),
+        Value::Struct {
+            type_name: "JsonObject".to_string(),
+            fields: Arc::new(owner),
+        },
+    );
+    r.insert("due".to_string(), Value::Unit);
+    for k in 0..20 {
+        r.insert(format!("f{k}"), Value::Integer(k));
+    }
+    Value::Struct {
+        type_name: "JsonObject".to_string(),
+        fields: Arc::new(r),
+    }
+}
+
+#[test]
+fn a_parsed_json_object_crosses_wrapped_and_reads_as_the_interpreter_does() {
+    let row = json_row(3);
+    assert!(matches!(
+        OvmValue::from_ast(row.clone()).data,
+        olang::ovm::value::ValueData::AstStruct(..)
+    ));
+    // Out unchanged: the Arc it came in with.
+    let back = OvmValue::from_ast(row.clone()).to_ast().unwrap();
+    match (&row, &back) {
+        (
+            Value::Struct {
+                fields: a,
+                type_name: ta,
+            },
+            Value::Struct {
+                fields: b,
+                type_name: tb,
+            },
+        ) => {
+            assert!(std::sync::Arc::ptr_eq(a, b));
+            assert_eq!(ta, tb);
+        }
+        _ => panic!("a JsonObject must come back a JsonObject"),
+    }
+    let one = std::slice::from_ref(&row);
+    for src in [
+        "fn f(r) = r.key",
+        "fn f(r) = r.owner.name",
+        "fn f(r) = map_get(r, \"summary\")",
+        "fn f(r) = map_get(map_get(r, \"owner\"), \"id\")",
+        "fn f(r) = [map_get_or(r, \"due\", \"none\"), map_get_or(r, \"nope\", 4), map_get_or(r, \"id\", 0)]",
+        "fn f(r) = [map_has_key(r, \"due\"), map_has_key(r, \"nope\"), map_get(r, \"nope\") == ()]",
+        "fn f(r) = typeof(r)",
+        "fn f(r) = typeof(r.owner)",
+        "fn f(r) = len(entries(r))",
+        "fn f(r) = r.nope",
+        "fn f(r) = r[0]",
+        "fn f(r) = match r { { id, key } => key + to_string(id) }",
+        "fn f(r) = r == r",
+        "fn f(r) = r == map_set(r, \"id\", 3)",
+        "fn f(r) = r != map_set(r, \"id\", 4)",
+        "fn f(r) = [r][0].tags",
+    ] {
+        assert_same(src, "f", one);
+    }
+}
+
+#[test]
+fn a_wrapped_json_object_is_a_value_writes_never_alias() {
+    // map_set on a shared wrapper copies; the one it came from is unchanged
+    // — whether the write is a call, the in-place assignment form, or a
+    // write into a row read out of a list.
+    let row = json_row(5);
+    let one = std::slice::from_ref(&row);
+    for src in [
+        "fn f(r) = { let n = map_set(r, \"id\", 99)\n [n.id, r.id, typeof(n)] }",
+        "fn f(r) = { let keep = r\n let mut w = r\n w = map_set(w, \"key\", \"changed\")\n w = map_set(w, \"owner\", map_set(w.owner, \"name\", \"bo\"))\n [keep.key, w.key, keep.owner.name, w.owner.name, r.owner.name] }",
+        "fn f(r) = { let xs = [r, r]\n let a = map_set(xs[0], \"summary\", \"x\")\n [a.summary, xs[0].summary, xs[1].summary] }",
+        "fn f(r) = { let mut m = #{ \"row\": r }\n let before = map_get(m, \"row\")\n m = map_set(m, \"row\", map_set(map_get(m, \"row\"), \"id\", 0))\n [before.id, map_get(m, \"row\").id, r.id] }",
+        "fn f(r) = map_set(map_set(r, \"new\", [1, 2]), \"id\", (1, 2))",
+        "fn f(r) = { let n = map_set(r, \"cb\", (x) => x + 1)\n n.cb(2) }",
+    ] {
+        assert_same(src, "f", one);
+    }
+}
+
 #[test]
 fn list_layouts_compare_as_one_kind() {
     // A long list of ints crosses typed; one built in compiled code is

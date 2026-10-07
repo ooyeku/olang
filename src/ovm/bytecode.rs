@@ -1748,6 +1748,7 @@ impl BytecodeVm {
             }
             ValueData::Builtin(_) => "Builtin",
             ValueData::Struct(s) => s.type_name(),
+            ValueData::AstStruct(_, kind) => kind.type_name(),
             ValueData::Range(_) => "Range",
             ValueData::Result(_) => "Result",
             ValueData::Unit => "Unit",
@@ -4226,6 +4227,37 @@ impl BytecodeVm {
                                 )?;
                             }
                         },
+                        // A wrapped record stays a wrapper, as a wrapped map
+                        // does.
+                        ValueData::AstStruct(mut arc, kind) => match v.to_ast() {
+                            Ok(ast) => {
+                                std::sync::Arc::make_mut(&mut arc).insert(key_str.to_string(), ast);
+                                self.execution_state.set_register(
+                                    *target,
+                                    OvmValue {
+                                        data: ValueData::AstStruct(arc, kind),
+                                    },
+                                )?;
+                            }
+                            Err(_) => {
+                                let st = OvmValue::force_ast_struct(&arc, kind);
+                                let mut pairs: Vec<(String, OvmValue)> = st
+                                    .iter()
+                                    .filter(|(name, _)| name.as_str() != key_str)
+                                    .map(|(name, val)| (name.clone(), val.clone()))
+                                    .collect();
+                                pairs.push((key_str.to_string(), v));
+                                self.execution_state.set_register(
+                                    *target,
+                                    OvmValue::new_struct(std::sync::Arc::new(
+                                        crate::ovm::value::StructObject::from_pairs(
+                                            kind.type_name(),
+                                            pairs,
+                                        ),
+                                    )),
+                                )?;
+                            }
+                        },
                         ValueData::Struct(st) => {
                             let mut pairs: Vec<(String, OvmValue)> = st
                                 .iter()
@@ -4706,6 +4738,9 @@ impl BytecodeVm {
                     // callable stays field access.
                     let field_callee = match &receiver.data {
                         crate::ovm::value::ValueData::Struct(st) => st.field(method).cloned(),
+                        crate::ovm::value::ValueData::AstStruct(m, _) => m
+                            .get(method.as_str())
+                            .map(|v| OvmValue::from_ast(v.clone())),
                         _ => None,
                     };
                     let result = if let Some(callee) = field_callee {
@@ -4876,6 +4911,7 @@ impl BytecodeVm {
                     use crate::ovm::value::ValueData;
                     let has = match &self.execution_state.register_ref(*value)?.data {
                         ValueData::Struct(s) => s.shape.field_index(field_name).is_some(),
+                        ValueData::AstStruct(m, _) => m.contains_key(field_name.as_str()),
                         _ => false,
                     };
                     self.execution_state
@@ -5438,7 +5474,10 @@ impl BytecodeVm {
             let map_like = |d: &ValueData| {
                 matches!(
                     d,
-                    ValueData::Map(_) | ValueData::AstMap(_) | ValueData::Struct(_)
+                    ValueData::Map(_)
+                        | ValueData::AstMap(_)
+                        | ValueData::Struct(_)
+                        | ValueData::AstStruct(..)
                 )
             };
             // And the list layouts: a list the boundary wrapped, a typed
@@ -5596,12 +5635,21 @@ impl BytecodeVm {
                 ));
             }
             (ValueData::Enum(_), ValueData::Enum(_))
-            | (ValueData::Struct(_), ValueData::Struct(_))
             | (
-                ValueData::Map(_) | ValueData::AstMap(_) | ValueData::Struct(_),
+                ValueData::Struct(_) | ValueData::AstStruct(..),
+                ValueData::Struct(_) | ValueData::AstStruct(..),
+            )
+            | (
+                ValueData::Map(_)
+                | ValueData::AstMap(_)
+                | ValueData::Struct(_)
+                | ValueData::AstStruct(..),
                 ValueData::Map(_) | ValueData::AstMap(_),
             )
-            | (ValueData::Map(_) | ValueData::AstMap(_), ValueData::Struct(_)) => match op {
+            | (
+                ValueData::Map(_) | ValueData::AstMap(_),
+                ValueData::Struct(_) | ValueData::AstStruct(..),
+            ) => match op {
                 BinaryOp::Equal => OvmValue::new_boolean(Self::pattern_eq(left, right)),
                 BinaryOp::NotEqual => OvmValue::new_boolean(!Self::pattern_eq(left, right)),
                 _ => {
@@ -6649,7 +6697,7 @@ impl BytecodeVm {
         }
         let recv = match &receiver.data {
             ValueData::Map(m) => Recv::Map(m),
-            ValueData::AstMap(m) => Recv::Ast(m),
+            ValueData::AstMap(m) | ValueData::AstStruct(m, _) => Recv::Ast(m),
             ValueData::Struct(st) => Recv::Struct(st),
             _ => {
                 return Err(BytecodeError::TypeError(format!(
@@ -6704,7 +6752,7 @@ impl BytecodeVm {
         }
         let recv = match &receiver.data {
             ValueData::Map(m) => Recv::Map(m),
-            ValueData::AstMap(m) => Recv::Ast(m),
+            ValueData::AstMap(m) | ValueData::AstStruct(m, _) => Recv::Ast(m),
             ValueData::Struct(st) => Recv::Struct(st),
             _ => {
                 return Err(BytecodeError::TypeError(
@@ -7504,6 +7552,14 @@ impl BytecodeVm {
             "map_get" if args.len() == 2 => {
                 Some(Self::native_map_get(&args[0], &args[1], "map_get"))
             }
+            // Read in place, as `map_get` is: bridged, a VM map converted
+            // whole into the interpreter's form for one key.
+            "map_get_or" if args.len() == 3 => Some(
+                Self::native_map_get(&args[0], &args[1], "map_get_or").map(|v| match v.data {
+                    ValueData::Unit => args[2].clone(),
+                    _ => v,
+                }),
+            ),
             // Presence, not value: a key explicitly holding Unit still
             // exists, so this cannot ride on map_get's Unit-for-missing.
             "map_has_key" if args.len() == 2 => Some(Self::native_map_has_key(&args[0], &args[1])),
@@ -7542,6 +7598,30 @@ impl BytecodeVm {
                             Ok(OvmValue::new_map(Arc::new(new_map)))
                         }
                     },
+                    ValueData::AstStruct(m, kind) => match args[2].to_ast() {
+                        Ok(ast) => {
+                            let mut new_map = (**m).clone();
+                            new_map.insert(key, ast);
+                            Ok(OvmValue {
+                                data: ValueData::AstStruct(Arc::new(new_map), *kind),
+                            })
+                        }
+                        Err(_) => {
+                            let st = OvmValue::force_ast_struct(m, *kind);
+                            let mut pairs: Vec<(String, OvmValue)> = st
+                                .iter()
+                                .filter(|(name, _)| **name != key)
+                                .map(|(name, v)| (name.clone(), v.clone()))
+                                .collect();
+                            pairs.push((key, args[2].clone()));
+                            Ok(OvmValue::new_struct(Arc::new(
+                                crate::ovm::value::StructObject::from_pairs(
+                                    kind.type_name(),
+                                    pairs,
+                                ),
+                            )))
+                        }
+                    },
                     ValueData::Struct(st) => {
                         let mut pairs: Vec<(String, OvmValue)> = st
                             .iter()
@@ -7561,7 +7641,7 @@ impl BytecodeVm {
             "entries" if args.len() == 1 => Some((|| {
                 let mut pairs: Vec<(String, OvmValue)> = match &args[0].data {
                     ValueData::Map(m) => m.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-                    ValueData::AstMap(m) => m
+                    ValueData::AstMap(m) | ValueData::AstStruct(m, _) => m
                         .iter()
                         .map(|(k, v)| (k.clone(), OvmValue::from_ast(v.clone())))
                         .collect(),
@@ -8056,7 +8136,10 @@ impl BytecodeVm {
             ValueData::String(s) => Ok(s.chars().count() as i64),
             _ => {
                 let hint = match &source.data {
-                    ValueData::Map(_) | ValueData::AstMap(_) | ValueData::Struct(_) => {
+                    ValueData::Map(_)
+                    | ValueData::AstMap(_)
+                    | ValueData::Struct(_)
+                    | ValueData::AstStruct(..) => {
                         " — iterate its pairs with `for (k, v) in entries(m)`"
                     }
                     _ => "",
@@ -8121,7 +8204,10 @@ impl BytecodeVm {
                 }),
             _ => {
                 let hint = match &source.data {
-                    ValueData::Map(_) | ValueData::AstMap(_) | ValueData::Struct(_) => {
+                    ValueData::Map(_)
+                    | ValueData::AstMap(_)
+                    | ValueData::Struct(_)
+                    | ValueData::AstStruct(..) => {
                         " — iterate its pairs with `for (k, v) in entries(m)`"
                     }
                     _ => "",
@@ -8155,12 +8241,21 @@ impl BytecodeVm {
             // 1 == 1.0 is true (scalar arms above), but [1] == [1.0] is false
             // (Value's structural equality distinguishes element kinds).
             (ValueData::Enum(_), ValueData::Enum(_))
-            | (ValueData::Struct(_), ValueData::Struct(_))
             | (
-                ValueData::Map(_) | ValueData::AstMap(_) | ValueData::Struct(_),
+                ValueData::Struct(_) | ValueData::AstStruct(..),
+                ValueData::Struct(_) | ValueData::AstStruct(..),
+            )
+            | (
+                ValueData::Map(_)
+                | ValueData::AstMap(_)
+                | ValueData::Struct(_)
+                | ValueData::AstStruct(..),
                 ValueData::Map(_) | ValueData::AstMap(_),
             )
-            | (ValueData::Map(_) | ValueData::AstMap(_), ValueData::Struct(_))
+            | (
+                ValueData::Map(_) | ValueData::AstMap(_),
+                ValueData::Struct(_) | ValueData::AstStruct(..),
+            )
             | (ValueData::List(_), ValueData::List(_))
             | (ValueData::AstList(_), ValueData::AstList(_))
             | (ValueData::AstList(_), ValueData::List(_))
@@ -8202,7 +8297,7 @@ impl BytecodeVm {
                         && x.iter()
                             .all(|(k, v)| y.get(k).is_some_and(|w| Self::inner_eq(v, w)))
             }
-            (D::AstMap(x), D::AstMap(y)) => {
+            (D::AstMap(x), D::AstMap(y)) | (D::AstStruct(x, _), D::AstStruct(y, _)) => {
                 Arc::ptr_eq(x, y) || loose(&Value::Map(x.clone()), &Value::Map(y.clone()))
             }
             (D::AstList(x), D::AstList(y)) => {
@@ -8271,7 +8366,13 @@ impl BytecodeVm {
             // builtins) and any struct holding a function/map — those keep
             // the function on the interpreter. `from_ast` maps enums to a
             // struct shape lossily, so enums are deliberately not included.
-            Value::Struct { fields, .. } => fields.values().all(Self::round_trips),
+            // A parsed JSON object or an anonymous record that crosses
+            // wrapped (`AstStruct`) leaves as the Arc it came in with, so
+            // it round-trips whatever it holds, unwalked — as a map does.
+            Value::Struct { type_name, fields } => {
+                crate::ovm::value::AstRecordKind::of(type_name).is_some()
+                    || fields.values().all(Self::round_trips)
+            }
             // Function values wrap verbatim (AstFunction), so they always
             // round-trip — which is what lets user functions be passed as
             // arguments into promoted functions.
@@ -8398,6 +8499,13 @@ impl BytecodeVm {
     fn execute_get_field(&self, object: &OvmValue, field: &str) -> Result<OvmValue, BytecodeError> {
         use crate::ovm::value::ValueData;
         match &object.data {
+            // Read through the wrapper: the one field converts.
+            ValueData::AstStruct(m, kind) => m
+                .get(field)
+                .map(|v| OvmValue::from_ast(v.clone()))
+                .ok_or_else(|| {
+                    BytecodeError::TypeError(self.no_field_or_method(kind.type_name(), field))
+                }),
             ValueData::Struct(s) => s.field(field).cloned().ok_or_else(|| {
                 if s.type_name() == "Module" {
                     // Same wording (and nearest-member suggestion) as the
@@ -8446,7 +8554,7 @@ impl BytecodeVm {
                     "a Map is not indexed with `[]`; read a key with `map_get(m, key)`".to_string(),
                 ));
             }
-            ValueData::Struct(_) => {
+            ValueData::Struct(_) | ValueData::AstStruct(..) => {
                 return Err(BytecodeError::TypeError(
                     "a struct or object is read by field (`value.name`) or with \
                      `map_get(value, name)`, not with `[]`"

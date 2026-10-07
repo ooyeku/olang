@@ -84,6 +84,23 @@ pub const AST_LIST_EAGER: usize = 64;
 /// `AstMap`.
 pub const AST_MAP_EAGER: usize = 16;
 
+/// A map (or a record's fields) small enough, and flat enough, to convert
+/// eagerly at the tier boundary: at most AST_MAP_EAGER entries, every one
+/// a scalar.
+fn small_and_flat(map: &crate::ast::ValueMap) -> bool {
+    map.len() <= AST_MAP_EAGER
+        && map.values().all(|v| {
+            matches!(
+                v,
+                Value::Integer(_)
+                    | Value::Float(_)
+                    | Value::Boolean(_)
+                    | Value::String(_)
+                    | Value::Unit
+            )
+        })
+}
+
 /// The typed-conversion cache: interpreter list (by Arc pointer) → its
 /// typed OvmValue. Bounded; oldest entry evicted. Thread-local because
 /// conversions happen on whichever thread runs the boundary.
@@ -165,6 +182,21 @@ pub enum ValueData {
     /// under AST_MAP_EAGER entries) still converts eagerly, so a record
     /// built and read in compiled code keeps the native layout.
     AstMap(Arc<crate::ast::ValueMap>),
+    /// A parsed JSON object or an anonymous `{ ... }` record held
+    /// verbatim — the `AstMap` idea applied to the map-like structs.
+    /// `json.parse` answers objects as `JsonObject` structs, and they used
+    /// to convert eagerly at the tier boundary: every field, every nested
+    /// object, the shape interned (its field names sorted and hashed) —
+    /// so reading one field of a server's answer out of a model, or one
+    /// row out of a page of them, converted the whole object each read.
+    /// Wrapped, crossing in is O(1) and leaving is the Arc it came in
+    /// with; a read (`.field`, `map_get`, `map_has_key`) converts the one
+    /// value it touches; `map_set` copies the interpreter map when it is
+    /// shared, as the interpreter's own `map_set` does, and stays a
+    /// wrapper. A small record of scalars (at or under AST_MAP_EAGER
+    /// fields) still converts eagerly, keeping the shape-cached field
+    /// reads and the JIT's struct kinds; a declared struct always does.
+    AstStruct(Arc<crate::ast::ValueMap>, AstRecordKind),
     Tuple(Arc<Vec<OvmValue>>),
     Function(Arc<FunctionObject>),
     /// An interpreter function held verbatim, so it converts back losslessly.
@@ -203,6 +235,35 @@ pub enum ValueData {
     /// `Value::Native` holds, so the tier boundary is a refcount bump and
     /// the conversion is lossless by construction.
     Native(crate::native::NativeHandle),
+}
+
+/// The map-like struct kinds that cross the tier boundary wrapped
+/// (`ValueData::AstStruct`): their type name is all they carry besides
+/// their fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum AstRecordKind {
+    /// A parsed JSON object (`json.parse`).
+    Json,
+    /// An anonymous `{ ... }` record.
+    Object,
+}
+
+impl AstRecordKind {
+    pub fn of(type_name: &str) -> Option<Self> {
+        match type_name {
+            "JsonObject" => Some(Self::Json),
+            "Object" => Some(Self::Object),
+            _ => None,
+        }
+    }
+
+    pub fn type_name(self) -> &'static str {
+        match self {
+            Self::Json => "JsonObject",
+            Self::Object => "Object",
+        }
+    }
 }
 
 /// Function object representation
@@ -737,6 +798,9 @@ impl PartialEq for OvmValue {
             (ValueData::Map(a), ValueData::Map(b)) => Arc::ptr_eq(a, b),
             (ValueData::AstMap(a), ValueData::AstMap(b)) => Arc::ptr_eq(a, b) || a == b,
             (ValueData::Struct(a), ValueData::Struct(b)) => Arc::ptr_eq(a, b),
+            (ValueData::AstStruct(a, ka), ValueData::AstStruct(b, kb)) => {
+                ka == kb && (Arc::ptr_eq(a, b) || a == b)
+            }
             (ValueData::Builtin(a), ValueData::Builtin(b)) => Arc::ptr_eq(a, b),
             (ValueData::Error(a), ValueData::Error(b)) => Arc::ptr_eq(a, b),
 
@@ -771,6 +835,7 @@ impl OvmValue {
             }
             ValueData::Builtin(_) => "Builtin",
             ValueData::Struct(s) => &s.shape.type_name,
+            ValueData::AstStruct(_, kind) => kind.type_name(),
             ValueData::Enum(e) => &e.type_name,
             ValueData::Range(_) => "Range",
             ValueData::Result(_) => "Result",
@@ -869,6 +934,7 @@ impl OvmValue {
             ValueData::Map(p) => ValueData::Map(p.clone()),
             ValueData::AstMap(p) => ValueData::AstMap(p.clone()),
             ValueData::Struct(p) => ValueData::Struct(p.clone()),
+            ValueData::AstStruct(p, kind) => ValueData::AstStruct(p.clone(), *kind),
             ValueData::Range(p) => ValueData::Range(p.clone()),
             ValueData::Builtin(p) => ValueData::Builtin(p.clone()),
             ValueData::Error(p) => ValueData::Error(p.clone()),
@@ -902,6 +968,7 @@ impl OvmValue {
             | ValueData::Map(_)
             | ValueData::AstMap(_)
             | ValueData::Struct(_)
+            | ValueData::AstStruct(..)
             | ValueData::Error(_) => TypeTag::Struct,
         }
     }
@@ -1068,7 +1135,12 @@ impl OvmValue {
             Value::Integer(n) => Self::new_integer(n),
             Value::Float(f) => Self::new_float(f),
             Value::Boolean(b) => Self::new_boolean(b),
-            Value::String(ref s) => Self::new_string(s.as_ref().clone()),
+            // The same Arc, shared: both sides hold `Arc<String>`, and a
+            // copy of every string crossing in (a row's every field) was
+            // most of what converting a record cost.
+            Value::String(ref s) => Self {
+                data: ValueData::String(s.clone()),
+            },
             Value::Unit => Self::new_unit(),
 
             Value::List(ref items) => {
@@ -1179,6 +1251,16 @@ impl OvmValue {
                 ref type_name,
                 ref fields,
             } => {
+                // A parsed JSON object or an anonymous record crosses as
+                // a wrapper unless it is a small record of scalars (see
+                // `ValueData::AstStruct`).
+                if let Some(kind) = AstRecordKind::of(type_name)
+                    && !small_and_flat(fields)
+                {
+                    return OvmValue {
+                        data: ValueData::AstStruct(fields.clone(), kind),
+                    };
+                }
                 // The fields are behind an Arc now, so this borrows and
                 // clones each value rather than consuming the map — the
                 // caller's struct may still be alive and shared.
@@ -1227,18 +1309,7 @@ impl OvmValue {
                 // A small record of scalars keeps the native layout (the
                 // fast paths, the JIT's typed maps); anything larger or
                 // nested crosses as a wrapper, in O(1).
-                let small_and_flat = map.len() <= AST_MAP_EAGER
-                    && map.values().all(|v| {
-                        matches!(
-                            v,
-                            Value::Integer(_)
-                                | Value::Float(_)
-                                | Value::Boolean(_)
-                                | Value::String(_)
-                                | Value::Unit
-                        )
-                    });
-                if small_and_flat {
+                if small_and_flat(map) {
                     Self::new_map(Arc::new(
                         map.iter()
                             .map(|(k, v)| (k.clone(), Self::from_ast(v.clone())))
@@ -1265,6 +1336,20 @@ impl OvmValue {
                 data: ValueData::Native(handle.clone()),
             },
         }
+    }
+
+    /// The native layout of a wrapped record, one level deep: a struct
+    /// of its type with each field converted by `from_ast`. For the
+    /// operations that need the native form (a pattern over its fields,
+    /// a value the JIT reads); reads go through the wrapper.
+    pub fn force_ast_struct(fields: &crate::ast::ValueMap, kind: AstRecordKind) -> StructObject {
+        StructObject::from_pairs(
+            kind.type_name(),
+            fields
+                .iter()
+                .map(|(k, v)| (k.clone(), Self::from_ast(v.clone())))
+                .collect(),
+        )
     }
 
     /// The native layout of a wrapped map, one level deep: each value
@@ -1302,6 +1387,7 @@ impl OvmValue {
                 ValueData::Enum(_) => std::mem::size_of::<EnumObject>(),
                 ValueData::Map(m) => m.len() * 64,
                 ValueData::AstMap(m) => m.len() * 64,
+                ValueData::AstStruct(m, _) => m.len() * 64,
                 ValueData::Struct(_) => std::mem::size_of::<StructObject>(),
                 ValueData::Range(_) => std::mem::size_of::<RangeObject>(),
                 _ => 0,
@@ -1423,6 +1509,10 @@ impl OvmValue {
             // The wrapper unwraps: an unchanged map leaves the tier as the
             // Arc it came in with.
             ValueData::AstMap(m) => Ok(Value::Map(m.clone())),
+            ValueData::AstStruct(m, kind) => Ok(Value::Struct {
+                type_name: kind.type_name().to_string(),
+                fields: m.clone(),
+            }),
             ValueData::Enum(e) => {
                 let variant_data = match &e.data {
                     EnumData::Unit => crate::ast::EnumVariantData::Unit,
@@ -1599,7 +1689,7 @@ impl fmt::Display for OvmValue {
             ValueData::Enum(e) => write!(f, "{}::{}", e.type_name, e.variant_name),
             ValueData::Map(m) => write!(f, "<map: {} entries>", m.len()),
             ValueData::AstMap(m) => write!(f, "<map: {} entries>", m.len()),
-            ValueData::Struct(_) => write!(f, "<struct>"),
+            ValueData::Struct(_) | ValueData::AstStruct(..) => write!(f, "<struct>"),
             ValueData::Range(gc_ptr) => {
                 if gc_ptr.inclusive {
                     write!(f, "{}..={}", gc_ptr.start, gc_ptr.end)
