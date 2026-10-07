@@ -126,6 +126,7 @@ pub fn create_proc_module() -> Value {
         ("spawn", 2),
         ("write", 2),
         ("write_line", 2),
+        ("write_frame", 2),
         ("close_stdin", 1),
         ("read_line", 1),
         ("read_all", 1),
@@ -157,6 +158,7 @@ pub fn call_proc_function(
         "spawn" => proc_spawn(args),
         "write" => proc_write(args, false),
         "write_line" => proc_write(args, true),
+        "write_frame" => proc_write_frame(args),
         "close_stdin" => proc_close_stdin(args),
         "read_line" => proc_read_line(args),
         "read_all" => proc_read_all(args),
@@ -246,6 +248,10 @@ struct Opts {
     env: Vec<(String, String)>,
     stdin: Option<String>,
     group: bool,
+    /// `framing: "content-length"`: stdout is messages framed by
+    /// `Content-Length` headers (the language server protocol's), each
+    /// one read whole by `read_line`.
+    framed: bool,
 }
 
 /// Parse the shared options map (`cwd`, `env`, and for pipelines `stdin`,
@@ -263,6 +269,16 @@ fn parse_opts(value: &Value, who: &str) -> Result<Opts, Value> {
             ("cwd", Value::String(s)) => opts.cwd = Some(s.as_ref().clone()),
             ("stdin", Value::String(s)) if pipeline => opts.stdin = Some(s.as_ref().clone()),
             ("group", Value::Boolean(b)) if !pipeline => opts.group = *b,
+            ("framing", Value::String(f)) if !pipeline => match f.as_str() {
+                "content-length" => opts.framed = true,
+                "lines" => opts.framed = false,
+                other => {
+                    return Err(err(format!(
+                        "{}: framing must be \"lines\" or \"content-length\", got \"{}\"",
+                        who, other
+                    )));
+                }
+            },
             ("env", Value::Map(m)) => {
                 for (k, v) in m.iter() {
                     match v {
@@ -282,7 +298,7 @@ fn parse_opts(value: &Value, who: &str) -> Result<Opts, Value> {
                     "{}: unknown or mistyped option '{}' (supported: cwd, env, {})",
                     who,
                     other,
-                    if pipeline { "stdin" } else { "group" }
+                    if pipeline { "stdin" } else { "group, framing" }
                 )));
             }
         }
@@ -308,7 +324,11 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Err(e) => return Ok(e),
     };
     let Opts {
-        cwd, env, group, ..
+        cwd,
+        env,
+        group,
+        framed,
+        ..
     } = match args.get(2) {
         Some(opts) => match parse_opts(opts, "spawn") {
             Ok(o) => o,
@@ -345,7 +365,18 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     // Drain stdout into a line channel: read_line pops from the channel,
     // never from the pipe, so the child can outrun a slow reader.
     let (tx, rx) = mpsc::channel::<String>();
-    if let Some(out) = child.stdout.take() {
+    if let Some(out) = child.stdout.take()
+        && framed
+    {
+        std::thread::spawn(move || {
+            let mut r = BufReader::new(out);
+            while let Some(body) = read_frame(&mut r) {
+                if tx.send(body).is_err() {
+                    break;
+                }
+            }
+        });
+    } else if let Some(out) = child.stdout.take() {
         std::thread::spawn(move || {
             for line in BufReader::new(out).lines() {
                 match line {
@@ -385,6 +416,50 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
     procs().lock().unwrap().insert(id, proc);
     Ok(ok(handle(id)))
+}
+
+/// One message framed by `Content-Length` headers: its body, or `None`
+/// at the end of the stream (or a frame that cannot be read).
+fn read_frame(r: &mut impl BufRead) -> Option<String> {
+    let mut len: Option<usize> = None;
+    loop {
+        let mut line = String::new();
+        if r.read_line(&mut line).ok()? == 0 {
+            return None;
+        }
+        let t = line.trim_end_matches(['\r', '\n']);
+        if t.is_empty() {
+            if len.is_some() {
+                break;
+            }
+            continue;
+        }
+        if let Some((k, v)) = t.split_once(':')
+            && k.trim().eq_ignore_ascii_case("content-length")
+        {
+            len = v.trim().parse().ok();
+        }
+    }
+    let mut buf = vec![0u8; len?];
+    r.read_exact(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// `proc.write_frame(p, body)` — feed the child's stdin one message,
+/// framed by a `Content-Length` header (its length in bytes), as the
+/// language server protocol frames them.
+fn proc_write_frame(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 2 {
+        return Ok(err("write_frame expects (process, string)"));
+    }
+    let Value::String(body) = &args[1] else {
+        return Ok(err(format!(
+            "write_frame: value must be a string, got {}",
+            args[1].type_name()
+        )));
+    };
+    let framed = format!("Content-Length: {}\r\n\r\n{}", body.len(), body);
+    proc_write(vec![args[0].clone(), Value::String(Arc::new(framed))], false)
 }
 
 /// `proc.write(p, s)` / `proc.write_line(p, s)` — feed the child's stdin.

@@ -1437,8 +1437,8 @@ deadlocks against a caller reading only one stream. Native-only.
 
 | Group | Functions |
 |---|---|
-| Spawn | `spawn(program, args)` / `spawn(program, args, #{ cwd, env, group })` → `Ok(Process)`; a `cwd` that names no directory is an `Err` saying so |
-| Input | `write(p, s)` · `write_line(p, s)` · `close_stdin(p)` (signals EOF) |
+| Spawn | `spawn(program, args)` / `spawn(program, args, #{ cwd, env, group, framing })` → `Ok(Process)`; a `cwd` that names no directory is an `Err` saying so |
+| Input | `write(p, s)` · `write_line(p, s)` · `write_frame(p, s)` (one `Content-Length`-framed message) · `close_stdin(p)` (signals EOF) |
 | Output | `read_line(p)` → `Ok(line)` \| `Err("eof")`; `read_all(p)` → the rest of stdout; `stderr(p)` → all stderr (complete after exit) |
 | Lifecycle | `wait(p)` → `Ok(#{ code })` · `kill(p)` / `kill(p, #{ tree: true })` · `pid(p)` |
 | Pipeline | `pipeline(stages)` / `pipeline(stages, #{ cwd, env, stdin })` |
@@ -1451,6 +1451,17 @@ proc.write_line(p, "nope")
 proc.close_stdin(p)
 println(unwrap(proc.read_line(p)))     // "olang rules"
 println(show(unwrap(proc.wait(p)).code))
+```
+
+A child that speaks the language server protocol frames its messages by
+`Content-Length` headers, not lines (a message's body ends with no line
+break). Spawn it with `#{ "framing": "content-length" }` and each
+`read_line` is one whole message body; `write_frame` sends one framed.
+
+```olang no-run
+let p = unwrap(proc.spawn("olang", ["lsp"], #{ "framing": "content-length" }))
+unwrap(proc.write_frame(p, unwrap(json.stringify(#{ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": #{} }))))
+println(unwrap(proc.read_line(p)))     // the initialize result, whole
 ```
 
 `proc.kill(p)` ends the child alone (SIGKILL); a shell's children

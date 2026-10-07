@@ -2141,7 +2141,7 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "proc.spawn(program, args, opts?)",
             "Result",
             "proc",
-            "start a child with piped stdin/stdout/stderr and return a live Process handle; opts: cwd, env, group (true: its own process group, for kill's tree)",
+            "start a child with piped stdin/stdout/stderr and return a live Process handle; opts: cwd, env, group (true: its own process group, for kill's tree), framing (\"content-length\": stdout read a message at a time, as the language server protocol frames them)",
             &[r##"let p = unwrap(proc.spawn("sort", ["-n"]))"##],
         );
         self.doc_ex(
@@ -2159,6 +2159,14 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "proc",
             "write a string plus a newline to the child's stdin",
             &[r##"unwrap(proc.write_line(p, "hello"))"##],
+        );
+        self.doc_ex(
+            "proc.write_frame",
+            "proc.write_frame(p, s)",
+            "Result",
+            "proc",
+            "write one message to the child's stdin, framed by a Content-Length header (the language server protocol's framing)",
+            &[r##"unwrap(proc.write_frame(p, json.stringify(msg)))"##],
         );
         self.doc_ex(
             "proc.close_stdin",
