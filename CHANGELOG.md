@@ -48,6 +48,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Values cross the tier boundary without converting whole.** A parsed
+  JSON object (and an anonymous record) that is not a small record of
+  scalars crosses into the VM as a wrapper (`ValueData::AstStruct`, as
+  maps do as `AstMap`), read in place — reading one field of a server's
+  answer, or one row out of a page held in a model, converted the whole
+  object each read, its shape interned and every string copied. Strings
+  cross by sharing their `Arc`. Out of the VM, a large native map, list,
+  tuple, or struct converts once while it lives: its interpreter form is
+  kept by identity (`TO_AST_CACHE`; sound because the VM writes in place
+  only through `Arc::get_mut`, which refuses while the cache's `Weak`
+  exists), and a changed collection converts only what changed beneath
+  it. `map_get_or` and `map_remove` run on the VM's values instead of
+  bridging. open-track desktop at 100,000 rows (the old and new olang
+  alternated on one machine, medians of five, load 2.8–3.2): a live
+  update's first page 16.9 → 7.3 ms, a page on screen 10.5 → 3.7 ms, the
+  table's `j` 8.7 → 3.8 ms, a key 4.4 → 2.9 ms. Loom (tools/gate.ol, the
+  same way): a keypress 0.73 → 0.34 ms, boot 0.60 → 0.35 ms, a scrolling
+  table frame 1.29 → 0.94 ms, an update's layout 0.71 → 0.70 ms; a layout
+  from scratch 2.66 → 2.93 ms (its first conversions now kept, and the
+  layout's own work on the VM rather than the tree-walker).
+- **A function value compiles around what it cannot compile.** A
+  function reached as a value (a program's `view`, a name two modules
+  define, a lambda) gave up after eight unresolved callees, on any callee
+  that could not compile (a `cell` call), and on a short call to a helper
+  whose defaults are `()`, `#{}`, or a negative number — and ran on the
+  tree-walker, its arguments converted at every call, with `olang check
+  --tier` green. It now resolves every callee, calls one that cannot
+  compile through the bridge, and fills literal defaults (now also `()`,
+  `#{}`, `[]`, and negated numbers) on both call paths. Loom's frame
+  (`rt_frame`, `layout`, a program's `view`) runs compiled again with the
+  terminal face loaded. `OLANG_DEBUG_HOF=1` says what a function value
+  declined and why.
 - **`return` compiles to the bytecode tier.** A function with an early
   `return` used to stay on the tree-walker, silently — and every value it
   handed a compiled function crossed the tier boundary. It now compiles:
@@ -68,6 +100,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A typed, a wrapped, and a boxed list of the same values are equal on
+  the bytecode tier.** `==` answered false across list layouts (the
+  different-types shortcut, and `OvmValue`'s own equality, rejected
+  before the arms that compare by element): `a == map(a, (x) => x)` was
+  false for 80 ints, and Heddle's terminal check failed 51 tests.
+- **No argument fingerprint without a timeline replaying.** Every
+  nondeterministic builtin rendered and SHA-256 hashed its arguments (a
+  `gui` call's whole view) before looking whether a timeline was
+  attached, then dropped the result.
 - **A function with an early `return` answers its body's value on every
   other path.** The compiler emitted the closing `Return` only when the
   body held none; with early returns compiled, the paths that did not
