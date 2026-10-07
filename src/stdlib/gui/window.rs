@@ -307,6 +307,15 @@ impl WinState {
         }
     }
 
+    /// Scrollers the window moved itself (to bring the focus into view):
+    /// each says so, as the wheel's do.
+    pub fn said_scrolled(&mut self, moved: Vec<(String, (f32, f32))>, out: &mut Vec<Value>) {
+        for (k, (x, y)) in moved {
+            self.a11y_dirty = true;
+            out.push(self.ev("scrolled", vec![("key", s(&k)), ("x", float(x)), ("y", float(y))]));
+        }
+    }
+
     /// This window's clock for animations, in ms: a headless window's is
     /// the test's.
     pub fn clock_ms(&self) -> f64 {
@@ -497,7 +506,8 @@ impl WinState {
         }
         if applied.focus_set && self.scene.focus != before_focus {
             if let Some(f) = self.scene.focus.clone() {
-                self.scene.reveal(&f);
+                let moved = self.scene.reveal(&f);
+                self.said_scrolled(moved, out);
             }
             out.push(self.ev("focus", vec![("key", opt_str(self.scene.focus.as_deref()))]));
         }
@@ -622,7 +632,8 @@ impl WinState {
         }
         self.scene.focus = key.clone();
         if let Some(k) = &key {
-            self.scene.reveal(k);
+            let moved = self.scene.reveal(k);
+            self.said_scrolled(moved, out);
         }
         out.push(self.ev("focus", vec![("key", opt_str(key.as_deref()))]));
         self.dirty = true;
@@ -1354,13 +1365,27 @@ impl WinState {
             ));
             return;
         }
+        // Shift turns a mouse wheel's turn sideways (AppKit already does
+        // for its own events: then `dx` is set and this does nothing).
+        let (dx, dy) = if mods.unwrap_or(self.mods).shift && dx == 0.0 && dy != 0.0 {
+            (dy, 0.0)
+        } else {
+            (dx, dy)
+        };
+        // Each axis goes to the nearest scroller that can still move
+        // along it: two fingers across a board's column (which scrolls
+        // down) move the board sideways, and a diagonal moves both.
+        let (mut rx, mut ry) = (dx, dy);
         let mut at = self.scene.scroller_up(&hit);
         while let Some(k) = at {
+            if rx == 0.0 && ry == 0.0 {
+                break;
+            }
             let before = self.scene.nodes[&k].offset;
             {
                 let n = self.scene.nodes.get_mut(&k).expect("present");
-                n.offset.0 -= dx;
-                n.offset.1 -= dy;
+                n.offset.0 -= rx;
+                n.offset.1 -= ry;
             }
             self.scene.clamp_scroll(&k);
             let after = self.scene.nodes[&k].offset;
@@ -1371,9 +1396,15 @@ impl WinState {
                     "scrolled",
                     vec![("key", s(&k)), ("x", float(after.0)), ("y", float(after.1))],
                 ));
-                return;
+                // what this one took is spent; the rest goes on out
+                if after.0 != before.0 {
+                    rx = 0.0;
+                }
+                if after.1 != before.1 {
+                    ry = 0.0;
+                }
             }
-            // Nothing left to scroll here: hand the wheel to the next
+            // Nothing (more) to scroll here: hand the rest to the next
             // scroller out.
             at = self.scene.nodes[&k]
                 .parent

@@ -953,17 +953,21 @@ impl Scene {
         }
     }
 
-    /// Scroll every scrollable ancestor so `key` is visible.
-    pub fn reveal(&mut self, key: &str) {
+    /// Scroll every scrollable ancestor so `key` is visible, across and
+    /// down: the scrollers that moved, with their offsets (each says so
+    /// with `scrolled`).
+    pub fn reveal(&mut self, key: &str) -> Vec<(String, (f32, f32))> {
+        let mut moved = Vec::new();
         let Some(mut at) = self.nodes.get(key).and_then(|n| n.parent.clone()) else {
-            return;
+            return moved;
         };
         loop {
             let (Some(target), Some(sc)) = (self.absolute(key), self.absolute(&at)) else {
-                return;
+                return moved;
             };
             let parent_next = self.nodes.get(&at).and_then(|n| n.parent.clone());
             if self.nodes.get(&at).is_some_and(|n| n.scrollable) {
+                let before = self.nodes[&at].offset;
                 let n = self.nodes.get_mut(&at).expect("present");
                 if target[1] < sc[1] {
                     n.offset.1 -= sc[1] - target[1];
@@ -976,10 +980,14 @@ impl Scene {
                     n.offset.0 += target[0] + target[2] - (sc[0] + sc[2]);
                 }
                 self.clamp_scroll(&at);
+                let after = self.nodes[&at].offset;
+                if after != before {
+                    moved.push((at.clone(), after));
+                }
             }
             match parent_next {
                 Some(p) => at = p,
-                None => return,
+                None => return moved,
             }
         }
     }

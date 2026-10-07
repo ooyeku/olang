@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **gui: scrolling sideways around what scrolls down.** The wheel gives
+  each axis to the nearest scroller that can still move along it (two
+  fingers sideways over a board's column move the board; a diagonal
+  moves both), shift turns a mouse wheel sideways, and a scroller moved
+  to bring the focus into view says `scrolled` (with both offsets) as
+  the wheel's do.
+
 - **gui: animated GIF and WebP play.** An `image` of an animated GIF or
   WebP shows its first frame, then plays: frames decoded off the
   window's thread, composited (a GIF's disposal, WebP's blending), kept

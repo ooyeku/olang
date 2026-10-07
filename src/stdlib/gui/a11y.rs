@@ -398,8 +398,9 @@ pub fn action(st: &mut WinState, req: &ActionRequest, out: &mut Vec<Value>) {
     let Some(key) = key_of(st, req.target_node) else {
         return;
     };
+    let wid = st.id;
     let ev = |kind: &str, mut fields: Vec<(&str, Value)>| {
-        fields.push(("window", Value::Integer(st.id as i64)));
+        fields.push(("window", Value::Integer(wid as i64)));
         event(kind, fields)
     };
     match req.action {
@@ -413,14 +414,16 @@ pub fn action(st: &mut WinState, req: &ActionRequest, out: &mut Vec<Value>) {
         Action::Focus => {
             if st.scene.focus.as_deref() != Some(key.as_str()) {
                 st.scene.focus = Some(key.clone());
-                st.scene.reveal(&key);
+                let moved = st.scene.reveal(&key);
+                st.said_scrolled(moved, out);
                 st.dirty = true;
                 st.a11y_dirty = true;
                 out.push(ev("focus", vec![("key", s(&key))]));
             }
         }
         Action::ScrollIntoView => {
-            st.scene.reveal(&key);
+            let moved = st.scene.reveal(&key);
+            st.said_scrolled(moved, out);
             st.dirty = true;
         }
         Action::SetTextSelection => {

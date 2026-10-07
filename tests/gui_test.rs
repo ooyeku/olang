@@ -1101,6 +1101,71 @@ fn an_animation_too_large_to_keep_shows_its_first_frame() {
     assert!(small.frames[0].width <= 256 && small.bytes < picture::ANIM_BYTES);
 }
 
+/// A board: a region 300 wide that scrolls across over three lists 200
+/// wide, each scrolling down through 1,000 px.
+fn board_window() -> WinState {
+    let mut st = WinState::new(11, true, "board", 300.0, 200.0, 1.0);
+    let mut ops = vec![
+        m(vec![("key", s("root")), ("box", tup(&[0.0, 0.0, 300.0, 200.0]))]),
+        m(vec![("key", s("sc")), ("parent", s("root")), ("role", s("region")), ("box", tup(&[0.0, 0.0, 300.0, 200.0]))]),
+        m(vec![("key", s("row")), ("parent", s("sc")), ("box", tup(&[0.0, 0.0, 640.0, 200.0]))]),
+    ];
+    for (i, c) in ["a", "b", "c"].iter().enumerate() {
+        ops.push(m(vec![
+            ("key", s(&format!("l:{c}"))),
+            ("parent", s("row")),
+            ("role", s("list")),
+            ("focusable", Value::Boolean(true)),
+            ("scroll", Value::Boolean(true)),
+            ("content", tup(&[200.0, 1000.0])),
+            ("box", tup(&[i as f64 * 220.0, 0.0, 200.0, 200.0])),
+        ]));
+    }
+    let mut out = Vec::new();
+    st.apply(&Value::List(Arc::new(ops)), &mut out).expect("applies");
+    st
+}
+
+fn offset_of(st: &WinState, k: &str) -> (f32, f32) {
+    st.scene.nodes[k].offset
+}
+
+#[test]
+fn the_wheel_gives_each_axis_to_the_scroller_that_can_move_along_it() {
+    let mut st = board_window();
+    let mut clip = NoClip;
+    let mut out = Vec::new();
+    let wheel = |st: &mut WinState, x: f32, dx: f32, dy: f32, shift: bool, out: &mut Vec<Value>| {
+        st.input(Input::Pointer { action: PointerAction::Move, x, y: 100.0, button: "left".into(), clicks: 0 }, &mut NoClip, out);
+        let mods = Mods { shift, ..Mods::default() };
+        st.input(Input::Wheel { dx, dy, mods: Some(mods) }, &mut NoClip, out);
+    };
+    // two fingers sideways over a list that scrolls only down: the board moves across
+    wheel(&mut st, 50.0, -100.0, 0.0, false, &mut out);
+    assert_eq!(offset_of(&st, "sc"), (100.0, 0.0));
+    assert_eq!(offset_of(&st, "l:a"), (0.0, 0.0));
+    // a diagonal: the list takes the down, the board the across
+    wheel(&mut st, 150.0, -40.0, -30.0, false, &mut out);
+    assert_eq!(offset_of(&st, "sc"), (140.0, 0.0));
+    assert_eq!(offset_of(&st, "l:b"), (0.0, 30.0));
+    // shift with a mouse wheel: across
+    wheel(&mut st, 150.0, 0.0, -60.0, true, &mut out);
+    assert_eq!(offset_of(&st, "sc"), (200.0, 0.0));
+    let said: Vec<String> = out.iter().map(text).filter(|t| t.contains(r#""kind": "scrolled""#)).collect();
+    assert_eq!(said.len(), 4, "{said:?}");
+    // the focus moving to a list out of view brings it in, and says so
+    st.input(Input::Pointer { action: PointerAction::Move, x: 10.0, y: 100.0, button: "left".into(), clicks: 0 }, &mut clip, &mut out);
+    st.input(Input::Wheel { dx: 300.0, dy: 0.0, mods: None }, &mut clip, &mut out);
+    assert_eq!(offset_of(&st, "sc"), (0.0, 0.0));
+    let mut out2 = Vec::new();
+    st.apply(&Value::List(Arc::new(vec![m(vec![("op", s("focus")), ("key", s("l:c"))])])), &mut out2).expect("focuses");
+    assert_eq!(offset_of(&st, "sc"), (340.0, 0.0));
+    assert!(
+        out2.iter().map(text).any(|t| t.contains(r#""kind": "scrolled""#) && t.contains(r#""key": "sc""#) && t.contains(r#""x": 340"#)),
+        "{out2:?}"
+    );
+}
+
 #[test]
 fn a_picture_that_is_not_one_says_so() {
     use olang::stdlib::gui::picture;
