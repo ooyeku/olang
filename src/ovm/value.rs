@@ -84,6 +84,120 @@ pub const AST_LIST_EAGER: usize = 64;
 /// `AstMap`.
 pub const AST_MAP_EAGER: usize = 16;
 
+/// The interpreter's form of a large native collection, kept by the
+/// collection's identity: a VM value converted again unchanged (a view
+/// or a frame's placements set into a runtime's state on every turn, a
+/// layout's memo table, a model's index built in compiled code) answers
+/// the same interpreter value in O(1), and a changed collection converts
+/// only what changed beneath it — its unchanged subtrees hit. The
+/// conversion of a whole store, per crossing, was the boundary's cost
+/// in both directions; this is the VM-to-interpreter half (the other is
+/// the wrappers, `AstMap`/`AstList`/`AstStruct`).
+///
+/// Sound because a native collection never changes under its address
+/// while anything else can see it: the VM writes in place only through
+/// `Arc::get_mut`, which refuses while this cache's `Weak` exists (the
+/// writer copies once, and the copy is a new identity), and
+/// `Arc::make_mut` on a sole owner dissociates the weak. A dead
+/// allocation fails to upgrade; a reused address fails `ptr_eq`. Typed
+/// lists are not cached (they convert in one contiguous pass).
+const TO_AST_CACHE_MIN: usize = 32;
+
+thread_local! {
+    static TO_AST_CACHE: std::cell::RefCell<rustc_hash::FxHashMap<usize, (VmOwner, Value)>> =
+        std::cell::RefCell::new(rustc_hash::FxHashMap::default());
+    static TO_AST_SWEEP_AT: std::cell::Cell<usize> = const { std::cell::Cell::new(256) };
+    /// Elements converted so far on this thread: what a conversion cost
+    /// is read off its difference.
+    static TO_AST_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+enum VmOwner {
+    List(std::sync::Weak<Vec<OvmValue>>),
+    Tuple(std::sync::Weak<Vec<OvmValue>>),
+    Map(std::sync::Weak<OvmMap>),
+    Struct(std::sync::Weak<StructObject>),
+}
+
+impl VmOwner {
+    fn of(value: &OvmValue) -> Option<(usize, VmOwner)> {
+        match &value.data {
+            ValueData::List(items) if items.len() > 1 => Some((
+                Arc::as_ptr(items) as *const u8 as usize,
+                VmOwner::List(Arc::downgrade(items)),
+            )),
+            ValueData::Tuple(items) if items.len() > 1 => Some((
+                Arc::as_ptr(items) as *const u8 as usize,
+                VmOwner::Tuple(Arc::downgrade(items)),
+            )),
+            ValueData::Map(m) if m.len() > 1 => Some((
+                Arc::as_ptr(m) as *const u8 as usize,
+                VmOwner::Map(Arc::downgrade(m)),
+            )),
+            ValueData::Struct(st) if st.values.len() > 1 => Some((
+                Arc::as_ptr(st) as *const u8 as usize,
+                VmOwner::Struct(Arc::downgrade(st)),
+            )),
+            _ => None,
+        }
+    }
+
+    fn still_is(&self, value: &OvmValue) -> bool {
+        match (self, &value.data) {
+            (VmOwner::List(w), ValueData::List(items))
+            | (VmOwner::Tuple(w), ValueData::Tuple(items)) => {
+                w.upgrade().is_some_and(|live| Arc::ptr_eq(&live, items))
+            }
+            (VmOwner::Map(w), ValueData::Map(m)) => {
+                w.upgrade().is_some_and(|live| Arc::ptr_eq(&live, m))
+            }
+            (VmOwner::Struct(w), ValueData::Struct(st)) => {
+                w.upgrade().is_some_and(|live| Arc::ptr_eq(&live, st))
+            }
+            _ => false,
+        }
+    }
+
+    fn is_alive(&self) -> bool {
+        match self {
+            VmOwner::List(w) | VmOwner::Tuple(w) => w.strong_count() > 0,
+            VmOwner::Map(w) => w.strong_count() > 0,
+            VmOwner::Struct(w) => w.strong_count() > 0,
+        }
+    }
+}
+
+fn to_ast_cache_insert(key: usize, owner: VmOwner, converted: &Value) {
+    // What an entry evicts is dropped after the borrow ends: dropping an
+    // interpreter value never converts, but keep the borrow short anyway.
+    let mut evicted = Vec::new();
+    TO_AST_CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.len() >= TO_AST_SWEEP_AT.get() {
+            let dead: Vec<usize> = c
+                .iter()
+                .filter(|(_, (o, _))| !o.is_alive())
+                .map(|(k, _)| *k)
+                .collect();
+            for k in dead {
+                if let Some(e) = c.remove(&k) {
+                    evicted.push(e);
+                }
+            }
+            // Live entries past the bound: start over rather than grow
+            // without one (each pins an interpreter copy of its value).
+            if c.len() >= 16_384 {
+                evicted.extend(c.drain().map(|(_, e)| e));
+            }
+            TO_AST_SWEEP_AT.set((c.len() * 2).max(256));
+        }
+        if let Some(old) = c.insert(key, (owner, converted.clone())) {
+            evicted.push(old);
+        }
+    });
+    drop(evicted);
+}
+
 /// A map (or a record's fields) small enough, and flat enough, to convert
 /// eagerly at the tier boundary: at most AST_MAP_EAGER entries, every one
 /// a scalar.
@@ -1469,7 +1583,29 @@ impl OvmValue {
         }
     }
 
+    /// One conversion, through the identity cache for a large native
+    /// collection (see `TO_AST_CACHE`).
     fn to_ast_nested(&self) -> Result<Value, RuntimeError> {
+        let Some((key, owner)) = VmOwner::of(self) else {
+            return self.to_ast_uncached();
+        };
+        if let Some(hit) = TO_AST_CACHE.with(|c| {
+            c.borrow()
+                .get(&key)
+                .filter(|(o, _)| o.still_is(self))
+                .map(|(_, v)| v.clone())
+        }) {
+            return Ok(hit);
+        }
+        let before = TO_AST_WORK.get();
+        let converted = self.to_ast_uncached()?;
+        if TO_AST_WORK.get() - before >= TO_AST_CACHE_MIN {
+            to_ast_cache_insert(key, owner, &converted);
+        }
+        Ok(converted)
+    }
+
+    fn to_ast_uncached(&self) -> Result<Value, RuntimeError> {
         match &self.data {
             ValueData::Integer(i) => Ok(Value::Integer(*i)),
             ValueData::Float(f) => Ok(Value::Float(*f)),
@@ -1483,6 +1619,7 @@ impl OvmValue {
                 v.iter().map(|&n| Value::Integer(n)).collect(),
             ))),
             ValueData::List(gc_ptr) => {
+                TO_AST_WORK.set(TO_AST_WORK.get() + gc_ptr.len());
                 let mut ast_values = Vec::with_capacity(gc_ptr.len());
                 for ovm_val in gc_ptr.iter() {
                     ast_values.push(ovm_val.to_ast()?);
@@ -1492,6 +1629,7 @@ impl OvmValue {
             // The whole point: the boundary out is a pointer move.
             ValueData::AstList(items) => Ok(Value::List(items.clone())),
             ValueData::Tuple(gc_ptr) => {
+                TO_AST_WORK.set(TO_AST_WORK.get() + gc_ptr.len());
                 let mut ast_values = Vec::with_capacity(gc_ptr.len());
                 for ovm_val in gc_ptr.iter() {
                     ast_values.push(ovm_val.to_ast()?);
@@ -1500,6 +1638,7 @@ impl OvmValue {
             }
             ValueData::AstFunction(func) => Ok(Value::Function(func.clone())),
             ValueData::Map(m) => {
+                TO_AST_WORK.set(TO_AST_WORK.get() + m.len());
                 let mut out = crate::ast::ValueMap::default();
                 for (k, v) in m.iter() {
                     out.insert(k.clone(), v.to_ast()?);
@@ -1585,6 +1724,7 @@ impl OvmValue {
                 Ok(Value::Unit)
             }
             ValueData::Struct(gc_ptr) => {
+                TO_AST_WORK.set(TO_AST_WORK.get() + gc_ptr.values.len());
                 let mut fields = crate::ast::ValueMap::default();
                 for (name, val) in gc_ptr.iter() {
                     fields.insert(name.clone(), val.to_ast()?);

@@ -893,6 +893,27 @@ fn list_layouts_compare_as_one_kind() {
 }
 
 #[test]
+fn a_native_collection_converted_then_written_converts_again_as_written() {
+    // The VM keeps the interpreter's form of a large native collection by
+    // its identity (`TO_AST_CACHE`). A collection converted (here by a
+    // bridged builtin, `show`) and then written in place must convert
+    // again as written — never the remembered form — and the remembered
+    // form must not change under the value that was handed out.
+    for src in [
+        // a map written in place after crossing, then crossing again
+        "fn f(n) = { let mut m = #{}\n for i in range(0, 40) { m = map_set(m, \"k\" + to_string(i), [i, i + 1]) }\n let a = show(m)\n m = map_set(m, \"k3\", \"changed\")\n let b = show(m)\n [a == b, str.contains(b, \"changed\"), str.contains(a, \"changed\")] }",
+        // a list appended in place after crossing
+        "fn f(n) = { let mut xs = []\n for i in range(0, 40) { xs = xs + [[i, \"a\"]] }\n let a = show(xs)\n xs = xs + [[99, \"b\"]]\n let b = show(xs)\n [len(a) < len(b), str.contains(b, \"99\"), str.contains(a, \"99\")] }",
+        // the same subtree under two keys, one rewritten
+        "fn f(n) = { let mut sub = #{}\n for i in range(0, 30) { sub = map_set(sub, to_string(i), [i]) }\n let top = #{ \"a\": sub, \"b\": sub }\n let s1 = show(top)\n let top2 = map_set(top, \"b\", map_set(sub, \"0\", \"x\"))\n [s1 == show(top), str.contains(show(top2), \"x\"), show(map_get(top2, \"a\")) == show(sub)] }",
+        // a struct-like record list crossing as an element of another
+        "fn f(n) = { let mut rows = []\n for i in range(0, 50) { rows = rows + [#{ \"id\": i, \"tags\": [\"t\", to_string(i)] }] }\n let a = show([rows])\n let rows2 = col.set(rows, 0, #{ \"id\": -1, \"tags\": [] })\n [a == show([rows]), show([rows2]) != a] }",
+    ] {
+        assert_same(src, "f", &ints(&[0]));
+    }
+}
+
+#[test]
 fn map_remove_reads_every_map_kind_in_place() {
     // Native on the VM now (it bridged, converting a native map whole to
     // drop one key): every kind answers its own kind without the key, and
