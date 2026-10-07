@@ -167,9 +167,14 @@ pub struct WinState {
     /// Where the window's content sits on the screen, in the platform's
     /// logical pixels: a pointer event carries its place on the screen
     /// too (`sx`, `sy`), so a drag can be followed into another window.
-    pub origin: (f32, f32),
-    /// The last pointer event's place on the screen.
-    screen_pointer: (f32, f32),
+    /// `None` while the platform has not said (Wayland never does: a
+    /// window there cannot learn its place), and then a pointer event
+    /// carries no `sx`/`sy` — a drag stays in its own window rather than
+    /// landing in another by a guess.
+    pub origin: Option<(f32, f32)>,
+    /// The last pointer event's place on the screen, when the origin is
+    /// known.
+    screen_pointer: Option<(f32, f32)>,
 }
 
 const WHITE: Color = [255, 255, 255, 255];
@@ -196,16 +201,18 @@ impl WinState {
             clip: None,
             zoom: 1.0,
             platform_scale: scale,
-            origin: (0.0, 0.0),
-            screen_pointer: (-1.0, -1.0),
+            // a headless window sits at the screen's corner until a test
+            // places it; a real one waits for the platform
+            origin: if headless { Some((0.0, 0.0)) } else { None },
+            screen_pointer: None,
         }
     }
 
     /// The window's content moved on the screen (or a test placed a
     /// headless one): `moved` with its new origin.
     pub fn place(&mut self, x: f32, y: f32, out: &mut Vec<Value>) {
-        if self.origin != (x, y) {
-            self.origin = (x, y);
+        if self.origin != Some((x, y)) {
+            self.origin = Some((x, y));
             out.push(self.ev("moved", vec![("x", float(x)), ("y", float(y))]));
         }
     }
@@ -547,7 +554,7 @@ impl WinState {
                 button,
                 clicks,
             } => {
-                self.screen_pointer = (self.origin.0 + x, self.origin.1 + y);
+                self.screen_pointer = self.origin.map(|(ox, oy)| (ox + x, oy + y));
                 Input::Pointer {
                     action,
                     x: x / z,
@@ -915,6 +922,12 @@ impl WinState {
                 ("left" | "right" | "up" | "down" | "backspace" | "delete", _) => {
                     ed.key(key, mods.shift, mods.word(), mods.line(), &mut ts)
                 }
+                // ctrl+home and ctrl+end: the text's start and end, as
+                // Windows and Linux fields do (macOS has ⌘↑ and ⌘↓)
+                ("home" | "end", _) if !cfg!(target_os = "macos") => {
+                    let to = if key == "end" { "down" } else { "up" };
+                    ed.key(to, mods.shift, false, true, &mut ts)
+                }
                 _ => Outcome::Pass,
             });
         }
@@ -986,8 +999,8 @@ impl WinState {
                         ("action", s("move")),
                         ("x", float(x)),
                         ("y", float(y)),
-                        ("sx", float(self.screen_pointer.0)),
-                        ("sy", float(self.screen_pointer.1)),
+                        ("sx", opt_float(self.screen_pointer.map(|p| p.0))),
+                        ("sy", opt_float(self.screen_pointer.map(|p| p.1))),
                         ("target", opt_str(hit.as_deref())),
                         ("hit", self.canvas_hit(hit.as_deref(), x, y)),
                     ],
@@ -1067,8 +1080,8 @@ impl WinState {
                         ("action", s("down")),
                         ("x", float(x)),
                         ("y", float(y)),
-                        ("sx", float(self.screen_pointer.0)),
-                        ("sy", float(self.screen_pointer.1)),
+                        ("sx", opt_float(self.screen_pointer.map(|p| p.0))),
+                        ("sy", opt_float(self.screen_pointer.map(|p| p.1))),
                         ("button", s(button)),
                         ("clicks", Value::Integer(clicks as i64)),
                         ("target", opt_str(hit.as_deref())),
@@ -1089,8 +1102,8 @@ impl WinState {
                         ("action", s("up")),
                         ("x", float(x)),
                         ("y", float(y)),
-                        ("sx", float(self.screen_pointer.0)),
-                        ("sy", float(self.screen_pointer.1)),
+                        ("sx", opt_float(self.screen_pointer.map(|p| p.0))),
+                        ("sy", opt_float(self.screen_pointer.map(|p| p.1))),
                         ("button", s(button)),
                         ("target", opt_str(hit.as_deref())),
                         ("hit", self.canvas_hit(hit.as_deref(), x, y)),

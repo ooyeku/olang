@@ -168,12 +168,52 @@ pub fn available() -> bool {
     true
 }
 
+/// What this platform's windows can do, for a program to check rather
+/// than find out: `#{ os, native_menu, clipboard_image, file_drop,
+/// drop_position, window_position, system_settings, ime, accessibility }`.
+/// Each is what this build does on this OS (not whether a display is
+/// there: that is `available`):
+///
+/// - `native_menu`: `gui.menu` sets the system's menu bar (macOS);
+///   elsewhere it answers `false` and Loom draws the window's menu.
+/// - `clipboard_image`: `gui.clipboard_image` reads a picture (macOS).
+/// - `file_drop`: files dragged in from another program arrive as
+///   `files` events (macOS, Windows; winit has no Wayland drag and drop).
+/// - `drop_position`: a `files` event's `x`/`y` is where the pointer is
+///   as they arrive (macOS); elsewhere the pointer's last place in the
+///   window.
+/// - `window_position`: a window learns where it is on the screen, so
+///   pointer events carry `sx`/`sy` and a drag follows into another
+///   window (macOS, Windows); on Wayland a drag stays in its window.
+/// - `system_settings`: `gui.context` reads increased contrast, reduced
+///   motion, and the dark appearance from the system (macOS).
+/// - `ime`: input methods (composition, a candidate window placed at the
+///   caret) — everywhere winit has them (Wayland's text-input-v3).
+/// - `accessibility`: the platform's accessibility API through AccessKit
+///   (NSAccessibility, UI Automation, AT-SPI).
+pub fn capabilities() -> Value {
+    let mac = cfg!(target_os = "macos");
+    let windows = cfg!(target_os = "windows");
+    let b = Value::Boolean;
+    map(vec![
+        ("os", s(std::env::consts::OS)),
+        ("native_menu", b(mac)),
+        ("clipboard_image", b(mac)),
+        ("file_drop", b(mac || windows)),
+        ("drop_position", b(mac)),
+        ("window_position", b(mac || windows)),
+        ("system_settings", b(mac)),
+        ("ime", b(true)),
+        ("accessibility", b(true)),
+    ])
+}
+
 /// Start winit on this (the first) thread and run it until the program
 /// ends. `None` when the loop could not start (the program goes on,
 /// windowless).
 fn run_loop(reply: crossbeam_channel::Sender<Result<(), String>>) -> Option<i32> {
     if cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_none() {
-        let msg = "no Wayland display (Loom runs on Wayland only; X11 is not supported — try --face terminal)".to_string();
+        let msg = "no Wayland display (Loom runs on Wayland only; X11 is not supported — try --terminal, or LOOM_FACE=terminal)".to_string();
         *LOOP.lock().unwrap_or_else(|e| e.into_inner()) = LoopState::Failed(msg.clone());
         let _ = reply.send(Err(msg));
         return None;

@@ -75,6 +75,7 @@ const FUNCTIONS: &[(&str, usize)] = &[
     ("menu", 1),
     ("compare", 3),
     ("context", 0),
+    ("platform", 0),
     ("wake", 0),
     ("flatten", 4),
     ("flat_emit", 5),
@@ -130,6 +131,10 @@ pub fn call_gui_function(name: &str, args: Vec<Value>) -> DynRes {
         "context" => {
             arity("gui.context", &args, 0, 0)?;
             Ok(context::as_value(None))
+        }
+        "platform" => {
+            arity("gui.platform", &args, 0, 0)?;
+            Ok(platform::capabilities())
         }
         "input" => gui_input(args),
         "set" => gui_set(args),

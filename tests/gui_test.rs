@@ -332,6 +332,8 @@ fn the_accessibility_tree_names_every_control() {
 
 #[test]
 fn headless_windows_from_olang() {
+    // its windows send events on the one channel
+    let _turn = events_turn();
     let v = run(r##"
         let w = gui.headless(#{ "size": (200, 100) })
         let r = gui.apply(w, [
@@ -357,6 +359,8 @@ fn headless_windows_from_olang() {
 
 #[test]
 fn a_bad_patch_says_what_is_wrong() {
+    // its windows send events on the one channel
+    let _turn = events_turn();
     let v = run(r##"
         let w = gui.headless(#{ "size": (100, 100) })
         [gui.apply(w, [#{ "key": "a", "role": "buton" }]),
@@ -662,6 +666,8 @@ fn a_test_can_close_command_paste_and_see_the_caret() {
 
 #[test]
 fn compare_finds_what_changed_and_draws_where() {
+    // its windows send events on the one channel
+    let _turn = events_turn();
     let v = run(r##"
         fn shot(label) = {
             let w = gui.headless(#{ "size": (120, 40) })
@@ -682,6 +688,8 @@ fn compare_finds_what_changed_and_draws_where() {
 
 #[test]
 fn a_node_that_grabs_is_found_before_the_siblings_over_it() {
+    // its windows send events on the one channel
+    let _turn = events_turn();
     let v = run(r##"
         let w = gui.headless(#{ "size": (200, 100) })
         gui.apply(w, [
@@ -697,6 +705,8 @@ fn a_node_that_grabs_is_found_before_the_siblings_over_it() {
 
 #[test]
 fn a_trailing_space_after_right_to_left_text_keeps_the_caret_in_view() {
+    // its windows send events on the one channel
+    let _turn = events_turn();
     // A right-to-left line's trailing spaces hang left of its start; the
     // field scrolled no further left than 0 and the caret went out of it.
     let v = run(r##"
@@ -1112,7 +1122,13 @@ fn a_styled_field_edits_a_paragraph_at_a_time_and_says_what_changed() {
 #[test]
 fn a_styled_field_composes_in_place_and_is_read_as_runs() {
     let _turn = events_turn();
-    let v = run(r##"
+    // the text's end: ⌘↓ on macOS, ctrl+end on Windows and Linux
+    let to_end = if cfg!(target_os = "macos") {
+        "down"
+    } else {
+        "end"
+    };
+    let v = run(&r##"
         let w = gui.headless(#{ "size": (300, 120) })
         gui.apply(w, [
           #{ "key": "root", "box": (0, 0, 300, 120) },
@@ -1120,7 +1136,7 @@ fn a_styled_field_composes_in_place_and_is_read_as_runs() {
              "edit": #{ "value": "ab\ncd", "rich": true, "styles": [], "spans": [] } },
           #{ "op": "focus", "key": "f" }
         ])
-        gui.input(w, #{ "kind": "key", "key": "down", "mod": true })
+        gui.input(w, #{ "kind": "key", "key": "TO_END", "mod": true })
         gui.input(w, #{ "kind": "compose", "text": "にほ" })
         // composing: the value is not yet changed, the input method's
         // window is at the composition
@@ -1129,7 +1145,8 @@ fn a_styled_field_composes_in_place_and_is_read_as_runs() {
         gui.input(w, #{ "kind": "commit", "text": "日本" })
         let node = filter(gui.read(w, "a11y"), (n) => map_get(n, "key") == "f")[0]
         [during, ime != () && ime[0] > 10.0 && ime[1] > 20.0, gui.read(w, "value", "f"), map_get(node, "text_runs"), map_get(node, "text_selection")]
-    "##);
+    "##
+    .replace("TO_END", to_end));
     assert_eq!(
         text(&v),
         "[\"ab\ncd\", true, \"ab\ncd日本\", 2, (1, 4, 1, 4)]"
@@ -1144,4 +1161,83 @@ fn a_text_with_a_bold_run_is_wider_and_measured_so() {
         map_get(bold, "width") > map_get(plain, "width")
     "##);
     assert_eq!(text(&v), "true");
+}
+
+/// A platform window that has not learnt where it is on the screen (all
+/// of them on Wayland) sends pointer events without `sx`/`sy`, so a drag
+/// stays in its own window instead of landing in another by a guess; once
+/// placed it sends them.
+#[test]
+fn a_window_that_cannot_learn_its_place_sends_no_screen_point() {
+    let mut st = WinState::new(7, false, "real", 300.0, 200.0, 1.0);
+    let mut out = Vec::new();
+    st.apply(
+        &Value::List(Arc::new(vec![m(vec![
+            ("key", s("root")),
+            ("box", tup(&[0.0, 0.0, 300.0, 200.0])),
+        ])])),
+        &mut out,
+    )
+    .expect("applies");
+    let mut clip = NoClip;
+    let mut press = |st: &mut WinState| {
+        let mut out = Vec::new();
+        st.input(
+            Input::Pointer {
+                action: PointerAction::Move,
+                x: 20.0,
+                y: 30.0,
+                button: "left".into(),
+                clicks: 0,
+            },
+            &mut clip,
+            &mut out,
+        );
+        let ev = out
+            .into_iter()
+            .find(|e| text(e).contains("\"pointer\""))
+            .expect("a pointer event");
+        let Value::Map(f) = &ev else { panic!("a map") };
+        (
+            f.get("sx").cloned().unwrap_or(Value::Unit),
+            f.get("sy").cloned().unwrap_or(Value::Unit),
+        )
+    };
+    let (sx, sy) = press(&mut st);
+    assert_eq!((text(&sx), text(&sy)), ("()".to_string(), "()".to_string()));
+    let mut moved = Vec::new();
+    st.place(100.0, 50.0, &mut moved);
+    assert_eq!(moved.len(), 1, "a `moved` event");
+    let (sx, sy) = press(&mut st);
+    assert_eq!(
+        (text(&sx), text(&sy)),
+        ("120.0".to_string(), "80.0".to_string())
+    );
+}
+
+/// `gui.platform()` says what this OS's windows can do; the degraded
+/// ones are named, not discovered.
+#[test]
+fn the_platform_says_what_its_windows_can_do() {
+    let v = run(r#"
+        let p = gui.platform()
+        [map_get(p, "os"), map_get(p, "native_menu"), map_get(p, "clipboard_image"), map_get(p, "file_drop"),
+         map_get(p, "drop_position"), map_get(p, "window_position"), map_get(p, "system_settings"),
+         map_get(p, "ime"), map_get(p, "accessibility")]
+    "#);
+    let want = if cfg!(target_os = "macos") {
+        r#"["macos", true, true, true, true, true, true, true, true]"#
+    } else if cfg!(target_os = "windows") {
+        r#"["windows", false, false, true, false, true, false, true, true]"#
+    } else {
+        r#"["linux", false, false, false, false, false, false, true, true]"#
+    };
+    assert_eq!(text(&v), want);
+    // and what is missing says so when asked for
+    if !cfg!(target_os = "macos") {
+        let v = run(r#"match gui.clipboard_image() { Ok(x) => "ok", Err(e) => e }"#);
+        assert!(text(&v).contains("macOS only"), "{}", text(&v));
+        let v = run(r#"gui.menu([])"#);
+        assert_eq!(text(&v), "false");
+    }
 }

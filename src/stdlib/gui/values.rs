@@ -23,6 +23,11 @@ pub fn float(f: f32) -> Value {
     Value::Float(f as f64)
 }
 
+/// A number, or `()` when there is none.
+pub fn opt_float(f: Option<f32>) -> Value {
+    f.map(float).unwrap_or(Value::Unit)
+}
+
 pub fn map(fields: Vec<(&str, Value)>) -> Value {
     let mut m = crate::ast::ValueMap::default();
     for (k, v) in fields {

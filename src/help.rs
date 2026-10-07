@@ -1913,6 +1913,14 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             &[r##"if !gui.available() => println("no display")"##],
         );
         self.doc_ex(
+            "gui.platform",
+            "gui.platform()",
+            "Map",
+            "gui",
+            "What this platform's windows can do: #{ os, native_menu, clipboard_image, file_drop, drop_position, window_position, system_settings, ime, accessibility }, each a Bool (os a String).",
+            &[r##"if map_get(gui.platform(), "window_position") != true => println("a drag stays in its window")"##],
+        );
+        self.doc_ex(
             "gui.open",
             "gui.open(opts?)",
             "Result",
