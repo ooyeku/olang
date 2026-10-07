@@ -26,6 +26,9 @@
 //! What cannot be guarded: SIGKILL and a power cut (nothing runs), and a
 //! stack overflow (the runtime aborts without a hook). `reset` in the
 //! shell is the answer there.
+// The signal path (SIG_*, take_signals, resume) is Unix's; Windows keys
+// and resizes arrive as console records instead.
+#![cfg_attr(windows, allow(dead_code))]
 
 use std::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 
