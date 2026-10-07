@@ -308,3 +308,43 @@ fn a_template_string_does_not_poison_its_function() {
         "the loop must not fall to VM dispatch (calibrated 0), got {instructions}"
     );
 }
+
+#[test]
+fn a_function_value_compiles_around_what_it_cannot() {
+    // A lambda reached as a value (a program's `view` in a map, here an
+    // argument) compiles by identity. That route once gave up after eight
+    // callees and on any callee that could not compile (a `cell` call),
+    // and a short call to a defaulted helper sent it to the bridge — the
+    // whole body then tree-walked, its arguments converted each call,
+    // every static check green (Loom's `rt_frame`, the app's `view`).
+    // Now it resolves every callee, calls the one that cannot compile
+    // through the bridge, and fills literal defaults (`()`, `#{}`, `-1`).
+    // Calibrated: promoted=12, instructions=13,800 (cold: 1 and 1,200).
+    let r = run("fn h1(m) = map_get(m, \"a\") + 1\n\
+         fn h2(m) = map_get(m, \"a\") + 2\n\
+         fn h3(m) = map_get(m, \"a\") + 3\n\
+         fn h4(m) = map_get(m, \"a\") + 4\n\
+         fn h5(m) = map_get(m, \"a\") + 5\n\
+         fn h6(m) = map_get(m, \"a\") + 6\n\
+         fn h7(m) = map_get(m, \"a\") + 7\n\
+         fn h8(m) = map_get(m, \"a\") + 8\n\
+         fn h9(m) = map_get(m, \"a\") + 9\n\
+         fn h10(m) = map_get(m, \"a\") + 10\n\
+         fn kept(m) = cell(map_get(m, \"a\"))\n\
+         fn opts(m, extra = (), o = #{}, near = -1) = if extra == () => map_get(m, \"a\") + near + map_len(o) else => 0\n\
+         fn apply(f, m) = f(m)\n\
+         let view = (m) => { let c = kept(m); h1(m) + h2(m) + h3(m) + h4(m) + h5(m) + h6(m) + h7(m) + h8(m) + h9(m) + h10(m) + cell.get(c) + opts(m) }\n\
+         let mut total = 0\n\
+         for i in range(0, 300) { total = total + apply(view, #{ \"a\": i }) }\n\
+         println(total)\n");
+    let promoted = r.aggregate["promoted"];
+    let instructions = r.aggregate["instructions"];
+    assert!(
+        promoted >= 10,
+        "the lambda's helpers must compile through it (calibrated 12), got promoted={promoted}"
+    );
+    assert!(
+        instructions >= 6_000,
+        "the lambda must run on the VM, not the tree-walker (calibrated 13,800), got {instructions}"
+    );
+}

@@ -1164,6 +1164,44 @@ const HOF_SHARED_MAX_STRING: usize = 256;
 /// closures keep changing (a capture that differs on every call) stays on
 /// the bytecode VM past this many — where its artifacts die with it.
 const HOF_JIT_CLOSURES: u32 = 4;
+/// Compile attempts a function value's compilation may make, each
+/// resolving one distinct callee (compiled, or called through the
+/// bridge). The bound is a backstop, not a limit on how many helpers a
+/// function may call: at 8, a view calling nine helpers not yet compiled
+/// never compiled, and took every function value above it to the
+/// tree-walker (the named tier's bound is the same; `Tier::compile`).
+const HOF_RESOLUTION_STEPS: usize = 4096;
+
+/// A parameter's default when it is a literal: its value, scope-free by
+/// construction, so a short call can complete its arguments without the
+/// callee's scope. `()`, `#{}`, `[]`, and a negated number count — the
+/// usual "nothing given" defaults (`count = ()`, `opts = #{}`, `near =
+/// -1`), which used to send every short call to a function value through
+/// the bridge, its arguments converted whole.
+fn literal_default(expr: &Expr) -> Option<OvmValue> {
+    Some(match expr {
+        Expr::Integer(n) => OvmValue::new_integer(*n),
+        Expr::Float(f) => OvmValue::new_float(*f),
+        Expr::Boolean(b) => OvmValue::new_boolean(*b),
+        Expr::String(st) => OvmValue {
+            data: crate::ovm::value::ValueData::String(st.clone()),
+        },
+        Expr::Tuple(items) if items.is_empty() => OvmValue::new_unit(),
+        Expr::List(items) if items.is_empty() => OvmValue::new_list(Vec::new()),
+        Expr::MapLiteral { entries } if entries.is_empty() => {
+            OvmValue::new_map(Arc::new(crate::ovm::value::OvmMap::default()))
+        }
+        Expr::UnaryOp {
+            op: crate::ast::UnaryOp::Negate,
+            operand,
+        } => match operand.as_ref() {
+            Expr::Integer(n) => OvmValue::new_integer(n.checked_neg()?),
+            Expr::Float(f) => OvmValue::new_float(-*f),
+            _ => return None,
+        },
+        _ => return None,
+    })
+}
 
 /// One compile of a lambda body shared by all its closures whose captures
 /// are the same (`BytecodeVm::hof_shared`).
@@ -6142,7 +6180,8 @@ impl BytecodeVm {
         // root and its nested lambdas (a named dependency compiled on the
         // way belongs to the registry, so tracking is suspended for it).
         self.hof_track = Some(Vec::new());
-        for _ in 0..8 {
+        let mut asked: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for _ in 0..HOF_RESOLUTION_STEPS {
             match self.compile_function_with_closure(
                 func_id,
                 &decl,
@@ -6157,14 +6196,30 @@ impl BytecodeVm {
                     break;
                 }
                 Err(BytecodeError::UnresolvedCallee(callee)) => {
+                    // Each step resolves a distinct callee; one asked for
+                    // twice was not resolved by the first answer.
+                    if !asked.insert(callee.clone()) {
+                        break;
+                    }
                     let tracked = self.hof_track.take();
                     let compiled = self.compile_hof_dependency(&callee, 0);
                     self.hof_track = tracked;
-                    if !compiled {
+                    if !compiled && !self.hof_bridge_callee(func, &callee) {
+                        if std::env::var_os("OLANG_DEBUG_HOF").is_some() {
+                            eprintln!(
+                                "[hof] '{}' declined: callee '{}' does not compile",
+                                decl.name, callee
+                            );
+                        }
                         break;
                     }
                 }
-                Err(_) => break,
+                Err(e) => {
+                    if std::env::var_os("OLANG_DEBUG_HOF").is_some() {
+                        eprintln!("[hof] '{}' declined: {}", decl.name, e);
+                    }
+                    break;
+                }
             }
         }
         let created = self.hof_track.take().unwrap_or_default();
@@ -6447,6 +6502,21 @@ impl BytecodeVm {
                 if let Some(func_id) = self.hof_function_id(&f, args.len()) {
                     return self.execute(func_id, args);
                 }
+                // A short call whose missing defaults are all literals
+                // completes its arguments here and runs compiled, as a
+                // direct call does (`splice_literal_defaults`).
+                if args.len() < f.parameters.len()
+                    && let Some(extra) = f.parameters[args.len()..]
+                        .iter()
+                        .map(|p| p.default_value.as_ref().and_then(literal_default))
+                        .collect::<Option<Vec<_>>>()
+                    && let Some(func_id) = self.hof_function_id(&f, f.parameters.len())
+                {
+                    let mut full = Vec::with_capacity(f.parameters.len());
+                    full.extend(args.iter().cloned());
+                    full.extend(extra);
+                    return self.execute(func_id, &full);
+                }
             }
             ValueData::Closure(c) if c.template.parameters.len() == args.len() => {
                 let c = c.clone();
@@ -6697,16 +6767,26 @@ impl BytecodeVm {
     /// mutual recursion resolve; a failure withdraws the registration
     /// so nothing calls a name with no bytecode.
     fn compile_hof_dependency(&mut self, name: &str, depth: usize) -> bool {
+        let debug = std::env::var_os("OLANG_DEBUG_HOF").is_some();
         if depth > 16 {
+            if debug {
+                eprintln!("[hof]   dependency '{}' declined: too deep", name);
+            }
             return false;
         }
         if self.compiler.function_registry.contains_key(name) {
             return true;
         }
         if self.ambiguous_function_names.contains(name) {
+            if debug {
+                eprintln!("[hof]   dependency '{}' declined: ambiguous", name);
+            }
             return false;
         }
         let Some(func) = self.known_function_values.get(name).cloned() else {
+            if debug {
+                eprintln!("[hof]   dependency '{}' declined: unknown", name);
+            }
             return false;
         };
         if !func.param_bounds.is_empty() {
@@ -6723,7 +6803,8 @@ impl BytecodeVm {
             return_type: None,
             body: (*func.body).clone(),
         };
-        for _ in 0..8 {
+        let mut asked: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for _ in 0..HOF_RESOLUTION_STEPS {
             match self.compile_function_with_closure(
                 dep_id,
                 &decl,
@@ -6738,19 +6819,64 @@ impl BytecodeVm {
                     return true;
                 }
                 Err(BytecodeError::UnresolvedCallee(inner)) => {
-                    if !self.compile_hof_dependency(&inner, depth + 1) {
-                        self.unregister_function(name);
-                        return false;
+                    if !asked.insert(inner.clone()) {
+                        break;
+                    }
+                    if !self.compile_hof_dependency(&inner, depth + 1)
+                        && !self.hof_bridge_callee(&func, &inner)
+                    {
+                        if debug {
+                            eprintln!(
+                                "[hof]   dependency '{}' (depth {}) declined: callee '{}'",
+                                name, depth, inner
+                            );
+                        }
+                        break;
                     }
                 }
-                Err(_) => {
-                    self.unregister_function(name);
-                    return false;
+                Err(e) => {
+                    if debug {
+                        eprintln!(
+                            "[hof]   dependency '{}' (depth {}) declined: {}",
+                            name, depth, e
+                        );
+                    }
+                    break;
                 }
             }
         }
+        if debug {
+            eprintln!("[hof]   dependency '{}' (depth {}) declined", name, depth);
+        }
         self.unregister_function(name);
         false
+    }
+
+    /// A callee that cannot compile, called from a function value being
+    /// compiled: the caller compiles around it, calling it through the
+    /// bridge, as the named tier does (`Tier::compile`). Only a callee
+    /// with a function behind it is bridged; a name nothing defines
+    /// still declines the caller. Before this, one uncompilable helper
+    /// anywhere under a function value (a `cell` call, say) kept the
+    /// whole chain above it on the tree-walker — every frame's `view`
+    /// and `layout` reached through the program's map, its model
+    /// converted whole on the way in.
+    fn hof_bridge_callee(&mut self, caller: &crate::ast::Function, callee: &str) -> bool {
+        let callable = caller.name.as_deref() != Some(callee)
+            && (self.known_function_values.contains_key(callee)
+                || matches!(caller.closure.get(callee), Some(Value::Function(_)))
+                || self.module_scope_has_function(caller.def_file.as_deref(), callee));
+        if !callable || self.bridged_callees.contains(callee) {
+            return false;
+        }
+        if std::env::var_os("OLANG_DEBUG_HOF").is_some() {
+            eprintln!(
+                "[hof]   '{}' is called through the bridge (it does not compile)",
+                callee
+            );
+        }
+        self.bridged_callees.insert(callee.to_string());
+        true
     }
 
     /// The tier-facing door to the native higher-order loops: the
@@ -11594,13 +11720,7 @@ impl BytecodeCompiler {
     ) -> Option<Vec<Register>> {
         let mut extra = Vec::new();
         for param in &func.parameters[from..] {
-            let value = match &param.default_value {
-                Some(Expr::Integer(n)) => OvmValue::new_integer(*n),
-                Some(Expr::Float(f)) => OvmValue::new_float(*f),
-                Some(Expr::Boolean(b)) => OvmValue::new_boolean(*b),
-                Some(Expr::String(st)) => OvmValue::from_ast(crate::ast::Value::String(st.clone())),
-                _ => return None,
-            };
+            let value = literal_default(param.default_value.as_ref()?)?;
             let idx = self.emitter.add_constant(value);
             let reg = self.register_allocator.allocate_register();
             self.emitter.instructions.push(Instruction::LoadConst {
