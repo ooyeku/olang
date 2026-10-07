@@ -5610,6 +5610,16 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             see_also: vec![],
         });
         self.add_function(FunctionDoc {
+            name: "re.find_spans".to_string(),
+            description: "Where every non-overlapping match is: a list of (start, end) character offsets (an editor's find highlights them).".to_string(),
+            syntax: "re.find_spans(pattern, text)".to_string(),
+            parameters: vec![],
+            return_type: "Result".to_string(),
+            examples: vec!["re.find_spans(\"[0-9]+\", \"a1b22\")  // Ok([(1, 2), (3, 5)])".to_string()],
+            category: "Regex".to_string(),
+            see_also: vec!["re.find_all".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "re.captures".to_string(),
             description: "Capture groups of the first match; index 0 is the whole match."
                 .to_string(),

@@ -224,3 +224,13 @@ join(jobs |> map(task.join), ",")
         started.elapsed()
     );
 }
+
+#[test]
+fn re_find_spans_says_where_each_match_is_in_characters() {
+    let v = eval(r#"show(unwrap(re.find_spans("[0-9]+", "é1b22")))"#);
+    assert_eq!(s(v), "[(1, 2), (3, 5)]");
+    let none = eval(r#"show(unwrap(re.find_spans("z", "abc")))"#);
+    assert_eq!(s(none), "[]");
+    let bad = eval(r#"is_err(re.find_spans("(", "x"))"#);
+    assert_eq!(bad, Value::Boolean(true));
+}

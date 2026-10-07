@@ -27,6 +27,10 @@ pub fn create_regex_module() -> Value {
         create_builtin_function("find_all", 2),
     );
     module.insert(
+        "find_spans".to_string(),
+        create_builtin_function("find_spans", 2),
+    );
+    module.insert(
         "captures".to_string(),
         create_builtin_function("captures", 2),
     );
@@ -58,6 +62,7 @@ pub fn call_regex_function(
     match name {
         "is_valid" => re_is_valid(args),
         "is_match" => re_is_match(args),
+        "find_spans" => re_find_spans(args),
         "find" => re_find(args),
         "find_all" => re_find_all(args),
         "captures" => re_captures(args),
@@ -144,6 +149,39 @@ fn re_find_all(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     };
     let matches: Vec<Value> = re.find_iter(text).map(|m| string(m.as_str())).collect();
     Ok(ok(Value::List(matches.into())))
+}
+
+/// Where every match is: `(start, end)` character offsets, in order —
+/// what an editor's find highlights (a match's text alone does not say
+/// where it was).
+fn re_find_spans(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let pattern = arg_str(&args, 0, "find_spans")?;
+    let text = arg_str(&args, 1, "find_spans")?;
+    let re = match compile(pattern) {
+        Ok(re) => re,
+        Err(e) => return Ok(e),
+    };
+    let ascii = text.is_ascii();
+    let mut out = Vec::new();
+    // byte offsets to characters, walking forward once
+    let (mut at_b, mut at_c) = (0usize, 0usize);
+    let mut chars = |b: usize| {
+        if ascii {
+            return b;
+        }
+        at_c += text[at_b..b].chars().count();
+        at_b = b;
+        at_c
+    };
+    for m in re.find_iter(text) {
+        let a = chars(m.start());
+        let b = chars(m.end());
+        out.push(Value::Tuple(Arc::new(vec![
+            Value::Integer(a as i64),
+            Value::Integer(b as i64),
+        ])));
+    }
+    Ok(ok(Value::List(out.into())))
 }
 
 /// Capture groups of the first match: index 0 is the whole match, then each

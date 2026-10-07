@@ -755,6 +755,7 @@ its Unicode tables are a fifth of the runtime's code); a page that calls
 | `re.is_match(pat, s)` | boolean test |
 | `re.find(pat, s)` | first match text |
 | `re.find_all(pat, s)` | all match texts |
+| `re.find_spans(pat, s)` | where every match is: `(start, end)` character offsets |
 | `re.captures(pat, s)` | full match + capture groups |
 | `re.replace(pat, s, rep)` / `re.replace_all` | substitution |
 | `re.split(pat, s)` | split by pattern |
