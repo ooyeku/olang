@@ -778,7 +778,9 @@ ISO-8601 strings in, ISO-8601 strings out; fallible operations return
 | Parse/format | `parse(s)` → `Date` · `parse_date` `parse_datetime` `parse_time` `format_date` `format_datetime` `format_time` |
 | Fields | `year` `month` `day` `hour` `minute` `second` `weekday` |
 | Arithmetic | `add_days` `add_weeks` `add_months` `add_years` `diff_days` — or Date operators |
-| Epoch | `timestamp(dt)` `from_timestamp(n)` |
+| Calendar | `start_of_week(d)` — the Monday on or before `d` · `start_of_month(d)` — its first day |
+| Day numbers | `epoch_day(d)` — days since 1970-01-01 (a stamp's day is the one it is written in) · `from_epoch_day(n)` → `Date` |
+| Epoch | `timestamp(dt)` — Unix seconds; an offset is honoured, a bare day is its midnight UTC · `from_timestamp(n)` |
 | Facts | `is_leap_year(y)` `days_in_month(y, m)` |
 
 Since 0.69 a date is a first-class **`Date` value**: `dates.date(y, m, d)`
@@ -806,6 +808,20 @@ println(s)
 `unwrap(dates.timestamp(dates.now()))` is the idiom for "seconds since
 the epoch, now" (`timestamp` parses its argument, so it returns a
 `Result`; for a plain millisecond clock, `time.now_ms()` is simpler).
+A stamp's offset is part of it: `…T16:30:00+02:00` and `…T14:30:00Z`
+are the same second.
+
+A **day number** is a day as a coordinate — what a calendar or a
+timeline lays out, pans, and snaps to. `epoch_day` and
+`from_epoch_day` convert, and the week and the month have their edges:
+
+```olang
+let d = unwrap(dates.epoch_day("2026-10-08"))    // an Int
+let week = unwrap(dates.epoch_day(unwrap(dates.start_of_week("2026-10-08"))))
+println(`${d - week} days into the week`)        // 3 (weeks start on Monday)
+println(unwrap(dates.from_epoch_day(d + 30)))    // 2026-11-07, a Date
+println(unwrap(dates.start_of_month("2026-10-08")))  // 2026-10-01
+```
 
 ## `time` — clocks and sleeping
 

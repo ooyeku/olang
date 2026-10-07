@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **dates: day numbers and the calendar's edges.** `dates.epoch_day(d)`
+  is a date's day number (days since 1970-01-01; a stamp's day is the one
+  it is written in) and `dates.from_epoch_day(n)` the `Date` of one — a
+  day as a coordinate, what a timeline or a calendar lays out and snaps
+  to. `dates.start_of_week(d)` (the Monday on or before; weeks start on
+  Monday, as ISO 8601 says) and `dates.start_of_month(d)` answer in kind.
+  (open-track desktop's timeline carried a civil-date algorithm twice for
+  want of these.)
+
 - **gui: a styled, editable text — a paragraph laid out at a time.** A
   `textarea` with `rich: true` (src/stdlib/gui/rich.rs) keeps a parley
   layout a hard line: an edit lays out the lines it touched (a keystroke
@@ -99,6 +108,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   hands a lambda to the VM (heddle-sql measured ~1.3 KB a call; now 3 B).
 
 ### Fixed
+
+- **`dates.timestamp` keeps a stamp's offset.** An RFC 3339 stamp with an
+  offset was read as if its local time were UTC, so
+  `timestamp(dates.now())` was off by the machine's zone and
+  `…T16:30:00+02:00` was two hours late. It also takes a bare day (text
+  or a `Date`: its midnight UTC).
 
 - **A typed, a wrapped, and a boxed list of the same values are equal on
   the bytecode tier.** `==` answered false across list layouts (the

@@ -8248,16 +8248,17 @@ for row in take(map_get(p, "rows"), 5) { println(map_get(row, "function") + " " 
 
         self.add_function(FunctionDoc {
             name: "dates.timestamp".to_string(),
-            description: "Convert a datetime string to Unix timestamp".to_string(),
-            syntax: "dates.timestamp(datetime_string)".to_string(),
-            parameters: vec!["datetime_string: String - Datetime in ISO format".to_string()],
-            return_type: "Int".to_string(),
+            description: "Convert a stamp to Unix seconds: an offset is honoured, a stamp without one is UTC, and a bare day (a string or a Date) is its midnight UTC".to_string(),
+            syntax: "dates.timestamp(stamp)".to_string(),
+            parameters: vec!["stamp: String | Date - An ISO-8601 / RFC 3339 stamp, or a day".to_string()],
+            return_type: "Result<Int>".to_string(),
             examples: vec![
-                "dates.timestamp(\"2024-06-15T14:30:00\")  // 1718461800".to_string(),
-                "let ts = dates.timestamp(\"2024-01-01T00:00:00\")".to_string(),
+                "dates.timestamp(\"2024-06-15T14:30:00\")  // Ok(1718461800)".to_string(),
+                "dates.timestamp(\"2024-06-15T16:30:00+02:00\")  // Ok(1718461800)".to_string(),
+                "unwrap(dates.timestamp(dates.now()))  // seconds since the epoch, now".to_string(),
             ],
             category: "Dates".to_string(),
-            see_also: vec!["dates.from_timestamp".to_string()],
+            see_also: vec!["dates.from_timestamp".to_string(), "dates.epoch_day".to_string()],
         });
 
         self.add_function(FunctionDoc {
@@ -8272,6 +8273,67 @@ for row in take(map_get(p, "rows"), 5) { println(map_get(row, "function") + " " 
             ],
             category: "Dates".to_string(),
             see_also: vec!["dates.timestamp".to_string()],
+        });
+
+        // Day numbers and the calendar's edges
+        self.add_function(FunctionDoc {
+            name: "dates.epoch_day".to_string(),
+            description: "The day number of a date: days since 1970-01-01 (negative before it). A stamp's day is the one it is written in. For drawing a calendar or a timeline, where a day is a coordinate".to_string(),
+            syntax: "dates.epoch_day(date)".to_string(),
+            parameters: vec!["date: Date | String - A date, a date string, or a stamp".to_string()],
+            return_type: "Result<Int>".to_string(),
+            examples: vec![
+                "dates.epoch_day(\"1970-01-02\")  // Ok(1)".to_string(),
+                "unwrap(dates.epoch_day(\"2026-10-09\")) - unwrap(dates.epoch_day(\"2026-10-04\"))  // 5".to_string(),
+            ],
+            category: "Dates".to_string(),
+            see_also: vec!["dates.from_epoch_day".to_string(), "dates.diff_days".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "dates.from_epoch_day".to_string(),
+            description: "The Date of a day number (days since 1970-01-01)".to_string(),
+            syntax: "dates.from_epoch_day(n)".to_string(),
+            parameters: vec!["n: Int - Days since 1970-01-01".to_string()],
+            return_type: "Result<Date>".to_string(),
+            examples: vec![
+                "dates.from_epoch_day(0)  // Ok(1970-01-01)".to_string(),
+                "to_string(unwrap(dates.from_epoch_day(-1)))  // \"1969-12-31\"".to_string(),
+            ],
+            category: "Dates".to_string(),
+            see_also: vec!["dates.epoch_day".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "dates.start_of_week".to_string(),
+            description: "The Monday on or before a date (ISO 8601 weeks start on Monday). A Date in, a Date out; a string in, a string out".to_string(),
+            syntax: "dates.start_of_week(date)".to_string(),
+            parameters: vec!["date: Date | String - A date or a stamp".to_string()],
+            return_type: "Result<Date | String>".to_string(),
+            examples: vec![
+                "dates.start_of_week(\"2026-10-08\")  // Ok(\"2026-10-05\")".to_string(),
+                "dates.start_of_week(\"2026-10-05\")  // Ok(\"2026-10-05\")".to_string(),
+            ],
+            category: "Dates".to_string(),
+            see_also: vec!["dates.start_of_month".to_string(), "dates.weekday".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "dates.start_of_month".to_string(),
+            description:
+                "The first day of a date's month. A Date in, a Date out; a string in, a string out"
+                    .to_string(),
+            syntax: "dates.start_of_month(date)".to_string(),
+            parameters: vec!["date: Date | String - A date or a stamp".to_string()],
+            return_type: "Result<Date | String>".to_string(),
+            examples: vec![
+                "dates.start_of_month(\"2024-02-29\")  // Ok(\"2024-02-01\")".to_string(),
+            ],
+            category: "Dates".to_string(),
+            see_also: vec![
+                "dates.start_of_week".to_string(),
+                "dates.days_in_month".to_string(),
+            ],
         });
     }
 

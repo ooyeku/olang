@@ -271,6 +271,24 @@ pub fn create_dates_module() -> Value {
         create_builtin_function("from_timestamp", 1),
     );
 
+    // Day numbers and the calendar's edges
+    module.insert(
+        "epoch_day".to_string(),
+        create_builtin_function("epoch_day", 1),
+    );
+    module.insert(
+        "from_epoch_day".to_string(),
+        create_builtin_function("from_epoch_day", 1),
+    );
+    module.insert(
+        "start_of_week".to_string(),
+        create_builtin_function("start_of_week", 1),
+    );
+    module.insert(
+        "start_of_month".to_string(),
+        create_builtin_function("start_of_month", 1),
+    );
+
     Value::Struct {
         type_name: "Module".to_string(),
         fields: std::sync::Arc::new(module),
@@ -358,6 +376,10 @@ fn dispatch_dates(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
         "days_in_month" => dates_days_in_month(args),
         "timestamp" => dates_timestamp(args),
         "from_timestamp" => dates_from_timestamp(args),
+        "epoch_day" => dates_epoch_day(args),
+        "from_epoch_day" => dates_from_epoch_day(args),
+        "start_of_week" => dates_start_of_week(args),
+        "start_of_month" => dates_start_of_month(args),
         _ => Err(format!("Unknown dates function: {}", name).into()),
     }
 }
@@ -1102,7 +1124,9 @@ fn dates_days_in_month(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Er
     Ok(Value::Integer(days))
 }
 
-/// Convert datetime to Unix timestamp
+/// Convert a stamp to Unix seconds. An offset is honoured
+/// (`…T14:30:00+02:00` is 12:30 UTC), a stamp without one is read as UTC,
+/// and a bare day (a string or a `Date`) is its midnight UTC.
 /// Usage: dates.timestamp("2024-06-15T14:30:00") -> 1718461800
 fn dates_timestamp(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
@@ -1114,9 +1138,25 @@ fn dates_timestamp(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
 
     let datetime_str = match &args[0] {
         Value::String(s) => s.as_ref(),
-        _ => return Err(misuse("timestamp: argument must be a string")),
+        v @ Value::Native(_) => {
+            let (d, _) = date_arg(v, "timestamp: argument")?;
+            return Ok(Value::Integer(
+                d.and_time(NaiveTime::MIN).and_utc().timestamp(),
+            ));
+        }
+        _ => return Err(misuse("timestamp: argument must be a string or a Date")),
     };
 
+    // an offset said is an offset kept: until 0.87 it was dropped, so
+    // `timestamp(dates.now())` was off by the machine's zone
+    if let Ok(dt) = DateTime::parse_from_rfc3339(datetime_str) {
+        return Ok(Value::Integer(dt.timestamp()));
+    }
+    if let Ok(d) = NaiveDate::parse_from_str(datetime_str, "%Y-%m-%d") {
+        return Ok(Value::Integer(
+            d.and_time(NaiveTime::MIN).and_utc().timestamp(),
+        ));
+    }
     let datetime = parse_datetime_flexible(datetime_str)?;
 
     let timestamp = datetime.and_utc().timestamp();
@@ -1141,5 +1181,82 @@ fn dates_from_timestamp(args: Vec<Value>) -> Result<Value, Box<dyn std::error::E
     match DateTime::from_timestamp(timestamp, 0) {
         Some(datetime) => Ok(Value::String(datetime.naive_utc().to_string().into())),
         None => Err(format!("Invalid timestamp: {}", timestamp).into()),
+    }
+}
+
+/// The Unix epoch's day, 1970-01-01: day 0 of `epoch_day`.
+fn epoch() -> NaiveDate {
+    NaiveDate::from_ymd_opt(1970, 1, 1).expect("1970-01-01 is a date")
+}
+
+/// The day number of a date: days since 1970-01-01 (negative before it).
+/// Takes a `Date`, a date string, or a stamp — a stamp's day is the one
+/// it is written in (`2026-10-04T23:30:00-05:00` is day 2026-10-04).
+/// Usage: dates.epoch_day("1970-01-02") -> 1
+fn dates_epoch_day(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 1 {
+        return Err(misuse(format!(
+            "epoch_day expects 1 argument, got {}",
+            args.len()
+        )));
+    }
+    let (date, _) = date_arg(&args[0], "epoch_day: argument")?;
+    Ok(Value::Integer(
+        date.signed_duration_since(epoch()).num_days(),
+    ))
+}
+
+/// The `Date` of a day number (days since 1970-01-01).
+/// Usage: dates.from_epoch_day(20365) -> Date 2025-10-04
+fn dates_from_epoch_day(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 1 {
+        return Err(misuse(format!(
+            "from_epoch_day expects 1 argument, got {}",
+            args.len()
+        )));
+    }
+    let n = match &args[0] {
+        Value::Integer(n) => *n,
+        other => {
+            return Err(misuse(format!(
+                "from_epoch_day: argument must be an integer, got {}",
+                other.type_name()
+            )));
+        }
+    };
+    shift_days(epoch(), n).map_err(|e| e.into())
+}
+
+/// The Monday on or before a date (weeks start on Monday, as ISO 8601
+/// says). Answers in kind: a `Date` for a `Date`, a string for a string.
+/// Usage: dates.start_of_week("2026-10-08") -> "2026-10-05"
+fn dates_start_of_week(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 1 {
+        return Err(misuse(format!(
+            "start_of_week expects 1 argument, got {}",
+            args.len()
+        )));
+    }
+    let (date, native) = date_arg(&args[0], "start_of_week: argument")?;
+    let back = date.weekday().num_days_from_monday() as u64;
+    match date.checked_sub_days(chrono::Days::new(back)) {
+        Some(monday) => Ok(date_out(monday, native)),
+        None => Err("Date arithmetic overflow".into()),
+    }
+}
+
+/// The first day of a date's month. Answers in kind.
+/// Usage: dates.start_of_month("2026-10-08") -> "2026-10-01"
+fn dates_start_of_month(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 1 {
+        return Err(misuse(format!(
+            "start_of_month expects 1 argument, got {}",
+            args.len()
+        )));
+    }
+    let (date, native) = date_arg(&args[0], "start_of_month: argument")?;
+    match date.with_day(1) {
+        Some(first) => Ok(date_out(first, native)),
+        None => Err("Date arithmetic error".into()),
     }
 }

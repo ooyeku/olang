@@ -147,6 +147,113 @@ fn date_functions_answer_in_kind() {
 }
 
 #[test]
+fn day_numbers_and_the_calendars_edges() {
+    // a day number is days since 1970-01-01, both ways, either side of it
+    assert_eq!(
+        run("show(unwrap(dates.epoch_day(\"1970-01-02\")))").unwrap(),
+        "1"
+    );
+    assert_eq!(
+        run("show(unwrap(dates.epoch_day(\"1969-12-31\")))").unwrap(),
+        "-1"
+    );
+    assert_eq!(
+        run("show(unwrap(dates.from_epoch_day(-1)))").unwrap(),
+        "1969-12-31"
+    );
+    assert_eq!(
+        run("typeof(unwrap(dates.from_epoch_day(0)))").unwrap(),
+        "Date"
+    );
+    assert_eq!(
+        run(
+            "let n = unwrap(dates.epoch_day(\"2024-02-29\"))\nshow(unwrap(dates.from_epoch_day(n)))"
+        )
+        .unwrap(),
+        "2024-02-29"
+    );
+    // a stamp's day is the day it is written in, whatever its offset
+    assert_eq!(
+        run("show(unwrap(dates.epoch_day(\"2026-10-04T23:30:00-05:00\")) == unwrap(dates.epoch_day(\"2026-10-04\")))").unwrap(),
+        "true"
+    );
+    assert_eq!(
+        run("show(unwrap(dates.epoch_day(unwrap(dates.date(1970, 1, 11)))))").unwrap(),
+        "10"
+    );
+    // weeks start on Monday; answers in kind
+    assert_eq!(
+        run("show(unwrap(dates.start_of_week(\"2026-10-08\")))").unwrap(),
+        "2026-10-05"
+    );
+    assert_eq!(
+        run("show(unwrap(dates.start_of_week(\"2026-10-05\")))").unwrap(),
+        "2026-10-05"
+    );
+    assert_eq!(
+        run("show(unwrap(dates.start_of_week(\"2026-10-11\")))").unwrap(),
+        "2026-10-05"
+    );
+    assert_eq!(
+        run("typeof(unwrap(dates.start_of_week(unwrap(dates.date(2026, 10, 8)))))").unwrap(),
+        "Date"
+    );
+    assert_eq!(
+        run("show(unwrap(dates.start_of_month(\"2024-02-29\")))").unwrap(),
+        "2024-02-01"
+    );
+    // data failures are values; misuse raises
+    assert_eq!(
+        run("show(is_err(dates.epoch_day(\"soon\")))").unwrap(),
+        "true"
+    );
+    assert_eq!(
+        run("show(is_err(dates.from_epoch_day(9223372036854775807)))").unwrap(),
+        "true"
+    );
+    let e = err("dates.from_epoch_day(\"3\")");
+    assert!(
+        e.contains("dates.from_epoch_day") && e.contains("must be an integer"),
+        "{e}"
+    );
+}
+
+#[test]
+fn timestamp_keeps_the_offset_and_takes_a_day() {
+    assert_eq!(
+        run("show(unwrap(dates.timestamp(\"1970-01-02T00:00:00+00:00\")))").unwrap(),
+        "86400"
+    );
+    assert_eq!(
+        run("show(unwrap(dates.timestamp(\"2026-10-04T20:18:08.507558+00:00\")) == unwrap(dates.timestamp(\"2026-10-04T15:18:08.507505-05:00\")))").unwrap(),
+        "true"
+    );
+    assert_eq!(
+        run("show(unwrap(dates.timestamp(\"2024-06-15T14:30:00Z\")))").unwrap(),
+        "1718461800"
+    );
+    // without an offset, UTC (as before)
+    assert_eq!(
+        run("show(unwrap(dates.timestamp(\"2024-06-15T14:30:00\")))").unwrap(),
+        "1718461800"
+    );
+    // a bare day, as text or a Date, is its midnight UTC
+    assert_eq!(
+        run("show(unwrap(dates.timestamp(\"1970-01-03\")))").unwrap(),
+        "172800"
+    );
+    assert_eq!(
+        run("show(unwrap(dates.timestamp(unwrap(dates.date(1970, 1, 3)))))").unwrap(),
+        "172800"
+    );
+    // now, in any zone, is now
+    assert_eq!(
+        run("show(math.abs(unwrap(dates.timestamp(dates.now())) - unwrap(dates.timestamp(dates.utc_now()))) < 5)").unwrap(),
+        "true"
+    );
+}
+
+#[test]
 fn date_string_parsing_is_uniformly_flexible() {
     // Before 0.68 `add_days` refused what `year` accepted: the strict
     // %Y-%m-%d path versus the flexible one. dates.now() output must be
