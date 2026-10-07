@@ -637,6 +637,8 @@ fn input_of(v: &Value) -> Res<Input> {
             let t = get_str(v, "text", what)?.ok_or("gui.input: \"text\" needs a \"text\"")?;
             Input::ImeCommit(t.to_string())
         }
+        // The modifier keys held (a press with ⌘ held, as a test sends it).
+        "modifiers" => Input::Modifiers(mods_of(v)?),
         "pointer" => {
             let action = match get_str(v, "action", what)?.unwrap_or("move") {
                 "down" => PointerAction::Down,

@@ -1411,6 +1411,68 @@ fn a_styled_field_edits_a_paragraph_at_a_time_and_says_what_changed() {
     );
 }
 
+/// A code editor's field: 50,000 lines open without laying each out (only
+/// those shown, and the caret's), the gutter numbers the lines and marks
+/// them in the padding, decorations draw without restyling, the program
+/// scrolls to a line, the wheel says the first line in view by bands, a
+/// press with the command key says so, and one edit's delta is said from
+/// the edit.
+#[test]
+fn a_code_field_numbers_marks_decorates_and_scrolls_large_text() {
+    let _turn = events_turn();
+    let v = run(r##"
+        let ev = gui.events()
+        let mut lines = []
+        for i in 0..50000 { lines = lines + ["let x" + to_string(i) + " = " + to_string(i)] }
+        let text = join(lines, "\n")
+        fn field(gutter, decos, scroll) = #{ "key": "f", "parent": "root", "role": "textarea", "box": (0, 0, 300, 160),
+             "style": #{ "pad": (4, 4, 4, 48), "font": "mono", "size": 13 },
+             "edit": #{ "value": text, "rich": true, "styles": [#{ "bg": "#ffcc00" }, #{ "underline": true, "color": "#ff0000" }], "spans": [],
+                        "undo": false, "report": true, "gutter": gutter, "decorations": decos, "scroll_to": scroll } }
+        let plain = gui.headless(#{ "size": (300, 160) })
+        gui.apply(plain, [#{ "key": "root", "box": (0, 0, 300, 160), "style": #{ "bg": "#ffffff" } }, field((), [], ())])
+        let t0 = time.monotonic()
+        let w = gui.headless(#{ "size": (300, 160) })
+        gui.apply(w, [#{ "key": "root", "box": (0, 0, 300, 160), "style": #{ "bg": "#ffffff" } },
+                      field(#{ "numbers": true, "color": "#888888", "marks": [(0, "●", "#ff0000")] }, [(0, 0, 3, 0), (1, 4, 6, 1)], ()),
+                      #{ "op": "focus", "key": "f" }])
+        let px = gui.read(w, "pixels")
+        let opened_ms = time.monotonic() - t0
+        let same_as_plain = px == gui.read(plain, "pixels")
+        let mut drain = true
+        while drain { match chan.try_recv(ev) { Ok(e) => (), _ => { drain = false } } }
+        // the program scrolls to line 30,000; a key says the first line in view
+        gui.apply(w, [field(#{ "numbers": true }, [], (30000, 1))])
+        let _p = gui.read(w, "pixels")
+        gui.input(w, #{ "kind": "pointer", "action": "move", "x": 150, "y": 80 })
+        gui.input(w, #{ "kind": "wheel", "dy": -400 })
+        let mut viewport = ()
+        let mut more = true
+        while more { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "viewport" => { viewport = map_get(e, "top") } }, _ => { more = false } } }
+        // a press with the command key
+        gui.input(w, #{ "kind": "modifiers", "mod": true })
+        gui.input(w, #{ "kind": "pointer", "action": "down", "x": 120, "y": 40 })
+        gui.input(w, #{ "kind": "pointer", "action": "up", "x": 120, "y": 40 })
+        gui.input(w, #{ "kind": "modifiers" })
+        let mut sel = ()
+        let mut more2 = true
+        while more2 { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "select" => { sel = e } }, _ => { more2 = false } } }
+        // typed there: the delta names the line
+        gui.input(w, #{ "kind": "text", "text": "Z" })
+        let mut changed = ()
+        let mut more3 = true
+        while more3 { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "changed" => { changed = e } }, _ => { more3 = false } } }
+        let d = map_get(changed, "delta")
+        [same_as_plain, opened_ms < 250.0, viewport != () && viewport > 30000, map_get(sel, "click_mod"), map_get(sel, "top") > 30000,
+         map_get(d, "first") == map_get(sel, "top") + 2 || map_get(d, "first") > 30000, map_get(d, "removed"), len(map_get(d, "lines")), map_get(d, "inserted"),
+         str.contains(map_get(d, "lines")[0], "Z")]
+    "##);
+    assert_eq!(
+        text(&v),
+        r#"[false, true, true, true, true, true, 1, 1, "Z", true]"#
+    );
+}
+
 #[test]
 fn a_styled_field_composes_in_place_and_is_read_as_runs() {
     let _turn = events_turn();

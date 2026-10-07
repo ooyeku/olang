@@ -205,7 +205,9 @@ impl Style {
 /// What an editable node is.
 #[derive(Clone, Debug, Default)]
 pub struct EditProps {
-    pub value: String,
+    /// Shared with the program's value (no copy of a large text; a value
+    /// the field reported earlier is known by its identity).
+    pub value: std::sync::Arc<String>,
     pub multiline: bool,
     pub placeholder: String,
     pub secure: bool,
@@ -228,6 +230,16 @@ pub struct EditProps {
     pub undo: bool,
     /// Report moves of the selection (`select` events).
     pub report: bool,
+    /// A code editor's gutter (`rich.rs` `Gutter`): line numbers and a
+    /// mark column, drawn in the field's left padding.
+    pub gutter: Option<Value>,
+    /// Ranges drawn over the text without restyling it: `(line, start,
+    /// end, style)`, characters within the line, `style` one of `styles`
+    /// (its `bg` behind, its `underline` under, in its `color`).
+    pub decorations: Option<Value>,
+    /// `(line, seq)`: scroll so the line is the first in view, when `seq`
+    /// is new.
+    pub scroll_to: Option<(i64, i64)>,
 }
 
 #[derive(Clone, Debug)]
@@ -542,7 +554,11 @@ impl Scene {
         let edit = match get(op, "edit") {
             None => None,
             Some(e) => Some(EditProps {
-                value: get_str(e, "value", what)?.unwrap_or("").to_string(),
+                value: match get(e, "value") {
+                    Some(Value::String(v)) => v.clone(),
+                    None | Some(Value::Unit) => std::sync::Arc::new(String::new()),
+                    Some(_) => return Err(format!("{what}: \"value\" must be a string")),
+                },
                 multiline: get_bool(e, "multiline", what)?.unwrap_or(role == "textarea"),
                 placeholder: get_str(e, "placeholder", what)?.unwrap_or("").to_string(),
                 secure: get_bool(e, "secure", what)?.unwrap_or(false),
@@ -571,6 +587,14 @@ impl Scene {
                 },
                 undo: get_bool(e, "undo", what)?.unwrap_or(true),
                 report: get_bool(e, "report", what)?.unwrap_or(false),
+                gutter: get(e, "gutter").cloned(),
+                decorations: get(e, "decorations").cloned(),
+                scroll_to: match get(e, "scroll_to") {
+                    Some(v) => nums(v)
+                        .filter(|n| n.len() >= 2)
+                        .map(|n| (n[0] as i64, n[1] as i64)),
+                    None => None,
+                },
             }),
         };
         if edit.is_some() {

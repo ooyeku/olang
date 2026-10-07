@@ -1755,7 +1755,7 @@ Native-only; on in the released binaries (the `gui` cargo feature).
 | `gui.apply(w, patch)` | apply a list of operations to the window's tree → `Ok(())`, or `Err` naming the operation and what is wrong with it |
 | `gui.measure(text, style, opts?)` | the size of a text as it would be drawn → `#{ width, height, lines, baseline }`, logical pixels. `style` as a node's; `opts`: `width` (wraps when the style says `wrap`), `scale` |
 | `gui.read(w, what, arg?)` | read the window back: `"focus"`, `"hover"`, `"size"` → `(w, h, scale)`, `"hit"` `(x, y)` → a key, `"node"` key (its role, text, name, children, scroll `offset`, `bounds`, and `visible`: what of it shows once scrolling and clipping ancestors and the window cut it, or `()`), `"value"` key and `"selection"` key of a field, `"keys"` (focus order), `"a11y"` (the accessibility tree as maps), `"pixels"` (a PNG, from the software renderer), `"rgba"`, `"caret"` → `(x, y, w, h)` of the caret as the last frame showed it, clipped, or `()`, `"settings"` (the system's settings as the window last heard them), `"animation"` key (an animated picture: `#{ frames, frame, paused, button }`), `"next_frame"` (when an animation in view next changes, on the window's clock) |
-| `gui.input(w, event)` | send input as the platform would: `#{ kind: "key", key, text?, mods? }` (`"mod": true` is the platform's command key), `"text"`, `"pointer"` (`action` down/up/move/leave, `x`, `y`, `button`, `clicks`), `"wheel"` (`dx`, `dy`, and the modifiers held: `mods` or `mod`, `shift`, `alt`, `ctrl`), `"pinch"` (`delta`, `phase`), `"compose"` and `"commit"` (an input method), `"resize"`, `"window_focus"`, `"files"` (`action` hover/drop/cancel, `paths`, `x`, `y`: files from another program); and what the platform does around a window: `"close"` (sends `close_requested`), `"menu"` with an `id` (sends `menu`), `"clipboard"` with a `text` (the clipboard input through `gui.input` uses, the window's own), `"clock"` with `ms` (a headless window's clock: its animations move only with it), `"appearance"` with `dark`, `contrast`, `reduce_motion`, `reduce_transparency`, `accent` (`"#rrggbb"`) — the window takes them (its pictures stop animating under reduced motion) and sends `appearance`, as a settings change would. What tests drive |
+| `gui.input(w, event)` | send input as the platform would: `#{ kind: "key", key, text?, mods? }` (`"mod": true` is the platform's command key), `"text"`, `"pointer"` (`action` down/up/move/leave, `x`, `y`, `button`, `clicks`), `"wheel"` (`dx`, `dy`, and the modifiers held: `mods` or `mod`, `shift`, `alt`, `ctrl`), `"pinch"` (`delta`, `phase`), `"modifiers"` (the modifier keys now held: `mod`, `shift`, `alt`, `ctrl`; a press with ⌘ held), `"compose"` and `"commit"` (an input method), `"resize"`, `"window_focus"`, `"files"` (`action` hover/drop/cancel, `paths`, `x`, `y`: files from another program); and what the platform does around a window: `"close"` (sends `close_requested`), `"menu"` with an `id` (sends `menu`), `"clipboard"` with a `text` (the clipboard input through `gui.input` uses, the window's own), `"clock"` with `ms` (a headless window's clock: its animations move only with it), `"appearance"` with `dark`, `contrast`, `reduce_motion`, `reduce_transparency`, `accent` (`"#rrggbb"`) — the window takes them (its pictures stop animating under reduced motion) and sends `appearance`, as a settings change would. What tests drive |
 | `gui.wake()` | a `wake` event on the channel, so a task blocked on `gui.events()` can stop without polling |
 | `gui.context()` | the system's settings now: `#{ dark, contrast, reduce_motion, reduce_transparency, accent }` (`accent` the colour chosen in System Settings, `"#rrggbb"`, or `()`). macOS reads them from AppKit — the application's effective appearance (Auto included) and NSWorkspace's accessibility display options — and keeps them live: a window hears `appearance` the moment one changes (AppKit's notices for the display options and the system's colours, and a window's theme changing), with no restart. Elsewhere they are false and `dark` follows a window's theme |
 | `gui.platform()` | what this platform's windows can do, to check rather than find out: `#{ os, native_menu, clipboard_image, file_drop, drop_position, window_position, system_settings, ime, accessibility }`. On macOS all are `true`; on Windows `native_menu`, `clipboard_image`, `drop_position`, and `system_settings` are `false`; on Linux (Wayland) `file_drop` and `window_position` are `false` too (winit has no Wayland drag and drop, and a Wayland window is never told where it is). `ime` and `accessibility` are `true` everywhere |
@@ -1870,6 +1870,28 @@ it is the field's own earlier value at an earlier `rev`, which is the
 program catching up, not a reset. Send back the `rev` of the last
 `changed` you applied.
 
+**A styled field** (`rich: true`, a `textarea`) is laid out a paragraph
+(a hard line) at a time: `spans` a list a line of `(start, end, style)`,
+`styles` the looks (`weight`, `italic`, `font`, `size`, `color`,
+`underline`, `strike`, `bg`, `line_bg`), `select` `(anchor, focus, seq)`
+the program's selection, `undo: false` (⌘Z is the program's), `report`
+(it says `select` as the selection moves). Only the paragraphs shown,
+and the caret's, are laid out (the rest are estimated until they show),
+so a 50,000-line text opens and edits at the cost of a page. For a code
+editor it also takes `gutter` `#{ numbers, color, current, line_bg,
+marks }` — line numbers (the caret's in `current`) and marks `(line,
+glyph, colour)` drawn in the field's left padding, the caret's line
+behind in `line_bg` — `decorations` `[(line, start, end, style)]`
+(characters within a line: a style's `bg` behind, its `underline` under,
+without restyling the text: a matching bracket, the find's matches, a
+problem), and `scroll_to` `(line, seq)` (that line first in view, when
+`seq` is new). Its `changed` adds `delta` `#{ first, removed, lines, at,
+old_len, inserted }` (what changed by line and by character), `caret`
+and `top` (the first line in view); `select` adds `caret`, `top`, and
+`click_mod` (the press was made holding the command key: ⌘-click). The
+value it reports is shared with the program, not copied, and a value
+handed back is known as the field's own earlier one by its identity.
+
 **Events** are maps with a `kind` and the `window` they came from:
 
 | `kind` | Fields |
@@ -1886,6 +1908,8 @@ program catching up, not a reset. Send back the `rev` of the last
 | `"wheel"` | `key` (a node with `wheel: true` under the pointer), `dx`, `dy` (logical pixels; positive moves the view up and left), `x`, `y`, `mod`, `shift`, `alt`, `ctrl` — the wheel or a trackpad's two fingers |
 | `"pinch"` | `key` (as `wheel`), `delta` (the change of magnification; positive zooms in), `phase` (`"start"`, `"move"`, `"end"`, `"cancel"`), `x`, `y` — a trackpad's pinch (macOS) |
 | `"scrolled"` | `key`, `x`, `y` |
+| `"viewport"` | `key`, `top` — a styled field's first line in view moved into another band of 16 lines (the wheel) |
+| `"select"` | `key`, `selection`, `rev`, `caret`, `top`, `click_mod` — a styled field's selection moved (`report`) |
 | `"a11y"` | `key`, `action` (`"set_value"`, `"increment"`, `"decrement"`), `value` |
 | `"outside"` | `key` (the modal layer), `x`, `y` — a press outside the topmost modal layer |
 | `"window_focus"` | `on` |

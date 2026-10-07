@@ -135,6 +135,10 @@ impl Clipboard for NoClipboard {
     fn set(&mut self, _: String) {}
 }
 
+/// A styled field says its first line in view when it moves into another
+/// band of this many lines.
+const VIEWPORT_BAND: usize = 16;
+
 pub struct WinState {
     pub id: u64,
     pub headless: bool,
@@ -195,6 +199,9 @@ pub struct WinState {
     /// The press that played or paused an animation: its release is not
     /// the program's.
     swallow_up: bool,
+    /// The press being said was made with the command key (a styled
+    /// field's `select` says `click_mod`).
+    click_mod: bool,
 }
 
 /// An animated picture's playing: since when, and where it stopped.
@@ -304,6 +311,7 @@ impl WinState {
             shown_anims: Vec::new(),
             next_frame: None,
             swallow_up: false,
+            click_mod: false,
         }
     }
 
@@ -426,12 +434,22 @@ impl WinState {
                     let mut reselected = false;
                     if let Some(r) = ed.rich_mut() {
                         r.own_undo = props.undo;
-                        if adopted || r.value() == props.value {
+                        let current = adopted || r.value_is(&props.value);
+                        if current {
                             r.set_spans(props.styles.as_ref(), props.spans.as_ref());
+                        }
+                        r.gutter = props.gutter.as_ref().and_then(super::rich::Gutter::parse);
+                        r.decorations = super::rich::parse_decorations(props.decorations.as_ref());
+                        if let Some((line, seq)) = props.scroll_to
+                            && seq != r.scroll_seq
+                            && current
+                        {
+                            r.scroll_seq = seq;
+                            r.scroll_to_line(line.max(0) as usize, &mut ts);
                         }
                         if let Some((a, f, seq)) = props.select
                             && seq != r.select_seq
-                            && (adopted || r.value() == props.value)
+                            && current
                         {
                             r.select_seq = seq;
                             r.select_chars(a.max(0) as usize, f.max(0) as usize);
@@ -469,10 +487,16 @@ impl WinState {
                         r.secure = props.secure;
                         r.own_undo = props.undo;
                         r.set_spans(props.styles.as_ref(), props.spans.as_ref());
+                        r.gutter = props.gutter.as_ref().and_then(super::rich::Gutter::parse);
+                        r.decorations = super::rich::parse_decorations(props.decorations.as_ref());
                         if let Some((a, f, seq)) = props.select {
                             r.select_seq = seq;
                             r.select_chars(a.max(0) as usize, f.max(0) as usize);
                             r.said_selection = r.selection_chars();
+                        }
+                        if let Some((line, seq)) = props.scroll_to {
+                            r.scroll_seq = seq;
+                            r.scroll_to_line(line.max(0) as usize, &mut ts);
                         }
                         Field::Rich(Box::new(r))
                     } else {
@@ -532,17 +556,18 @@ impl WinState {
     /// changed by line and by character, and where the caret is.
     fn rich_changed_event(&mut self, key: &str) -> Option<Value> {
         let caret = self.caret_rect(key);
+        let top = self.rich_top(key);
         let r = self.editors.get_mut(key)?.rich_mut()?;
         let d = r.take_delta();
         let (a, f) = r.selection_chars();
         r.said_selection = (a, f);
-        let (v, rev) = (r.value(), r.rev);
+        let (v, rev) = (r.value_arc(), r.rev);
         let lines = Value::List(Arc::new(d.lines.iter().map(|l| s(l)).collect()));
         Some(self.ev(
             "changed",
             vec![
                 ("key", s(key)),
-                ("value", s(&v)),
+                ("value", Value::String(v)),
                 ("rev", Value::Integer(rev)),
                 ("selection", pair(a, f)),
                 (
@@ -557,8 +582,18 @@ impl WinState {
                     ]),
                 ),
                 ("caret", rect_value(caret)),
+                ("top", top.map(|t| Value::Integer(t as i64)).unwrap_or(Value::Unit)),
             ],
         ))
+    }
+
+    /// A styled field's first line in view.
+    fn rich_top(&mut self, key: &str) -> Option<usize> {
+        let mut ts = text::system().lock().ok()?;
+        let r = self.editors.get_mut(key)?.rich_mut()?;
+        let t = r.top_line(&mut ts);
+        r.said_top = Some(t);
+        Some(t)
     }
 
     /// A styled field whose selection moved without an edit, said when
@@ -582,9 +617,11 @@ impl WinState {
         }
         let rev = r.rev;
         let caret = self.caret_rect(key);
+        let top = self.rich_top(key);
         if let Some(r) = self.editors.get_mut(key).and_then(|e| e.rich_mut()) {
             r.said_selection = sel;
         }
+        let click_mod = std::mem::take(&mut self.click_mod);
         out.push(self.ev(
             "select",
             vec![
@@ -592,6 +629,8 @@ impl WinState {
                 ("selection", pair(sel.0, sel.1)),
                 ("rev", Value::Integer(rev)),
                 ("caret", rect_value(caret)),
+                ("top", top.map(|t| Value::Integer(t as i64)).unwrap_or(Value::Unit)),
+                ("click_mod", Value::Boolean(click_mod)),
             ],
         ));
     }
@@ -1253,7 +1292,14 @@ impl WinState {
                     {
                         let dy = self.edit_text_dy(f, h, &mut ts);
                         let shift = self.mods.shift;
+                        let cmd = self.mods.command();
                         let ed = self.editors.get_mut(f).expect("present");
+                        // a press with the command key is said even where
+                        // the caret already was (⌘-click: go to definition)
+                        if cmd && let Some(r) = ed.rich_mut() {
+                            r.said_selection = (usize::MAX, usize::MAX);
+                        }
+                        self.click_mod = cmd;
                         let (sx, sy) = ed.scrolled();
                         ed.press(
                             x * self.scale - ox + sx,
@@ -1342,6 +1388,14 @@ impl WinState {
             && let Some(r) = self.editors.get_mut(&k).and_then(|e| e.rich_mut())
             && r.wheel(dy, &mut ts)
         {
+            // the first line in view, said when it moves a band of lines
+            // (a program asks for what the band shows; not every wheel)
+            let top = r.top_line(&mut ts);
+            if r.said_top.map(|t| t / VIEWPORT_BAND) != Some(top / VIEWPORT_BAND) {
+                r.said_top = Some(top);
+                drop(ts);
+                out.push(self.ev("viewport", vec![("key", s(&k)), ("top", Value::Integer(top as i64))]));
+            }
             self.dirty = true;
             return;
         }
@@ -1983,6 +2037,7 @@ impl WinState {
         r.follow_caret(content[3], ts);
         let ox = content[0];
         let oy = content[1] - r.scroll_y;
+        let outer_clip = clip;
         let clip = clip.intersect(Clip::rect(
             content[0] - 1.0,
             content[1],
@@ -1990,6 +2045,52 @@ impl WinState {
             content[1] + content[3],
         ));
         let shown = r.visible(r.scroll_y, r.scroll_y + content[3], ts);
+        // a code editor's caret line, edge to edge
+        if let Some(c) = r.gutter.as_ref().and_then(|g| g.line_bg)
+            && focused
+        {
+            let fi = r.focus_para();
+            if shown.contains(&fi) {
+                let (py, _, ph) = r.para(fi);
+                dl.prims.push(solid(
+                    content[0] - st.pad[3] * s,
+                    oy + py,
+                    content[2] + (st.pad[3] + st.pad[1]) * s,
+                    ph,
+                    fade(c),
+                    outer_clip,
+                ));
+            }
+        }
+        // decorations behind the text: a matching bracket, a highlight
+        let decos: Vec<(usize, usize, usize, u32)> = r
+            .decorations
+            .iter()
+            .copied()
+            .filter(|d| shown.contains(&d.0))
+            .collect();
+        for &(i, a, b, sty) in &decos {
+            let Some(look) = r.style_of(sty).cloned() else {
+                continue;
+            };
+            let (py, _, _) = r.para(i);
+            let (ba, bb) = r.para_char_bytes(i, a, b);
+            if let Some(c) = look.bg {
+                for bx in r.range_boxes(i, ba, bb) {
+                    dl.prims.push(Prim::Rect {
+                        x: ox + bx.x0 as f32 - s,
+                        y: oy + py + bx.y0 as f32,
+                        w: (bx.x1 - bx.x0) as f32 + 2.0 * s,
+                        h: (bx.y1 - bx.y0) as f32,
+                        fill: fade(c),
+                        border: [0, 0, 0, 0],
+                        border_width: 0.0,
+                        radii: [2.0 * s; 4],
+                        clip,
+                    });
+                }
+            }
+        }
         // backgrounds: a code block's lines edge to edge, a code span's
         // glyphs
         for i in shown.clone() {
@@ -2057,7 +2158,7 @@ impl WinState {
                 }
             }
         }
-        if r.value().is_empty() && !placeholder.is_empty() {
+        if r.value_is("") && !placeholder.is_empty() {
             let shaped = ts.shape(
                 &placeholder,
                 &st.font,
@@ -2113,6 +2214,60 @@ impl WinState {
                         clip,
                     ));
                 }
+            }
+        }
+        // decorations under the text: a problem's underline
+        for &(i, a, b, sty) in &decos {
+            let Some(look) = r.style_of(sty).cloned() else {
+                continue;
+            };
+            if !look.underline {
+                continue;
+            }
+            let (py, _, _) = r.para(i);
+            let (ba, bb) = r.para_char_bytes(i, a, b);
+            let c = fade(look.color.unwrap_or(st.color));
+            for bx in r.range_boxes(i, ba, bb.max(ba + 1)) {
+                let w = ((bx.x1 - bx.x0) as f32).max(4.0 * s);
+                dl.prims.push(solid(
+                    ox + bx.x0 as f32,
+                    (oy + py + bx.y1 as f32 - 1.5 * s).round(),
+                    w,
+                    (1.5 * s).max(1.0),
+                    c,
+                    clip,
+                ));
+            }
+        }
+        // a code editor's gutter, in the left padding: the line numbers
+        // (the caret's brighter) and the marks
+        if let Some(g) = r.gutter.clone() {
+            let gx0 = content[0] - st.pad[3] * s;
+            let gclip = outer_clip.intersect(Clip::rect(gx0, content[1], content[0], content[1] + content[3]));
+            let fi = r.focus_para();
+            let mut font = st.font.clone();
+            font.spans = None;
+            let base = g.color.unwrap_or(st.placeholder);
+            if g.numbers {
+                for i in shown.clone() {
+                    let (py, _, _) = r.para(i);
+                    let color = if i == fi { g.current.unwrap_or(st.color) } else { base };
+                    let label = (i + 1).to_string();
+                    let shaped = ts.shape(&label, &font, fade(color), None, Align::Start, s);
+                    let x = content[0] - 14.0 * s - shaped.width;
+                    push_glyphs(&shaped, x, oy + py, gclip, dl);
+                }
+            }
+            for (line, glyph, color) in &g.marks {
+                if !shown.contains(line) {
+                    continue;
+                }
+                let (py, _, _) = r.para(*line);
+                let mut mf = font.clone();
+                mf.size = font.size * 0.8;
+                let shaped = ts.shape(glyph, &mf, fade(color.unwrap_or(base)), None, Align::Start, s);
+                let lh = font.size * s * 1.2;
+                push_glyphs(&shaped, gx0 + 6.0 * s, oy + py + (lh - shaped.height).max(0.0) / 2.0, gclip, dl);
             }
         }
         // a scroll mark when the text is longer than its box

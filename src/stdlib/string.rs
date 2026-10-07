@@ -472,6 +472,10 @@ fn str_count(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let sub = arg_str(&args, 1, "count")?;
     let n = if sub.is_empty() {
         0
+    } else if sub.len() == 1 {
+        // one byte (a line break): counted a byte at a time, vectorised
+        let c = sub.as_bytes()[0];
+        s.bytes().filter(|b| *b == c).count()
     } else {
         s.matches(sub).count()
     };
@@ -524,12 +528,30 @@ fn str_replace(args: Vec<Value>, first_only: bool) -> Result<Value, Box<dyn std:
 /// never fails — a total operation.
 fn str_substring(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let s = arg_str(&args, 0, "substring")?;
-    let chars: Vec<char> = s.chars().collect();
-    let len = chars.len() as i64;
-    let start = arg_int(&args, 1, "substring")?.clamp(0, len) as usize;
-    let end = arg_int(&args, 2, "substring")?.clamp(0, len) as usize;
-    let slice: String = if start < end {
-        chars[start..end].iter().collect()
+    let a = arg_int(&args, 1, "substring")?.max(0) as usize;
+    let b = arg_int(&args, 2, "substring")?.max(0) as usize;
+    // Characters to bytes by walking only as far as `end` (an ASCII
+    // prefix is a byte a character): a slice of a large text costs the
+    // slice, not a copy of the text as characters.
+    let end_probe = b.min(s.len());
+    let (start, end) = if s.as_bytes()[..end_probe].is_ascii() {
+        (a.min(end_probe), end_probe)
+    } else {
+        let mut start = None;
+        let mut end = s.len();
+        for (n, (byte, _)) in s.char_indices().enumerate() {
+            if n == a {
+                start = Some(byte);
+            }
+            if n == b {
+                end = byte;
+                break;
+            }
+        }
+        (start.unwrap_or(s.len()), end)
+    };
+    let slice = if start < end {
+        s[start..end].to_string()
     } else {
         String::new()
     };

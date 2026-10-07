@@ -114,8 +114,11 @@ struct Para {
     /// Laid out at a width the paragraph has since lost: re-broken, not
     /// shaped again.
     rebreak: bool,
-    /// Device pixels.
+    /// Device pixels: measured when `measured`, else an estimate.
     h: f32,
+    /// `h` is the laid-out height at the current width (it outlives the
+    /// layout when a far paragraph's layout is let go).
+    measured: bool,
 }
 
 impl Para {
@@ -128,6 +131,7 @@ impl Para {
             layout: None,
             rebreak: false,
             h: 0.0,
+            measured: false,
         }
     }
     fn end(&self) -> usize {
@@ -169,7 +173,10 @@ pub struct RichEditor {
     /// The wrap width, device pixels.
     width: f32,
     pub rev: i64,
-    sent: VecDeque<(i64, String)>,
+    /// The values reported, by revision: known again by their identity
+    /// (the program hands back the very string it was given), never
+    /// copied or compared.
+    sent: VecDeque<(i64, std::sync::Weak<String>)>,
     pub multiline: bool,
     pub secure: bool,
     /// The field's own undo (`undo: false` hands ⌘Z to the program).
@@ -184,15 +191,115 @@ pub struct RichEditor {
     pub view_h: f32,
     pub dragging: bool,
     /// The value last reported to the program (for the next delta).
-    reported: String,
+    reported: Arc<String>,
+    /// The value as one shared string, made once an edit (`edits`).
+    value_cache: Option<(u64, Arc<String>)>,
+    /// The one edit since the last report, said without comparing the
+    /// texts: (first paragraph, paragraphs removed, paragraphs now, byte
+    /// at, the text replaced, the text put in).
+    last_edit: Option<(usize, usize, usize, usize, String, String)>,
+    edits_since_report: u32,
     /// The program's `select` sequence last applied.
     pub select_seq: i64,
     /// The selection last reported (chars), for `select` events.
     pub said_selection: (usize, usize),
     pub pending_delta: Option<Delta>,
+    /// Edits made (the buffer replaced): `mutate` compares counts, not
+    /// copies of the buffer.
+    edits: u64,
+    /// Average advance of a character, device pixels, from paragraphs laid
+    /// out on one line (for the estimate of one that is not laid out).
+    char_w: (f32, f32),
+    /// Paragraphs holding a layout now.
+    built: usize,
+    /// A code editor's gutter: line numbers and a mark column, drawn in
+    /// the field's left padding.
+    pub gutter: Option<Gutter>,
+    /// Ranges drawn over the text without restyling it (a matching
+    /// bracket, the find's matches, a problem's underline): `(line,
+    /// start, end, style)`, characters within the line.
+    pub decorations: Vec<(usize, usize, usize, u32)>,
+    /// The program's `scroll_to` sequence last applied.
+    pub scroll_seq: i64,
+    /// The first line in view last said (`viewport`), by its bucket.
+    pub said_top: Option<usize>,
 }
 
+/// A gutter: whether to number the lines, their colour and the caret
+/// line's, a background for the caret's line, and the marks — `(line,
+/// glyph, colour)` — in a column at the gutter's left edge.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Gutter {
+    pub numbers: bool,
+    pub color: Option<Color>,
+    pub current: Option<Color>,
+    pub line_bg: Option<Color>,
+    pub marks: Vec<(usize, String, Option<Color>)>,
+}
+
+impl Gutter {
+    pub fn parse(v: &Value) -> Option<Gutter> {
+        use super::values::{get, parse_color};
+        if !matches!(v, Value::Map(_) | Value::Struct { .. }) {
+            return None;
+        }
+        let marks = match get(v, "marks") {
+            Some(Value::List(l)) => l
+                .iter()
+                .filter_map(|m| {
+                    let Value::Tuple(t) = m else { return None };
+                    let line = match t.first()? {
+                        Value::Integer(i) if *i >= 0 => *i as usize,
+                        _ => return None,
+                    };
+                    let glyph = match t.get(1) {
+                        Some(Value::String(g)) => g.to_string(),
+                        _ => "●".to_string(),
+                    };
+                    Some((line, glyph, t.get(2).and_then(parse_color)))
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        Some(Gutter {
+            numbers: !matches!(get(v, "numbers"), Some(Value::Boolean(false))),
+            color: get(v, "color").and_then(parse_color),
+            current: get(v, "current").and_then(parse_color),
+            line_bg: get(v, "line_bg").and_then(parse_color),
+            marks,
+        })
+    }
+}
+
+/// The decorations of a patch: `(line, start, end, style)` tuples.
+pub fn parse_decorations(v: Option<&Value>) -> Vec<(usize, usize, usize, u32)> {
+    let Some(Value::List(l)) = v else {
+        return Vec::new();
+    };
+    let n = |v: Option<&Value>| match v {
+        Some(Value::Integer(i)) => Some((*i).max(0) as usize),
+        Some(Value::Float(f)) => Some(f.max(0.0) as usize),
+        _ => None,
+    };
+    l.iter()
+        .filter_map(|d| {
+            let Value::Tuple(t) = d else { return None };
+            Some((n(t.first())?, n(t.get(1))?, n(t.get(2))?, n(t.get(3))? as u32))
+        })
+        .collect()
+}
+
+/// A paragraph's layouts kept at most: past it, those far from the view
+/// and the caret are let go (their measured heights stay).
+const KEEP_LAYOUTS: usize = 3000;
+
+
 fn char_at(s: &str, chars: usize) -> usize {
+    // an ASCII prefix: a character is a byte (a code file, mostly)
+    let probe = chars.min(s.len());
+    if s.as_bytes()[..probe].is_ascii() {
+        return probe;
+    }
     s.char_indices()
         .nth(chars)
         .map(|(b, _)| b)
@@ -237,10 +344,20 @@ impl RichEditor {
             follow: false,
             view_h: 0.0,
             dragging: false,
-            reported: value.to_string(),
+            reported: Arc::new(value.to_string()),
+            value_cache: None,
+            last_edit: None,
+            edits_since_report: 0,
             select_seq: 0,
             said_selection: (0, 0),
             pending_delta: None,
+            edits: 0,
+            char_w: (0.0, 0.0),
+            built: 0,
+            gutter: None,
+            decorations: Vec::new(),
+            scroll_seq: 0,
+            said_top: None,
         };
         e.set_buffer(value);
         e
@@ -255,6 +372,7 @@ impl RichEditor {
             at += line.len() + 1;
         }
         self.paras = paras;
+        self.built = 0;
         self.ys_ok = false;
         self.anchor = self.anchor.min(self.buffer.len());
         self.focus = self.focus.min(self.buffer.len());
@@ -284,7 +402,10 @@ impl RichEditor {
     fn invalidate(&mut self) {
         for p in &mut self.paras {
             p.layout = None;
+            p.measured = false;
         }
+        self.built = 0;
+        self.char_w = (0.0, 0.0);
         self.ys_ok = false;
     }
 
@@ -298,6 +419,7 @@ impl RichEditor {
             self.width = w;
             for p in &mut self.paras {
                 p.rebreak = true;
+                p.measured = false;
             }
             self.ys_ok = false;
         }
@@ -362,7 +484,12 @@ impl RichEditor {
             }
             if spans != p.spans {
                 p.spans = spans;
-                p.layout = None;
+                if p.layout.take().is_some() {
+                    self.built -= 1;
+                }
+                // a span's look may change the paragraph's height (a
+                // heading's size): measured again when next shown
+                p.measured = false;
                 self.ys_ok = false;
             }
         }
@@ -378,6 +505,34 @@ impl RichEditor {
                 v
             }
         }
+    }
+
+    /// Whether the value is `v` (without copying the value).
+    pub fn value_is(&self, v: &str) -> bool {
+        match &self.compose {
+            None => self.buffer == v,
+            Some(r) => {
+                v.len() == self.buffer.len() - (r.end - r.start)
+                    && v.as_bytes()[..r.start] == self.buffer.as_bytes()[..r.start]
+                    && v.as_bytes()[r.start..] == self.buffer.as_bytes()[r.end..]
+            }
+        }
+    }
+
+    /// The value as a shared string: one copy an edit, however often it
+    /// is asked for (the report, the revision kept, the event).
+    pub fn value_arc(&mut self) -> Arc<String> {
+        if self.compose.is_none()
+            && let Some((n, v)) = &self.value_cache
+            && *n == self.edits
+        {
+            return v.clone();
+        }
+        let v = Arc::new(self.value());
+        if self.compose.is_none() {
+            self.value_cache = Some((self.edits, v.clone()));
+        }
+        v
     }
 
     pub fn is_composing(&self) -> bool {
@@ -403,19 +558,22 @@ impl RichEditor {
     /// The program's value from a patch: adopted unless it is the field's
     /// own earlier one. The selection stays where it was in the text
     /// that did not change.
-    pub fn offer(&mut self, value: &str, rev: Option<i64>, ts: &mut TextSystem) -> bool {
+    pub fn offer(&mut self, value: &Arc<String>, rev: Option<i64>, ts: &mut TextSystem) -> bool {
         if self.is_composing() {
             return false;
         }
-        if self.buffer == value {
+        if self.buffer.len() == value.len() && self.buffer.as_str() == value.as_str() {
             return false;
         }
         if let Some(r) = rev
             && r < self.rev
-            && self.sent.iter().any(|(sr, sv)| *sr == r && sv == value)
+            && self.sent.iter().any(|(sr, sv)| {
+                *sr == r && sv.upgrade().is_some_and(|v| Arc::ptr_eq(&v, value))
+            })
         {
             return false;
         }
+        let value: &str = value.as_str();
         // the change as one replacement: what both share at each end
         self.refresh(ts);
         let (p, s) = common_ends(&self.buffer, value);
@@ -443,7 +601,7 @@ impl RichEditor {
     }
 
     fn remember(&mut self) {
-        let v = self.value();
+        let v = Arc::downgrade(&self.value_arc());
         self.sent.push_back((self.rev, v));
         while self.sent.len() > 32 {
             self.sent.pop_front();
@@ -453,17 +611,33 @@ impl RichEditor {
     /// What changed since the last report, by line and by character, and
     /// the new value becomes the one reported.
     pub fn take_delta(&mut self) -> Delta {
-        let now = self.value();
-        let old = std::mem::take(&mut self.reported);
-        let d = delta_of(&old, &now);
+        let now = self.value_arc();
+        let d = match (&self.last_edit, self.edits_since_report, &self.compose) {
+            // one edit: said from the edit itself, not by comparing texts
+            (Some((first, removed, n, at, old, ins)), 1, None) => Delta {
+                first: *first,
+                removed: *removed,
+                lines: (*first..*first + *n)
+                    .map(|i| self.para_text(i).to_string())
+                    .collect(),
+                at: chars_of(&self.buffer, *at),
+                old_len: old.chars().count(),
+                inserted: ins.clone(),
+            },
+            _ => delta_of(&self.reported, &now),
+        };
         self.reported = now;
+        self.edits_since_report = 0;
+        self.last_edit = None;
         d
     }
 
     /// The value as reported (a value adopted from the program is the
     /// program's own: nothing to say).
     pub fn mark_reported(&mut self) {
-        self.reported = self.value();
+        self.reported = self.value_arc();
+        self.edits_since_report = 0;
+        self.last_edit = None;
     }
 
     // ── paragraphs ──────────────────────────────────────────────────
@@ -491,11 +665,17 @@ impl RichEditor {
             l.align(Alignment::Start, AlignmentOptions::default());
             let h = l.height();
             let p = &mut self.paras[i];
-            p.h = if h > 0.0 { h } else { p.h };
+            let h2 = if h > 0.0 { h } else { p.h };
+            if !p.measured || (h2 - p.h).abs() > 0.01 {
+                self.ys_ok = false;
+            }
+            p.h = h2;
+            p.measured = true;
             p.layout = Some(l);
             p.rebreak = false;
             return;
         }
+        self.built += 1;
         let p = &self.paras[i];
         let text = &self.buffer[p.start..p.end()];
         let mut b = ts
@@ -520,25 +700,82 @@ impl RichEditor {
         l.align(Alignment::Start, AlignmentOptions::default());
         let h = l.height();
         let line_h = self.font.size * self.scale * 1.2;
+        // a paragraph on one line says how wide a character is
+        if l.len() == 1 && !text.is_empty() && self.char_w.1 < 20_000.0 {
+            self.char_w.0 += l.width();
+            self.char_w.1 += text.chars().count() as f32;
+        }
         let p = &mut self.paras[i];
-        p.h = if h > 0.0 { h } else { line_h };
+        let h2 = if h > 0.0 { h } else { line_h };
+        if !p.measured || (h2 - p.h).abs() > 0.01 {
+            self.ys_ok = false;
+        }
+        p.h = h2;
+        p.measured = true;
         p.layout = Some(l);
         p.rebreak = false;
     }
 
-    /// Lay out every paragraph that needs it, and their tops.
-    pub fn refresh(&mut self, ts: &mut TextSystem) {
+    /// The height of paragraph `i` as far as it is known: measured, or
+    /// estimated from its length, the width and the average character.
+    fn height_of(&self, i: usize) -> f32 {
+        let p = &self.paras[i];
+        if p.measured {
+            return p.h;
+        }
+        let line_h = self.font.size * self.scale * 1.2;
+        let cw = if self.char_w.1 > 0.0 {
+            self.char_w.0 / self.char_w.1
+        } else {
+            self.font.size * self.scale * 0.55
+        };
+        let lines = ((p.len as f32 * cw) / self.width.max(1.0)).ceil().max(1.0);
+        line_h * lines
+    }
+
+    /// Paragraph `i` laid out (its height measured: the tops after it may
+    /// move, said by `ys_ok`).
+    fn ensure(&mut self, i: usize, ts: &mut TextSystem) {
+        if i < self.paras.len() {
+            self.build(i, ts);
+        }
+    }
+
+    /// Let go of the layouts of paragraphs far from `keep` (a band of
+    /// paragraph indexes) and the caret, once too many are held.
+    fn trim_layouts(&mut self, keep: std::ops::Range<usize>) {
+        if self.built <= KEEP_LAYOUTS {
+            return;
+        }
+        let (fi, _) = self.locate(self.focus);
+        let lo = keep.start.saturating_sub(200);
+        let hi = keep.end + 200;
+        let mut n = 0;
+        for (i, p) in self.paras.iter_mut().enumerate() {
+            if (i < lo || i >= hi) && i.abs_diff(fi) > 2 && p.layout.is_some() {
+                p.layout = None;
+                p.rebreak = false;
+            }
+            if p.layout.is_some() {
+                n += 1;
+            }
+        }
+        self.built = n;
+    }
+
+    /// The paragraphs' tops, from the heights known (a paragraph not laid
+    /// out yet is estimated: only those shown, and the caret's, are laid
+    /// out, so a 50,000-line text opens and edits at the cost of a page).
+    pub fn refresh(&mut self, _ts: &mut TextSystem) {
         if self.ys_ok {
             return;
         }
-        for i in 0..self.paras.len() {
-            self.build(i, ts);
-        }
         self.ys.clear();
+        self.ys.reserve(self.paras.len() + 1);
         let mut y = 0.0;
-        for p in &self.paras {
+        for i in 0..self.paras.len() {
             self.ys.push(y);
-            y += p.h;
+            y += self.height_of(i);
         }
         self.ys.push(y);
         self.ys_ok = true;
@@ -550,7 +787,7 @@ impl RichEditor {
     }
 
     fn layout_of(&self, i: usize) -> &Layout<Color> {
-        self.paras[i].layout.as_ref().expect("refreshed")
+        self.paras[i].layout.as_ref().expect("a paragraph used is laid out (ensure)")
     }
 
     fn cursor(&self, i: usize, local: usize, aff: Affinity) -> Cursor {
@@ -600,6 +837,7 @@ impl RichEditor {
             .filter(|sp| pa == pb && sp.start < la && sp.end > lb)
             .map(|sp| sp.style)
             .collect();
+        let old_text = self.buffer[a..b].to_string();
         self.buffer.replace_range(a..b, s);
         let new_end = (old_end as isize + growth) as usize;
         let region = &self.buffer[first_start..new_end];
@@ -654,7 +892,12 @@ impl RichEditor {
         {
             *c = ((c.start as isize + growth) as usize)..((c.end as isize + growth) as usize);
         }
+        let dropped = self.paras[pa..=pb].iter().filter(|p| p.layout.is_some()).count();
+        self.built -= dropped;
         self.paras.splice(pa..=pb, fresh);
+        self.edits += 1;
+        self.edits_since_report += 1;
+        self.last_edit = Some((pa, pb - pa + 1, n, a, old_text, s.to_string()));
         for p in &mut self.paras[pa + n..] {
             p.start = (p.start as isize + growth) as usize;
         }
@@ -689,12 +932,18 @@ impl RichEditor {
         ts: &mut TextSystem,
         f: impl FnOnce(&mut Self, &mut TextSystem),
     ) -> Outcome {
-        let before = (self.buffer.clone(), self.anchor, self.focus);
+        // the buffer is copied only for the field's own undo; a change is
+        // known by the edits made, not by comparing copies
+        let before = self
+            .own_undo
+            .then(|| (self.buffer.clone(), self.anchor, self.focus));
+        let edits = self.edits;
         f(self, ts);
-        if self.buffer == before.0 {
+        let changed = self.edits != edits && before.as_ref().is_none_or(|b| b.0 != self.buffer);
+        if !changed {
             return Outcome::Moved;
         }
-        if self.own_undo {
+        if let Some(before) = before {
             self.undo.push(before);
             if self.undo.len() > 200 {
                 self.undo.remove(0);
@@ -792,6 +1041,7 @@ impl RichEditor {
         }
         self.refresh(ts);
         let (i, l) = self.locate(self.focus);
+        self.ensure(i, ts);
         let g = self
             .cursor(i, l, self.affinity)
             .geometry(self.layout_of(i), 1.0);
@@ -831,6 +1081,11 @@ impl RichEditor {
         self.refresh(ts);
         let x = self.caret_x(ts);
         let (i, l) = self.locate(self.focus);
+        self.ensure(i, ts);
+        if i > 0 {
+            self.ensure(i - 1, ts);
+        }
+        self.ensure(i + 1, ts);
         let (k, n) = self.line_of(i, l);
         let target = if down {
             if k + 1 < n {
@@ -867,6 +1122,8 @@ impl RichEditor {
         self.refresh(ts);
         let x = self.caret_x(ts);
         let (i, l) = self.locate(self.focus);
+        self.ensure(i, ts);
+        self.refresh(ts);
         let g = self
             .cursor(i, l, self.affinity)
             .geometry(self.layout_of(i), 1.0);
@@ -874,20 +1131,22 @@ impl RichEditor {
         let step =
             (self.view_h - self.font.size * self.scale * 1.5).max(self.font.size * self.scale);
         let ty = if down { y + step } else { y - step };
-        let at = self.point_to_byte(x, ty);
+        let at = self.point_to_byte(x, ty, ts);
         self.set_focus_to(at.0, at.1, extend);
         self.scroll_y = (self.scroll_y + if down { step } else { -step }).max(0.0);
         self.h_pos = Some(x);
     }
 
     /// The byte under a point, device pixels from the text's top-left.
-    fn point_to_byte(&self, x: f32, y: f32) -> (usize, Affinity) {
+    fn point_to_byte(&mut self, x: f32, y: f32, ts: &mut TextSystem) -> (usize, Affinity) {
+        self.refresh(ts);
         let total = *self.ys.last().unwrap_or(&0.0);
         if y < 0.0 {
             return (0, Affinity::Downstream);
         }
         if y >= total {
             let i = self.paras.len() - 1;
+            self.ensure(i, ts);
             let c = Cursor::from_point(self.layout_of(i), x, self.paras[i].h - 0.5);
             return (
                 self.paras[i].start + c.index().min(self.paras[i].len),
@@ -902,6 +1161,7 @@ impl RichEditor {
             Err(i) => i.saturating_sub(1),
         }
         .min(self.paras.len() - 1);
+        self.ensure(i, ts);
         let c = Cursor::from_point(self.layout_of(i), x, y - self.ys[i]);
         (
             self.paras[i].start + c.index().min(self.paras[i].len),
@@ -918,6 +1178,7 @@ impl RichEditor {
             return;
         }
         let (i, l) = self.locate(self.focus);
+        self.ensure(i, ts);
         let len = self.paras[i].len;
         let at = if right && l >= len {
             if i + 1 < self.paras.len() {
@@ -949,6 +1210,7 @@ impl RichEditor {
     fn line_edge(&mut self, end: bool, extend: bool, ts: &mut TextSystem) {
         self.refresh(ts);
         let (i, l) = self.locate(self.focus);
+        self.ensure(i, ts);
         let layout = self.layout_of(i);
         let c = self.cursor(i, l, self.affinity);
         let sel = Selection::new(c, c);
@@ -977,6 +1239,7 @@ impl RichEditor {
             }
             return;
         }
+        self.ensure(i, ts);
         let layout = self.layout_of(i);
         let c = self.cursor(i, l, self.affinity);
         let start = if word {
@@ -1009,6 +1272,7 @@ impl RichEditor {
             }
             return;
         }
+        self.ensure(i, ts);
         let layout = self.layout_of(i);
         let c = self.cursor(i, l, self.affinity);
         let end = if word {
@@ -1125,10 +1389,11 @@ impl RichEditor {
     /// included).
     pub fn press(&mut self, x: f32, y: f32, clicks: u32, shift: bool, ts: &mut TextSystem) {
         self.refresh(ts);
-        let (at, aff) = self.point_to_byte(x, y);
+        let (at, aff) = self.point_to_byte(x, y, ts);
         match clicks {
             2 => {
                 let (i, _) = self.locate(at);
+                self.ensure(i, ts);
                 let s = Selection::word_from_point(self.layout_of(i), x, y - self.ys[i]);
                 let r = s.text_range();
                 let base = self.paras[i].start;
@@ -1153,7 +1418,7 @@ impl RichEditor {
             return;
         }
         self.refresh(ts);
-        let (at, aff) = self.point_to_byte(x, y);
+        let (at, aff) = self.point_to_byte(x, y, ts);
         self.set_focus_to(at, aff, true);
     }
 
@@ -1169,8 +1434,9 @@ impl RichEditor {
 
     /// The caret, device pixels from the text's top-left (no scroll).
     pub fn caret_box(&mut self, width: f32, ts: &mut TextSystem) -> BoundingBox {
-        self.refresh(ts);
         let (i, l) = self.locate(self.focus);
+        self.ensure(i, ts);
+        self.refresh(ts);
         let g = self
             .cursor(i, l, self.affinity)
             .geometry(self.layout_of(i), width);
@@ -1185,9 +1451,10 @@ impl RichEditor {
     /// Where the input method's window goes: the composition's start, or
     /// the caret.
     pub fn ime_box(&mut self, ts: &mut TextSystem) -> BoundingBox {
-        self.refresh(ts);
         let at = self.compose.as_ref().map(|r| r.start).unwrap_or(self.focus);
         let (i, l) = self.locate(at);
+        self.ensure(i, ts);
+        self.refresh(ts);
         let g = self
             .cursor(i, l, Affinity::Downstream)
             .geometry(self.layout_of(i), 1.0);
@@ -1215,18 +1482,73 @@ impl RichEditor {
     }
 
     /// The paragraphs a band `y0..y1` (device pixels, no scroll) shows.
+    /// Those shown are laid out (their measured heights may move the
+    /// band: it is found again until it holds still).
     pub fn visible(&mut self, y0: f32, y1: f32, ts: &mut TextSystem) -> std::ops::Range<usize> {
+        let mut band = 0..0;
+        for _ in 0..4 {
+            self.refresh(ts);
+            let find = |y: f32| match self
+                .ys
+                .binary_search_by(|v| v.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Less))
+            {
+                Ok(i) => i,
+                Err(i) => i.saturating_sub(1),
+            };
+            let a = find(y0).min(self.paras.len());
+            let b = (find(y1) + 1).min(self.paras.len());
+            band = a..b.max(a);
+            for i in band.clone() {
+                self.ensure(i, ts);
+            }
+            if self.ys_ok {
+                break;
+            }
+        }
         self.refresh(ts);
-        let find = |y: f32| match self
+        self.trim_layouts(band.clone());
+        band
+    }
+
+    /// The first line in view (a paragraph's index).
+    pub fn top_line(&mut self, ts: &mut TextSystem) -> usize {
+        self.refresh(ts);
+        let y = self.scroll_y;
+        match self
             .ys
             .binary_search_by(|v| v.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Less))
         {
             Ok(i) => i,
             Err(i) => i.saturating_sub(1),
-        };
-        let a = find(y0).min(self.paras.len());
-        let b = (find(y1) + 1).min(self.paras.len());
-        a..b.max(a)
+        }
+        .min(self.paras.len().saturating_sub(1))
+    }
+
+    /// Scroll so line `line` is the first in view.
+    pub fn scroll_to_line(&mut self, line: usize, ts: &mut TextSystem) {
+        let i = line.min(self.paras.len().saturating_sub(1));
+        self.ensure(i, ts);
+        self.refresh(ts);
+        let total = *self.ys.last().unwrap_or(&0.0);
+        let max = (total - self.view_h).max(0.0);
+        self.scroll_y = if self.view_h > 0.0 { self.ys[i].min(max) } else { self.ys[i] };
+        self.follow = false;
+    }
+
+    /// Characters `a..b` of paragraph `i` as its local bytes.
+    pub fn para_char_bytes(&self, i: usize, a: usize, b: usize) -> (usize, usize) {
+        let p = &self.paras[i];
+        let text = &self.buffer[p.start..p.end()];
+        (char_at(text, a), char_at(text, b.max(a)))
+    }
+
+    /// The paragraph the caret is in.
+    pub fn focus_para(&self) -> usize {
+        self.locate(self.focus).0
+    }
+
+    pub fn style_of(&self, i: u32) -> Option<&SpanStyle> {
+        self.styles.get(i as usize)
     }
 
     /// Paragraph `i`: its top (device pixels), its layout, its height.

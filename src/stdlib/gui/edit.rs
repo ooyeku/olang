@@ -490,7 +490,7 @@ impl Field {
         }
     }
 
-    pub fn offer(&mut self, value: &str, rev: Option<i64>, ts: &mut TextSystem) -> bool {
+    pub fn offer(&mut self, value: &std::sync::Arc<String>, rev: Option<i64>, ts: &mut TextSystem) -> bool {
         match self {
             Field::Plain(e) => e.offer(value, rev, ts),
             Field::Rich(r) => r.offer(value, rev, ts),
