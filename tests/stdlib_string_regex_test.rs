@@ -234,3 +234,19 @@ fn re_find_spans_says_where_each_match_is_in_characters() {
     let bad = eval(r#"is_err(re.find_spans("(", "x"))"#);
     assert_eq!(bad, Value::Boolean(true));
 }
+
+#[test]
+fn fuzzy_score_ranks_runs_word_starts_and_the_file_name() {
+    let near = eval(r#"str.fuzzy_score("lsp", "src/tools/lsp.rs") > str.fuzzy_score("lsp", "src/tools/large_sample_path.rs")"#);
+    assert_eq!(near, Value::Boolean(true));
+    assert_eq!(eval(r#"str.fuzzy_score("zq", "abc")"#), Value::Unit);
+    assert_eq!(eval(r#"str.fuzzy_score("", "abc")"#), Value::Integer(0));
+    assert_eq!(eval(r#"str.fuzzy_score("RICH", "gui/rich.rs") != ()"#), Value::Boolean(true));
+}
+
+#[test]
+fn col_splice_replaces_a_run_in_one_copy() {
+    assert_eq!(s(eval(r#"show(col.splice([1, 2, 3, 4], 1, 2, [9]))"#)), "[1, 9, 4]");
+    assert_eq!(s(eval(r#"show(col.splice([1, 2], 9, 1, [3]))"#)), "[1, 2, 3]");
+    assert_eq!(s(eval(r#"show(col.splice([1, 2, 3], 0, 99, []))"#)), "[]");
+}

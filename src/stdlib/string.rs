@@ -51,6 +51,7 @@ pub fn create_string_module() -> Value {
         "char_at",
         "fixed",
         "thousands",
+        "fuzzy_score",
     ];
     for name in binary {
         module.insert(name.to_string(), create_builtin_function(name, 2));
@@ -115,6 +116,7 @@ pub fn call_string_function(
         "last_index_of" => str_last_index_of(args),
         "repeat" => str_repeat(args),
         "count" => str_count(args),
+        "fuzzy_score" => str_fuzzy_score(args),
         "char_at" => str_char_at(args),
         "char_code" => str_char_code(args),
         "replace" => str_replace(args, false),
@@ -556,6 +558,47 @@ fn char_to_byte(s: &str, from: usize, from_char: usize, n: usize) -> usize {
         at += 1;
     }
     bytes.len()
+}
+
+/// `str.fuzzy_score(query, text)` — how well `query` matches `text` as a
+/// fuzzy finder ranks (⌘P): every character of the query in order,
+/// ignoring case; a run of them, one at a word's start (after `/`, `_`,
+/// `-`, `.`, a space), one in the last path segment, and that segment's
+/// own start count more; a shorter text wins a tie. `()` when it does not
+/// match. Higher is better.
+fn str_fuzzy_score(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let q = arg_str(&args, 0, "fuzzy_score")?;
+    let t = arg_str(&args, 1, "fuzzy_score")?;
+    let qc: Vec<char> = q.chars().filter(|c| !c.is_whitespace()).flat_map(|c| c.to_lowercase()).collect();
+    if qc.is_empty() {
+        return Ok(Value::Integer(0));
+    }
+    let tc: Vec<char> = t.chars().flat_map(|c| c.to_lowercase()).collect();
+    let base = tc.iter().rposition(|c| *c == '/').map(|i| i + 1).unwrap_or(0);
+    let score_from = |from: usize| -> Option<i64> {
+        let (mut qi, mut score, mut last) = (0usize, 0i64, usize::MAX - 1);
+        let mut i = from;
+        while i < tc.len() && qi < qc.len() {
+            if tc[i] == qc[qi] {
+                let start = i == 0 || matches!(tc[i - 1], '/' | '_' | '-' | '.' | ' ');
+                score += 1
+                    + if i == last.wrapping_add(1) { 6 } else { 0 }
+                    + if start { 5 } else { 0 }
+                    + if i >= base { 4 } else { 0 }
+                    + if i == base { 8 } else { 0 };
+                last = i;
+                qi += 1;
+            }
+            i += 1;
+        }
+        (qi == qc.len()).then_some(score * 10 - tc.len() as i64)
+    };
+    let in_name = if base > 0 { score_from(base) } else { None };
+    let best = match (in_name, score_from(0)) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
+    };
+    Ok(best.map(Value::Integer).unwrap_or(Value::Unit))
 }
 
 fn str_substring(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {

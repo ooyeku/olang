@@ -386,6 +386,7 @@ every function returns a new string.
 | `str.substring(s, from, to)` | half-open slice, clamped |
 | `str.index_of(s, sub)` / `str.last_index_of` | position, or `()` when absent |
 | `str.contains(s, sub)` / `str.count(s, sub)` | search |
+| `str.fuzzy_score(query, text)` | a fuzzy finder's score (every query character in order; runs, word starts, the last path segment count more), or `()` |
 | `str.starts_with` / `str.ends_with` | affix tests |
 | `str.split(s, sep)` / `str.join(xs, sep)` | list conversion |
 | `str.lines(s)` / `str.words(s)` | split on newlines / whitespace |
@@ -455,6 +456,7 @@ by its own standard library.
 |---|---|
 | `col.all(xs, p)` / `col.any(xs, p)` | quantifiers (short-circuit) |
 | `col.index_of(xs, v)` / `col.slice(xs, from, to)` | position of a value (or Unit) / a half-open, clamped sub-list |
+| `col.splice(xs, at, n, items)` | the `n` elements from `at` replaced by `items`, in one copy |
 | `col.take`, `col.drop`, `col.map`, … | every global list helper, mirrored here — one namespace that always works |
 | `col.unique(xs)` | dedupe, first-seen order |
 | `col.partition(xs, p)` | `([matching], [rest])` |

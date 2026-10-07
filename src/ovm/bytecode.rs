@@ -1435,6 +1435,7 @@ impl BytecodeVm {
             "str.last_index_of",
             "str.repeat",
             "str.count",
+            "str.fuzzy_score",
             "str.char_at",
             "str.replace",
             "str.replace_first",

@@ -5295,6 +5295,16 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             see_also: vec![],
         });
         self.add_function(FunctionDoc {
+            name: "str.fuzzy_score".to_string(),
+            description: "How well a query matches a text as a fuzzy finder ranks: every character of the query in order, ignoring case; runs, word starts, and the last path segment count more. () when it does not match; higher is better.".to_string(),
+            syntax: "str.fuzzy_score(query, text)".to_string(),
+            parameters: vec![],
+            return_type: "Int".to_string(),
+            examples: vec!["str.fuzzy_score(\"lsp\", \"src/tools/lsp.rs\") > str.fuzzy_score(\"lsp\", \"tests/lsp_test.rs\")  // true".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.contains".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "str.char_at".to_string(),
             description: "Character at index i (empty if out of range).".to_string(),
             syntax: "str.char_at(s, i)".to_string(),
@@ -5803,6 +5813,17 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             examples: vec!["col.slice([1, 2, 3, 4, 5], 1, 3)  // [2, 3]".to_string(), "col.slice([1, 2, 3], -2, 99)  // [2, 3]".to_string()],
             category: "Collections".to_string(),
             see_also: vec!["take".to_string(), "skip".to_string(), "str.substring".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "col.splice".to_string(),
+            description: "The list with the n elements from index at replaced by items, in one copy (take(xs, at) + items + skip(xs, at + n) makes three). at and n are clamped to the list.".to_string(),
+            syntax: "col.splice(list, at, n, items)".to_string(),
+            parameters: vec![],
+            return_type: "List".to_string(),
+            examples: vec!["col.splice([1, 2, 3, 4], 1, 2, [9])  // [1, 9, 4]".to_string()],
+            category: "Collections".to_string(),
+            see_also: vec!["col.slice".to_string(), "col.set".to_string()],
         });
 
         self.add_function(FunctionDoc {

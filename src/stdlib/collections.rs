@@ -52,6 +52,7 @@ pub fn create_collections_module() -> Value {
         create_builtin_function("index_of", 2),
     );
     module.insert("slice".to_string(), create_builtin_function("slice", 3));
+    module.insert("splice".to_string(), create_builtin_function("splice", 4));
 
     // The global collection helpers, reachable here too, so a reader
     // never has to guess which spelling a name has: `col.take` is
@@ -139,6 +140,7 @@ pub fn call_collections_function(
         "filled" => col_filled(args),
         "index_of" => index_of(args),
         "slice" => slice(args),
+        "splice" => splice(args),
         name if GLOBAL_ALIASES.iter().any(|(n, _)| *n == name) => {
             interpreter.call_global_builtin(name, args)
         }
@@ -193,6 +195,22 @@ fn slice(args: Vec<Value>) -> Result<Value, InterpreterError> {
         return Ok(Value::List(Vec::new().into()));
     }
     Ok(Value::List(list[from..to].to_vec().into()))
+}
+
+/// `col.splice(xs, at, n, items)` — the list with the `n` elements from
+/// `at` replaced by `items`, made in one copy (an editor's lines: the
+/// lines an edit touched replaced, the 50,000 others kept). `at` and `n`
+/// are clamped to the list.
+fn splice(args: Vec<Value>) -> Result<Value, InterpreterError> {
+    let list = list_arg(&args, 0, "splice")?;
+    let at = int_arg(&args, 1, "splice")?.clamp(0, list.len() as i64) as usize;
+    let n = int_arg(&args, 2, "splice")?.clamp(0, (list.len() - at) as i64) as usize;
+    let items = list_arg(&args, 3, "splice")?;
+    let mut out = Vec::with_capacity(list.len() - n + items.len());
+    out.extend_from_slice(&list[..at]);
+    out.extend_from_slice(&items[..]);
+    out.extend_from_slice(&list[at + n..]);
+    Ok(Value::List(Arc::new(out)))
 }
 
 // ── helpers ─────────────────────────────────────────────────────────
