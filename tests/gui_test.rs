@@ -1465,11 +1465,11 @@ fn a_code_field_numbers_marks_decorates_and_scrolls_large_text() {
         let d = map_get(changed, "delta")
         [same_as_plain, opened_ms < 250.0, viewport != () && viewport > 30000, map_get(sel, "click_mod"), map_get(sel, "top") > 30000,
          map_get(d, "first") == map_get(sel, "top") + 2 || map_get(d, "first") > 30000, map_get(d, "removed"), len(map_get(d, "lines")), map_get(d, "inserted"),
-         str.contains(map_get(d, "lines")[0], "Z")]
+         str.contains(map_get(d, "lines")[0], "Z"), map_get(sel, "place")[2] == map_get(d, "first"), map_get(changed, "place")[3] == map_get(sel, "place")[3] + 1]
     "##);
     assert_eq!(
         text(&v),
-        r#"[false, true, true, true, true, true, 1, 1, "Z", true]"#
+        r#"[false, true, true, true, true, true, 1, 1, "Z", true, true, true]"#
     );
 }
 

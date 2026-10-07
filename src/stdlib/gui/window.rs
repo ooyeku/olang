@@ -557,6 +557,7 @@ impl WinState {
     fn rich_changed_event(&mut self, key: &str) -> Option<Value> {
         let caret = self.caret_rect(key);
         let top = self.rich_top(key);
+        let place = self.rich_place(key);
         let r = self.editors.get_mut(key)?.rich_mut()?;
         let d = r.take_delta();
         let (a, f) = r.selection_chars();
@@ -567,6 +568,7 @@ impl WinState {
             "changed",
             vec![
                 ("key", s(key)),
+                ("place", place),
                 ("value", Value::String(v)),
                 ("rev", Value::Integer(rev)),
                 ("selection", pair(a, f)),
@@ -585,6 +587,23 @@ impl WinState {
                 ("top", top.map(|t| Value::Integer(t as i64)).unwrap_or(Value::Unit)),
             ],
         ))
+    }
+
+    /// A styled field's selection by line: `(anchor line, its column,
+    /// focus line, its column)`, characters within the line.
+    fn rich_place(&self, key: &str) -> Value {
+        match self.editors.get(key).and_then(|e| e.rich()) {
+            Some(r) => {
+                let ((al, ac), (fl, fc)) = r.selection_in_paras();
+                Value::Tuple(Arc::new(vec![
+                    Value::Integer(al as i64),
+                    Value::Integer(ac as i64),
+                    Value::Integer(fl as i64),
+                    Value::Integer(fc as i64),
+                ]))
+            }
+            None => Value::Unit,
+        }
     }
 
     /// A styled field's first line in view.
@@ -622,10 +641,12 @@ impl WinState {
             r.said_selection = sel;
         }
         let click_mod = std::mem::take(&mut self.click_mod);
+        let place = self.rich_place(key);
         out.push(self.ev(
             "select",
             vec![
                 ("key", s(key)),
+                ("place", place),
                 ("selection", pair(sel.0, sel.1)),
                 ("rev", Value::Integer(rev)),
                 ("caret", rect_value(caret)),

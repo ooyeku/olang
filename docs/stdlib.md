@@ -1886,9 +1886,10 @@ behind in `line_bg` — `decorations` `[(line, start, end, style)]`
 without restyling the text: a matching bracket, the find's matches, a
 problem), and `scroll_to` `(line, seq)` (that line first in view, when
 `seq` is new). Its `changed` adds `delta` `#{ first, removed, lines, at,
-old_len, inserted }` (what changed by line and by character), `caret`
-and `top` (the first line in view); `select` adds `caret`, `top`, and
-`click_mod` (the press was made holding the command key: ⌘-click). The
+old_len, inserted }` (what changed by line and by character), `caret`,
+`top` (the first line in view) and `place` `(anchor line, column, focus
+line, column)` (the selection by line, characters within it); `select`
+adds `caret`, `top`, `place`, and `click_mod` (the press was made holding the command key: ⌘-click). The
 value it reports is shared with the program, not copied, and a value
 handed back is known as the field's own earlier one by its identity.
 
@@ -1909,7 +1910,7 @@ handed back is known as the field's own earlier one by its identity.
 | `"pinch"` | `key` (as `wheel`), `delta` (the change of magnification; positive zooms in), `phase` (`"start"`, `"move"`, `"end"`, `"cancel"`), `x`, `y` — a trackpad's pinch (macOS) |
 | `"scrolled"` | `key`, `x`, `y` |
 | `"viewport"` | `key`, `top` — a styled field's first line in view moved into another band of 16 lines (the wheel) |
-| `"select"` | `key`, `selection`, `rev`, `caret`, `top`, `click_mod` — a styled field's selection moved (`report`) |
+| `"select"` | `key`, `selection`, `place`, `rev`, `caret`, `top`, `click_mod` — a styled field's selection moved (`report`) |
 | `"a11y"` | `key`, `action` (`"set_value"`, `"increment"`, `"decrement"`), `value` |
 | `"outside"` | `key` (the modal layer), `x`, `y` — a press outside the topmost modal layer |
 | `"window_focus"` | `on` |
