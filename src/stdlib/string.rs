@@ -526,6 +526,38 @@ fn str_replace(args: Vec<Value>, first_only: bool) -> Result<Value, Box<dyn std:
 
 /// substring(s, start, end) over character indices, clamped to bounds so it
 /// never fails — a total operation.
+/// The byte offset of character `n` of `s`, counting from byte `from`
+/// (which is character `from_char`); `s.len()` past the end. Characters
+/// are counted a block of bytes at a time (a byte that does not continue
+/// a character starts one), not decoded one by one.
+fn char_to_byte(s: &str, from: usize, from_char: usize, n: usize) -> usize {
+    let bytes = s.as_bytes();
+    let mut at = from;
+    let mut count = from_char;
+    const BLOCK: usize = 64;
+    while at + BLOCK <= bytes.len() {
+        let starts = bytes[at..at + BLOCK]
+            .iter()
+            .filter(|b| (**b as i8) >= -0x40)
+            .count();
+        if count + starts > n {
+            break;
+        }
+        count += starts;
+        at += BLOCK;
+    }
+    while at < bytes.len() {
+        if (bytes[at] as i8) >= -0x40 {
+            if count == n {
+                return at;
+            }
+            count += 1;
+        }
+        at += 1;
+    }
+    bytes.len()
+}
+
 fn str_substring(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let s = arg_str(&args, 0, "substring")?;
     let a = arg_int(&args, 1, "substring")?.max(0) as usize;
@@ -537,18 +569,9 @@ fn str_substring(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     let (start, end) = if s.as_bytes()[..end_probe].is_ascii() {
         (a.min(end_probe), end_probe)
     } else {
-        let mut start = None;
-        let mut end = s.len();
-        for (n, (byte, _)) in s.char_indices().enumerate() {
-            if n == a {
-                start = Some(byte);
-            }
-            if n == b {
-                end = byte;
-                break;
-            }
-        }
-        (start.unwrap_or(s.len()), end)
+        let start = char_to_byte(s, 0, 0, a);
+        let end = if b <= a { start } else { char_to_byte(s, start, a, b) };
+        (start, end)
     };
     let slice = if start < end {
         s[start..end].to_string()
