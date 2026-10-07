@@ -58,6 +58,33 @@ To build without installing — for development on the compiler itself — use
 olang supports macOS and Linux, on both x86-64 and ARM. There is no
 native Windows build; on Windows, use WSL and follow the Linux path.
 
+A source build on Linux with the default features (`gui` among them)
+needs `pkg-config libssl-dev libfontconfig1-dev libxkbcommon-dev
+libwayland-dev` (Debian and Ubuntu names). Linux windows are drawn
+under Wayland only; X11 has no `gui` (`gui.available()` is
+false there, and Loom programs take their terminal face).
+
+### Checking Linux and Windows from a Mac
+
+Two scripts rerun the cross-platform pass locally, with no CI:
+
+```bash
+tools/linux-check.sh                 # build olang in a Linux container (Docker or OrbStack), then
+                                     # Loom's verify, its pty check, open-track desktop's verify,
+                                     # gui_test, and Heddle's suite against that binary
+tools/linux-check.sh build loom      # named stages only; `shell` opens the container
+tools/windows-check.sh               # cargo check for x86_64-pc-windows-msvc (zig compiles the C)
+tools/windows-check.sh --link        # and link olang.exe for x86_64-pc-windows-gnu with zig
+```
+
+`linux-check.sh` expects loom, open-track-desktop, and heddle beside
+olang, keeps Cargo's target and registry in the Docker volume
+`olang-linux-target` (never olang/target), and limits the container to
+4 CPUs and 8 GB. `windows-check.sh` needs zig and the rustup targets; it
+downloads nothing from Microsoft, and builds into
+`target/windows-check`. Neither runs anything on Windows itself. Run one
+at a time, and not beside another cargo build.
+
 ## Updating
 
 However olang was installed, `otc update --check` reports whether a

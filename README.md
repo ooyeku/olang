@@ -85,7 +85,9 @@ otc add my-lib             # ...then depend on it by name, from any project
 otc bench                  # run bench/ with scaling curves and baselines
 ```
 
-See [Packages and dependencies](docs/packages.md).
+See [Packages and dependencies](docs/packages.md). `tools/linux-check.sh`
+and `tools/windows-check.sh` check the Linux and Windows builds from a
+Mac, locally ([Installation](docs/installation.md#checking-linux-and-windows-from-a-mac)).
 
 The language also runs in the browser: the website's playground compiles the
 interpreter, bytecode tier, and data stack to WebAssembly and runs them

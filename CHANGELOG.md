@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **gui: `gui.platform()` — what this platform's windows can do.**
+  `#{ os, native_menu, clipboard_image, file_drop, drop_position,
+  window_position, system_settings, ime, accessibility }`, so a program
+  checks a gap rather than finds it: on Linux (Wayland) no file drops
+  and no window position, off macOS no native menu, clipboard picture,
+  or system contrast and motion settings.
+- **tools/linux-check.sh and tools/windows-check.sh.** The Linux build
+  and its headless tests (Loom, open-track desktop, gui_test, Heddle) in
+  a local container, and a Windows `cargo check` (and a MinGW link) with
+  zig as the C toolchain — no CI, nothing from Microsoft.
+
 - **dates: day numbers and the calendar's edges.** `dates.epoch_day(d)`
   is a date's day number (days since 1970-01-01; a stamp's day is the one
   it is written in) and `dates.from_epoch_day(n)` the `Date` of one — a
@@ -108,6 +119,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   hands a lambda to the VM (heddle-sql measured ~1.3 KB a call; now 3 B).
 
 ### Fixed
+
+- **gui: Linux and Windows compile again.** skrifa (COLRv1 glyphs) was
+  declared under the macOS-only dependencies, so `gui` built nowhere
+  else.
+- **gui: a drag on Wayland no longer lands in another window by a
+  guess.** A window that cannot learn its place on the screen (all of
+  them on Wayland) sends pointer events with `sx`/`sy` `()`; a drag
+  stays in its own window.
+- **gui: ctrl+home and ctrl+end reach a field's text start and end** on
+  Windows and Linux (they passed to the program; macOS keeps ⌘↑/⌘↓).
+- **gui: the clipboard on a Wayland session without XWayland.** arboard
+  is built with its Wayland data-control support.
+- **CI's Linux jobs install fontconfig** (the default build's `gui` links
+  it), xkbcommon, and Wayland's headers.
 
 - **`dates.timestamp` keeps a stamp's offset.** An RFC 3339 stamp with an
   offset was read as if its local time were UTC, so
