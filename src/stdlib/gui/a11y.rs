@@ -14,6 +14,7 @@ use accesskit::{
     Action, ActionData, ActionRequest, CustomAction, NodeId, Rect, Role, Toggled, TreeId, TreeInfo,
     TreeUpdate,
 };
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
@@ -110,6 +111,7 @@ pub fn tree(st: &WinState) -> TreeUpdate {
     }
     nodes.push((WINDOW_NODE, window));
     let said = |c: &String| st.scene.nodes.get(c).is_some_and(|n| !n.decorative);
+    let lenders = lenders(st);
     for (key, n) in &st.scene.nodes {
         if n.decorative {
             continue;
@@ -207,13 +209,14 @@ pub fn tree(st: &WinState) -> TreeUpdate {
             node.set_scroll_x(n.offset.0 as f64);
             node.set_scroll_y(n.offset.1 as f64);
         }
-        // The node's own actions (a card's "Move right"). AccessKit hands
-        // them to UI Automation and AT-SPI; its macOS adapter does not yet
-        // publish custom actions, so on macOS they are reached through the
-        // program's commands and the node's action menu (Loom).
-        if !n.actions.is_empty() && !n.disabled {
+        // The node's actions (a card's "Move right"), its own or lent by
+        // the container whose active descendant it is (see `actions_for`).
+        // On macOS they are NSAccessibilityCustomAction objects (VoiceOver's
+        // Actions rotor), through olang's patched accesskit_macos
+        // (vendor/accesskit_macos).
+        if let Some((_, actions)) = actions_for(st, key, &lenders) {
             node.set_custom_actions(
-                n.actions
+                actions
                     .iter()
                     .enumerate()
                     .map(|(i, label)| CustomAction {
@@ -346,6 +349,39 @@ fn run_place(st: &WinState, key: &str, id: NodeId) -> Option<(usize, usize)> {
     None
 }
 
+/// Containers whose actions their active descendant shows, by that
+/// descendant: a list's actions act on its selected row, and a screen
+/// reader's cursor is on the row (the platform's focus follows the active
+/// descendant), so the row offers them too.
+fn lenders(st: &WinState) -> HashMap<&str, &str> {
+    st.scene
+        .nodes
+        .iter()
+        .filter(|(_, n)| !n.actions.is_empty() && !n.disabled)
+        .filter_map(|(k, n)| Some((n.active.as_deref()?, k.as_str())))
+        .filter(|(a, _)| st.scene.nodes.contains_key(*a))
+        .collect()
+}
+
+/// The assistive actions node `key` offers, with the key of the node they
+/// belong to: its own, or else those of the container whose active
+/// descendant it is.
+fn actions_for<'a>(
+    st: &'a WinState,
+    key: &'a str,
+    lenders: &HashMap<&'a str, &'a str>,
+) -> Option<(&'a str, &'a [String])> {
+    let n = st.scene.nodes.get(key)?;
+    if n.disabled {
+        return None;
+    }
+    if !n.actions.is_empty() {
+        return Some((key, &n.actions));
+    }
+    let owner = *lenders.get(key)?;
+    Some((owner, &st.scene.nodes.get(owner)?.actions))
+}
+
 /// An assistive action, as the events a pointer or key would send.
 pub fn action(st: &mut WinState, req: &ActionRequest, out: &mut Vec<Value>) {
     let Some(key) = key_of(st, req.target_node) else {
@@ -419,16 +455,16 @@ pub fn action(st: &mut WinState, req: &ActionRequest, out: &mut Vec<Value>) {
         )),
         Action::CustomAction => {
             if let Some(ActionData::CustomAction(i)) = &req.data {
-                let label = st
-                    .scene
-                    .nodes
-                    .get(&key)
-                    .and_then(|n| n.actions.get(*i as usize).cloned());
-                if let Some(label) = label {
+                // a row's lent action is its container's
+                let lenders = lenders(st);
+                let chosen = actions_for(st, &key, &lenders).and_then(|(owner, actions)| {
+                    Some((owner.to_string(), actions.get(*i as usize)?.clone()))
+                });
+                if let Some((owner, label)) = chosen {
                     out.push(ev(
                         "a11y",
                         vec![
-                            ("key", s(&key)),
+                            ("key", s(&owner)),
                             ("action", s("custom")),
                             ("index", Value::Integer(*i as i64)),
                             ("label", s(&label)),
@@ -467,11 +503,9 @@ fn walk(st: &WinState, key: &str, depth: i64, out: &mut Vec<Value>) {
     if n.edit.is_some() && !n.disabled {
         actions.push(s("set_value"));
     }
-    let custom: Vec<Value> = if n.disabled {
-        Vec::new()
-    } else {
-        n.actions.iter().map(|a| s(a)).collect()
-    };
+    let custom: Vec<Value> = actions_for(st, key, &lenders(st))
+        .map(|(_, actions)| actions.iter().map(|a| s(a)).collect())
+        .unwrap_or_default();
     out.push(map(vec![
         ("key", s(key)),
         ("role", s(&format!("{:?}", role_of(n)))),

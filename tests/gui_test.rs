@@ -472,6 +472,59 @@ fn a_drag_is_followed_across_windows_and_a_node_has_actions_of_its_own() {
     );
 }
 
+#[test]
+fn a_lists_actions_are_its_active_rows_too() {
+    // A board column's moves act on its selected card, and a screen
+    // reader's cursor is on the card (the active descendant): the card
+    // offers the column's actions, and choosing one is the column's.
+    let _turn = events_turn();
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (300, 200) })
+        let ev = gui.events()
+        let mut stale = true
+        while stale { match chan.try_recv(ev) { Ok(e) => (), _ => { stale = false } } }
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 300, 200) },
+          #{ "key": "col", "parent": "root", "role": "list", "box": (0, 0, 150, 200), "focusable": true,
+             "active": "r1", "actions": ["Move to Backlog", "Move to Done"] },
+          #{ "key": "r0", "parent": "col", "role": "listitem", "box": (0, 0, 150, 40), "text": "Zero" },
+          #{ "key": "r1", "parent": "col", "role": "listitem", "box": (0, 40, 150, 40), "text": "One",
+             "actions": [] }
+        ])
+        gui.input(w, #{ "kind": "a11y", "key": "r1", "action": "custom", "index": 1 })
+        let mut got = []
+        let mut more = true
+        while more { match chan.try_recv(ev) { Ok(e) => { got = got + [e] }, _ => { more = false } } }
+        let acted = filter(got, (e) => map_get(e, "kind") == "a11y")
+        let custom = (k) => map_get(filter(gui.read(w, "a11y"), (n) => map_get(n, "key") == k)[0], "custom")
+        [custom("col"), custom("r1"), custom("r0"), len(acted), map_get(acted[0], "key"), map_get(acted[0], "label")]
+    "##);
+    assert_eq!(
+        text(&v),
+        r#"[["Move to Backlog", "Move to Done"], ["Move to Backlog", "Move to Done"], [], 1, "col", "Move to Done"]"#
+    );
+    // in the platform's tree, the active row carries them; the other not
+    let mut st = reference_scene(1.0);
+    let keys: Vec<String> = st.scene.nodes.keys().take(2).cloned().collect();
+    let (list, row) = (&keys[0], &keys[1]);
+    let l = st.scene.nodes.get_mut(list).unwrap();
+    l.actions = vec!["Move to Done".into()];
+    l.active = Some(row.clone());
+    (l.decorative, l.disabled) = (false, false);
+    let r = st.scene.nodes.get_mut(row).unwrap();
+    r.actions.clear();
+    (r.decorative, r.disabled) = (false, false);
+    let tree = olang::stdlib::gui::a11y::tree(&st);
+    let custom = |k: &str| {
+        let id = olang::stdlib::gui::a11y::node_id(k);
+        tree.nodes
+            .iter()
+            .find(|(i, _)| *i == id)
+            .map(|(_, n)| n.custom_actions().len())
+    };
+    assert_eq!((custom(list), custom(row)), (Some(1), Some(1)));
+}
+
 /// A canvas (shapes and text) and two images, one fitted inside its box
 /// and one covering it.
 fn picture_scene(scale: f32, png: &str) -> WinState {
