@@ -68,11 +68,10 @@ dependencies = [
 [[package]]
 name = "accesskit_macos"
 version = "0.27.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5701624bf6a11efb6d4c8e922bf44126ed96250e5faa9a7a0468c979635839a4"
 dependencies = [
  "accesskit",
  "accesskit_consumer",
+ "block2 0.5.1",
  "hashbrown 0.17.1",
  "objc2 0.5.2",
  "objc2-app-kit 0.2.2",
@@ -3553,6 +3552,7 @@ dependencies = [
  "argon2",
  "base64 0.23.1",
  "bcrypt",
+ "block2 0.6.2",
  "brotli",
  "bytemuck",
  "chrono",
@@ -3588,6 +3588,7 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "num_cpus",
+ "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "olang-ods",

@@ -120,6 +120,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **gui: VoiceOver lists a node's actions (macOS).** A node's `actions`
+  were AccessKit custom actions that AccessKit's macOS adapter never
+  published, so VoiceOver's Actions rotor (VO-⌘-Space) was empty.
+  accesskit_macos 0.27.1 is now patched (vendor/accesskit_macos, through
+  `[patch.crates-io]`; written to go upstream): a node answers
+  `accessibilityCustomActions` with an `NSAccessibilityCustomAction` per
+  action, each sending the `CustomAction` request, so the program gets
+  the same `a11y` `custom` event. And a container's actions are its
+  active descendant's too (a list's moves act on its selected row, where
+  the platform's focus is); chosen there, the event carries the
+  container's key. tests/gui_macos_a11y_test.rs (no harness: AppKit
+  wants the first thread) checks it through a real window, in process
+  and through the AX client API, and hears a live region's announcement.
 - **gui: Linux and Windows compile again.** skrifa (COLRv1 glyphs) was
   declared under the macOS-only dependencies, so `gui` built nowhere
   else.

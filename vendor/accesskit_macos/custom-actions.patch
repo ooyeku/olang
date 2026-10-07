@@ -1,0 +1,119 @@
+--- a/platforms/macos/src/node.rs
++++ b/platforms/macos/src/node.rs
+@@ -14,11 +14,12 @@
+     Action, ActionData, ActionRequest, Orientation, Role, TextAlign, TextSelection, Toggled,
+ };
+ use accesskit_consumer::{FilterResult, FullNodeId, NodeRef, Tree};
++use block2::RcBlock;
+ use objc2::{
+     ClassType, DeclaredClass, declare_class, msg_send_id,
+     mutability::InteriorMutable,
+     rc::Id,
+-    runtime::{AnyObject, Sel},
++    runtime::{AnyObject, Bool, Sel},
+     sel,
+ };
+ use objc2_app_kit::*;
+@@ -1197,6 +1198,42 @@
+                 .unwrap_or(false)
+         }
+ 
++        // The node's custom actions (`Node::custom_actions`), as the
++        // NSAccessibilityCustomAction objects VoiceOver lists in its
++        // Actions rotor (VO-Command-Space). Choosing one sends
++        // `Action::CustomAction` with the action's id, as the other
++        // adapters' action requests do.
++        #[method_id(accessibilityCustomActions)]
++        fn custom_actions(&self) -> Option<Id<NSArray<NSAccessibilityCustomAction>>> {
++            self.resolve_with_context(|node, _, context| {
++                if !node.supports_action(Action::CustomAction, &filter) {
++                    return None;
++                }
++                let actions = node.data().custom_actions();
++                if actions.is_empty() {
++                    return None;
++                }
++                let node_id = self.ivars().node_id;
++                let platform_actions = actions
++                    .iter()
++                    .map(|action| {
++                        let handler =
++                            custom_action_handler(Rc::downgrade(context), node_id, action.id);
++                        let name = NSString::from_str(&action.description);
++                        unsafe {
++                            NSAccessibilityCustomAction::initWithName_handler(
++                                NSAccessibilityCustomAction::alloc(),
++                                &name,
++                                Some(&handler),
++                            )
++                        }
++                    })
++                    .collect::<Vec<_>>();
++                Some(NSArray::from_vec(platform_actions))
++            })
++            .flatten()
++        }
++
+         // We discovered through experimentation that when mixing the newer
+         // NSAccessibility protocols with the older informal protocol,
+         // the platform uses both protocols to discover which actions are
+@@ -1294,6 +1331,10 @@
+                         || node.has_braille_role_description()
+                         || node.has_html_id()
+                 }
++                if selector == sel!(accessibilityCustomActions) {
++                    return node.supports_action(Action::CustomAction, &filter)
++                        && !node.data().custom_actions().is_empty();
++                }
+                 if selector == sel!(accessibilityURL) {
+                     return node.supports_url();
+                 }
+@@ -1330,6 +1371,48 @@
+     }
+ );
+ 
++/// The handler of one custom action: it holds the context weakly, so an
++/// action object VoiceOver keeps after the tree or the window is gone does
++/// nothing, and it asks for the action only while the node still offers it.
++fn custom_action_handler(
++    context: Weak<Context>,
++    node_id: FullNodeId,
++    action_id: i32,
++) -> RcBlock<dyn Fn() -> Bool> {
++    RcBlock::new(move || -> Bool {
++        let Some(context) = context.upgrade() else {
++            return Bool::NO;
++        };
++        let request = {
++            let tree = context.tree.borrow();
++            let state = tree.state();
++            let Some(node) = state.node_by_id(node_id) else {
++                return Bool::NO;
++            };
++            if !node.supports_action(Action::CustomAction, &filter)
++                || !node
++                    .data()
++                    .custom_actions()
++                    .iter()
++                    .any(|action| action.id == action_id)
++            {
++                return Bool::NO;
++            }
++            let Some((target_node, target_tree)) = state.locate_node(node.id()) else {
++                return Bool::NO;
++            };
++            ActionRequest {
++                action: Action::CustomAction,
++                target_tree,
++                target_node,
++                data: Some(ActionData::CustomAction(action_id)),
++            }
++        };
++        context.do_action(request);
++        Bool::YES
++    })
++}
++
+ impl PlatformNode {
+     pub(crate) fn new(context: Weak<Context>, node_id: FullNodeId) -> Id<Self> {
+         let this = Self::alloc().set_ivars(PlatformNodeIvars { context, node_id });
