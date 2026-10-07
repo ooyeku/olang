@@ -1656,22 +1656,47 @@ impl RichEditor {
 /// on character boundaries.
 fn common_ends(a: &str, b: &str) -> (usize, usize) {
     let (ab, bb) = (a.as_bytes(), b.as_bytes());
-    let mut p = ab.iter().zip(bb.iter()).take_while(|(x, y)| x == y).count();
+    let mut p = common_prefix(ab, bb);
     while p > 0 && (!a.is_char_boundary(p) || !b.is_char_boundary(p)) {
         p -= 1;
     }
     let max_s = (ab.len() - p).min(bb.len() - p);
-    let mut s = ab
-        .iter()
-        .rev()
-        .zip(bb.iter().rev())
-        .take(max_s)
-        .take_while(|(x, y)| x == y)
-        .count();
+    let mut s = common_suffix(&ab[ab.len() - max_s..], &bb[bb.len() - max_s..]);
     while s > 0 && (!a.is_char_boundary(ab.len() - s) || !b.is_char_boundary(bb.len() - s)) {
         s -= 1;
     }
     (p, s)
+}
+
+/// How many bytes two slices share at the start: blocks compared whole
+/// (a memory compare), the first that differs byte by byte — a 2 MB text
+/// with an edit in its middle is compared in microseconds.
+fn common_prefix(a: &[u8], b: &[u8]) -> usize {
+    const BLOCK: usize = 256;
+    let n = a.len().min(b.len());
+    let mut at = 0;
+    while at + BLOCK <= n && a[at..at + BLOCK] == b[at..at + BLOCK] {
+        at += BLOCK;
+    }
+    while at < n && a[at] == b[at] {
+        at += 1;
+    }
+    at
+}
+
+/// How many bytes two slices share at the end (as `common_prefix`).
+fn common_suffix(a: &[u8], b: &[u8]) -> usize {
+    const BLOCK: usize = 256;
+    let n = a.len().min(b.len());
+    let (la, lb) = (a.len(), b.len());
+    let mut k = 0;
+    while k + BLOCK <= n && a[la - k - BLOCK..la - k] == b[lb - k - BLOCK..lb - k] {
+        k += BLOCK;
+    }
+    while k < n && a[la - k - 1] == b[lb - k - 1] {
+        k += 1;
+    }
+    k
 }
 
 /// What changed between two values, by line and by character.

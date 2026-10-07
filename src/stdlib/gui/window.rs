@@ -461,10 +461,15 @@ impl WinState {
                     }
                     if adopted || reselected {
                         // Adopted the program's value (or its selection):
-                        // say so, with the revision it now has.
+                        // say so, with the revision it now has (a styled
+                        // field's value shared, not copied).
                         let (a, f) = ed.selection_chars();
-                        let (v, rev) = (ed.value(), ed.rev());
-                        let mut e = self.changed_event(k, v, rev, a, f);
+                        let rev = ed.rev();
+                        let v = match ed.rich_mut() {
+                            Some(r) => Value::String(r.value_arc()),
+                            None => s(&ed.value()),
+                        };
+                        let mut e = self.changed_event_value(k, v, rev, a, f);
                         if let Some(r) = self.editors.get_mut(k).and_then(|e| e.rich_mut()) {
                             r.said_selection = (a, f);
                         }
@@ -541,11 +546,15 @@ impl WinState {
     }
 
     fn changed_event(&self, key: &str, value: String, rev: i64, a: usize, f: usize) -> Value {
+        self.changed_event_value(key, s(&value), rev, a, f)
+    }
+
+    fn changed_event_value(&self, key: &str, value: Value, rev: i64, a: usize, f: usize) -> Value {
         self.ev(
             "changed",
             vec![
                 ("key", s(key)),
-                ("value", s(&value)),
+                ("value", value),
                 ("rev", Value::Integer(rev)),
                 ("selection", pair(a, f)),
             ],
