@@ -115,9 +115,22 @@ pub fn note_threshold(n: u32) {
     THRESHOLD.store(n, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// Whether a statistics path names a directory: written with a trailing
+/// `/`, or one that exists.
+pub fn is_dir_spec(path: &Path) -> bool {
+    path.as_os_str().to_string_lossy().ends_with('/') || path.is_dir()
+}
+
 /// Keep statistics for the rest of the process and write them to `path`
-/// at exit (`finish_run`).
+/// at exit (`finish_run`). A directory gets a file of the process's own,
+/// `<pid>.json`, so a run's children each leave theirs beside it.
 pub fn begin_run(path: PathBuf) {
+    let path = if is_dir_spec(&path) {
+        let _ = std::fs::create_dir_all(&path);
+        path.join(format!("{}.json", std::process::id()))
+    } else {
+        path
+    };
     *OUT.lock().unwrap_or_else(|e| e.into_inner()) = Some(path);
     crate::profile::stats_sample_begin(INTERVAL_US);
 }

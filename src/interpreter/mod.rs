@@ -1074,6 +1074,15 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         }
     }
 
+    /// The file a test block's events name: the module it is declared in,
+    /// else the file under test.
+    fn test_event_file(&self) -> String {
+        match self.current_module_path.as_deref() {
+            Some(m) if !m.starts_with("__") => m.to_string(),
+            _ => self.entry_file.clone().unwrap_or_default(),
+        }
+    }
+
     pub fn take_error_location(&mut self) -> Option<crate::ast::ErrorLocation> {
         self.pending_error_frames = None;
         self.pending_error_location.take()
@@ -2323,6 +2332,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 let actual_val = self.eval_expr(actual)?;
                 let expected_val = self.eval_expr(expected)?;
                 if !ops::assert_eq_holds(&actual_val, &expected_val) {
+                    crate::tools::test_events::note_values("assert_eq", &expected_val, &actual_val);
                     let msg = message.clone().unwrap_or_else(|| {
                         format!("Assertion failed: {:?} != {:?}", actual_val, expected_val)
                     });
@@ -2338,6 +2348,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 let actual_val = self.eval_expr(actual)?;
                 let expected_val = self.eval_expr(expected)?;
                 if ops::assert_eq_holds(&actual_val, &expected_val) {
+                    crate::tools::test_events::note_values("assert_ne", &expected_val, &actual_val);
                     let msg = message.clone().unwrap_or_else(|| {
                         format!("Assertion failed: {:?} == {:?}", actual_val, expected_val)
                     });
@@ -5416,6 +5427,13 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             .as_deref()
             .is_some_and(|only| !test_decl.name.contains(only))
         {
+            // the file the run names says what it left out
+            if crate::tools::test_events::enabled()
+                && self.current_module_path.as_deref().is_none_or(|m| self.entry_file.as_deref() == Some(m))
+            {
+                let line = self.stmt_span_stack.last().map(|s| s.0).unwrap_or(0);
+                crate::tools::test_events::test_skipped(&self.test_event_file(), &test_decl.name, line);
+            }
             return Ok(Value::Unit);
         }
         if let Some(module) = self.current_module_path.as_deref()
@@ -5464,10 +5482,28 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // module-level name for every later block in the file (a test's
         // `let fs = …` once shadowed the `fs` module 400 lines down).
         self.environment = Environment::with_parent(self.environment.clone());
+        let events = crate::tools::test_events::enabled();
+        let event_at = if events {
+            let file = self.test_event_file();
+            let line = self.stmt_span_stack.last().map(|s| s.0).unwrap_or(0);
+            crate::tools::test_events::test_started(&file, &test_decl.name, line);
+            Some((file, line))
+        } else {
+            None
+        };
         let mut error = None;
+        let mut located = None;
+        let mut stmt_line = None;
         for statement in &test_decl.body {
+            if let Statement::Located { line, .. } = statement {
+                stmt_line = Some(*line);
+            }
             if let Err(e) = self.eval_statement(statement) {
                 error = Some(e.to_string());
+                if events {
+                    located = self.pending_error_location.take();
+                    self.pending_error_frames = None;
+                }
                 break;
             }
         }
@@ -5485,10 +5521,22 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 ));
             }
         }
+        let ms = started.elapsed().as_secs_f64() * 1000.0;
+        if let Some((file, line)) = event_at {
+            let failure = error.as_ref().map(|message| crate::tools::test_events::Failure {
+                message: message.clone(),
+                file: located.as_ref().and_then(|l| l.file.clone()),
+                line: located.as_ref().map(|l| l.line),
+                col: located.as_ref().map(|l| l.column),
+                frames: located.as_ref().map(|l| l.call_stack.clone()).unwrap_or_default(),
+                stmt: stmt_line,
+            });
+            crate::tools::test_events::test_done(&file, &test_decl.name, line, ms, failure);
+        }
         self.test_results.push(TestOutcome {
             name: test_decl.name,
             error,
-            ms: started.elapsed().as_secs_f64() * 1000.0,
+            ms,
         });
         Ok(Value::Unit)
     }

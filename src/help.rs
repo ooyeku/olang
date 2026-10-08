@@ -5488,6 +5488,16 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             see_also: vec!["testing.snapshot".to_string()],
         });
         self.add_function(FunctionDoc {
+            name: "testing.snapshot_failed".to_string(),
+            description: "A library that keeps snapshots of its own kind (Loom's pixels) says one differs, before it fails the test: under `olang test --format json` the block's events carry it (a `snapshot` event, and the `failed` event's `snapshots`), so an editor can show the baseline beside the new image. Does nothing otherwise.".to_string(),
+            syntax: "testing.snapshot_failed(info)".to_string(),
+            parameters: vec!["info: Map - name, baseline, actual, diff (paths), differing, total, worst, sizes".to_string()],
+            return_type: "Unit".to_string(),
+            examples: vec!["testing.snapshot_failed(#{ \"name\": name, \"baseline\": path, \"actual\": base + \".actual.png\" })".to_string()],
+            category: "Testing".to_string(),
+            see_also: vec!["testing.snapshot_dir".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "str.fixed".to_string(),
             description: "A number with exactly `digits` decimals, never in exponent form, rounded on the value's binary expansion (2.675 is 2.67) — the column form `to_string` is not: 12.5 prints \"12.50\" beside 3.0's \"3.00\". A rounded negative is never \"-0.00\". Ints with zero digits keep their exact digits.".to_string(),
             syntax: "str.fixed(x, digits)".to_string(),

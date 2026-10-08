@@ -950,3 +950,25 @@ fn map_remove_reads_every_map_kind_in_place() {
         assert_same(src, "f", &[row.clone(), store.clone()]);
     }
 }
+
+#[test]
+fn a_builtin_passed_as_a_value_crosses_the_boundary() {
+    // A builtin crosses into compiled code as its name and arity and is
+    // called there through the bridge, by name: the interpreter and the
+    // VM agree on what it answers, on what it raises, and on handing it
+    // back out (a function that returns it).
+    let b = |name: &str, arity: usize| Value::Builtin(olang::ast::BuiltinFunction { name: name.to_string(), arity });
+    let xs = Value::List(std::sync::Arc::new(ints(&[3, 1, 2])));
+    for (src, args) in [
+        ("fn f(g, x) = g(x)", vec![b("len", 1), xs.clone()]),
+        ("fn f(g, x) = g(g(x))", vec![b("sort", 1), xs.clone()]),
+        ("fn f(g, x) = map(x, g)", vec![b("to_string", 1), xs.clone()]),
+        ("fn f(g, x) = [g(x), g(x) + 1]", vec![b("len", 1), Value::String(std::sync::Arc::new("abc".to_string()))]),
+        ("fn f(g, x) = g", vec![b("len", 1), xs.clone()]),
+        ("fn f(g, x) = g(x, x)", vec![b("len", 1), xs.clone()]),
+        ("fn f(g, x) = if g == len => 1 else => 2", vec![b("len", 1), xs.clone()]),
+        ("fn f(g, x) = g(x)", vec![b("str.length", 1), Value::String(std::sync::Arc::new("hello".to_string()))]),
+    ] {
+        assert_same(src, "f", &args);
+    }
+}

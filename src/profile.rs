@@ -1207,8 +1207,49 @@ pub struct StatsSnapshot {
     pub ms_per_sample: f64,
 }
 
+/// Native code calling native code pushes no frame: with statistics on,
+/// the JIT bakes the address of the callee's counter here into the call
+/// site and adds one there per call (a load, an add and a store — no
+/// atomic read-modify-write, so racing threads may lose a count). Keyed
+/// by the callee's name and file, as its frame would be; leaked, so the
+/// address the machine code holds stays good.
+type InnerKey = (String, Option<String>);
+static NATIVE_INNER: Mutex<Option<HashMap<InnerKey, &'static AtomicU64>>> = Mutex::new(None);
+
+/// The counter of native-to-native calls of `name` (declared in `file`):
+/// its address, for the JIT to bake into a call site.
+pub fn native_call_counter(name: &str, file: Option<&str>) -> &'static AtomicU64 {
+    let mut guard = NATIVE_INNER.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(HashMap::new);
+    map.entry((name.to_string(), file.map(str::to_string)))
+        .or_insert_with(|| Box::leak(Box::new(AtomicU64::new(0))))
+}
+
+// The native-to-native calls counted at call sites, added to their
+// callees' native calls (and zeroed with a reset).
+fn add_native_inner(totals: &mut [u64], reset: bool) {
+    let guard = NATIVE_INNER.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(map) = guard.as_ref() else { return };
+    for ((name, file), counter) in map.iter() {
+        let n = if reset { counter.swap(0, Ordering::Relaxed) } else { counter.load(Ordering::Relaxed) };
+        if n == 0 || is_anonymous(name) {
+            continue;
+        }
+        let mut key = name.clone();
+        if let Some(f) = file {
+            key.push(FILE_SEP);
+            key.push_str(f);
+        }
+        let id = intern(&key) as usize;
+        if id < STAT_IDS {
+            totals[id * STAT_SLOTS + Tier::Native as usize] += n;
+        }
+    }
+}
+
 pub fn stats_snapshot(reset: bool) -> StatsSnapshot {
     let mut totals = vec![0u64; STAT_IDS * STAT_SLOTS];
+    add_native_inner(&mut totals, reset);
     {
         let mut retired = registry().retired.lock().unwrap_or_else(|e| e.into_inner());
         for (i, n) in retired.iter_mut().enumerate() {

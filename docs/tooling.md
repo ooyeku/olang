@@ -60,6 +60,8 @@ olang test examples/    # or a specific directory / single file
 olang test tests/ --only "rate limit"   # the blocks whose name contains the text
 olang test tests/ --times               # each block's milliseconds, and the slowest five
 olang test --deps       # the dependencies' blocks too
+olang test lib/calc.ol tests/calc_test.ol   # several files (or directories) in one run, each once
+olang test --format json tests/            # the run as line-delimited events, for an editor
 ```
 
 A *test file* is any `.ol` file containing a top-level `test "name" { ... }`
@@ -131,6 +133,48 @@ as a file error and counts as a failure.
 Conventions that work well: name dedicated suites `*_test.ol`, or keep a
 `test` block next to the code it guards (the markdown example self-checks
 its conversion contract this way).
+
+### `olang test --format json`
+
+For an editor (olang Studio's tests panel): the run as it goes, one JSON
+object a line on stdout, each with an `event`. The human report is not
+printed; everything else about the run — which files and blocks run,
+`--only`, several paths, `--verify-tiers`, `--ovm-stats`, the exit
+status — is as without the flag. Lines and columns are 1-based; files
+are absolute paths.
+
+```json
+{"event":"run","format":1,"files":["/p/tests/calc_test.ol"],"count":7,"only":null,"verify_tiers":null}
+{"event":"test","file":"/p/tests/calc_test.ol","name":"total is off by one","line":13}
+{"event":"failed","file":"/p/tests/calc_test.ol","name":"total is off by one","line":13,"ms":0.21,
+ "kind":"assert_eq","message":"Runtime error: Assertion failed: Integer(42) != Integer(41)",
+ "at":{"file":"/p/tests/calc_test.ol","line":14,"col":5},"stmt":14,"frames":[],
+ "expected":{"type":"Int","show":"41","pretty":"41","value":41},
+ "actual":{"type":"Int","show":"42","pretty":"42","value":42}}
+{"event":"passed","file":"/p/tests/calc_test.ol","name":"cents of a price","line":29,"ms":0.05}
+{"event":"snapshot","file":"/p/tests/calc_test.ol","name":"the card's pixels","line":41,
+ "snapshot":{"name":"card","baseline":"/p/tests/__snapshots__/card.png","actual":"/p/tests/__snapshots__/card.actual.png",
+             "diff":"/p/tests/__snapshots__/card.diff.png","differing":50,"total":19800,"worst":231,"sizes":null}}
+{"event":"file","file":"/p/tests/calc_test.ol","passed":3,"failed":4,"error":null}
+{"event":"finished","passed":3,"failed":4,"skipped":0,"files":1,"ms":412,"code":1}
+```
+
+| `event` | When, and what it says |
+|---|---|
+| `run` | First: the files that will run (those with blocks), how many blocks they declare (`only` applied), the `--only` text, the `--verify-tiers` rate. |
+| `test` | A block starts: `file`, `name`, `line`. |
+| `passed` | It passed: `ms`. |
+| `failed` | It failed: `ms`, `message`, `kind`, `at` (the failing assertion or error: `file`, `line`, `col`; `null` for an assertion that tallies instead of raising, `testing.assert_*`), `stmt` (the block's statement it surfaced from — its place in the test file when `at` is in a library), `frames` (innermost first, each `name`, `file`, and the `line` of its `fn` when the file declares one). `kind` is `assert_eq`, `assert_ne`, `snapshot` (a text snapshot), `pixels` (a pixel snapshot: `snapshots` lists them) or `error`; for the first three, `expected` and `actual` are the values: `type`, `show` (the display form), `pretty` (the display form an entry a line, when a list, map, tuple or record is longer than 60 characters — what a line diff reads), `value` (as JSON, where the value has a form there), `string` (a string's own text), `clipped` (past 20,000 characters). |
+| `snapshot` | A pixel snapshot differs, said by the library that compares it (`testing.snapshot_failed`, which Loom's `snapshot` calls): `snapshot` holds `name`, `baseline`, `actual`, `diff` (paths), `differing`, `total`, `worst`, `sizes`. |
+| `skipped` | A block of a named file that `--only` left out. |
+| `divergence` | `--verify-tiers` found native code and the VM disagreeing: `function` (`fn name (native call)`, or an on-stack-replacement region), `native`, `vm` (the two results, rendered), and the block under way (`file`, `name`, `line`). A `finished` event with `aborted: "divergence"` and `code` 102 follows, and the process ends. |
+| `file` | A file is done: its `passed` and `failed`, and `error` — the file's parse error (`kind` `parse`) or an error outside any block (`kind` `error`, with its `line`, `col` and `frames`). |
+| `finished` | Last: the totals, `ms`, and the exit status `code`. |
+
+What the program under test prints still goes to stdout, between the
+events, as it is printed: a reader takes a line holding `{"event":` as an
+event — with any text before it on the line as printed output — and any
+other line as the current block's output.
 
 ### Coverage
 
@@ -458,11 +502,13 @@ function directly, or pass what it needs as a parameter.
 
 <a id="tier-boundary"></a>
 **`boundary`** — a value crossing between the tree-walker and compiled
-code cannot be converted: a builtin function or a module passed as a
-value, a result the VM cannot hand back. The function compiles, so
-`olang check --tier` passes, but each such call runs on the tree-walker:
-tier statistics show it as a *fallback*. Pass a user function (a lambda
-around the builtin), or the data instead of the module.
+code cannot be converted: a module passed as a value, a result the VM
+cannot hand back. The function compiles, so `olang check --tier`
+passes, but each such call runs on the tree-walker: tier statistics
+show it as a *fallback*. Pass the data instead of the module, or the
+module's function itself. (A builtin passed as a value — `apply(len,
+xs)` — crosses: it is called in compiled code through the bridge, by
+name.)
 
 <a id="tier-ambiguous"></a>
 **`ambiguous`** — two functions share its name (two modules, a trait
@@ -1007,6 +1053,13 @@ or `os.exit`. `OLANG_OVM_STATS=json[:PATH]` does the same for any
 command, `olang test` included. `--ovm-stats` alone still prints the
 one-line summary.
 
+A `PATH` that is a directory — written with a trailing `/`, or one that
+exists — gets a file a process, `<pid>.json`, and the processes the run
+starts are told the same directory: `olang --ovm-stats=json:stats/
+bench prog.ol` leaves the bench's own file and one for each of its runs
+(with a single path, the last child to end replaced the others). A
+reader adds them up, function by function.
+
 ```json
 {"format":1,"kind":"ovm-stats","olang":"0.87.0","threshold":1,"interval_us":250,
  "sampled_ms":41.2,"ms_per_sample":0.31,
@@ -1016,7 +1069,7 @@ one-line summary.
    "calls":{"interpreter":400,"bytecode":0,"native":0},
    "self_ms":{"interpreter":0.6,"bytecode":0,"native":0,"builtin":0},"total_ms":0.9,
    "promoted":false,"deopts":0,"deopt_reasons":[],"refused":null,"native_refused":null,
-   "fallbacks":{"count":400,"reason":"an argument the tier boundary cannot convert (a builtin or a module passed as a value, say)"},
+   "fallbacks":{"count":400,"reason":"an argument the tier boundary cannot convert (a module passed as a value, say)"},
    "pinned":null,"violation":null}],
  "violations":[]}
 ```
@@ -1026,8 +1079,11 @@ declared, 1-based):
 
 - `calls` — exact counts of the calls each tier served. A call the
   tree-walker hands to a compiled tier counts once, on that tier.
-  Calls made from native code to native code are inside their caller's
-  native code and are not counted.
+  Calls native code makes to native code push no frame; with
+  statistics on, each such call site adds one to its callee's counter
+  as it calls (a load, an add and a store baked into the machine code;
+  racing threads may lose a count), so a function called only from
+  inside native code still has its calls. Its time stays its caller's.
 - `self_ms` — time each tier spent in the function itself, and in the
   builtins it called (`map`, `sort_by`, …: `builtin`); `total_ms` with
   its callees. Sampled, as `olang profile` samples, every 250 µs: a
@@ -1055,14 +1111,16 @@ declared, 1-based):
 
 **What it costs.** Calls are counted on the shadow-stack push each tier
 already makes for `olang profile` (a load and a store on the thread's
-own counters, no lock, no clock); time is sampled by a thread that wakes
-every 250 µs. Calls inside native code push nothing and are not slowed
-at all. Measured on this Mac (Apple silicon, best of 5 whole runs,
-start-up included): a native-heavy run (`fib(32)` × 6, 80 ms) +2%, a
-bytecode-heavy one (record and string helpers, 10⁶ calls, 2.8 s) +2%, a
-tree-walker-heavy one (a builtin passed as a value, 10⁶ calls, 1.4 s)
-+5–10%. Without the flag nothing changes: every
-push site is one relaxed load and a predicted-false branch, as before.
+own counters, no lock, no clock), and native code's calls of native code
+at their call sites (a load, an add and a store, compiled in only when
+statistics are on); time is sampled by a thread that wakes every
+250 µs. Measured on this Mac (Apple silicon, best of 7 whole runs,
+start-up included): a native-heavy run (`fib(32)` × 6, 85 ms, its
+42 million calls of itself counted) +1–5%, a bytecode-heavy one (record
+and string helpers, 10⁶ calls, 1.5 s) +3%, a tree-walker-heavy one (a
+module passed as a value, 10⁶ calls, 1.3 s) +8%. Without the flag nothing changes: every push site is
+one relaxed load and a predicted-false branch, and native code is
+compiled without the counters.
 
 **From the REPL.** `olang repl --serve` keeps the same statistics for
 its evaluations and answers them to `{"op":"stats","id":9,"reset":true}`
@@ -1081,14 +1139,17 @@ olang --verify-tiers 1 run pipeline.ol      # verify every native result
 ```
 
 At the given sampling probability, each native-tier result — a
-compiled call or an on-stack-replacement loop region — is re-executed
-on the bytecode VM with the same inputs, and the two results are
-compared bit for bit. Re-execution is unobservable because the JIT
+compiled call, made from the VM or from the tree-walker (a test block's
+call, a top-level one), or an on-stack-replacement loop region — is
+re-executed on the bytecode VM with the same inputs, and the two
+results are compared bit for bit. Re-execution is unobservable because the JIT
 compiles only code that is pure with respect to caller-visible state;
 the cost is the work re-run (rate `1` roughly doubles native work;
 `0.01` is noise). A divergence prints both renderings and exits with
 code 102: by the correctness policy, any such difference is an engine
-bug, and the report asks for it to be filed. The `:ovm` report in the
+bug, and the report asks for it to be filed. Under `olang test --format
+json` it is also a `divergence` event naming the function, both values
+and the block under way. The `:ovm` report in the
 REPL shows how many calls a session verified.
 
 The flag suits long-running or high-stakes runs where the standing
@@ -1104,7 +1165,7 @@ both exist.
 |---|---|
 | `OLANG_DENY` | Deny capabilities for the run, as `--deny`: a comma list of `fs`, `fs-write`, `net`, `proc`, `db`, `env`. |
 | `OLANG_VERIFY_TIERS` | The `--verify-tiers` sampling rate (`0`–`1`). |
-| `OLANG_OVM_STATS` | `json` or `json:PATH`: keep [tier statistics](#tier-statistics--ovm-statsjson) for any command and write them at exit. |
+| `OLANG_OVM_STATS` | `json` or `json:PATH`: keep [tier statistics](#tier-statistics--ovm-statsjson) for any command and write them at exit (`json:DIR/`: a file a process in `DIR`). |
 | `OLANG_TIER_GUARD` | `1`: a run keeping tier statistics in which a pinned-native function fell back exits with status 3. |
 | `OLANG_STALL_ABORT` | `0` disables the deadlock abort: an all-threads-parked program hangs instead of exiting with the stall report. |
 | `OLANG_HTTP_WORKERS` | Default worker count for `http.serve` when the options map does not set one. |

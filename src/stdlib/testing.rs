@@ -57,6 +57,10 @@ pub fn create_testing_module() -> Value {
         create_builtin_function("snapshot_dir", 0),
     );
     module.insert(
+        "snapshot_failed".to_string(),
+        create_builtin_function("snapshot_failed", 1),
+    );
+    module.insert(
         "run_test".to_string(),
         create_builtin_function("run_test", 2),
     );
@@ -102,6 +106,7 @@ pub fn call_testing_function(
         // needs the test file's directory).
         "snapshot" => Err("testing.snapshot needs the running program's file".into()),
         "snapshot_dir" => Err("testing.snapshot_dir needs the running program's file".into()),
+        "snapshot_failed" => Ok(Value::Unit),
         "run_test" => run_test(args),
         "test_summary" => test_summary(args),
         "reset_tests" => reset_tests(args),
@@ -143,6 +148,7 @@ fn assert_eq(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if values_equal(expected, actual) {
         Ok(Value::Ok(Box::new(Value::Unit)))
     } else {
+        crate::tools::test_events::note_values("assert_eq", expected, actual);
         let error_msg = format!("Assertion failed: expected {} but got {}", expected, actual);
         Ok(Value::Err(Box::new(Value::String(Arc::new(error_msg)))))
     }
@@ -487,6 +493,7 @@ mod tests {
                 "fail",
                 "snapshot",
                 "snapshot_dir",
+                "snapshot_failed",
                 "run_test",
                 "test_summary",
                 "reset_tests",

@@ -928,7 +928,7 @@ impl BytecodeTier {
                             self.known_functions
                                 .get(name)
                                 .and_then(|f| f.def_file.as_deref()),
-                            "an argument the tier boundary cannot convert (a builtin or a module passed as a value, say)",
+                            "an argument the tier boundary cannot convert (a module passed as a value, say)",
                         );
                     }
                     return TierOutcome::Fallback;

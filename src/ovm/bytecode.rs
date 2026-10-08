@@ -2338,6 +2338,10 @@ impl BytecodeVm {
                 }
             }
             if let Some(result) = native {
+                if Self::verify_sample() {
+                    let what = format!("fn {} (native call)", bytecode.debug_info.function_name.as_deref().unwrap_or("?"));
+                    self.verify_native_values(&what, &bytecode, args, &result);
+                }
                 return Ok(result);
             }
         }
@@ -2553,6 +2557,10 @@ impl BytecodeVm {
                 }
             }
             if let Some(result) = native {
+                if Self::verify_sample() {
+                    let what = format!("fn {} (native call)", bytecode.debug_info.function_name.as_deref().unwrap_or("?"));
+                    self.verify_native_values(&what, &bytecode, args, &result);
+                }
                 return Ok(Err(result));
             }
         }
@@ -2643,6 +2651,28 @@ impl BytecodeVm {
             Err(e) => Err(e),
         };
         self.call_depth -= 1;
+        self.verify_report(what, outcome, native);
+    }
+
+    /// `verify_native_result` for a native call entered with argument
+    /// values (the tree-walker calling a compiled function, a value
+    /// called): the same re-run on the VM and the same report.
+    fn verify_native_values(&mut self, what: &str, bytecode: &CompiledBytecode, args: &[OvmValue], native: &OvmValue) {
+        if self.call_depth >= self.max_call_depth {
+            return;
+        }
+        let _guard = Self::verify_enter();
+        self.call_depth += 1;
+        let saved = self.execution_state.push_frame(bytecode.register_count as usize, args);
+        let outcome = self.execute_bytecode(bytecode);
+        self.execution_state.pop_frame(saved);
+        self.call_depth -= 1;
+        self.verify_report(what, outcome, native);
+    }
+
+    /// The VM's re-run against the native result: agreement counted, a
+    /// divergence reported and the process ended.
+    fn verify_report(&mut self, what: &str, outcome: Result<OvmValue, BytecodeError>, native: &OvmValue) {
         self.stats.verified_calls += 1;
         let selftest = std::env::var_os("OLANG_VERIFY_SELFTEST").is_some();
         let diverged = match &outcome {
@@ -2671,6 +2701,9 @@ impl BytecodeVm {
         };
         #[cfg(feature = "native")]
         crate::stdlib::tty::restore_terminal();
+        if crate::tools::test_events::enabled() {
+            crate::tools::test_events::divergence(what, &clip(format!("{}", native)), &vm_text);
+        }
         eprintln!(
             "tier divergence: the native tier and the VM disagree\n  at:     {}\n  native: {}\n  vm:     {}\nThis is an engine bug — the program's results past this point cannot be trusted.\nPlease report it (a reproducing program plus this message).",
             what,
@@ -8473,10 +8506,21 @@ impl BytecodeVm {
             // A parsed JSON object or an anonymous record that crosses
             // wrapped (`AstStruct`) leaves as the Arc it came in with, so
             // it round-trips whatever it holds, unwalked — as a map does.
+            // A module of builtins stays on the interpreter, as before
+            // builtins crossed: its members are reached by name there.
+            Value::Struct { type_name, fields } if type_name == "Module" => fields
+                .values()
+                .all(|v| !matches!(v, Value::Builtin(_)) && Self::round_trips(v)),
             Value::Struct { type_name, fields } => {
                 crate::ovm::value::AstRecordKind::of(type_name).is_some()
                     || fields.values().all(Self::round_trips)
             }
+            // A builtin is its name and arity: it crosses as that and comes
+            // back as the same value (`to_ast`), and a call of it inside
+            // compiled code goes through the bridge by name — so a function
+            // handed `len` (`apply(len, xs)`) runs compiled instead of
+            // falling back to the tree-walker on every call.
+            Value::Builtin(_) => true,
             // Function values wrap verbatim (AstFunction), so they always
             // round-trip — which is what lets user functions be passed as
             // arguments into promoted functions.

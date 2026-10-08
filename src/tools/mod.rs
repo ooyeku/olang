@@ -13,6 +13,7 @@ pub mod fmt;
 pub mod lsp; // `olang lsp` — the language server over stdio
 #[cfg(feature = "native")]
 pub mod semantic; // the language server's semantic tokens
+pub mod test_events; // `olang test --format json` — the runner's events for an editor
 pub mod test_runner;
 
 use std::path::{Path, PathBuf};

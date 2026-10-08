@@ -158,6 +158,13 @@ impl ScratchCtx {
 /// call graph.
 pub type BytecodeLookup<'a> = dyn Fn(FunctionId) -> Option<Arc<CompiledBytecode>> + 'a;
 
+thread_local! {
+    /// While a group compiles with tier statistics on: each native
+    /// callee's function index → the address of its call counter
+    /// (`profile::native_call_counter`), baked into its call sites.
+    static CALL_COUNTERS: std::cell::RefCell<HashMap<usize, usize>> = std::cell::RefCell::new(HashMap::new());
+}
+
 /// One callable's signature in the group-inference snapshot: parameter
 /// kinds, current return mask, element kinds when it returns a tuple,
 /// its shape when it returns a struct, its full Result kind when it
@@ -3075,6 +3082,27 @@ impl JitCache {
                 (*clif_id, inf.ret_kind, inf.ret_tuple.clone()),
             );
         }
+
+        // Tier statistics: each call site to a native callee adds one to
+        // that callee's counter (native code pushes no frame for it).
+        let counters: HashMap<usize, usize> = if crate::profile::stats_on() {
+            targets
+                .keys()
+                .filter_map(|idx| {
+                    let bc = plans
+                        .iter()
+                        .find(|p| p.func_id.index() == *idx)
+                        .map(|p| Arc::clone(&p.bytecode))
+                        .or_else(|| lookup(FunctionId(*idx as u64)))?;
+                    let name = bc.debug_info.function_name.as_deref()?;
+                    let counter = crate::profile::native_call_counter(name, bc.def_file.as_deref());
+                    Some((*idx, counter as *const std::sync::atomic::AtomicU64 as usize))
+                })
+                .collect()
+        } else {
+            HashMap::new()
+        };
+        CALL_COUNTERS.with(|c| *c.borrow_mut() = counters);
 
         let mut fbc = FunctionBuilderContext::new();
         for ((plan, inf), clif_id) in plans.iter().zip(&inferences).zip(&clif_ids) {
@@ -7388,6 +7416,12 @@ fn translate_body(
                 let cont = builder.create_block();
                 builder.ins().brif(exhausted, deopt_block, &[], cont, &[]);
                 builder.switch_to_block(cont);
+                if let Some(addr) = CALL_COUNTERS.with(|c| c.borrow().get(&func_id.index()).copied()) {
+                    let at = builder.ins().iconst(types::I64, addr as i64);
+                    let n = builder.ins().load(types::I64, MemFlagsData::trusted(), at, 0);
+                    let n1 = builder.ins().iadd_imm_s(n, 1);
+                    builder.ins().store(MemFlagsData::trusted(), n1, at, 0);
+                }
 
                 let mut call_args = Vec::with_capacity(args.len() + 1);
                 for a in args {

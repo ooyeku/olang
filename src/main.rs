@@ -251,9 +251,9 @@ enum Commands {
 
     /// Discover and run test blocks
     Test {
-        /// File or directory to test (default: current directory)
+        /// Files or directories to test (default: current directory)
         #[arg(value_name = "PATH")]
-        path: Option<PathBuf>,
+        path: Vec<PathBuf>,
         /// Report line coverage
         #[arg(long)]
         coverage: bool,
@@ -273,6 +273,10 @@ enum Commands {
         /// lock packages, the runtime's embedded modules) as they are imported
         #[arg(long)]
         deps: bool,
+        /// `text` (the default), or `json`: line-delimited events as the run
+        /// goes, for an editor (docs/tooling.md)
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: String,
     },
 
     /// Compile a program to a self-contained executable
@@ -509,6 +513,16 @@ fn run() -> i32 {
         match olang::tier_stats::spec_path(&spec) {
             Some(path) => {
                 let path = std::path::absolute(&path).unwrap_or(path);
+                // A directory (`json:DIR/`, or one that exists): each
+                // process writes its own file there, and the children this
+                // one starts (`olang bench`'s runs, a test's `olang`) are
+                // told the same directory, so no child's statistics replace
+                // another's.
+                if olang::tier_stats::is_dir_spec(&path) {
+                    // SAFETY: single-threaded at this point — no interpreter
+                    // or worker threads have started.
+                    unsafe { std::env::set_var("OLANG_OVM_STATS", format!("json:{}/", path.display())) };
+                }
                 olang::tier_stats::begin_run(path);
             }
             None if spec == "text" => {}
@@ -634,11 +648,16 @@ fn run() -> i32 {
             only,
             times,
             deps,
+            format,
         }) => {
+            if format != "text" && format != "json" {
+                eprintln!("olang test: --format is `text` or `json`, not `{}`", format);
+                return 2;
+            }
             // Files under the runner get a bare argv — a program that branches
             // on os.args() takes its no-argument path.
             olang::stdlib::os::set_script_args(vec!["olang-test".to_string()]);
-            let target = path.unwrap_or_else(|| PathBuf::from("."));
+            let target = path.first().cloned().unwrap_or_else(|| PathBuf::from("."));
             if watch {
                 // The edit-test loop: each run is a child `olang test` (the
                 // same discipline as `--watch` for programs — a crash ends
@@ -670,11 +689,12 @@ fn run() -> i32 {
                 };
                 return watch_argv(&dir, &argv);
             }
-            olang::tools::test_runner::run_with(
-                &target,
+            let targets = if path.is_empty() { vec![target] } else { path };
+            olang::tools::test_runner::run_paths(
+                &targets,
                 coverage || coverage_lines,
                 coverage_lines,
-                &olang::tools::test_runner::Options { only, times, deps },
+                &olang::tools::test_runner::Options { only, times, deps, json: format == "json" },
             )
         }
 

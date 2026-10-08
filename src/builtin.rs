@@ -1012,6 +1012,15 @@ impl BuiltinFunctions {
         }
         // `testing.snapshot_dir()`: where snapshots of the file under test
         // live, for a library keeping its own kind (Loom's pixels).
+        // `testing.snapshot_failed(info)`: a library that compares its own
+        // snapshots (Loom's pixels) says one differs, for `olang test
+        // --format json`'s `snapshot` event. Nothing otherwise.
+        if name == "testing.snapshot_failed" {
+            if let Some(info) = arguments.first() {
+                crate::tools::test_events::note_snapshot(info);
+            }
+            return Ok(Value::Unit);
+        }
         if name == "testing.snapshot_dir" {
             return Ok(Value::String(std::sync::Arc::new(
                 snapshot_dir(interpreter).to_string_lossy().to_string(),
@@ -1054,6 +1063,7 @@ impl BuiltinFunctions {
                 let equal = crate::interpreter::ops::assert_eq_holds(&arguments[0], &arguments[1]);
                 let want_equal = name == "assert_eq";
                 if equal != want_equal {
+                    crate::tools::test_events::note_values(name, &arguments[1], &arguments[0]);
                     let message = arguments
                         .get(2)
                         .and_then(|m| match m {
@@ -4040,6 +4050,11 @@ fn testing_snapshot(
         }
         Ok(expected) => {
             crate::stdlib::testing::record_fail();
+            crate::tools::test_events::note_values(
+                "snapshot",
+                &Value::String(std::sync::Arc::new(expected.clone())),
+                &Value::String(std::sync::Arc::new(actual.clone())),
+            );
             Err(InterpreterError::RuntimeError {
                 message: format!(
                     "snapshot '{}' changed ({}):\n── recorded ──\n{}\n── now ──\n{}\nset OLANG_UPDATE_SNAPSHOTS=1 to accept the new form",

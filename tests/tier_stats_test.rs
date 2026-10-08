@@ -33,6 +33,8 @@ fn doubled_later(n) = {
 
 fn apply(f, x) = f(x)
 
+fn width(m, s) = m.length(s)
+
 // studio: native
 fn tally(ch, n) = n + 1
 
@@ -41,6 +43,7 @@ let mut total = 0
 for i in range(0, 300) {
     total = total + fib(10)
     total = total + apply(len, [i, i])
+    total = total + width(str, "ab")
     total = total + tally(ch, i)
 }
 println(total + doubled_later(1))
@@ -111,18 +114,25 @@ fn ovm_stats_json_says_where_each_function_ran_and_why() {
     let j: J = serde_json::from_str(&std::fs::read_to_string(&stats).unwrap()).unwrap();
     assert_eq!(j["kind"], json!("ovm-stats"));
     let fns = &j["functions"];
-    // native: every call counted once, on native code
+    // native: every call counted once, on native code — the 300 the VM
+    // made and the 52,800 native code made of itself (fib(10) calls fib
+    // 176 times below it), which push no frame and are counted at their
+    // call sites
     let fib = row(fns, "fib");
     assert_eq!(fib["tier"], json!("native"), "{fib}");
-    assert_eq!(fib["calls"]["native"], json!(300));
+    assert_eq!(fib["calls"]["native"], json!(300 * 177));
     assert_eq!(fib["calls"]["interpreter"], json!(0));
     assert_eq!(fib["line"], json!(1));
-    // compiles, but a builtin passed as a value keeps every call on the
-    // tree-walker: a fallback, with its reason
+    // a builtin passed as a value crosses the boundary: compiled, no fallback
     let apply = row(fns, "apply");
-    assert_eq!(apply["tier"], json!("interpreter"), "{apply}");
-    assert_eq!(apply["fallbacks"]["count"], json!(300));
-    assert!(apply["fallbacks"]["reason"].as_str().unwrap().contains("cannot convert"));
+    assert_ne!(apply["tier"], json!("interpreter"), "{apply}");
+    assert!(apply["fallbacks"].is_null(), "{apply}");
+    // compiles, but a module passed as a value keeps every call on the
+    // tree-walker: a fallback, with its reason
+    let width = row(fns, "width");
+    assert_eq!(width["tier"], json!("interpreter"), "{width}");
+    assert_eq!(width["fallbacks"]["count"], json!(300));
+    assert!(width["fallbacks"]["reason"].as_str().unwrap().contains("cannot convert"));
     // a channel argument: bytecode, each native attempt declined
     let tally = row(fns, "tally");
     assert_eq!(tally["tier"], json!("bytecode"), "{tally}");
@@ -172,7 +182,7 @@ fn the_repl_answers_its_evaluations_statistics() {
     let hello = recv();
     assert!(hello["ops"].as_array().unwrap().contains(&json!("stats")));
     let file = dir.join("main.ol");
-    writeln!(stdin, "{}", json!({"op": "eval", "id": 1, "code": "fib(15) + apply(len, [1])", "file": file, "line": 22})).unwrap();
+    writeln!(stdin, "{}", json!({"op": "eval", "id": 1, "code": "fib(15) + width(str, \"a\") + apply(len, [1])", "file": file, "line": 24})).unwrap();
     stdin.flush().unwrap();
     let r = recv();
     assert_eq!(r["ok"], json!(true), "{r}");
@@ -182,7 +192,7 @@ fn the_repl_answers_its_evaluations_statistics() {
     assert_eq!(s["id"], json!(2));
     let fns = &s["stats"]["functions"];
     assert_eq!(row(fns, "fib")["tier"], json!("native"), "{fns}");
-    assert_eq!(row(fns, "apply")["tier"], json!("interpreter"));
+    assert_eq!(row(fns, "width")["tier"], json!("interpreter"));
     // reset: the next answer starts from nothing
     writeln!(stdin, "{}", json!({"op": "stats", "id": 3})).unwrap();
     stdin.flush().unwrap();
@@ -190,4 +200,27 @@ fn the_repl_answers_its_evaluations_statistics() {
     assert!(s2["stats"]["functions"].as_array().unwrap().iter().all(|f| f["calls"]["native"] == json!(0)), "{s2}");
     let _ = writeln!(stdin, "{}", json!({"op": "shutdown", "id": 4}));
     let _ = child.wait();
+}
+
+#[test]
+fn a_directory_keeps_each_process_its_own_file() {
+    // `json:DIR/`: a run writes `<pid>.json` there, and tells its children
+    // the same directory — `olang bench`'s runs each leave theirs, where a
+    // single path kept only the last child's
+    let dir = project("dir", MAIN, "");
+    let out = dir.join("stats");
+    let arg = format!("--ovm-stats=json:{}/", out.display());
+    let (code, _, err) = olang(&dir, &[&arg, "bench", "--runs", "1", "main.ol"], &[]);
+    assert_eq!(code, 0, "{err}");
+    let files: Vec<PathBuf> = std::fs::read_dir(&out).unwrap().map(|e| e.unwrap().path()).collect();
+    // the bench itself, its warm-up and its one timed run
+    assert!(files.len() >= 3, "{files:?}");
+    let with_fib = files
+        .iter()
+        .filter(|f| {
+            let j: J = serde_json::from_str(&std::fs::read_to_string(f).unwrap()).unwrap();
+            j["functions"].as_array().unwrap().iter().any(|r| r["name"] == json!("fib"))
+        })
+        .count();
+    assert!(with_fib >= 2, "each child's run kept: {files:?}");
 }
