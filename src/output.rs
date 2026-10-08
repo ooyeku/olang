@@ -23,6 +23,12 @@ thread_local! {
 #[cfg(feature = "native")]
 fn write_stdout(bytes: &[u8], flush: bool) {
     use std::io::Write;
+    if COLLECTING.load(std::sync::atomic::Ordering::Relaxed) {
+        if let Ok(mut buf) = COLLECTED.lock() {
+            buf.extend_from_slice(bytes);
+        }
+        return;
+    }
     let mut out = std::io::stdout().lock();
     let result = out
         .write_all(bytes)
@@ -70,4 +76,27 @@ pub fn emit_line(text: &str) {
 #[cfg(not(feature = "native"))]
 pub fn drain_captured() -> String {
     CAPTURE.with(|c| std::mem::take(&mut *c.borrow_mut()))
+}
+
+// `olang repl --serve` keeps its stdout for the protocol: what a program
+// prints while it serves is collected here, from any thread, and handed
+// back with the evaluation that printed it.
+#[cfg(feature = "native")]
+static COLLECTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(feature = "native")]
+static COLLECTED: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
+
+/// From now on `print` and `println` collect instead of writing.
+#[cfg(feature = "native")]
+pub fn collect_output() {
+    COLLECTING.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// What was printed since the last call (lossy UTF-8).
+#[cfg(feature = "native")]
+pub fn take_collected() -> String {
+    match COLLECTED.lock() {
+        Ok(mut buf) => String::from_utf8_lossy(&std::mem::take(&mut *buf)).into_owned(),
+        Err(_) => String::new(),
+    }
 }

@@ -91,6 +91,22 @@ pub use errors::{InterpreterError, IntuitiveErrorFormatter};
 mod environment;
 pub use environment::{Environment, ModuleDebugConfig};
 
+/// A top-level scope kept aside (`Interpreter::new_repl_scope`).
+pub struct ReplScope {
+    environment: Environment,
+    scope_bindings: crate::scoping::Predefined,
+    module_path: Option<String>,
+    pending_top_level: HashMap<String, Statement>,
+    declared_early: crate::ast::ValueMap,
+}
+
+impl ReplScope {
+    /// A binding of this scope, when it is not the current one.
+    pub fn get(&self, name: &str) -> Option<Value> {
+        self.environment.get(name)
+    }
+}
+
 /// A lambda expression, worked out once (`Interpreter::lambda_shape`).
 struct LambdaShape {
     parameters: Vec<String>,
@@ -478,6 +494,33 @@ impl Interpreter {
             };
             self.module_cache.insert(path_str.to_string(), cache_entry);
         }
+    }
+
+    /// A fresh top-level scope for `olang repl --serve`: the prelude and
+    /// nothing else, its module context `file` (relative `use`s resolve
+    /// beside it). Each source file evaluated in the session has one, so
+    /// two files' helpers of the same name never meet; `swap_repl_scope`
+    /// makes one current.
+    pub fn new_repl_scope(&self, file: Option<&std::path::Path>) -> ReplScope {
+        let mut environment = Environment::new();
+        environment.variables = self.prelude();
+        ReplScope {
+            environment,
+            scope_bindings: crate::scoping::Predefined::new(),
+            module_path: file.and_then(|f| f.to_str()).map(|f| f.to_string()),
+            pending_top_level: HashMap::new(),
+            declared_early: crate::ast::ValueMap::default(),
+        }
+    }
+
+    /// Exchange the interpreter's top-level scope with `scope`: swap in,
+    /// evaluate, swap back.
+    pub fn swap_repl_scope(&mut self, scope: &mut ReplScope) {
+        std::mem::swap(&mut self.environment, &mut scope.environment);
+        std::mem::swap(&mut self.scope_bindings, &mut scope.scope_bindings);
+        std::mem::swap(&mut self.current_module_path, &mut scope.module_path);
+        std::mem::swap(&mut self.pending_top_level, &mut scope.pending_top_level);
+        std::mem::swap(&mut self.declared_early, &mut scope.declared_early);
     }
 
     /// Clear the current file context
@@ -3170,6 +3213,11 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     ) -> Result<Value, InterpreterError> {
         {
             self.spend_step()?;
+            if crate::interrupt::pending() {
+                return Err(InterpreterError::RuntimeError {
+                    message: crate::interrupt::MESSAGE.to_string(),
+                });
+            }
             // Increment call depth for user functions
             self.call_depth += 1;
             // A frame from another file names it — "open_db (lib/sql.ol)"
@@ -4501,6 +4549,13 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// Perform safepoint poll for GC coordination
     /// This should be called periodically during evaluation
     pub fn safepoint_poll(&self) -> Result<(), InterpreterError> {
+        // A stop asked for from another thread (`olang repl --serve`'s
+        // interrupt): one relaxed load when none is.
+        if crate::interrupt::pending() {
+            return Err(InterpreterError::RuntimeError {
+                message: crate::interrupt::MESSAGE.to_string(),
+            });
+        }
         self.safepoint_manager
             .safepoint_poll()
             .map_err(|e| InterpreterError::RuntimeError {

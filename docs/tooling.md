@@ -39,6 +39,7 @@ language server has [its own chapter](editors.md).
 | `olang bench` | Run benchmarks |
 | `olang profile <file>` | Run under the sampling profiler; report time per function and tier |
 | `olang lsp` | Start the language server (LSP over stdio) |
+| `olang repl --serve` | Serve the REPL to an editor: line-delimited JSON over stdio (below) |
 
 Because the tool is file-first, a word that is neither a known command
 nor a flag is taken as a file to run — so `olang report.ol` and `olang
@@ -466,6 +467,89 @@ script whose own directory has no `olang.toml` falls back to the working
 directory's project for dependency and shelf lookups, so a scratch
 script kept outside the repository can still `use` what the repository
 does.
+
+## `olang repl --serve`
+
+`olang repl --serve` is the REPL as a protocol, for an editor that keeps
+one long-lived REPL per project (olang Studio does). It speaks
+line-delimited JSON over stdio: one request a line in, one reply a line
+out, each reply carrying the request's `id`. The interactive REPL is
+unchanged.
+
+The session is bound to the project the working directory is in, as
+`olang eval` is: the project's dependencies and shelf libraries resolve.
+What a program prints while the session serves is collected and sent with
+the evaluation that printed it (`out`); stdout belongs to the protocol.
+
+**Handshake.** On start the server says
+`{"event":"hello","protocol":1,"olang":"0.87.0","root":…,"pid":…,"ops":[…]}`.
+A client that does not know the protocol's version stops there. `{"op":"hello"}`
+asks again.
+
+**Scopes and lines.** An `eval` with a `file` runs in that file's scope:
+the file's `use`s, functions, types, and the top-level `let`s that call
+nothing, loaded from disk the first time, and whatever was evaluated
+there since. A top-level `let` that calls something (it may read a file
+or start a window) is not loaded; naming it says so. An `eval` with no
+`file` runs in the session's own scope. A snippet evaluated at `line` (1-based)
+is parsed as if it stood there, so every line an error names is the
+file's. Code is evaluated as written: a function's parameter named in a
+line of its body is not bound, and the error says whose parameter it is.
+
+| Request | Reply |
+|---|---|
+| `{"op":"eval","id":1,"code":"rows(10)","file":"/p/calc.ol","line":12}` | `{"id":1,"ok":true,"eval":7,"value":V,"binding":"x"?,"ms":0.4,"server_ms":0.5,"tier":"native","calls":{"bytecode":1,"native":1},"out":"…","notes":[…]?}` — or `"ok":false` with `"error":E` |
+| `{"op":"expand","id":2,"h":3,"start":0,"count":100}` | more of a held value: a list's `items` (`{"i","v"}`), a map's or record's `entries` (`{"key","v"}`), a string's text (`s`), Bytes as base64 (`b64`) |
+| `{"op":"expand","id":3,"h":3,"table":true,"start":0,"count":50,"sort":{"col":2,"desc":true}}` | a table's `rows` (`{"i": index, "c": [cell text…]}`), sorted by a column |
+| `{"op":"release","id":4,"eval":7}` | the evaluation's handles are let go (the last 200 are kept anyway) |
+| `{"op":"interrupt","id":5}` | `{"running":true}`; the running evaluation fails with `"kind":"interrupted"` |
+| `{"op":"reload","id":6,"path":"/p/util.ol"}` | `{"ok":true,"scopes":n,"ms":…}`, or `"ok":false,"kept":true` with the reason |
+| `{"op":"render","id":7,"h":9,"dark":true,"scale":2,"width":640,"loom":"/path/to/loom"?}` | `{"ok":true,"png":"<base64>","width":…,"height":…}` (logical pixels) |
+| `{"op":"reset"}`, `{"op":"shutdown"}` | the scopes forgotten; the server ends |
+
+**Values (V).** Every value has `k` (its kind), `t` (its type) and `s`
+(a one-line form, at most 200 characters; a string's text, up to 2,000):
+
+- `int`, `float`, `bool`, `unit`, `str` (`n` characters; a handle `h`
+  past 2,000; `img`, the absolute path, when the string names a picture
+  that exists), `enum`, `fn`, `decl` (a declaration evaluated);
+- `result`: `ok` and the inner value `v`;
+- `list` and `tuple`: `n`, a handle `h`, the first 20 `items`; a list of
+  maps or records also says `table: {cols}`, and a list of numbers (or of
+  `(x, number)` pairs) `series: {lo, hi, pts}` (at most 512 points: past
+  that, each bucket's least and most);
+- `map` and `record`: `n`, `h`, the first 20 `entries`, sorted by key;
+- `bytes`: `n`, `h`, and for a picture `img: {format, w, h}` and the
+  picture itself (`png`, base64);
+- `view`: a Loom view node (`#{ role, key, props, children }`) — `role`
+  and `h`, for `render`.
+
+**Errors (E).** `{"kind","message","file","line","col","stack","hint"}`,
+`kind` one of `parse`, `runtime`, `unbound` (a parameter or a top-level
+binding not loaded), `interrupted`, `reload`, `render`, `gone` (a handle
+let go). `stack` lists the frames outermost first, each
+`{"name","file","line"}` (where the function is declared).
+
+**Interrupt.** Requests are read on a thread of their own, so
+`interrupt` reaches a running evaluation. Every tier polls one flag: the
+tree-walker at each statement and loop iteration, the VM at each backward
+jump, self tail call and call, native code at its back edges (compiled
+with the poll only in a serving process, so a program run any other way
+compiles exactly the code it always did). The evaluation fails with
+"interrupted" and the session stays as it was; a loop the interpreter had
+promoted to the VM keeps the values it had when it was promoted.
+
+**Reload.** `reload` re-reads a saved file. If it does not parse, nothing
+changes (`kept`). Otherwise the file's scope gets its declarations again,
+every scope that `use`s anything is declared again (its functions then
+call the module loaded now; what was evaluated there by hand stays), and
+the bytecode and native tiers start afresh (compiled code links its
+callees directly).
+
+**Views.** `render` draws a held Loom view headless with Loom's
+`render_view` (lib/test.ol), in the theme and scale asked for, at its
+natural size within `width`. Loom comes from the project's dependency,
+else from the `loom` path given.
 
 ## `olang bench`
 

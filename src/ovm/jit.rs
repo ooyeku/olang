@@ -5962,6 +5962,17 @@ fn translate_body(
     let n = bytecode.instructions.len();
     let param_count = inference.param_kinds.len();
     let ptr_ty = module.target_config().pointer_type();
+    // A process that can be interrupted (`olang repl --serve`) compiles a
+    // poll of the flag at each back edge: set, the body deopts and the VM
+    // raises the error. Any other run compiles no poll at all.
+    let poll_interrupt = crate::interrupt::armed();
+    let interrupt_poll = |builder: &mut FunctionBuilder, deopt: cranelift_codegen::ir::Block| {
+        let addr = builder.ins().iconst(ptr_ty, crate::interrupt::flag_address() as i64);
+        let flag = builder.ins().load(types::I8, MemFlagsData::trusted(), addr, 0);
+        let cont = builder.create_block();
+        builder.ins().brif(flag, deopt, &[], cont, &[]);
+        builder.switch_to_block(cont);
+    };
 
     // Block leaders: entry, every jump target, every instruction after a
     // conditional jump (the fallthrough edge needs a block).
@@ -6131,6 +6142,9 @@ fn translate_body(
             }
             Instruction::Nop => {}
             Instruction::TailCallSelf { args } => {
+                if poll_interrupt {
+                    interrupt_poll(builder, deopt_block);
+                }
                 // Read every argument before writing any parameter — an
                 // argument may be the very parameter register it rebinds.
                 let mut vals = Vec::with_capacity(args.len());
@@ -7253,6 +7267,9 @@ fn translate_body(
             }
             Instruction::Jump { target } => {
                 let block = blocks[target.0 as usize]?;
+                if poll_interrupt && (target.0 as usize) <= i {
+                    interrupt_poll(builder, deopt_block);
+                }
                 if let Some((h, _)) = inference.scratch_region
                     && target.0 as usize == h
                 {
@@ -7272,6 +7289,9 @@ fn translate_body(
                 terminated = true;
             }
             Instruction::JumpIfTrue { condition, target } => {
+                if poll_interrupt && (target.0 as usize) <= i {
+                    interrupt_poll(builder, deopt_block);
+                }
                 let cond = r#gen.read(builder, condition.0)?;
                 let mut then_block = blocks[target.0 as usize]?;
                 let else_block = blocks.get(i + 1).copied().flatten()?;
@@ -7298,6 +7318,9 @@ fn translate_body(
                 terminated = true;
             }
             Instruction::JumpIfFalse { condition, target } => {
+                if poll_interrupt && (target.0 as usize) <= i {
+                    interrupt_poll(builder, deopt_block);
+                }
                 let cond = r#gen.read(builder, condition.0)?;
                 let else_block = blocks[target.0 as usize]?;
                 let then_block = blocks.get(i + 1).copied().flatten()?;

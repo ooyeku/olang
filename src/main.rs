@@ -160,7 +160,13 @@ enum Commands {
     },
 
     /// Start the interactive REPL (the explicit form of bare `olang`)
-    Repl,
+    Repl {
+        /// Serve the REPL to an editor instead: line-delimited JSON over
+        /// stdio (evaluate, values by handle, interrupt, reload, render a
+        /// Loom view) — docs/tooling.md
+        #[arg(long)]
+        serve: bool,
+    },
 
     /// Audit a project: the manifest, its dependencies, the lock, the
     /// browser runtime this binary carries, and stale runtime copies
@@ -558,7 +564,8 @@ fn run() -> i32 {
             clap_complete::generate(shell, &mut Cli::command(), "olang", &mut std::io::stdout());
             0
         }
-        None | Some(Commands::Repl) => {
+        Some(Commands::Repl { serve: true }) => olang::repl_serve::serve(cli.no_ovm),
+        None | Some(Commands::Repl { serve: false }) => {
             if let Err(e) = start_repl(cli.verbose, cli.no_ovm, logger) {
                 logger.error("main", &format!("REPL error: {}", e));
                 return 1;

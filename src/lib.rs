@@ -20,6 +20,7 @@ pub mod expand;
 pub mod help;
 pub mod home;
 pub mod interpreter;
+pub mod interrupt; // Stopping a running evaluation (`olang repl --serve`)
 pub mod log;
 pub mod memory; // The accounting behind `runtime.memory()`
 pub mod native;
@@ -35,6 +36,8 @@ pub mod playground;
 pub mod profile; // Sampling profiler behind `olang profile`
 #[cfg(feature = "native")]
 pub mod repl;
+#[cfg(feature = "native")]
+pub mod repl_serve; // `olang repl --serve`: the REPL as a protocol
 pub mod resolve;
 #[cfg(feature = "native")]
 pub mod runtime_wasm; // The browser runtime the binary embeds

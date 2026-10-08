@@ -2273,6 +2273,11 @@ impl BytecodeVm {
             }
         }
 
+        // A stop asked for from another thread (`olang repl --serve`):
+        // every call's entry polls, so a recursion stops too.
+        if crate::interrupt::pending() {
+            return Err(BytecodeError::RuntimeError(crate::interrupt::MESSAGE.to_string()));
+        }
         // The cap gates the JIT attempt too: a base-case frame exactly at
         // the limit would otherwise run natively to completion without
         // ever meeting the depth check below, letting recursion finish
@@ -2476,6 +2481,11 @@ impl BytecodeVm {
                     }
                 }
             }
+        }
+        // A stop asked for from another thread (`olang repl --serve`):
+        // every call's entry polls, so a recursion stops too.
+        if crate::interrupt::pending() {
+            return Err(BytecodeError::RuntimeError(crate::interrupt::MESSAGE.to_string()));
         }
         // The cap gates the JIT attempt too: a base-case frame exactly at
         // the limit would otherwise run natively to completion without
@@ -4435,6 +4445,9 @@ impl BytecodeVm {
                 // Control flow
                 Instruction::Jump { target } => {
                     let t = target.0 as usize;
+                    if t <= pc && crate::interrupt::pending() {
+                        return Err(BytecodeError::RuntimeError(crate::interrupt::MESSAGE.to_string()));
+                    }
                     #[cfg(feature = "native")]
                     if t <= pc {
                         back_edges += 1;
@@ -4452,6 +4465,9 @@ impl BytecodeVm {
                 Instruction::JumpIfTrue { condition, target } => {
                     if self.is_truthy(self.execution_state.register_ref(*condition)?) {
                         let t = target.0 as usize;
+                        if t <= pc && crate::interrupt::pending() {
+                            return Err(BytecodeError::RuntimeError(crate::interrupt::MESSAGE.to_string()));
+                        }
                         #[cfg(feature = "native")]
                         if t <= pc {
                             back_edges += 1;
@@ -4474,6 +4490,9 @@ impl BytecodeVm {
                 Instruction::JumpIfFalse { condition, target } => {
                     if !self.is_truthy(self.execution_state.register_ref(*condition)?) {
                         let t = target.0 as usize;
+                        if t <= pc && crate::interrupt::pending() {
+                            return Err(BytecodeError::RuntimeError(crate::interrupt::MESSAGE.to_string()));
+                        }
                         #[cfg(feature = "native")]
                         if t <= pc {
                             back_edges += 1;
@@ -4494,6 +4513,9 @@ impl BytecodeVm {
                 }
 
                 Instruction::TailCallSelf { args } => {
+                    if crate::interrupt::pending() {
+                        return Err(BytecodeError::RuntimeError(crate::interrupt::MESSAGE.to_string()));
+                    }
                     // Collect first: an argument register may be the very
                     // parameter register it is about to rebind.
                     let mut values = Vec::with_capacity(args.len());
