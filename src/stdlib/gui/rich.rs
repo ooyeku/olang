@@ -281,7 +281,10 @@ pub fn parse_lenses(v: Option<&Value>) -> Vec<Lens> {
 
 /// A gutter: whether to number the lines, their colour and the caret
 /// line's, a background for the caret's line, and the marks — `(line,
-/// glyph, colour)` — in a column at the gutter's left edge.
+/// glyph, colour)` — in a column at the gutter's left edge. A mark whose
+/// glyph is a list of canvas operations is drawn from them instead, in a
+/// box of `MARK_BOX` logical pixels centred on its line's first row
+/// (`drawn`): a shape, not a character of whatever font has it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Gutter {
     pub numbers: bool,
@@ -289,7 +292,11 @@ pub struct Gutter {
     pub current: Option<Color>,
     pub line_bg: Option<Color>,
     pub marks: Vec<(usize, String, Option<Color>)>,
+    pub drawn: Vec<(usize, Value)>,
 }
+
+/// The side of a drawn gutter mark's box, logical pixels.
+pub const MARK_BOX: f32 = 12.0;
 
 impl Gutter {
     pub fn parse(v: &Value) -> Option<Gutter> {
@@ -297,6 +304,7 @@ impl Gutter {
         if !matches!(v, Value::Map(_) | Value::Struct { .. }) {
             return None;
         }
+        let mut drawn = Vec::new();
         let marks = match get(v, "marks") {
             Some(Value::List(l)) => l
                 .iter()
@@ -308,6 +316,10 @@ impl Gutter {
                     };
                     let glyph = match t.get(1) {
                         Some(Value::String(g)) => g.to_string(),
+                        Some(ops @ Value::List(_)) => {
+                            drawn.push((line, ops.clone()));
+                            return None;
+                        }
                         _ => "●".to_string(),
                     };
                     Some((line, glyph, t.get(2).and_then(parse_color)))
@@ -321,6 +333,7 @@ impl Gutter {
             current: get(v, "current").and_then(parse_color),
             line_bg: get(v, "line_bg").and_then(parse_color),
             marks,
+            drawn,
         })
     }
 }
@@ -1739,6 +1752,29 @@ impl RichEditor {
         let w = (self.font.size * self.scale * 0.6) as f64;
         let top = self.ys[i] as f64;
         Some((i, col, BoundingBox::new(g.x0, g.y0 + top, g.x0 + w, g.y1 + top)))
+    }
+
+    /// The line whose first row is at `y` (the text's own pixels), and the
+    /// box a drawn mark takes on it (x from 0) — what the pointer rests on
+    /// in the gutter.
+    pub fn gutter_line_at(&mut self, y: f32, ts: &mut TextSystem) -> Option<(usize, BoundingBox)> {
+        if y < 0.0 || self.lens_at(y, ts).is_some() {
+            return None;
+        }
+        self.refresh(ts);
+        let total = *self.ys.last().unwrap_or(&0.0);
+        if y >= total {
+            return None;
+        }
+        let (at, _) = self.point_to_byte(0.0, y, ts);
+        let (i, _) = self.locate(at);
+        self.ensure(i, ts);
+        let lh = if self.font.line_height > 0.0 { self.font.line_height } else { 1.2 };
+        let row = self.font.size * self.scale * lh;
+        let side = MARK_BOX * self.scale;
+        let top = self.ys[i] + ((row - side) / 2.0).max(0.0);
+        (y - self.ys[i] <= self.paras[i].h)
+            .then(|| (i, BoundingBox::new(0.0, top as f64, side as f64, (top + side) as f64)))
     }
 
     // ── lenses ──────────────────────────────────────────────────────

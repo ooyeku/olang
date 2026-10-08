@@ -2094,13 +2094,24 @@ impl WinState {
             return;
         }
         let Some((ox, oy, _, h)) = self.edit_origin(&k) else { return };
+        let pad_left = self.scene.nodes.get(&k).map(|n| n.style.pad[3]).unwrap_or(0.0);
         let Ok(mut ts) = text::system().lock() else { return };
         let dy = self.edit_text_dy(&k, h, &mut ts);
         let sc = self.scale;
         let Some(ed) = self.editors.get_mut(&k) else { return };
         let (sx, sy) = ed.scrolled();
         let Some(r) = ed.rich_mut() else { return };
-        let found = r.hover_at(x * sc - ox + sx, y * sc - oy - dy + sy, &mut ts);
+        let (tx, ty) = (x * sc - ox + sx, y * sc - oy - dy + sy);
+        let mut found = r.hover_at(tx, ty, &mut ts);
+        // in the gutter (left of the text, a code editor's): the line, with
+        // column -2 and the mark's box
+        let mut gutter = false;
+        if found.is_none() && tx < 0.0 && r.gutter.is_some() {
+            if let Some((line, b)) = r.gutter_line_at(ty, &mut ts) {
+                found = Some((line, usize::MAX, b));
+                gutter = true;
+            }
+        }
         drop(ts);
         let now = found.as_ref().map(|(l, c, _)| (*l, *c));
         if now == r.said_hover {
@@ -2108,6 +2119,18 @@ impl WinState {
         }
         r.said_hover = now;
         let ev = match found {
+            Some((line, _, b)) if gutter => {
+                // the mark's box, at the gutter's left edge
+                let bx = (ox - pad_left * sc + 4.0 * sc) / sc;
+                let by = (oy + dy + b.y0 as f32 - sy) / sc;
+                let rect = Value::Tuple(Arc::new(vec![
+                    float(bx),
+                    float(by),
+                    float(((b.x1 - b.x0) as f32 / sc).max(1.0)),
+                    float((b.y1 - b.y0) as f32 / sc),
+                ]));
+                vec![("key", s(&k)), ("line", Value::Integer(line as i64)), ("col", Value::Integer(-2)), ("rect", rect)]
+            }
             Some((line, col, b)) => {
                 let bx = (ox + b.x0 as f32 - sx) / sc;
                 let by = (oy + dy + b.y0 as f32 - sy) / sc;
@@ -2341,6 +2364,8 @@ impl WinState {
         // lenses: each band under its line, drawn after the text is (the
         // field is let go first: a canvas paints through the window)
         let mut lens_jobs: Vec<(Value, f32, f32, f32, f32)> = Vec::new();
+        // drawn gutter marks: (ops, x, y, side, clip), painted with the lenses
+        let mut mark_jobs: Vec<(Value, f32, f32, f32, Clip)> = Vec::new();
         for (k, lens) in r.lenses().iter().enumerate() {
             if !shown.contains(&lens.line) {
                 continue;
@@ -2390,6 +2415,15 @@ impl WinState {
                     let x = content[0] - 14.0 * s - shaped.width;
                     push_glyphs(&shaped, x, oy + py, gclip, dl);
                 }
+            }
+            for (line, ops) in &g.drawn {
+                if !shown.contains(line) {
+                    continue;
+                }
+                let (py, _, _) = r.para(*line);
+                let side = super::rich::MARK_BOX * s;
+                let lh = font.size * s * if font.line_height > 0.0 { font.line_height } else { 1.2 };
+                mark_jobs.push((ops.clone(), gx0 + 4.0 * s, (oy + py + ((lh - side) / 2.0).max(0.0)).round(), side, gclip));
             }
             for (line, glyph, color) in &g.marks {
                 if !shown.contains(line) {
@@ -2448,6 +2482,11 @@ impl WinState {
         for (ops, lx, ly, lw, lh) in lens_jobs {
             if let Ok(drawing) = super::canvas::draw(&ops, lw / s, lh / s, s) {
                 self.paint_canvas(drawing, lx, ly, lw, lh, lens_clip, st, opacity, ts, dl);
+            }
+        }
+        for (ops, mx, my, side, mclip) in mark_jobs {
+            if let Ok(drawing) = super::canvas::draw(&ops, side / s, side / s, s) {
+                self.paint_canvas(drawing, mx, my, side, side, mclip, st, opacity, ts, dl);
             }
         }
         if let Some((cx, cy, cw, ch)) = caret {
