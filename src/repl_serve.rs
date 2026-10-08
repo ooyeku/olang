@@ -120,6 +120,13 @@ pub fn serve(no_ovm: bool) -> i32 {
                         continue;
                     }
                 };
+                // a ping is answered here, even while an evaluation runs:
+                // the editor tells a busy session from one not answering
+                if msg.get("op").and_then(|o| o.as_str()) == Some("ping") {
+                    let busy = running.load(Ordering::SeqCst);
+                    out.send(&json!({ "id": msg.get("id").cloned().unwrap_or(J::Null), "ok": true, "running": busy }));
+                    continue;
+                }
                 if msg.get("op").and_then(|o| o.as_str()) == Some("interrupt") {
                     let busy = running.load(Ordering::SeqCst);
                     if busy {
@@ -224,7 +231,7 @@ impl Session {
         let mut v = json!({
             "event": "hello", "protocol": PROTOCOL, "olang": crate::version::VERSION,
             "root": self.root.to_string_lossy(), "pid": std::process::id(),
-            "ops": ["hello", "eval", "expand", "release", "interrupt", "reload", "render", "reset", "shutdown"],
+            "ops": ["hello", "eval", "expand", "release", "interrupt", "ping", "reload", "render", "reset", "shutdown"],
         });
         if let Some(id) = id {
             v["id"] = id.clone();
@@ -887,7 +894,11 @@ impl Session {
             return json!({ "ok": false, "error": { "kind": "gone", "message": "that view is no longer held" } });
         };
         // Loom: the project's dependency, else the path given
+        let own = crate::pkg::manifest::Manifest::load(&self.root)
+            .map(|m| m.dependencies.contains_key("loom") || m.package.name == "loom")
+            .unwrap_or(false);
         if let Some(p) = msg.get("loom").and_then(|p| p.as_str())
+            && !own
             && self.loom.as_deref() != Some(Path::new(p))
         {
             let lroot = PathBuf::from(p);

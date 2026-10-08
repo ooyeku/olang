@@ -3214,9 +3214,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         {
             self.spend_step()?;
             if crate::interrupt::pending() {
-                return Err(InterpreterError::RuntimeError {
-                    message: crate::interrupt::MESSAGE.to_string(),
-                });
+                return Err(crate::interrupt::interpreter_error());
             }
             // Increment call depth for user functions
             self.call_depth += 1;
@@ -4552,9 +4550,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // A stop asked for from another thread (`olang repl --serve`'s
         // interrupt): one relaxed load when none is.
         if crate::interrupt::pending() {
-            return Err(InterpreterError::RuntimeError {
-                message: crate::interrupt::MESSAGE.to_string(),
-            });
+            return Err(crate::interrupt::interpreter_error());
         }
         self.safepoint_manager
             .safepoint_poll()

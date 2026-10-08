@@ -503,6 +503,7 @@ line of its body is not bound, and the error says whose parameter it is.
 | `{"op":"expand","id":3,"h":3,"table":true,"start":0,"count":50,"sort":{"col":2,"desc":true}}` | a table's `rows` (`{"i": index, "c": [cell text…]}`), sorted by a column |
 | `{"op":"release","id":4,"eval":7}` | the evaluation's handles are let go (the last 200 are kept anyway) |
 | `{"op":"interrupt","id":5}` | `{"running":true}`; the running evaluation fails with `"kind":"interrupted"` |
+| `{"op":"ping","id":8}` | `{"running":…}` — answered even while an evaluation runs, so a client tells a busy session from one not answering |
 | `{"op":"reload","id":6,"path":"/p/util.ol"}` | `{"ok":true,"scopes":n,"ms":…}`, or `"ok":false,"kept":true` with the reason |
 | `{"op":"render","id":7,"h":9,"dark":true,"scale":2,"width":640,"loom":"/path/to/loom"?}` | `{"ok":true,"png":"<base64>","width":…,"height":…}` (logical pixels) |
 | `{"op":"reset"}`, `{"op":"shutdown"}` | the scopes forgotten; the server ends |
@@ -532,8 +533,8 @@ let go). `stack` lists the frames outermost first, each
 
 **Interrupt.** Requests are read on a thread of their own, so
 `interrupt` reaches a running evaluation. Every tier polls one flag: the
-tree-walker at each statement and loop iteration, the VM at each backward
-jump, self tail call and call, native code at its back edges (compiled
+tree-walker at each statement, loop iteration and call, the VM at each
+backward jump and self tail call and at one call in 256, native code at its back edges (compiled
 with the poll only in a serving process, so a program run any other way
 compiles exactly the code it always did). The evaluation fails with
 "interrupted" and the session stays as it was; a loop the interpreter had
@@ -549,7 +550,8 @@ callees directly).
 **Views.** `render` draws a held Loom view headless with Loom's
 `render_view` (lib/test.ol), in the theme and scale asked for, at its
 natural size within `width`. Loom comes from the project's dependency,
-else from the `loom` path given.
+else from the `loom` path given (a project with its own `loom`
+dependency keeps it).
 
 ## `olang bench`
 

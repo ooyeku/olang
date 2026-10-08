@@ -147,6 +147,10 @@ pub struct BytecodeVm {
     /// early error return skips the pop; each enclosing frame's own pop
     /// then consumes the leaked slot, so the surviving extra frame
     /// shifts outward until a span captures). Mirror that observable.
+    /// Calls until the next interrupt poll (`olang repl --serve`): a
+    /// countdown in the VM's own cache line, the shared flag read once
+    /// in 256 calls.
+    poll_countdown: u32,
     error_trace_leak: Option<String>,
     /// Spare execution frames, pooled so register/local vectors keep their
     /// allocated capacity across calls
@@ -1561,6 +1565,7 @@ impl BytecodeVm {
             entry_file: None,
             error_trace_frames: Vec::new(),
             error_trace_leak: None,
+            poll_countdown: 256,
         }
     }
 
@@ -2274,9 +2279,13 @@ impl BytecodeVm {
         }
 
         // A stop asked for from another thread (`olang repl --serve`):
-        // every call's entry polls, so a recursion stops too.
-        if crate::interrupt::pending() {
-            return Err(BytecodeError::RuntimeError(crate::interrupt::MESSAGE.to_string()));
+        // calls poll too (one in 256), so a recursion stops.
+        self.poll_countdown -= 1;
+        if self.poll_countdown == 0 {
+            self.poll_countdown = 256;
+            if crate::interrupt::pending() {
+                return Err(crate::interrupt::vm_error());
+            }
         }
         // The cap gates the JIT attempt too: a base-case frame exactly at
         // the limit would otherwise run natively to completion without
@@ -2483,9 +2492,13 @@ impl BytecodeVm {
             }
         }
         // A stop asked for from another thread (`olang repl --serve`):
-        // every call's entry polls, so a recursion stops too.
-        if crate::interrupt::pending() {
-            return Err(BytecodeError::RuntimeError(crate::interrupt::MESSAGE.to_string()));
+        // calls poll too (one in 256), so a recursion stops.
+        self.poll_countdown -= 1;
+        if self.poll_countdown == 0 {
+            self.poll_countdown = 256;
+            if crate::interrupt::pending() {
+                return Err(crate::interrupt::vm_error());
+            }
         }
         // The cap gates the JIT attempt too: a base-case frame exactly at
         // the limit would otherwise run natively to completion without
@@ -4446,7 +4459,7 @@ impl BytecodeVm {
                 Instruction::Jump { target } => {
                     let t = target.0 as usize;
                     if t <= pc && crate::interrupt::pending() {
-                        return Err(BytecodeError::RuntimeError(crate::interrupt::MESSAGE.to_string()));
+                        return Err(crate::interrupt::vm_error());
                     }
                     #[cfg(feature = "native")]
                     if t <= pc {
@@ -4466,7 +4479,7 @@ impl BytecodeVm {
                     if self.is_truthy(self.execution_state.register_ref(*condition)?) {
                         let t = target.0 as usize;
                         if t <= pc && crate::interrupt::pending() {
-                            return Err(BytecodeError::RuntimeError(crate::interrupt::MESSAGE.to_string()));
+                            return Err(crate::interrupt::vm_error());
                         }
                         #[cfg(feature = "native")]
                         if t <= pc {
@@ -4491,7 +4504,7 @@ impl BytecodeVm {
                     if !self.is_truthy(self.execution_state.register_ref(*condition)?) {
                         let t = target.0 as usize;
                         if t <= pc && crate::interrupt::pending() {
-                            return Err(BytecodeError::RuntimeError(crate::interrupt::MESSAGE.to_string()));
+                            return Err(crate::interrupt::vm_error());
                         }
                         #[cfg(feature = "native")]
                         if t <= pc {
@@ -4514,7 +4527,7 @@ impl BytecodeVm {
 
                 Instruction::TailCallSelf { args } => {
                     if crate::interrupt::pending() {
-                        return Err(BytecodeError::RuntimeError(crate::interrupt::MESSAGE.to_string()));
+                        return Err(crate::interrupt::vm_error());
                     }
                     // Collect first: an argument register may be the very
                     // parameter register it is about to rebind.

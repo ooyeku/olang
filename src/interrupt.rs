@@ -63,6 +63,21 @@ pub fn flag_address() -> usize {
     REQUESTED.as_ptr() as usize
 }
 
+/// The interrupt as the tree-walker's error, built out of line: the
+/// polls stay a load and a branch where they sit.
+#[cold]
+#[inline(never)]
+pub fn interpreter_error() -> crate::interpreter::InterpreterError {
+    crate::interpreter::InterpreterError::RuntimeError { message: MESSAGE.to_string() }
+}
+
+/// The interrupt as the VM's error, built out of line.
+#[cold]
+#[inline(never)]
+pub fn vm_error() -> crate::ovm::bytecode::BytecodeError {
+    crate::ovm::bytecode::BytecodeError::RuntimeError(MESSAGE.to_string())
+}
+
 /// Whether an error message is the interrupt's.
 pub fn is_interrupt(message: &str) -> bool {
     message == MESSAGE || message.ends_with(": interrupted")
