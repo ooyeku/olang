@@ -85,6 +85,14 @@ struct Cli {
     )]
     ovm_stats: Option<String>,
 
+    /// Arm a live profile: write the process's vital signs to
+    /// DIR/<pid>.json while it runs, and sample its stacks while the file
+    /// DIR/attach exists (an editor attaches by creating it).
+    /// `OLANG_PROFILE_LIVE=DIR` does the same and reaches the children a
+    /// run starts
+    #[arg(long, value_name = "DIR", help_heading = "Run options")]
+    profile_live: Option<PathBuf>,
+
     /// Re-execute a sample of native-tier calls on the bytecode VM and
     /// compare results bit-for-bit; a divergence aborts with a report.
     /// RATE is the sampling probability (1 verifies every native call).
@@ -230,6 +238,21 @@ enum Commands {
         /// How many functions to list (default 20)
         #[arg(long, value_name = "N", default_value_t = 20)]
         top: usize,
+        /// `text` (the report) or `json` (the profile as data: frames with
+        /// their files and lines, every path with each frame's tier, the
+        /// functions, folded stacks, and the process's series)
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: String,
+        /// With `--format json`: write the document here instead of stdout
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+        /// With `--format json`: write a snapshot to DIR/<pid>.json while
+        /// the program runs (an editor draws it live)
+        #[arg(long, value_name = "DIR")]
+        live: Option<PathBuf>,
+        /// Milliseconds between live snapshots (default 500)
+        #[arg(long, value_name = "MS", default_value_t = 500)]
+        live_every: u64,
         /// Arguments passed to the program, readable via os.args()
         #[arg(
             value_name = "ARGS",
@@ -458,6 +481,7 @@ fn main() {
     // (a no-op unless a program entered `tty` and is still in it).
     olang::stdlib::tty::restore_terminal();
     olang::memory::report_if_asked();
+    let _ = olang::profile_live::finish(Some(exit_code));
     let exit_code = match olang::tier_stats::finish_run() {
         Some(guard) if exit_code == 0 => guard,
         _ => exit_code,
@@ -507,6 +531,25 @@ fn run() -> i32 {
     // by `os.exit`). Not in the REPL's protocol mode, which answers them
     // to `stats` instead.
     let serving = matches!(cli.command, Some(Commands::Repl { serve: true }));
+    // An armed live profile (`--profile-live DIR`, `OLANG_PROFILE_LIVE`):
+    // vital signs from the start, stacks while DIR/attach exists. Not for
+    // `olang profile`, which runs its own.
+    let profiling = matches!(cli.command, Some(Commands::Profile { .. }));
+    if let Some(dir) = cli.profile_live.clone().or_else(|| std::env::var_os("OLANG_PROFILE_LIVE").map(PathBuf::from))
+        && !serving
+        && !profiling
+    {
+        let dir = std::path::absolute(&dir).unwrap_or(dir);
+        // SAFETY: single-threaded at this point (as above).
+        unsafe { std::env::set_var("OLANG_PROFILE_LIVE", &dir) };
+        olang::profile_live::start(olang::profile_live::LiveSpec {
+            dir: Some(dir),
+            every_ms: std::env::var("OLANG_PROFILE_LIVE_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(olang::profile_live::DEFAULT_EVERY_MS),
+            from_start: false,
+            interval_us: olang::profile_live::ATTACH_INTERVAL_US,
+            label: std::env::args().skip(1).filter(|a| a.ends_with(".ol")).last().map(|a| std::path::absolute(&a).map(|p| p.display().to_string()).unwrap_or(a)).unwrap_or_default(),
+        });
+    }
     if let Some(spec) = cli.ovm_stats.clone().or_else(|| std::env::var("OLANG_OVM_STATS").ok())
         && !serving
     {
@@ -701,8 +744,46 @@ fn run() -> i32 {
         Some(Commands::Profile {
             file,
             interval,
+            format,
+            out,
+            live,
+            live_every,
+            args,
+            ..
+        }) if format == "json" => {
+            let record = cli.record.clone();
+            let label = std::path::absolute(&file).unwrap_or(file.clone()).display().to_string();
+            olang::profile_live::start(olang::profile_live::LiveSpec {
+                dir: live.map(|d| std::path::absolute(&d).unwrap_or(d)),
+                every_ms: live_every,
+                from_start: true,
+                interval_us: interval,
+                label,
+            });
+            let code = run_program(&cli, file, args, record, logger);
+            let doc = olang::profile_live::finish(Some(code)).unwrap_or_default();
+            let text = doc.to_string();
+            match out {
+                Some(path) => {
+                    if let Err(e) = std::fs::write(&path, text) {
+                        eprintln!("olang profile: cannot write {}: {}", path.display(), e);
+                        return 2;
+                    }
+                }
+                None => println!("{}", text),
+            }
+            code
+        }
+        Some(Commands::Profile { format, .. }) if format != "text" => {
+            eprintln!("olang profile: --format is `text` or `json`, not `{}`", format);
+            2
+        }
+        Some(Commands::Profile {
+            file,
+            interval,
             top,
             args,
+            ..
         }) => {
             // The profiled run is an ordinary run: same tiers, same
             // capability grant, same argv. Only the shadow-stack flag

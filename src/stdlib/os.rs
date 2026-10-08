@@ -924,7 +924,9 @@ fn os_exit(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     // anywhere gets its terminal back (atexit covers Unix too; Windows's
     // ExitProcess runs no atexit handlers, so this call is the guarantee).
     crate::stdlib::tty::restore_terminal();
-    // tier statistics a run keeps are written as it ends, however it ends
+    // a live profile's last snapshot, and the tier statistics a run
+    // keeps, are written as it ends, however it ends
+    let _ = crate::profile_live::finish(Some(exit_code));
     let exit_code = match crate::tier_stats::finish_run() {
         Some(guard) if exit_code == 0 => guard,
         _ => exit_code,

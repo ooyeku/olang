@@ -437,7 +437,7 @@ pub fn push_at(name: &str, file: Option<&str>, tier: Tier) -> bool {
         return false;
     }
     let anon = is_anonymous(name);
-    let file = if stats_on() { file } else { None };
+    let file = if stats_on() || detail_on() { file } else { None };
     LOCAL.with(|stack| {
         // Resolve the display name through the per-thread memo; the
         // global intern lock is touched once per new (name, parent)
@@ -595,7 +595,11 @@ pub fn pop() {
 /// A running profile: the sampler thread plus what it has collected.
 pub struct Session {
     stop: Arc<AtomicBool>,
-    handle: Option<std::thread::JoinHandle<Collected>>,
+    handle: Option<std::thread::JoinHandle<()>>,
+    /// What the sampler has collected so far: the sampler adds to it a
+    /// tick at a time under the lock, and a live profile reads it while
+    /// the run goes (src/profile_live.rs).
+    shared: Arc<Mutex<Collected>>,
     interval_us: u64,
     started: std::time::Instant,
 }
@@ -621,6 +625,12 @@ struct Collected {
     /// Ticks on which a thread was parked (a channel receive, a sleep, a
     /// join) — waiting, not working; reported apart from the functions.
     blocked: u64,
+    /// With `detail_enable` (`olang profile --format json`, a live
+    /// profile): each path with the tier of every frame, `id << 2 | tier`
+    /// (0 interpreter, 1 VM, 2 native, 3 builtin) — a flame graph drawn
+    /// by tier. An adjacent repeat (a promoted call's frames, recursion)
+    /// folds into one frame carrying the innermost tier: the one running.
+    tiered: HashMap<Vec<u32>, u64>,
 }
 
 /// Start sampling. The returned session must be stopped to collect.
@@ -633,22 +643,24 @@ pub fn start(interval_us: u64) -> Session {
 fn start_sampler(interval_us: u64) -> Session {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_for_thread = stop.clone();
+    let shared = Arc::new(Mutex::new(Collected::default()));
+    let shared_for_thread = shared.clone();
     retain();
     let handle = std::thread::Builder::new()
         .name("olang-profiler".to_string())
         .spawn(move || {
-            let mut out = Collected::default();
             let interval = std::time::Duration::from_micros(interval_us.max(50));
             while !stop_for_thread.load(Ordering::Relaxed) {
                 std::thread::sleep(interval);
+                let mut out = shared_for_thread.lock().unwrap_or_else(|e| e.into_inner());
                 sample_once(&mut out);
             }
-            out
         })
         .expect("spawn profiler thread");
     Session {
         stop,
         handle: Some(handle),
+        shared,
         interval_us,
         started: std::time::Instant::now(),
     }
@@ -719,6 +731,24 @@ fn sample_once(out: &mut Collected) {
         }
         *out.attributed.entry(owner).or_insert(0) += 1;
         *out.stacks.entry(path).or_insert(0) += 1;
+        if detail_on() {
+            let mut tiered: Vec<u32> = Vec::with_capacity(depth);
+            let mut last = u32::MAX;
+            for i in 0..depth {
+                let id = stack.frames[i].load(Ordering::Relaxed);
+                let bits = stack.tiers[i].load(Ordering::Relaxed);
+                let code = if bits & BUILTIN_BIT != 0 { 3 } else { Tier::from_u8(bits) as u32 };
+                if id == last {
+                    if let Some(top) = tiered.last_mut() {
+                        *top = (id << 2) | code;
+                    }
+                } else {
+                    tiered.push((id << 2) | code);
+                    last = id;
+                }
+            }
+            *out.tiered.entry(tiered).or_insert(0) += 1;
+        }
     }
     if !saw_any {
         out.idle += 1;
@@ -1074,11 +1104,263 @@ impl Session {
     fn collect(&mut self) -> Collected {
         self.stop.store(true, Ordering::Relaxed);
         release();
-        match self.handle.take() {
-            Some(h) => h.join().unwrap_or_default(),
-            None => Collected::default(),
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+        std::mem::take(&mut *self.shared.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    /// The profile so far as the JSON document `olang profile --format
+    /// json` writes (docs/tooling.md), without stopping the sampler.
+    pub fn peek_json(&self, lines: &mut LineCache, folded: bool) -> serde_json::Value {
+        let elapsed = self.started.elapsed();
+        let c = self.shared.lock().unwrap_or_else(|e| e.into_inner());
+        json_of(&c, elapsed, self.interval_us, lines, folded)
+    }
+
+    /// Stop sampling and answer the JSON document.
+    pub fn finish_json(mut self, lines: &mut LineCache) -> serde_json::Value {
+        let elapsed = self.started.elapsed();
+        registry().profiles.fetch_sub(1, Ordering::SeqCst);
+        let c = self.collect();
+        json_of(&c, elapsed, self.interval_us, lines, true)
+    }
+
+    /// Samples so far by tier (interpreter, VM, native, builtin), and the
+    /// ticks: a live profile's time series is their differences.
+    pub fn tier_samples(&self) -> ([u64; 4], u64) {
+        let c = self.shared.lock().unwrap_or_else(|e| e.into_inner());
+        let mut out = [0u64; 4];
+        for ((_, bits), n) in &c.leaves {
+            let slot = if bits & BUILTIN_BIT != 0 { 3 } else { Tier::from_u8(*bits) as usize };
+            out[slot] += n;
+        }
+        (out, c.total)
+    }
+}
+
+// ── the profile as data (`olang profile --format json`, a live profile) ──
+
+static DETAIL: AtomicBool = AtomicBool::new(false);
+
+/// True when frames are keyed by their file and paths keep each frame's
+/// tier (a JSON or live profile).
+#[inline(always)]
+fn detail_on() -> bool {
+    DETAIL.load(Ordering::Relaxed)
+}
+
+/// Key frames by file and keep each path's tiers, from now on: what a
+/// flame graph by tier, and a frame that goes to its source, need. Off
+/// for the text report, which never reads them.
+pub fn detail_enable() {
+    DETAIL.store(true, Ordering::SeqCst);
+}
+
+/// Each file's functions and the lines they are declared on, read once
+/// a file (a frame's `line`).
+#[derive(Default)]
+pub struct LineCache {
+    files: HashMap<String, HashMap<String, (u32, u32)>>,
+}
+
+impl LineCache {
+    /// The line `name` (or, for `<lambda in f>`, `f`) is declared on in
+    /// `file`, 1-based.
+    pub fn line_of(&mut self, name: &str, file: &str) -> Option<u32> {
+        if file.starts_with("__embedded__") {
+            return None;
+        }
+        let lines = self.files.entry(file.to_string()).or_insert_with(|| {
+            std::fs::read_to_string(file)
+                .map(|t| crate::tier_stats::fn_lines(&t))
+                .unwrap_or_default()
+        });
+        let bare = name
+            .strip_prefix("<lambda in ")
+            .and_then(|r| r.strip_suffix('>'))
+            .unwrap_or(name);
+        lines.get(bare).map(|(l, _)| *l)
+    }
+}
+
+const TIER_NAMES: [&str; 4] = ["interpreter", "bytecode", "native", "builtin"];
+
+fn json_of(
+    c: &Collected,
+    elapsed: std::time::Duration,
+    interval_us: u64,
+    lines: &mut LineCache,
+    folded: bool,
+) -> serde_json::Value {
+    use serde_json::json;
+    let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
+    let ms_per_sample = if c.total > 0 {
+        elapsed_ms / c.total as f64
+    } else {
+        interval_us as f64 / 1000.0
+    };
+    // the frames a path names, numbered densely in the order first seen
+    let mut index: HashMap<u32, usize> = HashMap::new();
+    let mut frames: Vec<serde_json::Value> = Vec::new();
+    let mut builtin_ids: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    let mut paths: Vec<(&Vec<u32>, &u64)> = c.tiered.iter().collect();
+    paths.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+    for (path, _) in &paths {
+        for code in path.iter() {
+            if code & 3 == 3 {
+                builtin_ids.insert(code >> 2);
+            }
         }
     }
+    let mut frame_of = |id: u32, frames: &mut Vec<serde_json::Value>| -> usize {
+        if let Some(i) = index.get(&id) {
+            return *i;
+        }
+        let (name, file) = key_of(id);
+        let line = file.as_deref().and_then(|f| lines.line_of(&name, f));
+        let i = frames.len();
+        frames.push(json!({
+            "name": name,
+            "file": file,
+            "line": line,
+            "lambda": name.starts_with('<'),
+            "builtin": builtin_ids.contains(&id),
+        }));
+        index.insert(id, i);
+        i
+    };
+    let mut stacks = Vec::with_capacity(paths.len());
+    let mut self_n: HashMap<usize, [u64; 4]> = HashMap::new();
+    let mut total_n: HashMap<usize, u64> = HashMap::new();
+    let mut folded_text = String::new();
+    let mut tiers = [0u64; 4];
+    for (path, n) in &paths {
+        let ids: Vec<usize> = path.iter().map(|code| frame_of(code >> 2, &mut frames)).collect();
+        let ts: Vec<u32> = path.iter().map(|code| code & 3).collect();
+        if let (Some(leaf), Some(t)) = (ids.last(), ts.last()) {
+            self_n.entry(*leaf).or_insert([0; 4])[*t as usize] += **n;
+            tiers[*t as usize] += **n;
+        }
+        let mut seen = std::collections::HashSet::new();
+        for i in &ids {
+            if seen.insert(*i) {
+                *total_n.entry(*i).or_insert(0) += **n;
+            }
+        }
+        if folded {
+            let names: Vec<String> = ids
+                .iter()
+                .map(|i| frames[*i]["name"].as_str().unwrap_or("?").replace(';', ","))
+                .collect();
+            folded_text.push_str(&format!("{} {}
+", names.join(";"), n));
+        }
+        stacks.push(json!({ "f": ids, "t": ts, "n": n }));
+    }
+    let samples: u64 = tiers.iter().sum();
+    let mut functions: Vec<(usize, [u64; 4], u64)> = total_n
+        .iter()
+        .map(|(i, t)| (*i, self_n.get(i).copied().unwrap_or([0; 4]), *t))
+        .collect();
+    functions.sort_by(|a, b| {
+        let sa: u64 = a.1.iter().sum();
+        let sb: u64 = b.1.iter().sum();
+        sb.cmp(&sa).then(b.2.cmp(&a.2)).then(a.0.cmp(&b.0))
+    });
+    let functions: Vec<serde_json::Value> = functions
+        .into_iter()
+        .map(|(i, s, t)| {
+            let own: u64 = s.iter().sum();
+            let tier = (0..4).max_by_key(|k| (s[*k], 3 - *k)).filter(|_| own > 0).map(|k| TIER_NAMES[k]);
+            json!({
+                "frame": i,
+                "self": own,
+                "total": t,
+                "self_ms": round3(own as f64 * ms_per_sample),
+                "total_ms": round3(t as f64 * ms_per_sample),
+                "tiers": { "interpreter": s[0], "bytecode": s[1], "native": s[2], "builtin": s[3] },
+                "tier": tier,
+            })
+        })
+        .collect();
+    let mut doc = json!({
+        "format": 1,
+        "kind": "profile",
+        "olang": crate::version::VERSION,
+        "interval_us": interval_us,
+        "elapsed_ms": round3(elapsed_ms),
+        "ms_per_sample": round3(ms_per_sample),
+        "ticks": c.total,
+        "idle": c.idle,
+        "blocked": c.blocked,
+        "worker_samples": c.worker_samples,
+        "samples": samples,
+        "tiers": { "interpreter": tiers[0], "bytecode": tiers[1], "native": tiers[2], "builtin": tiers[3] },
+        "frames": frames,
+        "stacks": stacks,
+        "functions": functions,
+    });
+    if folded {
+        doc["folded"] = serde_json::Value::String(folded_text);
+    }
+    doc
+}
+
+fn round3(x: f64) -> f64 {
+    (x * 1000.0).round() / 1000.0
+}
+
+/// The threads that have run olang code and are still alive, and how
+/// many of them are parked now (a receive, a sleep, a join).
+pub fn thread_counts() -> (usize, usize) {
+    let Ok(stacks) = registry().stacks.lock() else {
+        return (0, 0);
+    };
+    let alive: Vec<&Arc<ThreadStack>> = stacks.iter().filter(|s| Arc::strong_count(s) > 1).collect();
+    let parked = alive.iter().filter(|s| s.blocked.load(Ordering::Relaxed)).count();
+    (alive.len(), parked)
+}
+
+/// With tier statistics on: every call counted so far (each tier's, and
+/// native code's calls of native code) and every deopt — a live
+/// profile's calls and deopts over time, without building the rows.
+pub fn stats_call_totals() -> (u64, u64) {
+    let mut calls = 0u64;
+    let mut deopts = 0u64;
+    let mut add = |i: usize, n: u64| {
+        let slot = i % STAT_SLOTS;
+        if slot < 3 {
+            calls += n;
+        } else if slot == SLOT_DECLINES {
+            deopts += n;
+        }
+    };
+    if let Ok(retired) = registry().retired.lock() {
+        for (i, n) in retired.iter().enumerate() {
+            add(i, *n);
+        }
+    }
+    if let Ok(stacks) = registry().stacks.lock() {
+        for stack in stacks.iter() {
+            if let Some(counts) = stack.counts.get() {
+                for (i, c) in counts.iter().enumerate() {
+                    let n = c.load(Ordering::Relaxed);
+                    if n > 0 {
+                        add(i, n);
+                    }
+                }
+            }
+        }
+    }
+    if let Ok(guard) = NATIVE_INNER.lock()
+        && let Some(map) = guard.as_ref()
+    {
+        for counter in map.values() {
+            calls += counter.load(Ordering::Relaxed);
+        }
+    }
+    (calls, deopts)
 }
 
 // ── tier statistics (`--ovm-stats=json`, `olang repl --serve`'s `stats`) ──

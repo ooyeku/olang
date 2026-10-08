@@ -720,6 +720,31 @@ not news, and prints as `~`. Add `--fail-on-regress` to turn any red
 row into exit code 1 — that flag is what makes a saved baseline a
 standing guard for performance work.
 
+**As data.** `--format json` prints line-delimited events instead of the
+table, for an editor (olang Studio's benches):
+
+```bash
+olang bench fib.ol --format json --against base.json --profile profiles/
+```
+
+```
+{"event":"start","olang":"0.87.0","runs":7,"in_task":false,"files":["/…/fib.ol"],"against":"base.json"}
+{"event":"result","name":"fib","file":"/…/fib.ol","median_s":0.0392,"min_s":0.039,"max_s":0.0413,"cv_pct":3.1,"runs":7,
+ "times_s":[…],"stable_output":true,"baseline_s":0.0371,"delta_pct":5.6,"threshold_pct":6.3,"verdict":"same",
+ "profile":"profiles/fib.json"}
+{"event":"finished","regressed":false,"files":1,"saved":null}
+```
+
+`verdict` is `new` (no baseline row), `same` (within the band
+`threshold_pct`, max(5%, 2×CV)), `faster` or `slower` — the table's
+colours as words; `regressed` is true when any row is `slower`, which
+`--fail-on-regress` turns into exit 1. A failed run is
+`{"event":"error","name","file","message"}`. `--profile DIR` runs each
+file once more, untimed, under `olang profile --format json`, and leaves
+that profile in `DIR/<name>.json`: the flame graph that explains a
+regression, beside the number that shows it. `--save` writes the
+baseline as before.
+
 ## `olang profile`
 
 Where a program spends its time, per function, **and on which tier**:
@@ -799,6 +824,48 @@ not stack depth. And a function the JIT has **inlined into its caller**
 no longer exists as a frame: its time is attributed to the caller,
 which is where the machine code actually is. If a function you expected
 is missing entirely and its caller shows `native`, inlining is why.
+
+### As data, and live
+
+```bash
+olang profile report.ol --format json --out p.json            # the profile as a document
+olang profile report.ol --format json --out p.json --live live/   # and a snapshot of it every 500 ms
+olang --profile-live live/ server.ol                           # any run, armed: sampled while live/attach exists
+```
+
+`--format json` writes one document (to `--out`, else stdout after the
+program's own output), the counts behind the report:
+
+| field | |
+|---|---|
+| `frames` | each function seen: `name`, `file`, `line` (its `fn`; a lambda's, its enclosing function's), `lambda`, `builtin` |
+| `stacks` | each distinct path: `f` (frame indices, root first), `t` (each frame's tier: 0 tree-walker, 1 bytecode, 2 native, 3 builtin — a promoted call's frames and recursion folded into one carrying the innermost tier), `n` (samples) |
+| `functions` | per frame: `self` and `total` samples and ms, `tiers` (self samples by tier), `tier` (the one that ran it most) |
+| `folded` | the stacks as folded lines (`a;b;c 12`), for any flame-graph tool |
+| `tiers`, `samples`, `ticks`, `idle`, `blocked`, `worker_samples`, `interval_us`, `elapsed_ms`, `ms_per_sample` | the totals |
+| `series` | the process over time, a point a snapshot: `t_ms`, `samples` by tier since the last point, `rss_kb`, `threads`, `cpu_ms` (the kernel's), `heap`, `program`, `values` (the counting allocator's, as `runtime.memory()`), `tasks` (counted apart), `olang_threads`, `parked`; with `--ovm-stats` also `calls` and `deopts` since the last point |
+| `live`, `done`, `attached`, `attaches`, `pid`, `file`, `wall_ms`, `exit` | the run |
+
+`--live DIR` writes the document so far (without `folded`) to
+`DIR/<pid>.json` every `--live-every` ms while the program runs, each
+written beside and renamed, so a reader never sees half of one; the
+last is the final document (`done: true`). The series keeps an hour.
+
+`--profile-live DIR` (or `OLANG_PROFILE_LIVE=DIR`, which reaches the
+children a run starts: `olang test`'s, `olang bench`'s) arms any run: its
+vital signs are written to `DIR/<pid>.json` from the start, and its
+stacks are sampled while the file `DIR/attach` exists — an editor
+attaches to a program it started by creating the file and detaches by
+deleting it (the profile so far is kept). Until then the shadow stack
+is off: an armed run costs what an ordinary one does.
+`OLANG_PROFILE_LIVE_EVERY` sets its period (ms).
+
+**Overhead**, measured on this Mac (median of 5, load ~3): a JSON
+profile with live snapshots +2.7% on a bytecode- and native-heavy run
+(1.83 → 1.88 s), +2% on a tree-walker-heavy one (0.90 → 0.92 s); the
+text report +0.5% and +6.7%; an armed run not attached, nothing
+measurable. A snapshot of a few thousand paths is written in about a
+millisecond, on the live thread.
 
 ### In the browser
 

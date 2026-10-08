@@ -34,6 +34,7 @@ pub mod pkg;
 #[cfg(not(feature = "native"))]
 pub mod playground;
 pub mod profile; // Sampling profiler behind `olang profile`
+pub mod profile_live; // A profile written while the program runs (`--profile-live`)
 #[cfg(feature = "native")]
 pub mod repl;
 #[cfg(feature = "native")]

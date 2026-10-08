@@ -31,6 +31,8 @@ struct Measurement {
     cv_pct: f64,
     runs: usize,
     stable_output: bool,
+    /// Every timed run, in the order run (seconds).
+    times_s: Vec<f64>,
 }
 
 pub fn run(args: &[String]) -> i32 {
@@ -39,6 +41,8 @@ pub fn run(args: &[String]) -> i32 {
     let mut against: Option<PathBuf> = None;
     let mut fail_on_regress = false;
     let mut in_task = false;
+    let mut json = false;
+    let mut profile_dir: Option<PathBuf> = None;
     let mut paths: Vec<PathBuf> = Vec::new();
 
     let mut it = args.iter();
@@ -69,6 +73,24 @@ pub fn run(args: &[String]) -> i32 {
             // Every run on a spawned task: what an http worker or a `spawn`
             // body costs, so a task's speed is pinned to the main thread's.
             "--in-task" => in_task = true,
+            // Line-delimited JSON events instead of the table (docs/tooling.md).
+            "--format" => match it.next().map(String::as_str) {
+                Some("json") => json = true,
+                Some("text") => json = false,
+                _ => {
+                    eprintln!("bench: --format is `text` or `json`");
+                    return 2;
+                }
+            },
+            // One more run of each file, untimed, under `olang profile
+            // --format json`, its profile left in DIR/<name>.json.
+            "--profile" => match it.next() {
+                Some(p) => profile_dir = Some(std::path::absolute(p).unwrap_or_else(|_| PathBuf::from(p))),
+                None => {
+                    eprintln!("bench: --profile expects a directory");
+                    return 2;
+                }
+            },
             other => paths.push(PathBuf::from(other)),
         }
     }
@@ -107,7 +129,16 @@ pub fn run(args: &[String]) -> i32 {
         None => None,
     };
 
-    println!(
+    let event = |v: serde_json::Value| println!("{}", v);
+    if json {
+        event(serde_json::json!({ "event": "start", "olang": env!("CARGO_PKG_VERSION"), "runs": runs, "in_task": in_task,
+            "files": files.iter().map(|f| f.display().to_string()).collect::<Vec<_>>(),
+            "against": against.as_ref().map(|p| p.display().to_string()) }));
+    }
+    if let Some(d) = &profile_dir {
+        let _ = std::fs::create_dir_all(d);
+    }
+    if !json { println!(
         "{}",
         format!(
             "olang bench — {} file(s), 1 warmup + up to {} runs each{}",
@@ -120,7 +151,7 @@ pub fn run(args: &[String]) -> i32 {
             }
         )
         .bold()
-    );
+    ); }
 
     let mut results: BTreeMap<String, f64> = BTreeMap::new();
     let mut regressed = false;
@@ -129,11 +160,58 @@ pub fn run(args: &[String]) -> i32 {
         let m = match measure(&exe, file, runs, in_task) {
             Ok(m) => m,
             Err(msg) => {
-                eprintln!("  {} {}", name.red(), msg);
+                if json {
+                    event(serde_json::json!({ "event": "error", "name": name, "file": file.display().to_string(), "message": msg }));
+                } else {
+                    eprintln!("  {} {}", name.red(), msg);
+                }
                 return 1;
             }
         };
         results.insert(name.clone(), m.median_s);
+        let profile_path = profile_dir.as_ref().map(|d| {
+            let out = d.join(format!("{name}.json"));
+            let mut c = Command::new(&exe);
+            if in_task {
+                c.arg("--in-task");
+            }
+            let ok = c
+                .args(["profile", "--format", "json", "--out"])
+                .arg(&out)
+                .arg(file)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            (out, ok)
+        });
+        if json {
+            let base = baseline.as_ref().and_then(|b| b.get(&name)).copied();
+            let threshold = 5.0_f64.max(2.0 * m.cv_pct);
+            let delta = base.map(|b| (m.median_s - b) / b * 100.0);
+            let verdict = match delta {
+                None => "new",
+                Some(d) if d.abs() < threshold => "same",
+                Some(d) if d < 0.0 => "faster",
+                Some(_) => "slower",
+            };
+            if verdict == "slower" {
+                regressed = true;
+            }
+            let r4 = |x: f64| (x * 1_000_000.0).round() / 1_000_000.0;
+            event(serde_json::json!({
+                "event": "result", "name": name, "file": file.display().to_string(),
+                "median_s": r4(m.median_s), "min_s": r4(m.min_s), "max_s": r4(m.max_s),
+                "cv_pct": (m.cv_pct * 100.0).round() / 100.0, "runs": m.runs,
+                "times_s": m.times_s.iter().map(|t| r4(*t)).collect::<Vec<_>>(),
+                "stable_output": m.stable_output,
+                "baseline_s": base, "delta_pct": delta.map(|d| (d * 100.0).round() / 100.0),
+                "threshold_pct": (threshold * 100.0).round() / 100.0, "verdict": verdict,
+                "profile": profile_path.as_ref().filter(|(_, ok)| *ok).map(|(p, _)| p.display().to_string()),
+            }));
+            continue;
+        }
 
         let mut line = format!(
             "  {:<32} {:>9} {}",
@@ -174,14 +252,19 @@ pub fn run(args: &[String]) -> i32 {
         println!("{line}");
     }
 
-    if let Some(p) = save {
-        match save_baseline(&p, &results) {
-            Ok(()) => println!("{}", format!("baseline saved to {}", p.display()).dimmed()),
+    if let Some(p) = &save {
+        match save_baseline(p, &results) {
+            Ok(()) if !json => println!("{}", format!("baseline saved to {}", p.display()).dimmed()),
+            Ok(()) => {}
             Err(msg) => {
                 eprintln!("bench: {msg}");
                 return 2;
             }
         }
+    }
+    if json {
+        event(serde_json::json!({ "event": "finished", "regressed": regressed, "files": results.len(),
+            "saved": save.as_ref().map(|p| p.display().to_string()) }));
     }
 
     if regressed && fail_on_regress { 1 } else { 0 }
@@ -255,6 +338,7 @@ fn measure(exe: &Path, file: &Path, max_runs: usize, in_task: bool) -> Result<Me
         }
         times.push(dt);
     }
+    let times_s = times.clone();
     times.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
     let median = if times.len() % 2 == 1 {
         times[times.len() / 2]
@@ -275,6 +359,7 @@ fn measure(exe: &Path, file: &Path, max_runs: usize, in_task: bool) -> Result<Me
         cv_pct,
         runs,
         stable_output,
+        times_s,
     })
 }
 
