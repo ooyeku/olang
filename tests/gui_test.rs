@@ -1617,3 +1617,56 @@ fn the_platform_says_what_its_windows_can_do() {
         assert_eq!(text(&v), "false");
     }
 }
+
+/// A code field's further carets, text after a line's end, rulers and
+/// sticky scroll are drawn (the pixels differ from the plain field); a
+/// press on a pinned line is said as a lens of id "sticky" with its
+/// line; a field to read takes no typing; a chord it is told to hand
+/// over arrives as a key, its text unmoved; an inert node's child is
+/// under the pointer, the inert node never.
+#[test]
+fn a_code_field_pins_scopes_says_problems_and_hands_over_chords() {
+    let _turn = events_turn();
+    let v = run(r##"
+        let ev = gui.events()
+        let mut lines = ["fn outer() = {"]
+        for i in 0..80 { lines = lines + ["    let x" + to_string(i) + " = " + to_string(i)] }
+        let text = join(lines + ["}"], "\n")
+        fn field(extra) = #{ "key": "f", "parent": "root", "role": "textarea", "box": (0, 0, 300, 160),
+             "style": #{ "pad": (4, 4, 4, 48), "font": "mono", "size": 13, "bg": "#ffffff" },
+             "edit": map_merge(#{ "value": text, "rich": true, "styles": [], "spans": [], "undo": false, "report": true,
+                                  "gutter": #{ "numbers": true }, "pass_keys": ["alt+up"] }, extra) }
+        fn root() = #{ "key": "root", "box": (0, 0, 300, 160), "style": #{ "bg": "#ffffff" } }
+        let plain = gui.headless(#{ "size": (300, 160) })
+        gui.apply(plain, [root(), field(#{ "scroll_to": (20, 1) })])
+        let w = gui.headless(#{ "size": (300, 160) })
+        gui.apply(w, [root(), field(#{ "scroll_to": (20, 1), "sticky": #{ "scopes": [(0, 81)], "max": 3, "bg": "#ffffff", "line": "#dddddd" },
+                                       "eol": [(22, "a problem here", "#ff0000")], "rulers": #{ "cols": [20], "color": "#cccccc" }, "carets": [(23, 2)] }),
+                      #{ "op": "focus", "key": "f" }])
+        let drawn = gui.read(w, "pixels") != gui.read(plain, "pixels")
+        let mut drain = true
+        while drain { match chan.try_recv(ev) { Ok(e) => (), _ => { drain = false } } }
+        // a press on the pinned first line
+        gui.input(w, #{ "kind": "pointer", "action": "down", "x": 120, "y": 10 })
+        gui.input(w, #{ "kind": "pointer", "action": "up", "x": 120, "y": 10 })
+        let mut lens = ()
+        let mut more = true
+        while more { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "lens" => { lens = e } }, _ => { more = false } } }
+        // a chord handed over: a key, the text as it was
+        gui.input(w, #{ "kind": "key", "key": "up", "alt": true })
+        let mut key = ()
+        let mut more2 = true
+        while more2 { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "key" => { key = map_get(e, "mod_chord") } }, _ => { more2 = false } } }
+        // a field to read: typing changes nothing
+        gui.apply(w, [field(#{ "readonly": true })])
+        gui.input(w, #{ "kind": "text", "text": "Z" })
+        let kept = gui.read(w, "value", "f") == text
+        // an inert row over the field: its child answers, never the row
+        let g = gui.headless(#{ "size": (300, 160) })
+        gui.apply(g, [root(), #{ "key": "under", "parent": "root", "role": "button", "box": (0, 0, 300, 160), "text": "Under" },
+                      #{ "key": "row", "parent": "root", "box": (0, 0, 60, 160), "inert": true },
+                      #{ "key": "grip", "parent": "row", "box": (40, 0, 8, 160) }])
+        [drawn, map_get(lens, "id"), map_get(lens, "line"), key, kept, gui.read(g, "hit", (44, 50)), gui.read(g, "hit", (20, 50))]
+    "##);
+    assert_eq!(text(&v), r#"[true, "sticky", 0, "alt+up", true, "grip", "under"]"#);
+}
