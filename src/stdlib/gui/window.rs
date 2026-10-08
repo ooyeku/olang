@@ -1135,6 +1135,14 @@ impl WinState {
             // The input method owns the keys until it commits.
             return Some(Outcome::Moved);
         }
+        // ⌥⌘ with a key that is not a move is the program's (⌥⌘↩, ⌥⌘F):
+        // never an edit of the field's
+        if mods.command()
+            && mods.alt
+            && !matches!(key, "left" | "right" | "up" | "down" | "backspace" | "delete")
+        {
+            return Some(Outcome::Pass);
+        }
         if mods.command() && !mods.alt {
             return Some(match (key, mods.shift) {
                 ("a", false) => {
