@@ -248,6 +248,16 @@ pub struct EditProps {
     pub lenses: Option<Value>,
     /// Say the character the pointer rests on (`hover` events).
     pub hover: bool,
+    /// Further carets (`rich.rs` `carets`), end-of-line texts (`eol`),
+    /// sticky scroll (`sticky`), rulers (`#{ cols, color }`), and
+    /// whether lines wrap (`wrap`, true by default).
+    pub carets: Option<Value>,
+    pub eol: Option<Value>,
+    pub sticky: Option<Value>,
+    pub rulers: Option<Value>,
+    pub wrap: bool,
+    /// Read, selected and copied, never edited.
+    pub readonly: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -599,6 +609,12 @@ impl Scene {
                 decorations: get(e, "decorations").cloned(),
                 lenses: get(e, "lenses").cloned(),
                 hover: get_bool(e, "hover", what)?.unwrap_or(false),
+                carets: get(e, "carets").cloned(),
+                eol: get(e, "eol").cloned(),
+                sticky: get(e, "sticky").cloned(),
+                rulers: get(e, "rulers").cloned(),
+                wrap: get_bool(e, "wrap", what)?.unwrap_or(true),
+                readonly: get_bool(e, "readonly", what)?.unwrap_or(false),
                 scroll_to: match get(e, "scroll_to") {
                     Some(v) => nums(v)
                         .filter(|n| n.len() >= 2)

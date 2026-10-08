@@ -441,6 +441,14 @@ impl WinState {
                         r.gutter = props.gutter.as_ref().and_then(super::rich::Gutter::parse);
                         r.decorations = super::rich::parse_decorations(props.decorations.as_ref());
                         r.set_lenses(super::rich::parse_lenses(props.lenses.as_ref()));
+                        r.carets = super::rich::parse_carets(props.carets.as_ref());
+                        r.eol = super::rich::parse_eol(props.eol.as_ref());
+                        r.sticky = super::rich::Sticky::parse(props.sticky.as_ref());
+                        let (cols, rc) = super::rich::parse_rulers(props.rulers.as_ref());
+                        r.rulers = cols;
+                        r.ruler_color = rc;
+                        r.set_nowrap(!props.wrap);
+                        r.readonly = props.readonly;
                         if let Some((line, seq)) = props.scroll_to
                             && seq != r.scroll_seq
                             && current
@@ -496,6 +504,14 @@ impl WinState {
                         r.gutter = props.gutter.as_ref().and_then(super::rich::Gutter::parse);
                         r.decorations = super::rich::parse_decorations(props.decorations.as_ref());
                         r.set_lenses(super::rich::parse_lenses(props.lenses.as_ref()));
+                        r.carets = super::rich::parse_carets(props.carets.as_ref());
+                        r.eol = super::rich::parse_eol(props.eol.as_ref());
+                        r.sticky = super::rich::Sticky::parse(props.sticky.as_ref());
+                        let (cols, rc) = super::rich::parse_rulers(props.rulers.as_ref());
+                        r.rulers = cols;
+                        r.ruler_color = rc;
+                        r.set_nowrap(!props.wrap);
+                        r.readonly = props.readonly;
                         if let Some((a, f, seq)) = props.select {
                             r.select_seq = seq;
                             r.select_chars(a.max(0) as usize, f.max(0) as usize);
@@ -1343,14 +1359,34 @@ impl WinState {
                         }
                         let (sx, sy) = ed.scrolled();
                         let (tx, ty) = (x * self.scale - ox + sx, y * self.scale - oy - dy + sy);
-                        // a press in a lens is the program's: said with the
-                        // operation under it, the caret left where it was
-                        let lens = ed.rich_mut().and_then(|r| {
+                        // a press on a pinned scope's first line (sticky
+                        // scroll) is the program's: said as a lens of id
+                        // "sticky" on that line, the caret left where it was
+                        let pinned = ed.rich_mut().and_then(|r| {
+                            let vy = ty - sy;
+                            r.sticky_drawn.iter().find(|(y0, y1, _)| vy >= *y0 && vy < *y1).map(|d| d.2)
+                        });
+                        let lens = if pinned.is_some() { None } else { ed.rich_mut().and_then(|r| {
                             let (k, ly) = r.lens_at(ty, &mut ts)?;
                             let l = r.lenses()[k].clone();
                             Some((l, ly / self.scale))
-                        });
-                        if let Some((l, ly)) = lens {
+                        }) };
+                        if let Some(line) = pinned {
+                            drop(ts);
+                            let f = f.clone();
+                            out.push(self.ev(
+                                "lens",
+                                vec![
+                                    ("key", s(&f)),
+                                    ("line", Value::Integer(line as i64)),
+                                    ("id", s("sticky")),
+                                    ("hit", Value::Unit),
+                                    ("x", float(tx / self.scale)),
+                                    ("y", float(0.0)),
+                                    ("clicks", Value::Integer(clicks as i64)),
+                                ],
+                            ));
+                        } else if let Some((l, ly)) = lens {
                             drop(ts);
                             let lx = tx / self.scale;
                             let width = self.scene.nodes.get(f).map(|n| n.rect[2]).unwrap_or(0.0);
@@ -1450,7 +1486,7 @@ impl WinState {
             .target_up(&hit, |n| n.edit.as_ref().is_some_and(|e| e.rich))
             && let Ok(mut ts) = text::system().lock()
             && let Some(r) = self.editors.get_mut(&k).and_then(|e| e.rich_mut())
-            && r.wheel(dy, &mut ts)
+            && (r.wheel_x(dx) | r.wheel(dy, &mut ts))
         {
             // the first line in view, said when it moves a band of lines
             // (a program asks for what the band shows; not every wheel)
@@ -2180,7 +2216,7 @@ impl WinState {
         r.set_font(&st.font, st.color);
         r.set_geometry(content[2] / s, s);
         r.follow_caret(content[3], ts);
-        let ox = content[0];
+        let ox = content[0] - r.scroll_x;
         let oy = content[1] - r.scroll_y;
         let outer_clip = clip;
         let clip = clip.intersect(Clip::rect(
@@ -2205,6 +2241,23 @@ impl WinState {
                     fade(c),
                     outer_clip,
                 ));
+            }
+        }
+        // rulers: a hairline at each column asked for (a code font's
+        // characters are one width: the width of ten zeros a tenth each)
+        if !r.rulers.is_empty() {
+            let mut rf = st.font.clone();
+            rf.spans = None;
+            let cw = ts.shape("0000000000", &rf, st.color, None, Align::Start, s).width / 10.0;
+            let mut c = r.ruler_color.unwrap_or(st.placeholder);
+            if r.ruler_color.is_none() {
+                c[3] = (c[3] as f32 * 0.35) as u8;
+            }
+            for col in r.rulers.clone() {
+                let x = (ox + cw * col as f32).round();
+                if x > content[0] && x < content[0] + content[2] {
+                    dl.prims.push(solid(x, content[1], s.max(1.0), content[3], fade(c), clip));
+                }
             }
         }
         // decorations behind the text: a matching bracket, a highlight
@@ -2361,6 +2414,44 @@ impl WinState {
                 }
             }
         }
+        // text after a line's end (a problem said at its line): quiet,
+        // a little smaller, cut with an ellipsis to the room left
+        if !r.eol.is_empty() {
+            let items: Vec<(usize, String, Option<Color>)> = r.eol.iter().filter(|e| shown.contains(&e.0)).cloned().collect();
+            let mut ef = st.font.clone();
+            ef.spans = None;
+            ef.size = st.font.size * 0.92;
+            let right = content[0] + content[2];
+            for (i, label, color) in items {
+                let (py, _, _) = r.para(i);
+                let len = r.para_text(i).len();
+                let boxes = r.range_boxes(i, 0, len);
+                let lh = st.font.size * s * if st.font.line_height > 0.0 { st.font.line_height } else { 1.2 };
+                let (ex, ey0, ey1) = match boxes.last() {
+                    Some(b) if len > 0 => (b.x1 as f32, b.y0 as f32, b.y1 as f32),
+                    _ => (0.0, 0.0, lh),
+                };
+                let x = (ox + ex + 20.0 * s).max(content[0] + 20.0 * s);
+                let avail = right - x - 6.0 * s;
+                if avail < 48.0 * s {
+                    continue;
+                }
+                let c = fade(color.unwrap_or(st.placeholder));
+                let mut shaped = ts.shape(&label, &ef, c, None, Align::Start, s);
+                if shaped.width > avail {
+                    let n = label.chars().count();
+                    let keep = ((n as f32) * (avail / shaped.width.max(1.0))).floor() as usize;
+                    let keep = keep.saturating_sub(2);
+                    if keep < 4 {
+                        continue;
+                    }
+                    let cut: String = label.chars().take(keep).collect::<String>().trim_end().to_string() + "…";
+                    shaped = ts.shape(&cut, &ef, c, None, Align::Start, s);
+                }
+                let ty = oy + py + ey0 + (((ey1 - ey0) - shaped.height) / 2.0).max(0.0);
+                push_glyphs(&shaped, x, ty, clip, dl);
+            }
+        }
         // lenses: each band under its line, drawn after the text is (the
         // field is let go first: a canvas paints through the window)
         let mut lens_jobs: Vec<(Value, f32, f32, f32, f32)> = Vec::new();
@@ -2437,6 +2528,68 @@ impl WinState {
                 push_glyphs(&shaped, gx0 + 6.0 * s, oy + py + (lh - shaped.height).max(0.0) / 2.0, gclip, dl);
             }
         }
+        // sticky scroll: the first line of each scope the view is inside,
+        // pinned at the top (outer first), pushed up as its scope's last
+        // line arrives; numbered in the gutter; a hairline under them
+        r.sticky_drawn.clear();
+        let mut sticky_bottom = 0.0f32;
+        if let Some(stk) = r.sticky.clone()
+            && stk.max > 0
+            && !stk.scopes.is_empty()
+        {
+            let lh = st.font.size * s * if st.font.line_height > 0.0 { st.font.line_height } else { 1.2 };
+            let top = r.top_line(ts);
+            let mut rows: Vec<(usize, f32)> = Vec::new();
+            for &(h, e) in &stk.scopes {
+                if rows.len() >= stk.max {
+                    break;
+                }
+                if h > top + stk.max || e < top {
+                    continue;
+                }
+                let slot = rows.len() as f32 * lh;
+                let (hy, _) = r.line_box(h, ts);
+                if hy >= r.scroll_y + slot {
+                    continue;
+                }
+                let (ey, eh) = r.line_box(e, ts);
+                let end_view = ey + eh - r.scroll_y;
+                if end_view <= slot + lh * 0.5 {
+                    continue;
+                }
+                rows.push((h, slot.min(end_view - lh)));
+            }
+            if !rows.is_empty() {
+                let x0 = content[0] - st.pad[3] * s;
+                let x1 = content[0] + content[2] + st.pad[1] * s;
+                let field = outer_clip.intersect(Clip::rect(x0, content[1], x1, content[1] + content[3]));
+                let bg = fade(stk.bg.or(st.bg).unwrap_or([255, 255, 255, 255]));
+                let mut gfont = st.font.clone();
+                gfont.spans = None;
+                let gcolor = r.gutter.as_ref().and_then(|g| g.color).unwrap_or(st.placeholder);
+                for &(h, top_y) in rows.iter().rev() {
+                    let y = content[1] + top_y;
+                    let row_clip = field.intersect(Clip::rect(x0, y, x1, y + lh));
+                    dl.prims.push(solid(x0, y, x1 - x0, lh, bg, field));
+                    r.ensure_line(h, ts);
+                    let (_, layout, _) = r.para(h);
+                    let shaped = text::shaped_of(layout, s);
+                    let text_clip = row_clip.intersect(Clip::rect(content[0] - 1.0, y, content[0] + content[2] + 1.0, y + lh));
+                    push_glyphs(&shaped, ox, y, text_clip, dl);
+                    if r.gutter.as_ref().is_some_and(|g| g.numbers) {
+                        let label = (h + 1).to_string();
+                        let sh = ts.shape(&label, &gfont, fade(gcolor), None, Align::Start, s);
+                        push_glyphs(&sh, content[0] - 14.0 * s - sh.width, y, row_clip, dl);
+                    }
+                    r.sticky_drawn.push((top_y, top_y + lh, h));
+                }
+                let bottom = rows.iter().map(|r| r.1 + lh).fold(0.0f32, f32::max);
+                sticky_bottom = bottom;
+                if let Some(c) = stk.line {
+                    dl.prims.push(solid(x0, content[1] + bottom, x1 - x0, s.max(1.0), fade(c), field));
+                }
+            }
+        }
         // a scroll mark when the text is longer than its box
         let total = r.content_height(ts);
         if total > content[3] + 1.0 && content[3] > 0.0 {
@@ -2462,6 +2615,21 @@ impl WinState {
                 )),
             });
         }
+        // what lies under the pinned rows is hidden by them
+        let clip = if sticky_bottom > 0.0 { clip.intersect(Clip::rect(clip.x0, content[1] + sticky_bottom, clip.x1, clip.y1)) } else { clip };
+        // the further carets (a program's further selections)
+        let mut more_carets: Vec<(f32, f32, f32, f32)> = Vec::new();
+        if focused && window_focused && r.show_cursor() && !r.carets.is_empty() {
+            let n = r.para_count();
+            for (line, col) in r.carets.clone() {
+                if line >= n || !shown.contains(&line) {
+                    continue;
+                }
+                let (b, _) = r.para_char_bytes(line, col, col);
+                let c = r.caret_box_at(line, b, (1.5 * s).max(1.0), ts);
+                more_carets.push((ox + c.x0 as f32, oy + c.y0 as f32, (c.x1 - c.x0) as f32, (c.y1 - c.y0) as f32));
+            }
+        }
         let caret = if focused && window_focused && r.show_cursor() {
             let c = r.caret_box((1.5 * s).max(1.0), ts);
             Some((
@@ -2475,7 +2643,7 @@ impl WinState {
         };
         let lens_clip = outer_clip.intersect(Clip::rect(
             content[0] - 1.0,
-            content[1],
+            content[1] + sticky_bottom,
             content[0] + content[2] + st.pad[1] * s,
             content[1] + content[3],
         ));
@@ -2485,9 +2653,13 @@ impl WinState {
             }
         }
         for (ops, mx, my, side, mclip) in mark_jobs {
+            let mclip = if sticky_bottom > 0.0 { mclip.intersect(Clip::rect(mclip.x0, content[1] + sticky_bottom, mclip.x1, mclip.y1)) } else { mclip };
             if let Ok(drawing) = super::canvas::draw(&ops, side / s, side / s, s) {
                 self.paint_canvas(drawing, mx, my, side, side, mclip, st, opacity, ts, dl);
             }
+        }
+        for (cx, cy, cw, ch) in more_carets {
+            dl.prims.push(solid(cx, cy, cw, ch, fade(st.caret), clip));
         }
         if let Some((cx, cy, cw, ch)) = caret {
             let shown = clip.intersect(Clip::rect(cx, cy, cx + cw, cy + ch));

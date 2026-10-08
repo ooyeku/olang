@@ -607,7 +607,7 @@ impl Field {
     pub fn scrolled(&self) -> (f32, f32) {
         match self {
             Field::Plain(e) => (e.scroll_x, 0.0),
-            Field::Rich(r) => (0.0, r.scroll_y),
+            Field::Rich(r) => (r.scroll_x, r.scroll_y),
         }
     }
 }

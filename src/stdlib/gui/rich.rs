@@ -230,6 +230,117 @@ pub struct RichEditor {
     lenses: Vec<Lens>,
     /// The character the pointer rests on last said (`hover` events).
     pub said_hover: Option<(usize, usize)>,
+    /// More carets than the one the field moves (a program's further
+    /// selections, ⌘D's): `(line, column)`, characters, drawn as the
+    /// caret is; editing them is the program's.
+    pub carets: Vec<(usize, usize)>,
+    /// Text drawn after a line's end, quietly, cut to the room left (a
+    /// problem said at its line): `(line, text, colour)`.
+    pub eol: Vec<(usize, String, Option<Color>)>,
+    /// The scopes whose first line is pinned at the top while the view is
+    /// inside them (sticky scroll).
+    pub sticky: Option<Sticky>,
+    /// The pinned rows last drawn: `(top, bottom, line)`, device pixels
+    /// from the field's content top (not scrolled), for a press.
+    pub sticky_drawn: Vec<(f32, f32, usize)>,
+    /// Vertical guides at these columns, and their colour.
+    pub rulers: Vec<usize>,
+    pub ruler_color: Option<Color>,
+    /// Lines are not wrapped: the text scrolls sideways.
+    pub nowrap: bool,
+    /// Read, selected and copied, never edited (a preview).
+    pub readonly: bool,
+    /// Horizontal scroll, device pixels (with `nowrap`).
+    pub scroll_x: f32,
+    /// The widest paragraph laid out, device pixels (with `nowrap`).
+    widest: f32,
+}
+
+/// Sticky scroll: `scopes` as `(first line, last line)`, sorted by their
+/// first line (an outer scope before the scopes inside it); at most
+/// `max` rows pinned; their background and the line under them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Sticky {
+    pub scopes: Vec<(usize, usize)>,
+    pub max: usize,
+    pub bg: Option<Color>,
+    pub line: Option<Color>,
+}
+
+impl Sticky {
+    pub fn parse(v: Option<&Value>) -> Option<Sticky> {
+        use super::values::{get, num, parse_color};
+        let v = v?;
+        if !matches!(v, Value::Map(_) | Value::Struct { .. }) {
+            return None;
+        }
+        let mut scopes: Vec<(usize, usize)> = match get(v, "scopes") {
+            Some(Value::List(l)) => l
+                .iter()
+                .filter_map(|x| {
+                    let Value::Tuple(t) = x else { return None };
+                    let a = t.first().and_then(num)?;
+                    let b = t.get(1).and_then(num)?;
+                    (a >= 0.0 && b > a).then_some((a as usize, b as usize))
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        scopes.sort_by(|x, y| x.0.cmp(&y.0).then(y.1.cmp(&x.1)));
+        Some(Sticky {
+            scopes,
+            max: get(v, "max").and_then(num).map(|n| n.max(0.0) as usize).unwrap_or(3),
+            bg: get(v, "bg").and_then(parse_color),
+            line: get(v, "line").and_then(parse_color),
+        })
+    }
+}
+
+/// The further carets of a patch: `(line, column)` tuples.
+pub fn parse_carets(v: Option<&Value>) -> Vec<(usize, usize)> {
+    use super::values::num;
+    let Some(Value::List(l)) = v else {
+        return Vec::new();
+    };
+    l.iter()
+        .filter_map(|x| {
+            let Value::Tuple(t) = x else { return None };
+            let a = t.first().and_then(num)?;
+            let b = t.get(1).and_then(num)?;
+            (a >= 0.0 && b >= 0.0).then_some((a as usize, b as usize))
+        })
+        .collect()
+}
+
+/// The end-of-line texts of a patch: `(line, text, colour)` tuples.
+pub fn parse_eol(v: Option<&Value>) -> Vec<(usize, String, Option<Color>)> {
+    use super::values::{num, parse_color};
+    let Some(Value::List(l)) = v else {
+        return Vec::new();
+    };
+    let mut out: Vec<(usize, String, Option<Color>)> = l
+        .iter()
+        .filter_map(|x| {
+            let Value::Tuple(t) = x else { return None };
+            let line = t.first().and_then(num)?;
+            let Some(Value::String(text)) = t.get(1) else { return None };
+            (line >= 0.0 && !text.is_empty()).then(|| (line as usize, text.to_string(), t.get(2).and_then(parse_color)))
+        })
+        .collect();
+    out.sort_by_key(|e| e.0);
+    out.dedup_by_key(|e| e.0);
+    out
+}
+
+/// The rulers of a patch: `#{ cols, color }`.
+pub fn parse_rulers(v: Option<&Value>) -> (Vec<usize>, Option<Color>) {
+    use super::values::{get, num, parse_color};
+    let Some(v) = v else { return (Vec::new(), None) };
+    let cols = match get(v, "cols") {
+        Some(Value::List(l)) => l.iter().filter_map(num).filter(|n| *n > 0.0).map(|n| n as usize).collect(),
+        _ => Vec::new(),
+    };
+    (cols, get(v, "color").and_then(parse_color))
 }
 
 /// A lens: `height` logical pixels under paragraph `line`, drawn from
@@ -427,6 +538,16 @@ impl RichEditor {
             said_top: None,
             lenses: Vec::new(),
             said_hover: None,
+            carets: Vec::new(),
+            eol: Vec::new(),
+            sticky: None,
+            sticky_drawn: Vec::new(),
+            rulers: Vec::new(),
+            ruler_color: None,
+            nowrap: false,
+            readonly: false,
+            scroll_x: 0.0,
+            widest: 0.0,
         };
         e.set_buffer(value);
         e
@@ -729,8 +850,12 @@ impl RichEditor {
         if self.paras[i].layout.is_some() && !self.paras[i].rebreak {
             return;
         }
+        let wrap = if self.nowrap { None } else { Some(self.width) };
         if let Some(mut l) = self.paras[i].layout.take() {
-            l.break_all_lines(Some(self.width));
+            l.break_all_lines(wrap);
+            if self.nowrap {
+                self.widest = self.widest.max(l.width());
+            }
             l.align(Alignment::Start, AlignmentOptions::default());
             let h = l.height();
             let p = &mut self.paras[i];
@@ -765,7 +890,10 @@ impl RichEditor {
             }
         }
         let mut l = b.build(text);
-        l.break_all_lines(Some(self.width));
+        l.break_all_lines(wrap);
+        if self.nowrap {
+            self.widest = self.widest.max(l.width());
+        }
         l.align(Alignment::Start, AlignmentOptions::default());
         let h = l.height();
         let line_h = self.font.size * self.scale * 1.2;
@@ -798,7 +926,7 @@ impl RichEditor {
         } else {
             self.font.size * self.scale * 0.55
         };
-        let lines = ((p.len as f32 * cw) / self.width.max(1.0)).ceil().max(1.0);
+        let lines = if self.nowrap { 1.0 } else { ((p.len as f32 * cw) / self.width.max(1.0)).ceil().max(1.0) };
         line_h * lines
     }
 
@@ -1008,6 +1136,10 @@ impl RichEditor {
         ts: &mut TextSystem,
         f: impl FnOnce(&mut Self, &mut TextSystem),
     ) -> Outcome {
+        // a field to read (a preview): selected and copied, never edited
+        if self.readonly {
+            return Outcome::Pass;
+        }
         // the buffer is copied only for the field's own undo; a change is
         // known by the edits made, not by comparing copies
         let before = self
@@ -1430,6 +1562,9 @@ impl RichEditor {
     // ── the input method ────────────────────────────────────────────
 
     pub fn compose(&mut self, text: &str, cursor: Option<(usize, usize)>, ts: &mut TextSystem) {
+        if self.readonly {
+            return;
+        }
         self.refresh(ts);
         if text.is_empty() {
             if let Some(r) = self.compose.take() {
@@ -1498,6 +1633,56 @@ impl RichEditor {
         self.set_focus_to(at, aff, true);
     }
 
+    /// Lines wrapped at the width (the default) or not (`nowrap`: the
+    /// text scrolls sideways).
+    pub fn set_nowrap(&mut self, nowrap: bool) {
+        if self.nowrap == nowrap {
+            return;
+        }
+        self.nowrap = nowrap;
+        self.scroll_x = 0.0;
+        self.widest = 0.0;
+        for p in &mut self.paras {
+            p.rebreak = true;
+            p.measured = false;
+        }
+        self.ys_ok = false;
+    }
+
+    /// Sideways, with `nowrap`: whether the view moved.
+    pub fn wheel_x(&mut self, dx: f32) -> bool {
+        if !self.nowrap {
+            return false;
+        }
+        let max = (self.widest - self.width + 24.0 * self.scale).max(0.0);
+        let before = self.scroll_x;
+        self.scroll_x = (self.scroll_x - dx * self.scale).clamp(0.0, max);
+        (self.scroll_x - before).abs() > 0.01
+    }
+
+    /// A caret's box at byte `local` of paragraph `i` (laid out), device
+    /// pixels from the text's top-left (no scroll).
+    pub fn caret_box_at(&mut self, i: usize, local: usize, width: f32, ts: &mut TextSystem) -> BoundingBox {
+        self.ensure(i, ts);
+        self.refresh(ts);
+        let g = self.cursor(i, local, Affinity::Downstream).geometry(self.layout_of(i), width);
+        let y = self.ys[i] as f64;
+        BoundingBox::new(g.x0, g.y0 + y, g.x1, g.y1 + y)
+    }
+
+    /// Paragraph `i` laid out (for drawing it out of its place).
+    pub fn ensure_line(&mut self, i: usize, ts: &mut TextSystem) {
+        self.ensure(i, ts);
+        self.refresh(ts);
+    }
+
+    /// Line `i`'s top and height (device pixels), laid out.
+    pub fn line_box(&mut self, i: usize, ts: &mut TextSystem) -> (f32, f32) {
+        self.ensure(i, ts);
+        self.refresh(ts);
+        (self.ys[i], self.paras[i].h)
+    }
+
     pub fn wheel(&mut self, dy: f32, ts: &mut TextSystem) -> bool {
         let total = self.content_height(ts);
         let max = (total - self.view_h).max(0.0);
@@ -1551,6 +1736,16 @@ impl RichEditor {
             }
             if y0 < self.scroll_y {
                 self.scroll_y = y0;
+            }
+            if self.nowrap {
+                let margin = 32.0 * self.scale;
+                let (x0, x1) = (c.x0 as f32, c.x1 as f32);
+                if x1 - self.scroll_x > self.width - margin {
+                    self.scroll_x = x1 - self.width + margin;
+                }
+                if x0 < self.scroll_x + margin {
+                    self.scroll_x = (x0 - margin).max(0.0);
+                }
             }
             self.follow = false;
         }
