@@ -444,6 +444,10 @@ forward" action. `--frozen` guards the other direction in CI: if
 resolution runs and would change an existing lock, the command fails
 with `lockfile is out of date` instead of writing. (With no lockfile at
 all, `--frozen` writes the first one — pair it with a committed lock.)
+`OLANG_LOCK_READONLY=1` resolves as usual but never writes the lock: an
+editor sets it for the children it runs on its own (a language server,
+a REPL, `olang check`), so opening a project without a lockfile leaves
+the project as it was.
 
 Fetched sources are cached content-addressed by commit under
 `~/.olang/cache` (override with `OLANG_CACHE`), so any given revision is

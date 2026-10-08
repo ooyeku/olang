@@ -151,8 +151,18 @@ pub fn install(root: &Path, options: &InstallOptions) -> Result<DependencyMap, P
         }
     }
 
-    lock.save(root).map_err(PkgError::Lock)?;
+    // An editor's passive children (a language server, a REPL, a check)
+    // resolve as a run does but never write into the project they read:
+    // OLANG_LOCK_READONLY=1 keeps the lock (or its absence) as it is.
+    if !lock_readonly() {
+        lock.save(root).map_err(PkgError::Lock)?;
+    }
     Ok(dep_map)
+}
+
+/// Whether this process may not write `olang.lock` (`OLANG_LOCK_READONLY=1`).
+pub fn lock_readonly() -> bool {
+    std::env::var("OLANG_LOCK_READONLY").map(|v| v == "1" || v == "true").unwrap_or(false)
 }
 
 /// `install`, but a dependency that cannot be resolved does not take the
