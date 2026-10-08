@@ -3932,7 +3932,7 @@ impl Repl {
 
             loop {
                 print!("{}Tutorial> {}", Colors::CYAN, Colors::RESET);
-                std::io::stdout().flush().unwrap();
+                let _ = std::io::stdout().flush();
 
                 let mut input = String::new();
                 // EOF (Ok(0)) or a read error must end the tutorial: with a

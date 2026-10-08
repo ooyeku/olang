@@ -1,3 +1,12 @@
+// First: the crate's print macros, which never panic on a closed stdout
+// or stderr (the library's `stdio`), shadow std's in the whole binary.
+#[macro_use]
+#[path = "print_macros.rs"]
+mod print_macros;
+mod stdio {
+    pub use olang::stdio::*;
+}
+
 use clap::{Parser, Subcommand};
 use colored::*;
 use std::path::PathBuf;
@@ -502,7 +511,7 @@ fn run() -> i32 {
         let logger = init_logger();
         let _ = initialize_parallelization(None);
         set_parallel_threshold(10_000);
-        miette::set_panic_hook();
+        olang::stdio::set_panic_hook();
         return run_embedded(bundle, logger);
     }
 
@@ -647,7 +656,7 @@ fn run() -> i32 {
     }
 
     // Initialize error reporting
-    miette::set_panic_hook();
+    olang::stdio::set_panic_hook();
 
     // Dispatch. The file-first form `olang <file> [args]` arrives as
     // `Commands::External` (any leading word that is neither a known command

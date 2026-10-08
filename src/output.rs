@@ -19,7 +19,8 @@ thread_local! {
 /// `olang gen.ol | head -1` the moment head exits. Emulate the Unix
 /// SIGPIPE default instead: terminate quietly with the conventional
 /// 141 (128+SIGPIPE), like every well-behaved filter. Other write
-/// errors report once to stderr and exit 1.
+/// errors report once to stderr (if it is still there) and exit 1
+/// (`crate::stdio::stdout_failed`).
 #[cfg(feature = "native")]
 fn write_stdout(bytes: &[u8], flush: bool) {
     use std::io::Write;
@@ -34,11 +35,8 @@ fn write_stdout(bytes: &[u8], flush: bool) {
         .write_all(bytes)
         .and_then(|_| if flush { out.flush() } else { Ok(()) });
     if let Err(e) = result {
-        if e.kind() == std::io::ErrorKind::BrokenPipe {
-            std::process::exit(141);
-        }
-        eprintln!("olang: cannot write to stdout: {}", e);
-        std::process::exit(1);
+        drop(out);
+        crate::stdio::stdout_failed(e);
     }
 }
 

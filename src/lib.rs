@@ -9,6 +9,12 @@
 //! This crate provides the core implementation of the Olang programming language,
 //! including parsing, AST construction, interpretation, and REPL functionality.
 
+// First: the crate's print macros, which never panic on a closed stdout
+// or stderr, shadow std's in every module below.
+#[macro_use]
+mod print_macros;
+pub mod stdio;
+
 pub mod analyze;
 pub mod ast;
 pub mod builtin;
