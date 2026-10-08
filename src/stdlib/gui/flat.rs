@@ -312,10 +312,24 @@ fn border_of(p: Option<&crate::ast::ValueMap>) -> f64 {
 fn tok(spec: &Spec, v: &Value) -> Value {
     match v {
         Value::String(s) => match spec.theme.get(s.as_str()) {
-            None | Some(Value::Unit) => v.clone(),
+            None | Some(Value::Unit) => tok_alpha(spec, s).unwrap_or_else(|| v.clone()),
             Some(c) => c.clone(),
         },
         _ => v.clone(),
+    }
+}
+
+/// A token at an opacity, as a canvas spells one (`"danger/12"`: the
+/// token's colour at 12%): a tinted row or a marked span in a style.
+fn tok_alpha(spec: &Spec, s: &str) -> Option<Value> {
+    let (base, pct) = s.split_once('/')?;
+    let pct: f64 = pct.parse().ok()?;
+    match spec.theme.get(base) {
+        Some(Value::String(c)) if c.len() == 7 && c.starts_with('#') => {
+            let a = (pct.clamp(0.0, 100.0) * 255.0 / 100.0).round() as u8;
+            Some(Value::String(Arc::new(format!("{}{:02x}", c, a))))
+        }
+        _ => None,
     }
 }
 
