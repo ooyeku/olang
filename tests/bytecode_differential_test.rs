@@ -69,7 +69,7 @@ fn bytecode_result(source: &str, target: &str, args: &[Value]) -> Result<Value, 
 
     vm.execute(target_id, &ovm_args)
         .map_err(|e| e.to_string())
-        .and_then(|v| v.to_ast().map_err(|e| format!("{:?}", e)))
+        .and_then(|v| v.into_ast().map_err(|e| format!("{:?}", e)))
 }
 
 /// Run a closure on a thread with a generous stack — recursive programs need
@@ -908,6 +908,26 @@ fn a_native_collection_converted_then_written_converts_again_as_written() {
         "fn f(n) = { let mut sub = #{}\n for i in range(0, 30) { sub = map_set(sub, to_string(i), [i]) }\n let top = #{ \"a\": sub, \"b\": sub }\n let s1 = show(top)\n let top2 = map_set(top, \"b\", map_set(sub, \"0\", \"x\"))\n [s1 == show(top), str.contains(show(top2), \"x\"), show(map_get(top2, \"a\")) == show(sub)] }",
         // a struct-like record list crossing as an element of another
         "fn f(n) = { let mut rows = []\n for i in range(0, 50) { rows = rows + [#{ \"id\": i, \"tags\": [\"t\", to_string(i)] }] }\n let a = show([rows])\n let rows2 = col.set(rows, 0, #{ \"id\": -1, \"tags\": [] })\n [a == show([rows]), show([rows2]) != a] }",
+    ] {
+        assert_same(src, "f", &ints(&[0]));
+    }
+}
+
+#[test]
+fn a_returned_collection_converts_whole_whether_held_only_by_the_result_or_shared() {
+    // A VM call's result converts as its holder gives it up (`into_ast`):
+    // what only the result holds converts without a cache entry, what is
+    // shared, or was converted before (a cache entry's weak handle on it),
+    // through the cache. Every mix answers what the tree-walker does.
+    for src in [
+        // held only by the result, nested
+        "fn f(n) = { let mut m = #{}\n for i in range(0, 40) { m = map_set(m, \"k\" + to_string(i), [i, (i, \"t\"), #{ \"v\": i }]) }\n m }",
+        // converted before (a cache entry), then returned alone
+        "fn f(n) = { let mut xs = []\n for i in range(0, 40) { xs = xs + [[i, \"a\"]] }\n let _s = show(xs)\n xs }",
+        // the same subtree twice in the result, and once converted before
+        "fn f(n) = { let mut sub = #{}\n for i in range(0, 30) { sub = map_set(sub, to_string(i), [i]) }\n let _s = show(sub)\n [sub, #{ \"a\": sub, \"b\": map_set(sub, \"0\", \"x\") }, (sub, 1)] }",
+        // written in place after a crossing, then returned
+        "fn f(n) = { let mut rows = []\n for i in range(0, 50) { rows = rows + [#{ \"id\": i }] }\n let _s = show([rows])\n col.set(rows, 0, #{ \"id\": -1 }) }",
     ] {
         assert_same(src, "f", &ints(&[0]));
     }

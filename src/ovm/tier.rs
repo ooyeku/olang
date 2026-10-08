@@ -801,7 +801,7 @@ impl BytecodeTier {
         let out = out?;
         self.stats.bytecode_calls += 1;
         Some(match out {
-            Ok(value) => match value.to_ast() {
+            Ok(value) => match value.into_ast() {
                 Ok(ast) => Ok(ast),
                 Err(_) => return None,
             },
@@ -858,7 +858,7 @@ impl BytecodeTier {
         let out = out?;
         self.stats.bytecode_calls += 1;
         Some(match out {
-            Ok(value) => match value.to_ast() {
+            Ok(value) => match value.into_ast() {
                 Ok(ast) => Ok(ast),
                 Err(_) => return None,
             },
@@ -909,7 +909,7 @@ impl BytecodeTier {
         self.stats.bytecode_calls += 1;
         self.vm.clear_error_trace();
         match self.vm.execute_taking(func_id, &mut ovm_args) {
-            Ok(value) => match value.to_ast() {
+            Ok(value) => match value.into_ast() {
                 Ok(ast) => TierOutcome::Ran(Ok(ast)),
                 // A result we can't convert would be observable as a wrong
                 // value; refuse rather than return something else.

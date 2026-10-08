@@ -1583,6 +1583,49 @@ impl OvmValue {
         }
     }
 
+    /// Convert a value its holder gives up (a VM call's result): what only
+    /// this value holds dies with it, so its conversion is not kept in
+    /// `TO_AST_CACHE` — an entry that could never hit, which pinned the
+    /// interpreter copy until a later sweep freed it (a frame's placements
+    /// freed inside the next frame's layout). What is shared still goes
+    /// through the cache, as in `to_ast`.
+    pub fn into_ast(self) -> Result<Value, RuntimeError> {
+        self.to_ast_in(true)
+    }
+
+    /// `to_ast`, or (`dying`: this value's holder drops it after) the
+    /// conversion of `into_ast`.
+    fn to_ast_in(&self, dying: bool) -> Result<Value, RuntimeError> {
+        match &self.data {
+            ValueData::Integer(i) => Ok(Value::Integer(*i)),
+            ValueData::Float(f) => Ok(Value::Float(*f)),
+            ValueData::Boolean(b) => Ok(Value::Boolean(*b)),
+            ValueData::Unit => Ok(Value::Unit),
+            _ if dying => crate::interpreter::with_stack_headroom(|| self.to_ast_dying()),
+            _ => crate::interpreter::with_stack_headroom(|| self.to_ast_nested()),
+        }
+    }
+
+    /// A collection held only here (no other strong handle, no cache
+    /// entry's weak one) dies with its holder: converted without an
+    /// entry, and so are its children held only by it. Anything else
+    /// converts as `to_ast` does.
+    fn to_ast_dying(&self) -> Result<Value, RuntimeError> {
+        let sole = match &self.data {
+            ValueData::List(a) | ValueData::Tuple(a) => {
+                Arc::strong_count(a) == 1 && Arc::weak_count(a) == 0
+            }
+            ValueData::Map(m) => Arc::strong_count(m) == 1 && Arc::weak_count(m) == 0,
+            ValueData::Struct(s) => Arc::strong_count(s) == 1 && Arc::weak_count(s) == 0,
+            _ => false,
+        };
+        if sole {
+            self.to_ast_uncached_in(true)
+        } else {
+            self.to_ast_nested()
+        }
+    }
+
     /// One conversion, through the identity cache for a large native
     /// collection (see `TO_AST_CACHE`).
     fn to_ast_nested(&self) -> Result<Value, RuntimeError> {
@@ -1606,6 +1649,12 @@ impl OvmValue {
     }
 
     fn to_ast_uncached(&self) -> Result<Value, RuntimeError> {
+        self.to_ast_uncached_in(false)
+    }
+
+    /// The conversion itself; `dying` passes to the collections' children
+    /// (see `to_ast_dying`).
+    fn to_ast_uncached_in(&self, dying: bool) -> Result<Value, RuntimeError> {
         match &self.data {
             ValueData::Integer(i) => Ok(Value::Integer(*i)),
             ValueData::Float(f) => Ok(Value::Float(*f)),
@@ -1622,7 +1671,7 @@ impl OvmValue {
                 TO_AST_WORK.set(TO_AST_WORK.get() + gc_ptr.len());
                 let mut ast_values = Vec::with_capacity(gc_ptr.len());
                 for ovm_val in gc_ptr.iter() {
-                    ast_values.push(ovm_val.to_ast()?);
+                    ast_values.push(ovm_val.to_ast_in(dying)?);
                 }
                 Ok(Value::List(ast_values.into()))
             }
@@ -1632,7 +1681,7 @@ impl OvmValue {
                 TO_AST_WORK.set(TO_AST_WORK.get() + gc_ptr.len());
                 let mut ast_values = Vec::with_capacity(gc_ptr.len());
                 for ovm_val in gc_ptr.iter() {
-                    ast_values.push(ovm_val.to_ast()?);
+                    ast_values.push(ovm_val.to_ast_in(dying)?);
                 }
                 Ok(Value::Tuple(std::sync::Arc::new(ast_values)))
             }
@@ -1641,7 +1690,7 @@ impl OvmValue {
                 TO_AST_WORK.set(TO_AST_WORK.get() + m.len());
                 let mut out = crate::ast::ValueMap::default();
                 for (k, v) in m.iter() {
-                    out.insert(k.clone(), v.to_ast()?);
+                    out.insert(k.clone(), v.to_ast_in(dying)?);
                 }
                 Ok(Value::Map(Arc::new(out)))
             }
@@ -1727,7 +1776,7 @@ impl OvmValue {
                 TO_AST_WORK.set(TO_AST_WORK.get() + gc_ptr.values.len());
                 let mut fields = crate::ast::ValueMap::default();
                 for (name, val) in gc_ptr.iter() {
-                    fields.insert(name.clone(), val.to_ast()?);
+                    fields.insert(name.clone(), val.to_ast_in(dying)?);
                 }
                 Ok(Value::Struct {
                     type_name: gc_ptr.type_name().to_string(),
