@@ -358,6 +358,28 @@ fn headless_windows_from_olang() {
 }
 
 #[test]
+fn a_code_font_without_ligatures_and_a_title_read_back() {
+    // its windows send events on the one channel
+    let _turn = events_turn();
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (200, 60) })
+        let r = gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 200, 60), "style": #{ "bg": "#ffffff" } },
+          #{ "key": "t", "parent": "root", "role": "text", "box": (8, 8, 180, 20), "text": "a => b != c", "style": #{ "font": "mono", "ligatures": false } }
+        ])
+        gui.set(w, #{ "title": "auth.ol — shuttle" })
+        [r, gui.read(w, "title")]
+    "##);
+    assert_eq!(text(&v), r#"[Ok(()), "auth.ol — shuttle"]"#);
+    // the font's features: ligatures and contextual alternates off
+    use olang::stdlib::gui::text::Font;
+    let off = Font { family: "mono".into(), ligatures: false, ..Font::default() };
+    assert!(format!("{:?}", off.styles()).contains("liga"));
+    assert!(!format!("{:?}", Font::default().styles()).contains("liga"));
+    assert_ne!(off, Font { family: "mono".into(), ..Font::default() });
+}
+
+#[test]
 fn a_bad_patch_says_what_is_wrong() {
     // its windows send events on the one channel
     let _turn = events_turn();

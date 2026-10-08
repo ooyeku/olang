@@ -428,6 +428,7 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
     };
     Ok(match what.as_str() {
         "focus" => opt_str(st.scene.focus.as_deref()),
+        "title" => opt_str(Some(st.title.as_str())),
         "hover" => opt_str(st.scene.hover.as_deref()),
         "size" => Value::Tuple(Arc::new(vec![
             float(st.width),

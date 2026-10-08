@@ -583,6 +583,34 @@ pub fn gui_flatten(args: Vec<Value>) -> Res<Value> {
     flatten_full(root, &spec, &mut ts, prev.as_ref(), &base)
 }
 
+/// A split's share for the core (`F_RATIO`, Loom's lib/flex.ol): its
+/// ratio (0 to 1); or, sized in pixels (`size`), `2 + size` for the
+/// first pane's or `-(1 + size)` for the second's (`fixed: "second"`).
+fn split_ratio(p: Option<&crate::ast::ValueMap>) -> f64 {
+    match mget(p, "size") {
+        Value::Unit => match mget(p, "ratio") {
+            Value::Unit => 0.5,
+            v => fnum(v),
+        },
+        v => {
+            let px = fnum(v).max(0.0);
+            if matches!(mget(p, "fixed"), Value::String(s) if s.as_str() == "second") {
+                -(1.0 + px)
+            } else {
+                2.0 + px
+            }
+        }
+    }
+}
+
+/// A split's divider thickness (`bar`, 8 unless given).
+fn split_bar(p: Option<&crate::ast::ValueMap>) -> f64 {
+    match mget(p, "bar") {
+        Value::Unit => 8.0,
+        v => fnum(v).max(0.0),
+    }
+}
+
 /// The core's kind for a node of `role` (0 group, 1 region, 2 split, 3
 /// leaf, 4 wrapping text).
 fn kind_of(role: &str, p: Option<&crate::ast::ValueMap>) -> i64 {
@@ -746,16 +774,9 @@ fn node_entry(
             nw,
             nh,
             fullw,
-            if kind == 2 {
-                match mget(p, "ratio") {
-                    Value::Unit => 0.5,
-                    v => fnum(v),
-                }
-            } else {
-                0.5
-            },
+            if kind == 2 { split_ratio(p) } else { 0.5 },
             if *mn == Value::Unit { 80.0 } else { fnum(mn) },
-            0.0,
+            if kind == 2 { split_bar(p) } else { 0.0 },
         ],
     ))
 }
@@ -1586,8 +1607,10 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
                 } else {
                     0.0
                 };
-                let (bar, grab) = (8.0, 24.0);
+                let (bar, grab) = (split_bar(p), 24.0);
                 let reach = (grab - bar) / 2.0;
+                // the line sits in the bar (a hairline bar is the line)
+                let mid = if bar <= 1.0 { reach } else { reach + bar / 2.0 };
                 let room = ((if row { w } else { h }) - bar).max(0.0);
                 let me_op = hm(vec![
                     ("role", st("group")),
@@ -1620,9 +1643,9 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
                     "",
                 );
                 let lb = if row {
-                    (d.0 + grab / 2.0, d.1, 1.0, d.3)
+                    (d.0 + mid, d.1, 1.0, d.3)
                 } else {
-                    (d.0, d.1 + grab / 2.0, d.2, 1.0)
+                    (d.0, d.1 + mid, d.2, 1.0)
                 };
                 let line = rec(
                     &format!("{gk}:line"),

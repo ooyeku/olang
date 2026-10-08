@@ -78,6 +78,7 @@ const STYLE_KEYS: &[&str] = &[
     "weight",
     "italic",
     "line_height",
+    "ligatures",
     "spans",
     "align",
     "valign",
@@ -143,6 +144,9 @@ impl Style {
         }
         if let Some(n) = get_num(m, "line_height", what)? {
             self.font.line_height = n.max(0.0);
+        }
+        if let Some(b) = get_bool(m, "ligatures", what)? {
+            self.font.ligatures = b;
         }
         if let Some(Value::List(l)) = get(m, "spans") {
             let mut v = Vec::new();

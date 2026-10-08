@@ -36,6 +36,10 @@ pub struct Font {
     /// Styled runs within the text (characters): a preview's bold, code,
     /// links (`rich.rs`'s looks).
     pub spans: Option<Arc<Vec<(usize, usize, super::rich::SpanStyle)>>>,
+    /// Whether the font's ligatures and contextual alternates are on
+    /// (`liga`, `calt`): a code font's `=>` drawn as one arrow. On by
+    /// default; a code editor turns them off unless asked.
+    pub ligatures: bool,
 }
 
 impl Default for Font {
@@ -47,6 +51,7 @@ impl Default for Font {
             italic: false,
             line_height: 0.0,
             spans: None,
+            ligatures: true,
         }
     }
 }
@@ -60,6 +65,7 @@ impl Hash for Font {
         self.weight.to_bits().hash(h);
         self.italic.hash(h);
         self.line_height.to_bits().hash(h);
+        self.ligatures.hash(h);
         if let Some(sp) = &self.spans {
             sp.len().hash(h);
             for (a, b, st) in sp.iter() {
@@ -103,6 +109,11 @@ impl Font {
         if self.line_height > 0.0 {
             v.push(StyleProperty::LineHeight(LineHeight::FontSizeRelative(
                 self.line_height,
+            )));
+        }
+        if !self.ligatures {
+            v.push(StyleProperty::FontFeatures(parley::FontFeatures::Source(
+                "\"liga\" 0, \"calt\" 0, \"clig\" 0".into(),
             )));
         }
         v

@@ -842,6 +842,13 @@ impl ApplicationHandler<Cmd> for App {
                     if let Ok(Some(true)) = get_bool(&v, "focus", "gui.set") {
                         pw.win.focus_window();
                     }
+                    // a document's unsaved edits: the dot in the close
+                    // button, as every Mac document window shows them
+                    #[cfg(target_os = "macos")]
+                    if let Ok(Some(e)) = get_bool(&v, "edited", "gui.set") {
+                        use winit::platform::macos::WindowExtMacOS;
+                        pw.win.set_document_edited(e);
+                    }
                     pw.win.request_redraw();
                 }
                 if let Ok(Some(a)) = get_str(&v, "appearance", "gui.set")
