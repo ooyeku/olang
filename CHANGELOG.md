@@ -153,6 +153,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **gui: a closed window goes away, in order (macOS).** The process's
+  GPU instance held the first window it presented to, so that window
+  was never dropped: closed by the program, it stayed on the screen
+  until the program ended, when winit tore it down long after its
+  accessibility adapter. The instance now holds the event loop's
+  display. A closed window is torn down surface and window first, in an
+  autorelease pool of its own, and its accessibility adapter (which
+  gives the content view its class back) is dropped only once AppKit
+  has let go of the window; the loop posts AppKit an event now and then
+  for a moment so an idle program does not keep a closed window.
+  tests/gui_macos_teardown_test.rs; tools/window_churn.sh opens and
+  closes real windows many times and counts crashes.
+
 - **gui: VoiceOver lists a node's actions (macOS).** A node's `actions`
   were AccessKit custom actions that AccessKit's macOS adapter never
   published, so VoiceOver's Actions rotor (VO-⌘-Space) was empty.

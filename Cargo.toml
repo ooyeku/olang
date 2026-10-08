@@ -55,6 +55,7 @@ gui = [
     "dep:objc2-app-kit",
     "dep:objc2-foundation",
     "dep:block2",
+    "dep:objc2",
     "dep:skrifa",
     "dep:zune-jpeg",
     "dep:image-webp",
@@ -286,9 +287,11 @@ crossterm = { version = "0.29", default-features = false, features = ["events", 
 muda = { version = "0.21", default-features = false, optional = true }
 # The system's appearance, contrast, motion, transparency, and accent
 # settings, and the notices that they changed (gui/context.rs).
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSWorkspace", "NSAccessibility", "NSPasteboard", "NSBitmapImageRep", "NSImageRep", "NSEvent", "NSApplication", "NSResponder", "NSAppearance", "NSColor", "NSColorSpace"], optional = true }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSWorkspace", "NSAccessibility", "NSPasteboard", "NSBitmapImageRep", "NSImageRep", "NSEvent", "NSApplication", "NSResponder", "NSAppearance", "NSColor", "NSColorSpace", "NSGraphicsContext"], optional = true }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSUserDefaults", "NSString", "NSData", "NSArray", "NSDictionary", "NSNotification", "NSOperation", "NSObject"], optional = true }
 block2 = { version = "0.6", optional = true }
+# A closed window's teardown in an autorelease pool of its own.
+objc2 = { version = "0.6", optional = true }
 
 # AccessKit's macOS adapter with custom actions published: its nodes
 # answer accessibilityCustomActions with NSAccessibilityCustomAction
@@ -314,6 +317,10 @@ block2 = "0.6"
 # AppKit wants the process's first thread: no libtest harness.
 [[test]]
 name = "gui_macos_a11y_test"
+harness = false
+
+[[test]]
+name = "gui_macos_teardown_test"
 harness = false
 
 [profile.release]

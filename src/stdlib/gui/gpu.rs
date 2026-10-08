@@ -311,11 +311,15 @@ pub fn new_instance() -> wgpu::Instance {
     wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env())
 }
 
-/// An instance that can present to windows of `window`'s display
-/// (Wayland needs the display; elsewhere it is harmless).
-fn window_instance(window: &Arc<winit::window::Window>) -> wgpu::Instance {
+/// An instance that can present to windows of the event loop's display
+/// (Wayland needs the display; elsewhere it is harmless). The display, not
+/// a window: the instance is the process's for good, and a window it held
+/// would never be dropped when the program closes it — it stayed on the
+/// screen, and was torn down only by winit as the loop ended, after its
+/// accessibility adapter had gone (a crash in AppKit's teardown).
+fn window_instance(display: winit::event_loop::OwnedDisplayHandle) -> wgpu::Instance {
     wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(
-        Box::new(window.clone()),
+        Box::new(display),
     ))
 }
 
@@ -825,6 +829,7 @@ pub struct Surface {
 impl Surface {
     pub fn new(
         window: Arc<winit::window::Window>,
+        display: winit::event_loop::OwnedDisplayHandle,
         width: u32,
         height: u32,
     ) -> Result<Surface, String> {
@@ -840,7 +845,7 @@ impl Surface {
             }
             Some(Err(e)) => return Err(e.clone()),
             None => {
-                let instance = window_instance(&window);
+                let instance = window_instance(display);
                 let s = instance
                     .create_surface(window)
                     .map_err(|e| format!("creating a surface: {e}"))?;

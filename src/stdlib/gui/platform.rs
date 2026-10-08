@@ -258,6 +258,8 @@ fn run_loop(reply: crossbeam_channel::Sender<Result<(), String>>) -> Option<i32>
         _live: crate::stdlib::chan::live_guard(),
         clipboard: None,
         files: Vec::new(),
+        closing: Vec::new(),
+        nudged: None,
         #[cfg(target_os = "macos")]
         menu: None,
     };
@@ -338,6 +340,117 @@ struct PWin {
     ime_area: Option<[f32; 4]>,
 }
 
+/// A window the program closed (or every window, as the loop ends), torn
+/// down in an order the platform can follow: its surface and the window
+/// first, in an autorelease pool of their own, so the window closes while
+/// what it shows, its accessibility included, is as it was. The window's
+/// accessibility adapter is returned, to be dropped once the platform has
+/// let go of the window ([`Closing`]).
+fn close_window(pw: PWin) -> Closing {
+    let PWin {
+        win,
+        renderer,
+        a11y,
+        state,
+        ..
+    } = pw;
+    let window = Closing::watch(&win);
+    let teardown = move || {
+        drop(renderer);
+        drop(state);
+        // the last reference: winit closes the window
+        drop(win);
+    };
+    #[cfg(target_os = "macos")]
+    objc2::rc::autoreleasepool(|_| teardown());
+    #[cfg(not(target_os = "macos"))]
+    teardown();
+    Closing {
+        _a11y: a11y,
+        window,
+        at: std::time::Instant::now(),
+    }
+}
+
+/// A closed window's accessibility adapter, kept until the window itself
+/// is gone. On macOS AccessKit makes the window's content view an
+/// instance of a subclass of its own; dropping the adapter gives the view
+/// its class back and releases it. AppKit lets go of a closed window only
+/// as it next handles an event, so the view's class is put back once the
+/// window and its frame are torn down, never under them.
+struct Closing {
+    _a11y: accesskit_winit::Adapter,
+    #[cfg(target_os = "macos")]
+    window: Option<objc2::rc::Weak<objc2::runtime::AnyObject>>,
+    #[cfg(not(target_os = "macos"))]
+    window: (),
+    /// When the window was closed: the loop nudges AppKit for a while.
+    at: std::time::Instant,
+}
+
+/// How long the loop keeps nudging AppKit to let go of a closed window
+/// (it takes a turn or two); after that the adapter waits quietly.
+const CLOSING_NUDGE: std::time::Duration = std::time::Duration::from_secs(2);
+
+impl Closing {
+    /// A weak reference to the platform's window behind `win`.
+    #[cfg(target_os = "macos")]
+    fn watch(win: &Window) -> Option<objc2::rc::Weak<objc2::runtime::AnyObject>> {
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let RawWindowHandle::AppKit(h) = win.window_handle().ok()?.as_raw() else {
+            return None;
+        };
+        let view = h.ns_view.as_ptr() as *mut objc2::runtime::AnyObject;
+        // SAFETY: the handle's view is a live NSView while `win` is;
+        // `-[NSView window]` returns it at +0 (retained here).
+        let window: Option<objc2::rc::Retained<objc2::runtime::AnyObject>> =
+            unsafe { objc2::msg_send![&*view, window] };
+        window.map(|w| objc2::rc::Weak::from_retained(&w))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn watch(_win: &Window) {}
+
+    /// Whether the platform has let go of the window.
+    fn gone(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            self.window.as_ref().is_none_or(|w| w.load().is_none())
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            true
+        }
+    }
+}
+
+/// Post an application-defined event (one nobody handles) so AppKit
+/// handles an event and lets go of the windows that were closed; with
+/// the loop otherwise idle it would hold them until the person next
+/// moves the pointer or presses a key.
+#[cfg(target_os = "macos")]
+fn nudge_appkit() {
+    use objc2_app_kit::{NSApplication, NSEvent, NSEventModifierFlags, NSEventType};
+    use objc2_foundation::{MainThreadMarker, NSPoint};
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let ev = NSEvent::otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2(
+        NSEventType::ApplicationDefined,
+        NSPoint::new(0.0, 0.0),
+        NSEventModifierFlags(0),
+        0.0,
+        0,
+        None,
+        0,
+        0,
+        0,
+    );
+    if let Some(ev) = ev {
+        NSApplication::sharedApplication(mtm).postEvent_atStart(&ev, false);
+    }
+}
+
 struct App {
     windows: HashMap<u64, PWin>,
     by_winit: HashMap<WindowId, u64>,
@@ -349,6 +462,10 @@ struct App {
     /// file: gathered and sent as one `files` event when the loop next
     /// waits (`(window, action, path)`).
     files: Vec<(u64, &'static str, String)>,
+    /// Closed windows' accessibility adapters, until the windows are gone.
+    closing: Vec<Closing>,
+    /// When AppKit was last nudged to let go of closed windows.
+    nudged: Option<std::time::Instant>,
     #[cfg(target_os = "macos")]
     menu: Option<(muda::Menu, HashMap<muda::MenuId, String>)>,
 }
@@ -395,7 +512,12 @@ impl App {
         let renderer = if opts.renderer == "software" {
             soft_renderer(&win)?
         } else {
-            match gpu::Surface::new(win.clone(), size.width, size.height) {
+            match gpu::Surface::new(
+                win.clone(),
+                el.owned_display_handle(),
+                size.width,
+                size.height,
+            ) {
                 Ok(s) => Renderer::Gpu(s),
                 Err(e) => {
                     eprintln!("gui: the GPU renderer is unavailable ({e}); drawing in software");
@@ -758,10 +880,24 @@ impl ApplicationHandler<Cmd> for App {
         if !self.files.is_empty() {
             self.flush_files();
         }
+        if !self.closing.is_empty() {
+            self.closing.retain(|c| !c.gone());
+        }
         // Animations: a window whose next frame is due draws; the loop
         // sleeps until the soonest of the rest.
         let now = std::time::Instant::now();
         let mut soonest: Option<std::time::Instant> = None;
+        // A closed window AppKit has not let go of yet: it does so as it
+        // handles an event, so it is given one now and then for a while.
+        if self.closing.iter().any(|c| now - c.at < CLOSING_NUDGE) {
+            let every = std::time::Duration::from_millis(50);
+            if self.nudged.is_none_or(|t| now - t >= every) {
+                self.nudged = Some(now);
+                #[cfg(target_os = "macos")]
+                nudge_appkit();
+            }
+            soonest = Some(now + every);
+        }
         for pw in self.windows.values_mut() {
             match pw.wake {
                 Some(t) if t <= now => {
@@ -802,6 +938,8 @@ impl ApplicationHandler<Cmd> for App {
             Cmd::Close(id) => {
                 if let Some(pw) = self.windows.remove(&id) {
                     self.by_winit.remove(&pw.win.id());
+                    let c = close_window(pw);
+                    self.closing.push(c);
                 }
             }
             Cmd::Redraw(id) => {
@@ -877,7 +1015,11 @@ impl ApplicationHandler<Cmd> for App {
             Cmd::Settings(why) => self.settings_changed(why, None),
             Cmd::Exit(code) => {
                 self.exit = Some(code);
-                self.windows.clear();
+                self.by_winit.clear();
+                for (_, pw) in self.windows.drain() {
+                    let c = close_window(pw);
+                    self.closing.push(c);
+                }
                 el.exit();
             }
             Cmd::A11y(ev) => {
