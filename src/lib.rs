@@ -44,6 +44,7 @@ pub mod runtime_wasm; // The browser runtime the binary embeds
 pub mod scoping;
 pub mod stdlib;
 pub mod test_framework;
+pub mod tier_stats; // Where each function ran: `--ovm-stats=json`, pins
 pub mod timeline;
 pub mod tools;
 pub mod version;

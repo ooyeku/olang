@@ -29,7 +29,7 @@
 //! one.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// Frames recorded per thread. Deeper stacks still profile correctly —
@@ -58,10 +58,13 @@ const BUILTIN_BIT: u8 = 0x80;
 /// parent). Rides the tier byte like BUILTIN_BIT so the parent walk in
 /// `named_parent` reads bits instead of interned names.
 const ANON_BIT: u8 = 0x40;
+/// Marks an interpreter frame whose call a tier took over (tier
+/// statistics): its call is counted once, on the tier that ran it.
+const TAKEN_BIT: u8 = 0x20;
 
 impl Tier {
     fn from_u8(v: u8) -> Tier {
-        match v & !(BUILTIN_BIT | ANON_BIT) {
+        match v & !(BUILTIN_BIT | ANON_BIT | TAKEN_BIT) {
             1 => Tier::Vm,
             2 => Tier::Native,
             _ => Tier::Interpreter,
@@ -97,13 +100,28 @@ struct ThreadStack {
     /// function that parked it made every actor loop the hottest row of
     /// a profile whose CPU was idle.
     blocked: AtomicBool,
+    /// Tier statistics (`--ovm-stats=json`): calls per (frame id, tier)
+    /// and the native attempts that declined, `STAT_SLOTS` counters a
+    /// frame id. Written only by this thread (a load and a store, no
+    /// read-modify-write); allocated the first time a counted frame is
+    /// pushed, so an ordinary profile never pays for it.
+    counts: OnceLock<Box<[AtomicU64]>>,
 }
+
+/// Frame ids counted per thread; a frame interned past this is timed by
+/// the sampler but its calls are not counted.
+const STAT_IDS: usize = 4096;
+/// Per frame id: calls on the interpreter, the VM and native code, the
+/// native attempts that declined, then the declines by reason (1–4).
+const STAT_SLOTS: usize = 8;
+const SLOT_DECLINES: usize = 3;
 
 impl ThreadStack {
     fn new(worker: bool) -> Self {
         ThreadStack {
             depth: AtomicUsize::new(0),
             blocked: AtomicBool::new(false),
+            counts: OnceLock::new(),
             frames: std::array::from_fn(|_| AtomicU32::new(0)),
             tiers: std::array::from_fn(|_| AtomicU8::new(0)),
             worker,
@@ -115,6 +133,34 @@ struct Registry {
     stacks: Mutex<Vec<Arc<ThreadStack>>>,
     names: Mutex<(Vec<String>, HashMap<String, u32>)>,
     enabled: AtomicBool,
+    /// Who wants frames recorded: a sampler session, the instrumented
+    /// mode, tier statistics. `enabled` is true while any does, so one
+    /// finishing does not switch off another.
+    users: AtomicUsize,
+    /// Sampler sessions a profile started (not the statistics' own), so
+    /// `runtime.profile_start` still refuses to nest inside `olang
+    /// profile` while statistics are being kept.
+    profiles: AtomicUsize,
+    /// Counts of threads that have exited, folded in when the sampler
+    /// prunes them (`STAT_IDS * STAT_SLOTS`).
+    retired: Mutex<Vec<u64>>,
+}
+
+fn retain() {
+    let r = registry();
+    r.users.fetch_add(1, Ordering::SeqCst);
+    r.enabled.store(true, Ordering::Relaxed);
+}
+
+fn release() {
+    let r = registry();
+    let before = r
+        .users
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| Some(n.saturating_sub(1)))
+        .unwrap_or(0);
+    if before <= 1 {
+        r.enabled.store(false, Ordering::Relaxed);
+    }
 }
 
 fn registry() -> &'static Registry {
@@ -123,6 +169,9 @@ fn registry() -> &'static Registry {
         stacks: Mutex::new(Vec::new()),
         names: Mutex::new((Vec::new(), HashMap::new())),
         enabled: AtomicBool::new(false),
+        users: AtomicUsize::new(0),
+        profiles: AtomicUsize::new(0),
+        retired: Mutex::new(Vec::new()),
     })
 }
 
@@ -185,8 +234,9 @@ pub fn instrument_start() {
     INSTR_TOTALS.with(|t| t.borrow_mut().clear());
     INSTR_STACK.with(|s| s.borrow_mut().clear());
     INSTR_STARTED.with(|s| s.set(Some(crate::clock::Instant::now())));
-    INSTRUMENT.store(true, Ordering::Relaxed);
-    registry().enabled.store(true, Ordering::Relaxed);
+    if !INSTRUMENT.swap(true, Ordering::Relaxed) {
+        retain();
+    }
 }
 
 /// The report so far, as JSON: `{ "elapsed_ms", "rows": [{ "function",
@@ -227,8 +277,9 @@ pub fn instrument_report() -> String {
 /// Stop timing and return the final report.
 pub fn instrument_stop() -> String {
     let report = instrument_report();
-    INSTRUMENT.store(false, Ordering::Relaxed);
-    registry().enabled.store(false, Ordering::Relaxed);
+    if INSTRUMENT.swap(false, Ordering::Relaxed) {
+        release();
+    }
     INSTR_STACK.with(|s| s.borrow_mut().clear());
     report
 }
@@ -282,14 +333,29 @@ fn intern(name: &str) -> u32 {
     id
 }
 
+/// A frame's display name: its interned key without the file a
+/// statistics run qualifies it with.
 fn name_of(id: u32) -> String {
-    registry()
+    key_of(id).0
+}
+
+/// A frame's name and, when tier statistics were on as it was first
+/// pushed, the file its function was declared in.
+fn key_of(id: u32) -> (String, Option<String>) {
+    let key = registry()
         .names
         .lock()
         .ok()
         .and_then(|g| g.0.get(id as usize).cloned())
-        .unwrap_or_else(|| "<unknown>".to_string())
+        .unwrap_or_else(|| "<unknown>".to_string());
+    match key.split_once(FILE_SEP) {
+        Some((name, file)) => (name.to_string(), Some(file.to_string())),
+        None => (key, None),
+    }
 }
+
+/// Between a frame's name and its file in an interned key.
+const FILE_SEP: char = '\u{1}';
 
 /// Mark this thread parked for the guard's lifetime: the sampler counts
 /// the ticks as blocked instead of charging them to the frame on top.
@@ -335,7 +401,7 @@ thread_local! {
     /// what keeps those pushes off the global intern lock, which
     /// otherwise serializes every thread of a parallel program into a
     /// crawl.
-    static NAME_MEMO: std::cell::RefCell<HashMap<(usize, usize, u32), u32>> =
+    static NAME_MEMO: std::cell::RefCell<HashMap<(usize, usize, usize, u32), u32>> =
         std::cell::RefCell::new(HashMap::new());
 }
 
@@ -357,10 +423,21 @@ fn named_parent(stack: &ThreadStack) -> u32 {
 
 #[inline]
 pub fn push(name: &str, tier: Tier) -> bool {
+    push_at(name, None, tier)
+}
+
+/// `push`, saying the file the function was declared in. With tier
+/// statistics on, a frame is keyed by its name *and* file, so two
+/// modules' functions of one name stay two rows (the ambiguous-name
+/// case is exactly the one worth seeing); otherwise the file is not
+/// read.
+#[inline]
+pub fn push_at(name: &str, file: Option<&str>, tier: Tier) -> bool {
     if !enabled() {
         return false;
     }
     let anon = is_anonymous(name);
+    let file = if stats_on() { file } else { None };
     LOCAL.with(|stack| {
         // Resolve the display name through the per-thread memo; the
         // global intern lock is touched once per new (name, parent)
@@ -369,11 +446,16 @@ pub fn push(name: &str, tier: Tier) -> bool {
         // adjacent-duplicate collapse fold a promoted call's
         // interpreter, VM, and native frames into one function.
         let parent = if anon { named_parent(stack) } else { u32::MAX };
-        let key = (name.as_ptr() as usize, name.len(), parent);
+        let key = (
+            name.as_ptr() as usize,
+            name.len(),
+            file.map(|f| f.as_ptr() as usize).unwrap_or(0),
+            parent,
+        );
         let id = match NAME_MEMO.with(|m| m.borrow().get(&key).copied()) {
             Some(hit) => hit,
             None => {
-                let resolved = if anon {
+                let mut resolved = if anon {
                     if parent == u32::MAX {
                         "<lambda>".to_string()
                     } else {
@@ -382,6 +464,10 @@ pub fn push(name: &str, tier: Tier) -> bool {
                 } else {
                     name.to_string()
                 };
+                if let Some(f) = file {
+                    resolved.push(FILE_SEP);
+                    resolved.push_str(f);
+                }
                 let id = intern(&resolved);
                 NAME_MEMO.with(|m| {
                     let mut m = m.borrow_mut();
@@ -402,10 +488,76 @@ pub fn push(name: &str, tier: Tier) -> bool {
         // Depth counts past the array so pops stay balanced; frames
         // beyond MAX_FRAMES simply are not recorded.
         stack.depth.store(depth + 1, Ordering::Relaxed);
+        if stats_on() {
+            count(stack, id, tier as usize, 1);
+            // the interpreter's frame for this very call, under a tier's:
+            // the call is the tier's (once, though a declined native
+            // attempt and the VM both push)
+            if tier != Tier::Interpreter && depth > 0 && depth <= MAX_FRAMES {
+                let below = stack.tiers[depth - 1].load(Ordering::Relaxed);
+                if below & (BUILTIN_BIT | TAKEN_BIT) == 0
+                    && Tier::from_u8(below) == Tier::Interpreter
+                    && stack.frames[depth - 1].load(Ordering::Relaxed) == id
+                {
+                    stack.tiers[depth - 1].store(below | TAKEN_BIT, Ordering::Relaxed);
+                    count(stack, id, Tier::Interpreter as usize, -1);
+                }
+            }
+        }
         instrument_push(id, bits);
     });
     true
 }
+
+/// Add `by` to one of this thread's counters for frame `id`. The thread
+/// is the only writer, so a load and a store suffice.
+#[inline]
+fn count(stack: &ThreadStack, id: u32, slot: usize, by: i64) {
+    let id = id as usize;
+    if id >= STAT_IDS {
+        return;
+    }
+    let counts = stack.counts.get_or_init(|| {
+        (0..STAT_IDS * STAT_SLOTS)
+            .map(|_| AtomicU64::new(0))
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
+    });
+    let c = &counts[id * STAT_SLOTS + slot];
+    c.store(
+        (c.load(Ordering::Relaxed) as i64 + by).max(0) as u64,
+        Ordering::Relaxed,
+    );
+}
+
+/// Pop a native frame whose call declined (the native code refused the
+/// arguments, or deopted): it ran nowhere, so its call is taken back
+/// and counted as a decline, with the reason (1–4, `DECLINE_REASONS`).
+#[inline]
+pub fn pop_declined(reason: u8) {
+    if stats_on() {
+        LOCAL.with(|stack| {
+            let depth = stack.depth.load(Ordering::Relaxed);
+            if depth > 0 && depth <= MAX_FRAMES {
+                let id = stack.frames[depth - 1].load(Ordering::Relaxed);
+                count(stack, id, Tier::Native as usize, -1);
+                count(stack, id, SLOT_DECLINES, 1);
+                if (1..=4).contains(&reason) {
+                    count(stack, id, SLOT_DECLINES + reason as usize, 1);
+                }
+            }
+        });
+    }
+    pop();
+}
+
+/// Why a native attempt declined, by the code `pop_declined` was given.
+pub const DECLINE_REASONS: [&str; 4] = [
+    "an argument of a kind native code does not take",
+    "the native compiler refused it (type inference or code generation)",
+    "a guard failed while it ran (a value the native code did not expect, an allocation cap, or an interrupt), and the bytecode ran the call again",
+    "no native specialization for these argument kinds",
+];
 
 /// Push a frame for a builtin that runs user code — `map`, `fold`,
 /// `sort_by`. Without it a lambda passed to `map` appears in the
@@ -445,6 +597,7 @@ pub struct Session {
     stop: Arc<AtomicBool>,
     handle: Option<std::thread::JoinHandle<Collected>>,
     interval_us: u64,
+    started: std::time::Instant,
 }
 
 #[derive(Default)]
@@ -461,6 +614,10 @@ struct Collected {
     idle: u64,
     /// Samples taken on parallel worker threads.
     worker_samples: u64,
+    /// Each sample charged to the user function it was in: the leaf, or
+    /// for a builtin leaf (`map`, `sort_by`) the nearest user frame under
+    /// it, keyed with the leaf's tier bits (BUILTIN_BIT for a builtin).
+    attributed: HashMap<(u32, u8), u64>,
     /// Ticks on which a thread was parked (a channel receive, a sleep, a
     /// join) — waiting, not working; reported apart from the functions.
     blocked: u64,
@@ -468,9 +625,15 @@ struct Collected {
 
 /// Start sampling. The returned session must be stopped to collect.
 pub fn start(interval_us: u64) -> Session {
+    let session = start_sampler(interval_us);
+    registry().profiles.fetch_add(1, Ordering::SeqCst);
+    session
+}
+
+fn start_sampler(interval_us: u64) -> Session {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_for_thread = stop.clone();
-    registry().enabled.store(true, Ordering::Relaxed);
+    retain();
     let handle = std::thread::Builder::new()
         .name("olang-profiler".to_string())
         .spawn(move || {
@@ -487,6 +650,7 @@ pub fn start(interval_us: u64) -> Session {
         stop,
         handle: Some(handle),
         interval_us,
+        started: std::time::Instant::now(),
     }
 }
 
@@ -500,6 +664,11 @@ fn sample_once(out: &mut Collected) {
     // list without bound, every tick scans all of it under the same
     // lock new threads need to register — and thread creation and the
     // sampler livelock each other.
+    if stats_on() {
+        for s in stacks.iter().filter(|s| std::sync::Arc::strong_count(s) <= 1) {
+            retire(s);
+        }
+    }
     stacks.retain(|s| std::sync::Arc::strong_count(s) > 1);
     out.total += 1;
     let mut saw_any = false;
@@ -532,12 +701,23 @@ fn sample_once(out: &mut Collected) {
         // The builtin bit rides along: a builtin's time is Rust, and
         // counting it as interpreter time would misattribute exactly
         // the thing this profiler exists to report honestly.
-        let leaf_tier = stack.tiers[depth - 1].load(Ordering::Relaxed) & !ANON_BIT;
+        let leaf_tier = stack.tiers[depth - 1].load(Ordering::Relaxed) & !(ANON_BIT | TAKEN_BIT);
         let leaf = stack.frames[depth - 1].load(Ordering::Relaxed);
         if stack.worker {
             out.worker_samples += 1;
         }
         *out.leaves.entry((leaf, leaf_tier)).or_insert(0) += 1;
+        let mut owner = (leaf, leaf_tier);
+        if leaf_tier & BUILTIN_BIT != 0 {
+            for i in (0..depth - 1).rev() {
+                let bits = stack.tiers[i].load(Ordering::Relaxed);
+                if bits & BUILTIN_BIT == 0 {
+                    owner = (stack.frames[i].load(Ordering::Relaxed), BUILTIN_BIT);
+                    break;
+                }
+            }
+        }
+        *out.attributed.entry(owner).or_insert(0) += 1;
         *out.stacks.entry(path).or_insert(0) += 1;
     }
     if !saw_any {
@@ -548,12 +728,8 @@ fn sample_once(out: &mut Collected) {
 impl Session {
     /// Stop sampling and render the report.
     pub fn finish(mut self, elapsed: std::time::Duration, top: usize, label: &str) -> String {
-        self.stop.store(true, Ordering::Relaxed);
-        registry().enabled.store(false, Ordering::Relaxed);
-        let collected = match self.handle.take() {
-            Some(h) => h.join().unwrap_or_default(),
-            None => Collected::default(),
-        };
+        registry().profiles.fetch_sub(1, Ordering::SeqCst);
+        let collected = self.collect();
         render(&collected, elapsed, top, self.interval_us, label)
     }
 }
@@ -578,12 +754,8 @@ pub struct Summary {
 impl Session {
     /// Stop sampling and answer the counts.
     pub fn finish_summary(mut self) -> Summary {
-        self.stop.store(true, Ordering::Relaxed);
-        registry().enabled.store(false, Ordering::Relaxed);
-        let collected = match self.handle.take() {
-            Some(h) => h.join().unwrap_or_default(),
-            None => Collected::default(),
-        };
+        registry().profiles.fetch_sub(1, Ordering::SeqCst);
+        let collected = self.collect();
         let mut rows: Vec<(String, &'static str, u64)> = collected
             .leaves
             .iter()
@@ -615,7 +787,7 @@ static IN_PROCESS: Mutex<Option<Session>> = Mutex::new(None);
 /// profile is already running — `olang profile`'s, or an earlier call's.
 pub fn start_in_process(interval_us: u64) -> Result<(), String> {
     let mut slot = IN_PROCESS.lock().unwrap_or_else(|e| e.into_inner());
-    if slot.is_some() || enabled() {
+    if slot.is_some() || registry().profiles.load(Ordering::SeqCst) > 0 || instrumenting() {
         return Err("a profile is already running".to_string());
     }
     *slot = Some(start(interval_us));
@@ -895,6 +1067,222 @@ fn render(
          was anywhere on the stack · recursion and inlined callees fold into one frame\n",
     );
     out
+}
+
+impl Session {
+    /// Stop the sampler thread and take what it collected.
+    fn collect(&mut self) -> Collected {
+        self.stop.store(true, Ordering::Relaxed);
+        release();
+        match self.handle.take() {
+            Some(h) => h.join().unwrap_or_default(),
+            None => Collected::default(),
+        }
+    }
+}
+
+// ── tier statistics (`--ovm-stats=json`, `olang repl --serve`'s `stats`) ──
+//
+// The question a profile answers per sample, kept per function for a
+// whole run: how many calls each tier served, how much time each tier
+// spent in it, and how often native code declined. Calls are counted
+// exactly, on the push every tier already makes (a load and a store on
+// the thread's own counters); time is sampled, as `olang profile`
+// samples it, so the clock is never read per call — counting time per
+// call would cost more than the native calls it measures.
+
+static STATS: AtomicBool = AtomicBool::new(false);
+
+/// True while tier statistics are kept.
+#[inline(always)]
+pub fn stats_on() -> bool {
+    STATS.load(Ordering::Relaxed)
+}
+
+/// Keep tier statistics from now on (for the rest of the process).
+/// Frames pushed from here are keyed by name and file, and counted.
+pub fn stats_enable() {
+    if !STATS.swap(true, Ordering::SeqCst) {
+        retain();
+    }
+}
+
+/// What the statistics' sampler has seen so far, across its sessions.
+#[derive(Default)]
+struct StatsAcc {
+    attributed: HashMap<(u32, u8), u64>,
+    inclusive: HashMap<u32, u64>,
+    /// Wall time sampled and the ticks it took: ms per tick is their
+    /// ratio, which stays honest when the OS oversleeps the interval.
+    sampled_ms: f64,
+    ticks: u64,
+}
+
+static STATS_SESSION: Mutex<Option<Session>> = Mutex::new(None);
+static STATS_ACC: OnceLock<Mutex<StatsAcc>> = OnceLock::new();
+
+fn stats_acc() -> std::sync::MutexGuard<'static, StatsAcc> {
+    STATS_ACC
+        .get_or_init(|| Mutex::new(StatsAcc::default()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
+/// Start the statistics' sampler (a run's whole length, or one REPL
+/// evaluation). A sampler already running is left alone.
+pub fn stats_sample_begin(interval_us: u64) {
+    stats_enable();
+    let mut slot = STATS_SESSION.lock().unwrap_or_else(|e| e.into_inner());
+    if slot.is_none() {
+        *slot = Some(start_sampler(interval_us));
+    }
+}
+
+/// Stop the statistics' sampler and fold what it saw in.
+pub fn stats_sample_end() {
+    let session = STATS_SESSION
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take();
+    let Some(mut session) = session else {
+        return;
+    };
+    let wall = session.started.elapsed().as_secs_f64() * 1000.0;
+    let collected = session.collect();
+    let mut acc = stats_acc();
+    for (k, n) in collected.attributed {
+        *acc.attributed.entry(k).or_insert(0) += n;
+    }
+    for (path, n) in &collected.stacks {
+        let mut seen = std::collections::HashSet::new();
+        for id in path {
+            if seen.insert(*id) {
+                *acc.inclusive.entry(*id).or_insert(0) += n;
+            }
+        }
+    }
+    acc.ticks += collected.total;
+    acc.sampled_ms += wall;
+}
+
+/// Fold an exited thread's counters into the retired totals.
+fn retire(stack: &ThreadStack) {
+    let Some(counts) = stack.counts.get() else {
+        return;
+    };
+    let mut retired = registry().retired.lock().unwrap_or_else(|e| e.into_inner());
+    if retired.is_empty() {
+        retired.resize(STAT_IDS * STAT_SLOTS, 0);
+    }
+    for (i, c) in counts.iter().enumerate() {
+        retired[i] += c.load(Ordering::Relaxed);
+    }
+}
+
+/// One function's statistics.
+#[derive(Debug, Clone, Default)]
+pub struct StatRow {
+    pub name: String,
+    /// The file it was declared in, when a tier said.
+    pub file: Option<String>,
+    /// Calls served by the interpreter, the VM, and native code.
+    pub calls: [u64; 3],
+    /// Native attempts that declined, and how many for each reason
+    /// (`DECLINE_REASONS`).
+    pub declines: u64,
+    pub decline_reasons: [u64; 4],
+    /// Self time (ms) on the interpreter, the VM, native code, and in
+    /// builtins it called (`map`, `sort_by`, …).
+    pub self_ms: [f64; 4],
+    /// Time (ms) with the function anywhere on the stack.
+    pub total_ms: f64,
+}
+
+/// The statistics so far. `reset` starts them again from zero (the
+/// REPL asks for each evaluation's own).
+pub struct StatsSnapshot {
+    pub rows: Vec<StatRow>,
+    /// Wall time sampled, and ms charged per sample.
+    pub sampled_ms: f64,
+    pub ms_per_sample: f64,
+}
+
+pub fn stats_snapshot(reset: bool) -> StatsSnapshot {
+    let mut totals = vec![0u64; STAT_IDS * STAT_SLOTS];
+    {
+        let mut retired = registry().retired.lock().unwrap_or_else(|e| e.into_inner());
+        for (i, n) in retired.iter_mut().enumerate() {
+            totals[i] += *n;
+            if reset {
+                *n = 0;
+            }
+        }
+    }
+    if let Ok(stacks) = registry().stacks.lock() {
+        for stack in stacks.iter() {
+            if let Some(counts) = stack.counts.get() {
+                for (i, c) in counts.iter().enumerate() {
+                    totals[i] += if reset {
+                        c.swap(0, Ordering::Relaxed)
+                    } else {
+                        c.load(Ordering::Relaxed)
+                    };
+                }
+            }
+        }
+    }
+    let mut acc = stats_acc();
+    let ms_per_sample = if acc.ticks > 0 {
+        acc.sampled_ms / acc.ticks as f64
+    } else {
+        0.0
+    };
+    let mut rows: HashMap<u32, StatRow> = HashMap::new();
+    fn row(rows: &mut HashMap<u32, StatRow>, id: u32) -> &mut StatRow {
+        rows.entry(id).or_insert_with(|| {
+            let (name, file) = key_of(id);
+            StatRow {
+                name,
+                file,
+                ..StatRow::default()
+            }
+        })
+    }
+    for id in 0..STAT_IDS {
+        let base = id * STAT_SLOTS;
+        if totals[base..base + STAT_SLOTS].iter().all(|n| *n == 0) {
+            continue;
+        }
+        let r = row(&mut rows, id as u32);
+        r.calls = [totals[base], totals[base + 1], totals[base + 2]];
+        r.declines = totals[base + SLOT_DECLINES];
+        for k in 0..4 {
+            r.decline_reasons[k] = totals[base + SLOT_DECLINES + 1 + k];
+        }
+    }
+    for ((id, bits), n) in acc.attributed.iter() {
+        let slot = if bits & BUILTIN_BIT != 0 {
+            3
+        } else {
+            Tier::from_u8(*bits) as usize
+        };
+        row(&mut rows, *id).self_ms[slot] += *n as f64 * ms_per_sample;
+    }
+    for (id, n) in acc.inclusive.iter() {
+        row(&mut rows, *id).total_ms += *n as f64 * ms_per_sample;
+    }
+    let sampled_ms = acc.sampled_ms;
+    if reset {
+        *acc = StatsAcc::default();
+    }
+    drop(acc);
+    let mut rows: Vec<StatRow> = rows.into_values().filter(|r| !r.name.is_empty()).collect();
+    rows.sort_by(|a, b| a.file.cmp(&b.file).then(a.name.cmp(&b.name)));
+    StatsSnapshot {
+        rows,
+        sampled_ms,
+        ms_per_sample,
+    }
 }
 
 fn pct(n: u64, of: u64) -> f64 {

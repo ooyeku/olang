@@ -254,7 +254,19 @@ impl BytecodeTier {
     /// of it. Returns the refusals among functions declared in `file`
     /// (every function when `file` is None), sorted by name.
     pub fn compile_ahead(&mut self, file: Option<&str>) -> Vec<(String, String)> {
-        let mut names: Vec<String> = self.known_functions.keys().cloned().collect();
+        // Only the file's own functions are compiled here (what they call
+        // compiles as their dependency): checking one file of a program
+        // that imports a large library (Loom) compiled the whole library
+        // first, seconds for a verdict about one file.
+        let mut names: Vec<String> = self
+            .known_functions
+            .iter()
+            .filter(|(_, func)| match file {
+                Some(f) => func.def_file.as_deref().is_none_or(|d| d == f),
+                None => true,
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
         names.sort();
         for name in &names {
             if self.compiled.contains_key(name)
@@ -720,7 +732,14 @@ impl BytecodeTier {
             let arity = func.parameters.len();
             return match self.vm.hof_function_id(func, arity) {
                 Some(func_id) => self.run_on_vm(func_id, args, None),
-                None => TierOutcome::Fallback,
+                None => {
+                    crate::tier_stats::note_fallback(
+                        name,
+                        func.def_file.as_deref(),
+                        "its name is declared more than once (two modules), so it is compiled by identity, and that compile was refused",
+                    );
+                    TierOutcome::Fallback
+                }
             };
         }
 
@@ -900,6 +919,17 @@ impl BytecodeTier {
                         {
                             *slot = back;
                         }
+                    }
+                    if let Some(name) = reject_name
+                        && crate::profile::stats_on()
+                    {
+                        crate::tier_stats::note_fallback(
+                            name,
+                            self.known_functions
+                                .get(name)
+                                .and_then(|f| f.def_file.as_deref()),
+                            "an argument the tier boundary cannot convert (a builtin or a module passed as a value, say)",
+                        );
                     }
                     return TierOutcome::Fallback;
                 }
@@ -1133,9 +1163,16 @@ impl BytecodeTier {
             self.compiled.remove(name);
             return;
         }
+        let reason: String = reason.into();
+        crate::tier_stats::note_refused(
+            name,
+            self.known_functions
+                .get(name)
+                .and_then(|f| f.def_file.as_deref()),
+            &reason,
+        );
         self.rejected.insert(name.to_string());
-        self.rejected_reasons
-            .insert(name.to_string(), reason.into());
+        self.rejected_reasons.insert(name.to_string(), reason);
         self.compiled.remove(name);
         self.stats.rejected += 1;
     }

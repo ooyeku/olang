@@ -414,6 +414,9 @@ pub struct JitCache {
     /// Native calls per function id — the warm-start profile's evidence
     /// that a specialization is worth replaying next run.
     per_fn_calls: Vec<u64>,
+    /// Why the last call that ran no native code declined (the codes of
+    /// `profile::DECLINE_REASONS`): read by the VM right after a None.
+    last_decline: u8,
     /// Builtin names shadowed by a user definition. Compiled code that
     /// baked one of these natives is demoted the moment the shadow
     /// appears (see note_shadow); specialization refuses them up front.
@@ -1684,7 +1687,14 @@ impl JitCache {
             poly_refused: HashMap::new(),
             spec_seq: 0,
             per_fn_calls: Vec::new(),
+            last_decline: 0,
         }
+    }
+
+    /// Why the last call that returned None ran no native code (1–4,
+    /// `profile::DECLINE_REASONS`).
+    pub fn last_decline(&self) -> u8 {
+        self.last_decline
     }
 
     fn module(&mut self) -> Option<&mut JITModule> {
@@ -1790,6 +1800,11 @@ impl JitCache {
             }
             self.table[idx] = Some(Slot::Pending);
             if boundary_unprofitable(bytecode) {
+                crate::tier_stats::note_native(
+                    bytecode.debug_info.function_name.as_deref().unwrap_or("<anonymous>"),
+                    bytecode.def_file.as_deref(),
+                    "a trivial constructor: native code would cost more at the call boundary than it saves, so calls from outside native code run it as bytecode",
+                );
                 if self.boundary_skip.len() <= idx {
                     self.boundary_skip.resize(idx + 1, false);
                 }
@@ -1820,6 +1835,11 @@ impl JitCache {
                     }
                 }
             }
+            crate::tier_stats::note_native(
+                bytecode.debug_info.function_name.as_deref().unwrap_or("<anonymous>"),
+                bytecode.def_file.as_deref(),
+                "its body uses an operation native code does not have",
+            );
             if let Some(slot) = self.table.get_mut(idx) {
                 *slot = Some(Slot::Refused);
             }
@@ -1870,6 +1890,7 @@ impl JitCache {
     ) -> Option<OvmValue> {
         let mut bits = [0i64; MAX_PARAMS];
         let mut kinds = [Kind::Int; MAX_PARAMS];
+        self.last_decline = 1;
         if args.len() > MAX_PARAMS {
             return None;
         }
@@ -2126,6 +2147,7 @@ impl JitCache {
         map_args_for_ctx: &[Arc<crate::ovm::value::OvmMap>],
     ) -> Option<OvmValue> {
         let idx = func_id.index();
+        self.last_decline = 2;
         match self.table.get(idx)? {
             Some(Slot::Ready(_)) => {}
             Some(Slot::Pending) => {
@@ -2138,6 +2160,11 @@ impl JitCache {
                     if jit_debug() {
                         eprintln!("[jit] fn#{} refused (inference or codegen)", idx);
                     }
+                    crate::tier_stats::note_native(
+                        bytecode.debug_info.function_name.as_deref().unwrap_or("<anonymous>"),
+                        bytecode.def_file.as_deref(),
+                        "the native compiler refused it (type inference or code generation, on the argument kinds of its first call)",
+                    );
                     self.table[idx] = Some(Slot::Refused);
                     return None;
                 }
@@ -2157,10 +2184,12 @@ impl JitCache {
                 None
             }
         };
+        self.last_decline = 4;
         let (entry_fn, ret_kind, ret_tuple) = match primary {
             Some(t) => t,
             None => self.variant(func_id, bytecode, kinds, lookup, shapes)?,
         };
+        self.last_decline = 3;
         let mut out = [0i64; MAX_TUPLE];
         let ctx = &mut self.scratch;
         ctx.clear();

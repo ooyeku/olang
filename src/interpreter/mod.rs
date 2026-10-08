@@ -2460,6 +2460,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     }
 
     pub fn enable_bytecode_tier(&mut self, threshold: u32, verbose: bool) {
+        crate::tier_stats::note_threshold(threshold);
         let mut tier = crate::ovm::tier::BytecodeTier::new(threshold).with_verbose(verbose);
         // Order-independent: capabilities may be installed before or after
         // the tier is turned on, and the tier must enforce either way.
@@ -2583,6 +2584,15 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         self.bytecode_tier
             .as_mut()
             .map(|t| t.compile_ahead(file))
+            .unwrap_or_default()
+    }
+
+    /// Names the bytecode tier has compiled, and names it can only
+    /// compile by identity (two functions share them).
+    pub fn tier_compiled(&self) -> (Vec<String>, Vec<String>) {
+        self.bytecode_tier
+            .as_ref()
+            .map(|t| (t.compiled_names(), t.ambiguous_names()))
             .unwrap_or_default()
     }
 
@@ -3193,8 +3203,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // Interpreter: if the call is promoted, the tier pushes its own
         // frame underneath and *that* becomes the sampled leaf, so the
         // tier column reports where the work actually ran.
-        let profiled = crate::profile::push(
+        let profiled = crate::profile::push_at(
             func.name.as_deref().unwrap_or("<lambda>"),
+            func.def_file.as_deref(),
             crate::profile::Tier::Interpreter,
         );
         // Every frame under the cap must be physically reachable, or the

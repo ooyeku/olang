@@ -3464,6 +3464,30 @@ impl Checker {
 /// names `tier`.
 #[cfg(feature = "native")]
 pub fn run_tier(paths: &[PathBuf]) -> i32 {
+    run_tier_as(paths, false)
+}
+
+/// One function's static verdict (`olang check --tier --format json`).
+#[cfg(feature = "native")]
+struct TierVerdict {
+    name: String,
+    line: u32,
+    col: u32,
+    end_line: u32,
+    /// `bytecode`, `refused`, `unchecked` (it names a top-level binding
+    /// this pass did not evaluate), or `unknown` (the pass did not reach
+    /// it: a nested or trait function).
+    verdict: &'static str,
+    reason: Option<String>,
+    ambiguous: bool,
+    pinned: Option<&'static str>,
+}
+
+/// `olang check --tier`, as text or (`json`) every function of each file
+/// with its verdict. A function pinned native (`// studio: native`, or
+/// `[check] native` in olang.toml) that the tier refuses is an error.
+#[cfg(feature = "native")]
+pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
     let mut files = Vec::new();
     for path in paths {
         if !path.exists() {
@@ -3474,15 +3498,57 @@ pub fn run_tier(paths: &[PathBuf]) -> i32 {
     }
     let mut refused_total = 0usize;
     let mut promoted_errors = 0usize;
+    let mut file_rows: Vec<serde_json::Value> = Vec::new();
     for file in &files {
         let Ok(source) = std::fs::read_to_string(file) else {
             continue;
         };
+        // the path as a run names it (absolute, not resolved through
+        // symlinks), so a report and a run's statistics key the same file
+        let absolute = std::path::absolute(file).unwrap_or_else(|_| file.to_path_buf());
         let parser = crate::parser::Parser::new();
-        let Ok(program) = parser.parse_with_dir(&source, file.parent()) else {
-            continue; // `olang check` proper reports parse errors
+        let program = match parser.parse_with_dir(&source, file.parent()) {
+            Ok(p) => p,
+            Err(e) => {
+                // `olang check` proper reports parse errors
+                if json {
+                    file_rows.push(serde_json::json!({
+                        "file": absolute.to_string_lossy(), "error": e.to_string(), "functions": [] }));
+                }
+                continue;
+            }
         };
-        let absolute = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
+        let facts = crate::tier_stats::FileFacts::of(&absolute, &source);
+        // every top-level function, where it is
+        let mut declared: Vec<(String, u32, u32, u32)> = Vec::new();
+        let starts: Vec<u32> = program
+            .statements
+            .iter()
+            .filter_map(|s| match s {
+                Statement::Located { line, .. } => Some(*line),
+                _ => None,
+            })
+            .collect();
+        for statement in &program.statements {
+            let line = match statement {
+                Statement::Located { line, .. } => *line,
+                _ => 0,
+            };
+            if let Statement::FunctionDecl(f) | Statement::ShareDecl(crate::ast::ShareDecl::Function(f)) =
+                statement.unwrapped()
+            {
+                let (l, c) = f.name_span.unwrap_or((line, 1));
+                let end = starts
+                    .iter()
+                    .copied()
+                    .filter(|s| *s > l)
+                    .min()
+                    .map(|s| s - 1)
+                    .unwrap_or(source.lines().count() as u32)
+                    .max(l);
+                declared.push((f.name.clone(), l, c, end));
+            }
+        }
         let mut interpreter = crate::interpreter::Interpreter::new();
         interpreter.enable_bytecode_tier(1, std::env::var_os("OLANG_TIER_VERBOSE").is_some());
         interpreter.set_current_file(&absolute);
@@ -3516,44 +3582,117 @@ pub fn run_tier(paths: &[PathBuf]) -> i32 {
                 declarations.push(statement.clone());
             }
         }
-        if interpreter
-            .eval_program(Program {
-                statements: declarations,
-            })
-            .is_err()
-        {
+        if let Err(e) = interpreter.eval_program(Program {
+            statements: declarations,
+        }) {
+            if json {
+                file_rows.push(serde_json::json!({
+                    "file": absolute.to_string_lossy(), "error": e.to_string(), "functions": [] }));
+            }
             continue;
         }
         let file_key = absolute.to_string_lossy().to_string();
         interpreter.note_root_as_module_scope(&file_key);
-        let refusals: Vec<(String, String)> = interpreter
-            .tier_compile_ahead(Some(&file_key))
-            .into_iter()
-            .filter(|(_, reason)| {
-                !skipped
-                    .iter()
-                    .any(|name| reason.contains(&format!("'{name}'")))
+        let all_refusals = interpreter.tier_compile_ahead(Some(&file_key));
+        let (compiled, ambiguous) = interpreter.tier_compiled();
+        let names_skipped = |reason: &str| {
+            skipped
+                .iter()
+                .any(|name| reason.contains(&format!("'{name}'")))
+        };
+        let refusals: Vec<(String, String)> = all_refusals
+            .iter()
+            .filter(|(_, reason)| !names_skipped(reason))
+            .cloned()
+            .collect();
+        let verdicts: Vec<TierVerdict> = declared
+            .iter()
+            .map(|(name, line, col, end_line)| {
+                let refusal = all_refusals.iter().find(|(n, _)| n == name);
+                let (verdict, reason) = match refusal {
+                    Some((_, r)) if names_skipped(r) => ("unchecked", Some(r.clone())),
+                    Some((_, r)) => ("refused", Some(r.clone())),
+                    None if compiled.contains(name) || ambiguous.contains(name) => ("bytecode", None),
+                    None => ("unknown", None),
+                };
+                TierVerdict {
+                    name: name.clone(),
+                    line: *line,
+                    col: *col,
+                    end_line: *end_line,
+                    verdict,
+                    reason,
+                    ambiguous: ambiguous.contains(name),
+                    pinned: facts.pin(name),
+                }
             })
             .collect();
-        if refusals.is_empty() {
-            continue;
-        }
+        let pinned_refused: Vec<&TierVerdict> = verdicts
+            .iter()
+            .filter(|v| v.pinned.is_some() && v.verdict == "refused")
+            .collect();
         let promoted = promotions_for(file.parent())
             .iter()
             .any(|p| p == "tier" || p == "all");
-        println!("{}", file.display());
-        for (name, reason) in &refusals {
-            println!(
-                "  {} `{}` stays on the tree-walker: {}",
-                if promoted { "×" } else { "⚠" },
-                name,
-                reason
-            );
-        }
         refused_total += refusals.len();
         if promoted {
             promoted_errors += refusals.len();
+        } else {
+            promoted_errors += pinned_refused.len();
         }
+        if json {
+            let rows: Vec<serde_json::Value> = verdicts
+                .iter()
+                .map(|v| {
+                    let code = v.reason.as_deref().map(crate::tier_stats::reason_code);
+                    serde_json::json!({
+                        "name": v.name, "line": v.line, "col": v.col, "end_line": v.end_line,
+                        "verdict": v.verdict, "reason": v.reason, "code": code,
+                        "docs": code.map(crate::tier_stats::docs_ref),
+                        "ambiguous": v.ambiguous, "pinned": v.pinned,
+                        "error": v.verdict == "refused" && (promoted || v.pinned.is_some()),
+                    })
+                })
+                .collect();
+            file_rows.push(serde_json::json!({
+                "file": file_key, "error": null, "functions": rows }));
+            continue;
+        }
+        if refusals.is_empty() {
+            continue;
+        }
+        println!("{}", file.display());
+        for (name, reason) in &refusals {
+            let pinned = verdicts
+                .iter()
+                .find(|v| &v.name == name)
+                .and_then(|v| v.pinned);
+            println!(
+                "  {} `{}` {}stays on the tree-walker: {}",
+                if promoted || pinned.is_some() { "×" } else { "⚠" },
+                name,
+                match pinned {
+                    Some("comment") => "is pinned native (// studio: native) but ",
+                    Some(_) => "is pinned native ([check] native) but ",
+                    None => "",
+                },
+                reason
+            );
+        }
+    }
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "format": crate::tier_stats::FORMAT,
+                "kind": "tier-check",
+                "olang": crate::version::VERSION,
+                "files": file_rows,
+                "refused": refused_total,
+                "errors": promoted_errors,
+            })
+        );
+        return if promoted_errors > 0 { 1 } else { 0 };
     }
     if refused_total == 0 {
         println!(
@@ -3567,7 +3706,7 @@ pub fn run_tier(paths: &[PathBuf]) -> i32 {
             refused_total,
             if refused_total == 1 { "" } else { "s" },
             if promoted_errors > 0 {
-                " (an error here: [check] promote names `tier`)"
+                " (an error here: [check] promote names `tier`, or a function is pinned native)"
             } else {
                 ""
             }

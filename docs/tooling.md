@@ -388,6 +388,94 @@ second line above is a finding in its own right — a name a module never
 imported, which a concatenated browser bundle resolves and a native run
 does not. Refusals are advisories unless `[check] promote` names `tier`.
 
+`--format json` prints every function of each file, not only the
+refused ones, for an editor's gutter:
+
+```json
+{"format":1,"kind":"tier-check","olang":"0.87.0","refused":1,"errors":0,
+ "files":[{"file":"/p/main.ol","error":null,"functions":[
+   {"name":"fib","line":5,"col":4,"end_line":6,"verdict":"bytecode","reason":null,"code":null,
+    "docs":null,"ambiguous":false,"pinned":"olang.toml","error":false},
+   {"name":"doubled_later","line":9,"col":4,"end_line":12,"verdict":"refused",
+    "reason":"Compilation failed: it contains a `spawn` (a task starts on the interpreter)",
+    "code":"task","docs":"docs/tooling.md#tier-task","ambiguous":false,"pinned":null,"error":false}]}]}
+```
+
+`verdict` is `bytecode` (it compiles; native code is decided per call,
+at run time), `refused` (with the compiler's `reason` and its `code`,
+below), `unchecked` (its refusal names a top-level binding this pass
+does not evaluate) or `unknown` (not reached: a nested or trait
+function). Lines are 1-based. A file that does not parse, or whose
+declarations fail to evaluate, has its `error` and no functions. Only a
+file's own functions are compiled, so a file that imports a large
+library is checked in the time its own functions take.
+
+**Pins.** A function can be pinned *must be native*: a `// studio:
+native` comment on the line above its `fn` (comment lines between are
+allowed) or at the end of that line, or a pattern in the project's
+`olang.toml`:
+
+```toml
+[check]
+promote = ["shape"]
+native = ["rt_frame", "ly_*", "lib/engine.ol:rt_*"]   # a name, a * pattern, or path:pattern
+```
+
+`olang check --tier` fails (exit 1, `"error": true`) on a pinned
+function the tier refuses, whatever `promote` says; `promote = ["tier"]`
+still makes every refusal an error. A run decides the rest — whether a
+pinned function that compiles stays on native code — through its tier
+statistics (`--ovm-stats=json`, below).
+
+### Why a function stays on the tree-walker
+
+Each refusal has a `code`, the anchor of its entry here.
+
+<a id="tier-task"></a>
+**`task`** — it starts a task (`spawn`): a task runs on the interpreter.
+Move the work the task does into a function of its own; that function
+compiles and runs natively inside the task.
+
+<a id="tier-callee"></a>
+**`callee`** — it calls a function that cannot compile and that the tier
+cannot call through its bridge. The callee's own reason is the one to
+fix; once it compiles, so does its caller.
+
+<a id="tier-undefined"></a>
+**`undefined`** — it names something nothing in its scope defines: a
+missing `use`, usually. A concatenated browser bundle may resolve it; a
+native run would not.
+
+<a id="tier-cell"></a>
+**`cell`** — it reads or writes a `cell` in a way the tier cannot
+represent. Pass the cell's value in and the new value out, and keep the
+cell in the caller.
+
+<a id="tier-capture"></a>
+**`capture`** — it calls a value it cannot resolve at compile time (a
+dynamic call), or captures what the VM has no environment for. Name the
+function directly, or pass what it needs as a parameter.
+
+<a id="tier-boundary"></a>
+**`boundary`** — a value crossing between the tree-walker and compiled
+code cannot be converted: a builtin function or a module passed as a
+value, a result the VM cannot hand back. The function compiles, so
+`olang check --tier` passes, but each such call runs on the tree-walker:
+tier statistics show it as a *fallback*. Pass a user function (a lambda
+around the builtin), or the data instead of the module.
+
+<a id="tier-ambiguous"></a>
+**`ambiguous`** — two functions share its name (two modules, a trait
+default and an override). It is compiled by identity, as a value; when
+that is refused, the reason is its own.
+
+<a id="tier-depth"></a>
+**`depth`** — its chain of callees to compile is too deep.
+
+<a id="tier-unsupported"></a>
+**`unsupported`** — the body uses a form the bytecode compiler does not
+have yet (the message names it). Worth a finding: most such gaps close.
+
 ### Project rules
 
 Run project-specific lint rules, written in olang over the [meta
@@ -506,6 +594,7 @@ line of its body is not bound, and the error says whose parameter it is.
 | `{"op":"ping","id":8}` | `{"running":…}` — answered even while an evaluation runs, so a client tells a busy session from one not answering |
 | `{"op":"reload","id":6,"path":"/p/util.ol"}` | `{"ok":true,"scopes":n,"ms":…}`, or `"ok":false,"kept":true` with the reason |
 | `{"op":"render","id":7,"h":9,"dark":true,"scale":2,"width":640,"loom":"/path/to/loom"?}` | `{"ok":true,"png":"<base64>","width":…,"height":…}` (logical pixels) |
+| `{"op":"stats","id":9,"reset":true}` | `{"ok":true,"stats":S}` — where each function ran in the evaluations since the last reset ([tier statistics](#tier-statistics--ovm-statsjson)); `reset` starts them again |
 | `{"op":"reset"}`, `{"op":"shutdown"}` | the scopes forgotten; the server ends |
 
 **Values (V).** Every value has `k` (its kind), `t` (its type) and `s`
@@ -909,6 +998,77 @@ once on stderr. (Roadmap:
 "where did this number come from?" — a chain back to the recorded
 inputs.)
 
+## Tier statistics — `--ovm-stats=json`
+
+`olang --ovm-stats=json[:PATH] program.ol` keeps, for the whole run,
+where every function ran, and writes it as JSON at exit (to `PATH`, or
+`ovm-stats.json` in the working directory) — at a normal end, an error,
+or `os.exit`. `OLANG_OVM_STATS=json[:PATH]` does the same for any
+command, `olang test` included. `--ovm-stats` alone still prints the
+one-line summary.
+
+```json
+{"format":1,"kind":"ovm-stats","olang":"0.87.0","threshold":1,"interval_us":250,
+ "sampled_ms":41.2,"ms_per_sample":0.31,
+ "tiers_ms":{"interpreter":3.1,"bytecode":0.9,"native":36.4,"builtin":0.3},
+ "functions":[
+  {"name":"apply","file":"/p/main.ol","line":17,"col":4,"lambda":false,"tier":"interpreter",
+   "calls":{"interpreter":400,"bytecode":0,"native":0},
+   "self_ms":{"interpreter":0.6,"bytecode":0,"native":0,"builtin":0},"total_ms":0.9,
+   "promoted":false,"deopts":0,"deopt_reasons":[],"refused":null,"native_refused":null,
+   "fallbacks":{"count":400,"reason":"an argument the tier boundary cannot convert (a builtin or a module passed as a value, say)"},
+   "pinned":null,"violation":null}],
+ "violations":[]}
+```
+
+Per function (keyed by `file` and `name`; `line` is where it is
+declared, 1-based):
+
+- `calls` — exact counts of the calls each tier served. A call the
+  tree-walker hands to a compiled tier counts once, on that tier.
+  Calls made from native code to native code are inside their caller's
+  native code and are not counted.
+- `self_ms` — time each tier spent in the function itself, and in the
+  builtins it called (`map`, `sort_by`, …: `builtin`); `total_ms` with
+  its callees. Sampled, as `olang profile` samples, every 250 µs: a
+  function that ran for less than a tick may show calls and no time.
+- `tier` — the tier that served most of its calls.
+- `deopts` and `deopt_reasons` — native attempts that declined: an
+  argument of a kind native code does not take, a native compile
+  refused, a guard that failed while it ran (the bytecode ran the call
+  again), no specialisation for the arguments' kinds.
+- `refused` (`reason`, `code`, `docs`) — the bytecode tier refused it,
+  at compile time or because a result could not cross back.
+- `fallbacks` — calls of a compiled function that ran on the
+  tree-walker anyway, and why (code `boundary` above). This is the
+  case `olang check --tier` cannot see: the function compiles, and its
+  run stays interpreted.
+- `native_refused` — why native code does not take a function that
+  runs as bytecode.
+- `pinned` (`comment`, `olang.toml`) and `violation` — a pinned
+  function that fell back: more than `threshold` calls on the
+  tree-walker, or every call on bytecode because native code would not
+  take it. Each violation is also printed on stderr at exit
+  (`tier guard: file:line `name` …`), and with `OLANG_TIER_GUARD=1` a
+  run that otherwise succeeded exits with status 3 — a guard a local
+  verify script can use without an editor.
+
+**What it costs.** Calls are counted on the shadow-stack push each tier
+already makes for `olang profile` (a load and a store on the thread's
+own counters, no lock, no clock); time is sampled by a thread that wakes
+every 250 µs. Calls inside native code push nothing and are not slowed
+at all. Measured on this Mac (Apple silicon, best of 5 whole runs,
+start-up included): a native-heavy run (`fib(32)` × 6, 80 ms) +2%, a
+bytecode-heavy one (record and string helpers, 10⁶ calls, 2.8 s) +2%, a
+tree-walker-heavy one (a builtin passed as a value, 10⁶ calls, 1.4 s)
++5–10%. Without the flag nothing changes: every
+push site is one relaxed load and a predicted-false branch, as before.
+
+**From the REPL.** `olang repl --serve` keeps the same statistics for
+its evaluations and answers them to `{"op":"stats","id":9,"reset":true}`
+— `{"ok":true,"stats":{…the object above…}}` — with `reset` starting
+them again (the evaluation's own, when asked after each one).
+
 ## `--verify-tiers` — live tier verification
 
 The differential suites prove that the execution tiers agree on the
@@ -944,6 +1104,8 @@ both exist.
 |---|---|
 | `OLANG_DENY` | Deny capabilities for the run, as `--deny`: a comma list of `fs`, `fs-write`, `net`, `proc`, `db`, `env`. |
 | `OLANG_VERIFY_TIERS` | The `--verify-tiers` sampling rate (`0`–`1`). |
+| `OLANG_OVM_STATS` | `json` or `json:PATH`: keep [tier statistics](#tier-statistics--ovm-statsjson) for any command and write them at exit. |
+| `OLANG_TIER_GUARD` | `1`: a run keeping tier statistics in which a pinned-native function fell back exits with status 3. |
 | `OLANG_STALL_ABORT` | `0` disables the deadlock abort: an all-threads-parked program hangs instead of exiting with the stall report. |
 | `OLANG_HTTP_WORKERS` | Default worker count for `http.serve` when the options map does not set one. |
 | `OLANG_ODS_WORKERS` | Worker count for the ods data stack's parallel operations. |

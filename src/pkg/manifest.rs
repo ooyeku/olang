@@ -36,6 +36,12 @@ pub struct CheckConfig {
     /// discarded `Result`), `all`.
     #[serde(default)]
     pub promote: Vec<String>,
+    /// Functions pinned to native code: a name, a `*` pattern, or
+    /// `path:pattern` (the path relative to the project's root). `olang
+    /// check --tier` fails when the tier refuses one, and a run keeping
+    /// tier statistics names one that falls back (src/tier_stats.rs).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub native: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

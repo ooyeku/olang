@@ -70,9 +70,20 @@ struct Cli {
     #[arg(long, help_heading = "Run options")]
     in_task: bool,
 
-    /// Show OVM performance statistics
-    #[arg(long, help_heading = "Run options")]
-    ovm_stats: bool,
+    /// Show OVM performance statistics. `--ovm-stats=json[:PATH]` keeps
+    /// per-function tier statistics instead (calls and time per tier,
+    /// deopts, refusals, pins) and writes them as JSON at exit, to PATH
+    /// or ovm-stats.json; `OLANG_OVM_STATS=json[:PATH]` does the same
+    /// for any command (`olang test`)
+    #[arg(
+        long,
+        help_heading = "Run options",
+        value_name = "json[:PATH]",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "text"
+    )]
+    ovm_stats: Option<String>,
 
     /// Re-execute a sample of native-tier calls on the bytecode VM and
     /// compare results bit-for-bit; a divergence aborts with a report.
@@ -193,6 +204,10 @@ enum Commands {
         /// the tree-walker)
         #[arg(long)]
         tier: bool,
+        /// With --tier: `json` prints every function with its verdict,
+        /// reason, reason code, line and pin (docs/tooling.md)
+        #[arg(long, value_name = "text|json", default_value = "text")]
+        format: String,
     },
 
     /// Evaluate source text and print its value — a one-liner probe
@@ -439,6 +454,10 @@ fn main() {
     // (a no-op unless a program entered `tty` and is still in it).
     olang::stdlib::tty::restore_terminal();
     olang::memory::report_if_asked();
+    let exit_code = match olang::tier_stats::finish_run() {
+        Some(guard) if exit_code == 0 => guard,
+        _ => exit_code,
+    };
     process::exit(exit_code);
 }
 
@@ -478,6 +497,27 @@ fn run() -> i32 {
     }
 
     let mut cli = Cli::parse();
+
+    // Tier statistics (`--ovm-stats=json[:PATH]`, `OLANG_OVM_STATS`):
+    // kept from here to exit, written by `main` as the process ends (or
+    // by `os.exit`). Not in the REPL's protocol mode, which answers them
+    // to `stats` instead.
+    let serving = matches!(cli.command, Some(Commands::Repl { serve: true }));
+    if let Some(spec) = cli.ovm_stats.clone().or_else(|| std::env::var("OLANG_OVM_STATS").ok())
+        && !serving
+    {
+        match olang::tier_stats::spec_path(&spec) {
+            Some(path) => {
+                let path = std::path::absolute(&path).unwrap_or(path);
+                olang::tier_stats::begin_run(path);
+            }
+            None if spec == "text" => {}
+            None => {
+                eprintln!("--ovm-stats: expected `json` or `json:PATH`, got `{}`", spec);
+                return 2;
+            }
+        }
+    }
 
     // The tier self-verifier reads its rate from the environment so the
     // VM needs no plumbing from here; the flag simply sets it. Set
@@ -670,12 +710,21 @@ fn run() -> i32 {
             rules,
             fix,
             tier,
+            format,
         }) => {
             if paths.is_empty() {
                 paths.push(PathBuf::from("."));
             }
+            if format != "text" && format != "json" {
+                eprintln!("olang check: --format is `text` or `json`, not `{}`", format);
+                return 2;
+            }
             if tier {
-                return olang::tools::check::run_tier(&paths);
+                return olang::tools::check::run_tier_as(&paths, format == "json");
+            }
+            if format == "json" {
+                eprintln!("olang check: --format json is for --tier");
+                return 2;
             }
             if fix {
                 let fixed = olang::tools::check::fix(&paths);
@@ -949,7 +998,7 @@ fn run_program(
         &file_path,
         cli.verbose,
         cli.no_ovm,
-        cli.ovm_stats,
+        cli.ovm_stats.as_deref() == Some("text"),
         cli.ovm_tier,
         cli.max_depth,
         deny,

@@ -191,6 +191,8 @@ struct Session {
 
 impl Session {
     fn new(no_ovm: bool) -> Session {
+        // every evaluation keeps tier statistics (the `stats` op)
+        crate::profile::stats_enable();
         let mut interp = Interpreter::new();
         if !no_ovm {
             interp.enable_bytecode_tier(1, false);
@@ -231,7 +233,7 @@ impl Session {
         let mut v = json!({
             "event": "hello", "protocol": PROTOCOL, "olang": crate::version::VERSION,
             "root": self.root.to_string_lossy(), "pid": std::process::id(),
-            "ops": ["hello", "eval", "expand", "release", "interrupt", "ping", "reload", "render", "reset", "shutdown"],
+            "ops": ["hello", "eval", "expand", "release", "interrupt", "ping", "reload", "render", "reset", "shutdown", "stats"],
         });
         if let Some(id) = id {
             v["id"] = id.clone();
@@ -263,6 +265,12 @@ impl Session {
                 json!({ "ok": true })
             }
             "shutdown" => json!({ "ok": true }),
+            // where each function ran in the evaluations since the last
+            // `reset: true` (or since the start): src/tier_stats.rs
+            "stats" => {
+                let reset = msg.get("reset").and_then(|r| r.as_bool()).unwrap_or(false);
+                json!({ "ok": true, "stats": crate::tier_stats::report(reset) })
+            }
             other => json!({ "ok": false, "error": { "kind": "protocol", "message": format!("unknown op \"{}\"", other) } }),
         };
         reply["id"] = id;
@@ -414,7 +422,9 @@ impl Session {
         let _ = crate::output::take_collected();
         running.store(true, Ordering::SeqCst);
         let started = Instant::now();
+        crate::profile::stats_sample_begin(crate::tier_stats::INTERVAL_US);
         let outcome = self.interp.eval_program(program);
+        crate::profile::stats_sample_end();
         let ms = started.elapsed().as_secs_f64() * 1000.0;
         running.store(false, Ordering::SeqCst);
         let interrupted = crate::interrupt::pending();
