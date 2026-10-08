@@ -197,6 +197,8 @@ fn recorded_of(op: &str) -> bool {
             | "fs.list_dir"
             | "fs.walk"
             | "fs.glob"
+            | "fs.scan"
+            | "fs.search"
             | "fs.file_info"
             | "fs.file_size"
             // the network.
@@ -256,6 +258,8 @@ fn fs_read_only(name: &str) -> bool {
             | "file_size"
             | "walk"
             | "glob"
+            | "scan"
+            | "search"
             | "abs_path"
     )
 }

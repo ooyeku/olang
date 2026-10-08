@@ -4553,6 +4553,22 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             &[r##"unwrap(fs.walk("src")) |> filter((p) => fs.ext(p) == "ol")"##],
         );
         self.doc_ex(
+            "fs.scan",
+            "fs.scan(root, opts)",
+            "Result",
+            "fs",
+            "every file under a folder a checkout keeps, relative to it and sorted: its .gitignores respected at every level, hidden entries and the folders in skip left out, walked on worker threads (opts: skip, exts, hidden, gitignore, limit, max_depth)",
+            &[r##"unwrap(fs.scan(".", #{ "skip": ["target", "node_modules"], "exts": ["ol", "toml"] }))"##],
+        );
+        self.doc_ex(
+            "fs.search",
+            "fs.search(root, query, opts)",
+            "Result",
+            "fs",
+            "every line under a folder holding a literal or a regular expression, searched on worker threads: Ok of maps with path, line, col, end and text, by path then line (opts: regex, case, word, limit, per_file, files, and fs.scan's)",
+            &[r##"unwrap(fs.search("src", "fn main", #{ "exts": ["ol"], "word": true }))"##],
+        );
+        self.doc_ex(
             "fs.glob",
             "fs.glob(pattern)",
             "Result",

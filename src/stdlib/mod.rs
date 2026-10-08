@@ -19,6 +19,8 @@ pub mod dom;
 pub mod embedded;
 #[cfg(feature = "native")]
 pub mod fs;
+#[cfg(feature = "native")]
+pub mod fs_scan;
 #[cfg(feature = "gui")]
 pub mod gui;
 #[cfg(feature = "native")]

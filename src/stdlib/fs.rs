@@ -91,6 +91,10 @@ pub fn create_fs_module() -> Value {
         create_builtin_function("abs_path", 1),
     );
     module.insert("glob".to_string(), create_builtin_function("glob", 1));
+    // A checkout walked (its .gitignores respected) and searched, on worker
+    // threads: src/stdlib/fs_scan.rs.
+    module.insert("scan".to_string(), create_builtin_function("scan", 1));
+    module.insert("search".to_string(), create_builtin_function("search", 2));
     module.insert(
         "create_dir".to_string(),
         create_builtin_function("create_dir", 1),
@@ -165,6 +169,8 @@ pub fn call_fs_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
         "list_dir" => list_dir(args),
         "walk" => walk(args),
         "glob" => glob(args),
+        "scan" => crate::stdlib::fs_scan::scan(args),
+        "search" => crate::stdlib::fs_scan::search(args),
         "create_dir" => create_dir(args),
         "create_dir_all" => create_dir_all(args),
         "remove_dir" => remove_dir(args),

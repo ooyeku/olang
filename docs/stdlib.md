@@ -1189,7 +1189,16 @@ semantics); `fs.dirname`/`fs.basename`/`fs.ext` decompose without
 touching the disk. `fs.walk(dir)` lists every file below a directory
 (recursive, sorted);
 `fs.glob(pattern)` filters by a pattern where `*` matches within a path
-segment, `?` one character, and `**` any number of segments.
+segment, `?` one character, and `**` any number of segments. `fs.scan(root, opts)` lists a
+checkout's files as a person sees them — every `.gitignore` respected
+at every level, hidden entries and the folders named in `skip` left
+out, `exts` the extensions kept — relative to `root` and sorted,
+walked on worker threads (an editor lists a workspace of thousands of
+files with it). `fs.search(root, query, opts)` searches those files (or
+`opts.files`) for a literal or, with `regex: true`, a regular
+expression — `case` and `word` as a find bar has them — in parallel,
+answering `Ok` of `#{ path, line, col, end, text }` by path then line
+(columns in characters; at most `limit` matches, 2,000 by default).
 
 ```olang no-run
 let text = unwrap(fs.read_file("data.txt"))
