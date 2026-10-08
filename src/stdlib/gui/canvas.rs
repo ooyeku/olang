@@ -70,6 +70,8 @@ pub struct CanvasText {
     /// Cut with an ellipsis to this width, when given.
     pub max_w: Option<f32>,
     pub clip: Area,
+    /// A family other than the node's (`"mono"`, `"sans"`).
+    pub font: Option<String>,
 }
 
 /// What a canvas draws, in its own logical pixels, in order.
@@ -541,6 +543,7 @@ pub fn draw_at(ops: &Value, w: f32, h: f32, scale: f32, raster: bool) -> Res<Dra
                     align,
                     max_w,
                     clip: f.clip,
+                    font: get_str(op, "font", &what)?.map(|f| f.to_string()),
                 }));
             }
             other => {

@@ -223,6 +223,60 @@ pub struct RichEditor {
     pub scroll_seq: i64,
     /// The first line in view last said (`viewport`), by its bucket.
     pub said_top: Option<usize>,
+    /// Lenses: bands of drawn content under a line (a result, a value),
+    /// sorted by line. The paragraph layout leaves room for each; the
+    /// caret and the selection pass over them, and the gutter numbers no
+    /// band.
+    lenses: Vec<Lens>,
+    /// The character the pointer rests on last said (`hover` events).
+    pub said_hover: Option<(usize, usize)>,
+}
+
+/// A lens: `height` logical pixels under paragraph `line`, drawn from
+/// canvas operations (`ops`, canvas.rs) across the text's width. A press
+/// in it is said to the program (`lens` events) with the operation's
+/// `hit` under it; it never moves the caret.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Lens {
+    pub line: usize,
+    pub height: f32,
+    pub ops: Value,
+    pub id: Value,
+}
+
+/// The lenses of a patch: `#{ line, height, ops, id }` maps, sorted by
+/// line (one lens a line: the last of a line's wins).
+pub fn parse_lenses(v: Option<&Value>) -> Vec<Lens> {
+    use super::values::{get, num};
+    let Some(Value::List(l)) = v else {
+        return Vec::new();
+    };
+    let mut out: Vec<Lens> = l
+        .iter()
+        .filter_map(|x| {
+            let line = get(x, "line").and_then(num)?;
+            let height = get(x, "height").and_then(num)?;
+            if line < 0.0 || height <= 0.0 {
+                return None;
+            }
+            Some(Lens {
+                line: line as usize,
+                height,
+                ops: get(x, "ops").cloned().unwrap_or(Value::List(Arc::new(Vec::new()))),
+                id: get(x, "id").cloned().unwrap_or(Value::Unit),
+            })
+        })
+        .collect();
+    out.sort_by_key(|l| l.line);
+    out.dedup_by(|b, a| {
+        if a.line == b.line {
+            *a = b.clone();
+            true
+        } else {
+            false
+        }
+    });
+    out
 }
 
 /// A gutter: whether to number the lines, their colour and the caret
@@ -358,6 +412,8 @@ impl RichEditor {
             decorations: Vec::new(),
             scroll_seq: 0,
             said_top: None,
+            lenses: Vec::new(),
+            said_hover: None,
         };
         e.set_buffer(value);
         e
@@ -773,9 +829,16 @@ impl RichEditor {
         self.ys.clear();
         self.ys.reserve(self.paras.len() + 1);
         let mut y = 0.0;
+        let mut k = 0;
         for i in 0..self.paras.len() {
             self.ys.push(y);
             y += self.height_of(i);
+            while k < self.lenses.len() && self.lenses[k].line < i {
+                k += 1;
+            }
+            if k < self.lenses.len() && self.lenses[k].line == i {
+                y += self.lenses[k].height * self.scale;
+            }
         }
         self.ys.push(y);
         self.ys_ok = true;
@@ -1649,6 +1712,73 @@ impl RichEditor {
 
     pub fn scale(&self) -> f32 {
         self.scale
+    }
+
+    /// The character under a point (device pixels from the text's top,
+    /// scroll included): its line, its column, and its box — or none
+    /// past a line's end, below the text, or over a lens.
+    pub fn hover_at(&mut self, x: f32, y: f32, ts: &mut TextSystem) -> Option<(usize, usize, BoundingBox)> {
+        if x < 0.0 || y < 0.0 || self.lens_at(y, ts).is_some() {
+            return None;
+        }
+        self.refresh(ts);
+        let total = *self.ys.last().unwrap_or(&0.0);
+        if y >= total {
+            return None;
+        }
+        let (at, _) = self.point_to_byte(x, y, ts);
+        let (i, l) = self.locate(at);
+        self.ensure(i, ts);
+        let layout = self.layout_of(i);
+        if x > layout.width() + 2.0 || y - self.ys[i] > self.paras[i].h {
+            return None;
+        }
+        let g = Cursor::from_byte_index(layout, l, Affinity::Downstream).geometry(layout, 1.0);
+        let p = &self.paras[i];
+        let col = self.buffer[p.start..p.start + l].chars().count();
+        let w = (self.font.size * self.scale * 0.6) as f64;
+        let top = self.ys[i] as f64;
+        Some((i, col, BoundingBox::new(g.x0, g.y0 + top, g.x0 + w, g.y1 + top)))
+    }
+
+    // ── lenses ──────────────────────────────────────────────────────
+
+    /// The program's lenses: the tops move only when a lens's line or
+    /// height did.
+    pub fn set_lenses(&mut self, lenses: Vec<Lens>) {
+        let same_room = lenses.len() == self.lenses.len()
+            && lenses.iter().zip(&self.lenses).all(|(a, b)| a.line == b.line && a.height == b.height);
+        if !same_room {
+            self.ys_ok = false;
+        }
+        self.lenses = lenses;
+    }
+
+    pub fn lenses(&self) -> &[Lens] {
+        &self.lenses
+    }
+
+    /// Lens `k`'s band: its top (device pixels from the text's top, no
+    /// scroll) and height, when its line exists and is laid out.
+    pub fn lens_band(&self, k: usize) -> Option<(f32, f32)> {
+        let l = self.lenses.get(k)?;
+        if !self.ys_ok || l.line >= self.paras.len() {
+            return None;
+        }
+        Some((self.ys[l.line] + self.height_of(l.line), l.height * self.scale))
+    }
+
+    /// The lens under `y` (device pixels from the text's top, scroll
+    /// included): its index and `y` within it.
+    pub fn lens_at(&mut self, y: f32, ts: &mut TextSystem) -> Option<(usize, f32)> {
+        if self.lenses.is_empty() {
+            return None;
+        }
+        self.refresh(ts);
+        (0..self.lenses.len()).find_map(|k| {
+            let (top, h) = self.lens_band(k)?;
+            (y >= top && y < top + h).then_some((k, y - top))
+        })
     }
 }
 

@@ -244,6 +244,10 @@ pub struct EditProps {
     /// `(line, seq)`: scroll so the line is the first in view, when `seq`
     /// is new.
     pub scroll_to: Option<(i64, i64)>,
+    /// Lenses (`rich.rs` `Lens`): bands of drawn content under lines.
+    pub lenses: Option<Value>,
+    /// Say the character the pointer rests on (`hover` events).
+    pub hover: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -593,6 +597,8 @@ impl Scene {
                 report: get_bool(e, "report", what)?.unwrap_or(false),
                 gutter: get(e, "gutter").cloned(),
                 decorations: get(e, "decorations").cloned(),
+                lenses: get(e, "lenses").cloned(),
+                hover: get_bool(e, "hover", what)?.unwrap_or(false),
                 scroll_to: match get(e, "scroll_to") {
                     Some(v) => nums(v)
                         .filter(|n| n.len() >= 2)

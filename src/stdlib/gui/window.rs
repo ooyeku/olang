@@ -440,6 +440,7 @@ impl WinState {
                         }
                         r.gutter = props.gutter.as_ref().and_then(super::rich::Gutter::parse);
                         r.decorations = super::rich::parse_decorations(props.decorations.as_ref());
+                        r.set_lenses(super::rich::parse_lenses(props.lenses.as_ref()));
                         if let Some((line, seq)) = props.scroll_to
                             && seq != r.scroll_seq
                             && current
@@ -494,6 +495,7 @@ impl WinState {
                         r.set_spans(props.styles.as_ref(), props.spans.as_ref());
                         r.gutter = props.gutter.as_ref().and_then(super::rich::Gutter::parse);
                         r.decorations = super::rich::parse_decorations(props.decorations.as_ref());
+                        r.set_lenses(super::rich::parse_lenses(props.lenses.as_ref()));
                         if let Some((a, f, seq)) = props.select {
                             r.select_seq = seq;
                             r.select_chars(a.max(0) as usize, f.max(0) as usize);
@@ -1256,6 +1258,7 @@ impl WinState {
                     self.report_selection(&p, out);
                     self.dirty = true;
                 }
+                self.hover_field(hit.as_deref(), x, y, out);
                 out.push(self.ev(
                     "pointer",
                     vec![
@@ -1270,6 +1273,7 @@ impl WinState {
                 ));
             }
             PointerAction::Leave => {
+                self.hover_field(None, x, y, out);
                 out.push(self.ev("pointer", vec![("action", s("leave"))]));
             }
             PointerAction::Down => {
@@ -1329,18 +1333,40 @@ impl WinState {
                         if cmd && let Some(r) = ed.rich_mut() {
                             r.said_selection = (usize::MAX, usize::MAX);
                         }
-                        self.click_mod = cmd;
                         let (sx, sy) = ed.scrolled();
-                        ed.press(
-                            x * self.scale - ox + sx,
-                            y * self.scale - oy - dy + sy,
-                            clicks,
-                            shift,
-                            &mut ts,
-                        );
-                        drop(ts);
-                        let f = f.clone();
-                        self.report_selection(&f, out);
+                        let (tx, ty) = (x * self.scale - ox + sx, y * self.scale - oy - dy + sy);
+                        // a press in a lens is the program's: said with the
+                        // operation under it, the caret left where it was
+                        let lens = ed.rich_mut().and_then(|r| {
+                            let (k, ly) = r.lens_at(ty, &mut ts)?;
+                            let l = r.lenses()[k].clone();
+                            Some((l, ly / self.scale))
+                        });
+                        if let Some((l, ly)) = lens {
+                            drop(ts);
+                            let lx = tx / self.scale;
+                            let width = self.scene.nodes.get(f).map(|n| n.rect[2]).unwrap_or(0.0);
+                            let hit = super::canvas::hit(&l.ops, width, l.height, lx, ly);
+                            let f = f.clone();
+                            out.push(self.ev(
+                                "lens",
+                                vec![
+                                    ("key", s(&f)),
+                                    ("line", Value::Integer(l.line as i64)),
+                                    ("id", l.id.clone()),
+                                    ("hit", hit),
+                                    ("x", float(lx)),
+                                    ("y", float(ly)),
+                                    ("clicks", Value::Integer(clicks as i64)),
+                                ],
+                            ));
+                        } else {
+                            self.click_mod = cmd;
+                            ed.press(tx, ty, clicks, shift, &mut ts);
+                            drop(ts);
+                            let f = f.clone();
+                            self.report_selection(&f, out);
+                        }
                     }
                     self.dirty = true;
                 }
@@ -1977,6 +2003,9 @@ impl WinState {
                     let mut font = st.font.clone();
                     font.size = t.size;
                     font.weight = t.weight;
+                    if let Some(f) = &t.font {
+                        font.family = f.clone();
+                    }
                     let color = fade(t.color);
                     let mut shaped = ts.shape(&t.text, &font, color, None, Align::Start, s);
                     // longer than it may be: cut with an ellipsis
@@ -2030,6 +2059,61 @@ impl WinState {
             return Value::Unit;
         };
         super::canvas::hit(ops, n.rect[2], n.rect[3], x - abs[0], y - abs[1])
+    }
+
+    /// A styled field that asks (`hover`) hears which character the
+    /// pointer is over, when that changes: `hover` with its line, column
+    /// and box (window pixels), or line -1 when it leaves the text.
+    fn hover_field(&mut self, hit: Option<&str>, x: f32, y: f32, out: &mut Vec<Value>) {
+        let target = hit.and_then(|h| {
+            self.scene.target_up(h, |n| n.edit.as_ref().is_some_and(|e| e.rich && e.hover))
+        });
+        // the field the pointer left: said once
+        let left: Vec<String> = self
+            .editors
+            .iter()
+            .filter(|(k, e)| Some(k.as_str()) != target.as_deref() && e.rich().is_some_and(|r| r.said_hover.is_some()))
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in left {
+            if let Some(r) = self.editors.get_mut(&k).and_then(|e| e.rich_mut()) {
+                r.said_hover = None;
+            }
+            out.push(self.ev("hover", vec![("key", s(&k)), ("line", Value::Integer(-1)), ("col", Value::Integer(-1))]));
+        }
+        let Some(k) = target else { return };
+        if self.scene.pressed.is_some() {
+            return;
+        }
+        let Some((ox, oy, _, h)) = self.edit_origin(&k) else { return };
+        let Ok(mut ts) = text::system().lock() else { return };
+        let dy = self.edit_text_dy(&k, h, &mut ts);
+        let sc = self.scale;
+        let Some(ed) = self.editors.get_mut(&k) else { return };
+        let (sx, sy) = ed.scrolled();
+        let Some(r) = ed.rich_mut() else { return };
+        let found = r.hover_at(x * sc - ox + sx, y * sc - oy - dy + sy, &mut ts);
+        drop(ts);
+        let now = found.as_ref().map(|(l, c, _)| (*l, *c));
+        if now == r.said_hover {
+            return;
+        }
+        r.said_hover = now;
+        let ev = match found {
+            Some((line, col, b)) => {
+                let bx = (ox + b.x0 as f32 - sx) / sc;
+                let by = (oy + dy + b.y0 as f32 - sy) / sc;
+                let rect = Value::Tuple(Arc::new(vec![
+                    float(bx),
+                    float(by),
+                    float(((b.x1 - b.x0) as f32 / sc).max(1.0)),
+                    float((b.y1 - b.y0) as f32 / sc),
+                ]));
+                vec![("key", s(&k)), ("line", Value::Integer(line as i64)), ("col", Value::Integer(col as i64)), ("rect", rect)]
+            }
+            None => vec![("key", s(&k)), ("line", Value::Integer(-1)), ("col", Value::Integer(-1))],
+        };
+        out.push(self.ev("hover", ev));
     }
 
     /// A styled field: the paragraphs in view, their spans' and lines'
@@ -2246,6 +2330,17 @@ impl WinState {
                 }
             }
         }
+        // lenses: each band under its line, drawn after the text is (the
+        // field is let go first: a canvas paints through the window)
+        let mut lens_jobs: Vec<(Value, f32, f32, f32, f32)> = Vec::new();
+        for (k, lens) in r.lenses().iter().enumerate() {
+            if !shown.contains(&lens.line) {
+                continue;
+            }
+            if let Some((top, h)) = r.lens_band(k) {
+                lens_jobs.push((lens.ops.clone(), content[0], oy + top, content[2] + st.pad[1] * s, h));
+            }
+        }
         // decorations under the text: a problem's underline
         for &(i, a, b, sty) in &decos {
             let Some(look) = r.style_of(sty).cloned() else {
@@ -2336,6 +2431,17 @@ impl WinState {
         } else {
             None
         };
+        let lens_clip = outer_clip.intersect(Clip::rect(
+            content[0] - 1.0,
+            content[1],
+            content[0] + content[2] + st.pad[1] * s,
+            content[1] + content[3],
+        ));
+        for (ops, lx, ly, lw, lh) in lens_jobs {
+            if let Ok(drawing) = super::canvas::draw(&ops, lw / s, lh / s, s) {
+                self.paint_canvas(drawing, lx, ly, lw, lh, lens_clip, st, opacity, ts, dl);
+            }
+        }
         if let Some((cx, cy, cw, ch)) = caret {
             let shown = clip.intersect(Clip::rect(cx, cy, cx + cw, cy + ch));
             if !shown.is_empty() {
