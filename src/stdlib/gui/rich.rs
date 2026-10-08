@@ -250,6 +250,9 @@ pub struct RichEditor {
     pub nowrap: bool,
     /// Read, selected and copied, never edited (a preview).
     pub readonly: bool,
+    /// The first line in view is said when it moves this many lines (16;
+    /// 1 for a view kept beside it line for line).
+    pub band: usize,
     /// Horizontal scroll, device pixels (with `nowrap`).
     pub scroll_x: f32,
     /// The widest paragraph laid out, device pixels (with `nowrap`).
@@ -546,6 +549,7 @@ impl RichEditor {
             ruler_color: None,
             nowrap: false,
             readonly: false,
+            band: 16,
             scroll_x: 0.0,
             widest: 0.0,
         };

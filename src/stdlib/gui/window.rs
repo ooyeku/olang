@@ -137,7 +137,7 @@ impl Clipboard for NoClipboard {
 
 /// A styled field says its first line in view when it moves into another
 /// band of this many lines.
-const VIEWPORT_BAND: usize = 16;
+// (a field says its own band: rich.rs `band`, 16 lines by default)
 
 pub struct WinState {
     pub id: u64,
@@ -449,6 +449,7 @@ impl WinState {
                         r.ruler_color = rc;
                         r.set_nowrap(!props.wrap);
                         r.readonly = props.readonly;
+                        r.band = props.band.unwrap_or(16).max(1);
                         if let Some((line, seq)) = props.scroll_to
                             && seq != r.scroll_seq
                             && current
@@ -512,6 +513,7 @@ impl WinState {
                         r.ruler_color = rc;
                         r.set_nowrap(!props.wrap);
                         r.readonly = props.readonly;
+                        r.band = props.band.unwrap_or(16).max(1);
                         if let Some((a, f, seq)) = props.select {
                             r.select_seq = seq;
                             r.select_chars(a.max(0) as usize, f.max(0) as usize);
@@ -1016,15 +1018,26 @@ impl WinState {
         } else {
             key.clone()
         };
-        let passed = plain
-            && !composing
+        // a chord with ⌘, ⌃ or ⌥ is said as the commands spell it
+        // ("mod+shift+k", "alt+up"): a field hands those over too
+        let chorded = {
+            let mut m = mods;
+            if cfg!(target_os = "macos") {
+                m.super_ = false;
+            } else {
+                m.ctrl = false;
+            }
+            let base = Self::chord(&key, m);
+            if mods.command() { format!("mod+{base}") } else { base }
+        };
+        let passed = !composing
             && self
                 .scene
                 .focus
                 .as_ref()
                 .and_then(|f| self.scene.nodes.get(f))
                 .and_then(|n| n.edit.as_ref())
-                .is_some_and(|e| e.pass_keys.iter().any(|k| *k == spelled));
+                .is_some_and(|e| e.pass_keys.iter().any(|k| (plain && *k == spelled) || (!plain && *k == chorded)));
         if key == "tab" && plain && !passed {
             self.move_focus(!mods.shift, out);
             return;
@@ -1491,7 +1504,8 @@ impl WinState {
             // the first line in view, said when it moves a band of lines
             // (a program asks for what the band shows; not every wheel)
             let top = r.top_line(&mut ts);
-            if r.said_top.map(|t| t / VIEWPORT_BAND) != Some(top / VIEWPORT_BAND) {
+            let band = r.band.max(1);
+            if r.said_top.map(|t| t / band) != Some(top / band) {
                 r.said_top = Some(top);
                 drop(ts);
                 out.push(self.ev("viewport", vec![("key", s(&k)), ("top", Value::Integer(top as i64))]));

@@ -258,6 +258,8 @@ pub struct EditProps {
     pub wrap: bool,
     /// Read, selected and copied, never edited.
     pub readonly: bool,
+    /// How many lines the first line in view moves before it is said.
+    pub band: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -615,6 +617,7 @@ impl Scene {
                 rulers: get(e, "rulers").cloned(),
                 wrap: get_bool(e, "wrap", what)?.unwrap_or(true),
                 readonly: get_bool(e, "readonly", what)?.unwrap_or(false),
+                band: get(e, "band").and_then(|v| match v { Value::Integer(i) if *i > 0 => Some(*i as usize), _ => None }),
                 scroll_to: match get(e, "scroll_to") {
                     Some(v) => nums(v)
                         .filter(|n| n.len() >= 2)
@@ -928,7 +931,9 @@ impl Scene {
 
     fn hit_in(&self, key: &str, ox: f32, oy: f32, x: f32, y: f32) -> Option<String> {
         let node = self.nodes.get(key)?;
-        if node.inert {
+        // an inert node is never under the pointer itself; a child of it
+        // that is not inert may be (a grip laid over a field's edge)
+        if node.inert && node.children.is_empty() {
             return None;
         }
         let rx = ox + node.rect[0];
@@ -954,7 +959,9 @@ impl Scene {
                 return Some(h);
             }
         }
-        if inside && node.role != "text" || inside && node.parent.is_none() {
+        if node.inert {
+            None
+        } else if inside && node.role != "text" || inside && node.parent.is_none() {
             Some(key.to_string())
         } else {
             None
