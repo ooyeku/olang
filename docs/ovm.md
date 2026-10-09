@@ -59,9 +59,37 @@ needs the `=` so a bare flag doesn't swallow the filename). A function that
 fails compilation is marked ineligible and keeps running on the interpreter —
 which is why the default can never change program behavior.
 
-When a function calls another user function, the compiler reports the
-unresolved callee rather than giving up; the tier compiles that callee and
-retries. Names are registered with the VM *before* compilation, which is what
+**Callees compile at their first call.** When a function calls a user
+function that has no id yet, the compiler gives the callee one on the spot
+and emits a direct call to it; the callee is *owed* — compiled when that
+call first runs, not before its caller. Compiling a caller used to compile
+everything it could reach first, down the whole call graph: olang Studio's
+first frame compiled ~1,800 functions (235 ms) to run ~480 of them; now it
+compiles those ~480 (45 ms). The rules are the eager route's, only later:
+
+- a callee is owed only where the eager route would have compiled it by
+  name (not the registry's, not a builtin, not ambiguous, not already
+  refused or bridged, no bounded type parameters, and the caller's scope
+  resolves the name to that same function); anything else goes the eager
+  way — the compiler reports the unresolved callee, the tier compiles it
+  (or routes it through the bridge) and retries;
+- an owed callee's first call compiles it under its id (`materialize`,
+  with the tier's own dependency resolution); if the compile is refused,
+  the name is withdrawn and bridged — exactly what a caller compiled
+  around an uncompilable callee does — and calls to the id run through
+  the function's value (`call_refused`). The tier's books (promoted,
+  rejected with the reason, `tier_stats`) hear both;
+- the interpreter calling an owed function by name compiles it under the
+  id its callers already hold (`claim_owed`), so there is one copy;
+- a native candidate (a function the JIT will specialize at its first
+  call) has the callees its group reaches compiled just before it plans,
+  since the planner reads their code — a pure, numeric group stays native
+  as before (pinned by `tests/tier_floor_test.rs`);
+- `olang check --tier` compiles eagerly, every owed callee included, so
+  its static verdicts are unchanged.
+
+`OLANG_LAZY_COMPILE=0` restores the eager route, for A/B measurement.
+Names are still registered with the VM *before* compilation, which is what
 lets mutually recursive functions resolve each other — and are withdrawn if
 compilation fails, so nothing later resolves a call against a name that has no
 bytecode.

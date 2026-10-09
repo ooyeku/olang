@@ -280,6 +280,44 @@ pub struct BytecodeVm {
     /// compiled again — the interpreter (whose registry is live) stays the
     /// authority.
     poisoned_structs: std::collections::HashSet<String>,
+    /// Callees compile at their first call, not before their caller
+    /// (on unless `olang check --tier` asks for every verdict up front).
+    lazy_callees: bool,
+    /// Ids given to callees not compiled yet: compiled when first called
+    /// (`materialize`), or — when a JIT candidate is about to specialize
+    /// over them — just before.
+    lazy_pending: HashMap<FunctionId, (String, Arc<crate::ast::Function>)>,
+    /// Every function given an id that way: one whose compile was then
+    /// refused is called through its value (the bridge), as a caller
+    /// compiled around it would.
+    lazy_born: HashMap<FunctionId, Arc<crate::ast::Function>>,
+    /// Names whose compile was refused, by the tier or here.
+    refused_names: std::collections::HashSet<String>,
+    /// What compiling at a first call decided, for the tier's books
+    /// (`take_lazy_events`).
+    lazy_events: Vec<LazyEvent>,
+}
+
+/// Whether callees compile at their first call: on, unless
+/// `OLANG_LAZY_COMPILE=0` asks for the eager route (every callee compiled
+/// with its caller), for A/B measurement. Read once a process.
+fn lazy_callees_default() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !matches!(std::env::var("OLANG_LAZY_COMPILE").as_deref(), Ok("0")))
+}
+
+/// A callee compiled (or refused) at its first call.
+pub enum LazyEvent {
+    Compiled {
+        name: String,
+        id: FunctionId,
+        body: Arc<crate::ast::Expr>,
+    },
+    Refused {
+        name: String,
+        def_file: Option<String>,
+        reason: String,
+    },
 }
 
 /// Bytecode compiler that transforms AST to bytecode
@@ -393,6 +431,17 @@ pub struct BytecodeCompiler {
     /// Each defining file canonicalized once (the capability table
     /// attenuates by it): a compile asked the file system every time.
     canonical_files: HashMap<Arc<str>, std::path::PathBuf>,
+    /// Callees compile at their first call (`BytecodeVm::lazy_callees`):
+    /// a user function this compile calls before it has an id is given
+    /// one here, and the call is a direct call to it, compiled when it is
+    /// first made — not before its caller, down the whole graph.
+    lazy_callees: bool,
+    /// The ids this compile gave (name, id), for the VM to keep as owed.
+    lazy_new: Vec<(String, FunctionId)>,
+    /// Names whose compile was refused: never given an id here — the
+    /// tier's own resolution (the bridge) answers for them, as it did.
+    /// Lent by the VM like the registries.
+    refused_names: std::collections::HashSet<String>,
 }
 
 /// A deferred lambda compile: its id, the body as a standalone declaration
@@ -1560,6 +1609,11 @@ impl BytecodeVm {
             trait_defaults: HashMap::new(),
             type_traits: HashMap::new(),
             poisoned_structs: std::collections::HashSet::new(),
+            lazy_callees: lazy_callees_default(),
+            lazy_pending: HashMap::new(),
+            lazy_born: HashMap::new(),
+            refused_names: std::collections::HashSet::new(),
+            lazy_events: Vec::new(),
             // Must match the interpreter's own limit: a program that recurses
             // 900 deep has to behave the same whether or not it was promoted
             max_call_depth: crate::interpreter::DEFAULT_MAX_CALL_DEPTH as u32,
@@ -1958,6 +2012,7 @@ impl BytecodeVm {
         let Some(bytecode) = self.get_bytecode(func_id).ok() else {
             return;
         };
+        self.owe_nothing_native(func_id, &bytecode);
         let hot = &self.bytecode_hot;
         let cache = &self.bytecode_cache;
         let lookup = |id: FunctionId| -> Option<Arc<CompiledBytecode>> {
@@ -2031,10 +2086,265 @@ impl BytecodeVm {
         // retried around.
         self.lend_registries();
         self.compiler.unresolved.clear();
+        self.compiler.lazy_callees = self.lazy_callees;
         let result = self.compile_function_with_closure_lent(func_id, func, closure, param_checks, return_check, def_file, run);
         self.return_registries();
-        self.stats.compilation_time += start_time.elapsed();
+        self.keep_owed_callees();
+        let took = start_time.elapsed();
+        self.stats.compilation_time += took;
+        crate::boot_trace::add(crate::boot_trace::Counter::Compile, took.as_nanos() as u64);
         result
+    }
+
+    /// Callees compile at their first call (`true`, the default), or
+    /// with their caller, down the whole graph (`false`: `olang check
+    /// --tier`, whose verdicts are about every function it reaches).
+    pub fn set_lazy_callees(&mut self, on: bool) {
+        self.lazy_callees = on;
+    }
+
+    pub fn lazy_callees(&self) -> bool {
+        self.lazy_callees
+    }
+
+    /// The ids the last compile gave callees not compiled yet, kept as
+    /// owed: each compiles at its first call (`materialize`).
+    fn keep_owed_callees(&mut self) {
+        if self.compiler.lazy_new.is_empty() {
+            return;
+        }
+        for (name, id) in std::mem::take(&mut self.compiler.lazy_new) {
+            #[cfg(feature = "native")]
+            self.jit.note_shadow(&name);
+            match self.known_function_values.get(&name).cloned() {
+                Some(func) => {
+                    self.lazy_born.insert(id, func.clone());
+                    self.lazy_pending.insert(id, (name, func));
+                }
+                // the compiler gave an id only to a known function
+                None => {
+                    if self.function_registry.get(&name) == Some(&id) {
+                        self.function_registry.remove(&name);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The owed id `name` is registered under, taken over by a compile by
+    /// name (the tier's, when the interpreter calls it first): the code
+    /// it makes is what that id calls.
+    pub fn claim_owed(&mut self, name: &str) -> Option<FunctionId> {
+        let id = *self.function_registry.get(name)?;
+        self.lazy_pending.remove(&id).map(|_| id)
+    }
+
+    /// A name whose compile the tier refused: never given an id at a
+    /// call, so a caller resolves it as the tier always did (the bridge).
+    pub fn note_refused(&mut self, name: &str) {
+        self.refused_names.insert(name.to_string());
+    }
+
+    /// Whether compiling at a first call decided anything the tier has
+    /// not heard.
+    #[inline]
+    pub fn has_lazy_events(&self) -> bool {
+        !self.lazy_events.is_empty()
+    }
+
+    pub fn take_lazy_events(&mut self) -> Vec<LazyEvent> {
+        std::mem::take(&mut self.lazy_events)
+    }
+
+    /// How many callees are owed (given an id, not compiled yet).
+    pub fn owed_count(&self) -> usize {
+        self.lazy_pending.len()
+    }
+
+    /// What compiling at first calls decided that the tier has not taken.
+    pub fn lazy_events(&self) -> &[LazyEvent] {
+        &self.lazy_events
+    }
+
+    /// Compile every owed callee now (`olang check --tier`: a verdict for
+    /// each function its compiles reached, as the eager route gave).
+    pub fn compile_owed_now(&mut self) {
+        loop {
+            let Some(&id) = self.lazy_pending.keys().next() else {
+                break;
+            };
+            let _ = self.materialize(id);
+        }
+    }
+
+    /// Compiled code for `func_id`, without compiling anything.
+    fn peek_code(&self, func_id: FunctionId) -> Option<Arc<CompiledBytecode>> {
+        self.bytecode_hot
+            .get(func_id.index())
+            .and_then(|slot| slot.clone())
+            .or_else(|| {
+                self.bytecode_cache
+                    .read()
+                    .ok()
+                    .and_then(|cache| cache.get(&func_id).cloned())
+            })
+    }
+
+    /// Compile an owed callee now — its first call. `None` when it is not
+    /// owed, or its compile was refused: the name is then withdrawn and
+    /// bridged, as the tier does for a callee it cannot compile, and a
+    /// call to the id runs through the function's value
+    /// (`call_refused`).
+    fn materialize(&mut self, func_id: FunctionId) -> Option<Arc<CompiledBytecode>> {
+        let (name, owed) = self.lazy_pending.remove(&func_id)?;
+        // The declaration's newest value: a module re-closes its functions
+        // over its whole scope once loaded, which a later sibling needs.
+        let func = match self.known_function_values.get(&name) {
+            Some(f) if Arc::ptr_eq(&f.body, &owed.body) => f.clone(),
+            _ => owed,
+        };
+        self.lazy_born.insert(func_id, func.clone());
+        // What this compiles belongs to the registry, not to a closure
+        // being compiled around it.
+        let tracked = self.hof_track.take();
+        let outcome = self.compile_owed(func_id, &name, &func);
+        self.hof_track = tracked;
+        match outcome {
+            Ok(()) => {
+                self.lazy_born.remove(&func_id);
+                self.lazy_events.push(LazyEvent::Compiled {
+                    name,
+                    id: func_id,
+                    body: func.body.clone(),
+                });
+                self.peek_code(func_id)
+            }
+            Err(reason) => {
+                if self.function_registry.get(&name) == Some(&func_id) {
+                    self.function_registry.remove(&name);
+                }
+                self.refused_names.insert(name.clone());
+                self.bridged_callees.insert(name.clone());
+                self.lazy_events.push(LazyEvent::Refused {
+                    name,
+                    def_file: func.def_file.clone(),
+                    reason,
+                });
+                None
+            }
+        }
+    }
+
+    /// The tier's compile of a function by name (`BytecodeTier::compile`),
+    /// for an owed callee under its given id: every callee the attempt
+    /// still meets unregistered is compiled first or, failing that,
+    /// called through the bridge; only a name with no function behind it
+    /// refuses.
+    fn compile_owed(
+        &mut self,
+        func_id: FunctionId,
+        name: &str,
+        func: &Arc<crate::ast::Function>,
+    ) -> Result<(), String> {
+        let decl = FunctionDecl {
+            name_span: None,
+            name: name.to_string(),
+            type_params: Vec::new(),
+            type_param_bounds: Vec::new(),
+            parameters: func.parameters.clone(),
+            return_type: None,
+            body: (*func.body).clone(),
+        };
+        let mut bridged_here: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for _ in 0..4096 {
+            match self.compile_function_with_closure(
+                func_id,
+                &decl,
+                func.closure.clone(),
+                func.param_checks.clone().into(),
+                func.return_check.clone(),
+                func.def_file.as_deref().map(Arc::from),
+                func.run.clone(),
+            ) {
+                Ok(()) => return Ok(()),
+                Err(BytecodeError::UnresolvedCallee(first)) => {
+                    for callee in self.unresolved_with(first) {
+                        if self.compile_hof_dependency(&callee, 0) {
+                            continue;
+                        }
+                        let callable = callee != name
+                            && (self.known_function_values.contains_key(&callee)
+                                || matches!(func.closure.get(&callee), Some(Value::Function(_)))
+                                || self.module_scope_has_function(func.def_file.as_deref(), &callee));
+                        if callable && bridged_here.insert(callee.clone()) {
+                            self.bridged_callees.insert(callee);
+                            continue;
+                        }
+                        return Err(if callable {
+                            format!("calls '{}', which cannot compile", callee)
+                        } else {
+                            format!(
+                                "calls '{}', which nothing in its scope defines (a missing import? it would be an undefined variable when run natively)",
+                                callee
+                            )
+                        });
+                    }
+                }
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+        Err("its dependency chain is too deep to resolve".to_string())
+    }
+
+    /// A call to an id whose compile at its first call was refused: run
+    /// through the function's value, as a caller compiled around it would
+    /// call it. `None` for any other id.
+    fn call_refused(
+        &mut self,
+        func_id: FunctionId,
+        args: &[OvmValue],
+    ) -> Option<Result<OvmValue, BytecodeError>> {
+        let func = self.lazy_born.get(&func_id)?.clone();
+        Some(self.call_function_value(&OvmValue::new_ast_function(func), args))
+    }
+
+    /// Before a JIT candidate specializes (its first native call), the
+    /// callees its group reaches are compiled: the planner reads their
+    /// code, and an owed one would read as absent and refuse the group.
+    /// Only native-eligible code is walked, so this stays the small,
+    /// pure group the JIT compiles.
+    #[cfg(feature = "native")]
+    fn owe_nothing_native(&mut self, root: FunctionId, root_code: &Arc<CompiledBytecode>) {
+        if self.lazy_pending.is_empty() || !self.jit.is_pending(root) {
+            return;
+        }
+        let mut seen: std::collections::HashSet<FunctionId> = std::collections::HashSet::new();
+        seen.insert(root);
+        let mut stack = vec![root_code.clone()];
+        while let Some(code) = stack.pop() {
+            let targets: Vec<FunctionId> = code
+                .instructions
+                .iter()
+                .filter_map(|inst| match inst {
+                    Instruction::CallFn { func_id, .. } => Some(*func_id),
+                    _ => None,
+                })
+                .collect();
+            for id in targets {
+                if !seen.insert(id) {
+                    continue;
+                }
+                let callee = match self.peek_code(id) {
+                    Some(c) => Some(c),
+                    None => self.materialize(id),
+                };
+                if let Some(c) = callee
+                    && crate::ovm::jit::whitelist_ok(&c)
+                {
+                    stack.push(c);
+                }
+            }
+        }
     }
 
     /// The registries moved into the compiler (`return_registries` moves
@@ -2048,6 +2358,7 @@ impl BytecodeVm {
         std::mem::swap(&mut self.compiler.unit_variant_names, &mut self.unit_variant_names);
         std::mem::swap(&mut self.compiler.type_aliases, &mut self.type_aliases);
         std::mem::swap(&mut self.compiler.bridged_callees, &mut self.bridged_callees);
+        std::mem::swap(&mut self.compiler.refused_names, &mut self.refused_names);
     }
 
     fn return_registries(&mut self) {
@@ -2213,12 +2524,18 @@ impl BytecodeVm {
         match self.bytecode_hot.get(idx).and_then(|slot| slot.as_ref()) {
             Some(b) => Ok(b.clone()),
             None => {
-                let fetched = self
+                let cached = self
                     .bytecode_cache
                     .read()
                     .ok()
-                    .and_then(|cache| cache.get(&func_id).cloned())
-                    .ok_or(BytecodeError::FunctionNotFound(func_id))?;
+                    .and_then(|cache| cache.get(&func_id).cloned());
+                // an owed callee: its first call compiles it
+                let fetched = match cached {
+                    Some(b) => b,
+                    None => self
+                        .materialize(func_id)
+                        .ok_or(BytecodeError::FunctionNotFound(func_id))?,
+                };
                 self.mirror_hot(idx, &fetched);
                 Ok(fetched)
             }
@@ -2296,8 +2613,18 @@ impl BytecodeVm {
         func_id: FunctionId,
         args: &[OvmValue],
     ) -> Result<OvmValue, BytecodeError> {
-        // Fetch bytecode: index the lock-free mirror first, shared cache on miss
-        let bytecode = self.get_bytecode(func_id)?;
+        // Fetch bytecode: index the lock-free mirror first, shared cache on
+        // miss (an owed callee compiles here; one refused runs through
+        // its value)
+        let bytecode = match self.get_bytecode(func_id) {
+            Ok(b) => b,
+            Err(e) => {
+                return match self.call_refused(func_id, args) {
+                    Some(r) => r,
+                    None => Err(e),
+                };
+            }
+        };
 
         if args.len() != bytecode.param_count {
             // Word-for-word the interpreter's messages: a missing argument
@@ -2372,6 +2699,7 @@ impl BytecodeVm {
         // deopted) — the bytecode path below is the unchanged fallback.
         #[cfg(feature = "native")]
         if self.jit.has(func_id) {
+            self.owe_nothing_native(func_id, &bytecode);
             // The JIT spends this as frames *beyond* its entry frame, so
             // the entry itself is charged here — without the +1 a
             // recursion one past the cap completes instead of erroring.
@@ -2532,7 +2860,15 @@ impl BytecodeVm {
         func_id: FunctionId,
         args: &[OvmValue],
     ) -> Result<Result<Arc<CompiledBytecode>, OvmValue>, BytecodeError> {
-        let bytecode = self.get_bytecode(func_id)?;
+        let bytecode = match self.get_bytecode(func_id) {
+            Ok(b) => b,
+            Err(e) => {
+                return match self.call_refused(func_id, args) {
+                    Some(r) => r.map(Err),
+                    None => Err(e),
+                };
+            }
+        };
         if args.len() != bytecode.param_count {
             return Err(BytecodeError::RuntimeError(
                 if args.len() < bytecode.param_count {
@@ -2593,6 +2929,7 @@ impl BytecodeVm {
         }
         #[cfg(feature = "native")]
         if self.jit.has(func_id) {
+            self.owe_nothing_native(func_id, &bytecode);
             // The JIT spends this as frames *beyond* its entry frame, so
             // the entry itself is charged here — without the +1 a
             // recursion one past the cap completes instead of erroring.
@@ -3073,6 +3410,7 @@ impl BytecodeVm {
             .saturating_sub(self.call_depth)
             .min(JIT_NATIVE_DEPTH_BUDGET);
         let mut shapes = std::collections::HashMap::new();
+        self.owe_nothing_native(region.region_id, &region.synth);
         if self.jit.is_pending(region.region_id) {
             for reg in &region.live_in {
                 let Ok(v) = self.execution_state.register_ref(*reg) else {
@@ -3222,16 +3560,23 @@ impl BytecodeVm {
         let idx = func_id.index();
         let bytecode = match self.bytecode_hot.get(idx).and_then(|slot| slot.as_ref()) {
             Some(b) => b.clone(),
-            None => {
-                let fetched = self
-                    .bytecode_cache
-                    .read()
-                    .ok()
-                    .and_then(|cache| cache.get(&func_id).cloned())
-                    .ok_or_else(|| BytecodeError::FunctionNotFound(func_id))?;
-                self.mirror_hot(idx, &fetched);
-                fetched
-            }
+            None => match self.get_bytecode(func_id) {
+                Ok(b) => b,
+                Err(e) => {
+                    // an owed callee whose compile was refused: through
+                    // its value, as a call compiled around it goes
+                    if self.lazy_born.contains_key(&func_id) {
+                        let mut args = Vec::with_capacity(arg_regs.len());
+                        for reg in arg_regs {
+                            args.push(self.execution_state.get_register(*reg)?);
+                        }
+                        if let Some(r) = self.call_refused(func_id, &args) {
+                            return r;
+                        }
+                    }
+                    return Err(e);
+                }
+            },
         };
 
         if arg_regs.len() != bytecode.param_count {
@@ -3289,6 +3634,7 @@ impl BytecodeVm {
         // the JIT body. None → the unchanged bytecode path below.
         #[cfg(feature = "native")]
         if self.jit.has(func_id) && arg_regs.len() <= 16 {
+            self.owe_nothing_native(func_id, &bytecode);
             // Same cap gate as execute/execute_prologue: never attempt
             // native for a frame the depth check would refuse.
             if self.call_depth >= self.max_call_depth {
@@ -7294,6 +7640,7 @@ impl BytecodeVm {
                     && self.jit.has(func_id)
                     && let Ok(bytecode) = self.get_bytecode(func_id)
                 {
+                    self.owe_nothing_native(func_id, &bytecode);
                     use crate::ovm::jit::Kind as JitKind;
                     let remaining = self
                         .max_call_depth
@@ -9223,6 +9570,9 @@ impl BytecodeCompiler {
             pending_lambdas: Vec::new(),
             unresolved: Vec::new(),
             canonical_files: HashMap::new(),
+            lazy_callees: false,
+            lazy_new: Vec::new(),
+            refused_names: std::collections::HashSet::new(),
         }
     }
 
@@ -9259,6 +9609,49 @@ impl BytecodeCompiler {
             .get(name)
             .cloned()
             .or_else(|| self.enclosing_run.get(name))
+    }
+
+    /// What a called name is, past the registry and the builtins: the
+    /// closure, the run, the module's finished scope, and a known user
+    /// function (unless the name is ambiguous).
+    fn callee_in_scope(&self, name: &str) -> Option<Value> {
+        self.lexical(name)
+            .or_else(|| self.module_scope.as_ref().and_then(|m| m.get(name).cloned()))
+            .or_else(|| {
+                (!self.ambiguous_names.contains(name))
+                    .then(|| self.known_function_values.get(name))
+                    .flatten()
+                    .map(|f| Value::Function(f.clone()))
+            })
+    }
+
+    /// Is a call to `name` one the eager route would report unresolved —
+    /// a user function with no id yet, that the tier would compile by
+    /// its name and call directly — and may it compile at its first call
+    /// instead? Exactly the eager route's condition (the registry, a
+    /// builtin, an enum constructor, the closure's own binding all come
+    /// first), less what the tier already refused or will not resolve
+    /// by name (bounded type parameters).
+    fn lazy_callee(&self, name: &str) -> bool {
+        if !self.lazy_callees
+            || self.function_registry.contains_key(name)
+            || self.builtin_names.contains(name)
+            || self.ambiguous_names.contains(name)
+            || self.bridged_callees.contains(name)
+            || self.refused_names.contains(name)
+        {
+            return false;
+        }
+        let Some(known) = self.known_function_values.get(name) else {
+            return false;
+        };
+        if !known.param_bounds.is_empty() {
+            return false;
+        }
+        matches!(
+            self.callee_in_scope(name),
+            Some(Value::Function(ref f)) if f.name.as_deref() == Some(name)
+        )
     }
 
     /// True when the static manifest fully grants `builtin` for this
@@ -10078,6 +10471,16 @@ impl BytecodeCompiler {
                     Some(_) => true,
                     None => false,
                 };
+                // A user function not compiled yet: given an id now and
+                // compiled at its first call (`lazy_callees`), where the
+                // eager route below would report it unresolved, have the
+                // tier compile it (and everything it calls) first, and
+                // compile this function again to call that id.
+                if !closure_disagrees && self.lazy_callee(&function_name) {
+                    let func_id = FunctionId::new();
+                    self.function_registry.insert(function_name.clone(), func_id);
+                    self.lazy_new.push((function_name.clone(), func_id));
+                }
                 if !closure_disagrees
                     && let Some(&func_id) = self.function_registry.get(&function_name)
                 {
@@ -10183,22 +10586,7 @@ impl BytecodeCompiler {
                 // helper declared below its caller is absent from the
                 // closure (a snapshot of the declaration's moment) and
                 // present in the module.
-                let in_scope = self
-                    .enclosing_closure
-                    .get(&function_name)
-                    .cloned()
-                    .or_else(|| self.enclosing_run.get(&function_name))
-                    .or_else(|| {
-                        self.module_scope
-                            .as_ref()
-                            .and_then(|m| m.get(&function_name).cloned())
-                    })
-                    .or_else(|| {
-                        (!self.ambiguous_names.contains(&function_name))
-                            .then(|| self.known_function_values.get(&function_name))
-                            .flatten()
-                            .map(|f| Value::Function(f.clone()))
-                    });
+                let in_scope = self.callee_in_scope(&function_name);
                 match in_scope.as_ref() {
                     // A same-named function the registry could still learn
                     // by name: report it unresolved so the tier compiles it

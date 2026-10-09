@@ -268,6 +268,11 @@ impl BytecodeTier {
             .map(|(name, _)| name.clone())
             .collect();
         names.sort();
+        // Every verdict now: what a function calls compiles with it, as
+        // before callees compiled at their first call.
+        self.sync_lazy();
+        let lazy = self.vm.lazy_callees();
+        self.vm.set_lazy_callees(false);
         for name in &names {
             if self.compiled.contains_key(name)
                 || self.rejected.contains(name)
@@ -279,6 +284,9 @@ impl BytecodeTier {
                 let _ = self.compile(name, &func);
             }
         }
+        self.vm.compile_owed_now();
+        self.vm.set_lazy_callees(lazy);
+        self.sync_lazy();
         self.rejections()
             .into_iter()
             .filter(|(name, _)| match (file, self.known_functions.get(name)) {
@@ -375,7 +383,14 @@ impl BytecodeTier {
             // "Promoted" = named functions compiled to the tier, whichever
             // channel compiled them — direct promotion or a lambda's
             // dependency resolution.
-            promoted: self.stats.promoted + self.vm.hof_promotions(),
+            promoted: self.stats.promoted
+                + self.vm.hof_promotions()
+                + self
+                    .vm
+                    .lazy_events()
+                    .iter()
+                    .filter(|e| matches!(e, crate::ovm::bytecode::LazyEvent::Compiled { .. }))
+                    .count() as u32,
             ..self.stats
         }
     }
@@ -686,6 +701,9 @@ impl BytecodeTier {
 
     /// Try to execute `func(args)` on the bytecode VM.
     pub fn try_call(&mut self, func: &Function, args: &mut [Value]) -> TierOutcome {
+        if self.vm.has_lazy_events() {
+            self.sync_lazy();
+        }
         if std::env::var_os("OLANG_COLLECTIONS_ON_INTERP").is_some()
             && let Some(def_file) = func.def_file.as_deref()
             && Self::INTERPRETER_RESIDENT.contains(&def_file)
@@ -805,6 +823,9 @@ impl BytecodeTier {
         )));
         self.vm.clear_error_trace();
         let out = self.vm.native_hof(name, &args);
+        if self.vm.has_lazy_events() {
+            self.sync_lazy();
+        }
         if std::env::var_os("OLANG_DEBUG_HOF").is_some() {
             eprintln!(
                 "[hof] tier {} n={} -> {}",
@@ -860,6 +881,9 @@ impl BytecodeTier {
         )));
         self.vm.clear_error_trace();
         let out = self.vm.native_hof(name, &args);
+        if self.vm.has_lazy_events() {
+            self.sync_lazy();
+        }
         if std::env::var_os("OLANG_DEBUG_HOF").is_some() {
             eprintln!(
                 "[hof] tier {} over {}..{}{} -> {}",
@@ -938,7 +962,11 @@ impl BytecodeTier {
 
         self.stats.bytecode_calls += 1;
         self.vm.clear_error_trace();
-        match self.vm.execute_taking(func_id, &mut ovm_args) {
+        let executed = self.vm.execute_taking(func_id, &mut ovm_args);
+        if self.vm.has_lazy_events() {
+            self.sync_lazy();
+        }
+        match executed {
             Ok(value) => match value.into_ast() {
                 Ok(ast) => TierOutcome::Ran(Ok(ast)),
                 // A result we can't convert would be observable as a wrong
@@ -976,6 +1004,43 @@ impl BytecodeTier {
                     .unwrap_or(message);
                 self.last_error_trace = self.vm.take_error_trace();
                 TierOutcome::Ran(Err(message))
+            }
+        }
+    }
+
+    /// Fold what the VM decided at callees' first calls into the tier's
+    /// books: a callee compiled is promoted (and found by name when the
+    /// interpreter calls it), one refused is rejected with its reason.
+    fn sync_lazy(&mut self) {
+        for event in self.vm.take_lazy_events() {
+            match event {
+                crate::ovm::bytecode::LazyEvent::Compiled { name, id, body } => {
+                    if self.ambiguous.contains(&name) {
+                        continue;
+                    }
+                    self.compiled.entry(name.clone()).or_insert((id, body));
+                    self.stats.promoted += 1;
+                    if self.verbose {
+                        eprintln!("[ovm] promoted '{}' to the bytecode tier (at its first call)", name);
+                    }
+                }
+                crate::ovm::bytecode::LazyEvent::Refused {
+                    name,
+                    def_file,
+                    reason,
+                } => {
+                    if self.verbose {
+                        eprintln!("[ovm] '{}' stays interpreted: {}", name, reason);
+                    }
+                    crate::tier_stats::note_refused(&name, def_file.as_deref(), &reason);
+                    if self.ambiguous.contains(&name) || self.compiled.contains_key(&name) {
+                        continue;
+                    }
+                    if self.rejected.insert(name.clone()) {
+                        self.stats.rejected += 1;
+                    }
+                    self.rejected_reasons.insert(name, reason);
+                }
             }
         }
     }
@@ -1136,6 +1201,11 @@ impl BytecodeTier {
         // tier is offered the call), so the body compiles like any
         // other: by the time bytecode runs, every argument is present.
 
+        // A callee given an id at a caller's compile and not compiled
+        // yet compiles here under that id: the callers' calls reach it.
+        if let Some(func_id) = self.vm.claim_owed(name) {
+            return Some(func_id);
+        }
         let func_id = FunctionId::new();
         self.vm.register_function(name.to_string(), func_id);
         Some(func_id)
@@ -1174,6 +1244,7 @@ impl BytecodeTier {
             return;
         }
         let reason: String = reason.into();
+        self.vm.note_refused(name);
         crate::tier_stats::note_refused(
             name,
             self.known_functions

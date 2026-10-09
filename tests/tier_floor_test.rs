@@ -23,6 +23,7 @@ fn olang() -> &'static str {
 struct TierReport {
     aggregate: HashMap<String, u64>,
     per_fn: HashMap<String, u64>,
+    stdout: String,
 }
 
 /// Run a script and parse the `tier-stats:` / `tier-fn:` lines from
@@ -74,7 +75,11 @@ fn run(source: &str) -> TierReport {
         !aggregate.is_empty(),
         "no tier-stats line — the report format changed or the tier is off:\n{stderr}"
     );
-    TierReport { aggregate, per_fn }
+    TierReport {
+        aggregate,
+        per_fn,
+        stdout: String::from_utf8_lossy(&out.stdout).to_string(),
+    }
 }
 
 #[test]
@@ -346,5 +351,80 @@ fn a_function_value_compiles_around_what_it_cannot() {
     assert!(
         instructions >= 6_000,
         "the lambda must run on the VM, not the tree-walker (calibrated 13,800), got {instructions}"
+    );
+}
+
+#[test]
+fn a_callee_compiles_at_its_first_call_not_with_its_caller() {
+    // `never` is reachable from `pick` and never called. Compiling a
+    // caller once compiled everything it could reach first (olang
+    // Studio's first frame compiled ~1,800 functions to run a few
+    // hundred); now a callee compiles when it is first called. `pick`
+    // prints, so it is no native candidate (whose group would compile
+    // its callees ahead, for the JIT's planner).
+    let r = run("fn often(x) = x + 1\n\
+         fn never(x) = x * 2\n\
+         fn pick(b, x) = { if x < 0 => println(\"below\")\n if b => often(x) else => never(x) }\n\
+         let mut s = 0\n\
+         for i in range(0, 100) { s = s + pick(true, i) }\n\
+         println(s)\n");
+    assert_eq!(r.stdout.trim(), "5050");
+    let promoted = r.aggregate["promoted"];
+    assert_eq!(
+        promoted, 2,
+        "pick and often compile, never does not (it is never called), got promoted={promoted}"
+    );
+}
+
+#[test]
+fn a_callee_refused_at_its_first_call_runs_through_its_value() {
+    // The bitwise `&` keeps `odd_bit` off the tier. Its caller compiled
+    // with a direct call to it, owed; the first call's compile refuses,
+    // and that call and every later one run through the function's
+    // value (the bridge), with the same answers.
+    let r = run("fn odd_bit(x) = x & 1\n\
+         fn count_odd(xs) = {\n\
+             let mut n = 0\n\
+             for x in xs { n = n + odd_bit(x) }\n\
+             n\n\
+         }\n\
+         println(count_odd(range(0, 101)))\n\
+         println(count_odd([1, 3, 5, 6]))\n");
+    assert_eq!(r.stdout.trim(), "50\n3");
+    let rejected = r.aggregate["rejected"];
+    assert!(rejected >= 1, "odd_bit's refusal is counted, got rejected={rejected}");
+}
+
+#[test]
+fn a_native_group_compiles_its_owed_callees_before_it_specializes() {
+    // `sq` is owed when `sum_sq` compiles; the JIT plans `sum_sq`'s group
+    // at its first call and reads `sq`'s code, so the callees a native
+    // candidate reaches compile just before. Without that the group is
+    // refused and the loop runs on VM dispatch. Calibrated (the same as
+    // with every callee compiled with its caller): 200 native calls, 0
+    // VM instructions.
+    let r = run("fn sq(x) = x * x\n\
+         fn sum_sq(n) = {\n\
+             let mut a = 0\n\
+             let mut i = 0\n\
+             while i < n {\n\
+                 a = a + sq(i)\n\
+                 i = i + 1\n\
+             }\n\
+             a\n\
+         }\n\
+         let mut t = 0\n\
+         for k in range(0, 200) { t = t + sum_sq(k) }\n\
+         println(t)\n");
+    assert_eq!(r.stdout.trim(), "130683300");
+    let own = r.per_fn.get("sum_sq").copied().unwrap_or(0);
+    let instructions = r.aggregate["instructions"];
+    assert!(
+        own >= 50,
+        "sum_sq must serve native calls (calibrated 200), got {own}"
+    );
+    assert!(
+        instructions <= 100_000,
+        "its loop must not run on VM dispatch (calibrated 0 instructions), got {instructions}"
     );
 }

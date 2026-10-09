@@ -2393,6 +2393,7 @@ impl JitCache {
         if entry_kinds.len() != entry_bytecode.param_count {
             return None;
         }
+        let _boot = crate::boot_trace::Span::start(crate::boot_trace::Counter::Native);
 
         // ── plan + global inference fixpoint ──
         let mut plans: Vec<PlanFn> = vec![PlanFn::new(
