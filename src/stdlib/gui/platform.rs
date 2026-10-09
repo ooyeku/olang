@@ -45,10 +45,9 @@ pub enum Cmd {
         opts: Value,
         reply: crossbeam_channel::Sender<Result<Value, String>>,
     },
-    Menu {
-        spec: Value,
-        reply: crossbeam_channel::Sender<Result<Value, String>>,
-    },
+    /// The menu bar, read and checked on the program's thread; made here
+    /// without the program waiting.
+    Menu(MenuSpec),
     Exit(i32),
     A11y(accesskit_winit::Event),
     MenuEvent(String),
@@ -96,6 +95,7 @@ pub fn host(spawn: impl FnOnce() -> std::thread::JoinHandle<i32>) -> i32 {
     loop {
         match rx.recv() {
             Ok(MainMsg::Start(reply)) => {
+                crate::boot_trace::mark("the platform's event loop starts");
                 if let Some(code) = run_loop(reply) {
                     return code;
                 }
@@ -150,6 +150,33 @@ fn proxy() -> Result<EventLoopProxy<Cmd>, String> {
             }
         }
         std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+}
+
+/// Whether the loop, once started, makes a hidden window and lets it go
+/// (`prepare` asks; see `App::resumed`).
+static WARM_WINDOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Start the platform's loop now, without waiting for it: a program
+/// about to open its first window (Loom's `run`) asks before it computes
+/// that window's first frame, so the application's start on the main
+/// thread (AppKit's, tens of milliseconds) runs meanwhile instead of
+/// after. Nothing when the loop is already started, has failed, or there
+/// is no olang main thread; the first window waits for the loop as
+/// before.
+pub fn prepare() {
+    let Some(main) = MAIN.get() else {
+        return;
+    };
+    WARM_WINDOW.store(true, std::sync::atomic::Ordering::Release);
+    let mut state = LOOP.lock().unwrap_or_else(|e| e.into_inner());
+    if !matches!(&*state, LoopState::Idle) {
+        return;
+    }
+    // the reply is not waited for: `proxy` sees the loop start
+    let (rtx, _rrx) = crossbeam_channel::bounded(1);
+    if main.send(MainMsg::Start(rtx)).is_ok() {
+        *state = LoopState::Starting;
     }
 }
 
@@ -506,6 +533,7 @@ impl App {
             el.create_window(attrs)
                 .map_err(|e| format!("creating the window: {e}"))?,
         );
+        crate::boot_trace::mark("a window made");
         let a11y = accesskit_winit::Adapter::with_event_loop_proxy(el, &win, self.proxy.clone());
         let scale = win.scale_factor() as f32;
         let size = win.inner_size();
@@ -525,6 +553,7 @@ impl App {
                 }
             }
         };
+        crate::boot_trace::mark("a window's renderer made");
         let logical = size.to_logical::<f32>(scale as f64);
         let mut st = WinState::new(id, false, &opts.title, logical.width, logical.height, scale);
         if let Some(c) = opts.clear {
@@ -707,6 +736,7 @@ impl App {
             },
             Renderer::Soft { surface, .. } => present_soft(surface, &dl, &pw.win),
         }
+        crate::boot_trace::frame_presented();
         // the frame: its display list made, and drawn and presented
         if trace {
             eprintln!(
@@ -891,7 +921,22 @@ fn pointer_now(_win: &Window) -> Option<(f32, f32)> {
 }
 
 impl ApplicationHandler<Cmd> for App {
-    fn resumed(&mut self, _el: &ActiveEventLoop) {}
+    fn resumed(&mut self, el: &ActiveEventLoop) {
+        // Started ahead of a window (`prepare`): AppKit's first window
+        // pays a one-time start of its own (its text input, its window
+        // server connection; ~25 ms, a second window ~5), so a hidden
+        // one is made and let go now, while the program boots — the
+        // program's own window then opens at a second window's cost.
+        if WARM_WINDOW.swap(false, std::sync::atomic::Ordering::AcqRel) {
+            let attrs = Window::default_attributes()
+                .with_inner_size(winit::dpi::LogicalSize::new(1.0, 1.0))
+                .with_visible(false);
+            if let Ok(w) = el.create_window(attrs) {
+                drop(w);
+            }
+            crate::boot_trace::mark("the platform warmed (a hidden window made and let go)");
+        }
+    }
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
         if !self.files.is_empty() {
@@ -939,7 +984,7 @@ impl ApplicationHandler<Cmd> for App {
                 Cmd::Redraw(id) => format!("redraw {id}"),
                 Cmd::Set(id, _) => format!("set {id}"),
                 Cmd::Dialog { kind, .. } => format!("dialog {kind}"),
-                Cmd::Menu { .. } => "menu".to_string(),
+                Cmd::Menu(_) => "menu".to_string(),
                 Cmd::Exit(c) => format!("exit {c}"),
                 Cmd::A11y(_) => "a11y".to_string(),
                 Cmd::MenuEvent(id) => format!("menu event {id}"),
@@ -949,6 +994,7 @@ impl ApplicationHandler<Cmd> for App {
         }
         match cmd {
             Cmd::Open { id, opts, reply } => {
+                crate::boot_trace::mark("the platform makes the window");
                 let r = self.open(el, id, opts);
                 let _ = reply.send(r);
             }
@@ -1025,8 +1071,10 @@ impl ApplicationHandler<Cmd> for App {
             Cmd::Dialog { kind, opts, reply } => {
                 let _ = reply.send(run_dialog(&kind, &opts));
             }
-            Cmd::Menu { spec, reply } => {
-                let _ = reply.send(self.set_menu(&spec));
+            Cmd::Menu(spec) => {
+                if let Err(e) = self.set_menu(spec) {
+                    eprintln!("{e}");
+                }
             }
             Cmd::MenuEvent(id) => emit(vec![event("menu", vec![("id", s(&id))])]),
             Cmd::Settings(why) => self.settings_changed(why, None),
@@ -1280,6 +1328,7 @@ impl ApplicationHandler<Cmd> for App {
 // ── requests from the program's threads ─────────────────────────────
 
 pub fn open(opts: OpenOpts) -> Result<u64, String> {
+    crate::boot_trace::mark("a window asked for (gui.open)");
     let p = proxy().map_err(|e| format!("gui.open: {e}"))?;
     let id = super::next_id();
     let (tx, rx) = crossbeam_channel::bounded(1);
@@ -1453,65 +1502,120 @@ pub fn menu(spec: &Value) -> Result<Value, String> {
         // Elsewhere the menu is drawn in the window, by Loom.
         return Ok(Value::Boolean(false));
     }
+    // Read and checked here, every error the program's; made on the main
+    // thread without waiting for it — a program's first frame is still
+    // being presented there when its menu is set, and a menu of a large
+    // program's commands takes ~10 ms to make (olang Studio's start
+    // waited for both).
+    let spec = menu_spec(spec)?;
     let p = proxy().map_err(|e| format!("gui.menu: {e}"))?;
-    let (tx, rx) = crossbeam_channel::bounded(1);
-    p.send_event(Cmd::Menu {
-        spec: spec.clone(),
-        reply: tx,
-    })
-    .map_err(|_| "gui.menu: the event loop has ended".to_string())?;
-    rx.recv()
-        .map_err(|_| "gui.menu: the event loop has ended".to_string())?
+    p.send_event(Cmd::Menu(spec))
+        .map_err(|_| "gui.menu: the event loop has ended".to_string())?;
+    Ok(Value::Boolean(true))
+}
+
+/// A menu bar as `gui.menu` reads it: menus (a title, items), an item a
+/// separator or `(id, label, enabled, keys, checked)` with the keys in
+/// the platform's spelling, already checked to parse.
+pub struct MenuSpec(Vec<(String, Vec<MenuItemSpec>)>);
+
+enum MenuItemSpec {
+    Separator,
+    Item {
+        id: String,
+        label: String,
+        enabled: bool,
+        keys: Option<String>,
+        checked: Option<bool>,
+    },
+}
+
+fn menu_spec(spec: &Value) -> Result<MenuSpec, String> {
+    let what = "gui.menu";
+    let menus = match spec {
+        Value::List(l) => l.clone(),
+        _ => return Err(format!("{what}: the spec is a list of menus")),
+    };
+    let mut out = Vec::with_capacity(menus.len());
+    for m in menus.iter() {
+        let title = get_str(m, "title", what)?.unwrap_or("").to_string();
+        let items = match get(m, "items") {
+            Some(Value::List(l)) => l.clone(),
+            _ => Arc::new(vec![]),
+        };
+        let mut its = Vec::with_capacity(items.len());
+        for it in items.iter() {
+            if matches!(it, Value::String(t) if t.as_str() == "separator") {
+                its.push(MenuItemSpec::Separator);
+                continue;
+            }
+            let id = get_str(it, "id", what)?
+                .ok_or_else(|| format!("{what}: a menu item needs an \"id\""))?
+                .to_string();
+            let label = get_str(it, "label", what)?.unwrap_or(&id).to_string();
+            let enabled = get_bool(it, "enabled", what)?.unwrap_or(true);
+            let keys = match get_str(it, "keys", what)? {
+                Some(k) => {
+                    let spelled = accel_spelling(k);
+                    #[cfg(target_os = "macos")]
+                    spelled
+                        .parse::<muda::accelerator::Accelerator>()
+                        .map_err(|e| format!("{what}: keys \"{k}\": {e}"))?;
+                    Some(spelled)
+                }
+                None => None,
+            };
+            let checked = get_bool(it, "checked", what)?;
+            its.push(MenuItemSpec::Item {
+                id,
+                label,
+                enabled,
+                keys,
+                checked,
+            });
+        }
+        out.push((title, its));
+    }
+    Ok(MenuSpec(out))
 }
 
 impl App {
     #[cfg(not(target_os = "macos"))]
-    fn set_menu(&mut self, _spec: &Value) -> Result<Value, String> {
-        Ok(Value::Boolean(false))
+    fn set_menu(&mut self, _spec: MenuSpec) -> Result<(), String> {
+        Ok(())
     }
 
     /// The macOS menu bar from a spec: a list of menus, each `#{ title,
     /// items }`, an item `#{ id, label, keys?, enabled?, checked? }` or
     /// `"separator"`. The first menu is the application menu.
     #[cfg(target_os = "macos")]
-    fn set_menu(&mut self, spec: &Value) -> Result<Value, String> {
+    fn set_menu(&mut self, spec: MenuSpec) -> Result<(), String> {
         use muda::accelerator::Accelerator;
         use muda::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
         let what = "gui.menu";
-        let menus = match spec {
-            Value::List(l) => l.clone(),
-            _ => return Err(format!("{what}: the spec is a list of menus")),
-        };
         let bar = Menu::new();
         let mut ids = HashMap::new();
-        for m in menus.iter() {
-            let title = get_str(m, "title", what)?.unwrap_or("").to_string();
+        for (title, items) in spec.0 {
             let sub = Submenu::new(&title, true);
-            let items = match get(m, "items") {
-                Some(Value::List(l)) => l.clone(),
-                _ => Arc::new(vec![]),
-            };
-            for it in items.iter() {
-                if matches!(it, Value::String(t) if t.as_str() == "separator") {
-                    sub.append(&PredefinedMenuItem::separator())
-                        .map_err(|e| format!("{what}: {e}"))?;
-                    continue;
-                }
-                let id = get_str(it, "id", what)?
-                    .ok_or_else(|| format!("{what}: a menu item needs an \"id\""))?
-                    .to_string();
-                let label = get_str(it, "label", what)?.unwrap_or(&id).to_string();
-                let enabled = get_bool(it, "enabled", what)?.unwrap_or(true);
-                let accel: Option<Accelerator> = match get_str(it, "keys", what)? {
-                    Some(k) => Some(
-                        accel_of(k)
-                            .parse()
-                            .map_err(|e| format!("{what}: keys \"{k}\": {e}"))?,
-                    ),
-                    None => None,
+            for it in items {
+                let (id, label, enabled, keys, checked) = match it {
+                    MenuItemSpec::Separator => {
+                        sub.append(&PredefinedMenuItem::separator())
+                            .map_err(|e| format!("{what}: {e}"))?;
+                        continue;
+                    }
+                    MenuItemSpec::Item {
+                        id,
+                        label,
+                        enabled,
+                        keys,
+                        checked,
+                    } => (id, label, enabled, keys, checked),
                 };
+                // checked to parse when the spec was read
+                let accel: Option<Accelerator> = keys.and_then(|k| k.parse().ok());
                 let mid = muda::MenuId::new(&id);
-                match get_bool(it, "checked", what)? {
+                match checked {
                     Some(c) => {
                         let item = CheckMenuItem::with_id(mid.clone(), &label, enabled, c, accel);
                         sub.append(&item).map_err(|e| format!("{what}: {e}"))?;
@@ -1531,13 +1635,12 @@ impl App {
             let _ = proxy.send_event(Cmd::MenuEvent(e.id.0.clone()));
         }));
         self.menu = Some((bar, ids));
-        Ok(Value::Boolean(true))
+        Ok(())
     }
 }
 
 /// Loom's chord spelling as muda's: `mod+shift+p` → `CmdOrCtrl+Shift+P`.
-#[cfg(target_os = "macos")]
-fn accel_of(keys: &str) -> String {
+fn accel_spelling(keys: &str) -> String {
     keys.split('+')
         .map(|p| match p {
             "mod" => "CmdOrCtrl".to_string(),

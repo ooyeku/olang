@@ -257,9 +257,51 @@ pub fn remember_face(font: &parley::FontData) -> FaceKey {
 
 static SYSTEM: OnceLock<Mutex<TextSystem>> = OnceLock::new();
 
-/// The process's text system. Created on first use: discovering the
-/// system's fonts takes tens of milliseconds, paid once.
+/// Fonts being registered on a thread of their own
+/// (`gui.fonts(…, #{ "background": true })`): every use of the text
+/// system waits for them, so no text is ever shaped without them.
+static FONTS_PENDING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static FONTS_GATE: (Mutex<()>, std::sync::Condvar) = (Mutex::new(()), std::sync::Condvar::new());
+
+/// One background registration under way; done when dropped (a panic in
+/// it included).
+pub struct FontsPending(());
+
+impl FontsPending {
+    pub fn begin() -> FontsPending {
+        FONTS_PENDING.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        FontsPending(())
+    }
+}
+
+impl Drop for FontsPending {
+    fn drop(&mut self) {
+        let _g = FONTS_GATE.0.lock().unwrap_or_else(|e| e.into_inner());
+        FONTS_PENDING.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        FONTS_GATE.1.notify_all();
+    }
+}
+
+fn wait_for_fonts() {
+    let mut g = FONTS_GATE.0.lock().unwrap_or_else(|e| e.into_inner());
+    while FONTS_PENDING.load(std::sync::atomic::Ordering::Acquire) > 0 {
+        g = FONTS_GATE.1.wait(g).unwrap_or_else(|e| e.into_inner());
+    }
+}
+
+/// The process's text system, once the fonts being registered are in.
+/// Created on first use: discovering the system's fonts takes tens of
+/// milliseconds, paid once (on the registering thread, when fonts are
+/// registered in the background).
 pub fn system() -> &'static Mutex<TextSystem> {
+    if FONTS_PENDING.load(std::sync::atomic::Ordering::Acquire) > 0 {
+        wait_for_fonts();
+    }
+    system_now()
+}
+
+/// The text system without waiting: the background registration's own.
+pub fn system_now() -> &'static Mutex<TextSystem> {
     SYSTEM.get_or_init(|| {
         Mutex::new(TextSystem {
             font_cx: FontContext::new(),

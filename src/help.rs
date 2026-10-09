@@ -1994,11 +1994,11 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
         );
         self.doc_ex(
             "gui.fonts",
-            "gui.fonts(sources)",
+            "gui.fonts(sources, opts?)",
             "Int",
             "gui",
-            "Register fonts (paths or Bytes; TTF, OTF, TTC, optionally brotli-compressed) ahead of the system's; answers the faces added.",
-            &[r##"gui.fonts(["fonts/Inter.ttf"])"##],
+            "Register fonts (paths or Bytes; TTF, OTF, TTC, optionally brotli-compressed) ahead of the system's; answers the faces added. With #{ \"background\": true } they are decompressed and registered on a thread of their own while the program goes on (text shaped or measured meanwhile waits for them), and it answers the number of sources.",
+            &[r##"gui.fonts(["fonts/Inter.ttf"])"##, r##"gui.fonts(fonts, #{ "background": true })"##],
         );
         self.doc_ex(
             "gui.clipboard_read",
@@ -2047,6 +2047,14 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "gui",
             "The macOS menu bar from [#{ title, items: [#{ id, label, keys?, enabled?, checked? } or \"separator\"] }]; a chosen item sends a menu event with its id. Elsewhere answers false.",
             &[r##"gui.menu([#{ "title": "File", "items": [#{ "id": "open", "label": "Open…", "keys": "mod+o" }] }])"##],
+        );
+        self.doc_ex(
+            "gui.prepare",
+            "gui.prepare()",
+            "Unit",
+            "gui",
+            "Start the platform's event loop now without waiting for it, so the application's start overlaps the program's work before its first window opens (Loom's run asks).",
+            &["gui.prepare()"],
         );
         self.doc_ex(
             "gui.wake",

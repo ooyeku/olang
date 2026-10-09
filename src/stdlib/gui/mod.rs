@@ -66,7 +66,7 @@ const FUNCTIONS: &[(&str, usize)] = &[
     ("read", 3),
     ("input", 2),
     ("set", 2),
-    ("fonts", 1),
+    ("fonts", 2),
     ("clipboard_read", 0),
     ("clipboard_write", 1),
     ("clipboard_image", 0),
@@ -77,6 +77,7 @@ const FUNCTIONS: &[(&str, usize)] = &[
     ("context", 0),
     ("platform", 0),
     ("wake", 0),
+    ("prepare", 0),
     ("flatten", 4),
     ("flat_emit", 5),
     ("flat_join", 4),
@@ -126,6 +127,11 @@ pub fn call_gui_function(name: &str, args: Vec<Value>) -> DynRes {
         "wake" => {
             arity("gui.wake", &args, 0, 0)?;
             emit(vec![event("wake", vec![])]);
+            Ok(Value::Unit)
+        }
+        "prepare" => {
+            arity("gui.prepare", &args, 0, 0)?;
+            platform::prepare();
             Ok(Value::Unit)
         }
         "context" => {
@@ -909,11 +915,19 @@ fn gui_set(args: Vec<Value>) -> Res<Value> {
 }
 
 fn gui_fonts(args: Vec<Value>) -> Res<Value> {
-    arity("gui.fonts", &args, 1, 1)?;
+    arity("gui.fonts", &args, 1, 2)?;
     let items: Vec<Value> = match &args[0] {
         Value::List(l) => l.as_ref().clone(),
         other => vec![other.clone()],
     };
+    let background = match args.get(1) {
+        None | Some(Value::Unit) => false,
+        Some(Value::Map(m)) => matches!(m.get("background"), Some(Value::Boolean(true))),
+        Some(_) => return Err("gui.fonts: the options are a map (#{ \"background\": true })".into()),
+    };
+    if background {
+        return fonts_in_background(items);
+    }
     let mut ts = text::system().lock().map_err(|_| "gui: text poisoned")?;
     let mut total = 0;
     for item in items {
@@ -932,6 +946,63 @@ fn gui_fonts(args: Vec<Value>) -> Res<Value> {
         total += ts.register(bytes);
     }
     Ok(Value::Integer(total as i64))
+}
+
+/// `gui.fonts(sources, #{ "background": true })`: the sources are read
+/// here (a path that cannot be read is this call's error), then
+/// decompressed and registered on a thread of their own — the text
+/// system's first use (discovering the system's fonts) with them —
+/// while the program goes on; whatever shapes or measures text first
+/// waits until they are in. Answers the number of sources handed over.
+/// Loom's bundled fonts were most of a window's first 60 ms this way
+/// (brotli, 15 MB of faces, and the system's fonts found).
+fn fonts_in_background(items: Vec<Value>) -> Res<Value> {
+    let mut sources: Vec<Vec<u8>> = Vec::with_capacity(items.len());
+    for item in &items {
+        let bytes = match item {
+            Value::String(path) => std::fs::read(path.as_str())
+                .map_err(|e| format!("gui.fonts: reading {path}: {e}"))?,
+            other => crate::stdlib::bytes::bytes_of(other)
+                .map_err(|_| "gui.fonts: each font is a path (String) or Bytes".to_string())?
+                .to_vec(),
+        };
+        if bytes.starts_with(b"wOF2") {
+            return Err("gui.fonts: WOFF2 is not read; give a TTF, OTF, or TTC".into());
+        }
+        sources.push(bytes);
+    }
+    let n = sources.len();
+    let pending = text::FontsPending::begin();
+    std::thread::Builder::new()
+        .name("gui-fonts".to_string())
+        .spawn(move || {
+            let _pending = pending;
+            // each decompressed on a thread of its own (the emoji face
+            // alone is most of the work); the text system made meanwhile
+            let fonts: Vec<Res<Vec<u8>>> = std::thread::scope(|scope| {
+                let jobs: Vec<_> = sources
+                    .into_iter()
+                    .map(|b| scope.spawn(move || maybe_brotli(b)))
+                    .collect();
+                let _ = text::system_now();
+                jobs.into_iter()
+                    .map(|j| j.join().unwrap_or_else(|_| Err("gui.fonts: a font's reader stopped".into())))
+                    .collect()
+            });
+            let Ok(mut ts) = text::system_now().lock() else {
+                return;
+            };
+            for font in fonts {
+                match font {
+                    Ok(bytes) => {
+                        ts.register(bytes);
+                    }
+                    Err(e) => eprintln!("{e}"),
+                }
+            }
+        })
+        .map_err(|e| format!("gui.fonts: starting the thread: {e}"))?;
+    Ok(Value::Integer(n as i64))
 }
 
 /// Fonts may arrive brotli-compressed (Loom embeds them so).
