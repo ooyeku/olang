@@ -1029,12 +1029,22 @@ impl BytecodeTier {
                     }
                     return Some(func_id);
                 }
-                Err(BytecodeError::UnresolvedCallee(callee)) => {
-                    // Resolve the dependency, then retry this function
-                    if self.verbose {
-                        eprintln!("[ovm] '{}' waits on callee '{}'", name, callee);
+                Err(BytecodeError::UnresolvedCallee(first)) => {
+                    // Resolve every callee the attempt met (it went on past
+                    // each), then retry this function once for them all
+                    let mut callees = vec![first];
+                    for c in self.vm.take_unresolved() {
+                        if !callees.contains(&c) {
+                            callees.push(c);
+                        }
                     }
-                    if !self.compile_dependency(&callee) {
+                    for callee in callees {
+                        if self.verbose {
+                            eprintln!("[ovm] '{}' waits on callee '{}'", name, callee);
+                        }
+                        if self.compile_dependency(&callee) {
+                            continue;
+                        }
                         // The callee stays interpreted; this function need
                         // not. A function the tier knows by value is called
                         // through the bridge from here on, and the compile

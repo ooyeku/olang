@@ -385,6 +385,14 @@ pub struct BytecodeCompiler {
     /// them fails, the whole enclosing compilation fails — a MakeClosure
     /// must never reference an id with no bytecode behind it.
     pending_lambdas: Vec<PendingLambda>,
+    /// User functions this compile called before the tier had them, in
+    /// the order met: the compile goes on past each (a stand-in call
+    /// through its value) so one attempt finds them all, and fails at
+    /// its end naming the first (see `BytecodeVm::take_unresolved`).
+    pub(crate) unresolved: Vec<String>,
+    /// Each defining file canonicalized once (the capability table
+    /// attenuates by it): a compile asked the file system every time.
+    canonical_files: HashMap<Arc<str>, std::path::PathBuf>,
 }
 
 /// A deferred lambda compile: its id, the body as a standalone declaration
@@ -2014,19 +2022,72 @@ impl BytecodeVm {
         run: crate::ast::RunRef,
     ) -> Result<(), BytecodeError> {
         let start_time = crate::clock::Instant::now();
+        // The registries the compiler validates callees against are lent
+        // to it for this compile — moved in and moved back, never copied.
+        // Copying them on every attempt (a function registry, every known
+        // function value, every builtin's name: thousands of keys in a
+        // program on a UI framework) was most of a large program's first
+        // frame, paid again for each callee a dependency resolution
+        // retried around.
+        self.lend_registries();
+        self.compiler.unresolved.clear();
+        let result = self.compile_function_with_closure_lent(func_id, func, closure, param_checks, return_check, def_file, run);
+        self.return_registries();
+        self.stats.compilation_time += start_time.elapsed();
+        result
+    }
 
-        // Set up registries so the compiler can validate callees
-        self.compiler.function_registry = self.function_registry.clone();
-        self.compiler.builtin_names = self.builtin_names.clone();
-        self.compiler.struct_defs = self.struct_defs.clone();
-        self.compiler.struct_field_checks = self.struct_field_checks.clone();
+    /// The registries moved into the compiler (`return_registries` moves
+    /// them back; nothing reads the VM's copies while a compile runs).
+    fn lend_registries(&mut self) {
+        std::mem::swap(&mut self.compiler.function_registry, &mut self.function_registry);
+        std::mem::swap(&mut self.compiler.builtin_names, &mut self.builtin_names);
+        std::mem::swap(&mut self.compiler.struct_defs, &mut self.struct_defs);
+        std::mem::swap(&mut self.compiler.struct_field_checks, &mut self.struct_field_checks);
+        std::mem::swap(&mut self.compiler.known_function_values, &mut self.known_function_values);
+        std::mem::swap(&mut self.compiler.unit_variant_names, &mut self.unit_variant_names);
+        std::mem::swap(&mut self.compiler.type_aliases, &mut self.type_aliases);
+        std::mem::swap(&mut self.compiler.bridged_callees, &mut self.bridged_callees);
+    }
+
+    fn return_registries(&mut self) {
+        // the same swaps: each registry back where it lives
+        self.lend_registries();
+    }
+
+    /// The callees the last compile found unregistered, in the order it
+    /// met them (the first is the one its error names): a dependency
+    /// resolution compiles them all before it retries, instead of one per
+    /// attempt.
+    pub fn take_unresolved(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.compiler.unresolved)
+    }
+
+    /// `first` (the callee an error named) and every other the attempt
+    /// met, once each, in order.
+    fn unresolved_with(&mut self, first: String) -> Vec<String> {
+        let mut all = vec![first];
+        for c in self.take_unresolved() {
+            if !all.contains(&c) {
+                all.push(c);
+            }
+        }
+        all
+    }
+
+    fn compile_function_with_closure_lent(
+        &mut self,
+        func_id: FunctionId,
+        func: &FunctionDecl,
+        closure: std::sync::Arc<im::HashMap<String, Value>>,
+        param_checks: std::sync::Arc<[Option<crate::ast::FieldTypeCheck>]>,
+        return_check: Option<crate::ast::FieldTypeCheck>,
+        def_file: Option<Arc<str>>,
+        run: crate::ast::RunRef,
+    ) -> Result<(), BytecodeError> {
         self.compiler.pending_param_checks = param_checks;
         self.compiler.pending_return_check = return_check;
         self.compiler.pending_def_file = def_file;
-        self.compiler.known_function_values = self.known_function_values.clone();
-        self.compiler.unit_variant_names = self.unit_variant_names.clone();
-        self.compiler.type_aliases = self.type_aliases.clone();
-        self.compiler.bridged_callees = self.bridged_callees.clone();
         self.compiler.module_scope = self
             .compiler
             .pending_def_file
@@ -2080,6 +2141,11 @@ impl BytecodeVm {
                 let compiled = self.compiler.compile_function(lambda_id, &decl);
                 self.compiler.self_call = None;
                 let lambda_bytecode = Arc::new(compiled?);
+                // callees still unregistered: the lambda's code is only
+                // the search for them, and is dropped with its function's
+                if !self.compiler.unresolved.is_empty() {
+                    continue;
+                }
                 let idx = lambda_id.index();
                 self.mirror_hot(idx, &lambda_bytecode);
                 // A closure's compile defers this to `hof_function_id`.
@@ -2096,6 +2162,12 @@ impl BytecodeVm {
             }
         }
 
+        // the callees the compile met unregistered, every one: the caller
+        // resolves them all and compiles again (this code had stand-ins)
+        if let Some(first) = self.compiler.unresolved.first().cloned() {
+            return Err(BytecodeError::UnresolvedCallee(first));
+        }
+
         let bytecode = Arc::new(bytecode);
         let idx = func_id.index();
         self.mirror_hot(idx, &bytecode);
@@ -2109,8 +2181,6 @@ impl BytecodeVm {
         if let Some(tracked) = self.hof_track.as_mut() {
             tracked.push(func_id);
         }
-
-        self.stats.compilation_time += start_time.elapsed();
         Ok(())
     }
 
@@ -6362,22 +6432,31 @@ impl BytecodeVm {
                     result = Some(func_id);
                     break;
                 }
-                Err(BytecodeError::UnresolvedCallee(callee)) => {
-                    // Each step resolves a distinct callee; one asked for
-                    // twice was not resolved by the first answer.
-                    if !asked.insert(callee.clone()) {
-                        break;
-                    }
-                    let tracked = self.hof_track.take();
-                    let compiled = self.compile_hof_dependency(&callee, 0);
-                    self.hof_track = tracked;
-                    if !compiled && !self.hof_bridge_callee(func, &callee) {
-                        if std::env::var_os("OLANG_DEBUG_HOF").is_some() {
-                            eprintln!(
-                                "[hof] '{}' declined: callee '{}' does not compile",
-                                decl.name, callee
-                            );
+                Err(BytecodeError::UnresolvedCallee(first)) => {
+                    // Every callee the attempt met, each resolved once; one
+                    // asked for twice was not resolved by the first answer.
+                    let callees = self.unresolved_with(first);
+                    let mut declined = false;
+                    for callee in callees {
+                        if !asked.insert(callee.clone()) {
+                            declined = true;
+                            break;
                         }
+                        let tracked = self.hof_track.take();
+                        let compiled = self.compile_hof_dependency(&callee, 0);
+                        self.hof_track = tracked;
+                        if !compiled && !self.hof_bridge_callee(func, &callee) {
+                            if std::env::var_os("OLANG_DEBUG_HOF").is_some() {
+                                eprintln!(
+                                    "[hof] '{}' declined: callee '{}' does not compile",
+                                    decl.name, callee
+                                );
+                            }
+                            declined = true;
+                            break;
+                        }
+                    }
+                    if declined {
                         break;
                     }
                 }
@@ -6948,7 +7027,7 @@ impl BytecodeVm {
             }
             return false;
         }
-        if self.compiler.function_registry.contains_key(name) {
+        if self.function_registry.contains_key(name) {
             return true;
         }
         if self.ambiguous_function_names.contains(name) {
@@ -6992,19 +7071,28 @@ impl BytecodeVm {
                     self.hof_promotions += 1;
                     return true;
                 }
-                Err(BytecodeError::UnresolvedCallee(inner)) => {
-                    if !asked.insert(inner.clone()) {
-                        break;
-                    }
-                    if !self.compile_hof_dependency(&inner, depth + 1)
-                        && !self.hof_bridge_callee(&func, &inner)
-                    {
-                        if debug {
-                            eprintln!(
-                                "[hof]   dependency '{}' (depth {}) declined: callee '{}'",
-                                name, depth, inner
-                            );
+                Err(BytecodeError::UnresolvedCallee(first)) => {
+                    let callees = self.unresolved_with(first);
+                    let mut declined = false;
+                    for inner in callees {
+                        if !asked.insert(inner.clone()) {
+                            declined = true;
+                            break;
                         }
+                        if !self.compile_hof_dependency(&inner, depth + 1)
+                            && !self.hof_bridge_callee(&func, &inner)
+                        {
+                            if debug {
+                                eprintln!(
+                                    "[hof]   dependency '{}' (depth {}) declined: callee '{}'",
+                                    name, depth, inner
+                                );
+                            }
+                            declined = true;
+                            break;
+                        }
+                    }
+                    if declined {
                         break;
                     }
                 }
@@ -9133,6 +9221,8 @@ impl BytecodeCompiler {
             known_function_values: HashMap::new(),
             self_call: None,
             pending_lambdas: Vec::new(),
+            unresolved: Vec::new(),
+            canonical_files: HashMap::new(),
         }
     }
 
@@ -9193,10 +9283,15 @@ impl BytecodeCompiler {
     ) -> Result<CompiledBytecode, BytecodeError> {
         // The provenance the capability table attenuates by; resolved
         // once per compile so per-callsite verdicts are map lookups.
-        self.current_def_file = self
-            .pending_def_file
-            .as_deref()
-            .map(|f| std::fs::canonicalize(f).unwrap_or_else(|_| std::path::PathBuf::from(f)));
+        self.current_def_file = match self.pending_def_file.clone() {
+            None => None,
+            Some(f) => Some(
+                self.canonical_files
+                    .entry(f.clone())
+                    .or_insert_with(|| std::fs::canonicalize(&*f).unwrap_or_else(|_| std::path::PathBuf::from(&*f)))
+                    .clone(),
+            ),
+        };
         // Reset state
         self.register_allocator.reset();
         self.emitter.reset();
@@ -9251,7 +9346,7 @@ impl BytecodeCompiler {
 
         // OLANG_DUMP_FN=<name> prints the final instruction stream for one
         // function — the register-level view the JIT debug summary elides.
-        if let Some(want) = std::env::var_os("OLANG_DUMP_FN")
+        if let Some(want) = DUMP_FN.get_or_init(|| std::env::var_os("OLANG_DUMP_FN"))
             && *want == *func.name.as_str()
         {
             eprintln!(
@@ -10118,7 +10213,24 @@ impl BytecodeCompiler {
                             && !self.ambiguous_names.contains(&function_name)
                             && !self.bridged_callees.contains(&function_name) =>
                     {
-                        Err(BytecodeError::UnresolvedCallee(function_name))
+                        // Noted, and the compile goes on with a stand-in
+                        // (a call through the value, as a bridged callee's
+                        // is): the attempt fails at its end, having found
+                        // every such callee instead of the first.
+                        if !self.unresolved.contains(&function_name) {
+                            self.unresolved.push(function_name.clone());
+                        }
+                        let const_idx = self
+                            .emitter
+                            .add_constant(OvmValue::new_ast_function(f.clone()));
+                        let baked = self.register_allocator.allocate_register();
+                        self.emitter.emit_load_const(baked, const_idx);
+                        self.emitter.instructions.push(Instruction::CallValue {
+                            dst: dst_reg,
+                            callee: baked,
+                            args: arg_regs,
+                        });
+                        Ok(dst_reg)
                     }
                     Some(Value::Function(f)) => {
                         let const_idx = self
@@ -10749,7 +10861,7 @@ impl BytecodeCompiler {
                     && matches!(callee.as_ref(), Expr::Identifier(_) | Expr::LocalRef { .. })
                     && !arguments.is_empty()
                 {
-                    if std::env::var_os("OLANG_DEBUG_TAKEMOVE").is_some() {
+                    if debug_flag(&DEBUG_TAKEMOVE, "OLANG_DEBUG_TAKEMOVE") {
                         eprintln!("[takemove] candidate: {} = call", target);
                     }
                     let mut exprs = Vec::with_capacity(arguments.len());
@@ -10771,7 +10883,7 @@ impl BytecodeCompiler {
                             .all(|e| Self::assignment_free(e) && !Self::references_name(e, target))
                         && !self.local_variables.contains_key("__moved_arg0__")
                     {
-                        if std::env::var_os("OLANG_DEBUG_TAKEMOVE").is_some() {
+                        if debug_flag(&DEBUG_TAKEMOVE, "OLANG_DEBUG_TAKEMOVE") {
                             eprintln!("[takemove] FIRES for {}", target);
                         }
                         let tmp = self.register_allocator.allocate_register();
@@ -12785,7 +12897,7 @@ impl BytecodeOptimizer {
                 }
                 *arg_moves = mask;
             }
-            if std::env::var_os("OLANG_DEBUG_LIVENESS").is_some()
+            if debug_flag(&DEBUG_LIVENESS, "OLANG_DEBUG_LIVENESS")
                 && let I::Move { dst, src } = &instructions[pc]
             {
                 let la = |r: u32| pc + 1 < n && live_in[pc + 1][r as usize];
@@ -13653,4 +13765,16 @@ mod tests {
             "Should fail with wrong number of arguments"
         );
     }
+}
+
+
+// Debug switches read once a process: a compile asked the environment
+// for each (once a function, and once each `Move` the liveness pass
+// looked at), and `getenv` scans the whole environment under a lock.
+static DEBUG_LIVENESS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+static DEBUG_TAKEMOVE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+static DUMP_FN: std::sync::OnceLock<Option<std::ffi::OsString>> = std::sync::OnceLock::new();
+
+fn debug_flag(cell: &std::sync::OnceLock<bool>, name: &str) -> bool {
+    *cell.get_or_init(|| std::env::var_os(name).is_some())
 }
