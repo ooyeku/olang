@@ -11,7 +11,11 @@ use crate::clock::Instant;
 #[cfg(feature = "native")]
 use std::sync::OnceLock;
 
-/// The monotonic clock's origin: the first time anything asked for it.
+/// The monotonic clock's origin: the process's start, as the kernel
+/// recorded it (where it cannot be read, the first time anything asked).
+/// A program that times its own start (Loom's `LOOM_TRACE=launch`) reads
+/// from the moment the process began, not from its first reading — which
+/// came after its modules loaded, and hid them.
 #[cfg(feature = "native")]
 static MONOTONIC_ORIGIN: OnceLock<Instant> = OnceLock::new();
 
@@ -65,13 +69,18 @@ fn time_now_ms(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 }
 
 /// The monotonic clock, in fractional milliseconds. Natively the origin
-/// is its first use in this process; in the browser it is the page's own
+/// is the process's start; in the browser it is the page's own
 /// `performance.now()`, so a reading here and a stamp the page made are
 /// the same clock.
 fn monotonic_now() -> f64 {
     #[cfg(feature = "native")]
     {
-        let origin = MONOTONIC_ORIGIN.get_or_init(Instant::now);
+        let origin = MONOTONIC_ORIGIN.get_or_init(|| {
+            let now = Instant::now();
+            let ran = crate::boot_trace::since_start_ms();
+            now.checked_sub(std::time::Duration::from_micros((ran * 1000.0) as u64))
+                .unwrap_or(now)
+        });
         origin.elapsed().as_secs_f64() * 1000.0
     }
     #[cfg(not(feature = "native"))]
@@ -80,7 +89,7 @@ fn monotonic_now() -> f64 {
     }
 }
 
-/// Milliseconds on a monotonic clock (origin: first use in this process).
+/// Milliseconds on a monotonic clock (origin: the process's start).
 /// Never goes backwards — the right clock for measuring durations.
 /// Usage: time.monotonic_ms() -> Int
 fn time_monotonic_ms(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {

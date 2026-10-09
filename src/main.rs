@@ -499,6 +499,7 @@ fn main() {
 }
 
 fn run() -> i32 {
+    olang::boot_trace::mark("the interpreter's thread started");
     // The main interpreter thread joins the stall detector's census:
     // with every olang-running thread counted, "all counted threads
     // parked" proves a deadlock (src/stdlib/chan.rs).
@@ -2847,6 +2848,7 @@ fn execute_source(
     let load = olang::memory::load_scope();
     let parsed = OlangParser::new().parse(source);
     drop(load);
+    olang::boot_trace::mark("the entry file parsed");
     let program = match parsed {
         Ok(program) => program,
         Err(e) => {
@@ -3091,6 +3093,7 @@ fn execute_program(
             }
         }
     } else {
+        olang::boot_trace::mark("the program starts (its packages resolved)");
         interpreter.eval_program(program)
     };
     // The program is over: a terminal it entered with `tty` is restored

@@ -18,6 +18,7 @@ pub mod stdio;
 pub mod analyze;
 pub mod ast;
 pub mod builtin;
+pub mod boot_trace; // Where a program's start goes (`OLANG_BOOT_TRACE=1`)
 pub mod caps;
 pub mod clock;
 pub mod vfs;
