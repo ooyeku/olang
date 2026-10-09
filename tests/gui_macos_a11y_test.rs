@@ -50,7 +50,10 @@ mod mac {
           #{ "key": "col", "parent": "root", "role": "list", "box": (170, 10, 140, 120), "name": "In progress, 2 issues",
              "focusable": true, "active": "row1", "actions": ["Move to Backlog", "Move to Done"] },
           #{ "key": "row0", "parent": "col", "role": "listitem", "box": (0, 0, 140, 40), "text": "Row zero" },
-          #{ "key": "row1", "parent": "col", "role": "listitem", "box": (0, 40, 140, 40), "text": "Row one" }
+          #{ "key": "row1", "parent": "col", "role": "listitem", "box": (0, 40, 140, 40), "text": "Row one" },
+          #{ "key": "tabs", "parent": "root", "role": "tablist", "box": (10, 150, 300, 30), "name": "Sections" },
+          #{ "key": "tab0", "parent": "tabs", "role": "tab", "box": (0, 0, 140, 30), "text": "Editor tab", "selected": false },
+          #{ "key": "tab1", "parent": "tabs", "role": "tab", "box": (150, 0, 140, 30), "text": "Commands tab", "selected": true }
         ])
         let mut got = []
         let mut notices = 0
@@ -189,6 +192,17 @@ mod mac {
 
     /// Run the custom action `name` of the element titled `title`, as
     /// VoiceOver does when it is chosen from the Actions rotor.
+    /// Whether the tab titled `title` says it is the one chosen: on the
+    /// Mac a tab is a radio button, its value 1 when chosen (what
+    /// VoiceOver reads as "selected").
+    fn chosen(title: &str) -> Option<bool> {
+        let view = content_view()?;
+        let el = find(&view, title, 6)?;
+        let v: Option<Retained<AnyObject>> = unsafe { msg_send![&*el, accessibilityValue] };
+        let b: Bool = unsafe { msg_send![&*v?, boolValue] };
+        Some(b.as_bool())
+    }
+
     fn perform(title: &'static str, name: &'static str) -> bool {
         let Some(view) = content_view() else { return false };
         let Some(card) = find(&view, title, 6) else { return false };
@@ -418,6 +432,7 @@ mod mac {
                     let plain = on_main(|| look("Plain"));
                     let row = on_main(|| look("Row one"));
                     let other_row = on_main(|| look("Row zero"));
+                    let tabs = (on_main(|| chosen("Commands tab")), on_main(|| chosen("Editor tab")));
                     let trusted = unsafe { AXIsProcessTrusted() };
                     let served = trusted && ax_served();
                     let ax = if served { ax_client_actions("Move to To do") } else { None };
@@ -439,7 +454,7 @@ mod mac {
                         unsafe { CFRelease(o) };
                     }
                     *SEEN.lock().unwrap() = Some(format!(
-                        "card={card:?}\nplain={plain:?}\nrow={row:?}\nother_row={other_row:?}\ntrusted={trusted} served={served} ax={ax:?}\nran={ran} ran_row={ran_row} ran_last={ran_last}\nheard={heard:?}"
+                        "card={card:?}\nplain={plain:?}\nrow={row:?}\nother_row={other_row:?}\ntabs={tabs:?}\ntrusted={trusted} served={served} ax={ax:?}\nran={ran} ran_row={ran_row} ran_last={ran_last}\nheard={heard:?}"
                     ));
                 });
                 let program = Parser::new().parse(PROGRAM).expect("parses");
@@ -464,6 +479,8 @@ mod mac {
         has(r#"row=Some(Seen { names: ["Move to Backlog", "Move to Done"], help: None, allowed: true })"#);
         has(r#"other_row=Some(Seen { names: [], help: None, allowed: false })"#);
         has("ran=true ran_row=true ran_last=true");
+        // a tab says whether it is the one chosen
+        has("tabs=(Some(true), Some(false))");
         if seen.contains("served=true") {
             assert!(
                 seen.lines().any(|l| l.starts_with("trusted=")

@@ -518,7 +518,11 @@ fn leaf_size(
     }
     if is_true(mget(r, "text")) {
         let fs = font_style_v(spec, p, role);
-        return measure(spec, ts, &text_of(mget(p, "text")), &fs, avail);
+        // a text's `pad` widens its box as the recursive layout's does
+        // (lib/layout.ol `ly_extra`): the words drawn inside it, not cut
+        let (pt, pr, pb, pl) = pad4(mget(p, "pad"));
+        let (w, h) = measure(spec, ts, &text_of(mget(p, "text")), &fs, (avail - pl - pr).max(0.0))?;
+        return Ok((w + pl + pr, h + pt + pb));
     }
     if let Value::String(field) = mget(r, "label") {
         let (lw, lh) = label_size(spec, ts, mget(p, field.as_str()), avail)?;
@@ -1442,6 +1446,24 @@ fn group_op(
     // shape on a canvas, placed over it)
     if is_true(mget(p, "inert")) {
         op.insert("inert".into(), Value::Boolean(true));
+    }
+    // a group presented as a tab, a radio, a switch or a button says its
+    // state as a leaf does: chosen, checked, its value, unavailable (the
+    // recursive layout carried these; the flat core dropped them, and
+    // VoiceOver never heard a section's tab was the one chosen)
+    for k in ["selected", "checked", "disabled", "expanded"] {
+        match mget(p, k) {
+            Value::Unit => {}
+            Value::Boolean(b) => {
+                op.insert(k.into(), Value::Boolean(*b));
+            }
+            v if k == "selected" || k == "disabled" || k == "expanded" => {
+                op.insert(k.into(), Value::Boolean(is_true(v)));
+            }
+            v => {
+                op.insert(k.into(), v.clone());
+            }
+        }
     }
     op
 }
