@@ -103,10 +103,22 @@ pub const AST_MAP_EAGER: usize = 16;
 /// lists are not cached (they convert in one contiguous pass).
 const TO_AST_CACHE_MIN: usize = 32;
 
+/// The fewest entries the cache holds before a sweep looks for dead ones
+/// (past that, twice the live ones). A dead entry is an interpreter copy
+/// nothing can reach again, and the sweep frees it: what a sweep costs is
+/// what died since the last. A program that keeps few collections alive
+/// and converts a few dozen each turn (a view's memo table set into a
+/// cell, a frame's state) dies about that many a turn; swept at 256, it
+/// paid every eighth turn or so a millisecond and more of freeing at
+/// once — in olang Studio one keystroke in four, the one its median
+/// keystroke landed on. Swept at 32, the freeing is spread over the turns
+/// that made it (the look for dead entries is a pass over a few dozen).
+const TO_AST_SWEEP_MIN: usize = 32;
+
 thread_local! {
     static TO_AST_CACHE: std::cell::RefCell<rustc_hash::FxHashMap<usize, (VmOwner, Value)>> =
         std::cell::RefCell::new(rustc_hash::FxHashMap::default());
-    static TO_AST_SWEEP_AT: std::cell::Cell<usize> = const { std::cell::Cell::new(256) };
+    static TO_AST_SWEEP_AT: std::cell::Cell<usize> = const { std::cell::Cell::new(TO_AST_SWEEP_MIN) };
     /// Elements converted so far on this thread: what a conversion cost
     /// is read off its difference.
     static TO_AST_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -189,7 +201,7 @@ fn to_ast_cache_insert(key: usize, owner: VmOwner, converted: &Value) {
             if c.len() >= 16_384 {
                 evicted.extend(c.drain().map(|(_, e)| e));
             }
-            TO_AST_SWEEP_AT.set((c.len() * 2).max(256));
+            TO_AST_SWEEP_AT.set((c.len() * 2).max(TO_AST_SWEEP_MIN));
         }
         if let Some(old) = c.insert(key, (owner, converted.clone())) {
             evicted.push(old);

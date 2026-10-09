@@ -7038,7 +7038,7 @@ impl BytecodeVm {
         // authority — except for the O(1) probes below, which answer
         // through the wrapper without conversion.
         if args.iter().any(|a| matches!(a.data, ValueData::AstList(_)))
-            && !matches!(name, "len" | "head")
+            && !matches!(name, "len" | "head" | "typeof")
         {
             return None;
         }
@@ -7046,7 +7046,7 @@ impl BytecodeVm {
         // below; everything else sees the boxed form — one O(n)
         // conversion in front of an O(n) operation.
         let normalized: Vec<OvmValue>;
-        let args: &[OvmValue] = if !matches!(name, "len" | "head")
+        let args: &[OvmValue] = if !matches!(name, "len" | "head" | "typeof")
             && args
                 .iter()
                 .any(|a| matches!(a.data, ValueData::FloatList(_) | ValueData::IntList(_)))
@@ -7537,6 +7537,22 @@ impl BytecodeVm {
             // Every arm mirrors the interpreter's checks in the same order
             // with the same messages; anything not matched falls to the
             // bridge, which stays the authority.
+            // A collection's type is its layout's: bridged, `typeof` handed
+            // the interpreter a converted copy of the whole collection — a
+            // view tree, a program's (model, effects) — to read one word.
+            // Anything else (a struct, an enum, a native) still bridges.
+            "typeof" if args.len() == 1 => {
+                let t = match &args[0].data {
+                    ValueData::List(_)
+                    | ValueData::AstList(_)
+                    | ValueData::FloatList(_)
+                    | ValueData::IntList(_) => "List",
+                    ValueData::Tuple(_) => "Tuple",
+                    ValueData::Map(_) | ValueData::AstMap(_) => "Map",
+                    _ => return None,
+                };
+                Some(Ok(OvmValue::new_string(t.to_string())))
+            }
             "len" if args.len() == 1 => Some(match &args[0].data {
                 ValueData::List(items) => Ok(OvmValue::new_integer(items.len() as i64)),
                 ValueData::AstList(items) => Ok(OvmValue::new_integer(items.len() as i64)),

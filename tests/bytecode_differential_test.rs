@@ -675,6 +675,23 @@ fn a_wrapped_map_reads_and_writes_as_the_interpreter_does() {
     );
 }
 
+/// `typeof` of a collection answers from the VM's layout without the
+/// collection crossing to the interpreter: native, wrapped and typed
+/// lists, tuples, native and wrapped maps; anything else still bridges.
+#[test]
+fn typeof_reads_every_layout_as_the_interpreter_does() {
+    use std::sync::Arc;
+    let store = store_value();
+    let long = Value::List(Arc::new((0..200).map(|i| Value::String(Arc::new(format!("line {i}")))).collect()));
+    assert!(matches!(
+        OvmValue::from_ast(long.clone()).data,
+        olang::ovm::value::ValueData::AstList(_)
+    ));
+    let floats = Value::List(Arc::new((0..100).map(|i| Value::Float(i as f64)).collect()));
+    let src = "fn f(m, l, fl) = [typeof(m), typeof(map_get(m, \"by_id\")), typeof(l), typeof(fl), typeof([1, 2]), typeof([]), typeof((m, 1)), typeof(#{}), typeof(#{ \"k\": [l] }), typeof(map_set(m, \"x\", 1)), typeof(1), typeof(\"s\"), typeof(()), typeof(Ok(1)), typeof({ a: 1 })]";
+    assert_same(src, "f", &[store, long, floats]);
+}
+
 #[test]
 fn a_wrapped_map_compares_shows_and_travels_like_a_map() {
     let store = store_value();
