@@ -3503,8 +3503,12 @@ impl BytecodeVm {
         let mut err_pc: usize = bytecode.entry_point;
         let result = self.dispatch_loop(bytecode, &mut executed, &mut err_pc);
         self.stats.instructions_executed += executed;
-        if result.is_err() {
-            self.note_error_frame(bytecode, err_pc);
+        if let Err(e) = &result {
+            // only a program's failure has a trace: an unresolved callee
+            // (compiled and retried) or a stack overflow the VM recovers
+            // from is not one, and noting it would cost every first call
+            let failure = matches!(e, BytecodeError::RuntimeError(_) | BytecodeError::TypeError(_));
+            self.note_error_frame(bytecode, err_pc, failure);
         }
         result
     }
@@ -3514,10 +3518,10 @@ impl BytecodeVm {
     /// starts the visible stack; frames deeper than it stay invisible
     /// (the interpreter's model: those frames were already popped when
     /// the innermost Located statement captured).
-    fn note_error_frame(&mut self, bytecode: &CompiledBytecode, err_pc: usize) {
+    fn note_error_frame(&mut self, bytecode: &CompiledBytecode, err_pc: usize, failure: bool) {
         // Every frame the error leaves, with its line, for the error's
         // trace (errtrace); fresh when this VM has not placed it yet.
-        {
+        if failure {
             let fresh = self.error_trace_span.is_none()
                 && self.error_trace_frames.is_empty()
                 && self.error_trace_leak.is_none();
