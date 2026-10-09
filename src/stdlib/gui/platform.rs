@@ -601,6 +601,23 @@ impl App {
             let Ok(mut st) = pw.state.lock() else {
                 return;
             };
+            // a window a script drives takes no person's input (its size,
+            // focus and the system's settings still come)
+            if st.scripted
+                && matches!(
+                    input,
+                    Input::Key { .. }
+                        | Input::Pointer { .. }
+                        | Input::Wheel { .. }
+                        | Input::Pinch { .. }
+                        | Input::ImePreedit(..)
+                        | Input::ImeCommit(_)
+                        | Input::Modifiers(_)
+                        | Input::Files { .. }
+                )
+            {
+                return;
+            }
             let mut clip = PlatformClipboard(&mut self.clipboard);
             st.input(input, &mut clip, &mut out);
             st.dirty

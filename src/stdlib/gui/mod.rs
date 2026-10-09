@@ -885,6 +885,9 @@ fn gui_set(args: Vec<Value>) -> Res<Value> {
             st.clear = c;
             st.dirty = true;
         }
+        if let Some(on) = get_bool(v, "scripted", what)? {
+            st.scripted = on;
+        }
         if let Some(z) = get_num(v, "zoom", what)? {
             let mut out = Vec::new();
             st.set_zoom(z, &mut out);
