@@ -1290,6 +1290,9 @@ interfaces:
 | Variable | Effect |
 |---|---|
 | `OLANG_TIER_STATS=1` | Machine-readable tier counters on exit. |
+| `OLANG_BOOT_TRACE=1` | Where a program's start goes: a line on stderr at each landmark (the interpreter's thread started, the entry parsed, the program starting, the platform's loop, a window asked for and made, the first frame presented), stamped from the process's start, and at the first frame the modules read (parsed or from the parse cache) and loaded, and the bytecode and native compiles, with their times. |
+| `OLANG_LAZY_COMPILE=0` | Compile every callee with its caller (the eager route) instead of at its first call, for A/B measurement. |
+| `OLANG_PARSE_CACHE=0` | Parse every module instead of reading it back from `~/.olang/state/parsed`. |
 | `OLANG_JIT_DEBUG=1` | JIT compilation decisions: what compiled, what refused, and the instruction or register that refused it. |
 | `OLANG_OSR_DEBUG=1` | On-stack-replacement decisions: regions synthesized, entries, refusals with live-register counts. |
 | `OLANG_OSR_OFF=1` | Disable on-stack replacement. |

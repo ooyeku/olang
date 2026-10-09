@@ -121,6 +121,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **A program's start: callees compile at their first call, and the
+  rest of a window's first 600 ms.** olang Studio in a real window, from
+  the process's start to its first frame (medians of nine, load 2.4–3.0):
+  ~600 ms → ~206 ms with the parse cache warm, ~396 ms with it off
+  (`OLANG_PARSE_CACHE=0`). What went:
+  - *Compiling code the first frame never runs.* Compiling a caller
+    compiled every function it could reach first; now a callee with no
+    id yet is given one at its caller's compile and compiled when that
+    call first runs (refused, it is called through its value, as a
+    callee the tier cannot compile always was). Studio's first frame
+    compiled 2,520 attempts in 235 ms; now 484 in 45. A native
+    candidate has the callees its group reaches compiled just before
+    the JIT plans it; `olang check --tier` still compiles everything.
+    `OLANG_LAZY_COMPILE=0` is the old route (docs/ovm.md).
+  - *Parsing modules a guess kept out of the parse cache.* A module
+    with an `@` anywhere (a string: `"lsp@p1"`) or the word `meta` was
+    never kept; the parser now says whether a text held a macro, and
+    every other module is kept — a quarter of Studio's, 75 ms a launch.
+  - *Hashing every module file again at every `use`.* A loaded module's
+    file was read and SHA-256'd on each import of it (and twice more
+    when it loaded, its whole tree cloned to estimate its size); now an
+    unchanged file is known by its modification time and length, and
+    the text read is hashed once. Modules 92 → 68 ms.
+  - *The platform after the frame, not beside it.* `gui.prepare()`
+    starts the event loop without waiting, and a loop so started makes
+    a hidden window and lets it go — AppKit's first window costs ~25
+    ms, a second ~5 — while the program boots (Loom's `run` asks).
+  - *Fonts on the critical path.* `gui.fonts(sources, #{ "background":
+    true })` decompresses and registers them on a thread of their own,
+    the text system's first use (the system's fonts found) with them;
+    whatever shapes text meanwhile waits (Loom's bundled fonts: ~55 ms).
+  - *Waiting for the menu bar.* `gui.menu` checks its spec on the
+    calling thread and has the main thread make it without waiting (it
+    was ~20 ms behind the first frame's presentation).
+  - *The clock.* `time.monotonic()` now reads from the process's start
+    (the kernel's record of it) rather than its first use, which came
+    after a program's modules loaded: a start timed with it (Loom's
+    `LOOM_TRACE=launch`) left out the ~260 ms before.
+  `OLANG_BOOT_TRACE=1` says where a start goes, landmark by landmark.
+
 - **Values cross the tier boundary without converting whole.** A parsed
   JSON object (and an anonymous record) that is not a small record of
   scalars crosses into the VM as a wrapper (`ValueData::AstStruct`, as
