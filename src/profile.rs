@@ -400,9 +400,32 @@ thread_local! {
     /// program is the same functions pushed millions of times; this is
     /// what keeps those pushes off the global intern lock, which
     /// otherwise serializes every thread of a parallel program into a
-    /// crawl.
-    static NAME_MEMO: std::cell::RefCell<HashMap<(usize, usize, usize, u32), u32>> =
-        std::cell::RefCell::new(HashMap::new());
+    /// crawl. Hashed with Fx, not SipHash: the key is four machine
+    /// words, looked up on every call of a profiled program (Studio
+    /// profiling itself pays it on each call of its keystroke).
+    static NAME_MEMO: std::cell::RefCell<rustc_hash::FxHashMap<(usize, usize, usize, u32), u32>> =
+        std::cell::RefCell::new(rustc_hash::FxHashMap::default());
+    /// Per-thread memo of builtin frames' ids (`map`, `fold`, …) by name:
+    /// a builtin handed a function is pushed on every call, and the global
+    /// intern lock and a SipHash of its name were paid each time.
+    static BUILTIN_MEMO: std::cell::RefCell<rustc_hash::FxHashMap<Box<str>, u32>> =
+        std::cell::RefCell::new(rustc_hash::FxHashMap::default());
+}
+
+/// A builtin frame's interned id, through this thread's memo.
+fn builtin_id(name: &str) -> u32 {
+    if let Some(id) = BUILTIN_MEMO.with(|m| m.borrow().get(name).copied()) {
+        return id;
+    }
+    let id = intern(name);
+    BUILTIN_MEMO.with(|m| {
+        let mut m = m.borrow_mut();
+        if m.len() >= 4096 {
+            m.clear();
+        }
+        m.insert(name.into(), id);
+    });
+    id
 }
 
 /// The nearest named, non-builtin ancestor's frame id on this thread's
@@ -568,7 +591,7 @@ pub fn push_builtin(name: &str) -> bool {
     if !enabled() {
         return false;
     }
-    let id = intern(name);
+    let id = builtin_id(name);
     LOCAL.with(|stack| {
         let depth = stack.depth.load(Ordering::Relaxed);
         if depth < MAX_FRAMES {
@@ -631,6 +654,20 @@ struct Collected {
     /// by tier. An adjacent repeat (a promoted call's frames, recursion)
     /// folds into one frame carrying the innermost tier: the one running.
     tiered: HashMap<Vec<u32>, u64>,
+    /// The paths being built, kept between ticks: a tick allocates only
+    /// for a path it has not seen (the sampler's allocations go through
+    /// the same allocator as the program's).
+    scratch: (Vec<u32>, Vec<u32>),
+}
+
+/// Count one more sample of `path`, allocating its key only the first time.
+fn count_path(map: &mut HashMap<Vec<u32>, u64>, path: &[u32]) {
+    match map.get_mut(path) {
+        Some(n) => *n += 1,
+        None => {
+            map.insert(path.to_vec(), 1);
+        }
+    }
 }
 
 /// Start sampling. The returned session must be stopped to collect.
@@ -703,7 +740,8 @@ fn sample_once(out: &mut Collected) {
         // entry) and recursion pushes once per level. Neither is a
         // distinct *place in the program*, which is what a call path
         // is meant to name.
-        let mut path: Vec<u32> = Vec::with_capacity(depth);
+        let (mut path, mut tiered) = std::mem::take(&mut out.scratch);
+        path.clear();
         for i in 0..depth {
             let id = stack.frames[i].load(Ordering::Relaxed);
             if path.last() != Some(&id) {
@@ -730,9 +768,9 @@ fn sample_once(out: &mut Collected) {
             }
         }
         *out.attributed.entry(owner).or_insert(0) += 1;
-        *out.stacks.entry(path).or_insert(0) += 1;
+        count_path(&mut out.stacks, &path);
         if detail_on() {
-            let mut tiered: Vec<u32> = Vec::with_capacity(depth);
+            tiered.clear();
             let mut last = u32::MAX;
             for i in 0..depth {
                 let id = stack.frames[i].load(Ordering::Relaxed);
@@ -747,8 +785,9 @@ fn sample_once(out: &mut Collected) {
                     last = id;
                 }
             }
-            *out.tiered.entry(tiered).or_insert(0) += 1;
+            count_path(&mut out.tiered, &tiered);
         }
+        out.scratch = (path, tiered);
     }
     if !saw_any {
         out.idle += 1;
