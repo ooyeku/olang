@@ -616,6 +616,11 @@ impl BuiltinFunctions {
         if let Some(message) = interpreter.capability_denial(name) {
             return Err(InterpreterError::RuntimeError { message });
         }
+        // A module loaded at run time (a plugin) is held to its scope too:
+        // the host's builtins, its folders, its programs.
+        if let Some(message) = interpreter.scope_denial(name, &arguments) {
+            return Err(InterpreterError::RuntimeError { message });
+        }
         // The expansion purity gate (meta mode): same chokepoint, same
         // reasoning — every builtin passes here on either tier.
         if let Some(message) = interpreter.expansion_denial(name) {
@@ -885,6 +890,11 @@ impl BuiltinFunctions {
         }
         #[cfg(feature = "native")]
         if let Some(runtime_function) = name.strip_prefix("runtime.") {
+            if let Some(result) =
+                crate::stdlib::runtime::call_host(runtime_function, &arguments, interpreter)
+            {
+                return result;
+            }
             return crate::stdlib::runtime::call_runtime_function(runtime_function, arguments)
                 .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
@@ -991,14 +1001,16 @@ impl BuiltinFunctions {
                     ),
                 });
             }
+            crate::errtrace::begin();
             return match interpreter.call_function(arguments[0].clone(), Vec::new()) {
                 Ok(value) => Ok(Value::Ok(Box::new(value))),
                 Err(e) if crate::interpreter::Interpreter::is_control_signal(&e) => Err(e),
                 Err(e) => {
                     interpreter.clear_pending_error();
-                    Ok(Value::Err(Box::new(Value::String(std::sync::Arc::new(
-                        strip_error_prefixes(&e.to_string()),
-                    )))))
+                    let message = strip_error_prefixes(&e.to_string());
+                    // Where it went, for `runtime.last_error()`.
+                    crate::errtrace::caught(&message);
+                    Ok(Value::Err(Box::new(Value::String(std::sync::Arc::new(message)))))
                 }
             };
         }

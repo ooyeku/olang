@@ -304,6 +304,384 @@ impl CapTable {
     }
 }
 
+// ── modules loaded at run time ───────────────────────────────────────
+//
+// A host (olang Studio) loads code it did not write into its own running
+// VM — a plugin — with `runtime.load_module(path, grant)`. The grant is
+// attributed exactly as a dependency's is, by the directory the code was
+// defined in, so the module's functions, the lambdas they make, and
+// anything else under its folder answer to it; the host's own functions
+// (the narrow API it hands the module) answer to the host's. It is finer
+// than a dependency's in two ways a plugin needs:
+//
+// - `fs_roots`: the filesystem grant holds only under these folders (a
+//   plugin may read the project open, not the home folder);
+// - `proc_allow`: `proc` holds only for these programs (a plugin may run
+//   `olang`, and nothing else) — matched by the program's file name, or
+//   its whole path.
+//
+// A module loaded at run time is never the host: `gui`, `tty`, loading
+// and unloading modules and the process's own profiler are refused it
+// (capability "host").
+//
+// The registry is the process's, not one interpreter's: the VM reaches
+// builtins through bridge interpreters, and every one must see the same
+// grants. It costs nothing until a module is loaded (one relaxed load).
+
+/// A module loaded at run time and what it may do.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModuleGrant {
+    /// The folder whose code answers to this grant (canonical).
+    pub dir: PathBuf,
+    /// The name errors and `caps.granted()` say.
+    pub name: String,
+    pub caps: Caps,
+    /// Where the filesystem grant holds (canonical); None: everywhere.
+    pub fs_roots: Option<Vec<PathBuf>>,
+    /// The programs `proc` may run; None: any.
+    pub proc_allow: Option<Vec<String>>,
+}
+
+static MODULES_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn modules() -> &'static std::sync::RwLock<Vec<ModuleGrant>> {
+    static M: std::sync::OnceLock<std::sync::RwLock<Vec<ModuleGrant>>> = std::sync::OnceLock::new();
+    M.get_or_init(|| std::sync::RwLock::new(Vec::new()))
+}
+
+/// Whether any module loaded at run time holds a grant.
+#[inline]
+pub fn modules_active() -> bool {
+    MODULES_ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The grant of the module `path` (a canonical file path) belongs to.
+pub fn module_for(path: &std::path::Path) -> Option<ModuleGrant> {
+    if !modules_active() {
+        return None;
+    }
+    let ms = modules().read().unwrap();
+    ms.iter().find(|g| path.starts_with(&g.dir)).cloned()
+}
+
+/// The grant registered for `dir` exactly, if any.
+pub fn module_at(dir: &std::path::Path) -> Option<ModuleGrant> {
+    modules().read().unwrap().iter().find(|g| g.dir == dir).cloned()
+}
+
+/// Register (or replace) a module's grant; the one it replaced back.
+pub fn register_module(grant: ModuleGrant) -> Option<ModuleGrant> {
+    let mut ms = modules().write().unwrap();
+    let old = ms.iter().position(|g| g.dir == grant.dir).map(|i| ms.remove(i));
+    ms.push(grant);
+    // Longest first, so a module nested in another's folder answers to
+    // its own grant.
+    ms.sort_by_key(|g| std::cmp::Reverse(g.dir.as_os_str().len()));
+    MODULES_ACTIVE.store(true, std::sync::atomic::Ordering::SeqCst);
+    old
+}
+
+/// Forget the grant of the module at `dir`; whether there was one.
+pub fn unregister_module(dir: &std::path::Path) -> bool {
+    let mut ms = modules().write().unwrap();
+    let before = ms.len();
+    ms.retain(|g| g.dir != dir);
+    if ms.is_empty() {
+        MODULES_ACTIVE.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+    ms.len() != before
+}
+
+/// The builtins only the host may call: the window and the terminal,
+/// loading code, and the process's own profiler.
+pub fn host_only(full_name: &str) -> bool {
+    full_name.starts_with("gui.")
+        || full_name.starts_with("tty.")
+        || matches!(
+            full_name,
+            "runtime.load_module"
+                | "runtime.unload_module"
+                | "runtime.profile_start"
+                | "runtime.profile_stop"
+                | "runtime.profile_live_start"
+                | "runtime.profile_live_stop"
+        )
+}
+
+/// The builtins that take two paths (a source and a destination).
+fn two_paths(full_name: &str) -> bool {
+    let f = full_name.strip_prefix("fs.").unwrap_or("");
+    f.contains("copy") || f.contains("rename") || f.contains("move") || f.contains("link")
+}
+
+/// A path as the gate compares it: absolute, `.`/`..` resolved, real
+/// where it exists (its nearest existing parent made real otherwise, so
+/// a file not yet written is placed by its folder).
+pub fn gate_path(p: &str) -> PathBuf {
+    let raw = PathBuf::from(p);
+    let abs = if raw.is_absolute() {
+        raw
+    } else {
+        std::env::current_dir().unwrap_or_default().join(raw)
+    };
+    let mut clean = PathBuf::new();
+    for c in abs.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                clean.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => clean.push(other.as_os_str()),
+        }
+    }
+    if let Ok(real) = std::fs::canonicalize(&clean) {
+        return real;
+    }
+    let mut tail = Vec::new();
+    let mut at = clean.clone();
+    while let Some(parent) = at.parent().map(|p| p.to_path_buf()) {
+        if let Some(name) = at.file_name() {
+            tail.push(name.to_os_string());
+        }
+        if let Ok(real) = std::fs::canonicalize(&parent) {
+            let mut out = real;
+            for n in tail.iter().rev() {
+                out.push(n);
+            }
+            return out;
+        }
+        at = parent;
+    }
+    clean
+}
+
+/// The program a process-starting call names: a list's first item, or a
+/// command line's first word.
+fn program_of(full_name: &str, first: Option<&str>, list_head: Option<&str>) -> Option<String> {
+    if let Some(h) = list_head {
+        return Some(h.to_string());
+    }
+    let s = first?;
+    if full_name == "os.exit" {
+        return None;
+    }
+    s.split_whitespace().next().map(|w| w.to_string())
+}
+
+/// Does the program `prog` match the allow-list? By its file name
+/// (`olang` allows `/x/target/release/olang`) or its whole path.
+pub fn program_allowed(allow: &[String], prog: &str) -> bool {
+    let base = std::path::Path::new(prog)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| prog.to_string());
+    allow.iter().any(|a| a == prog || *a == base)
+}
+
+/// The scope gate for code of a module loaded at run time: the host's
+/// builtins, the filesystem outside its roots, a program outside its
+/// allow-list. `strings` are the call's string arguments in order and
+/// `list_head` the first item of its first argument when that is a list
+/// (an argv). None when allowed; otherwise the denial's message.
+pub fn scope_denial(
+    grant: &ModuleGrant,
+    full_name: &str,
+    strings: &[Option<&str>],
+    list_head: Option<&str>,
+) -> Option<String> {
+    if host_only(full_name) {
+        return Some(format!(
+            "capability 'host' denied: {} is the host's, and module '{}' was loaded by it (runtime.load_module)",
+            full_name, grant.name
+        ));
+    }
+    match required(full_name) {
+        Some(CapUse::FsRead) | Some(CapUse::FsWrite) => {
+            let roots = grant.fs_roots.as_ref()?;
+            let n = if two_paths(full_name) { 2 } else { 1 };
+            for p in strings.iter().take(n).flatten() {
+                let at = gate_path(p);
+                if !roots.iter().any(|r| at.starts_with(r)) {
+                    return Some(format!(
+                        "capability 'fs' denied: {} reaches {}, outside what module '{}' is granted ({})",
+                        full_name,
+                        at.display(),
+                        grant.name,
+                        roots
+                            .iter()
+                            .map(|r| r.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+            }
+            None
+        }
+        Some(CapUse::Proc) => {
+            let allow = grant.proc_allow.as_ref()?;
+            if full_name == "os.exit" {
+                return Some(format!(
+                    "capability 'proc' denied: os.exit ends the host, and module '{}' may only run {}",
+                    grant.name,
+                    allow.join(", ")
+                ));
+            }
+            match program_of(full_name, strings.first().copied().flatten(), list_head) {
+                Some(prog) if program_allowed(allow, &prog) => None,
+                Some(prog) => Some(format!(
+                    "capability 'proc' denied: {} runs {}, and module '{}' may only run {}",
+                    full_name,
+                    prog,
+                    grant.name,
+                    if allow.is_empty() { "nothing".to_string() } else { allow.join(", ") }
+                )),
+                // A handle (proc.wait, proc.kill on a process it started)
+                // carries the authority its start was granted.
+                None => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// A grant as a program writes it (`runtime.load_module`'s second
+/// argument): `#{ name, fs: false | "read" | true, fs_roots: [..], proc:
+/// bool | [programs], net, db, env }`, every key optional and absent
+/// meaning *denied* — a module gets what its host says, nothing more.
+pub fn grant_from_value(
+    dir: PathBuf,
+    default_name: &str,
+    v: &crate::ast::Value,
+) -> Result<ModuleGrant, String> {
+    use crate::ast::Value;
+    let get = |k: &str| -> Option<Value> {
+        match v {
+            Value::Map(m) => m.get(k).cloned(),
+            Value::Unit => None,
+            _ => None,
+        }
+    };
+    if !matches!(v, Value::Map(_) | Value::Unit) {
+        return Err(format!(
+            "runtime.load_module: the grant must be a Map, got {}",
+            v.type_name()
+        ));
+    }
+    let flag = |k: &str| -> Result<bool, String> {
+        match get(k) {
+            None | Some(Value::Unit) => Ok(false),
+            Some(Value::Boolean(b)) => Ok(b),
+            Some(other) => Err(format!(
+                "runtime.load_module: grant '{}' must be true or false, got {}",
+                k,
+                other.type_name()
+            )),
+        }
+    };
+    let fs = match get("fs") {
+        None | Some(Value::Unit) | Some(Value::Boolean(false)) => FsCap::None,
+        Some(Value::Boolean(true)) => FsCap::Full,
+        Some(Value::String(ref s)) if s.as_str() == "read" => FsCap::Read,
+        Some(other) => {
+            return Err(format!(
+                "runtime.load_module: grant 'fs' must be false, \"read\" or true, got {}",
+                other.to_string()
+            ));
+        }
+    };
+    let strings = |k: &str| -> Result<Option<Vec<String>>, String> {
+        match get(k) {
+            None | Some(Value::Unit) => Ok(None),
+            Some(Value::List(ref items)) => items
+                .iter()
+                .map(|i| match i {
+                    Value::String(s) => Ok(s.to_string()),
+                    other => Err(format!(
+                        "runtime.load_module: grant '{}' must list strings, got {}",
+                        k,
+                        other.type_name()
+                    )),
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map(Some),
+            Some(other) => Err(format!(
+                "runtime.load_module: grant '{}' must be a list, got {}",
+                k,
+                other.type_name()
+            )),
+        }
+    };
+    let (proc_, proc_allow) = match get("proc") {
+        None | Some(Value::Unit) | Some(Value::Boolean(false)) => (false, None),
+        Some(Value::Boolean(true)) => (true, None),
+        Some(Value::List(_)) => (true, strings("proc")?),
+        Some(other) => {
+            return Err(format!(
+                "runtime.load_module: grant 'proc' must be true, false or a list of programs, got {}",
+                other.type_name()
+            ));
+        }
+    };
+    let fs_roots = strings("fs_roots")?.map(|rs| rs.iter().map(|r| gate_path(r)).collect());
+    let name = match get("name") {
+        Some(Value::String(ref s)) => s.to_string(),
+        _ => default_name.to_string(),
+    };
+    Ok(ModuleGrant {
+        dir,
+        name,
+        caps: Caps {
+            fs,
+            net: flag("net")?,
+            proc: proc_,
+            db: flag("db")?,
+            env: flag("env")?,
+        },
+        fs_roots,
+        proc_allow,
+    })
+}
+
+/// A grant as olang values (what `runtime.module_grant` answers).
+pub fn grant_value(g: &ModuleGrant) -> crate::ast::Value {
+    use crate::ast::Value;
+    use std::sync::Arc;
+    let s = |t: &str| Value::String(Arc::new(t.to_string()));
+    let mut m = crate::ast::ValueMap::default();
+    m.insert("name".into(), s(&g.name));
+    m.insert("dir".into(), s(&g.dir.to_string_lossy()));
+    m.insert(
+        "fs".into(),
+        match g.caps.fs {
+            FsCap::None => Value::Boolean(false),
+            FsCap::Read => s("read"),
+            FsCap::Full => Value::Boolean(true),
+        },
+    );
+    m.insert(
+        "fs_roots".into(),
+        match &g.fs_roots {
+            None => Value::Unit,
+            Some(rs) => Value::List(Arc::from(
+                rs.iter().map(|r| s(&r.to_string_lossy())).collect::<Vec<_>>(),
+            )),
+        },
+    );
+    m.insert(
+        "proc".into(),
+        match (&g.proc_allow, g.caps.proc) {
+            (Some(list), true) => {
+                Value::List(Arc::from(list.iter().map(|p| s(p)).collect::<Vec<_>>()))
+            }
+            (_, b) => Value::Boolean(b),
+        },
+    );
+    m.insert("net".into(), Value::Boolean(g.caps.net));
+    m.insert("db".into(), Value::Boolean(g.caps.db));
+    m.insert("env".into(), Value::Boolean(g.caps.env));
+    Value::Map(Arc::new(m))
+}
+
 /// What a denied call was denied for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapDenial {

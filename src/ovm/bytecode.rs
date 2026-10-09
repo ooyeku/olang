@@ -2179,9 +2179,9 @@ impl BytecodeVm {
             .push_frame(bytecode.register_count as usize, args);
         self.stats.bytecode_cache_hits += 1;
         self.stats.function_calls += 1;
-        self.push_caps_frame(bytecode);
+        let caps_pushed = self.push_caps_frame(bytecode);
         let result = self.execute_bytecode(bytecode);
-        self.pop_caps_frame();
+        self.pop_caps_frame(caps_pushed);
         self.execution_state.pop_frame(saved);
         self.call_depth -= 1;
         result
@@ -2213,9 +2213,9 @@ impl BytecodeVm {
         }
         self.stats.bytecode_cache_hits += 1;
         self.stats.function_calls += 1;
-        self.push_caps_frame(bytecode);
+        let caps_pushed = self.push_caps_frame(bytecode);
         let result = self.execute_bytecode(bytecode);
-        self.pop_caps_frame();
+        self.pop_caps_frame(caps_pushed);
         self.execution_state.pop_frame(saved);
         self.call_depth -= 1;
         result
@@ -2363,7 +2363,7 @@ impl BytecodeVm {
         self.stats.bytecode_cache_hits += 1;
         self.stats.function_calls += 1;
 
-        self.push_caps_frame(&bytecode);
+        let caps_pushed = self.push_caps_frame(&bytecode);
         // Profiling shadow frame (`olang profile`): off, this is one
         // relaxed load and a predicted-false branch.
         let profiled = crate::profile::push_at(
@@ -2379,7 +2379,7 @@ impl BytecodeVm {
         if profiled {
             crate::profile::pop();
         }
-        self.pop_caps_frame();
+        self.pop_caps_frame(caps_pushed);
 
         // Restore the caller's window on both success and error paths
         self.execution_state.pop_frame(saved);
@@ -2431,7 +2431,7 @@ impl BytecodeVm {
         }
         self.stats.bytecode_cache_hits += 1;
         self.stats.function_calls += 1;
-        self.push_caps_frame(&bytecode);
+        let caps_pushed = self.push_caps_frame(&bytecode);
         // Profiling shadow frame (`olang profile`): off, this is one
         // relaxed load and a predicted-false branch.
         let profiled = crate::profile::push_at(
@@ -2447,7 +2447,7 @@ impl BytecodeVm {
         if profiled {
             crate::profile::pop();
         }
-        self.pop_caps_frame();
+        self.pop_caps_frame(caps_pushed);
         self.execution_state.pop_frame(saved);
         self.call_depth -= 1;
         result
@@ -3438,7 +3438,7 @@ impl BytecodeVm {
         self.stats.bytecode_cache_hits += 1;
         self.stats.function_calls += 1;
 
-        self.push_caps_frame(&bytecode);
+        let caps_pushed = self.push_caps_frame(&bytecode);
         // Profiling shadow frame (`olang profile`): off, this is one
         // relaxed load and a predicted-false branch.
         let profiled = crate::profile::push_at(
@@ -3454,7 +3454,7 @@ impl BytecodeVm {
         if profiled {
             crate::profile::pop();
         }
-        self.pop_caps_frame();
+        self.pop_caps_frame(caps_pushed);
 
         self.execution_state.pop_frame(saved);
         self.call_depth -= 1;
@@ -3515,6 +3515,34 @@ impl BytecodeVm {
     /// (the interpreter's model: those frames were already popped when
     /// the innermost Located statement captured).
     fn note_error_frame(&mut self, bytecode: &CompiledBytecode, err_pc: usize) {
+        // Every frame the error leaves, with its line, for the error's
+        // trace (errtrace); fresh when this VM has not placed it yet.
+        {
+            let fresh = self.error_trace_span.is_none()
+                && self.error_trace_frames.is_empty()
+                && self.error_trace_leak.is_none();
+            let pc = err_pc as u32;
+            let line = bytecode
+                .span_table
+                .iter()
+                .rev()
+                .find(|&&(start, _, _)| start <= pc)
+                .map(|&(_, line, _)| line)
+                .unwrap_or(0);
+            crate::errtrace::note(
+                fresh,
+                (0, 0),
+                crate::errtrace::Frame {
+                    file: bytecode
+                        .def_file
+                        .as_ref()
+                        .map(|f| f.to_string())
+                        .or_else(|| self.entry_file.clone()),
+                    line,
+                    function: bytecode.debug_info.function_name.clone(),
+                },
+            );
+        }
         if self.error_trace_span.is_none() {
             let pc = err_pc as u32;
             match bytecode
@@ -6470,16 +6498,23 @@ impl BytecodeVm {
     /// Costs a push and a pop per call when a manifest or a trace is
     /// active, and a single branch when neither is — an unrestricted run
     /// pays nothing.
+    ///
+    /// A module loaded at run time (`runtime.load_module`) turns the
+    /// stack on too; the push says whether it happened, so a frame
+    /// entered before the first module and left after it pops nothing.
     #[inline]
-    fn push_caps_frame(&mut self, bytecode: &CompiledBytecode) {
-        if self.caps.is_some() || self.caps_trace.is_some() {
+    fn push_caps_frame(&mut self, bytecode: &CompiledBytecode) -> bool {
+        if self.caps.is_some() || self.caps_trace.is_some() || crate::caps::modules_active() {
             self.caps_file_stack.push(bytecode.def_file.clone());
+            true
+        } else {
+            false
         }
     }
 
     #[inline]
-    fn pop_caps_frame(&mut self) {
-        if self.caps.is_some() || self.caps_trace.is_some() {
+    fn pop_caps_frame(&mut self, pushed: bool) {
+        if pushed {
             self.caps_file_stack.pop();
         }
     }
@@ -7077,13 +7112,18 @@ impl BytecodeVm {
                         ValueData::AstFunction(_) | ValueData::Closure(_)
                     ) =>
             {
+                crate::errtrace::begin();
                 Some(match self.call_function_value(&args[0], &[]) {
                     Ok(v) => Ok(OvmValue::new_result(v, true)),
                     Err(BytecodeError::RuntimeError(message))
-                    | Err(BytecodeError::TypeError(message)) => Ok(OvmValue::new_result(
-                        OvmValue::new_string(crate::builtin::strip_error_prefixes(&message)),
-                        false,
-                    )),
+                    | Err(BytecodeError::TypeError(message)) => {
+                        let message = crate::builtin::strip_error_prefixes(&message);
+                        // Where it went, for `runtime.last_error()`; this
+                        // error's place is the value's now, not the next's.
+                        crate::errtrace::caught(&message);
+                        self.clear_error_trace();
+                        Ok(OvmValue::new_result(OvmValue::new_string(message), false))
+                    }
                     Err(e) => Err(e),
                 })
             }
@@ -9096,6 +9136,13 @@ impl BytecodeCompiler {
     /// table is installed. None = no manifest, no folding.
     fn static_grant(&self) -> Option<crate::caps::Caps> {
         let table = self.static_caps.as_ref()?;
+        // A module loaded at run time is gated at run time: its grant is
+        // not the table's, and may be replaced while its code runs.
+        if let Some(f) = self.current_def_file.as_deref()
+            && crate::caps::module_for(f).is_some()
+        {
+            return None;
+        }
         let (caps, _) = table.caps_for(self.current_def_file.as_deref());
         Some(*caps)
     }

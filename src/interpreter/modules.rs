@@ -536,6 +536,43 @@ impl Interpreter {
         // the first package's module, and a dependency's internal imports
         // worked only when its index.ol happened to cache the name first.
         let file_path = self.resolve_module_path(module_path)?;
+        self.load_module_resolved(file_path, module_path)
+    }
+
+    /// A module from a file named by its path (`runtime.load_module`):
+    /// loaded afresh — every module cached from its folder forgotten
+    /// first, so an edited plugin is read again, its own imports too.
+    pub fn load_module_at(&mut self, file: &std::path::Path) -> Result<Value, InterpreterError> {
+        let dir = file.parent().map(|d| d.to_path_buf()).unwrap_or_default();
+        self.forget_modules_under(&dir);
+        let name = file.to_string_lossy().to_string();
+        self.load_module_resolved(file.to_path_buf(), &name)
+    }
+
+    /// Forget every cached module whose file is under `dir`.
+    pub fn forget_modules_under(&mut self, dir: &std::path::Path) {
+        let keys: Vec<String> = self
+            .module_cache
+            .iter()
+            .filter(|(k, e)| {
+                std::path::Path::new(k.as_str()).starts_with(dir)
+                    || e.file_path.as_ref().is_some_and(|f| f.starts_with(dir))
+            })
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in keys {
+            self.module_cache.remove(&k);
+            self.module_scopes.remove(&k);
+        }
+        self.module_name_index
+            .retain(|_, f| !f.starts_with(dir));
+    }
+
+    fn load_module_resolved(
+        &mut self,
+        file_path: std::path::PathBuf,
+        module_path: &str,
+    ) -> Result<Value, InterpreterError> {
         let file_path_str = file_path.to_string_lossy().to_string();
         // What this load leaves on the heap is the program's, not its
         // values' (`runtime.memory()`).

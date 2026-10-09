@@ -1131,6 +1131,11 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 }
                 let result = self.eval_statement(stmt);
                 if let Err(e) = &result
+                    && !Self::is_control_signal(e)
+                {
+                    self.note_trace_line(*line);
+                }
+                if let Err(e) = &result
                     && self.pending_error_location.is_none()
                     && !Self::is_control_signal(e)
                 {
@@ -3354,7 +3359,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             // Capability enforcement rides the same stack — a gated
             // builtin call is attributed to the file (and so the
             // package) of the function that made it.
-            let track_coverage = self.coverage.is_some() || self.caps.is_some();
+            let track_coverage =
+                self.coverage.is_some() || self.caps.is_some() || crate::caps::modules_active();
             if track_coverage {
                 self.coverage_file_stack.push(func.def_file.clone());
             }
@@ -3471,6 +3477,24 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             // stands, deepest frame included, before the pop below
             // erases it. The located-statement capture upstream uses
             // this instead of its own (already-unwound) view.
+            // The frame in the error's trace (errtrace): a body with
+            // located statements noted its line already; an expression
+            // body is named here, its file without a line.
+            if let Err(e) = &result
+                && !Self::is_control_signal(e)
+            {
+                let fresh =
+                    self.pending_error_location.is_none() && self.pending_error_frames.is_none();
+                crate::errtrace::note(
+                    fresh,
+                    (self as *const Self as usize, self.call_depth),
+                    crate::errtrace::Frame {
+                        file: func.def_file.clone().or_else(|| self.entry_file.clone()),
+                        line: 0,
+                        function: func.name.clone(),
+                    },
+                );
+            }
             if let Err(e) = &result
                 && !Self::is_control_signal(e)
                 && self.pending_error_location.is_none()
@@ -4052,6 +4076,11 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     }
                 }
                 let result = self.eval_tail_statement(stmt, me);
+                if let Err(e) = &result
+                    && !Self::is_control_signal(e)
+                {
+                    self.note_trace_line(*line);
+                }
                 if let Err(e) = &result
                     && self.pending_error_location.is_none()
                     && !Self::is_control_signal(e)
@@ -5815,23 +5844,89 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// Attribution is by the executing function's `def_file`, compared as a
     /// canonicalized (memoized) real path.
     fn current_caps(&mut self) -> Option<(crate::caps::Caps, Option<String>)> {
+        if self.caps.is_none() && !crate::caps::modules_active() {
+            return None;
+        }
+        let canon = self.current_canon_file();
+        // A module loaded at run time answers to its own grant (within
+        // the app's, when the app has a manifest).
+        if let Some(path) = canon.as_deref()
+            && let Some(g) = crate::caps::module_for(path)
+        {
+            let caps = match self.caps.as_ref() {
+                Some(t) => g.caps.intersect(t.app),
+                None => g.caps,
+            };
+            return Some((caps, Some(format!("module:{}", g.name))));
+        }
         let table = self.caps.clone()?;
+        let (caps, package) = table.caps_for(canon.as_deref());
+        Some((*caps, package.map(|s| s.to_string())))
+    }
+
+    /// The real path of the file whose code is running (memoized).
+    fn current_canon_file(&mut self) -> Option<std::path::PathBuf> {
         let def_file = self
             .coverage_file_stack
             .last()
             .and_then(|f| f.as_deref())
             .or(self.current_module_path.as_deref())
             .map(|s| s.to_string());
-        let canon = def_file.as_ref().map(|f| {
+        def_file.as_ref().map(|f| {
             self.caps_path_cache
                 .entry(f.clone())
                 .or_insert_with(|| {
                     std::fs::canonicalize(f).unwrap_or_else(|_| std::path::PathBuf::from(f))
                 })
                 .clone()
-        });
-        let (caps, package) = table.caps_for(canon.as_deref());
-        Some((*caps, package.map(|s| s.to_string())))
+        })
+    }
+
+    /// The grant of the module loaded at run time whose code is running,
+    /// if it is one's.
+    pub fn current_module_grant(&mut self) -> Option<crate::caps::ModuleGrant> {
+        if !crate::caps::modules_active() {
+            return None;
+        }
+        let canon = self.current_canon_file()?;
+        crate::caps::module_for(&canon)
+    }
+
+    /// The scope gate for a module loaded at run time (caps::scope_denial):
+    /// the host's builtins, a path outside its roots, a program outside
+    /// its allow-list. One relaxed load until a module is loaded.
+    pub fn scope_denial(&mut self, full_name: &str, args: &[Value]) -> Option<String> {
+        if !crate::caps::modules_active() {
+            return None;
+        }
+        if !crate::caps::host_only(full_name) && crate::caps::required(full_name).is_none() {
+            return None;
+        }
+        let grant = self.current_module_grant()?;
+        Self::scope_check(&grant, full_name, args)
+    }
+
+    /// `scope_denial` for a grant and a call's arguments.
+    pub fn scope_check(
+        grant: &crate::caps::ModuleGrant,
+        full_name: &str,
+        args: &[Value],
+    ) -> Option<String> {
+        let strings: Vec<Option<&str>> = args
+            .iter()
+            .map(|a| match a {
+                Value::String(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect();
+        let head = match args.first() {
+            Some(Value::List(items)) => match items.first() {
+                Some(Value::String(s)) => Some(s.as_str()),
+                _ => None,
+            },
+            _ => None,
+        };
+        crate::caps::scope_denial(grant, full_name, &strings, head)
     }
 
     /// The grant governing the currently-executing code, for the `caps`
@@ -5862,9 +5957,22 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             self.cap_pregranted = false;
             return None;
         }
+        if self.caps.is_none() && !crate::caps::modules_active() {
+            return None;
+        }
+        // Ungated calls (the most of them) are allowed before anything
+        // is attributed.
+        crate::caps::required(full_name)?;
         let (caps, package) = self.current_caps()?;
         let denied = crate::caps::check(&caps, full_name)?;
         Some(match package {
+            Some(pkg) if pkg.starts_with("module:") => format!(
+                "capability '{}' denied: {} requires it, and module '{}' is granted {} (runtime.load_module)",
+                denied,
+                full_name,
+                &pkg["module:".len()..],
+                caps.summary()
+            ),
             Some(pkg) => format!(
                 "capability '{}' denied: {} requires it, and dependency '{}' is granted {} (olang.toml [capabilities.dependencies.{}])",
                 denied,
@@ -5889,7 +5997,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// capability. Called from builtin dispatch alongside `capability_denial`;
     /// a no-op (one branch) when no capabilities are active.
     pub fn implied_fs_denial(&mut self, full_name: &str, args: &[Value]) -> Option<String> {
-        self.caps.as_ref()?;
+        if self.caps.is_none() && !crate::caps::modules_active() {
+            return None;
+        }
         let relevant = match full_name {
             "db.open" => args.first(),
             "db.execute" | "db.query" | "db.query_one" | "db.query_rows" | "db.cursor" => {
@@ -5997,6 +6107,28 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         self.pending_error_location = None;
         self.pending_error_frames = None;
         self.pending_error_hint = None;
+    }
+
+    /// A located statement the error is leaving: its line noted in the
+    /// error's trace (errtrace), once a frame — the innermost statement
+    /// of each frame the error passes. "Fresh" when nothing has caught
+    /// this error's place yet: the trace of an earlier one is dropped.
+    fn note_trace_line(&mut self, line: u32) {
+        let fresh = self.pending_error_location.is_none() && self.pending_error_frames.is_none();
+        let file = match self.frame_funcs.last().and_then(|f| f.def_file.clone()) {
+            Some(f) => Some(f),
+            None => self
+                .current_module_path
+                .clone()
+                .filter(|p| !p.starts_with("__"))
+                .or_else(|| self.entry_file.clone()),
+        };
+        let function = self.frame_funcs.last().and_then(|f| f.name.clone());
+        crate::errtrace::note(
+            fresh,
+            (self as *const Self as usize, self.call_depth),
+            crate::errtrace::Frame { file, line, function },
+        );
     }
 
     /// The file whose code is running, for artifacts that live beside it

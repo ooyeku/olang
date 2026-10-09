@@ -23,6 +23,15 @@ pub fn create_runtime_module() -> Value {
     module.insert("profile_live_start".to_string(), builtin("profile_live_start", 1));
     module.insert("profile_live_stop".to_string(), builtin("profile_live_stop", 0));
     module.insert("build".to_string(), builtin("build", 0));
+    // A host loading code it did not write (olang Studio's plugins):
+    // see `call_host`.
+    module.insert("load_module".to_string(), builtin("load_module", 2));
+    module.insert("unload_module".to_string(), builtin("unload_module", 1));
+    module.insert("module_grant".to_string(), builtin("module_grant", 1));
+    module.insert("module_permits".to_string(), builtin("module_permits", 3));
+    module.insert("call_budget".to_string(), builtin("call_budget", 3));
+    module.insert("last_error".to_string(), builtin("last_error", 0));
+    module.insert("shape".to_string(), builtin("shape", 1));
     Value::Struct {
         type_name: "Module".to_string(),
         fields: Arc::new(module),
@@ -338,4 +347,273 @@ fn runtime_wasm(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let answer = Value::Map(Arc::new(out));
     let answer = ANSWER.get_or_init(|| answer).clone();
     Ok(Value::Ok(Box::new(answer)))
+}
+
+// ── a host's calls: modules loaded at run time ───────────────────────
+
+fn host_err(message: impl Into<String>) -> crate::interpreter::InterpreterError {
+    crate::interpreter::InterpreterError::RuntimeError {
+        message: message.into(),
+    }
+}
+
+fn str_arg<'a>(args: &'a [Value], i: usize, f: &str) -> Result<&'a str, crate::interpreter::InterpreterError> {
+    match args.get(i) {
+        Some(Value::String(s)) => Ok(s.as_str()),
+        other => Err(host_err(format!(
+            "runtime.{}: argument {} must be a String, got {}",
+            f,
+            i + 1,
+            other.map(|v| v.type_name()).unwrap_or_else(|| "nothing".into())
+        ))),
+    }
+}
+
+/// The folder a module's grant covers, from a path to its file (or to
+/// the folder itself): canonical.
+fn module_dir(path: &str) -> std::path::PathBuf {
+    let p = crate::caps::gate_path(path);
+    if p.is_dir() {
+        p
+    } else {
+        p.parent().map(|d| d.to_path_buf()).unwrap_or(p)
+    }
+}
+
+fn map_value(pairs: Vec<(&str, Value)>) -> Value {
+    let mut m = crate::ast::ValueMap::default();
+    for (k, v) in pairs {
+        m.insert(k.to_string(), v);
+    }
+    Value::Map(Arc::new(m))
+}
+
+/// The runtime functions that need the interpreter: a module loaded at
+/// run time under its own grant (`load_module`, `unload_module`,
+/// `module_grant`, `module_permits`), a call held to a time budget
+/// (`call_budget`), the trace of the last error caught (`last_error`),
+/// and a value's shape (`shape`). None for every other name.
+pub fn call_host(
+    name: &str,
+    args: &[Value],
+    interpreter: &mut crate::interpreter::Interpreter,
+) -> Option<Result<Value, crate::interpreter::InterpreterError>> {
+    Some(match name {
+        "load_module" => host_load_module(args, interpreter),
+        "unload_module" => (|| {
+            let dir = module_dir(str_arg(args, 0, "unload_module")?);
+            interpreter.forget_modules_under(&dir);
+            Ok(Value::Boolean(crate::caps::unregister_module(&dir)))
+        })(),
+        "module_grant" => (|| {
+            let dir = module_dir(str_arg(args, 0, "module_grant")?);
+            Ok(crate::caps::module_at(&dir)
+                .map(|g| crate::caps::grant_value(&g))
+                .unwrap_or(Value::Unit))
+        })(),
+        "module_permits" => host_module_permits(args),
+        "call_budget" => host_call_budget(args, interpreter),
+        "last_error" => Ok(match crate::errtrace::last() {
+            None => Value::Unit,
+            Some((message, frames)) => map_value(vec![
+                ("message", Value::String(Arc::new(message))),
+                ("frames", crate::errtrace::frames_value(&frames)),
+            ]),
+        }),
+        "shape" => match args.first() {
+            Some(v) => Ok(Value::String(Arc::new(shape_of(v, 0)))),
+            None => Err(host_err("runtime.shape expects a value")),
+        },
+        _ => return None,
+    })
+}
+
+/// `runtime.load_module(path, grant)`: the olang file at `path` loaded
+/// into this running program as a module — read afresh, with whatever it
+/// imports from its own folder — its code (everything under the file's
+/// folder) answering to `grant` (`#{ name, fs, fs_roots, proc, net, db,
+/// env }`; a key left out is denied). `Ok(module)` (its shared names as
+/// fields), or `Err(message)` — the module's grant as it was before, and
+/// the error's frames in `runtime.last_error()`.
+fn host_load_module(
+    args: &[Value],
+    interpreter: &mut crate::interpreter::Interpreter,
+) -> Result<Value, crate::interpreter::InterpreterError> {
+    let path = str_arg(args, 0, "load_module")?;
+    let file = crate::caps::gate_path(path);
+    if !file.is_file() {
+        return Ok(err_value(format!("runtime.load_module: {} is not a file", file.display())));
+    }
+    let dir = file.parent().map(|d| d.to_path_buf()).unwrap_or_default();
+    let default_name = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "module".to_string());
+    let grant = match crate::caps::grant_from_value(dir.clone(), &default_name, args.get(1).unwrap_or(&Value::Unit)) {
+        Ok(g) => g,
+        Err(e) => return Ok(err_value(e)),
+    };
+    let before = crate::caps::register_module(grant);
+    crate::errtrace::begin();
+    match interpreter.load_module_at(&file) {
+        Ok(module) => Ok(Value::Ok(Box::new(module))),
+        Err(e) if crate::interpreter::Interpreter::is_control_signal(&e) => Err(e),
+        Err(e) => {
+            // The previous version's grant stands, as its code does.
+            crate::caps::unregister_module(&dir);
+            if let Some(old) = before {
+                crate::caps::register_module(old);
+            }
+            interpreter.clear_pending_error();
+            let message = crate::builtin::strip_error_prefixes(&e.to_string());
+            crate::errtrace::caught(&message);
+            Ok(err_value(message))
+        }
+    }
+}
+
+/// `runtime.module_permits(path, builtin, args)`: would the module whose
+/// code is under `path` be allowed `builtin(args…)`? The same gate its own
+/// call would meet — for a host performing an effect on a module's behalf
+/// (a process it asked for). `Ok(())`, or `Err(why)`.
+fn host_module_permits(args: &[Value]) -> Result<Value, crate::interpreter::InterpreterError> {
+    let dir = module_dir(str_arg(args, 0, "module_permits")?);
+    let builtin = str_arg(args, 1, "module_permits")?;
+    let call_args: Vec<Value> = match args.get(2) {
+        Some(Value::List(items)) => items.iter().cloned().collect(),
+        Some(Value::Unit) | None => Vec::new(),
+        Some(other) => vec![other.clone()],
+    };
+    let Some(grant) = crate::caps::module_at(&dir) else {
+        return Ok(err_value(format!(
+            "runtime.module_permits: no module is loaded from {}",
+            dir.display()
+        )));
+    };
+    if let Some(denied) = crate::caps::check(&grant.caps, builtin) {
+        return Ok(err_value(format!(
+            "capability '{}' denied: {} requires it, and module '{}' is granted {} (runtime.load_module)",
+            denied,
+            builtin,
+            grant.name,
+            grant.caps.summary()
+        )));
+    }
+    if let Some(message) = crate::interpreter::Interpreter::scope_check(&grant, builtin, &call_args) {
+        return Ok(err_value(message));
+    }
+    Ok(Value::Ok(Box::new(Value::Unit)))
+}
+
+/// `runtime.call_budget(f, args, ms)`: `f(args…)` with a deadline — past
+/// `ms` its evaluation is stopped (as an interrupt, on this thread only)
+/// — and its failures caught. Answers a Map: `ok`, `value` (when ok),
+/// `error` and `frames` (when not), `over` (it ran out of time), `us`
+/// (how long it took, in microseconds).
+fn host_call_budget(
+    args: &[Value],
+    interpreter: &mut crate::interpreter::Interpreter,
+) -> Result<Value, crate::interpreter::InterpreterError> {
+    let f = match args.first() {
+        Some(v @ (Value::Function(_) | Value::Builtin(_))) => v.clone(),
+        other => {
+            return Err(host_err(format!(
+                "runtime.call_budget: argument 1 must be a function, got {}",
+                other.map(|v| v.type_name()).unwrap_or_else(|| "nothing".into())
+            )));
+        }
+    };
+    let call_args: Vec<Value> = match args.get(1) {
+        Some(Value::List(items)) => items.iter().cloned().collect(),
+        Some(Value::Unit) | None => Vec::new(),
+        Some(other) => {
+            return Err(host_err(format!(
+                "runtime.call_budget: argument 2 must be a List of arguments, got {}",
+                other.type_name()
+            )));
+        }
+    };
+    let ms = match args.get(2) {
+        Some(Value::Integer(n)) if *n > 0 => *n as u64,
+        Some(Value::Float(x)) if *x > 0.0 => x.ceil() as u64,
+        other => {
+            return Err(host_err(format!(
+                "runtime.call_budget: argument 3 must be a positive number of milliseconds, got {}",
+                other.map(|v| v.to_string()).unwrap_or_else(|| "nothing".into())
+            )));
+        }
+    };
+    crate::errtrace::begin();
+    let started = std::time::Instant::now();
+    crate::interrupt::budget_begin(ms);
+    let result = interpreter.call_function(f, call_args);
+    let over = crate::interrupt::budget_end();
+    let us = Value::Integer(started.elapsed().as_micros() as i64);
+    match result {
+        Ok(v) => Ok(map_value(vec![
+            ("ok", Value::Boolean(true)),
+            ("value", v),
+            ("over", Value::Boolean(over)),
+            ("us", us),
+        ])),
+        Err(e) if crate::interpreter::Interpreter::is_control_signal(&e) => Err(e),
+        Err(e) => {
+            interpreter.clear_pending_error();
+            let raw = crate::builtin::strip_error_prefixes(&e.to_string());
+            let message = if over && crate::interrupt::is_interrupt(&raw) {
+                format!("stopped: over its time budget of {} ms", ms)
+            } else {
+                raw
+            };
+            let frames = crate::errtrace::caught(&message);
+            Ok(map_value(vec![
+                ("ok", Value::Boolean(false)),
+                ("error", Value::String(Arc::new(message))),
+                ("frames", crate::errtrace::frames_value(&frames)),
+                ("over", Value::Boolean(over)),
+                ("us", us),
+            ]))
+        }
+    }
+}
+
+/// A value's shape: its kind, a map's keys with theirs, a list's first
+/// item's, a struct's fields' — what a host compares to decide whether a
+/// reloaded module's state can be kept. Depth-limited (6).
+pub fn shape_of(v: &Value, depth: usize) -> String {
+    if depth > 6 {
+        return "…".to_string();
+    }
+    match v {
+        Value::Map(m) => {
+            let mut keys: Vec<&String> = m.keys().collect();
+            keys.sort();
+            format!(
+                "{{{}}}",
+                keys.iter()
+                    .map(|k| format!("{}:{}", k, shape_of(m.get(*k).unwrap(), depth + 1)))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        }
+        Value::List(items) => match items.first() {
+            Some(first) => format!("[{}]", shape_of(first, depth + 1)),
+            None => "[]".to_string(),
+        },
+        Value::Struct { type_name, fields } => {
+            let mut keys: Vec<&String> = fields.keys().collect();
+            keys.sort();
+            format!(
+                "{}{{{}}}",
+                type_name,
+                keys.iter()
+                    .map(|k| format!("{}:{}", k, shape_of(fields.get(*k).unwrap(), depth + 1)))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        }
+        Value::Ok(inner) => format!("Ok({})", shape_of(inner, depth + 1)),
+        Value::Err(inner) => format!("Err({})", shape_of(inner, depth + 1)),
+        other => other.type_name().to_string(),
+    }
 }

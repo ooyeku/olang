@@ -26,6 +26,7 @@ pub mod expand;
 pub mod help;
 pub mod home;
 pub mod interpreter;
+pub mod errtrace; // Where a caught error went: its frames, file and line each
 pub mod interrupt; // Stopping a running evaluation (`olang repl --serve`)
 pub mod log;
 pub mod memory; // The accounting behind `runtime.memory()`

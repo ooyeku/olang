@@ -6021,6 +6021,64 @@ for row in take(map_get(p, "rows"), 5) { println(map_get(row, "function") + " " 
             &[r##"unwrap(runtime.profile_live_stop())"##],
         );
         self.doc_ex(
+            "runtime.load_module",
+            "runtime.load_module(path, grant)",
+            "Result",
+            "runtime",
+            "Load the olang file at `path` into this running program as a module, read afresh (every module cached from its folder forgotten first, so an edited file is read again), its code — everything under the file's folder — held to `grant`: #{ \"name\", \"fs\": false | \"read\" | true, \"fs_roots\": [folders the fs grant holds under], \"proc\": false | true | [programs it may run, by file name or path], \"net\", \"db\", \"env\" }, a key left out denied; and never the host's own builtins (gui, tty, loading modules, the process's profiler). Ok(module) — its shared names as fields — or Err(message), the folder's previous grant kept and the error's frames in runtime.last_error(). How a host (olang Studio) runs plugins in its own VM.",
+            &[r##"match runtime.load_module("plugins/hello/plugin.ol", #{ "name": "hello", "fs": "read", "fs_roots": ["."], "proc": ["olang"] }) { Ok(m) => println(m.greet("you")), Err(e) => println(e) }"##],
+        );
+        self.doc_ex(
+            "runtime.unload_module",
+            "runtime.unload_module(path)",
+            "Bool",
+            "runtime",
+            "Forget the grant of the module loaded from `path` (its file or its folder) and the modules cached from its folder. Its values a program still holds keep working, under the grant of whoever runs them. True when there was one.",
+            &[r##"runtime.unload_module("plugins/hello/plugin.ol")"##],
+        );
+        self.doc_ex(
+            "runtime.module_grant",
+            "runtime.module_grant(path)",
+            "Map",
+            "runtime",
+            "The grant of the module loaded from `path` (its file or its folder), as runtime.load_module took it with its folders made real — #{ \"name\", \"dir\", \"fs\", \"fs_roots\", \"proc\", \"net\", \"db\", \"env\" } — or () when none is loaded from there.",
+            &[r##"show(runtime.module_grant("plugins/hello"))"##],
+        );
+        self.doc_ex(
+            "runtime.module_permits",
+            "runtime.module_permits(path, builtin, args)",
+            "Result",
+            "runtime",
+            "Would the module loaded from `path` be allowed `builtin(args…)`? The gate its own call would meet — its capabilities, its folders, its programs — asked by a host about to perform an effect on the module's behalf (a process it asked for). Ok(()), or Err(why).",
+            &[r##"runtime.module_permits("plugins/hello", "proc.spawn", [["olang", "check", "x.ol"]])"##],
+        );
+        self.doc_ex(
+            "runtime.call_budget",
+            "runtime.call_budget(f, args, ms)",
+            "Map",
+            "runtime",
+            "Call f(args…) with a time budget: past `ms` milliseconds its evaluation is stopped — as an interrupt, on this thread only — and any failure is caught. #{ \"ok\", \"value\" (when ok), \"error\" and \"frames\" (when not: each #{ \"file\", \"line\", \"fn\" }, innermost first), \"over\" (it ran past its budget), \"us\" (microseconds it took) }. How a host calls code it does not trust to finish.",
+            &[r##"let r = runtime.call_budget((n) => n * 2, [21], 50)
+println(show(map_get(r, "value")) + " in " + show(map_get(r, "us")) + " µs")"##],
+        );
+        self.doc_ex(
+            "runtime.last_error",
+            "runtime.last_error()",
+            "Map",
+            "runtime",
+            "The error a boundary on this thread caught last (attempt, runtime.call_budget, runtime.load_module) with where it went: #{ \"message\", \"frames\": [#{ \"file\", \"line\", \"fn\" }] }, innermost frame first (line 0: a function whose body is one expression, named without a line). () when none was caught.",
+            &[r##"let r = attempt(() => str.trim(()))
+for f in map_get(runtime.last_error(), "frames") { println(show(map_get(f, "file")) + ":" + show(map_get(f, "line"))) }"##],
+        );
+        self.doc_ex(
+            "runtime.shape",
+            "runtime.shape(value)",
+            "String",
+            "runtime",
+            "A value's shape as text: its kind, a map's keys (sorted) with theirs, a list's first item's, a struct's fields'. Two values of one shape can stand for each other — what a host compares to keep a reloaded module's state.",
+            &[r##"runtime.shape(#{ "n": 1, "items": ["a"] })   // "{items:[String],n:Int}""##],
+        );
+        self.doc_ex(
             "runtime.build",
             "runtime.build()",
             "Map",
