@@ -33,6 +33,7 @@ pub mod memory; // The accounting behind `runtime.memory()`
 pub mod native;
 pub mod ods;
 pub mod olb; // The program image: a parsed Program as bytes
+pub mod parse_cache; // Parsed modules kept between runs
 pub mod output;
 pub mod ovm; // Bytecode execution tier
 pub mod parallel;

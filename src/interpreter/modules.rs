@@ -668,11 +668,20 @@ impl Interpreter {
             declared_macros = macro_names_in(&content);
             // Expansion resolves the module's own imports from its
             // directory (and its package root), not the working directory.
-            crate::parser::Parser::new()
-                .parse_with_dir(&content, file_path.parent())
-                .map_err(|e| InterpreterError::RuntimeError {
-                    message: format!("Failed to parse module {}:\n{}", file_path.display(), e),
-                })?
+            // A module this build parsed before, unchanged, is read back
+            // (crate::parse_cache); else parsed, and kept for next time.
+            match crate::parse_cache::load(&file_path, &content) {
+                Some(program) => program,
+                None => {
+                    let program = crate::parser::Parser::new()
+                        .parse_with_dir(&content, file_path.parent())
+                        .map_err(|e| InterpreterError::RuntimeError {
+                            message: format!("Failed to parse module {}:\n{}", file_path.display(), e),
+                        })?;
+                    crate::parse_cache::store(&file_path, &content, &program);
+                    program
+                }
+            }
         };
 
         // Create a new environment for the module with builtins
