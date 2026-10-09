@@ -223,6 +223,11 @@ pub fn program_nodes(program: &crate::ast::Program) -> Vec<Value> {
     program.statements.iter().map(stmt_to_value).collect()
 }
 
+/// One statement as `program_nodes` gives it.
+pub fn stmt_node(stmt: &Statement) -> Value {
+    stmt_to_value(stmt)
+}
+
 // ── Value builders ──────────────────────────────────────────────────
 fn s(text: &str) -> Value {
     Value::String(std::sync::Arc::new(text.to_string()))

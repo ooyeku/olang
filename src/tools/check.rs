@@ -27,6 +27,41 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// Every finding `olang check` makes on one file — `program` parsed from
+/// `source` (macros already expanded), `dir` its directory — with the
+/// project's promotions applied. The language server publishes exactly
+/// this list, so the editor and the checker never disagree.
+/// `unresolved` is `Analyzer::unresolved_names(program)`, taken by the
+/// caller so a server that walks the file once for its own reasons does
+/// not walk it twice.
+pub fn file_diagnostics(
+    program: &Program,
+    source: &str,
+    dir: Option<&Path>,
+    unresolved: Vec<String>,
+) -> Vec<CheckDiagnostic> {
+    // the file's own tree says what it imports: parsing `source` again
+    // for its `use` lines doubled the cost of a large file
+    let modules = match dir {
+        Some(d) => modules_used_by(program, d, false),
+        None => Vec::new(),
+    };
+    let context: Vec<&Program> = modules.iter().map(|(_, _, p)| p).collect();
+    let mut diagnostics = check_program_with_context(&context, program);
+    diagnostics.extend(use_shadow_warnings(program, dir));
+    diagnostics.extend(unimported_names(program, source, &modules, dir, unresolved));
+    diagnostics.extend(template_escape_warnings(source));
+    diagnostics.extend(shadow_warnings_in(program, source));
+    // The project's `[check] promote`: the advisory classes it names
+    // are errors here, so an exhaustiveness or shape finding gates
+    // without a rules file.
+    let promoted = promotions_for(dir);
+    for d in diagnostics.iter_mut() {
+        promote(d, &promoted);
+    }
+    diagnostics
+}
+
 /// `olang check [paths] [--rules FILE]` — parse every `.ol` file and report
 /// provable annotation violations. With `--rules`, also run project-authored
 /// lints written in olang over the meta AST. Exit 0 when everything is clean
@@ -88,20 +123,8 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
                 continue;
             }
         };
-        let modules = module_programs(&source, file.parent());
-        let context: Vec<&Program> = modules.iter().map(|(_, _, p)| p).collect();
-        let mut diagnostics = check_program_with_context(&context, &program);
-        diagnostics.extend(use_shadow_warnings(&program, file.parent()));
-        diagnostics.extend(unimported_names(&program, &source, &modules, file.parent()));
-        diagnostics.extend(template_escape_warnings(&source));
-        diagnostics.extend(shadow_warnings(&program));
-        // The project's `[check] promote`: the advisory classes it names
-        // are errors here, so an exhaustiveness or shape finding gates
-        // without a rules file.
-        let promoted = promotions_for(file.parent());
-        for d in diagnostics.iter_mut() {
-            promote(d, &promoted);
-        }
+        let unresolved = crate::analyze::Analyzer::unresolved_names(&program);
+        let diagnostics = file_diagnostics(&program, &source, file.parent(), unresolved);
         for d in diagnostics {
             if d.warning {
                 warnings += 1;
@@ -304,6 +327,31 @@ fn flatten_ast(nodes: &[Value]) -> Vec<Value> {
     out
 }
 
+/// `flatten_ast` without the copies: `f` sees every node (a map with a
+/// `kind`) in the same preorder, with the nearest enclosing line.
+fn visit_nodes(v: &Value, inherited_line: i64, f: &mut dyn FnMut(&crate::ast::ValueMap, i64)) {
+    match v {
+        Value::Map(m) => {
+            let line = match m.get("line") {
+                Some(Value::Integer(l)) => *l,
+                _ => inherited_line,
+            };
+            if m.contains_key("kind") {
+                f(m, line);
+            }
+            for val in m.values() {
+                visit_nodes(val, line, f);
+            }
+        }
+        Value::List(items) => {
+            for it in items.iter() {
+                visit_nodes(it, inherited_line, f);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn flatten_into(v: &Value, inherited_line: i64, out: &mut Vec<Value>) {
     match v {
         Value::Map(m) => {
@@ -425,8 +473,8 @@ fn unimported_names(
     source: &str,
     modules: &[(PathBuf, String, Program)],
     dir: Option<&Path>,
+    candidates: Vec<String>,
 ) -> Vec<CheckDiagnostic> {
-    let candidates = crate::analyze::Analyzer::unresolved_names(program);
     if candidates.is_empty() {
         return Vec::new();
     }
@@ -703,8 +751,134 @@ from line {} — call it as `{}.{}`, or alias the earlier import \
 ///   turns every later `fs.exists(…)` in its scope into a field access on
 ///   a value.
 pub fn shadow_warnings(program: &Program) -> Vec<CheckDiagnostic> {
-    use crate::ast::Value;
     let nodes = crate::stdlib::meta::program_nodes(program);
+    let callable = callable_names(&nodes);
+    shadow_warnings_of(&nodes, &callable)
+}
+
+/// `shadow_warnings`, the same findings in the same order, without
+/// turning the whole program into meta nodes: only the top-level
+/// statements that can warn are converted — a function with a parameter
+/// named like a callable, a `use` whose leaf is a stdlib module — and
+/// the whole program only when `source` (the text `program` was parsed
+/// from) binds a stdlib module's name with `let` somewhere. The full
+/// conversion was most of a 50,000-line file's check.
+pub fn shadow_warnings_in(program: &Program, source: &str) -> Vec<CheckDiagnostic> {
+    use crate::ast::{ShareDecl, UseItem};
+    let stdlib = crate::stdlib::get_stdlib();
+    if may_let_bind_any(source, |w| stdlib.contains_key(w)) {
+        return shadow_warnings(program);
+    }
+    // What `callable_names` reads from the nodes, read from the tree.
+    let mut callable: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for stmt in &program.statements {
+        match stmt.unwrapped() {
+            Statement::UseDecl(u) | Statement::ShareDecl(ShareDecl::Use(u)) => {
+                callable.extend(u.items.iter().map(|i| match i {
+                    UseItem::Specific(n) => n.clone(),
+                    UseItem::Aliased { name, alias } => format!("{} as {}", name, alias),
+                    UseItem::Wildcard => "*".to_string(),
+                }));
+            }
+            Statement::FunctionDecl(f) | Statement::ShareDecl(ShareDecl::Function(f)) => {
+                callable.insert(f.name.clone());
+            }
+            _ => {}
+        }
+    }
+    let nodes: Vec<crate::ast::Value> = program
+        .statements
+        .iter()
+        .filter(|stmt| match stmt.unwrapped() {
+            Statement::UseDecl(u) | Statement::ShareDecl(ShareDecl::Use(u)) => {
+                u.path.len() >= 2 && u.path.last().is_some_and(|l| stdlib.contains_key(l))
+            }
+            Statement::FunctionDecl(f) | Statement::ShareDecl(ShareDecl::Function(f)) => {
+                f.parameters.iter().any(|p| callable.contains(&p.name))
+            }
+            _ => false,
+        })
+        .map(|stmt| crate::stdlib::meta::stmt_node(stmt))
+        .collect();
+    shadow_warnings_of(&nodes, &callable)
+}
+
+/// Whether `source` may hold `let NAME` (or `let mut NAME`) with `hit(NAME)`
+/// — conservative: comments and strings are not told apart.
+fn may_let_bind_any(source: &str, hit: impl Fn(&str) -> bool) -> bool {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut rest = source;
+    while let Some(at) = rest.find("let") {
+        let before = rest[..at].chars().next_back();
+        let after = &rest[at + 3..];
+        rest = after;
+        if before.is_some_and(word) || !after.starts_with(char::is_whitespace) {
+            continue;
+        }
+        let mut name = after.trim_start();
+        if let Some(m) = name.strip_prefix("mut")
+            && m.starts_with(char::is_whitespace)
+        {
+            name = m.trim_start();
+        }
+        let end = name.find(|c: char| !word(c)).unwrap_or(name.len());
+        if hit(&name[..end]) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Names a body may call that a parameter could shadow: imports and
+/// module-level functions, read from the top-level meta nodes.
+fn callable_names(nodes: &[Value]) -> std::collections::HashSet<String> {
+    let str_of = |v: &Value| match v {
+        Value::String(s) => Some(s.to_string()),
+        _ => None,
+    };
+    let field = |m: &Value, k: &str| -> Option<Value> {
+        match m {
+            Value::Map(map) => map.get(k).cloned(),
+            Value::Struct { fields, .. } => fields.get(k).cloned(),
+            _ => None,
+        }
+    };
+    let list_of = |v: Option<Value>| -> Vec<Value> {
+        match v {
+            Some(Value::List(ref items)) => items.as_ref().clone(),
+            _ => Vec::new(),
+        }
+    };
+    let mut callable: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for node in nodes {
+        match field(node, "kind").and_then(|k| str_of(&k)).as_deref() {
+            Some("use") => {
+                for item in list_of(field(node, "items")) {
+                    if let Some(n) = str_of(&item)
+                        .or_else(|| field(&item, "alias").and_then(|a| str_of(&a)))
+                        .or_else(|| field(&item, "name").and_then(|a| str_of(&a)))
+                    {
+                        callable.insert(n);
+                    }
+                }
+            }
+            Some("fn") => {
+                if let Some(n) = field(node, "name").and_then(|n| str_of(&n)) {
+                    callable.insert(n);
+                }
+            }
+            _ => {}
+        }
+    }
+    callable
+}
+
+/// The findings of `shadow_warnings` over `nodes`, given the callables.
+fn shadow_warnings_of(
+    nodes: &[Value],
+    callable: &std::collections::HashSet<String>,
+) -> Vec<CheckDiagnostic> {
+    use crate::ast::Value;
     let stdlib: std::collections::HashSet<String> =
         crate::stdlib::get_stdlib().keys().cloned().collect();
     let str_of = |v: &Value| match v {
@@ -735,31 +909,8 @@ pub fn shadow_warnings(program: &Program) -> Vec<CheckDiagnostic> {
         };
         (l, c)
     };
-    // Names a body may call that a parameter could shadow: imports and
-    // module-level functions.
-    let mut callable: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for node in &nodes {
-        match field(node, "kind").and_then(|k| str_of(&k)).as_deref() {
-            Some("use") => {
-                for item in list_of(field(node, "items")) {
-                    if let Some(n) = str_of(&item)
-                        .or_else(|| field(&item, "alias").and_then(|a| str_of(&a)))
-                        .or_else(|| field(&item, "name").and_then(|a| str_of(&a)))
-                    {
-                        callable.insert(n);
-                    }
-                }
-            }
-            Some("fn") => {
-                if let Some(n) = field(node, "name").and_then(|n| str_of(&n)) {
-                    callable.insert(n);
-                }
-            }
-            _ => {}
-        }
-    }
     let mut out = Vec::new();
-    for node in &nodes {
+    for node in nodes {
         let kind = field(node, "kind").and_then(|k| str_of(&k));
         let (line, column) = line_of(node);
         match kind.as_deref() {
@@ -771,15 +922,16 @@ pub fn shadow_warnings(program: &Program) -> Vec<CheckDiagnostic> {
                     .iter()
                     .filter_map(|p| str_of(p).or_else(|| field(p, "name").and_then(|n| str_of(&n))))
                     .collect();
-                let body = field(node, "body").map(|b| vec![b]).unwrap_or_default();
                 let mut called: std::collections::HashSet<String> =
                     std::collections::HashSet::new();
-                for n in flatten_ast(&body) {
-                    if field(&n, "kind").and_then(|k| str_of(&k)).as_deref() == Some("call")
-                        && let Some(t) = field(&n, "target").and_then(|t| str_of(&t))
-                    {
-                        called.insert(t);
-                    }
+                if let Some(body) = field(node, "body") {
+                    visit_nodes(&body, 0, &mut |n, _| {
+                        if matches!(n.get("kind"), Some(Value::String(k)) if k.as_str() == "call")
+                            && let Some(Value::String(t)) = n.get("target")
+                        {
+                            called.insert(t.to_string());
+                        }
+                    });
                 }
                 for p in params {
                     if callable.contains(&p) && called.contains(&p) {
@@ -829,25 +981,34 @@ this module, not the standard library — rename the file if that is not intende
         }
     }
     // `let` bindings, at any depth, that take a stdlib module's name.
-    for n in flatten_ast(&nodes) {
-        if field(&n, "kind").and_then(|k| str_of(&k)).as_deref() == Some("let")
-            && let Some(name) = field(&n, "name").and_then(|v| str_of(&v))
-            && stdlib.contains(&name)
-        {
-            let (line, column) = line_of(&n);
-            out.push(CheckDiagnostic {
-                line,
-                column,
-                message: format!(
-                    "`let {}` shadows the stdlib module `{}` for the rest of its scope — a later \
+    let mut lets: Vec<(String, u32, u32)> = Vec::new();
+    for node in nodes {
+        visit_nodes(node, 0, &mut |n, line| {
+            if matches!(n.get("kind"), Some(Value::String(k)) if k.as_str() == "let")
+                && let Some(Value::String(name)) = n.get("name")
+                && stdlib.contains(name.as_str())
+            {
+                let column = match n.get("column") {
+                    Some(Value::Integer(c)) => *c as u32,
+                    _ => 0,
+                };
+                lets.push((name.to_string(), line as u32, column));
+            }
+        });
+    }
+    for (name, line, column) in lets {
+        out.push(CheckDiagnostic {
+            line,
+            column,
+            message: format!(
+                "`let {}` shadows the stdlib module `{}` for the rest of its scope — a later \
 `{}.…` reaches this binding, not the module",
-                    name, name, name
-                ),
-                runtime: false,
-                warning: true,
-                scope: false,
-            });
-        }
+                name, name, name
+            ),
+            runtime: false,
+            warning: true,
+            scope: false,
+        });
     }
     out
 }
@@ -901,6 +1062,56 @@ pub fn fix_template_escapes(source: &str) -> (String, usize) {
     (text, total)
 }
 
+/// A conservative lexical pass: false only when no backtick template in
+/// `source` can contain `\n`, `\t` or `\r`. Comments and double-quoted
+/// (and raw) strings are skipped so their backticks and escapes do not
+/// count; inside a template anything suspicious answers true, `${…}`
+/// bodies included.
+fn may_hold_template_escape(source: &str) -> bool {
+    if !source.contains('`') {
+        return false;
+    }
+    let b = source.as_bytes();
+    let mut i = 0;
+    let mut in_template = false;
+    while i < b.len() {
+        let c = b[i];
+        if in_template {
+            match c {
+                b'\\' => {
+                    if matches!(b.get(i + 1), Some(b'n' | b't' | b'r')) {
+                        return true;
+                    }
+                    i += 2;
+                    continue;
+                }
+                b'`' => in_template = false,
+                _ => {}
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'/' if b.get(i + 1) == Some(&b'/') => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            b'"' => {
+                i += 1;
+                while i < b.len() && b[i] != b'"' {
+                    i += if b[i] == b'\\' { 2 } else { 1 };
+                }
+            }
+            b'`' => in_template = true,
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
 pub fn template_escape_warnings(source: &str) -> Vec<CheckDiagnostic> {
     fn advance(c: char, line: &mut u32, col: &mut u32) {
         if c == '\n' {
@@ -909,6 +1120,11 @@ pub fn template_escape_warnings(source: &str) -> Vec<CheckDiagnostic> {
         } else {
             *col += 1;
         }
+    }
+    // The spans come from a second full parse of the file; most files
+    // have no template holding a `\n`, `\t` or `\r` at all.
+    if !may_hold_template_escape(source) {
+        return Vec::new();
     }
     let mut out = Vec::new();
     for (start_line, start_col, raw) in crate::parser::Parser::template_literal_spans(source) {
@@ -1063,6 +1279,15 @@ fn modules_used(
             }
         }
     };
+    modules_used_by(&program, dir, reexports_only)
+}
+
+/// `modules_used` over an already-parsed program.
+fn modules_used_by(
+    program: &Program,
+    dir: &Path,
+    reexports_only: bool,
+) -> Vec<(PathBuf, String, Program)> {
     // The modules the file names, and apart from them the modules those
     // re-export. Re-exports are returned FIRST: a later signature replaces
     // an earlier one of the same name, and the function a file imports
@@ -1123,7 +1348,10 @@ fn modules_used(
                 if let Some(prog) = parsed_module(&c, &src) {
                     // A package's index re-exports: the modules it
                     // `share use`s carry the signatures and types.
-                    let reexports = modules_used(&src, c.parent(), true);
+                    let reexports = match c.parent() {
+                        Some(d) => modules_used_by(&prog, d, true),
+                        None => Vec::new(),
+                    };
                     out.push((c, src, prog));
                     for r in reexports {
                         if reexported.len() < 96 && !reexported.iter().any(|(p, _, _)| *p == r.0) {
