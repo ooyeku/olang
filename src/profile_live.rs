@@ -68,6 +68,9 @@ struct State {
 
 struct Live {
     spec: LiveSpec,
+    /// Started by the program itself (`runtime.profile_live_start`): only
+    /// such a one may `runtime.profile_live_stop` end.
+    by_program: bool,
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
     state: Arc<Mutex<State>>,
@@ -78,6 +81,17 @@ static LIVE: Mutex<Option<Live>> = Mutex::new(None);
 
 /// Start a live profile (once a process; a second call is refused).
 pub fn start(spec: LiveSpec) -> bool {
+    start_as(spec, false)
+}
+
+/// `start`, by the program itself (`runtime.profile_live_start`): one
+/// `runtime.profile_live_stop` may end; `olang profile`'s and an armed
+/// run's it may not.
+pub fn start_by_program(spec: LiveSpec) -> bool {
+    start_as(spec, true)
+}
+
+fn start_as(spec: LiveSpec, by_program: bool) -> bool {
     let mut slot = LIVE.lock().unwrap_or_else(|e| e.into_inner());
     if slot.is_some() {
         return false;
@@ -148,6 +162,7 @@ pub fn start(spec: LiveSpec) -> bool {
         .ok();
     *slot = Some(Live {
         spec,
+        by_program,
         stop,
         thread,
         state,
@@ -182,6 +197,19 @@ fn follow_attach(s: &mut State, dir: Option<&Path>, interval_us: u64) {
 /// Whether a live profile runs in this process.
 pub fn running() -> bool {
     LIVE.lock().map(|l| l.is_some()).unwrap_or(false)
+}
+
+/// End the live profile the program started itself (`runtime.
+/// profile_live_stop`): None when none runs, or when the one running is
+/// `olang profile`'s or an armed run's (theirs to end).
+pub fn finish_by_program() -> Option<J> {
+    {
+        let slot = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        if !slot.as_ref().is_some_and(|l| l.by_program) {
+            return None;
+        }
+    }
+    finish(None)
 }
 
 /// End the live profile: the final document (`done`), written as the

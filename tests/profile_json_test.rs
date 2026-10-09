@@ -455,10 +455,17 @@ fn a_program_profiles_itself_live_in_the_snapshot_format_and_stops() {
 
 #[test]
 fn a_live_profile_of_its_own_is_refused_in_an_armed_run() {
-    let dir = project("self-armed", "println(show(runtime.profile_live_start(fs.join(unwrap(os.cwd()), \"x\"))))\n");
+    let dir = project("self-armed", "println(show(runtime.profile_live_start(fs.join(unwrap(os.cwd()), \"x\"))))\nprintln(show(runtime.profile_live_stop()))\n");
     let (code, out, _) = olang(&dir, &["--profile-live", "armed", "main.ol"]);
     assert_eq!(code, 0);
-    assert!(out.trim().starts_with("Err("), "{out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines[0].starts_with("Err("), "{out}");
+    // nor may it end the armed run's: that is the run's to end
+    assert!(lines[1].starts_with("Err("), "{out}");
+    // inside `olang profile`, the program's stop leaves the profile whole
+    let (code2, _, err2) = olang(&dir, &["profile", "main.ol", "--format", "json", "--out", "p.json"]);
+    assert_eq!(code2, 0, "{err2}");
+    assert_eq!(read(&dir.join("p.json"))["kind"], "profile");
 }
 
 #[test]

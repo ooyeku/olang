@@ -165,7 +165,7 @@ fn runtime_profile_live_start(args: Vec<Value>) -> Result<Value, Box<dyn std::er
     }
     let dir = std::path::PathBuf::from(dir);
     let dir = std::path::absolute(&dir).unwrap_or(dir);
-    let started = crate::profile_live::start(crate::profile_live::LiveSpec {
+    let started = crate::profile_live::start_by_program(crate::profile_live::LiveSpec {
         dir: Some(dir),
         every_ms,
         from_start: true,
@@ -182,12 +182,13 @@ fn runtime_profile_live_start(args: Vec<Value>) -> Result<Value, Box<dyn std::er
 /// `runtime.profile_live_stop()` — end the live profile
 /// `runtime.profile_live_start` began: sampling stops, the final snapshot
 /// (`"done": true`) is written, and the process pays nothing for it again.
-/// `Ok(())`, or `Err` when none runs.
+/// `Ok(())`, or `Err` when none runs — or when the one running is not the
+/// program's (`olang profile`'s, an armed run's: theirs to end).
 fn runtime_profile_live_stop(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
         return Err(format!("runtime.profile_live_stop expects 0 arguments, got {}", args.len()).into());
     }
-    Ok(if crate::profile_live::finish(None).is_some() {
+    Ok(if crate::profile_live::finish_by_program().is_some() {
         Value::Ok(Box::new(Value::Unit))
     } else {
         err_value("no live profile is running (runtime.profile_live_start starts one)".to_string())
