@@ -894,9 +894,12 @@ children a run starts: `olang test`'s, `olang bench`'s) arms any run: its
 vital signs are written to `DIR/<pid>.json` from the start, and its
 stacks are sampled while the file `DIR/attach` exists — an editor
 attaches to a program it started by creating the file and detaches by
-deleting it (the profile so far is kept). Until then the shadow stack
-is off: an armed run costs what an ordinary one does.
-`OLANG_PROFILE_LIVE_EVERY` sets its period (ms).
+deleting it (the profile so far is kept). A `DIR/attach` there before
+the run starts samples it from its first call; one made or removed while
+it runs is noticed within 50 ms, not at the next snapshot. Until then the
+shadow stack is off: an armed run costs what an ordinary one does. The
+series' first point is the run's start. `OLANG_PROFILE_LIVE_EVERY` sets
+its period (ms).
 
 **Overhead**, measured on this Mac (median of 5, load ~3): a JSON
 profile with live snapshots +2.7% on a bytecode- and native-heavy run

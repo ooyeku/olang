@@ -153,6 +153,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **An armed run attached before it starts is sampled from its first
+  call.** `--profile-live DIR` with `DIR/attach` already there looked for
+  it only at the first snapshot (250–500 ms in), so a shorter run ended
+  with no samples (Loom's `tools/bench.ol` under Studio's Profile File:
+  0 samples of a 250 ms run). The attach file is read as the run starts
+  and every 50 ms after; the series begins with a point at the start.
+
 - **gui: a closed window goes away, in order (macOS).** The process's
   GPU instance held the first window it presented to, so that window
   was never dropped: closed by the program, it stayed on the screen

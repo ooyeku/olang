@@ -86,8 +86,13 @@ pub fn start(spec: LiveSpec) -> bool {
         let _ = std::fs::create_dir_all(dir);
     }
     crate::profile::detail_enable();
-    let state = Arc::new(Mutex::new(State {
-        session: if spec.from_start {
+    // Attached from the first call when `DIR/attach` is there already (an
+    // editor's "profile this file" writes it before the child starts):
+    // waiting for the first period would miss a run shorter than it.
+    let attached_now = spec.from_start || attach_wanted(spec.dir.as_deref());
+    let started = std::time::Instant::now();
+    let mut first = State {
+        session: if attached_now {
             Some(crate::profile::start(spec.interval_us))
         } else {
             None
@@ -97,10 +102,12 @@ pub fn start(spec: LiveSpec) -> bool {
         lines: LineCache::default(),
         prev_tiers: [0; 4],
         prev_calls: None,
-        attaches: if spec.from_start { 1 } else { 0 },
-    }));
+        attaches: if attached_now { 1 } else { 0 },
+    };
+    // the series' first point at the start, so even a short run spans its time
+    point(&mut first, started);
+    let state = Arc::new(Mutex::new(first));
     let stop = Arc::new(AtomicBool::new(false));
-    let started = std::time::Instant::now();
     let (st, sp) = (state.clone(), stop.clone());
     let dir = spec.dir.clone();
     let every = std::time::Duration::from_millis(spec.every_ms.max(50));
@@ -111,26 +118,25 @@ pub fn start(spec: LiveSpec) -> bool {
         .name("olang-profile-live".to_string())
         .spawn(move || {
             while !sp.load(Ordering::Relaxed) {
-                // sleep in short steps, so finishing does not wait a period
+                // sleep in short steps, so finishing does not wait a period;
+                // an attach (or a detach) is looked for every ATTACH_POLL_MS,
+                // not only at a snapshot, so sampling starts when asked
                 let until = std::time::Instant::now() + every;
+                let mut polled = std::time::Instant::now();
                 while std::time::Instant::now() < until && !sp.load(Ordering::Relaxed) {
                     std::thread::sleep(std::time::Duration::from_millis(10).min(every));
+                    if !from_start && polled.elapsed().as_millis() as u64 >= ATTACH_POLL_MS {
+                        polled = std::time::Instant::now();
+                        let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
+                        follow_attach(&mut s, dir.as_deref(), interval_us);
+                    }
                 }
                 if sp.load(Ordering::Relaxed) {
                     break;
                 }
                 let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
                 if !from_start {
-                    let want = dir.as_ref().is_some_and(|d| d.join("attach").exists());
-                    if want && s.session.is_none() {
-                        s.session = Some(crate::profile::start(interval_us));
-                        s.prev_tiers = [0; 4];
-                        s.attaches += 1;
-                    } else if !want && let Some(session) = s.session.take() {
-                        let mut lines = std::mem::take(&mut s.lines);
-                        s.kept = Some(session.finish_json(&mut lines));
-                        s.lines = lines;
-                    }
+                    follow_attach(&mut s, dir.as_deref(), interval_us);
                 }
                 point(&mut s, started);
                 if let Some(d) = &dir {
@@ -148,6 +154,29 @@ pub fn start(spec: LiveSpec) -> bool {
         started,
     });
     true
+}
+
+/// How often an armed run looks for `DIR/attach` between snapshots (ms).
+pub const ATTACH_POLL_MS: u64 = 50;
+
+/// Whether `dir/attach` exists: an editor wants the stacks.
+fn attach_wanted(dir: Option<&Path>) -> bool {
+    dir.is_some_and(|d| d.join("attach").exists())
+}
+
+/// The sampler started when `dir/attach` appeared, stopped (the profile so
+/// far kept) when it went.
+fn follow_attach(s: &mut State, dir: Option<&Path>, interval_us: u64) {
+    let want = attach_wanted(dir);
+    if want && s.session.is_none() {
+        s.session = Some(crate::profile::start(interval_us));
+        s.prev_tiers = [0; 4];
+        s.attaches += 1;
+    } else if !want && let Some(session) = s.session.take() {
+        let mut lines = std::mem::take(&mut s.lines);
+        s.kept = Some(session.finish_json(&mut lines));
+        s.lines = lines;
+    }
 }
 
 /// Whether a live profile runs in this process.

@@ -265,6 +265,44 @@ fn an_armed_run_samples_only_while_attached() {
 }
 
 #[test]
+fn an_armed_run_attached_before_it_starts_samples_from_its_first_call() {
+    // a run shorter than the snapshot period, attached before it starts
+    // (an editor's "profile this file"): sampled from the start, not left
+    // with nothing because the first look for `attach` came too late
+    let dir = project("armed-short", &MAIN.replace("ROUNDS", "40"));
+    let live = dir.join("live");
+    std::fs::create_dir_all(&live).unwrap();
+    std::fs::write(live.join("attach"), "").unwrap();
+    let status = Command::new(env!("CARGO_BIN_EXE_olang"))
+        .args(["--profile-live", "live", "main.ol"])
+        .env("OLANG_PROFILE_LIVE_EVERY", "5000")
+        .current_dir(&dir)
+        .stdout(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let snap = std::fs::read_dir(&live)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|x| x == "json"))
+        .unwrap();
+    let end = read(&snap);
+    assert_eq!(end["done"], true);
+    assert_eq!(end["attaches"], 1);
+    assert!(
+        end["samples"].as_u64().unwrap() > 0,
+        "samples: {}",
+        end["samples"]
+    );
+    assert!(frame_named(&end, "fib").is_some() || frame_named(&end, "churn").is_some());
+    // the series spans the run: a point at its start and one at its end
+    let series = end["series"].as_array().unwrap();
+    assert!(series.len() >= 2);
+    assert!(series[0]["t_ms"].as_f64().unwrap() < series.last().unwrap()["t_ms"].as_f64().unwrap());
+}
+
+#[test]
 fn a_bench_as_events_against_a_baseline_with_profiles() {
     let dir = project("bench", &MAIN.replace("ROUNDS", "20"));
     let (code, out, err) = olang(
