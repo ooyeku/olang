@@ -39,7 +39,8 @@ impl Client {
         let mut len = 0usize;
         loop {
             let mut line = String::new();
-            self.stdout.read_line(&mut line).unwrap();
+            // An ended server is a failure, not a test waiting forever.
+            assert!(self.stdout.read_line(&mut line).unwrap() > 0, "the server ended");
             if line == "\r\n" || line == "\n" {
                 break;
             }
@@ -764,7 +765,7 @@ fn a_declared_shape_completes_its_keys() {
     let main = ws.join("main.ol");
     // The third line is incomplete on purpose: completion answers while
     // the file does not parse.
-    let text = "use lib.types { Task }\nfn inline_shape(r: { id: Int, name: String }) = r.\nfn title_of(t: Task) = map_get(t, \"";
+    let text = "use lib.types { Task }\nfn inline_shape(r: { id: Int, name: String }) = r.\nfn title_of(t: Task) = map_get(t, \"\n// ── a rule of box-drawing characters";
     std::fs::write(&main, text).unwrap();
     let uri = format!("file://{}", main.display());
     let mut c = Client::start();
@@ -795,6 +796,10 @@ fn a_declared_shape_completes_its_keys() {
     assert_eq!(labels(&mut c, 2, 2, 35), vec!["title", "tags", "done"]);
     // `r.` with an inline shape.
     assert_eq!(labels(&mut c, 3, 1, 50), vec!["id", "name"]);
+    // Just past a character wider than a byte (`// ─`): answered, the
+    // server still up (it sliced inside the `─` and ended).
+    let _ = labels(&mut c, 4, 3, 4);
+    assert_eq!(labels(&mut c, 5, 1, 50), vec!["id", "name"]);
     let _ = std::fs::remove_dir_all(&ws);
 }
 

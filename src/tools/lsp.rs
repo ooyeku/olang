@@ -961,10 +961,13 @@ fn shape_key_completions(
             .collect();
         (!name.is_empty()).then_some(name)
     };
-    // Strip the partial key being typed.
+    // Strip the partial key being typed (past the character before it,
+    // which may be wider than a byte: `// ─` in a comment).
     let typed_from = head
-        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .map(|i| i + 1)
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !(c.is_alphanumeric() || *c == '_'))
+        .map(|(i, c)| i + c.len_utf8())
         .unwrap_or(0);
     let before = &head[..typed_from];
     let (receiver, quoted) = if let Some(rest) = before.strip_suffix('"') {
