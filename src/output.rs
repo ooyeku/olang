@@ -24,6 +24,9 @@ thread_local! {
 #[cfg(feature = "native")]
 fn write_stdout(bytes: &[u8], flush: bool) {
     use std::io::Write;
+    if crate::stdio::capturing() && crate::stdio::capture_push(false, &String::from_utf8_lossy(bytes)) {
+        return;
+    }
     if COLLECTING.load(std::sync::atomic::Ordering::Relaxed) {
         if let Ok(mut buf) = COLLECTED.lock() {
             buf.extend_from_slice(bytes);

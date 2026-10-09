@@ -11155,6 +11155,13 @@ For function-specific syntax, use: {}:help <function_name>{}",
         self.find_function_by_name(name).is_some()
     }
 
+    /// The categories' names, sorted.
+    pub fn get_categories(&self) -> Vec<String> {
+        let mut c: Vec<String> = self.categories.keys().cloned().collect();
+        c.sort();
+        c
+    }
+
     /// Enhanced case-insensitive category lookup
     pub fn has_category(&self, name: &str) -> bool {
         self.find_category_by_name(name).is_some()

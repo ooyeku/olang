@@ -1,0 +1,63 @@
+olang <version> — :help for help · quit or ^D to exit
+
+1
+Now watching variable: n
+
+Watched variable changes:
+  Variable 'n' changed: 1 -> 2
+2
+Currently watched variables:
+  n
+Usage: :watch <variable>
+Stopped watching variable: n
+Now tracing function: f
+Currently traced functions:
+  f
+Usage: :trace <function>
+Stopped tracing function: f
+Debug mode: off
+
+=== Interactive Debugging Commands ===
+  :debug <expression>  - Step through expression evaluation
+  :watch <variable>     - Toggle variable watching
+  :inspect <variable>   - Detailed variable inspection
+  :trace <function>     - Trace function calls
+  :set <var> <value>      - Modify variable values
+  :stack           - Show call stack
+  :profile <expression>    - Profile expression performance
+  :debug [on|off]       - Enable/disable debug mode
+
+Debug mode enabled
+Debug mode disabled
+Debugging: 1 + 1
+  Result: 2
+  Execution time: <ms>ms
+
+=== Call Stack ===
+  (empty - no active function calls)
+
+Benchmarking: 1 + 1
+  Run 1: <ms>ms
+  Run 2: <ms>ms
+  Run 3: <ms>ms
+  Run 4: <ms>ms
+  Run 5: <ms>ms
+Benchmark results:
+  Average: <ms>ms
+  Min: <ms>ms
+  Max: <ms>ms
+Parallel threshold set to 50 items
+Current parallel threshold: 50 items
+Usage: :parallel threshold <number>
+Parallel processing disabled
+Parallel processing enabled
+Usage: :parallel [status|enable|disable|threshold <number>]
+
+=== Execution Statistics ===
+  Bytecode tier: enabled
+  Functions promoted: 0
+  Functions rejected:  0
+  Bytecode calls:      0
+^D
+
+--- stderr ---

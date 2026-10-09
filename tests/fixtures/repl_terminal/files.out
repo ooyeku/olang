@@ -1,0 +1,26 @@
+olang <version> — :help for help · quit or ^D to exit
+
+<dir>
+a.ol
+home
+notes.txt
+sub
+hello
+(exit code 1)
+bang
+ran a
+2
+File 'a.ol' executed successfully
+<dir>/sub
+<dir>/sub
+<dir>
+No package here. Use ':pkg load <path>', or run from a directory with an olang.toml.
+Multi-line input: type statements across lines; :end evaluates, :cancel abandons.
+2
+Multi-line input: type statements across lines; :end evaluates, :cancel abandons.
+(input abandoned)
+unknown command :end — did you mean :env?
+unknown command :cancel — :help lists them. Statements need no colon: `use collections`, `let x = 1`
+^D
+
+--- stderr ---

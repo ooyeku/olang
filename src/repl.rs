@@ -219,40 +219,11 @@ fn olang_interpreter_levenshtein(a: &str, b: &str) -> usize {
     crate::interpreter::IntuitiveErrorFormatter::levenshtein_distance(a, b)
 }
 
-/// All REPL colon-commands, used for TAB completion of the command word.
-const REPL_COMMANDS: &[&str] = &[
-    ":help",
-    ":quit",
-    ":env",
-    ":clear",
-    ":ovm",
-    ":version",
-    ":history",
-    ":type",
-    ":time",
-    ":memory",
-    ":stats",
-    ":parallel",
-    ":run",
-    ":debug",
-    ":watch",
-    ":inspect",
-    ":trace",
-    ":set",
-    ":stack",
-    ":profile",
-    ":config",
-    ":benchmark",
-    ":search",
-    ":tutorial",
-    ":tutorial_run",
-    ":contextual_help",
-    ":help_advanced",
-    ":sh",
-    ":cd",
-    ":pwd",
-    ":ls",
-];
+/// All REPL colon-commands, used for TAB completion of the command word
+/// (the registry's, in src/repl_commands.rs).
+fn repl_commands() -> Vec<&'static str> {
+    crate::repl_commands::tab_names()
+}
 
 /// Commands whose arguments are file paths (get filename completion).
 const PATH_COMMANDS: &[&str] = &[":sh", ":cd", ":ls", ":run"];
@@ -325,8 +296,8 @@ impl ReplHelper {
     }
 
     fn complete_commands(&self, word: &str) -> Vec<Pair> {
-        REPL_COMMANDS
-            .iter()
+        repl_commands()
+            .into_iter()
             .filter(|cmd| cmd.starts_with(word))
             .map(|cmd| Pair {
                 display: cmd.to_string(),
@@ -464,8 +435,9 @@ impl Validator for ReplHelper {}
 impl Helper for ReplHelper {}
 
 pub struct Repl {
-    editor: Editor<ReplHelper, DefaultHistory>,
-    interpreter: crate::interpreter::Interpreter,
+    /// The line editor; none when the REPL serves an editor (`headless`).
+    editor: Option<Editor<ReplHelper, DefaultHistory>>,
+    pub(crate) interpreter: crate::interpreter::Interpreter,
     parser: Parser,
     #[allow(dead_code)] // consumed at construction; kept for future diagnostics
     verbose: bool,
@@ -483,8 +455,13 @@ pub struct Repl {
     /// several statements at once.
     multiline_explicit: bool,
     multiline_buffer: String,
-    command_history: Vec<String>,
+    pub(crate) command_history: Vec<String>,
     debugger: InteractiveDebugger,
+    /// Serving an editor (`olang repl --serve`): no terminal, no line
+    /// editor; what a command finds besides its text is kept in `notes`.
+    headless: bool,
+    /// What the last command found for an editor to show richly.
+    pub(crate) notes: Vec<crate::repl_commands::Note>,
     /// The rebind tip fires once per session: the first time a bundled
     /// collection's write operation is called without rebinding its
     /// handle, the REPL explains the convention instead of letting the
@@ -605,7 +582,7 @@ impl Repl {
         }
 
         Ok(Self {
-            editor,
+            editor: Some(editor),
             interpreter,
             parser: Parser::new(),
             verbose,
@@ -623,7 +600,85 @@ impl Repl {
             pending_doc_lines: Vec::new(),
             loaded_doc_files: std::collections::BTreeSet::new(),
             loaded_doc_modules: std::collections::BTreeMap::new(),
+            headless: false,
+            notes: Vec::new(),
         })
+    }
+
+    /// The REPL's commands with no terminal, over `interpreter` — for
+    /// `olang repl --serve`, which runs every `:` command through it.
+    pub(crate) fn headless(interpreter: crate::interpreter::Interpreter) -> Self {
+        Self {
+            editor: None,
+            interpreter,
+            parser: Parser::new(),
+            verbose: false,
+            history_file: String::new(),
+            meta_prelude: Vec::new(),
+            help_system: HelpSystem::new(),
+            config: ReplConfig::default(),
+            multiline_mode: false,
+            multiline_explicit: false,
+            multiline_buffer: String::new(),
+            command_history: Vec::new(),
+            debugger: InteractiveDebugger::new(),
+            rebind_tip_shown: false,
+            session_docs: Vec::new(),
+            pending_doc_lines: Vec::new(),
+            loaded_doc_files: std::collections::BTreeSet::new(),
+            loaded_doc_modules: std::collections::BTreeMap::new(),
+            headless: true,
+            notes: Vec::new(),
+        }
+    }
+
+    /// Keep a note for the editor (headless only; the terminal has its
+    /// text).
+    fn note(&mut self, n: crate::repl_commands::Note) {
+        if self.headless {
+            self.notes.push(n);
+        }
+    }
+
+    /// Run one `:` command line (or `!<shell>`, or `quit`) as the
+    /// terminal would: what it says goes where `println!` goes.
+    pub(crate) fn run_command(&mut self, line: &str) -> Result<(), ReplError> {
+        self.notes.clear();
+        if let Some(shell_cmd) = line.strip_prefix('!') {
+            self.run_shell_command(shell_cmd);
+            return Ok(());
+        }
+        self.handle_command(line)
+    }
+
+    /// The help system (topics and tutorials, for completion).
+    pub(crate) fn help(&self) -> &HelpSystem {
+        &self.help_system
+    }
+
+    /// Names TAB completes in code: builtins, stdlib modules and their
+    /// functions, documented functions.
+    pub(crate) fn library_names(&self) -> Vec<String> {
+        let mut names = self.help_system.get_function_names();
+        names.extend(crate::builtin::BuiltinFunctions::new().get_functions().keys().cloned());
+        for (module_name, module_value) in crate::stdlib::get_stdlib() {
+            names.push(module_name.clone());
+            if let Value::Struct { fields, .. } = &module_value {
+                for field in fields.values() {
+                    if let Value::Builtin(func) = field {
+                        names.push(func.name.clone());
+                    }
+                }
+            }
+        }
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    /// The short type `:env` gives a value.
+    pub(crate) fn type_name_of(value: &Value) -> &'static str {
+        Self::get_type_name(value)
     }
 
     /// If the working directory is inside a package, resolve its dependencies
@@ -704,7 +759,8 @@ impl Repl {
                 self.config.prompt.clone()
             };
 
-            let line = match self.editor.readline(&prompt) {
+            let Some(editor) = self.editor.as_mut() else { break };
+            let line = match editor.readline(&prompt) {
                 Ok(line) => line,
                 Err(ReadlineError::Interrupted) => {
                     println!("^C");
@@ -854,7 +910,9 @@ impl Repl {
         }
 
         // Save history
-        if let Err(e) = self.editor.save_history(&self.history_file) {
+        if let Some(editor) = self.editor.as_mut()
+            && let Err(e) = editor.save_history(&self.history_file)
+        {
             eprintln!("Could not save history: {}", e);
         }
 
@@ -1143,7 +1201,7 @@ impl Repl {
             .keys()
             .cloned()
             .collect();
-        if let Some(helper) = self.editor.helper_mut() {
+        if let Some(helper) = self.editor.as_mut().and_then(|e| e.helper_mut()) {
             helper.user_identifiers = names;
         }
     }
@@ -1164,11 +1222,102 @@ impl Repl {
         }
 
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        if self.headless {
+            self.run_shell_piped(&shell, cmd);
+            return;
+        }
         match std::process::Command::new(&shell)
             .arg("-c")
             .arg(cmd)
             .status()
         {
+            Ok(status) => {
+                if !status.success() {
+                    match status.code() {
+                        Some(code) => println!("{}", format!("(exit code {})", code).bright_red()),
+                        None => println!("{}", "(terminated by signal)".bright_red()),
+                    }
+                }
+            }
+            Err(e) => eprintln!("Failed to run '{}' via {}: {}", cmd, shell, e),
+        }
+    }
+
+    /// A shell command with no terminal (`olang repl --serve`): its
+    /// output read through pipes and said line by line as it comes (the
+    /// protocol streams it), stdin closed, and ended — with everything it
+    /// started — when the session is interrupted.
+    fn run_shell_piped(&mut self, shell: &str, cmd: &str) {
+        use std::io::BufRead;
+        let mut command = std::process::Command::new(shell);
+        command
+            .arg("-c")
+            .arg(cmd)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+        let mut child = match command.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Failed to run '{}' via {}: {}", cmd, shell, e);
+                return;
+            }
+        };
+        let (tx, rx) = std::sync::mpsc::channel::<(bool, String)>();
+        let mut readers = Vec::new();
+        if let Some(out) = child.stdout.take() {
+            let tx = tx.clone();
+            readers.push(std::thread::spawn(move || {
+                for line in std::io::BufReader::new(out).lines() {
+                    let Ok(line) = line else { break };
+                    if tx.send((false, line)).is_err() {
+                        break;
+                    }
+                }
+            }));
+        }
+        if let Some(err) = child.stderr.take() {
+            let tx = tx.clone();
+            readers.push(std::thread::spawn(move || {
+                for line in std::io::BufReader::new(err).lines() {
+                    let Ok(line) = line else { break };
+                    if tx.send((true, line)).is_err() {
+                        break;
+                    }
+                }
+            }));
+        }
+        drop(tx);
+        let mut interrupted = false;
+        loop {
+            match rx.recv_timeout(std::time::Duration::from_millis(40)) {
+                Ok((true, line)) => eprintln!("{}", line),
+                Ok((false, line)) => println!("{}", line),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+            if !interrupted && crate::interrupt::pending() {
+                interrupted = true;
+                #[cfg(unix)]
+                unsafe {
+                    libc::kill(-(child.id() as i32), libc::SIGTERM);
+                }
+                let _ = child.kill();
+            }
+        }
+        for r in readers {
+            let _ = r.join();
+        }
+        match child.wait() {
+            Ok(status) if interrupted => {
+                let _ = status;
+                println!("{}", "(interrupted)".bright_red());
+            }
             Ok(status) => {
                 if !status.success() {
                     match status.code() {
@@ -1197,6 +1346,7 @@ impl Repl {
         match std::env::set_current_dir(&expanded) {
             Ok(()) => {
                 if let Ok(cwd) = std::env::current_dir() {
+                    self.note(crate::repl_commands::Note::Cwd(cwd.display().to_string()));
                     println!("{}", cwd.display().to_string().bright_cyan());
                 }
                 // The package context is directory-relative, so re-resolve.
@@ -1256,6 +1406,7 @@ impl Repl {
                 self.multiline_mode = true;
                 self.multiline_explicit = true;
                 self.multiline_buffer.clear();
+                self.note(crate::repl_commands::Note::Effect("multiline"));
                 println!(
                     "Multi-line input: type statements across lines; {} evaluates, {} abandons.",
                     ":end".bright_cyan(),
@@ -1264,6 +1415,7 @@ impl Repl {
             }
             ":help" => {
                 if parts.len() == 1 {
+                    self.note(crate::repl_commands::Note::Commands);
                     println!("{}", self.help_system.show_overview());
                 } else {
                     let topic = parts[1];
@@ -1355,6 +1507,12 @@ impl Repl {
                 }
             }
             "quit" | ":quit" => {
+                if self.headless {
+                    // an editor ends (or restarts) the session itself
+                    println!("Ending the REPL session.");
+                    self.note(crate::repl_commands::Note::Effect("quit"));
+                    return Ok(());
+                }
                 std::process::exit(0);
             }
             ":sh" => {
@@ -1470,13 +1628,18 @@ impl Repl {
                         }
                         "history" => {
                             self.command_history.clear();
-                            self.editor.clear_history()?;
+                            if let Some(editor) = self.editor.as_mut() {
+                                editor.clear_history()?;
+                            }
+                            self.note(crate::repl_commands::Note::Effect("clear_history"));
                             println!("Command history cleared.");
                         }
                         _ => {
                             println!("Usage: :clear [env|history]");
                         }
                     }
+                } else if self.headless {
+                    self.note(crate::repl_commands::Note::Effect("clear"));
                 } else {
                     print!("\x1B[2J\x1B[1;1H");
                 }
@@ -1486,6 +1649,7 @@ impl Repl {
                     .get(1)
                     .filter(|t| **t != "status")
                     .map(|t| t.to_string());
+                self.note(crate::repl_commands::Note::Open("tiers"));
                 self.show_ovm_report(target.as_deref());
             }
             ":version" | "version" => {
@@ -1543,7 +1707,10 @@ impl Repl {
                                 } else {
                                     match self.eval_line(&expr) {
                                         Ok(value) => {
-                                            println!("{} : {}", expr, Self::deep_type_of(&value));
+                                            let t = Self::deep_type_of(&value);
+                                            self.note(crate::repl_commands::Note::Type(t.clone()));
+                                            self.note(crate::repl_commands::Note::Value { label: "value".into(), value: value.clone() });
+                                            println!("{} : {}", expr, t);
                                         }
                                         Err(e) => {
                                             println!("Type check failed: {}", e);
@@ -1567,7 +1734,9 @@ impl Repl {
                     match self.eval_line(&expr) {
                         Ok(value) => {
                             let duration = start.elapsed();
+                            self.note(crate::repl_commands::Note::Time(duration.as_secs_f64() * 1000.0));
                             if value != Value::Unit {
+                                self.note(crate::repl_commands::Note::Value { label: "value".into(), value: value.clone() });
                                 repl_print(&value);
                             }
                             println!("Execution time: {:.2}ms", duration.as_secs_f64() * 1000.0);
@@ -1587,6 +1756,7 @@ impl Repl {
                 println!("  User bindings: {}", user_vars.to_string().bright_white());
             }
             ":stats" => {
+                self.note(crate::repl_commands::Note::Open("tiers"));
                 println!("\n{}", "=== Execution Statistics ===".bright_cyan().bold());
                 match self.interpreter.bytecode_tier_stats() {
                     Some(tier) => {
@@ -1708,6 +1878,7 @@ impl Repl {
                             match self.eval_line(&content) {
                                 Ok(value) => {
                                     if value != Value::Unit {
+                                        self.note(crate::repl_commands::Note::Value { label: "value".into(), value: value.clone() });
                                         repl_print(&value);
                                     }
                                     println!("File '{}' executed successfully", filename);
@@ -1838,6 +2009,7 @@ impl Repl {
             ":profile" => {
                 if parts.len() > 1 {
                     let expr = parts[1..].join(" ");
+                    self.note(crate::repl_commands::Note::Open("profiler"));
                     self.profile_expression(&expr)?;
                 } else {
                     println!(
@@ -1905,6 +2077,7 @@ impl Repl {
                     }
 
                     if !times.is_empty() {
+                        self.note(crate::repl_commands::Note::Bench(times.iter().map(|t| t.as_secs_f64() * 1000.0).collect()));
                         let total: std::time::Duration = times.iter().sum();
                         let avg = total / times.len() as u32;
 
@@ -2035,6 +2208,13 @@ impl Repl {
                 if parts.len() > 1 {
                     let tutorial_name = parts[1];
                     if let Some(tutorial) = self.help_system.get_tutorial(tutorial_name).cloned() {
+                        if self.headless {
+                            // no terminal to answer r/t/e/h/n/q: the editor
+                            // takes the steps with its own buttons
+                            self.note(crate::repl_commands::Note::Tutorial(tutorial.clone()));
+                            println!("{}", self.help_system.format_tutorial(&tutorial));
+                            return Ok(());
+                        }
                         self.run_interactive_tutorial(&tutorial)?;
                     } else {
                         println!("Tutorial '{}' not found.", tutorial_name);
@@ -2149,6 +2329,7 @@ impl Repl {
                         match self.eval_line(&command) {
                             Ok(value) => {
                                 if value != Value::Unit {
+                                    self.note(crate::repl_commands::Note::Value { label: "value".into(), value: value.clone() });
                                     repl_print(&value);
                                 }
                             }
@@ -2171,6 +2352,7 @@ impl Repl {
                 match self.eval_line(stripped) {
                     Ok(value) => {
                         if value != Value::Unit {
+                            self.note(crate::repl_commands::Note::Value { label: "value".into(), value: value.clone() });
                             repl_print(&value);
                         }
                     }
@@ -2181,9 +2363,9 @@ impl Repl {
                 // Say it plainly, with the nearest real command — not
                 // through the error chain's stacked prefixes.
                 let max_distance = (command_name.chars().count() / 3).clamp(1, 3);
-                let nearest = REPL_COMMANDS
-                    .iter()
-                    .map(|c| (olang_interpreter_levenshtein(command_name, c), *c))
+                let nearest = repl_commands()
+                    .into_iter()
+                    .map(|c| (olang_interpreter_levenshtein(command_name, c), c))
                     .filter(|(d, _)| *d <= max_distance)
                     .min();
                 match nearest {
@@ -2203,8 +2385,9 @@ impl Repl {
         Ok(())
     }
 
-    fn eval_line(&mut self, line: &str) -> Result<Value, ReplError> {
-        // Check for watched variables before execution
+    /// Before an evaluation: the watched variables' values remembered.
+    /// Answers whether any are watched.
+    pub(crate) fn watch_before(&mut self) -> bool {
         let watching_vars = !self.debugger.watched_variables.is_empty();
         if watching_vars {
             let vars = self.interpreter.get_user_variables();
@@ -2215,6 +2398,35 @@ impl Repl {
                 }
             }
         }
+        watching_vars
+    }
+
+    /// After an evaluation: how the watched variables changed (and their
+    /// new values remembered).
+    pub(crate) fn watch_after(&mut self) -> Vec<String> {
+        let user_vars_after = self.interpreter.get_user_variables();
+
+        // Convert HashMap<String, &Value> to crate::ast::ValueMap for compatibility
+        let user_vars_owned: crate::ast::ValueMap = user_vars_after
+            .iter()
+            .map(|(k, v)| (k.clone(), (*v).clone()))
+            .collect();
+
+        let changes = self.debugger.check_watched_variables(&user_vars_owned);
+
+        // Update variable history
+        for (name, value) in &user_vars_after {
+            if self.debugger.is_watching(name) {
+                self.debugger
+                    .update_variable_history(name.clone(), (*value).clone());
+            }
+        }
+        changes
+    }
+
+    fn eval_line(&mut self, line: &str) -> Result<Value, ReplError> {
+        // Check for watched variables before execution
+        let watching_vars = self.watch_before();
 
         // Macro support in the session: meta fns are stripped from every
         // expanded program, so remember each one's source and prepend the
@@ -2252,28 +2464,12 @@ impl Repl {
 
         // Check for watched variable changes after execution
         if watching_vars {
-            let user_vars_after = self.interpreter.get_user_variables();
-
-            // Convert HashMap<String, &Value> to crate::ast::ValueMap for compatibility
-            let user_vars_owned: crate::ast::ValueMap = user_vars_after
-                .iter()
-                .map(|(k, v)| (k.clone(), (*v).clone()))
-                .collect();
-
-            let changes = self.debugger.check_watched_variables(&user_vars_owned);
+            let changes = self.watch_after();
 
             if !changes.is_empty() {
                 println!("\n{}", "Watched variable changes:".bright_yellow().bold());
                 for change in changes {
                     println!("  {}", change);
-                }
-            }
-
-            // Update variable history
-            for (name, value) in &user_vars_after {
-                if self.debugger.is_watching(name) {
-                    self.debugger
-                        .update_variable_history(name.clone(), (*value).clone());
                 }
             }
         }
@@ -2338,6 +2534,23 @@ impl Repl {
             user_var_count.to_string().bright_white()
         );
 
+        if self.headless && user_var_count > 0 {
+            let user_vars = self.interpreter.get_user_variables();
+            let mut names: Vec<&String> = user_vars.keys().collect();
+            names.sort();
+            let rows: Vec<Value> = names
+                .iter()
+                .map(|n| {
+                    let v = user_vars[*n];
+                    let mut m = crate::ast::ValueMap::default();
+                    m.insert("name".into(), Value::String(std::sync::Arc::new((*n).clone())));
+                    m.insert("type".into(), Value::String(std::sync::Arc::new(Self::get_type_name(v).to_string())));
+                    m.insert("value".into(), Value::String(std::sync::Arc::new(Self::format_value_preview(v))));
+                    Value::Map(std::sync::Arc::new(m))
+                })
+                .collect();
+            self.notes.push(crate::repl_commands::Note::Value { label: "bindings".into(), value: Value::List(std::sync::Arc::new(rows)) });
+        }
         if user_var_count == 0 {
             println!("  {}", "(none)".bright_black());
         } else {
@@ -2999,6 +3212,7 @@ impl Repl {
                         let time_ms = duration.as_secs_f64() * 1000.0;
 
                         if value != Value::Unit {
+                            self.note(crate::repl_commands::Note::Value { label: "value".into(), value: value.clone() });
                             println!("  {}: {}", "Result".bright_green(), value);
                         }
                         println!("  {}: {:.2}ms", "Execution time".bright_blue(), time_ms);
@@ -3059,6 +3273,9 @@ impl Repl {
         let user_vars = self.interpreter.get_user_variables();
 
         if let Some(value) = user_vars.get(var_name) {
+            if self.headless {
+                self.notes.push(crate::repl_commands::Note::Value { label: var_name.to_string(), value: (*value).clone() });
+            }
             println!(
                 "\n{}",
                 format!("=== Variable Inspection: {} ===", var_name)
@@ -3175,6 +3392,7 @@ impl Repl {
                 // Set the variable
                 self.interpreter
                     .define_variable(var_name.clone(), value.clone());
+                self.note(crate::repl_commands::Note::Value { label: var_name.clone(), value: value.clone() });
 
                 if existed {
                     println!(

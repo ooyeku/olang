@@ -1,0 +1,20 @@
+let mut n = 1
+:watch n
+n = n + 1
+:watch
+:watch n
+:trace f
+:trace
+:trace f
+:debug
+:debug on
+:debug off
+:debug 1 + 1
+:stack
+:benchmark 1 + 1
+:parallel threshold 50
+:parallel threshold
+:parallel disable
+:parallel enable
+:parallel bogus
+:stats

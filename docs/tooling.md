@@ -641,7 +641,45 @@ line of its body is not bound, and the error says whose parameter it is.
 | `{"op":"reload","id":6,"path":"/p/util.ol"}` | `{"ok":true,"scopes":n,"ms":…}`, or `"ok":false,"kept":true` with the reason |
 | `{"op":"render","id":7,"h":9,"dark":true,"scale":2,"width":640,"loom":"/path/to/loom"?}` | `{"ok":true,"png":"<base64>","width":…,"height":…}` (logical pixels) |
 | `{"op":"stats","id":9,"reset":true}` | `{"ok":true,"stats":S}` — where each function ran in the evaluations since the last reset ([tier statistics](#tier-statistics--ovm-statsjson)); `reset` starts them again |
+| `{"op":"command","id":10,"line":":type xs"}` | a `:` command, run as the terminal REPL runs it (below) |
+| `{"op":"commands","id":11,"prefix":":t"?}` | `{"ok":true,"commands":[{"name","aliases","usage","summary","arg","group","client","words"?}…]}` — every command, for completion and help |
+| `{"op":"complete","id":12,"line":":cd sr","pos":6}` | `{"ok":true,"start":4,"items":[{"label","kind","detail"}…],"command":{"name","usage","summary","client"}?}` — completion of a prompt line at `pos` (characters); `items` replace `line[start..pos]` |
 | `{"op":"reset"}`, `{"op":"shutdown"}` | the scopes forgotten; the server ends |
+
+**Commands.** Every command of the interactive REPL (`:help`, `:type`,
+`:time`, `:sh`, … — `commands` lists them) runs through `command`, in the
+session's own scope, by the very code the terminal REPL runs: what it
+says is the terminal's text. An `eval` with no `file` whose code is a
+command line (`:word`, `!shell`, `quit`) is one too. While it runs, what
+it says is streamed — `{"event":"out","id":10,"text":"…","err":false}`
+for each piece (a `:sh` command's lines as they come) — and an
+`interrupt` stops it (a `:sh` command and everything it started are
+ended). The reply:
+
+`{"id":10,"ok":true,"command":":type","out":"xs : List<Int>","lines":[[{"s":"xs : List<Int>"}]],"ms":0.4,…}`
+
+- `out` is the text, `lines` the same text as lines of styled runs
+  (`{"s", "c": "red"|"green"|"yellow"|"blue"|"magenta"|"cyan"|"white"|"gray", "b": bold, "d": dim}`);
+- what the command found, when it found it: `value` (V, the last of
+  `values`, each `{"label","value"}` — `:type`, `:time`, `:inspect`,
+  `:set`, `:let`, `:run`, `:env`'s `bindings` as a table) with `eval`
+  for its handles; `type`; `time_ms`; `bench` (each run's ms); `cwd`
+  (`:cd`); `tutorial` (`{name, description, steps: [{title, description,
+  code, expected, explanation, hints}]}` — `:tutorial_run` takes no
+  answers over the protocol, so an editor takes the steps); `commands`
+  (with `:help`); `open` (`"tiers"` for `:ovm` and `:stats`,
+  `"profiler"` for `:profile`: a richer place an editor may have);
+- `effects`: what an editor does with its own interface — `clear` (the
+  screen, `:clear`), `clear_history`, `multiline` (`:ml`), `quit`
+  (`:quit` ends nothing: the editor ends or restarts the session);
+  the commands marked `client` in `commands` are these;
+- an unknown command: `"unknown":true` and the nearest, `suggest`;
+- `"ok":false` with `error` when the command failed (`:inspect` of
+  nothing), `"interrupted":true` when it was stopped.
+
+A prompt's evaluations (no `file`) are the session's history (`:history`,
+`:!n`), and a watched variable they change is said in the eval's reply
+(`"watched":[…]`).
 
 **Values (V).** Every value has `k` (its kind), `t` (its type) and `s`
 (a one-line form, at most 200 characters; a string's text, up to 2,000):

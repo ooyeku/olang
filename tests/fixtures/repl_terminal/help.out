@@ -1,0 +1,251 @@
+olang <version> — :help for help · quit or ^D to exit
+
+
+[1molang help[0m
+
+  [36m:help <name>[0m     a function's documentation      [2m:help map, :help collections.heap.push[0m
+  [36m:help <module>[0m   a module's functions            [2m:help str, :help collections[0m
+  [36m:help <your fn>[0m  your own code's docs            [2m/// comments above a declaration appear here[0m
+  [36m:help list[0m       every function, grouped
+  [36m:help syntax[0m     language syntax reference
+  [36m:help examples[0m   worked examples                 [2m:help tutorials for guided ones[0m
+  [36m:help search <q>[0m find functions by keyword
+
+[33mModules[0m [2m(:help <module> to open one)[0m
+  core       [36mstr col math json toml re dates time random crypto base64 bytes bigint[0m
+  system     [36mfs os proc http db chan task cell caps meta testing[0m
+  data       [36mods stats plot csv collections[0m
+  via use    [36mcli term ui viz dash colx mathx[0m
+
+[33mREPL[0m
+  [36m:env[0m variables    [36m:type <expr>[0m a value's type    [36m:time <expr>[0m wall-clock an expression
+  [36m:history[0m this session    [36m:clear[0m screen or environment    [36m:cd :pwd :ls[0m filesystem
+  [36m:sh <cmd>[0m or [36m!<cmd>[0m shell    [36mTAB[0m completes    [36mit[0m holds the last printed result
+
+Anything without a leading colon is olang: [36muse collections { heap }[0m, [36mlet x = 1[0m, [36m1 + 1[0m.
+
+
+[1m═══ Function: [36mlen ═══[0m
+
+[33mDescription:[0m Returns the length of a list, string, or tuple
+[33mCategory:   [0m Collection
+[33mSyntax:     [0m [36mlen(collection)[0m
+[33mReturns:    [0m [32mInt[0m
+
+[1mParameters:[0m
+  • collection: List[T] | String | Tuple - The collection to measure
+
+[1mExamples:[0m
+  [32m>>[0m [36mlen([1, 2, 3, 4])  // 4[0m
+  [32m>>[0m [36mlen("hello")  // 5[0m
+
+[2mSee Also:[0m head, tail
+
+
+═══ Module: str ═══
+  37 function(s), call as str.<fn>(...):
+    capitalize, cell_width, char_at, char_code
+    chars, contains, count, ends_with
+    fixed, fmt, fuzzy_score, graphemes
+    index_of, is_empty, join, last_index_of
+    length, lines, pad_end, pad_start
+    parse_float, parse_int, repeat, replace
+    replace_first, reverse, split, starts_with
+    substring, thousands, to_lower, to_upper
+    trim, trim_end, trim_start, width
+    words
+
+  Try :help str.<fn> for a function's documentation.
+[1m=== Olang Syntax Reference ===[0m
+
+[32mVariables:[0m
+  let name = "Alice"          // Immutable binding
+  let mut age = 25             // Reassignable binding
+  age = 26                     // Reassignment (requires `let mut`)
+
+[36mFunctions:[0m
+  fn add(a, b) = a + b                       // One expression
+  fn dist(a, b) = { let d = b - a  d * d }   // A block; last expression is the value
+  fn label(n: Int) -> String = `#${n}`       // With type annotations
+
+[33mLambdas:[0m
+  (x) => x * 2                 // Single parameter
+  (a, b) => a + b              // Multiple parameters
+  () => "Hello"                // No parameters
+  let double = (x) => x * 2    // Bind one to a name
+
+[35mControl Flow:[0m
+  if cond => value1 else => value2
+  if cond => { ... } else => { ... }
+  for item in list { ... }
+  while cond { ... }
+
+[34mLists, Tuples, Ranges:[0m
+  [1, 2, 3, 4]                 // List
+  ("Alice", 25, true)          // Tuple
+  1..10                        // Range (exclusive); 1..=10 inclusive
+
+[31mPipeline Operator:[0m
+  data |> map((x) => x * 2) |> filter((x) => x > 10) |> fold(0, (a, x) => a + x)
+
+[2mPattern Matching:[0m
+  match value {
+    Ok(result) => "Success: " + result,
+    Err(error) => "Error: " + error
+  }
+
+[32mType Annotations:[0m
+  let count: Int = 3
+  fn process(items: List<Int>) -> Int = len(items)
+
+[35mStrings:[0m
+  `hello ${name}`              // Template string with interpolation
+
+[36mComments:[0m
+  // Single line comment
+  /* Multi-line
+     comment */
+
+[33mModules:[0m
+  use collections { heap, table }   // import from a module
+  share fn helper(x) = x + 1         // export from this module
+
+For function-specific syntax, use: [34m:help <function_name>[0m
+No help found for 'nosuchthing'. Try 'help search nosuchthing' for advanced search.
+Usage: :search <query> [filters]
+
+[36mAdvanced Search Options:[0m
+  [34mcategory:<name>[0m - Filter by category
+  [34mreturns:<type>[0m - Filter by return type
+  [34mlimit:<num>[0m - Limit number of results
+
+[32mExamples:[0m
+  :search map category:List
+  :search returns:Bool
+  :search transform limit:5
+  :search "file operations"
+[1m=== Tutorial: basic_operations ===[0m
+
+[32mLearn basic Olang operations and syntax[0m
+[33mDifficulty:[0m Beginner
+[33mEstimated Time:[0m 5 minutes
+
+[36mStep 1: Basic Arithmetic[0m
+[2mLet's start with simple arithmetic operations[0m
+
+[35mCode to try:[0m
+[34m2 + 3 * 4
+[0m
+
+[32mExpected Output:[0m
+[32m14
+[0m
+
+[33mExplanation:[0m
+[2mOlang follows standard operator precedence: multiplication before addition[0m
+
+[36mHINTS:[0m
+   • [2mUse parentheses to change precedence: (2 + 3) * 4[0m
+
+---
+
+[36mStep 2: Variables[0m
+[2mCreating and using variables[0m
+
+[35mCode to try:[0m
+[34mlet name = "Alice"
+let age = 25
+println(name + " is " + age + " years old")
+[0m
+
+[32mExpected Output:[0m
+[32mAlice is 25 years old
+[0m
+
+[33mExplanation:[0m
+[2mVariables are created with 'let' and can be reassigned[0m
+
+[36mHINTS:[0m
+   • [2mUse to_string() to convert numbers to strings if needed[0m
+
+---
+
+[36mStep 3: Functions[0m
+[2mDefining and calling functions[0m
+
+[35mCode to try:[0m
+[34mfn greet(name) = "Hello, " + name + "!"
+greet("World")
+[0m
+
+[32mExpected Output:[0m
+[32mHello, World!
+[0m
+
+[33mExplanation:[0m
+[2mFunctions are defined with 'fn' and can have parameters[0m
+
+[36mHINTS:[0m
+   • [2mUse => for multi-line functions: fn name() => { ... }[0m
+
+---
+
+[32mCONGRATULATIONS! You've completed the basic_operations tutorial![0m
+
+
+[36mInteractive Mode:[0m
+  Would you like to try the tutorial interactively?
+  Use ':tutorial_run basic_operations' to start interactive mode
+
+[1m=== Advanced Help Features ===[0m
+
+[36mAdvanced Search:[0m
+  [34m:search <query>[0m - Fuzzy search with relevance scoring
+  [34mhelp search <query>[0m - Same as :search
+  [32mcategory:<name>[0m - Filter by category
+  [32mreturns:<type>[0m - Filter by return type
+  [32mlimit:<num>[0m - Limit results
+
+[36mInteractive Tutorials:[0m
+  [34mhelp tutorials[0m - List all available tutorials
+  [34mhelp tutorial <name>[0m - View specific tutorial
+  [34m:tutorial <name>[0m - View tutorial with interactive options
+  [34m:tutorial_run <name>[0m - Start interactive tutorial mode
+
+[36mContext-Sensitive Help:[0m
+  [34m:contextual_help[0m - Get suggestions based on recent activity
+  [34mhelp contextual[0m - Same as :contextual_help
+  Automatic suggestions based on:
+    • Recent commands and patterns
+    • Last error messages
+    • Current variables and types
+    • Working category context
+
+[36mEnhanced Examples:[0m
+  [34m:examples <function>[0m - Interactive examples with execution
+  [34mhelp examples[0m - Comprehensive example gallery
+  All examples are runnable and include explanations
+
+[36mSearch Result Types:[0m
+  Exact name matches (highest priority)
+  Fuzzy name matches
+  Description matches
+  Category matches
+  Example matches
+  Parameter matches
+  Signature matches
+[1m=== Contextual Help Suggestions ===[0m
+
+[32mBased on your recent activity:[0m
+
+[34m1. [0mTutorial: basic_operations - Learn Olang fundamentals[0m
+[34m2. [0m:help examples - See practical examples[0m
+[34m3. [0m:help syntax - Language syntax reference[0m
+
+[2mTIP: Type ':help <topic>' for detailed information[0m
+
+unknown command :hlep — :help lists them. Statements need no colon: `use collections`, `let x = 1`
+unknown command :zzzzzzzz — :help lists them. Statements need no colon: `use collections`, `let x = 1`
+^D
+
+--- stderr ---

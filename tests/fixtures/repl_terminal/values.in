@@ -1,0 +1,25 @@
+let x = 41
+:type x + 1
+:type [1, 2, 3]
+:type let y = 2
+:time 1 + 2
+:inspect x
+:set x 5
+:inspect x
+:inspect nothing_here
+:let z = 3
+:fn twice(a) = a * 2
+:use collections
+twice(z)
+:memory
+:config
+:config show_types true
+twice(4)
+:config show_types false
+:version
+:history
+:history 2
+:history search twice
+:!1
+:clear env
+:clear what

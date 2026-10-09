@@ -1,0 +1,19 @@
+:pwd
+:ls
+:sh echo hello
+:sh false
+!echo bang
+:run a.ol
+:cd sub
+:pwd
+:cd ..
+:pkg
+:ml
+let q = 1
+q + 1
+:end
+:ml
+nope(
+:cancel
+:end
+:cancel

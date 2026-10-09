@@ -25,6 +25,10 @@ pub const BROKEN_PIPE_STATUS: i32 = 141;
 
 /// `print!`: write to stdout; a stdout that has gone ends the process.
 pub fn out(args: fmt::Arguments<'_>) {
+    if capturing() {
+        capture_push(false, &fmt::format(args));
+        return;
+    }
     let mut lock = io::stdout().lock();
     let r = lock.write_fmt(args);
     if let Err(e) = r {
@@ -35,6 +39,12 @@ pub fn out(args: fmt::Arguments<'_>) {
 
 /// `println!`: a line to stdout; a stdout that has gone ends the process.
 pub fn out_line(args: fmt::Arguments<'_>) {
+    if capturing() {
+        let mut t = fmt::format(args);
+        t.push('\n');
+        capture_push(false, &t);
+        return;
+    }
     let mut lock = io::stdout().lock();
     let r = lock.write_fmt(args).and_then(|_| lock.write_all(b"\n"));
     if let Err(e) = r {
@@ -45,13 +55,77 @@ pub fn out_line(args: fmt::Arguments<'_>) {
 
 /// `eprint!`: write to stderr; a stderr that has gone drops it.
 pub fn err(args: fmt::Arguments<'_>) {
+    if capturing() {
+        capture_push(true, &fmt::format(args));
+        return;
+    }
     let _ = io::stderr().lock().write_fmt(args);
 }
 
 /// `eprintln!`: a line to stderr; a stderr that has gone drops it.
 pub fn err_line(args: fmt::Arguments<'_>) {
+    if capturing() {
+        let mut t = fmt::format(args);
+        t.push('\n');
+        capture_push(true, &t);
+        return;
+    }
     let mut lock = io::stderr().lock();
     let _ = lock.write_fmt(args).and_then(|_| lock.write_all(b"\n"));
+}
+
+// ── capture ─────────────────────────────────────────────────────────
+//
+// `olang repl --serve` runs the REPL's `:` commands — the same code the
+// terminal REPL runs, which says what it has to say with `println!` —
+// and sends what they said as the command's reply. While a capture is
+// open, everything the crate's macros and a program's `print` write
+// (stdout and stderr, from any thread) is kept in order instead, and
+// handed as it comes to `live` (the protocol streams it).
+
+/// Text said while a capture is open: `(to stderr, text)` in order.
+pub type Captured = Vec<(bool, String)>;
+
+type Live = Box<dyn Fn(bool, &str) + Send>;
+
+static CAPTURING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static CAPTURE: std::sync::Mutex<Option<(Captured, Option<Live>)>> = std::sync::Mutex::new(None);
+
+/// Whether a capture is open.
+#[inline]
+pub fn capturing() -> bool {
+    CAPTURING.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Open a capture; `live` hears each piece as it is said.
+pub fn capture_begin(live: Option<Box<dyn Fn(bool, &str) + Send>>) {
+    if let Ok(mut c) = CAPTURE.lock() {
+        *c = Some((Vec::new(), live));
+    }
+    CAPTURING.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Close the capture: what was said, in order.
+pub fn capture_end() -> Captured {
+    CAPTURING.store(false, std::sync::atomic::Ordering::SeqCst);
+    match CAPTURE.lock() {
+        Ok(mut c) => c.take().map(|(v, _)| v).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Keep `text` in the open capture (false when none is open).
+pub fn capture_push(err: bool, text: &str) -> bool {
+    let Ok(mut c) = CAPTURE.lock() else { return false };
+    let Some((segs, live)) = c.as_mut() else { return false };
+    if let Some(f) = live {
+        f(err, text);
+    }
+    match segs.last_mut() {
+        Some((e, t)) if *e == err => t.push_str(text),
+        _ => segs.push((err, text.to_string())),
+    }
+    true
 }
 
 /// Stdout could not be written: its reader has gone (or it is broken some

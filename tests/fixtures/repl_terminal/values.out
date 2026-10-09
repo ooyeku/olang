@@ -1,0 +1,53 @@
+olang <version> — :help for help · quit or ^D to exit
+
+41
+x + 1 : Int
+[1, 2, 3] : List<Int>
+`:type` evaluates its argument and won't run a binding or assignment.
+Query the value instead: `:type 2`
+3
+Execution time: <ms>ms
+
+=== Variable Inspection: x ===
+  Type: int
+  Value: 41
+Variable 'x' updated to: 5
+
+=== Variable Inspection: x ===
+  Type: int
+  Value: 5
+3
+<function: twice>
+6
+
+=== Memory ===
+  Values are reference-counted and reclaimed deterministically.
+  User bindings: 46
+Current configuration:
+  prompt: olang> 
+  show_types: false
+  debug_mode: false
+  time_commands: false
+  max_history: 1000
+Show types: true
+8 : int
+Show types: false
+Olang v<version>
+Command history:
+  1: let x = 41
+  2: twice(z)
+  3: twice(4)
+Last 2 commands:
+  2: twice(z)
+  3: twice(4)
+Command history search for 'twice':
+  2: twice(z)
+  3: twice(4)
+Re-executing: let x = 41
+41
+User environment cleared.
+Usage: :clear [env|history]
+^D
+
+--- stderr ---
+Command error: Debug error: Variable 'nothing_here' not found

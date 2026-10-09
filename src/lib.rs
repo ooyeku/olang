@@ -44,6 +44,8 @@ pub mod profile_live; // A profile written while the program runs (`--profile-li
 #[cfg(feature = "native")]
 pub mod repl;
 #[cfg(feature = "native")]
+pub mod repl_commands; // the `:` commands described once, for the terminal and the protocol
+#[cfg(feature = "native")]
 pub mod repl_serve; // `olang repl --serve`: the REPL as a protocol
 pub mod resolve;
 #[cfg(feature = "native")]

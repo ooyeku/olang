@@ -30,6 +30,12 @@
 //!   `render_view`, from the project's dependency or a path given) and
 //!   answers a PNG.
 //!
+//! - **Commands.** Every `:` command of the interactive REPL runs through
+//!   the REPL itself (`Repl::run_command`, headless), in the session's
+//!   own scope: what it says is captured (src/stdio.rs) and streamed,
+//!   then sent as text and styled lines with what it found besides
+//!   (src/repl_commands.rs has the registry, completion, styled runs).
+//!
 //! What a program prints while the session serves is collected and sent
 //! with the evaluation that printed it; the protocol keeps stdout to
 //! itself (fd 1 is pointed at stderr for anything else).
@@ -142,7 +148,7 @@ pub fn serve(no_ovm: bool) -> i32 {
         });
     }
 
-    let mut session = Session::new(no_ovm);
+    let mut session = Session::new(no_ovm, Some(out.clone()));
     out.send(&session.hello(None));
     for msg in rx {
         let op = msg.get("op").and_then(|o| o.as_str()).unwrap_or("").to_string();
@@ -173,7 +179,11 @@ struct Scope {
 }
 
 struct Session {
-    interp: Interpreter,
+    /// The REPL itself, headless: its interpreter is the session's, and
+    /// every `:` command runs through it as the terminal runs it.
+    cmd: crate::repl::Repl,
+    /// The protocol's stdout, for what a command says while it runs.
+    out: Option<Arc<Out>>,
     parser: Parser,
     root: PathBuf,
     scopes: HashMap<String, Scope>,
@@ -184,13 +194,15 @@ struct Session {
     sorts: HashMap<(u64, usize, bool), Arc<Vec<usize>>>,
     files: HashMap<PathBuf, FileIndex>,
     loom: Option<PathBuf>,
+    /// The library's names, for completion (made the first time asked).
+    library: Option<Vec<String>>,
     /// Whether the bytecode and native tiers are on (a reload starts
     /// them afresh: compiled code links its callees directly).
     tiers: bool,
 }
 
 impl Session {
-    fn new(no_ovm: bool) -> Session {
+    fn new(no_ovm: bool, out: Option<Arc<Out>>) -> Session {
         // every evaluation keeps tier statistics (the `stats` op)
         crate::profile::stats_enable();
         let mut interp = Interpreter::new();
@@ -214,7 +226,8 @@ impl Session {
             interp.set_dependency_map(map);
         }
         Session {
-            interp,
+            cmd: crate::repl::Repl::headless(interp),
+            out,
             parser: Parser::new(),
             root,
             scopes: HashMap::new(),
@@ -226,6 +239,7 @@ impl Session {
             files: HashMap::new(),
             loom: None,
             tiers: !no_ovm,
+            library: None,
         }
     }
 
@@ -233,7 +247,7 @@ impl Session {
         let mut v = json!({
             "event": "hello", "protocol": PROTOCOL, "olang": crate::version::VERSION,
             "root": self.root.to_string_lossy(), "pid": std::process::id(),
-            "ops": ["hello", "eval", "expand", "release", "interrupt", "ping", "reload", "render", "reset", "shutdown", "stats"],
+            "ops": ["hello", "eval", "command", "commands", "complete", "expand", "release", "interrupt", "ping", "reload", "render", "reset", "shutdown", "stats"],
         });
         if let Some(id) = id {
             v["id"] = id.clone();
@@ -247,7 +261,22 @@ impl Session {
         let id = msg.get("id").cloned().unwrap_or(J::Null);
         let mut reply = match op {
             "hello" => return self.hello(Some(&id)),
-            "eval" => self.eval(msg, running),
+            "eval" => {
+                // a `:` command (or `!shell`, or `quit`) typed where code goes
+                let code = msg.get("code").and_then(|c| c.as_str()).unwrap_or("").trim();
+                if msg.get("file").is_none() && is_command_line(code) {
+                    let code = code.to_string();
+                    self.command(&code, &id, running)
+                } else {
+                    self.eval(msg, running)
+                }
+            }
+            "command" => {
+                let line = msg.get("line").and_then(|c| c.as_str()).unwrap_or("").trim().to_string();
+                self.command(&line, &id, running)
+            }
+            "commands" => self.commands(msg),
+            "complete" => self.complete(msg),
             "expand" => self.expand(msg),
             "release" => {
                 if let Some(e) = msg.get("eval").and_then(|e| e.as_u64()) {
@@ -285,7 +314,7 @@ impl Session {
             return (key, s, Vec::new());
         }
         let mut scope = Scope {
-            scope: self.interp.new_repl_scope(file),
+            scope: self.cmd.interpreter.new_repl_scope(file),
             uses: Vec::new(),
         };
         let mut notes = Vec::new();
@@ -339,16 +368,16 @@ impl Session {
             }
         }
         let mut notes = Vec::new();
-        self.interp.swap_repl_scope(&mut scope.scope);
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
         for st in keep {
             let line = stmt_line(&st);
             let one = crate::ast::Program { statements: vec![st] };
-            if let Err(e) = self.interp.eval_program(one) {
+            if let Err(e) = self.cmd.interpreter.eval_program(one) {
                 notes.push(format!("{}:{}: {}", short(&self.root, file), line, plain_message(&e)));
-                let _ = self.interp.take_error_location();
+                let _ = self.cmd.interpreter.take_error_location();
             }
         }
-        self.interp.swap_repl_scope(&mut scope.scope);
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
         notes
     }
 
@@ -416,20 +445,27 @@ impl Session {
         } else {
             Vec::new()
         };
-        let stats0 = self.interp.bytecode_tier_stats();
-        self.interp.swap_repl_scope(&mut scope.scope);
+        let stats0 = self.cmd.interpreter.bytecode_tier_stats();
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        // the prompt's inputs are the session's history (`:history`, `:!n`),
+        // and its watched variables are watched
+        let prompt = file.is_none();
+        let watching = prompt && self.cmd.watch_before();
+        if prompt {
+            self.cmd.command_history.push(code.clone());
+        }
         crate::interrupt::clear();
         let _ = crate::output::take_collected();
         running.store(true, Ordering::SeqCst);
         let started = Instant::now();
         crate::profile::stats_sample_begin(crate::tier_stats::INTERVAL_US);
-        let outcome = self.interp.eval_program(program);
+        let outcome = self.cmd.interpreter.eval_program(program);
         crate::profile::stats_sample_end();
         let ms = started.elapsed().as_secs_f64() * 1000.0;
         running.store(false, Ordering::SeqCst);
         let interrupted = crate::interrupt::pending();
         crate::interrupt::clear();
-        let location = if outcome.is_err() { self.interp.take_error_location() } else { None };
+        let location = if outcome.is_err() { self.cmd.interpreter.take_error_location() } else { None };
         // a `let`'s value is its binding's
         let bound = match (&outcome, &last) {
             (Ok(_), Some(Statement::LetDecl(l))) | (Ok(_), Some(Statement::ShareDecl(ShareDecl::Let(l)))) => match &l.pattern {
@@ -438,12 +474,13 @@ impl Session {
             },
             _ => None,
         };
-        let bound_value = bound.as_ref().and_then(|n| self.interp.get_environment().get(n));
-        self.interp.swap_repl_scope(&mut scope.scope);
+        let bound_value = bound.as_ref().and_then(|n| self.cmd.interpreter.get_environment().get(n));
+        let watched = if watching && outcome.is_ok() { self.cmd.watch_after() } else { Vec::new() };
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
         if outcome.is_ok() {
             scope.uses.extend(uses);
         }
-        let stats1 = self.interp.bytecode_tier_stats();
+        let stats1 = self.cmd.interpreter.bytecode_tier_stats();
         let printed = crate::output::take_collected();
         let (bc, nat) = match (stats0, stats1) {
             (Some(a), Some(b)) => (
@@ -492,7 +529,236 @@ impl Session {
         if !notes.is_empty() {
             reply["notes"] = json!(notes);
         }
+        if !watched.is_empty() {
+            reply["watched"] = json!(watched);
+        }
         reply
+    }
+
+    // ── commands ────────────────────────────────────────────────────
+
+    /// A `:` command run as the terminal REPL runs it (`Repl::run_command`),
+    /// in the prompt's scope. What it says is streamed as it is said
+    /// (`{"event": "out", "id", "text", "err"}`) and sent whole with the
+    /// reply, as plain text (`out`) and styled lines (`lines`); what it
+    /// found besides — a value, a type, a time, a tutorial, a place the
+    /// editor has — comes as fields of its own.
+    fn command(&mut self, line: &str, id: &J, running: &AtomicBool) -> J {
+        let t0 = Instant::now();
+        let word = line.split_whitespace().next().unwrap_or("").to_string();
+        let spec = crate::repl_commands::find(&word);
+        let (key, mut scope, _) = self.take_scope(None);
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        crate::interrupt::clear();
+        let _ = crate::output::take_collected();
+        let live: Option<Box<dyn Fn(bool, &str) + Send>> = self.out.clone().map(|out| {
+            let id = id.clone();
+            Box::new(move |err: bool, text: &str| {
+                out.send(&json!({ "event": "out", "id": id, "text": crate::repl_commands::strip_ansi(text), "err": err }));
+            }) as Box<dyn Fn(bool, &str) + Send>
+        });
+        colored::control::set_override(true);
+        crate::stdio::capture_begin(live);
+        running.store(true, Ordering::SeqCst);
+        let started = Instant::now();
+        let outcome = if spec.is_none() && line != "quit" {
+            // an unknown command: the nearest of all of them
+            match crate::repl_commands::suggest(&word) {
+                Some(c) => println!("unknown command {} — did you mean {}?", word, c),
+                None => println!(
+                    "unknown command {} — :help lists them. Statements need no colon: `use collections`, `let x = 1`",
+                    word
+                ),
+            }
+            Ok(())
+        } else if matches!(word.as_str(), ":end" | ":cancel") {
+            println!("No multi-line input is open — {} starts one.", ":ml");
+            Ok(())
+        } else {
+            self.cmd.run_command(line)
+        };
+        let ms = started.elapsed().as_secs_f64() * 1000.0;
+        running.store(false, Ordering::SeqCst);
+        let interrupted = crate::interrupt::pending();
+        crate::interrupt::clear();
+        let said = crate::stdio::capture_end();
+        colored::control::unset_override();
+        // what a program printed outside the capture (another thread's)
+        let stray = crate::output::take_collected();
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        self.scopes.insert(key, scope);
+        // `:run` leaves the module context on its file
+        if word == ":run" {
+            self.cmd.interpreter.set_current_file(&self.root.join("olang.toml"));
+        }
+        let mut text = String::new();
+        for (_, t) in &said {
+            text.push_str(t);
+        }
+        text.push_str(&stray);
+        let lines: Vec<J> = crate::repl_commands::styled_lines(&text)
+            .into_iter()
+            .map(|l| {
+                J::Array(
+                    l.into_iter()
+                        .map(|r| {
+                            let mut o = json!({ "s": r.text });
+                            if let Some(c) = r.color {
+                                o["c"] = J::String(c.to_string());
+                            }
+                            if r.bold {
+                                o["b"] = J::Bool(true);
+                            }
+                            if r.dim {
+                                o["d"] = J::Bool(true);
+                            }
+                            o
+                        })
+                        .collect(),
+                )
+            })
+            .collect();
+        let mut reply = json!({
+            "ok": true,
+            "command": spec.map(|c| c.name).unwrap_or(if line == "quit" { ":quit" } else { "" }),
+            "out": crate::repl_commands::strip_ansi(&text),
+            "lines": lines,
+            "ms": round3(ms),
+        });
+        if spec.is_none() && line != "quit" {
+            reply["unknown"] = J::Bool(true);
+            if let Some(c) = crate::repl_commands::suggest(&word) {
+                reply["suggest"] = J::String(c.to_string());
+            }
+        }
+        match outcome {
+            Err(e) => {
+                reply["ok"] = J::Bool(false);
+                reply["error"] = json!({ "kind": if interrupted { "interrupted" } else { "command" }, "message": crate::repl_commands::strip_ansi(&e.to_string()), "stack": [] });
+            }
+            Ok(()) if interrupted => {
+                reply["interrupted"] = J::Bool(true);
+            }
+            Ok(()) => {}
+        }
+        let notes = std::mem::take(&mut self.cmd.notes);
+        let mut effects: Vec<J> = Vec::new();
+        let mut held = Vec::new();
+        let mut values: Vec<J> = Vec::new();
+        for n in notes {
+            use crate::repl_commands::Note;
+            match n {
+                Note::Effect(e) => effects.push(J::String(e.to_string())),
+                Note::Value { label, value } => {
+                    let v = self.encode(&value, 0, &mut held);
+                    values.push(json!({ "label": label, "value": v }));
+                }
+                Note::Type(t) => reply["type"] = J::String(t),
+                Note::Time(t) => reply["time_ms"] = json!(round3(t)),
+                Note::Bench(runs) => reply["bench"] = json!(runs.iter().map(|r| round3(*r)).collect::<Vec<_>>()),
+                Note::Open(place) => reply["open"] = J::String(place.to_string()),
+                Note::Commands => reply["commands"] = self.command_list(""),
+                Note::Cwd(d) => reply["cwd"] = J::String(d),
+                Note::Tutorial(t) => {
+                    reply["tutorial"] = json!({
+                        "name": t.name, "description": t.description, "difficulty": t.difficulty, "time": t.estimated_time,
+                        "steps": t.steps.iter().map(|s| json!({ "title": s.title, "description": s.description, "code": s.code,
+                            "expected": s.expected_output, "explanation": s.explanation, "hints": s.hints })).collect::<Vec<_>>(),
+                    })
+                }
+            }
+        }
+        if !held.is_empty() || !values.is_empty() {
+            self.eval_seq += 1;
+            let seq = self.eval_seq;
+            self.evals.push_back((seq, held));
+            while self.evals.len() > KEEP_EVALS {
+                let (old, _) = self.evals[0];
+                self.drop_eval(old);
+            }
+            reply["eval"] = json!(seq);
+        }
+        if let Some(v) = values.last() {
+            reply["value"] = v["value"].clone();
+        }
+        if !values.is_empty() {
+            reply["values"] = J::Array(values);
+        }
+        if !effects.is_empty() {
+            reply["effects"] = J::Array(effects);
+        }
+        reply["server_ms"] = json!(round3(t0.elapsed().as_secs_f64() * 1000.0));
+        reply
+    }
+
+    /// The commands (those starting with `prefix`): name, aliases, usage,
+    /// summary, the kind of argument, group, and whether an editor
+    /// answers it with its own interface.
+    fn command_list(&self, prefix: &str) -> J {
+        J::Array(
+            crate::repl_commands::COMMANDS
+                .iter()
+                .filter(|c| c.name.starts_with(prefix))
+                .map(|c| {
+                    let mut o = json!({ "name": c.name, "aliases": c.aliases, "usage": c.usage, "summary": c.summary,
+                                         "arg": c.arg.name(), "group": c.group, "client": c.client });
+                    if let crate::repl_commands::Arg::Words(ws) = c.arg {
+                        o["words"] = json!(ws);
+                    }
+                    o
+                })
+                .collect(),
+        )
+    }
+
+    fn commands(&self, msg: &J) -> J {
+        let prefix = msg.get("prefix").and_then(|p| p.as_str()).unwrap_or("");
+        json!({ "ok": true, "commands": self.command_list(prefix) })
+    }
+
+    /// Completion of a prompt's line at `pos` (characters): a command, its
+    /// arguments (paths against the working folder, the session's names,
+    /// topics, tutorials, options), or code (the session's bindings and
+    /// the library's names, paths inside a string).
+    fn complete(&mut self, msg: &J) -> J {
+        let line = msg.get("line").and_then(|l| l.as_str()).unwrap_or("");
+        let chars = msg.get("pos").and_then(|p| p.as_u64()).map(|p| p as usize).unwrap_or(line.chars().count());
+        let pos = line.char_indices().nth(chars).map(|(i, _)| i).unwrap_or(line.len());
+        let (key, mut scope, _) = self.take_scope(None);
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        let user = self.cmd.interpreter.get_user_variables();
+        let mut vars: Vec<(String, String)> = user
+            .iter()
+            .filter(|(_, v)| !matches!(v, Value::Struct { type_name, .. } if type_name.as_str() == "Module"))
+            .map(|(n, v)| (n.clone(), crate::repl::Repl::type_name_of(v).to_string()))
+            .collect();
+        let fns: Vec<String> = user.iter().filter(|(_, v)| matches!(v, Value::Function(_))).map(|(n, _)| n.clone()).collect();
+        drop(user);
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        self.scopes.insert(key, scope);
+        vars.sort();
+        if self.library.is_none() {
+            self.library = Some(self.cmd.library_names());
+        }
+        let names = crate::repl_commands::Names {
+            vars,
+            fns,
+            library: self.library.clone().unwrap_or_default(),
+            topics: self.cmd.help().get_categories(),
+            tutorials: self.cmd.help().get_tutorials().iter().map(|t| t.name.clone()).collect(),
+            cwd: std::env::current_dir().unwrap_or_else(|_| self.root.clone()),
+        };
+        let (start, items) = crate::repl_commands::complete(line, pos, &names);
+        let start_chars = line[..start].chars().count();
+        // the command being typed, for help as it is typed
+        let word = line.trim_start().split_whitespace().next().unwrap_or("");
+        let about = if line.trim_start().starts_with(':') {
+            crate::repl_commands::find(word).map(|c| json!({ "name": c.name, "usage": c.usage, "summary": c.summary, "client": c.client }))
+        } else {
+            None
+        };
+        json!({ "ok": true, "start": start_chars, "items": items.iter().map(|i| json!({ "label": i.label, "kind": i.kind, "detail": i.detail })).collect::<Vec<_>>(),
+                "command": about })
     }
 
     fn error_json(
@@ -620,7 +886,7 @@ impl Session {
                 self.scopes.insert(k, scope);
                 continue;
             }
-            self.interp.swap_repl_scope(&mut scope.scope);
+            self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
             for u in &uses {
                 if let Ok(p) = self.parser.parse(u) {
                     // only the `use` statements of what was evaluated
@@ -629,13 +895,13 @@ impl Session {
                         .into_iter()
                         .filter(|s| matches!(s.unwrapped(), Statement::UseDecl(_) | Statement::ShareDecl(ShareDecl::Use(_))))
                         .collect();
-                    if let Err(e) = self.interp.eval_program(crate::ast::Program { statements: only }) {
+                    if let Err(e) = self.cmd.interpreter.eval_program(crate::ast::Program { statements: only }) {
                         problems.push(plain_message(&e));
-                        let _ = self.interp.take_error_location();
+                        let _ = self.cmd.interpreter.take_error_location();
                     }
                 }
             }
-            self.interp.swap_repl_scope(&mut scope.scope);
+            self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
             self.scopes.insert(k, scope);
         }
         running.store(false, Ordering::SeqCst);
@@ -644,7 +910,7 @@ impl Session {
         // a group of functions together): start the tiers afresh, so
         // what runs next is compiled from what is loaded now
         if self.tiers {
-            self.interp.enable_bytecode_tier(1, false);
+            self.cmd.interpreter.enable_bytecode_tier(1, false);
         }
         let _ = crate::output::take_collected();
         let ms = round3(t0.elapsed().as_secs_f64() * 1000.0);
@@ -916,7 +1182,7 @@ impl Session {
             let (map, _missing) = crate::pkg::install_lenient(&lroot, &opts);
             let mut map: HashMap<_, _> = map.into_iter().collect();
             map.insert("loom".to_string(), lroot.clone());
-            self.interp.add_to_dependency_map(map);
+            self.cmd.interpreter.add_to_dependency_map(map);
             self.loom = Some(lroot);
         }
         let opts = json!({
@@ -927,21 +1193,21 @@ impl Session {
             "max_height": msg.get("max_height").and_then(|d| d.as_f64()).unwrap_or(1600.0),
         });
         let (key, mut scope, _) = self.take_scope(None);
-        self.interp.swap_repl_scope(&mut scope.scope);
-        self.interp.define_global("__studio_view", view);
-        self.interp.define_global("__studio_opts", json_to_value(&opts));
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        self.cmd.interpreter.define_global("__studio_view", view);
+        self.cmd.interpreter.define_global("__studio_opts", json_to_value(&opts));
         crate::interrupt::clear();
         running.store(true, Ordering::SeqCst);
         let program = self
             .parser
             .parse("use loom.lib.test { render_view as __studio_render_view }\n__studio_render_view(__studio_view, __studio_opts)");
         let outcome = match program {
-            Ok(p) => self.interp.eval_program(p),
+            Ok(p) => self.cmd.interpreter.eval_program(p),
             Err(e) => Err(InterpreterError::RuntimeError { message: parse_message(&e) }),
         };
         running.store(false, Ordering::SeqCst);
-        let _ = self.interp.take_error_location();
-        self.interp.swap_repl_scope(&mut scope.scope);
+        let _ = self.cmd.interpreter.take_error_location();
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
         self.scopes.insert(key, scope);
         let _ = crate::output::take_collected();
         let ms = round3(t0.elapsed().as_secs_f64() * 1000.0);
@@ -972,6 +1238,13 @@ impl Session {
 }
 
 // ── helpers ─────────────────────────────────────────────────────────
+
+/// Whether prompt input is a REPL command: `:word`, `!shell`, `quit`.
+fn is_command_line(code: &str) -> bool {
+    (code.starts_with(':') && code.chars().nth(1).is_some_and(|c| c.is_alphabetic() || c == '!'))
+        || (code.starts_with('!') && code.len() > 1 && !code.starts_with("!="))
+        || code == "quit"
+}
 
 fn round3(x: f64) -> f64 {
     (x * 1000.0).round() / 1000.0
