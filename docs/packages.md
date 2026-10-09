@@ -666,6 +666,59 @@ carried no grant table and no idea which function was running, and a
 partial gate is worse than none. Turning on the security feature cost
 roughly two orders of magnitude on hot numeric code.
 
+### Modules loaded at run time
+
+A host can load code it did not write into its own running program — a
+plugin — and hold that code to a grant of its own. olang Studio's plugins
+run this way (studio/docs/plugins.md):
+
+```olang no-run
+let grant = #{ "name": "tier-map", "fs": "read", "fs_roots": ["/work/project"], "proc": ["olang"] }
+match runtime.load_module("/work/plugins/tier-map/plugin.ol", grant) {
+    Ok(m) => {
+        let r = runtime.call_budget(m.on, [state, event], 250)
+        if map_get(r, "ok") => map_get(r, "value") else => println(map_get(r, "error"))
+    },
+    Err(e) => println("did not load: " + e)
+}
+```
+
+- **The grant is attributed by folder**, as a dependency's attenuation
+  is: everything defined under the loaded file's folder — its functions,
+  the lambdas they make, the files it imports from there — answers to it;
+  the host's own functions (the API it hands the module) answer to the
+  host's. A key left out of the grant is denied. Within an app that has
+  a manifest, a module gets no more than the app.
+- **Finer than a dependency's.** `fs_roots` holds the filesystem grant
+  under those folders only (a path's `..` resolved, its real path
+  compared); `proc` may be a list of the programs it may run, matched by
+  file name or whole path.
+- **Never the host's.** `gui`, `tty`, loading and unloading modules and
+  the process's own profiler are refused a loaded module (capability
+  `host`): its code cannot draw, take the terminal, or grant itself more.
+- **Afresh, and safely replaced.** A load forgets the modules cached from
+  that folder first, so an edited file is read again; a load that fails
+  keeps the grant before it, and the module value the host already holds
+  still runs. `runtime.unload_module` forgets the grant;
+  `runtime.module_grant` says it; `runtime.module_permits(path, builtin,
+  args)` asks the same gate before the host performs an effect on the
+  module's behalf (a process it asked for).
+- **A time budget per call.** `runtime.call_budget(f, args, ms)` stops
+  the call past `ms` — an interrupt aimed at the calling thread only, so
+  the program's other threads run on — catches its failure, and answers
+  `#{ ok, value | error, frames, over, us }`. Native code compiled after
+  the first budget polls for it too. A builtin that blocks (a long
+  `os.exec`, a sleep) is not interrupted until it returns, and a thread
+  the module starts is not under the budget.
+- **Where a failure happened.** A caught error's frames — each `#{ file,
+  line, fn }`, innermost first — come with `call_budget`'s answer, and
+  `runtime.last_error()` keeps the last one any boundary on the thread
+  caught (`attempt` too). `runtime.shape(value)` describes a value's
+  structure, for a host deciding whether a reloaded module's state still
+  fits it.
+
+tests/runtime_modules_test.rs runs each of these through the binary.
+
 ## The transparent binary
 
 An `olang build` executable embeds its complete source, its `olang.toml`

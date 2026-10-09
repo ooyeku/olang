@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **runtime: modules loaded at run time, under their own grant.**
+  `runtime.load_module(path, grant)` loads a file into the running
+  program as a module (read afresh) whose code — everything under its
+  folder — answers to a grant of its own: folders for `fs`
+  (`fs_roots`), an allow-list of programs for `proc`, and never the
+  host's builtins (`gui`, `tty`, loading code, the profiler). A failed
+  load keeps the grant before it. `runtime.unload_module`,
+  `module_grant` and `module_permits` (the same gate, asked by a host
+  about to act for a module) go with it. What olang Studio's plugins run
+  on.
+- **runtime: a call held to a time budget.** `runtime.call_budget(f,
+  args, ms)` stops a call past `ms` — an interrupt aimed at the calling
+  thread, the rest of the program running on — and answers ok/value or
+  error/frames, whether it ran over, and how long it took.
+- **Where a caught error went.** Both tiers note each frame an error
+  leaves with its file and line; `attempt`, `call_budget` and
+  `load_module` keep the trace and `runtime.last_error()` reads it back
+  (Loom prints it when a program stops with an error). `runtime.shape`
+  describes a value's structure.
+
 - **gui: scrolling sideways around what scrolls down.** The wheel gives
   each axis to the nearest scroller that can still move along it (two
   fingers sideways over a board's column move the board; a diagonal
