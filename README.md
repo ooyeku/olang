@@ -215,11 +215,10 @@ all demonstrated in [`examples/`](examples/).
 
 What is young is not the engine but its surroundings. The third-party
 package ecosystem is small, so programs rely chiefly on the standard
-library, and the project is pre-1.0: one deliberate breaking release is
-planned before the compatibility contract freezes (see the
-[roadmap](docs/roadmap.md)). A project that cannot absorb that migration
-should pin its olang version until 1.0. The authoritative statement of what
-is stable today is [Stability and compatibility](docs/stability.md).
+library, and the project is pre-1.0: the planned breaking releases have
+shipped, and what remains is in the [roadmap](docs/roadmap.md). The
+authoritative statement of what is stable today is
+[Stability and compatibility](docs/stability.md).
 
 ## License
 

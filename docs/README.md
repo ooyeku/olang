@@ -58,7 +58,7 @@ For the conventions used throughout the book, see the
 | [The execution model: OVM and JIT](ovm.md) | The bytecode VM and the Cranelift JIT in depth: the register machine, the compilation whitelist, type specialization, measured performance, and the deliberate limits. |
 | [Case study: building robust systems](demo.md) | A design study of the flagship example, `examples/concurrency/demo` (Harborline): state threading, algebraic data types, `Result` discipline, testable concurrency, and self-checking invariants. |
 | [Stability and compatibility](stability.md) | What is stable, what is experimental, and how the language evolves. |
-| [Roadmap](roadmap.md) | The plan of record for reaching 1.0: the locked design decisions and the campaigns that implement them. |
+| [Roadmap](roadmap.md) | What olang still has to do, each item with the evidence from the program that ran into it. |
 
 ## Reading paths
 

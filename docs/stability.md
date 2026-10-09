@@ -165,8 +165,9 @@ purity promise), and never shrinks.
 
 These rules are part of the commitment above and are permanent under the
 [semver contract](#versioning): changing any of them would be a 2.0, and
-2.0 is the version that is not meant to happen. Campaign 1 of
-[the roadmap](roadmap.md) — the language surface — is complete and closed.
+2.0 is the version that is not meant to happen. The language surface is
+complete and closed; what [the roadmap](roadmap.md) still holds is
+additive.
 
 ### Stable in behavior, evolving in scope
 

@@ -187,8 +187,10 @@ Anything else causes the function to stay interpreted:
   compile-time snapshot can represent
 - background tasks (`spawn`), and struct-variant enum
   construction (unit and tuple variants compile)
-- `return` and `break value` — both unwind in ways the bytecode loops
-  don't model
+- `break value`, and `return` inside a promoted loop or OSR region — they
+  unwind in ways the bytecode loops don't model (a function's own
+  `return` compiles)
+- the bitwise operators `& | ^ << >>`
 - a lambda capturing a *local* the enclosing function binds only *later*
   (no register holds it yet at the lambda expression) — a *function*
   declared later resolves through the registry and compiles
