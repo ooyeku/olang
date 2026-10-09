@@ -634,6 +634,17 @@ command table) logged these while it was built (loom/FINDINGS.md,
 | `[olang]` On the bytecode tier, a value a builtin returned is copied when extended | `map_set(cell.take(c), k, v)` and `cell.take(c) + [v]` cost 548 ms and 157 ms for 8,000 inserts compiled, 12 ms interpreted: the native `map_set` clones its map unless the call is the fused `m = map_set(m, …)` form, and a builtin's result is not solely owned in a register | **landed** — builtin calls (`CallNamed`) take the liveness pass's mask of argument registers dead after the call, as user-function calls do; `map_set` inserts into a map it owns outright (`Arc::make_mut`); an `Add` whose left register is dead takes it and extends it in place. The interpreter's list `+` extends a left side nothing else holds. 8,000 inserts through `cell.take`: compiled 548 → 12 ms, matching the interpreter. Pinned in tests/builtin_move_test.rs, with the aliasing cases (a map or list still held elsewhere is never changed) on both tiers |
 | `[stdlib]` A covered window never drew | Loom's form, opened behind another application, stayed blank: the surface answered `Occluded`, the frame was skipped, and nothing asked for it again | **landed** — a skipped frame stays owed (the scene stays dirty), `Occluded(false)` asks for a redraw, a timeout retries; `GUI_TRACE=1` prints each frame and each skip |
 
+## olang Studio's reading
+
+olang Studio (`studio/`, an IDE on Loom) asked for these while its
+Control Center and its profiler of itself were built (studio/FINDINGS.md,
+2026-10-09). Tags as in W9.
+
+| Item | Evidence | Status |
+|---|---|---|
+| `[stdlib]` A program cannot profile itself live | Studio's Profiler could show any run it started (`--profile-live`) but not Studio: a process not started armed had no way to sample itself into the snapshot format, and `runtime.profile_start` answers a summary only at its end | **landed** — `runtime.profile_live_start(dir[, #{ every_ms, interval_us, label }])` samples the process from now and writes `DIR/<pid>.json` in `profile --format json --live`'s format, cumulative and atomic; `runtime.profile_live_stop()` writes the final snapshot and stops (nothing paid after). Refused while another profile runs. tests/profile_json_test.rs |
+| `[stdlib]` A binary cannot say what it is | An About box and a bug report want the commit, the build's date and profile, the features and the gui engine's crates; only `runtime.version()` existed | **landed** — `runtime.build()`: version, commit, branch, dirty, date (UTC), profile, target, rustc, features, the key crates from Cargo.lock (`vendored` marks vendor/accesskit_macos), the binary's path; build.rs makes them, again when the sources, the lock or the commit change. tests/profile_json_test.rs |
+
 ## Process
 
 One lane at a time, each landing with its tests and documentation in

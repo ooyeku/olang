@@ -4,7 +4,9 @@
 //! folded stacks, the process's series), its live snapshots
 //! (`--live DIR`), an armed run that is attached to and detached from
 //! (`--profile-live DIR`, `DIR/attach`), and `olang bench --format json`
-//! with `--profile` and a baseline.
+//! with `--profile` and a baseline; a program's live profile of itself
+//! (`runtime.profile_live_start` / `runtime.profile_live_stop`) and what
+//! the binary says it is (`runtime.build()`).
 
 use serde_json::Value as J;
 use std::path::{Path, PathBuf};
@@ -384,4 +386,103 @@ fn a_bench_as_events_against_a_baseline_with_profiles() {
         .last()
         .unwrap();
     assert_eq!(fin["regressed"], true);
+}
+
+// A program that profiles itself for a while, in the live format: on,
+// work, a snapshot read back mid-run, off (a second start refused while
+// on, allowed after), then work that must not be sampled.
+const SELF: &str = r#"fn fib(n) = if n < 2 => n else => fib(n - 1) + fib(n - 2)
+
+fn spin(ms) = {
+    let until = time.monotonic() + ms
+    let mut t = 0
+    while time.monotonic() < until { t = t + fib(15) }
+    t
+}
+
+let dir = fs.join(unwrap(os.cwd()), "self")
+println(show(runtime.profile_live_start(dir, #{ "every_ms": 50, "label": "me" })))
+println(show(runtime.profile_live_start(dir)))
+let _a = spin(400)
+let names = filter(unwrap(fs.list_dir(dir)), (n) => str.ends_with(n, ".json"))
+let mid = unwrap(json.parse(unwrap(fs.read_file(fs.join(dir, names[0])))))
+println("mid " + show(map_get(mid, "live")) + " " + show(map_get(mid, "samples") > 0))
+println(show(runtime.profile_live_stop()))
+println(show(runtime.profile_live_stop()))
+let fin = unwrap(json.parse(unwrap(fs.read_file(fs.join(dir, names[0])))))
+let _b = spin(150)
+let again = unwrap(json.parse(unwrap(fs.read_file(fs.join(dir, names[0])))))
+println("after " + show(map_get(fin, "samples") == map_get(again, "samples")))
+println(show(runtime.profile_live_start(fs.join(unwrap(os.cwd()), "self2"))))
+let _c = spin(100)
+println(show(runtime.profile_live_stop()))
+"#;
+
+#[test]
+fn a_program_profiles_itself_live_in_the_snapshot_format_and_stops() {
+    let dir = project("self", SELF);
+    let (code, out, err) = olang(&dir, &["main.ol"]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "Ok(())");
+    assert!(lines[1].starts_with("Err("), "a second start while one runs is refused: {out}");
+    assert_eq!(lines[2], "mid true true");
+    assert_eq!(lines[3], "Ok(())");
+    assert!(lines[4].starts_with("Err("), "stopping twice: {out}");
+    assert_eq!(lines[5], "after true", "nothing sampled once stopped");
+    assert_eq!(lines[6], "Ok(())", "started again after a stop");
+    assert_eq!(lines[7], "Ok(())");
+    // the final snapshot: the format a live run writes, the program's frames in it
+    let snap = std::fs::read_dir(dir.join("self"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|x| x == "json"))
+        .unwrap();
+    let doc = read(&snap);
+    assert_eq!(doc["kind"], "profile");
+    assert_eq!(doc["done"], true);
+    assert_eq!(doc["live"], false);
+    assert_eq!(doc["file"], "me");
+    assert_eq!(doc["pid"].as_u64().is_some(), true);
+    assert!(doc["samples"].as_u64().unwrap() > 0);
+    assert!(!doc["series"].as_array().unwrap().is_empty());
+    let (_, fib) = frame_named(&doc, "fib").expect("fib sampled");
+    assert!(fib["file"].as_str().unwrap().ends_with("main.ol"));
+    assert!(doc["stacks"].as_array().unwrap().iter().all(|s| s["t"].is_array()));
+    assert!(dir.join("self2").is_dir());
+}
+
+#[test]
+fn a_live_profile_of_its_own_is_refused_in_an_armed_run() {
+    let dir = project("self-armed", "println(show(runtime.profile_live_start(fs.join(unwrap(os.cwd()), \"x\"))))\n");
+    let (code, out, _) = olang(&dir, &["--profile-live", "armed", "main.ol"]);
+    assert_eq!(code, 0);
+    assert!(out.trim().starts_with("Err("), "{out}");
+}
+
+#[test]
+fn the_binary_says_what_it_is() {
+    let dir = project(
+        "build",
+        r#"let b = runtime.build()
+println(map_get(b, "version") == runtime.version())
+println(str.length(map_get(b, "commit")) == 40 || map_get(b, "commit") == "")
+println(contains(["release", "debug"], map_get(b, "profile")))
+println(str.ends_with(map_get(b, "date"), "Z"))
+println(str.starts_with(map_get(b, "rustc"), "rustc "))
+println(contains(map_get(b, "features"), "native"))
+let names = map(map_get(b, "crates"), (c) => map_get(c, "name"))
+println(contains(names, "winit") && contains(names, "wgpu") && contains(names, "parley"))
+let ak = filter(map_get(b, "crates"), (c) => map_get(c, "name") == "accesskit_macos")
+println(len(ak) == 1 && map_get(ak[0], "vendored") == true)
+println(fs.exists(map_get(b, "exe")))
+"#,
+    );
+    let (code, out, err) = olang(&dir, &["main.ol"]);
+    assert_eq!(code, 0, "{err}");
+    for (i, l) in out.lines().enumerate() {
+        assert_eq!(l, "true", "line {i} of {out}");
+    }
+    assert_eq!(out.lines().count(), 9);
 }

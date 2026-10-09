@@ -824,6 +824,14 @@ pub fn start_in_process(interval_us: u64) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether any profile samples this process now: `olang profile`'s, a
+/// live one's, `runtime.profile_start`'s, or the instrumented mode.
+pub fn busy() -> bool {
+    registry().profiles.load(Ordering::SeqCst) > 0
+        || instrumenting()
+        || IN_PROCESS.lock().map(|s| s.is_some()).unwrap_or(true)
+}
+
 /// `runtime.profile_stop`: end it and answer what it saw.
 pub fn stop_in_process() -> Result<Summary, String> {
     let session = IN_PROCESS

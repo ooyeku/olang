@@ -6005,6 +6005,31 @@ println("program: " + to_string(map_get(m, "program") / 1048576) + " MB")"##],
 for row in take(map_get(p, "rows"), 5) { println(map_get(row, "function") + " " + map_get(row, "tier")) }"##],
         );
         self.doc_ex(
+            "runtime.profile_live_start",
+            "runtime.profile_live_start(dir)",
+            "Result",
+            "runtime",
+            "A live profile of this process from now, as `olang profile --format json --live DIR` makes of a program it runs: every thread's olang stacks sampled by tier (every 1,000 µs), and a snapshot of the profile and the process's vital signs (memory, threads, tasks, cpu) written to DIR/<pid>.json every 500 ms in that same format — cumulative, replaced atomically. runtime.profile_live_start(dir, #{ \"every_ms\": 250, \"interval_us\": 2000, \"label\": \"my app\" }) sets the pace. Ok(()), or Err when a profile already runs. A program that never calls it pays nothing; runtime.profile_live_stop() ends it. What lets an app (olang Studio) draw its own profile while it runs.",
+            &[r##"unwrap(runtime.profile_live_start(fs.join(os.temp_dir(), "me")))"##],
+        );
+        self.doc_ex(
+            "runtime.profile_live_stop",
+            "runtime.profile_live_stop()",
+            "Result",
+            "runtime",
+            "End the live profile runtime.profile_live_start began: sampling stops (the process pays nothing for it again) and the final snapshot, \"done\": true, is written. Ok(()), or Err when none runs.",
+            &[r##"unwrap(runtime.profile_live_stop())"##],
+        );
+        self.doc_ex(
+            "runtime.build",
+            "runtime.build()",
+            "Map",
+            "runtime",
+            "What this olang binary is, for an About box or a bug report: #{ \"version\", \"commit\", \"branch\", \"dirty\", \"date\", \"profile\", \"target\", \"rustc\", \"features\", \"crates\", \"exe\" } — the commit it was built from (empty outside a checkout) and whether the checkout had uncommitted changes, when its build script last ran (UTC), release or debug, the target triple, the compiler, the Cargo features, the gui engine's and the stdlib's key crates as #{ \"name\", \"version\", \"vendored\" } (vendored: a patched copy), and the binary's path.",
+            &[r##"let b = runtime.build()
+println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))"##],
+        );
+        self.doc_ex(
             "runtime.version",
             "runtime.version()",
             "String",
