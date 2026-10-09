@@ -176,8 +176,16 @@ impl Analyzer {
             );
             self.hoisted.insert(decl.name.clone());
         }
+        // A statement the walk cannot follow (a struct literal naming a
+        // field twice) costs that statement, not the rest of the file:
+        // every later use still counts, every later undefined name is
+        // still found.
         for statement in &program.statements {
-            self.analyze_statement(statement)?;
+            if self.analyze_statement(statement).is_err() {
+                while self.current_scope > 0 {
+                    self.exit_scope();
+                }
+            }
         }
         // With every name declared (imports and later declarations
         // included): annotations are uses, and `share`d names are used
@@ -207,6 +215,15 @@ impl Analyzer {
                     ShareDecl::Type(t) => {
                         self.exported.insert(t.name.clone());
                         self.note_type_decl(t);
+                    }
+                    // A re-export (`share use lib.x { a, b }`) is the
+                    // module's interface: its importers are the users.
+                    ShareDecl::Use(u) => {
+                        self.exported.extend(
+                            u.items
+                                .iter()
+                                .filter_map(|i| i.bound_name().map(str::to_string)),
+                        );
                     }
                     _ => {}
                 },
@@ -257,53 +274,22 @@ impl Analyzer {
                 // Extract variable names from the pattern
                 let pattern_variables = self.extract_pattern_variables(&let_decl.pattern);
 
-                // Check for duplicate variables in current scope
-                for var_name in &pattern_variables {
-                    if self.scopes[self.current_scope].contains(var_name) {
-                        return Err(AnalysisError::DuplicateVariable {
-                            name: var_name.clone(),
-                        });
-                    }
-                }
-
-                // Add all variables from the pattern to current scope, with a
-                // tracking entry — without one, usage counting silently
-                // no-ops for every let-bound variable and they can never
-                // appear in unused-variable reports
+                // Each name gets a tracking entry — without one, usage
+                // counting silently no-ops for every let-bound variable.
+                // A name the scope already holds is shadowed, as the
+                // runtime does (`let x = 1` then `let x = x + 1`).
                 for var_name in pattern_variables {
-                    self.declare_in_scope(var_name.clone());
-                    self.variables.insert(
-                        var_name.clone(),
-                        VariableInfo {
-                            name: var_name,
-                            scope: self.current_scope,
-                            is_mutable: true,
-                            usage_count: 0,
-                        },
-                    );
+                    self.bind(&var_name, true);
                 }
                 Ok(())
             }
             Statement::FunctionDecl(func_decl) => {
                 // Add function to current scope (a hoisted top-level
                 // declaration is already there — this is its statement)
-                if self.hoisted.remove(&func_decl.name) {
+                if self.current_scope == 0 && self.hoisted.remove(&func_decl.name) {
                     // declared by the pre-pass
-                } else if self.scopes[self.current_scope].contains(&func_decl.name) {
-                    return Err(AnalysisError::DuplicateVariable {
-                        name: func_decl.name.clone(),
-                    });
                 } else {
-                    self.declare_in_scope(func_decl.name.clone());
-                    self.variables.insert(
-                        func_decl.name.clone(),
-                        VariableInfo {
-                            name: func_decl.name.clone(),
-                            scope: self.current_scope,
-                            is_mutable: false,
-                            usage_count: 0,
-                        },
-                    );
+                    self.bind(&func_decl.name, false);
                 }
 
                 // Analyze function body with parameters in scope
@@ -311,21 +297,7 @@ impl Analyzer {
 
                 // Add parameters to function scope
                 for param in &func_decl.parameters {
-                    if self.scopes[self.current_scope].contains(&param.name) {
-                        return Err(AnalysisError::DuplicateVariable {
-                            name: param.name.clone(),
-                        });
-                    }
-                    self.declare_in_scope(param.name.clone());
-                    self.variables.insert(
-                        param.name.clone(),
-                        VariableInfo {
-                            name: param.name.clone(),
-                            scope: self.current_scope,
-                            is_mutable: false,
-                            usage_count: 0,
-                        },
-                    );
+                    self.bind(&param.name, false);
                 }
 
                 // Analyze function body
@@ -335,24 +307,8 @@ impl Analyzer {
                 Ok(())
             }
             Statement::TypeDecl(type_decl) => {
-                // Add type to current scope
-                if self.scopes[self.current_scope].contains(&type_decl.name) {
-                    return Err(AnalysisError::DuplicateVariable {
-                        name: type_decl.name.clone(),
-                    });
-                }
-                self.declare_in_scope(type_decl.name.clone());
-
-                // Add type to variables map (types are treated as constants)
-                self.variables.insert(
-                    type_decl.name.clone(),
-                    VariableInfo {
-                        name: type_decl.name.clone(),
-                        scope: self.current_scope,
-                        is_mutable: false,
-                        usage_count: 0,
-                    },
-                );
+                // Types are tracked like constants.
+                self.bind(&type_decl.name, false);
 
                 // Analyze type definition based on its structure
                 // For now, we'll do basic validation that can be extended as needed
@@ -400,24 +356,7 @@ impl Analyzer {
                 Ok(())
             }
             Statement::ErrorTypeDecl(error_type_decl) => {
-                // Add error type to current scope
-                if self.scopes[self.current_scope].contains(&error_type_decl.name) {
-                    return Err(AnalysisError::DuplicateVariable {
-                        name: error_type_decl.name.clone(),
-                    });
-                }
-                self.declare_in_scope(error_type_decl.name.clone());
-
-                // Add error type to variables map
-                self.variables.insert(
-                    error_type_decl.name.clone(),
-                    VariableInfo {
-                        name: error_type_decl.name.clone(),
-                        scope: self.current_scope,
-                        is_mutable: false,
-                        usage_count: 0,
-                    },
-                );
+                self.bind(&error_type_decl.name, false);
 
                 // Analyze error variants for duplicate names
                 let mut field_names = HashSet::new();
@@ -490,12 +429,6 @@ impl Analyzer {
                 }
                 self.enter_scope();
                 for param in parameters {
-                    // Add parameter to current scope
-                    if self.scopes[self.current_scope].contains(&param.name) {
-                        return Err(AnalysisError::DuplicateVariable {
-                            name: param.name.clone(),
-                        });
-                    }
                     self.declare_in_scope(param.name.clone());
                 }
                 self.analyze_expr(body)?;
@@ -551,6 +484,7 @@ impl Analyzer {
                 Ok(())
             }
             Expr::StructLiteral(struct_lit) => {
+                self.note_use(&struct_lit.type_name);
                 // Analyze all field expressions in the struct literal
                 for field in &struct_lit.fields {
                     self.analyze_expr(&field.value)?;
@@ -726,18 +660,27 @@ impl Analyzer {
                 self.analyze_expr(right)?;
                 Ok(())
             }
+            Expr::AssertEq {
+                actual, expected, ..
+            }
+            | Expr::AssertNe {
+                actual, expected, ..
+            } => {
+                self.analyze_expr(actual)?;
+                self.analyze_expr(expected)
+            }
+            Expr::Assert { condition: e, .. }
+            | Expr::AssertTrue { expression: e, .. }
+            | Expr::AssertFalse { expression: e, .. } => self.analyze_expr(e),
             _ => Ok(()),
         }
     }
 
     fn analyze_match_arms(&mut self, arms: &[MatchArm]) -> Result<(), AnalysisError> {
-        if arms.is_empty() {
-            return Err(AnalysisError::NonExhaustivePatternMatch);
-        }
-
-        let mut patterns = Vec::new();
+        // Exhaustiveness is the checker's (an advisory a project may
+        // promote), not a reason to stop counting the uses in the arms.
         for arm in arms {
-            patterns.push(&arm.pattern);
+            self.note_pattern_uses(&arm.pattern);
 
             // Enter a new scope for pattern variables
             self.enter_scope();
@@ -748,25 +691,17 @@ impl Analyzer {
                 self.declare_in_scope(var_name);
             }
 
-            // Analyze the arm expression
+            // The guard sees the arm's bindings, as the arm does.
+            if let Pattern::Guarded { guard, .. } = &arm.pattern {
+                self.analyze_expr(guard)?;
+            }
+            if let Some(guard) = &arm.guard {
+                self.analyze_expr(guard)?;
+            }
             self.analyze_expr(&arm.expression)?;
 
             // Exit the scope
             self.exit_scope();
-        }
-
-        // Check pattern exhaustiveness
-        let pattern_refs: Vec<Pattern> = patterns.iter().map(|p| (*p).clone()).collect();
-        if !self.check_pattern_exhaustiveness(&pattern_refs)? {
-            // Get missing patterns for better error messages
-            let missing_patterns = self.get_missing_patterns(&pattern_refs);
-            if !missing_patterns.is_empty() {
-                return Err(AnalysisError::NonExhaustivePatternMatchWithMissing {
-                    missing_patterns,
-                });
-            } else {
-                return Err(AnalysisError::NonExhaustivePatternMatch);
-            }
         }
 
         Ok(())
@@ -860,6 +795,87 @@ impl Analyzer {
             self.undefined.push(name.to_string());
         }
         Ok(())
+    }
+
+    /// Bind `name` in the current scope with a fresh tracking entry. A
+    /// name the scope already holds is shadowed — `let x = 1` then
+    /// `let x = x + 1`, an import of a name the language also provides
+    /// — which the runtime allows, so it is not an error. A top-level
+    /// name a function body named above its declaration (a constant
+    /// written below the code that reads it) is already used.
+    fn bind(&mut self, name: &str, is_mutable: bool) {
+        self.declare_in_scope(name.to_string());
+        let mut usage_count = 0;
+        if self.current_scope == 0 {
+            if self.undefined.iter().any(|n| n == name) {
+                usage_count = 1;
+            }
+            // A file's own binding of a builtin's name is the file's.
+            self.builtin_names.remove(name);
+        }
+        self.variables.insert(
+            name.to_string(),
+            VariableInfo {
+                name: name.to_string(),
+                scope: self.current_scope,
+                is_mutable,
+                usage_count,
+            },
+        );
+    }
+
+    /// Count a use of `name` when it is tracked; an unknown name here (a
+    /// struct's type, a variant in a pattern) is not reported undefined.
+    fn note_use(&mut self, name: &str) {
+        if let Some(info) = self.variables.get_mut(name) {
+            info.usage_count += 1;
+        }
+    }
+
+    /// The names a pattern refers to rather than binds: a struct
+    /// pattern's type, an enum variant, a capitalised bare name (`Red =>`
+    /// matches the imported variant).
+    fn note_pattern_uses(&mut self, pattern: &Pattern) {
+        match pattern {
+            Pattern::Identifier(n) if n.starts_with(char::is_uppercase) => self.note_use(n),
+            Pattern::EnumVariant {
+                variant_name,
+                patterns,
+            } => {
+                self.note_use(variant_name);
+                for p in patterns {
+                    self.note_pattern_uses(p);
+                }
+            }
+            Pattern::Struct {
+                type_name,
+                field_patterns,
+            } => {
+                self.note_use(type_name);
+                for (_, p) in field_patterns {
+                    self.note_pattern_uses(p);
+                }
+            }
+            Pattern::AnonymousStruct { field_patterns } => {
+                for (_, p) in field_patterns {
+                    self.note_pattern_uses(p);
+                }
+            }
+            Pattern::Tuple(ps) | Pattern::List { patterns: ps, .. } => {
+                for p in ps {
+                    self.note_pattern_uses(p);
+                }
+            }
+            Pattern::Or { alternatives } => {
+                for p in alternatives {
+                    self.note_pattern_uses(p);
+                }
+            }
+            Pattern::Ok(p) | Pattern::Err(p) => self.note_pattern_uses(p),
+            // the guard is walked with the arm, where its bindings are
+            Pattern::Guarded { pattern, .. } => self.note_pattern_uses(pattern),
+            _ => {}
+        }
     }
 
     fn enter_scope(&mut self) {
@@ -982,6 +998,8 @@ impl Analyzer {
                 info.usage_count == 0
                     && !self.builtin_names.contains(*name)
                     && !self.exported.contains(*name)
+                    // `_name`: unused on purpose
+                    && !name.starts_with('_')
             })
             .map(|(name, _)| name)
             .collect()
@@ -1663,47 +1681,18 @@ impl Analyzer {
             ShareDecl::Function(func_decl) => {
                 // Add function to current scope (hoisted by the pre-pass
                 // when it is a top-level declaration)
-                if self.hoisted.remove(&func_decl.name) {
+                if self.current_scope == 0 && self.hoisted.remove(&func_decl.name) {
                     // declared by the pre-pass
-                } else if self.scopes[self.current_scope].contains(&func_decl.name) {
-                    return Err(AnalysisError::DuplicateVariable {
-                        name: func_decl.name.clone(),
-                    });
                 } else {
-                    self.declare_in_scope(func_decl.name.clone());
+                    self.bind(&func_decl.name, false);
                 }
-
-                // Add function to variables map
-                self.variables.insert(
-                    func_decl.name.clone(),
-                    VariableInfo {
-                        name: func_decl.name.clone(),
-                        scope: self.current_scope,
-                        is_mutable: false,
-                        usage_count: 0,
-                    },
-                );
 
                 // Analyze function body with parameters in scope
                 self.enter_scope();
 
                 // Add parameters to function scope
                 for param in &func_decl.parameters {
-                    if self.scopes[self.current_scope].contains(&param.name) {
-                        return Err(AnalysisError::DuplicateVariable {
-                            name: param.name.clone(),
-                        });
-                    }
-                    self.declare_in_scope(param.name.clone());
-                    self.variables.insert(
-                        param.name.clone(),
-                        VariableInfo {
-                            name: param.name.clone(),
-                            scope: self.current_scope,
-                            is_mutable: false,
-                            usage_count: 0,
-                        },
-                    );
+                    self.bind(&param.name, false);
                 }
 
                 // Analyze function body
@@ -1721,52 +1710,17 @@ impl Analyzer {
                 // Extract variable names from the pattern
                 let pattern_variables = self.extract_pattern_variables(&let_decl.pattern);
 
-                // Check for duplicate variables in current scope
-                for var_name in &pattern_variables {
-                    if self.scopes[self.current_scope].contains(var_name) {
-                        return Err(AnalysisError::DuplicateVariable {
-                            name: var_name.clone(),
-                        });
-                    }
-                }
-
-                // Add all variables from the pattern to current scope, with a
-                // tracking entry — without one, usage counting silently
-                // no-ops for every let-bound variable and they can never
-                // appear in unused-variable reports
+                // Each name gets a tracking entry — without one, usage
+                // counting silently no-ops for every let-bound variable.
+                // A name the scope already holds is shadowed, as the
+                // runtime does (`let x = 1` then `let x = x + 1`).
                 for var_name in pattern_variables {
-                    self.declare_in_scope(var_name.clone());
-                    self.variables.insert(
-                        var_name.clone(),
-                        VariableInfo {
-                            name: var_name,
-                            scope: self.current_scope,
-                            is_mutable: true,
-                            usage_count: 0,
-                        },
-                    );
+                    self.bind(&var_name, true);
                 }
                 Ok(())
             }
             ShareDecl::Type(type_decl) => {
-                // Add type to current scope
-                if self.scopes[self.current_scope].contains(&type_decl.name) {
-                    return Err(AnalysisError::DuplicateVariable {
-                        name: type_decl.name.clone(),
-                    });
-                }
-                self.declare_in_scope(type_decl.name.clone());
-
-                // Add type to variables map
-                self.variables.insert(
-                    type_decl.name.clone(),
-                    VariableInfo {
-                        name: type_decl.name.clone(),
-                        scope: self.current_scope,
-                        is_mutable: false,
-                        usage_count: 0,
-                    },
-                );
+                self.bind(&type_decl.name, false);
                 Ok(())
             }
             ShareDecl::Use(use_decl) => {
@@ -1804,24 +1758,10 @@ impl Analyzer {
                         });
                     }
 
-                    // Check for duplicate imports in same scope
-                    if self.scopes[self.current_scope].contains(name) {
-                        return Err(AnalysisError::DuplicateVariable { name: name.clone() });
-                    }
-
-                    // Add imported symbol to current scope
-                    self.declare_in_scope(name.clone());
-
-                    // Track in variables map
-                    self.variables.insert(
-                        name.clone(),
-                        VariableInfo {
-                            name: name.clone(),
-                            scope: self.current_scope,
-                            is_mutable: false,
-                            usage_count: 0,
-                        },
-                    );
+                    // An import of a name the language also provides
+                    // (`use loom { task, find }`) rebinds it, as the
+                    // runtime does — not a duplicate.
+                    self.bind(name, false);
                 }
                 crate::ast::UseItem::Wildcard => {
                     // For wildcard imports, we can't track specific symbols at analysis time
