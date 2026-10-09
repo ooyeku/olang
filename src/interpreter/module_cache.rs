@@ -11,6 +11,9 @@ pub struct ModuleCacheEntry {
     pub module: Value,
     pub file_path: Option<std::path::PathBuf>,
     pub last_modified: Option<SystemTime>,
+    /// The file's length when it was read: with `last_modified`, what
+    /// tells an unchanged file without reading and hashing it again.
+    pub file_len: Option<u64>,
     pub dependencies: Vec<String>,
 
     // Feature 8: Smart caching enhancements (simplified for thread safety)

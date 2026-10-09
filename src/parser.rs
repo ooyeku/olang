@@ -654,6 +654,18 @@ impl Parser {
         input: &str,
         base_dir: Option<&std::path::Path>,
     ) -> Result<Program, ParseError> {
+        self.parse_module(input, base_dir).map(|(program, _)| program)
+    }
+
+    /// `parse_with_dir`, saying whether the text held no macro construct
+    /// at all — a tree then made from the text alone, which nothing else
+    /// it reads can change (what the parse cache may keep). An `@` in a
+    /// string or a comment is not a macro.
+    pub fn parse_module(
+        &self,
+        input: &str,
+        base_dir: Option<&std::path::Path>,
+    ) -> Result<(Program, bool), ParseError> {
         let program = self.parse_raw(input)?;
         // The tree-build recorded which macro constructs exist; no `@`
         // site, no decorator, no `meta fn` means nothing to expand.
@@ -663,8 +675,21 @@ impl Parser {
             self.saw_decorated.get(),
         );
         if !(calls || metas || decorated) {
-            return Ok(program);
+            return Ok((program, true));
         }
+        self.expand_module(program, input, base_dir, calls, metas, decorated)
+            .map(|program| (program, false))
+    }
+
+    fn expand_module(
+        &self,
+        program: Program,
+        input: &str,
+        base_dir: Option<&std::path::Path>,
+        calls: bool,
+        metas: bool,
+        decorated: bool,
+    ) -> Result<Program, ParseError> {
         // Declarations only — a library that ships macros, parsed as a
         // program that never invokes them (the bundled SDK modules in a
         // browser client): drop the declarations and skip the text

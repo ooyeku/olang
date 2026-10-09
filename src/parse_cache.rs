@@ -14,8 +14,12 @@
 //! checkout state and build date — any change to olang's sources moves
 //! the date) and the module's text hashes to what it held then; anything
 //! else is parsed and written again. A module that uses macros is never
-//! kept: its expansion depends on other files. Failures are silent — a
-//! read-only home never fails a program.
+//! kept: its expansion depends on other files. Which modules do is the
+//! parser's answer (`Parser::parse_module`), not a guess from the text:
+//! an `@` in a string (`lsp@p1`) or the word `meta` in a comment kept a
+//! module out, and a quarter of olang Studio's modules were parsed on
+//! every launch for it. Failures are silent — a read-only home never
+//! fails a program.
 //!
 //! Stored under `~/.olang/state/parsed/` (`OLANG_HOME` moves it);
 //! `OLANG_PARSE_CACHE=0` turns it off for A/B measurement.
@@ -57,16 +61,11 @@ fn entry(path: &Path) -> Option<PathBuf> {
     dir().map(|d| d.join(format!("{}.olpc", name)))
 }
 
-/// Whether a module's text may be kept: no macro anywhere in it (its
-/// expansion reads other files), judged by the text, conservatively.
-pub fn cacheable(source: &str) -> bool {
-    !source.contains('@') && !source.contains("meta")
-}
-
 /// The tree `path` parsed to when it held `source`, from a run of this
-/// build, or `None`.
+/// build, or `None`. Only a macro-free text was ever kept, and the entry
+/// holds the text's hash: the same text is macro-free still.
 pub fn load(path: &Path, source: &str) -> Option<Program> {
-    if disabled() || !cacheable(source) {
+    if disabled() {
         return None;
     }
     let bytes = std::fs::read(entry(path)?).ok()?;
@@ -85,10 +84,12 @@ pub fn load(path: &Path, source: &str) -> Option<Program> {
     postcard::from_bytes(&bytes[head..]).ok()
 }
 
-/// Keep `program`, the tree `path` parsed to holding `source`. Written
-/// beside and renamed over: a reader never meets half an entry.
+/// Keep `program`, the tree `path` parsed to holding `source` — a text
+/// with no macro in it (`Parser::parse_module` says so; the caller asks
+/// it). Written beside and renamed over: a reader never meets half an
+/// entry.
 pub fn store(path: &Path, source: &str, program: &Program) {
-    if disabled() || !cacheable(source) {
+    if disabled() {
         return;
     }
     let (Some(dir), Some(file)) = (dir(), entry(path)) else {
@@ -128,10 +129,19 @@ mod tests {
         assert_eq!(back, p);
     }
 
+    // Which texts may be kept is the parser's verdict: an `@` in a
+    // string or `meta` in a comment is plain text, a macro call or a
+    // `meta fn` is not.
     #[test]
-    fn a_module_with_macros_is_never_kept() {
-        assert!(cacheable("fn f() = 1"));
-        assert!(!cacheable("@derive fn f() = 1"));
-        assert!(!cacheable("meta fn m(x) = x"));
+    fn only_a_text_without_macros_is_kept() {
+        let plain = |src: &str| {
+            crate::parser::Parser::new()
+                .parse_module(src, None)
+                .map(|(_, plain)| plain)
+                .unwrap_or(false)
+        };
+        assert!(plain("fn f() = 1"));
+        assert!(plain("let tag = \"lsp@p1\"\n// meta: a comment\nfn f() = tag"));
+        assert!(!plain("meta fn m(x) = x"));
     }
 }

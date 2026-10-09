@@ -484,6 +484,7 @@ impl Interpreter {
                 module: Value::Unit,
                 file_path: Some(file_path.to_path_buf()),
                 last_modified: Some(crate::clock::system_now()),
+                file_len: None,
                 dependencies: vec![],
                 content_hash,
                 compilation_time: std::time::Duration::default(),

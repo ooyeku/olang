@@ -33,7 +33,21 @@ impl Interpreter {
             if let Some(entry) = self.module_cache.get(module_path) {
                 if let Some(ref path) = entry.file_path {
                     if self.smart_cache_config.enable_content_hashing && path.exists() {
-                        (true, Some(self.calculate_file_hash(path)?))
+                        // Unchanged by its metadata (written at the same
+                        // moment, the same length): not read and hashed
+                        // again. Every `use` of a loaded module did, which
+                        // was a large program's every import re-reading
+                        // and hashing its file (olang Studio: hundreds).
+                        let meta = std::fs::metadata(path).ok();
+                        let unchanged = entry.last_modified.is_some()
+                            && entry.file_len.is_some()
+                            && meta.as_ref().and_then(|m| m.modified().ok()) == entry.last_modified
+                            && meta.as_ref().map(|m| m.len()) == entry.file_len;
+                        if unchanged {
+                            (false, None)
+                        } else {
+                            (true, Some(self.calculate_file_hash(path)?))
+                        }
                     } else {
                         (false, None)
                     }
@@ -84,6 +98,7 @@ impl Interpreter {
             None,
             None,
             Duration::default(),
+            None,
         )
     }
 
@@ -98,24 +113,25 @@ impl Interpreter {
         ast_cache: Option<Program>,
         analysis_cache: Option<AnalysisReport>,
         compilation_time: Duration,
+        // What the load already knew of the file (its stamp taken before
+        // it was read, and the hash of what was read): not read again.
+        read: Option<FileRead>,
     ) -> Result<(), InterpreterError> {
-        let last_modified = if let Some(ref path) = file_path {
-            std::fs::metadata(path)
-                .and_then(|m| m.modified())
-                .map_err(|e| InterpreterError::RuntimeError {
-                    message: format!("Failed to get file modification time: {}", e),
-                })
-                .ok()
-        } else {
-            None
-        };
-
-        // Feature 8: Calculate content hash for smart invalidation
-        let content_hash = if let Some(ref path) = file_path {
-            self.calculate_file_hash(path)?
-        } else {
-            // For stdlib modules, use module path as hash
-            self.calculate_string_hash(&module_path)
+        let (content_hash, last_modified, file_len) = match read {
+            Some(r) => (r.hash, r.modified, r.len),
+            None => {
+                let meta = file_path.as_ref().and_then(|p| std::fs::metadata(p).ok());
+                let last_modified = meta.as_ref().and_then(|m| m.modified().ok());
+                let file_len = meta.as_ref().map(|m| m.len());
+                // Feature 8: Calculate content hash for smart invalidation
+                let content_hash = if let Some(ref path) = file_path {
+                    self.calculate_file_hash(path)?
+                } else {
+                    // For stdlib modules, use module path as hash
+                    self.calculate_string_hash(&module_path)
+                };
+                (content_hash, last_modified, file_len)
+            }
         };
 
         // Feature 8: Estimate memory usage
@@ -125,6 +141,7 @@ impl Interpreter {
             module,
             file_path,
             last_modified,
+            file_len,
             dependencies,
             // Feature 8: Smart caching fields
             content_hash,
@@ -628,6 +645,11 @@ impl Interpreter {
 
         // Feature 8: Start timing for compilation metrics
         let start_time = Instant::now();
+        // The start's trace counts the outermost load (its imports in it)
+        let _boot = self
+            .module_loading_stack
+            .is_empty()
+            .then(|| crate::boot_trace::Span::start(crate::boot_trace::Counter::ModuleLoad));
 
         // The module source is either an embedded olang builtin (compiled into
         // the binary) or a file on disk. Embedded packages come from a
@@ -641,7 +663,9 @@ impl Interpreter {
             .map(|s| s.to_string());
 
         let mut declared_macros: Vec<String> = Vec::new();
+        let mut file_read: Option<FileRead> = None;
         let program = if let Some(name) = &embedded_name {
+            crate::boot_trace::add(crate::boot_trace::Counter::Embedded, 0);
             match crate::stdlib::embedded::parsed(name).map_err(|e| {
                 InterpreterError::RuntimeError {
                     message: format!("Failed to parse module {}:\n{}", file_path.display(), e),
@@ -656,6 +680,13 @@ impl Interpreter {
             }
         } else {
             // A built application carries its modules (crate::vfs).
+            // The file's stamp before it is read: an edit after the read
+            // moves it, and the next `use` hashes the file again.
+            let meta = std::fs::metadata(&file_path).ok();
+            let stamp = (
+                meta.as_ref().and_then(|m| m.modified().ok()),
+                meta.as_ref().map(|m| m.len()),
+            );
             let content = crate::vfs::read_to_string(&file_path).map_err(|e| {
                 InterpreterError::RuntimeError {
                     message: format!("Failed to read module file {}: {}", file_path.display(), e),
@@ -666,19 +697,33 @@ impl Interpreter {
             // expansion time, so the runtime import of that name is not a
             // miss (see `bind_module_imports`).
             declared_macros = macro_names_in(&content);
+            file_read = Some(FileRead {
+                hash: format!("{:x}", sha2::Sha256::digest(content.as_bytes())),
+                modified: stamp.0,
+                len: stamp.1,
+            });
             // Expansion resolves the module's own imports from its
             // directory (and its package root), not the working directory.
             // A module this build parsed before, unchanged, is read back
             // (crate::parse_cache); else parsed, and kept for next time.
+            let read = crate::boot_trace::Span::start(crate::boot_trace::Counter::CacheRead);
             match crate::parse_cache::load(&file_path, &content) {
                 Some(program) => program,
                 None => {
-                    let program = crate::parser::Parser::new()
-                        .parse_with_dir(&content, file_path.parent())
+                    read.cancel();
+                    let parse = crate::boot_trace::Span::start(crate::boot_trace::Counter::Parsed);
+                    let (program, plain) = crate::parser::Parser::new()
+                        .parse_module(&content, file_path.parent())
                         .map_err(|e| InterpreterError::RuntimeError {
                             message: format!("Failed to parse module {}:\n{}", file_path.display(), e),
                         })?;
-                    crate::parse_cache::store(&file_path, &content, &program);
+                    drop(parse);
+                    // kept only when no macro made it (an expansion reads
+                    // other files): the tree is then the text's alone
+                    if plain {
+                        let _store = crate::boot_trace::Span::start(crate::boot_trace::Counter::CacheStored);
+                        crate::parse_cache::store(&file_path, &content, &program);
+                    }
                     program
                 }
             }
@@ -702,15 +747,27 @@ impl Interpreter {
 
         // Pre-cache a placeholder entry so nested imports can find this module's directory
         // The full module value will be added after the module is fully loaded
-        let content_hash = if file_path.exists() {
-            self.calculate_file_hash(&file_path).unwrap_or_default()
-        } else {
-            String::new()
+        let (content_hash, last_modified, file_len) = match &file_read {
+            Some(r) => (r.hash.clone(), r.modified, r.len),
+            None => {
+                let content_hash = if file_path.exists() {
+                    self.calculate_file_hash(&file_path).unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                let meta = file_path.metadata().ok();
+                (
+                    content_hash,
+                    meta.as_ref().and_then(|m| m.modified().ok()),
+                    meta.as_ref().map(|m| m.len()),
+                )
+            }
         };
         let placeholder_entry = ModuleCacheEntry {
             module: Value::Unit, // Placeholder until full load
             file_path: Some(file_path.clone()),
-            last_modified: file_path.metadata().ok().and_then(|m| m.modified().ok()),
+            last_modified,
+            file_len,
             dependencies: vec![],
             content_hash,
             compilation_time: std::time::Duration::default(),
@@ -941,9 +998,12 @@ impl Interpreter {
                 module.clone(),
                 Some(file_path),
                 dependencies,
-                Some(program.clone()), // Cache the parsed AST
-                None,                  // Analysis cache can be added later
+                // the tree is not kept (it was cloned whole only to be
+                // counted for a size estimate)
+                None,
+                None, // Analysis cache can be added later
                 compilation_time,
+                file_read,
             )?;
 
             Ok(module)
@@ -1544,4 +1604,12 @@ fn module_declares_macro(module: &Value, name: &str) -> bool {
         },
         _ => false,
     }
+}
+
+/// What a module's load knew of its file: the hash of the text it read,
+/// and the file's stamp (modified, length) taken before the read.
+pub(crate) struct FileRead {
+    hash: String,
+    modified: Option<std::time::SystemTime>,
+    len: Option<u64>,
 }
