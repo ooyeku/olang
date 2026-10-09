@@ -701,6 +701,14 @@ impl Parser {
     /// is what `meta.parse` exposes (the Open AST shows source as the
     /// author wrote it, `@` sites and all) and what the expander itself
     /// uses between rounds.
+    /// Whether the last `parse_raw` met a macro construct — an `@` call,
+    /// a `meta fn`, a decorator — as the tree-build recorded it: what
+    /// `expand::program_uses_macros` answers, without serializing the
+    /// whole tree to look.
+    pub fn saw_macros(&self) -> bool {
+        self.saw_macro_call.get() || self.saw_meta_fn.get() || self.saw_decorated.get()
+    }
+
     pub fn parse_raw(&self, input: &str) -> Result<Program, ParseError> {
         self.saw_macro_call.set(false);
         self.saw_meta_fn.set(false);

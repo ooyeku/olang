@@ -173,6 +173,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The language server's problems are `olang check`'s.** The server ran
+  its own analyzer and published where it stopped as an error, so an
+  editor showed problems the checker and the program did not have:
+  importing a name the language also provides (`use loom { task, find,
+  split }`) was a "Duplicate variable", a `let` constant written below
+  the function reading it an "Undefined variable", a second `let` of one
+  name a duplicate — and the first stop hid every finding after it
+  (olang Studio's own project: 11 errors in its Problems, `olang check`
+  clean). Errors and warnings now come from the checker's own pass for
+  the file (`check::file_diagnostics`: the same module resolution, scope
+  rules and `[check] promote`); Studio, Loom and open-track-desktop open
+  with exactly `olang check`'s findings. A name nothing reads is a hint
+  tagged unnecessary (faded in the editor, not a problem), and those are
+  now right: uses in match guards, assertions, struct literals and
+  patterns count, a re-export (`share use`) is the module's interface,
+  `_name` is unused on purpose, and the walk goes on past a redeclared
+  name. Diagnostics on a 50,000-line file are faster than before though
+  the whole check now runs (about 680 ms, was 735): the checker reads a
+  file's imports from its tree instead of parsing it again, skips the
+  template-escape parse when no template can hold an escape, and turns
+  only the statements that can warn into meta nodes for its shadowing
+  advisories.
+
 - **An armed run attached before it starts is sampled from its first
   call.** `--profile-live DIR` with `DIR/attach` already there looked for
   it only at the first snapshot (250–500 ms in), so a shorter run ended

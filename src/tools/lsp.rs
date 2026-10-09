@@ -652,7 +652,7 @@ fn diagnostics(text: &str, doc_dir: Option<&std::path::Path>) -> Vec<Diagnostic>
     // site rather than silence.
     match parser.parse_raw(text) {
         Err(e) => vec![parse_error_diagnostic(text, &e)],
-        Ok(program) if crate::expand::program_uses_macros(&program) => {
+        Ok(_) if parser.saw_macros() => {
             match crate::expand::expand_source_mapped_with_dir(text, doc_dir) {
                 Err(message) => vec![expansion_error_diagnostic(text, &message)],
                 Ok(exp) => match parser.parse_raw(&exp.text) {
@@ -729,127 +729,69 @@ fn expansion_error_diagnostic(text: &str, message: &str) -> Diagnostic {
 
 /// The semantic half of `diagnostics`, over an already-parsed program and
 /// the text its positions refer to (the buffer, or the expanded program).
+///
+/// Errors and warnings are exactly `olang check`'s for the file —
+/// `check::file_diagnostics`, the same module resolution, scope rules and
+/// promotions — so the editor's Problems and the checker never disagree.
+/// (The server once ran its own analyzer here and reported its stops as
+/// errors: an import of a builtin's name was a "duplicate", a constant
+/// written below the function that reads it "undefined".) What the
+/// checker does not say — a name declared and never read — is a hint,
+/// tagged unnecessary: the editor fades it, and it is not a problem.
 fn program_diagnostics(
     program: &crate::ast::Program,
     text: &str,
     doc_dir: Option<&std::path::Path>,
 ) -> Vec<Diagnostic> {
-    // The scoping pass first: assigning to an immutable or undeclared
-    // binding fails at runtime before a single statement runs, so the
-    // editor must say so — and its message is what the `let mut` quick
-    // fix reads.
-    let mut scope_diags: Vec<Diagnostic> = {
-        let mut known = crate::scoping::Predefined::new();
-        crate::scoping::validate_program(program, &mut known)
+    // One walk answers both: the names the checker excuses or reports as
+    // unimported, and the names nothing reads.
+    let mut analyzer = Analyzer::new();
+    let _ = analyzer.analyze_program(program);
+    let unresolved = analyzer.get_undefined_variables();
+    let mut out: Vec<Diagnostic> =
+        crate::tools::check::file_diagnostics(program, text, doc_dir, unresolved)
             .into_iter()
-            .map(|e| Diagnostic {
-                range: Range::new(
-                    Position::new(e.line.saturating_sub(1), e.column.saturating_sub(1)),
-                    Position::new(e.line.saturating_sub(1), e.column.saturating_sub(1) + 1),
-                ),
-                severity: Some(DiagnosticSeverity::ERROR),
+            .map(|d| {
+                let line = d.line.saturating_sub(1);
+                let col = d.column.saturating_sub(1) as usize;
+                let severity = if d.warning {
+                    DiagnosticSeverity::WARNING
+                } else {
+                    DiagnosticSeverity::ERROR
+                };
+                Diagnostic {
+                    range: utf16_range(text, line, col, col + 1),
+                    severity: Some(severity),
+                    source: Some("olang".to_string()),
+                    message: d.message,
+                    ..Default::default()
+                }
+            })
+            .collect();
+    let unused = analyzer.get_unused_variables();
+    if !unused.is_empty() {
+        let sites = declaration_sites(text, &unused);
+        out.extend(unused.into_iter().filter_map(|name| {
+            let range = *sites.get(name.as_str())?;
+            Some(Diagnostic {
+                range,
+                severity: Some(DiagnosticSeverity::HINT),
+                tags: Some(vec![lsp_types::DiagnosticTag::UNNECESSARY]),
                 source: Some("olang".to_string()),
-                message: e.message,
+                message: format!("unused variable: {}", name),
                 ..Default::default()
             })
-            .collect()
-    };
-    {
-        {
-            let mut analyzer = Analyzer::new();
-            match analyzer.analyze_comprehensive(program) {
-                Err(e) => {
-                    // Semantic error without a span: attach at the named
-                    // identifier's first occurrence where one exists.
-                    let msg = e.to_string();
-                    let range = name_in_error(&msg)
-                        .and_then(|name| find_identifier(text, &name))
-                        .unwrap_or_else(|| Range::new(Position::new(0, 0), Position::new(0, 0)));
-                    scope_diags.push(Diagnostic {
-                        range,
-                        severity: Some(DiagnosticSeverity::ERROR),
-                        source: Some("olang".to_string()),
-                        message: msg,
-                        ..Default::default()
-                    });
-                    // Every other undefined name of the same pass, each
-                    // at its first occurrence — not one per save.
-                    for name in analyzer.get_undefined_variables().into_iter().skip(1) {
-                        if let Some(range) = find_identifier(text, &name) {
-                            scope_diags.push(Diagnostic {
-                                range,
-                                severity: Some(DiagnosticSeverity::ERROR),
-                                source: Some("olang".to_string()),
-                                message: format!("Undefined variable: {}", name),
-                                ..Default::default()
-                            });
-                        }
-                    }
-                    scope_diags
-                }
-                Ok(report) => {
-                    let decls = declarations(text);
-                    let mut out: Vec<Diagnostic> = report
-                        .unused_variables
-                        .iter()
-                        .filter_map(|name| {
-                            let range = decls
-                                .iter()
-                                .find(|(n, _, _)| n == name)
-                                .map(|(n, _, span)| span_range(text, *span, n.chars().count()))
-                                .or_else(|| find_declaration(text, name))?;
-                            Some(Diagnostic {
-                                range,
-                                severity: Some(DiagnosticSeverity::WARNING),
-                                source: Some("olang".to_string()),
-                                message: format!("unused variable: {}", name),
-                                ..Default::default()
-                            })
-                        })
-                        .collect();
-                    // Provable annotation violations: the runtime would
-                    // reject these, so surface them as errors pre-run.
-                    out.extend(
-                        {
-                            let modules = crate::tools::check::module_programs(text, doc_dir);
-                            let context: Vec<&crate::ast::Program> =
-                                modules.iter().map(|(_, _, p)| p).collect();
-                            let promoted = crate::tools::check::promotions_for(doc_dir);
-                            let mut out =
-                                crate::tools::check::check_program_with_context(&context, program);
-                            for d in out.iter_mut() {
-                                crate::tools::check::promote(d, &promoted);
-                            }
-                            out
-                        }
-                        .into_iter()
-                        .map(|d| {
-                            let line = d.line.saturating_sub(1);
-                            let col = d.column.saturating_sub(1) as usize;
-                            let severity = if d.warning {
-                                DiagnosticSeverity::WARNING
-                            } else {
-                                DiagnosticSeverity::ERROR
-                            };
-                            Diagnostic {
-                                range: utf16_range(text, line, col, col + 1),
-                                severity: Some(severity),
-                                source: Some("olang".to_string()),
-                                message: d.message,
-                                ..Default::default()
-                            }
-                        }),
-                    );
-                    out.append(&mut scope_diags);
-                    // The scoping pass and the checker overlap on
-                    // assignment errors; one report per finding.
-                    out.sort_by_key(|d| (d.range.start.line, d.range.start.character));
-                    out.dedup_by(|a, b| a.message == b.message && a.range == b.range);
-                    out
-                }
-            }
-        }
+        }));
     }
+    out.sort_by(|a, b| {
+        (a.range.start.line, a.range.start.character, &a.message).cmp(&(
+            b.range.start.line,
+            b.range.start.character,
+            &b.message,
+        ))
+    });
+    out.dedup_by(|a, b| a.message == b.message && a.range == b.range);
+    out
 }
 
 fn parse_error_diagnostic(text: &str, e: &ParseError) -> Diagnostic {
@@ -893,40 +835,64 @@ fn parse_error_diagnostic(text: &str, e: &ParseError) -> Diagnostic {
     }
 }
 
-fn name_in_error(msg: &str) -> Option<String> {
-    msg.rsplit_once(": ")
-        .map(|(_, name)| name.trim().to_string())
-        .filter(|n| n.chars().all(|c| c.is_alphanumeric() || c == '_'))
-}
-
-/// 0-based wire range of the first standalone occurrence of `name`.
-fn find_identifier(text: &str, name: &str) -> Option<Range> {
-    occurrences(text, name).into_iter().next()
-}
-
-/// The declaration site of `name` (`let [mut] name`, `fn name`), falling
-/// back to any standalone occurrence.
-fn find_declaration(text: &str, name: &str) -> Option<Range> {
+/// Where each of `names` is declared, in one pass over `text`: the name
+/// after `let`, `let mut`, `fn`, `type` or `share`, else its first
+/// standalone occurrence outside a `//` comment (an import list, a
+/// destructuring pattern), else anywhere. One scan for every name — a
+/// scan per name was most of a 50,000-line file's diagnostics time.
+fn declaration_sites<'a>(
+    text: &str,
+    names: &[&'a String],
+) -> std::collections::HashMap<&'a str, Range> {
+    use std::collections::HashMap;
+    let wanted: HashMap<&str, &'a str> = names.iter().map(|n| (n.as_str(), n.as_str())).collect();
+    let mut declared: HashMap<&'a str, Range> = HashMap::new();
+    let mut first: HashMap<&'a str, Range> = HashMap::new();
+    let mut in_comment: HashMap<&'a str, Range> = HashMap::new();
+    let word = |c: char| c.is_alphanumeric() || c == '_';
     for (ln, line) in text.lines().enumerate() {
-        for prefix in ["let mut ", "let ", "fn "] {
-            if let Some(kw) = line.find(prefix) {
-                let after = &line[kw + prefix.len()..];
-                if let Some(rest) = after.strip_prefix(name) {
-                    let boundary = rest.chars().next();
-                    if !boundary.is_some_and(|c| c.is_alphanumeric() || c == '_') {
-                        let col_chars = line[..kw + prefix.len()].chars().count();
-                        return Some(utf16_range(
-                            text,
-                            ln as u32,
-                            col_chars,
-                            col_chars + name.chars().count(),
-                        ));
+        let code_end = line.find("//").unwrap_or(line.len());
+        let mut prev: &str = "";
+        let mut prev2: &str = "";
+        let mut chars = line.char_indices().peekable();
+        while let Some((start, c)) = chars.next() {
+            if !word(c) {
+                continue;
+            }
+            let mut end = start + c.len_utf8();
+            while let Some(&(i, d)) = chars.peek() {
+                if !word(d) {
+                    break;
+                }
+                end = i + d.len_utf8();
+                chars.next();
+            }
+            let w = &line[start..end];
+            if let Some(&name) = wanted.get(w) {
+                let col = line[..start].chars().count();
+                let range = || utf16_range(text, ln as u32, col, col + w.chars().count());
+                if start >= code_end {
+                    in_comment.entry(name).or_insert_with(range);
+                } else {
+                    let after_keyword = matches!(prev, "let" | "fn" | "type" | "share")
+                        || (prev == "mut" && prev2 == "let");
+                    if after_keyword {
+                        declared.entry(name).or_insert_with(range);
                     }
+                    first.entry(name).or_insert_with(range);
                 }
             }
+            prev2 = prev;
+            prev = w;
+        }
+        if declared.len() == wanted.len() {
+            break;
         }
     }
-    find_identifier(text, name)
+    for (name, r) in first.into_iter().chain(in_comment) {
+        declared.entry(name).or_insert(r);
+    }
+    declared
 }
 
 // ── completions ────────────────────────────────────────────────────────

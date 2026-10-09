@@ -96,8 +96,9 @@ fn full_protocol_loop() {
     assert_eq!(ds[0]["severity"], 1);
     assert_eq!(ds[0]["range"]["start"]["line"], 2);
 
-    // Fixed file with a top-level unused variable: a warning at its
-    // declaration site.
+    // Fixed file with a top-level unused variable: a hint (tagged
+    // unnecessary — `olang check` does not report it, so neither is it a
+    // problem here) at its declaration site.
     c.send(&serde_json::json!({
         "jsonrpc":"2.0","method":"textDocument/didChange","params":{
             "textDocument":{"uri":uri,"version":2},
@@ -109,8 +110,9 @@ fn full_protocol_loop() {
     let w = ds
         .iter()
         .find(|d| d["message"].as_str().unwrap().contains("unused"))
-        .expect("unused-variable warning");
-    assert_eq!(w["severity"], 2);
+        .expect("unused-variable hint");
+    assert_eq!(w["severity"], 4);
+    assert_eq!(w["tags"], serde_json::json!([1]));
     assert_eq!(w["range"]["start"]["line"], 3);
     assert_eq!(w["range"]["start"]["character"], 4);
 
@@ -192,7 +194,7 @@ fn macro_files_get_mapped_diagnostics() {
     };
 
     // 1. A generated function is called: no false "undefined" error, and
-    //    the only diagnostic is the unused-variable warning in UNTOUCHED
+    //    the only diagnostic is the unused-variable hint in UNTOUCHED
     //    code — mapped to its true buffer line (4, 0-based 3) even though
     //    the decorator's output shifted the expanded text below it.
     open(
@@ -821,11 +823,15 @@ fn every_undefined_name_is_reported_in_one_pass() {
                             "text":"fn f(x) = first_missing(x) + 1\nfn g(y) = second_missing(y) + first_missing(y)\nprintln(show(f(1) + g(2)))\n"}}
     }));
     let m = c.recv_until(|m| diagnostics_of(m).is_some());
+    // The checker's own words (`olang check` says the same).
     let mut errors: Vec<String> = diagnostics_of(&m)
         .unwrap()
         .iter()
         .filter(|d| d["severity"] == 1)
-        .map(|d| d["message"].as_str().unwrap_or("").to_string())
+        .map(|d| {
+            let m = d["message"].as_str().unwrap_or("");
+            m.split(" — ").next().unwrap_or(m).to_string()
+        })
         .collect();
     errors.sort();
     assert_eq!(
