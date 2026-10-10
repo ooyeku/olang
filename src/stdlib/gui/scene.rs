@@ -330,6 +330,11 @@ pub struct Node {
     /// pixel to one display pixel, from the top left).
     pub image: Option<Value>,
     pub fit: String,
+    /// It takes the keyboard as it is (a terminal): Tab is its own, and
+    /// the input method's text comes to it as `text` and `preedit`
+    /// events, its candidates at `ime_area` (its own pixels).
+    pub input: bool,
+    pub ime_area: Option<[f32; 4]>,
 }
 
 pub const HOVER: usize = 0;
@@ -448,6 +453,8 @@ const NODE_KEYS: &[&str] = &[
     "active",
     "image",
     "fit",
+    "input",
+    "ime_area",
 ];
 
 #[derive(Default)]
@@ -699,6 +706,8 @@ impl Scene {
             active: get_str(op, "active", what)?.map(str::to_string),
             image: get(op, "image").cloned(),
             fit: get_str(op, "fit", what)?.unwrap_or("contain").to_string(),
+            input: get_bool(op, "input", what)?.unwrap_or(false),
+            ime_area: super::values::get_rect(op, "ime_area", what)?,
         };
         // Detach from the old parent (or the root slot) when it moved.
         if previous.is_some() && old_parent != parent {

@@ -530,7 +530,12 @@ fn leaf_size(
             Value::Unit => (lh + num_or("dh", 0.0)).max(num_or("min_h", 0.0)),
             v => fnum(v),
         };
-        return Ok((lw + num_or("dw", 0.0), h));
+        // a node may say its own room around its label (a compact segment)
+        let dw = match mget(p, "dw") {
+            Value::Unit => num_or("dw", 0.0),
+            v => fnum(v),
+        };
+        return Ok((lw + dw, h));
     }
     if let Value::String(field) = mget(r, "widest") {
         let mut widest: f64 = 0.0;

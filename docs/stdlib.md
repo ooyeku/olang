@@ -39,6 +39,8 @@ a file system, a network, or a browser.
 - [`meta` — the program as data](#meta--the-program-as-data-the-open-ast)
 - [`os` — operating system](#os--operating-system)
 - [`proc` — child processes and pipelines](#proc--child-processes-and-pipelines)
+- [`pty` — a child on a pseudo-terminal](#pty--a-child-on-a-pseudo-terminal)
+- [`vt` — a terminal's screen](#vt--a-terminals-screen)
 - [`cli` — command-line argument parsing](#cli--command-line-argument-parsing)
 - [`term` — the terminal toolkit](#term--the-terminal-toolkit)
 - [`tty` — the terminal as an interactive device](#tty--the-terminal-as-an-interactive-device)
@@ -1525,6 +1527,74 @@ println(show(r.codes))         // [0, 0, 0]
 The [`watch` example](../examples/tools/watch/) is the flagship: it streams a
 command's output, runs pipelines, and shuts down gracefully on Ctrl-C.
 
+## `pty` — a child on a pseudo-terminal
+
+Where `proc` pipes a child's stdin and stdout, `pty` gives it a terminal
+of its own: the child leads a new session with the pty's slave as its
+controlling terminal (job control, `^C`, window sizes and full-screen
+programs work), and the program holds the master side. What a terminal
+emulator (olang Studio's) runs a shell in. macOS and Linux (an `Err`
+elsewhere: `pty.available()`); capability-gated as `proc`.
+
+| Function | Description |
+|---|---|
+| `pty.spawn(argv, opts?)` | start `argv[0]` → `Ok(Pty)`. `opts`: `cwd`, `env` (a map: a String sets a variable, `()` removes one), `clear_env`, `rows`, `cols` (24 × 80). The child's signals are at their defaults (SIGPIPE too) |
+| `pty.read(p, opts?)` | what it wrote → `Ok(Bytes)`, `Ok(())` when nothing came within `timeout_ms` (1000), `Err("eof")` once its side closed. Having read something it reads on while more arrives within `settle_ms` (2), up to `max` bytes (1 MiB): a burst is one value. For a reader task of its own |
+| `pty.write(p, data)` | a String or Bytes (the keys typed), queued for a writer thread (a large paste never blocks) |
+| `pty.resize(p, rows, cols)` | TIOCSWINSZ: the foreground job hears SIGWINCH |
+| `pty.kill(p, sig?)` | `"HUP"` (the default), `"INT"`, `"TERM"`, `"KILL"`, `"QUIT"`, `"CONT"`, `"STOP"` or a number, to the shell's process group and the foreground job's |
+| `pty.wait(p, timeout_ms?)` | `Ok({ code, signal })` once it ended (waiting up to `timeout_ms`, 0), `Ok(())` while it runs |
+| `pty.foreground(p)` | the terminal's foreground job `{ pid, name, shell }` (`shell` while the shell is at its prompt), or `()` once it ended — ask before closing a terminal a program runs in |
+| `pty.cwd(p)` | the foreground job's working directory (the shell's at its prompt), or `()` |
+| `pty.pid(p)` · `pty.shell()` · `pty.available()` | the child's pid; the user's login shell (`$SHELL`, the user database's, `/bin/zsh`); whether ptys exist here |
+| `pty.close(p)` | hang up: SIGHUP to its groups, the master closed, the child reaped (SIGKILL after 500 ms). At once; the handle is gone |
+
+A terminal that closes waits for what it wrote to be read (macOS): keep
+reading until `eof`, then `wait`.
+
+```olang no-run
+let p = unwrap(pty.spawn([pty.shell(), "-l"], #{ "cwd": "/tmp", "rows": 30, "cols": 100, "env": #{ "TERM": "xterm-256color" } }))
+unwrap(pty.write(p, "ls\r"))
+match pty.read(p, #{ "timeout_ms": 500 }) { Ok(b) => println(b), Err(e) => println(e) }
+pty.close(p)
+```
+
+## `vt` — a terminal's screen
+
+What a program on a terminal writes — xterm's escape sequences — read
+into a grid of cells with a scrollback, and drawn as a canvas's
+operations: a terminal emulator's core, in Rust so a megabyte of output
+costs milliseconds. Screens are `Screen` handles into a registry: one may
+be fed on a reader's thread and drawn on the window's.
+
+It reads UTF-8 (wide characters take two cells, combining marks join the
+cell before; a sequence split across feeds is kept), C0 controls, ESC
+(save/restore the cursor, index, reverse index, next line, reset, the
+keypad's modes, character sets with DEC line drawing), CSI (cursor
+movement, erase in display and line, insert/delete characters and lines,
+scroll up/down, scroll regions, tab stops, repeat; SGR with 16, 256 and
+true colours, bold, dim, italic, underline, inverse, hidden,
+strikethrough; modes: insert, newline, application cursor keys, origin,
+autowrap, the cursor shown, the alternate screen 47/1047/1049, bracketed
+paste 2004, mouse reporting 1000/1002/1003 and the SGR encoding 1006,
+focus events 1004; the cursor's style; device status, attributes and a
+mode's state answered), OSC (0 and 2 a title, 7 the working directory,
+8 hyperlinks, 10 and 11 the colours asked) and DCS/SOS/PM/APC read and
+ignored. Lines are numbered from the first ever kept, so a selection
+stays on its text while the scrollback (10,000 lines) moves; a resize
+rewraps the main screen.
+
+| Function | Description |
+|---|---|
+| `vt.new(rows, cols, opts?)` | a screen. `opts`: `scrollback`, `fg`, `bg` (what OSC 10/11 answer) |
+| `vt.feed(t, data)` | read a String or Bytes → what the terminal answers the program (a cursor report), often `""` |
+| `vt.resize(t, rows, cols)` · `vt.clear(t)` · `vt.reset(t)` | the size (rewrapped); ⌘K's clear (the cursor's line kept as the first); RIS |
+| `vt.info(t)` | `{ rows, cols, title, cwd, alt, cursor (line, col), cursor_row, cursor_visible, cursor_style, cursor_blink, app_cursor, app_keypad, bracketed_paste, mouse, mouse_sgr, focus_events, bell, rev, first, screen, last }` |
+| `vt.claim(t)` | true once after each `vt.info`: a reader says "changed" once until the window looks (a burst is a frame) |
+| `vt.render(t, opts)` | canvas operations: backgrounds, text runs (bold, italic), underlines, strikes, the cursor (block, bar, underline; hollow; the input method's text). `opts`: `cell_w`, `cell_h`, `size`, `font`, `pad_x`, `pad_y`, `text_dy`, `rows`, `top`, `palette` (16), `fg`, `bg`, `cursor_color`, `cursor_text`, `selection_color`, `find_color`, `find_current_color`, `link_color`, `selection` `(l0, c0, l1, c1)`, `matches` and `match`, `hover`, `cursor`, `hollow`, `cursor_style`, `preedit` |
+| `vt.text(t, l0, c0, l1, c1)` · `vt.line(t, l)` · `vt.word_at(t, l, c)` · `vt.link_at(t, l, c)` · `vt.find(t, q, opts?)` | a selection's text; a line's text and each character's column; a double click's word; an OSC 8 link; every match `(line, col, cells)` |
+| `vt.set_colors(t, #{ fg, bg })` · `vt.free(t)` | |
+
 ## `cli` — command-line argument parsing
 
 `use cli` — an embedded olang package — turns a command-line
@@ -1787,7 +1857,7 @@ Native-only; on in the released binaries (the `gui` cargo feature).
 | `gui.prepare()` | start the platform's event loop now, without waiting for it: the application's start on the main thread (tens of milliseconds on macOS) then overlaps the program's work before its first window opens, which waits for the loop as before. Nothing when it is started already or cannot be (Loom's `run` asks, for real windows) |
 | `gui.wake()` | a `wake` event on the channel, so a task blocked on `gui.events()` can stop without polling |
 | `gui.context()` | the system's settings now: `#{ dark, contrast, reduce_motion, reduce_transparency, accent }` (`accent` the colour chosen in System Settings, `"#rrggbb"`, or `()`). macOS reads them from AppKit — the application's effective appearance (Auto included) and NSWorkspace's accessibility display options — and keeps them live: a window hears `appearance` the moment one changes (AppKit's notices for the display options and the system's colours, and a window's theme changing), with no restart. Elsewhere they are false and `dark` follows a window's theme |
-| `gui.platform()` | what this platform's windows can do, to check rather than find out: `#{ os, native_menu, clipboard_image, file_drop, drop_position, window_position, system_settings, ime, accessibility, window_tabs, open_documents, context_menu }` (`context_menu`: `gui.context_menu` and the `context` event; `window_tabs`: `tabbing`, `tab_of`, `tab` and the `tabs` event; `open_documents`: the `open` and `new_tab` events — a program asks before it uses them, as an older engine refuses an option it does not know). On macOS all are `true` (`window_tabs` and `open_documents` only there); on Windows `native_menu`, `clipboard_image`, `drop_position`, and `system_settings` are `false`; on Linux (Wayland) `file_drop` and `window_position` are `false` too (winit has no Wayland drag and drop, and a Wayland window is never told where it is). `ime` and `accessibility` are `true` everywhere |
+| `gui.platform()` | what this platform's windows can do, to check rather than find out: `#{ os, native_menu, clipboard_image, file_drop, drop_position, window_position, system_settings, ime, accessibility, window_tabs, open_documents, context_menu, terminal }` (`terminal`: the `pty` and `vt` modules, a node's `input` and `ime_area` and the `text` and `preedit` events, a canvas text's `italic`; `context_menu`: `gui.context_menu` and the `context` event; `window_tabs`: `tabbing`, `tab_of`, `tab` and the `tabs` event; `open_documents`: the `open` and `new_tab` events — a program asks before it uses them, as an older engine refuses an option it does not know). On macOS all are `true` (`window_tabs` and `open_documents` only there); on Windows `native_menu`, `clipboard_image`, `drop_position`, and `system_settings` are `false`; on Linux (Wayland) `file_drop` and `window_position` are `false` too (winit has no Wayland drag and drop, and a Wayland window is never told where it is). `ime` and `accessibility` are `true` everywhere |
 | `gui.compare(a, b, opts?)` | two PNGs compared as a pixel snapshot is: `#{ same, differing, total, worst, diff }`; a pixel differs past `threshold` (32 of 255), the images are the same while at most `ratio` (0.001) of the pixels differ; `diff` is a PNG with the differing pixels in red |
 | `gui.set(w, props)` | `title`, `size`, `min`, `visible`, `cursor`, `focus`, `background`, `zoom` (the text size, 0.5 to 3: the window keeps its pixels and its boxes, reads, and events are in units of `zoom` logical pixels, so a program lays out in less room at a larger size; a `resize` event says the new size), `appearance` (`"light"`, `"dark"`, or `"system"`: the title bar and the platform's own controls in the appearance the program draws in), `scripted` (`true`: a script drives the window through `gui.input`, and a person's keys, pointer, wheel and drops on it are not taken — a test's window is not moved by the mouse passing over it), `tab` (macOS window tabs: `"next"`, `"previous"` tab chosen, `"merge"` every window into this one's tab bar, `"detach"` this tab into a window of its own, `"bar"` the bar shown or hidden; a `tabs` event follows) |
 | `gui.fonts(sources, opts?)` | register fonts: paths or Bytes, TTF/OTF/TTC, optionally brotli-compressed → the number of faces added. Registered fonts come before the system's. `#{ "background": true }`: the sources are read now, then decompressed and registered on a thread of their own while the program goes on — whatever shapes or measures text meanwhile waits until they are in — and it answers the number of sources (Loom's `run` registers its bundled fonts so: they were tens of milliseconds of a window's first frame) |
@@ -1841,7 +1911,14 @@ over its rectangle. An operation with a `hit` value is a hit region: a
 itself (`wheel`, `pinch` events) before any scrolling node around it. Give
 a canvas a `name` (role `figure`) so a screen reader can say what it
 shows, and `active: <key>` to have the element `key` (one placed over its
-focused shape) said as its focus: its active descendant.
+focused shape) said as its focus: its active descendant. A canvas text
+may say `italic: true`. A focusable node with `input: true` takes the
+keyboard as it is (a terminal): Tab is its own rather than the focus's,
+and the input method is allowed while it has the focus — its composed
+text arrives as `preedit` events and its committed text as `text`
+events, the candidates placed at `ime_area` `(x, y, w, h)` (its own
+pixels: the cursor's cell). An older engine refuses both keys: ask
+`gui.platform().terminal` first.
 
 **Pictures.** An `image` node's source is a file's path or its Bytes:
 PNG, JPEG (turned as its EXIF orientation says), WebP, GIF, or SVG
@@ -1934,7 +2011,8 @@ handed back is known as the field's own earlier one by its identity.
 | `"focus"` | `key` (or `()`) — focus moved (Tab, a click, an assistive action, or a `"focus"` op) |
 | `"changed"` | `key`, `value`, `selection`, `rev` |
 | `"submit"` | `key` — Enter in a single-line field |
-| `"pointer"` | `action`, `x`, `y`, `button`, `clicks`, `target`, `hit` (over a canvas: its topmost hit region there), `sx`, `sy` (the place on the screen, what follows a drag into another window; `()` where a window cannot learn where it is — Wayland, `gui.platform().window_position`) |
+| `"text"`, `"preedit"` | `key` (a node with `input: true`), `text` (committed; being composed, with `cursor`) — the input method's |
+| `"pointer"` | `action`, `x`, `y`, `button`, `clicks`, `mods` (the modifier keys held: a ⌘-click), `target`, `hit` (over a canvas: its topmost hit region there), `sx`, `sy` (the place on the screen, what follows a drag into another window; `()` where a window cannot learn where it is — Wayland, `gui.platform().window_position`) |
 | `"moved"` | `x`, `y` — the window's content moved on the screen (never sent on Wayland) |
 | `"wheel"` | `key` (a node with `wheel: true` under the pointer), `dx`, `dy` (logical pixels; positive moves the view up and left), `x`, `y`, `mod`, `shift`, `alt`, `ctrl` — the wheel or a trackpad's two fingers |
 | `"pinch"` | `key` (as `wheel`), `delta` (the change of magnification; positive zooms in), `phase` (`"start"`, `"move"`, `"end"`, `"cancel"`), `x`, `y` — a trackpad's pinch (macOS) |

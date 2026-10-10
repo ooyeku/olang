@@ -942,7 +942,12 @@ impl WinState {
                 }
             }
             Input::ImePreedit(t, cursor) => {
-                if let Some(f) = self.scene.focus.clone()
+                if let Some(f) = self.input_focus() {
+                    out.push(self.ev(
+                        "preedit",
+                        vec![("key", s(&f)), ("text", s(&t)), ("cursor", cursor.map(|c| Value::Integer(c.0 as i64)).unwrap_or(Value::Unit))],
+                    ));
+                } else if let Some(f) = self.scene.focus.clone()
                     && let Some(ed) = self.editors.get_mut(&f)
                     && let Ok(mut ts) = text::system().lock()
                 {
@@ -951,7 +956,9 @@ impl WinState {
                 }
             }
             Input::ImeCommit(t) => {
-                if let Some(f) = self.scene.focus.clone() {
+                if let Some(f) = self.input_focus() {
+                    out.push(self.ev("text", vec![("key", s(&f)), ("text", s(&t))]));
+                } else if let Some(f) = self.scene.focus.clone() {
                     let outcome = match (self.editors.get_mut(&f), text::system().lock()) {
                         (Some(ed), Ok(mut ts)) => {
                             ed.compose("", None, &mut ts);
@@ -1059,7 +1066,14 @@ impl WinState {
                 .and_then(|f| self.scene.nodes.get(f))
                 .and_then(|n| n.edit.as_ref())
                 .is_some_and(|e| e.pass_keys.iter().any(|k| (plain && *k == spelled) || (!plain && *k == chorded)));
-        if key == "tab" && plain && !passed {
+        // a node that takes the keyboard as it is (a terminal) keeps Tab
+        let raw_input = self
+            .scene
+            .focus
+            .as_ref()
+            .and_then(|f| self.scene.nodes.get(f))
+            .is_some_and(|n| n.input);
+        if key == "tab" && plain && !passed && !raw_input {
             self.move_focus(!mods.shift, out);
             return;
         }
@@ -1323,6 +1337,7 @@ impl WinState {
                         ("action", s("move")),
                         ("x", float(x)),
                         ("y", float(y)),
+                        ("mods", self.mods.value()),
                         ("sx", opt_float(self.screen_pointer.map(|p| p.0))),
                         ("sy", opt_float(self.screen_pointer.map(|p| p.1))),
                         ("target", opt_str(hit.as_deref())),
@@ -1475,6 +1490,7 @@ impl WinState {
                         ("action", s("down")),
                         ("x", float(x)),
                         ("y", float(y)),
+                        ("mods", self.mods.value()),
                         ("sx", opt_float(self.screen_pointer.map(|p| p.0))),
                         ("sy", opt_float(self.screen_pointer.map(|p| p.1))),
                         ("button", s(button)),
@@ -1497,6 +1513,7 @@ impl WinState {
                         ("action", s("up")),
                         ("x", float(x)),
                         ("y", float(y)),
+                        ("mods", self.mods.value()),
                         ("sx", opt_float(self.screen_pointer.map(|p| p.0))),
                         ("sy", opt_float(self.screen_pointer.map(|p| p.1))),
                         ("button", s(button)),
@@ -1626,6 +1643,11 @@ impl WinState {
     /// Where the input method should place its candidate window: the
     /// focused field's composition or caret, in logical pixels.
     pub fn ime_area(&mut self) -> Option<[f32; 4]> {
+        if let Some(f) = self.input_focus() {
+            let abs = self.scene.absolute(&f)?;
+            let a = self.scene.nodes.get(&f)?.ime_area.unwrap_or([0.0, 0.0, 1.0, abs[3].min(20.0)]);
+            return Some([abs[0] + a[0], abs[1] + a[1], a[2].max(1.0), a[3].max(1.0)]);
+        }
         let f = self.scene.focus.clone()?;
         let (ox, oy, _, h) = self.edit_origin(&f)?;
         let mut ts = text::system().lock().ok()?;
@@ -1652,13 +1674,23 @@ impl WinState {
         ])
     }
 
-    /// Whether the focused node is a text field (the input method is
-    /// allowed only then).
+    /// Whether the focused node is a text field, or a node that takes the
+    /// keyboard as it is (the input method is allowed only then).
     pub fn wants_ime(&self) -> bool {
         self.scene
             .focus
             .as_ref()
             .is_some_and(|f| self.editors.contains_key(f))
+            || self.input_focus().is_some()
+    }
+
+    /// The focused node when it takes the keyboard as it is (`input`).
+    fn input_focus(&self) -> Option<String> {
+        let f = self.scene.focus.as_ref()?;
+        if self.editors.contains_key(f) {
+            return None;
+        }
+        self.scene.nodes.get(f).filter(|n| n.input).map(|_| f.clone())
     }
 
     // ── the display list ────────────────────────────────────────────
@@ -2105,6 +2137,9 @@ impl WinState {
                     font.weight = t.weight;
                     if let Some(f) = &t.font {
                         font.family = f.clone();
+                    }
+                    if t.italic {
+                        font.italic = true;
                     }
                     let color = fade(t.color);
                     let mut shaped = ts.shape(&t.text, &font, color, None, Align::Start, s);

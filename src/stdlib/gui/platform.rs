@@ -230,6 +230,9 @@ pub fn available() -> bool {
 ///   takes `tab`, and windows say their `tabs` (macOS window tabs).
 /// - `open_documents`: the application hears `open` with the files the
 ///   system asks it to open, and `new_tab` from a tab bar's + (macOS).
+/// - `terminal`: a terminal can be built: the `pty` and `vt` modules, a
+///   canvas's `ime` (the input method's text as `text` and `preedit`
+///   events while it has the focus) and a canvas text's `italic`.
 ///
 /// A program (Loom) asks before it uses what an older engine refuses.
 pub fn capabilities() -> Value {
@@ -249,6 +252,7 @@ pub fn capabilities() -> Value {
         ("window_tabs", b(mac)),
         ("open_documents", b(mac)),
         ("context_menu", b(mac)),
+        ("terminal", b(cfg!(unix))),
     ])
 }
 

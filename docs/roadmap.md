@@ -39,30 +39,73 @@ From a review of the ~110,000 lines of olang in this workspace
 desktop; 2026-10-09). The core reads well — expression `if`/`match`,
 pipelines, `(model, effects)` tuples — but the data a program carries
 is almost always a string-keyed map, and that is where the friction
-is: 17,763 `map_get(` calls (one every six lines), 11,452
-`#{ "key": … }` literals, 4,114 `map_set`/`map_merge` calls, and six
-`type` declarations in the whole corpus. A line from Studio's
-profiler:
+is: 23,970 `map_get` calls, 2,120 `map_get_or`, 11,452
+`#{ "key": … }` literals, 4,114 `map_set`/`map_merge`, and six `type`
+declarations in the whole corpus. Of the `map_get` calls, 18,485
+(77%) read an identifier key off a name — `map_get(p, "profiles")` —
+and 1,441 nest (`map_get(map_get(m, "pp"), "cur")`); about 4% use a
+key computed at run time.
+
+### The design (decided 2026-10-10)
+
+**`.` reads a map's key, and `??` supplies a default.** Both are
+additive: `.` on a Map is a type error today, and `??` does not parse.
+
+1. `m.key` on a Map is exactly `map_get(m, "key")`: a missing key is
+   `()`. Chains read nested maps (`m.pp.cur`). A key that is not an
+   identifier, or is computed, stays `map_get(m, k)`. A key wins over
+   a trait method of the same name, as a struct field already does
+   (language.md, Traits).
+2. `a ?? b` is `b` when `a` is `()`, else `a`; `b` is evaluated only
+   when needed (as `&&` is). `map_get_or(o, "pad", 0)` becomes
+   `o.pad ?? 0`, and `if x == () => d else => x` one expression. An
+   operator, not a word, so the reserved list stays at fifteen.
+3. Objects keep raising on a missing field. A map is an open bag
+   whose keys may be absent; an object is a record whose fields are
+   fixed. Nothing existing changes meaning.
+4. A parsed `JsonObject` follows Map: `.` on a missing key is `()`
+   (today it raises "has no field or method"). It carries outside
+   data, where absence is ordinary. This one is a behaviour change and
+   is ruled in language.md with the rest.
 
 ```olang no-run
+// today
+let live = if map_get(p, "running") == true => map_get(p, "live_id") else => ()
 let clearable = len(filter(map_get(p, "profiles"), (e) => map_get(e, "id") != live))
+let pad = map_get_or(opts, "pad", 0)
+
+// with the design
+let live = if p.running == true => p.live_id else => ()
+let clearable = len(filter(p.profiles, (e) => e.id != live))
+let pad = opts.pad ?? 0
 ```
 
-Objects (`{ a: 1 }`, read with `.`) already exist and `map_get`,
-`map_set`, `map_keys`, `map_has_key`, `map_get_or` accept them, so the
-short form is there — but the frameworks standardised on `#{ "k": … }`
-because objects, maps and parsed JSON objects are three kinds that the
-builtins do not treat alike, and nothing makes updating one short.
-The rows are in the order to take them; each is additive, so all fit
-the stability contract.
+Considered and not taken:
+
+- **`.` raising on a missing key**, as an object's does. It would
+  catch a typo at run time, but the migration could not be mechanical
+  — each of 18,485 sites would need judging for whether its key can be
+  absent, and optional keys are everywhere (2,120 `map_get_or`, and
+  `== ()` checks through every framework's props). Typos are caught
+  statically instead (E4): `.ident` is a key the checker can see,
+  which a string argument is not.
+- **Moving the frameworks to objects.** Every optional prop would need
+  rewriting (an object raises on an absent field), and the Map and
+  JsonObject plumbing would remain.
+- **`?.` for optional chains.** `res?.field` already means "propagate
+  the Result, then read the field"; the token is taken.
+
+`.` stays read-only: olang has no field assignment, by design. Writes
+get their own rows (E5, E6).
 
 | Item | Evidence | Done when |
 |---|---|---|
-| `[olang]` One record kind for the builtins | `map_len` and `map_merge` refuse an object and a parsed `JsonObject` ("argument must be a map", "first argument must be a map") while `map_get`/`map_set`/`map_keys` accept both — re-checked on 0.87.0. open-track desktop writes every server-record merge by hand; Loom's props stay maps because 39 `map_merge` and 10 `map_len` calls in loom/heddle/shuttle `lib/` would refuse an object | every `map_*` builtin accepts a Map, an Object and a JsonObject alike, on every tier, and stdlib.md's map table says so; Loom, Heddle and Shuttle can take `{ width: "fill" }` props |
-| `[olang]` Spread in map and object literals | `#{ ...m, "a": 5 }` and `{ ...o, b: 2 }` are parse errors, and the error is wrong: "Unclosed `{` opened at line 6" for a brace that is closed. Updating one key of a model is `map_set(m, "k", v)`; two keys nest two calls | `#{ ...m, "k": v }` and `{ ...o, k: v }` build a copy with the keys replaced (later wins), on every tier; until then the parser names the unsupported spread instead of an unclosed brace |
-| `[stdlib]` Nested reads and updates | the models are maps of maps (`map_get(map_get(m, "pp"), "cur")`, then `map_set(m, "pp", map_set(map_get(m, "pp"), "cur", x))`); `map_get_in`, `map_set_in` and `map_update` do not exist | `map_get_in(m, path)`, `map_set_in(m, path, v)` and `map_update(m, k, f)` (sole-owner in place, as `map_set` is), for maps and objects |
-| `[olang]` Reading a map's key with `.` — reopen the ruling | language.md "Anonymous objects" rules that maps are read with `map_get` only, and Heddle logged the cost (a message's fields read with `map_get` everywhere). After the three rows above, decide between (a) `m.key` on a map for identifier keys, a missing key raising as an object's does, with `map_get` kept as the raw read; or (b) leaving maps alone and moving the frameworks' props, models and messages to objects. Recommended: (b) first — it needs no new semantics — and (a) only if the corpus still reads `map_get(m, "literal")` more than it reads `.` | the ruling written into language.md, and the frameworks' examples written in the chosen form |
-| `[tooling]` The checker sees record shapes | a misspelt key is `()` at run time (`map_get(p, "runing")`), and neither `olang check` nor the language server can see inside string keys, so the most common data shape gets the least checking. An object's missing field already raises at run time | `olang check` reports a read of a key that no construction of that value can have (literal-keyed maps and objects, through `let` and parameters within a module), with no false report over the workspace's corpus |
+| E1 `[olang]` `.` reads a map's key | the design above; 18,485 `map_get(name, "ident")` calls. language.md "Anonymous objects" rules that maps are read with `map_get` only — this row reopens that ruling | field access on a Map (and a JsonObject) answers the key or `()` on the interpreter, the VM's field read and the JIT, pinned by the differential tests; the key-over-method rule pinned; language.md's ruling rewritten; pitfalls.md's "maps use `map_get`" and "Missing map keys return Unit" entries rewritten around `.` and `??` |
+| E2 `[olang]` The `??` operator | the design above; 2,120 `map_get_or` calls and the `if x == () => d else => x` pattern | `a ?? b` in the grammar with its precedence stated in language.md (below the arithmetic operators, above the comparisons, as Kotlin's `?:`: `a.n ?? 0 > 3` is `(a.n ?? 0) > 3`), the right side evaluated only when the left is `()`, on every tier |
+| E3 `[tooling]` The migration | 18,485 + 2,120 call sites across seven programs | a codemod written in olang over `meta.parse` (`olang fix maps`, or tools/) rewriting `map_get(chain, "ident")` → `chain.ident` and `map_get_or(x, "k", d)` → `x.k ?? d`, run over every application with its suite passing unchanged. The one inexact case — `map_get_or` returns a *stored* `()` where `??` takes the default — is flagged by the codemod, never rewritten |
+| E4 `[tooling]` The checker sees keys | a misspelt key is `()` at run time (`p.runing`), and neither `olang check` nor the language server sees inside string keys, so the most common data shape gets the least checking. With E1 the key is syntax | `olang check` reports a `.key` read that no construction of that value can have (literal-keyed maps and objects, through `let`, parameters and returns within a module), with no false report over the workspace's corpus; the language server completes keys after `.` |
+| E5 `[olang]` One record kind for the builtins | `map_len` and `map_merge` refuse an object and a parsed `JsonObject` ("argument must be a map", "first argument must be a map") while `map_get`/`map_set`/`map_keys` accept both — re-checked on 0.87.0. open-track desktop writes every server-record merge by hand | every `map_*` builtin accepts a Map, an Object and a JsonObject alike, on every tier, and stdlib.md's map table says so |
+| E6 `[olang]` Writes: spread and nested updates | `#{ ...m, "a": 5 }` and `{ ...o, b: 2 }` are parse errors, and the error is wrong ("Unclosed `{` opened at line 6" for a closed brace); updating one key is `map_set(m, "k", v)`, a nested one `map_set(m, "pp", map_set(map_get(m, "pp"), "cur", x))` (94 sites written that way, 4,114 `map_set`/`map_merge` in all); `map_set_in` and `map_update` do not exist | `#{ ...m, "k": v }` and `{ ...o, k: v }` build a copy with the keys replaced (later wins); `map_set_in(m, path, v)`, `map_get_in(m, path)` and `map_update(m, k, f)`, sole-owner in place as `map_set` is; the parser names an unsupported form instead of an unclosed brace |
 
 ## Language and runtime
 
@@ -79,6 +122,9 @@ the stability contract.
 | `[olang]` An interrupted promoted loop keeps the values from its promotion | `let mut k = 0; while true { k = k + 1 }` in `repl --serve`, interrupted: `k` reads 512, the count at promotion; tooling.md states this as current behaviour (Studio's REPL panel) | the loop's live variables are written back on every exit from the promoted remainder, interrupt and error included; the caveat leaves tooling.md |
 | `[olang]` A lambda compiled once per body | open-track compiles about 100 per-closure bytecode bodies a request for lambdas that capture data; a38daa3 shares compiles only between closures with equal cheap captures and evicts the rest | each lambda body compiles once with its captures as run-time inputs; no compile on a request's path. Low: the leak it caused is gone |
 | `[olang]` A list element cannot be assigned | `xs[i] = v` is a parse error ("possible assignment in expression context"); a line edited in place rebuilds the list (Studio's replace across files, core/replace.ol, appends every line to a new list) | `xs[i] = v` on a `let mut` list (in place when the list is not shared), or a `list_set(xs, i, v)` builtin |
+| `[olang]` No character from its code | `str.char_code` exists but its inverse does not: Loom's terminal (lib/vterm.ol) writes the C0 controls as a literal table of `\u{…}` escapes and the old mouse encoding's bytes through `json.parse("\"\\uXXXX\"")` | `str.from_char_code(n)` (and a list form), on every tier |
+| `[olang]` `if a == (x, y) => return …` parses `(x, y) => …` as a lambda | Studio's terminal (face/termface.ol `tf_fit`): "expected an operator" at the next line; the tuple has to be bound first (`let want = (rows, cols)`) | a tuple after a comparison operator is an operand, or the error names the lambda the parser took it for |
+| `[olang]` No `abs`, `all`, `any` among the global builtins | `min`/`max`/`clamp` are global but `abs` is not ("Undefined variable: abs" in face/termface.ol's wheel); `all`/`any` over a list with a predicate are written as `len(filter(…)) == 0` (lib/vterm.ol's digits) | `abs(n)`, `all(xs, f)`, `any(xs, f)` as globals, on every tier |
 | `[olang]` A match on string literals is a linear chain | Studio's `sa_update` matches about 300 string arms; not shown to be a cost yet | a match of string-literal arms compiles to a table — only when a profile asks for it |
 
 ## Memory and start-up
@@ -98,7 +144,7 @@ the stability contract.
 | `[tooling]` The checker misses a builtin's arity | `str.thousands(1234)` (it takes two) passes `olang check` in one file and across modules, and fails at run time (Loom) | `olang check` reports a wrong argument count to any builtin or stdlib function from the signature table; pinned |
 | `[tooling]` The checker misses a parameter that shadows a stdlib module | `fn table_sort(rows, col, …)` checked clean and failed on `col.sort_by`; `fn f(str) = str.length("a")` is clean on 0.87.0. The `let` form already warns (Heddle) | the "shadows the stdlib module" advisory covers parameters and pattern bindings |
 | `[tooling]` The language server ignores a file renamed | Studio's Rename and Move to Trash (its navigator's context menu) say `workspace/didRenameFiles` and close and reopen the open document under its new name; `olang lsp` drops the notification (src/tools/lsp.rs's notification arm), so a module importing the renamed file keeps a stale problem until it is edited, and `workspace/symbol` answers the old path until the next save | the server takes `didRenameFiles` (and `didDeleteFiles`): the documents re-keyed, the importers re-checked, symbols answered under the new paths |
-| `[olang]` No `fs.real_path` | Studio's file operations must stay inside the folder opened with symbolic links resolved; `fs.abs_path` only normalizes `.`/`..` (`/tmp/x` stays `/tmp/x`, not `/private/tmp/x`), so core/fileops.ol runs `/bin/realpath` in its task (a process a check) | `fs.real_path(p)` answers the path with its links resolved (its nearest existing folder made real when `p` does not exist yet, as the capability gate's `gate_path` does), on every platform |
+| `[olang]` No `fs.real_path` | Studio's file operations must stay inside the folder opened with symbolic links resolved; `fs.abs_path` only normalizes `.`/`..` (`/tmp/x` stays `/tmp/x`, not `/private/tmp/x`), so core/fileops.ol runs `/bin/realpath` in its task (a process a check); Studio's terminal maps a link's file from the shell's real working directory (`pty.cwd`: `/private/var/…`) back onto the folder opened (`/var/…`) by its `/private` prefix (face/termface.ol `tf_alias`), or the file opened twice | `fs.real_path(p)` answers the path with its links resolved (its nearest existing folder made real when `p` does not exist yet, as the capability gate's `gate_path` does), on every platform |
 | `[tooling]` A large file's problems arrive 630 ms after an edit | in a 50,000-line file a typed problem shows ~0.63 s later: every edit re-parses and re-analyses the whole file (Studio, tools/live_lsp.ol). `olang check .` over open-track takes 12 s, all of it the parse | the server checks by top-level item: an edit re-parses its item and the items naming what it declares |
 | `[tooling]` Native code calling native code has no time of its own | callees in a caller's native group have counted calls (7d76560) but their time is the caller's (tooling.md), so Studio's tier map shows none for them | time attributed per callee (group entries counted in the JIT call stub, or members reported with their root) |
 | `[tooling]` REPL command output is not deterministic | `:env` lists modules in hash order; `:help tutorials`, `:tutorial` and `:search` ties vary — three piped runs, three outputs. Studio's pinned transcripts leave them out | sorted (name, then score), and the full transcripts pinned in tests/repl_commands_test.rs |
