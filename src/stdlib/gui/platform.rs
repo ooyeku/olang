@@ -584,7 +584,22 @@ impl App {
             // SAFETY: two live NSWindows; NSWindowAbove is 1.
             let _: () = unsafe { objc2::msg_send![&*a, addTabbedWindow: &*b, ordered: 1isize] };
         }
+        // a window of its own asked for: shown alone (the system's automatic
+        // tabbing would put it in a bar of its kind), then free to join one
+        // (Merge All Windows) as any window is
+        #[cfg(target_os = "macos")]
+        let alone = if opts.tabbing.is_some() && opts.tab_of.is_none() { ns_window(&win) } else { None };
+        #[cfg(target_os = "macos")]
+        if let Some(w) = &alone {
+            // SAFETY: a live NSWindow; NSWindowTabbingModeDisallowed is 2.
+            let _: () = unsafe { objc2::msg_send![&**w, setTabbingMode: 2isize] };
+        }
         win.set_visible(true);
+        #[cfg(target_os = "macos")]
+        if let Some(w) = &alone {
+            // SAFETY: as above; NSWindowTabbingModeAutomatic is 0.
+            let _: () = unsafe { objc2::msg_send![&**w, setTabbingMode: 0isize] };
+        }
         win.request_redraw();
         self.windows.insert(
             id,
@@ -618,6 +633,10 @@ impl App {
             .map(|t| t == winit::window::Theme::Dark);
         emit(vec![super::context::event_for(id, dark, "open")]);
         self.sync_origin(id);
+        // the tab bar it opened in (another window's, or its own), as it
+        // stands now: a window that is not key says nothing else of it
+        #[cfg(target_os = "macos")]
+        self.report_tabs(id);
         Ok(())
     }
 
