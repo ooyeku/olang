@@ -478,6 +478,9 @@ impl Interpreter {
     pub fn set_current_file(&mut self, file_path: &std::path::Path) {
         // Store the file path as the current module context
         if let Some(path_str) = file_path.to_str() {
+            // its compiled functions, and its lambdas', read ahead
+            crate::compile_cache::prefetch(Some(path_str));
+            crate::compile_cache::prefetch(None);
             self.current_module_path = Some(path_str.to_string());
             self.entry_file = Some(path_str.to_string());
             if let Some(tier) = self.bytecode_tier.as_mut() {

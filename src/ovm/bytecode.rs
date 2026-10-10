@@ -14,6 +14,8 @@ use std::fmt;
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
 
+mod cached;
+
 /// The most native frames one JIT call chain may push before it deopts
 /// back to bytecode. The logical call-depth cap is 100k, but jitted
 /// recursion lives on the real Rust stack where headroom below a grown
@@ -442,6 +444,14 @@ pub struct BytecodeCompiler {
     /// tier's own resolution (the bridge) answers for them, as it did.
     /// Lent by the VM like the registries.
     refused_names: std::collections::HashSet<String>,
+    /// Whether this compile is being recorded for the compile cache
+    /// (`cached`): every question asked of the scope, with its answer.
+    rec_on: bool,
+    rec: std::cell::RefCell<Option<cached::Recording>>,
+    /// A known function's answer hash, by the function (its parameters
+    /// encoded once a process, not at every call that asks).
+    known_digests:
+        std::cell::RefCell<rustc_hash::FxHashMap<usize, (Arc<crate::ast::Function>, u64)>>,
 }
 
 /// A deferred lambda compile: its id, the body as a standalone declaration
@@ -505,7 +515,7 @@ pub struct CompiledBytecode {
 }
 
 /// One piece of a compiled template string.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum TplPart {
     Literal(String),
     Reg(Register),
@@ -546,7 +556,13 @@ impl PartialEq for FieldCache {
 }
 
 /// Bytecode instruction set - Enhanced with more operations
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Serializable for the compile cache (`crate::compile_cache`): a
+/// function id is written as the number it had in the run that compiled
+/// it and mapped to this run's on the way back; a struct shape as its
+/// type and fields, interned again; an inline cache not at all (a read
+/// one starts cold, as a cloned one does).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Instruction {
     // Load/Store operations
     LoadConst {
@@ -750,6 +766,7 @@ pub enum Instruction {
     /// exact rules.
     MakeStruct {
         dst: Register,
+        #[serde(with = "crate::compile_cache::shape_serde")]
         shape: Arc<crate::ovm::value::StructShape>,
         field_regs: Vec<Register>,
         /// Declared field types in the shape's field order, parallel to
@@ -805,6 +822,7 @@ pub enum Instruction {
         op: BinaryOp,
         dst: Register,
         lhs: Register,
+        #[serde(with = "crate::compile_cache::imm_serde")]
         imm: OvmValue,
         /// True when the compiler flipped `imm <op> x` into this form:
         /// the immediate was the SOURCE-LEFT operand. Execution semantics
@@ -1030,6 +1048,7 @@ pub enum Instruction {
         name_const: u32,
         /// One-entry inline cache: shape id → field index. Interior-mutable
         /// because bytecode is shared (Arc) across calls and threads.
+        #[serde(skip)]
         cache: FieldCache,
     },
     /// Subscript: `dst = object[index]`. Lists, tuples, and strings with an
@@ -1045,11 +1064,11 @@ pub enum Instruction {
 }
 
 /// Register identifier
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
 pub struct Register(pub u32);
 
 /// Label identifier for jumps
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
 pub struct Label(pub u32);
 
 /// Debug information for bytecode
@@ -1133,6 +1152,10 @@ pub struct InstructionEmitter {
     constant_map: HashMap<String, u32>, // For deduplication
     current_line: u32,
     debug_info: BytecodeDebugInfo,
+    /// While a compile is recorded for the compile cache: where each
+    /// constant came from (`None`: a literal, written as itself).
+    recording: bool,
+    const_srcs: Vec<Option<crate::compile_cache::ConstSrc>>,
 }
 
 /// VM errors
@@ -2087,12 +2110,81 @@ impl BytecodeVm {
         self.lend_registries();
         self.compiler.unresolved.clear();
         self.compiler.lazy_callees = self.lazy_callees;
-        let result = self.compile_function_with_closure_lent(func_id, func, closure, param_checks, return_check, def_file, run);
+        // The compile cache: the code a compile of this declaration made
+        // in an earlier run, if its scope answers every question that
+        // compile asked as it answered them then (`cached`).
+        let key = if crate::compile_cache::enabled() {
+            self.cache_key(func, &param_checks, &return_check, &def_file)
+        } else {
+            None
+        };
+        let mut result = None;
+        if let Some(key) = &key {
+            let mut tried = false;
+            for entry in crate::compile_cache::load(def_file.as_deref(), key) {
+                if !tried {
+                    tried = true;
+                    self.compiler.pending_param_checks = param_checks.clone();
+                    self.compiler.pending_return_check = return_check.clone();
+                    self.compiler.pending_def_file = def_file.clone();
+                    self.compiler.module_scope = def_file
+                        .as_deref()
+                        .and_then(|f| self.module_scopes.get(f).cloned());
+                    self.compiler.enclosing_run = run.clone();
+                    self.compiler.set_current_def_file();
+                }
+                if let Some(group) = self.cached_group(entry, func_id, &closure) {
+                    // the lambdas first, as a compile installs them
+                    let mut group = group.into_iter();
+                    let main = group.next();
+                    for lambda in group {
+                        self.install_compiled(lambda);
+                    }
+                    if let Some(main) = main {
+                        self.install_compiled(main);
+                    }
+                    result = Some(Ok(()));
+                    break;
+                }
+            }
+            if tried && result.is_none() {
+                crate::boot_trace::add(crate::boot_trace::Counter::CompileCacheStale, 0);
+            }
+        }
+        let from_cache = result.is_some();
+        let result = match result {
+            Some(r) => r,
+            None => {
+                if key.is_some() {
+                    self.record_start();
+                }
+                let def_file_kept = def_file.clone();
+                let r = self.compile_function_with_closure_lent(func_id, func, closure, param_checks, return_check, def_file, run);
+                if let Some(key) = key {
+                    let rec = self.record_stop();
+                    if r.is_ok()
+                        && let Some(rec) = rec
+                    {
+                        crate::compile_cache::store(def_file_kept.as_deref(), key, move || {
+                            Self::entry_of(rec, func_id)
+                        });
+                    }
+                }
+                r
+            }
+        };
         self.return_registries();
         self.keep_owed_callees();
         let took = start_time.elapsed();
         self.stats.compilation_time += took;
-        crate::boot_trace::add(crate::boot_trace::Counter::Compile, took.as_nanos() as u64);
+        crate::boot_trace::add(
+            if from_cache {
+                crate::boot_trace::Counter::CompileCacheHit
+            } else {
+                crate::boot_trace::Counter::Compile
+            },
+            took.as_nanos() as u64,
+        );
         result
     }
 
@@ -2408,7 +2500,9 @@ impl BytecodeVm {
         self.compiler.enclosing_run = run;
 
         self.compiler.pending_lambdas.clear();
+        self.compiler.note_segment(0, func_id);
         let bytecode = self.compiler.compile_function(func_id, func)?;
+        let mut member = 0usize;
 
         // Compile the runtime-capture lambdas this function created, each
         // as a standalone function with the captures as trailing
@@ -2449,6 +2543,8 @@ impl BytecodeVm {
                         *captures,
                     )
                 });
+                member += 1;
+                self.compiler.note_segment(member, lambda_id);
                 let compiled = self.compiler.compile_function(lambda_id, &decl);
                 self.compiler.self_call = None;
                 let lambda_bytecode = Arc::new(compiled?);
@@ -2457,19 +2553,7 @@ impl BytecodeVm {
                 if !self.compiler.unresolved.is_empty() {
                     continue;
                 }
-                let idx = lambda_id.index();
-                self.mirror_hot(idx, &lambda_bytecode);
-                // A closure's compile defers this to `hof_function_id`.
-                #[cfg(feature = "native")]
-                if self.hof_track.is_none() {
-                    self.jit.try_compile(lambda_id, &lambda_bytecode);
-                }
-                if let Ok(mut cache) = self.bytecode_cache.write() {
-                    cache.insert(lambda_id, lambda_bytecode);
-                }
-                if let Some(tracked) = self.hof_track.as_mut() {
-                    tracked.push(lambda_id);
-                }
+                self.install_compiled(lambda_bytecode);
             }
         }
 
@@ -2479,20 +2563,32 @@ impl BytecodeVm {
             return Err(BytecodeError::UnresolvedCallee(first));
         }
 
-        let bytecode = Arc::new(bytecode);
-        let idx = func_id.index();
-        self.mirror_hot(idx, &bytecode);
+        self.install_compiled(Arc::new(bytecode));
+        Ok(())
+    }
+
+    /// Make compiled code callable: the hot mirror, the JIT's candidates
+    /// (a closure's compile defers that to `hof_function_id`), the cache,
+    /// and the closure's own list when one is tracked — and, when the
+    /// compile is recorded, the entry's members.
+    fn install_compiled(&mut self, bytecode: Arc<CompiledBytecode>) {
+        let id = bytecode.function_id;
+        self.mirror_hot(id.index(), &bytecode);
         #[cfg(feature = "native")]
         if self.hof_track.is_none() {
-            self.jit.try_compile(func_id, &bytecode);
+            self.jit.try_compile(id, &bytecode);
+        }
+        if self.compiler.rec_on
+            && let Some(rec) = self.compiler.rec.get_mut().as_mut()
+        {
+            rec.group.push(bytecode.clone());
         }
         if let Ok(mut cache) = self.bytecode_cache.write() {
-            cache.insert(func_id, bytecode);
+            cache.insert(id, bytecode);
         }
         if let Some(tracked) = self.hof_track.as_mut() {
-            tracked.push(func_id);
+            tracked.push(id);
         }
-        Ok(())
     }
 
     /// The bytecode-hot mirror is capped: only ids below `HOT_CAP` are
@@ -9573,6 +9669,9 @@ impl BytecodeCompiler {
             lazy_callees: false,
             lazy_new: Vec::new(),
             refused_names: std::collections::HashSet::new(),
+            rec_on: false,
+            rec: std::cell::RefCell::new(None),
+            known_digests: Default::default(),
         }
     }
 
@@ -9597,7 +9696,7 @@ impl BytecodeCompiler {
     /// provenance, both known here — so the runtime answer cannot
     /// differ.
     fn fold_cap_allowed(&self, cap: &str) -> Option<bool> {
-        let caps = self.static_grant()?;
+        let caps = self.q_grant()?;
         crate::stdlib::caps_mod::holds(&caps, cap)
     }
 
@@ -9634,22 +9733,22 @@ impl BytecodeCompiler {
     /// by name (bounded type parameters).
     fn lazy_callee(&self, name: &str) -> bool {
         if !self.lazy_callees
-            || self.function_registry.contains_key(name)
-            || self.builtin_names.contains(name)
-            || self.ambiguous_names.contains(name)
-            || self.bridged_callees.contains(name)
-            || self.refused_names.contains(name)
+            || self.q_registry(name).is_some()
+            || self.q_builtin(name)
+            || self.q_ambiguous(name)
+            || self.q_bridged(name)
+            || self.q_refused(name)
         {
             return false;
         }
-        let Some(known) = self.known_function_values.get(name) else {
+        let Some(known) = self.q_known(name) else {
             return false;
         };
         if !known.param_bounds.is_empty() {
             return false;
         }
         matches!(
-            self.callee_in_scope(name),
+            self.q_callee(name),
             Some(Value::Function(ref f)) if f.name.as_deref() == Some(name)
         )
     }
@@ -9663,19 +9762,15 @@ impl BytecodeCompiler {
         if crate::caps::required(builtin).is_none() {
             return false;
         }
-        match self.static_grant() {
+        match self.q_grant() {
             Some(caps) => crate::caps::check(&caps, builtin).is_none(),
             None => false,
         }
     }
 
-    pub fn compile_function(
-        &mut self,
-        func_id: FunctionId,
-        func: &FunctionDecl,
-    ) -> Result<CompiledBytecode, BytecodeError> {
-        // The provenance the capability table attenuates by; resolved
-        // once per compile so per-callsite verdicts are map lookups.
+    /// The provenance the capability table attenuates by; resolved once
+    /// per compile so per-callsite verdicts are map lookups.
+    fn set_current_def_file(&mut self) {
         self.current_def_file = match self.pending_def_file.clone() {
             None => None,
             Some(f) => Some(
@@ -9685,6 +9780,14 @@ impl BytecodeCompiler {
                     .clone(),
             ),
         };
+    }
+
+    pub fn compile_function(
+        &mut self,
+        func_id: FunctionId,
+        func: &FunctionDecl,
+    ) -> Result<CompiledBytecode, BytecodeError> {
+        self.set_current_def_file();
         // Reset state
         self.register_allocator.reset();
         self.emitter.reset();
@@ -9720,6 +9823,7 @@ impl BytecodeCompiler {
 
         let mut instructions = self.emitter.take_instructions();
         let constants = self.emitter.take_constants();
+        self.note_constant_srcs(func_id);
 
         instructions = self
             .optimizer
@@ -9956,33 +10060,26 @@ impl BytecodeCompiler {
                     // The closure, then the module's finished scope, then the
                     // tier's own table of declared functions (an unambiguous
                     // name declared after this function's closure was taken).
-                    let later = (!self.ambiguous_names.contains(name))
-                        .then(|| self.known_function_values.get(name))
-                        .flatten()
-                        .map(|f| Value::Function(f.clone()));
-                    let sibling = self.enclosing_run.get(name);
-                    let resolved = self
-                        .enclosing_closure
-                        .get(name)
-                        .or(sibling.as_ref())
-                        .or_else(|| self.module_scope.as_ref().and_then(|m| m.get(name)))
-                        .or(later.as_ref());
-                    match resolved {
+                    let resolved = self.q_ident(name);
+                    match resolved.as_ref() {
                         // A function value is wrapped verbatim (AstFunction),
                         // the same representation the lambda machinery uses,
                         // so it converts back unchanged and the native
                         // higher-order path can compile it.
                         Some(Value::Function(func)) => {
-                            let const_idx = self
-                                .emitter
-                                .add_constant(OvmValue::new_ast_function(func.clone()));
+                            let const_idx = self.emitter.add_constant_from(
+                                OvmValue::new_ast_function(func.clone()),
+                                || crate::compile_cache::ConstSrc::Ident(name.clone()),
+                            );
                             let dst_reg = self.register_allocator.allocate_register();
                             self.emitter.emit_load_const(dst_reg, const_idx);
                             Ok(dst_reg)
                         }
                         Some(value) if BytecodeVm::round_trips(value) => {
-                            let const_idx =
-                                self.emitter.add_constant(OvmValue::from_ast(value.clone()));
+                            let const_idx = self.emitter.add_constant_from(
+                                OvmValue::from_ast(value.clone()),
+                                || crate::compile_cache::ConstSrc::Ident(name.clone()),
+                            );
                             let dst_reg = self.register_allocator.allocate_register();
                             self.emitter.emit_load_const(dst_reg, const_idx);
                             Ok(dst_reg)
@@ -10297,9 +10394,7 @@ impl BytecodeCompiler {
                     Expr::FieldAccess { object, field } => match object.as_ref() {
                         Expr::Identifier(module)
                             if !self.local_variables.contains_key(module)
-                                && self
-                                    .builtin_names
-                                    .contains(&format!("{}.{}", module, field)) =>
+                                && self.q_builtin(&format!("{}.{}", module, field)) =>
                         {
                             None
                         }
@@ -10314,23 +10409,11 @@ impl BytecodeCompiler {
                         // (falls through) and stays interpreted.
                         Expr::Identifier(module)
                             if !self.local_variables.contains_key(module)
-                                && matches!(
-                                    self.enclosing_closure.get(module),
-                                    Some(Value::Struct { type_name, fields })
-                                        if type_name == "Module"
-                                            && matches!(
-                                                fields.get(field.as_str()),
-                                                Some(Value::Builtin(_))
-                                            )
-                                ) =>
+                                && self.q_module_builtin(module, field).is_some() =>
                         {
-                            let builtin_name = match self.enclosing_closure.get(module) {
-                                Some(Value::Struct { fields, .. }) => match fields.get(field.as_str()) {
-                                    Some(Value::Builtin(b)) => b.name.clone(),
-                                    _ => unreachable!("guard checked the field is a builtin"),
-                                },
-                                _ => unreachable!("guard checked the module"),
-                            };
+                            let builtin_name = self
+                                .q_module_builtin(module, field)
+                                .expect("the guard found the module's builtin");
                             // caps.allowed("x") under a static manifest is
                             // a constant here too (see the fold below for
                             // the reasoning); this arm is the one a normal
@@ -10463,7 +10546,7 @@ impl BytecodeCompiler {
                 // agree (the overwhelmingly common case: the closure
                 // snapshot simply contains the global), the registry's
                 // direct CallFn stays.
-                let closure_disagrees = match self.lexical(&function_name) {
+                let closure_disagrees = match self.q_lexical(&function_name) {
                     Some(Value::Function(ref f)) => self
                         .known_function_values
                         .get(&function_name)
@@ -10478,11 +10561,12 @@ impl BytecodeCompiler {
                 // compile this function again to call that id.
                 if !closure_disagrees && self.lazy_callee(&function_name) {
                     let func_id = FunctionId::new();
+                    self.note_lazy(&function_name, func_id);
                     self.function_registry.insert(function_name.clone(), func_id);
                     self.lazy_new.push((function_name.clone(), func_id));
                 }
                 if !closure_disagrees
-                    && let Some(&func_id) = self.function_registry.get(&function_name)
+                    && let Some(func_id) = self.q_registry(&function_name)
                 {
                     // A short call to a defaulted function completes its
                     // argument list here when every missing default is a
@@ -10492,7 +10576,7 @@ impl BytecodeCompiler {
                     // fallback evaluates the defaults in the callee's
                     // scope, exactly as a direct interpreted call would.
                     let mut arg_regs = arg_regs;
-                    let known = self.known_function_values.get(&function_name).cloned();
+                    let known = self.q_known(&function_name).cloned();
                     if let Some(f) = &known
                         && arg_regs.len() < f.parameters.len()
                         && f.parameters.iter().any(|p| p.default_value.is_some())
@@ -10500,9 +10584,10 @@ impl BytecodeCompiler {
                         match self.splice_literal_defaults(f, arg_regs.len()) {
                             Some(mut extra) => arg_regs.append(&mut extra),
                             None => {
-                                let idx = self.emitter.add_constant(OvmValue::from_ast(
-                                    crate::ast::Value::Function(f.clone()),
-                                ));
+                                let idx = self.emitter.add_constant_from(
+                                    OvmValue::from_ast(crate::ast::Value::Function(f.clone())),
+                                    || crate::compile_cache::ConstSrc::Known(function_name.clone()),
+                                );
                                 let callee_reg = self.register_allocator.allocate_register();
                                 self.emitter.instructions.push(Instruction::LoadConst {
                                     dst: callee_reg,
@@ -10518,6 +10603,7 @@ impl BytecodeCompiler {
                             }
                         }
                     }
+                    self.note_call_id(func_id, &function_name);
                     self.emitter.instructions.push(Instruction::CallFn {
                         dst: dst_reg,
                         func_id,
@@ -10531,12 +10617,12 @@ impl BytecodeCompiler {
                 // rule: `let head = (x) => …` at the top level, then
                 // `head(r)` inside a function, reached the list builtin
                 // `head` here and raised "argument must be a list".
-                let closure_shadows_builtin = match self.lexical(&function_name) {
+                let closure_shadows_builtin = match self.q_lexical(&function_name) {
                     None => false,
                     Some(Value::Builtin(ref b)) => b.name != function_name,
                     Some(_) => true,
                 };
-                if self.builtin_names.contains(&function_name) && !closure_shadows_builtin {
+                if self.q_builtin(&function_name) && !closure_shadows_builtin {
                     if let Some(builtin_id) =
                         BytecodeVm::float_math_id(&function_name, arg_regs.len())
                     {
@@ -10560,7 +10646,7 @@ impl BytecodeCompiler {
                 // An enum tuple-variant constructor from the closure —
                 // `Circle(2.0)`. An argument-count mismatch refuses, and the
                 // interpreter raises its arity error.
-                if let Some(Value::EnumConstructor(ref constructor)) = self.lexical(&function_name)
+                if let Some(Value::EnumConstructor(ref constructor)) = self.q_lexical(&function_name)
                 {
                     if constructor.arity != arguments.len() {
                         return Err(BytecodeError::UnresolvedCallee(function_name));
@@ -10586,7 +10672,7 @@ impl BytecodeCompiler {
                 // helper declared below its caller is absent from the
                 // closure (a snapshot of the declaration's moment) and
                 // present in the module.
-                let in_scope = self.callee_in_scope(&function_name);
+                let in_scope = self.q_callee(&function_name);
                 match in_scope.as_ref() {
                     // A same-named function the registry could still learn
                     // by name: report it unresolved so the tier compiles it
@@ -10598,8 +10684,8 @@ impl BytecodeCompiler {
                     // compiles around the one that could not.
                     Some(Value::Function(f))
                         if f.name.as_deref() == Some(function_name.as_str())
-                            && !self.ambiguous_names.contains(&function_name)
-                            && !self.bridged_callees.contains(&function_name) =>
+                            && !self.q_ambiguous(&function_name)
+                            && !self.q_bridged(&function_name) =>
                     {
                         // Noted, and the compile goes on with a stand-in
                         // (a call through the value, as a bridged callee's
@@ -10608,9 +10694,10 @@ impl BytecodeCompiler {
                         if !self.unresolved.contains(&function_name) {
                             self.unresolved.push(function_name.clone());
                         }
-                        let const_idx = self
-                            .emitter
-                            .add_constant(OvmValue::new_ast_function(f.clone()));
+                        let const_idx = self.emitter.add_constant_from(
+                            OvmValue::new_ast_function(f.clone()),
+                            || crate::compile_cache::ConstSrc::Callee(function_name.clone()),
+                        );
                         let baked = self.register_allocator.allocate_register();
                         self.emitter.emit_load_const(baked, const_idx);
                         self.emitter.instructions.push(Instruction::CallValue {
@@ -10621,9 +10708,10 @@ impl BytecodeCompiler {
                         Ok(dst_reg)
                     }
                     Some(Value::Function(f)) => {
-                        let const_idx = self
-                            .emitter
-                            .add_constant(OvmValue::new_ast_function(f.clone()));
+                        let const_idx = self.emitter.add_constant_from(
+                            OvmValue::new_ast_function(f.clone()),
+                            || crate::compile_cache::ConstSrc::Callee(function_name.clone()),
+                        );
                         let baked = self.register_allocator.allocate_register();
                         self.emitter.emit_load_const(baked, const_idx);
                         self.emitter.note_callee(&function_name);
@@ -10687,7 +10775,7 @@ impl BytecodeCompiler {
             // instruction so MakeStruct enforces them at run time, exactly as
             // the interpreter does.
             Expr::StructLiteral(literal) => {
-                let declared = self.struct_defs.get(&literal.type_name).ok_or_else(|| {
+                let declared = self.q_struct_def(&literal.type_name).ok_or_else(|| {
                     BytecodeError::CompilationFailed(format!(
                         "struct type '{}' is unknown to the bytecode tier (undeclared, or                          redeclared with a different shape)",
                         literal.type_name
@@ -10730,7 +10818,7 @@ impl BytecodeCompiler {
                 // with an unenforceable annotation carry `None` and stay
                 // dynamic.
                 let field_types: std::sync::Arc<[Option<crate::ast::FieldTypeCheck>]> = {
-                    let checks = self.struct_field_checks.get(&literal.type_name);
+                    let checks = self.q_struct_checks(&literal.type_name);
                     pairs
                         .iter()
                         .map(|(name, _)| checks.and_then(|c| c.get(name)).cloned())
@@ -11145,7 +11233,7 @@ impl BytecodeCompiler {
                     && matches!(object.as_ref(), Expr::Identifier(m)
                         if m == "col" && !self.local_variables.contains_key(m))
                     && matches!(field.as_str(), "set" | "swap")
-                    && self.builtin_names.contains(&format!("col.{}", field))
+                    && self.q_builtin(&format!("col.{}", field))
                     && arguments.len() == 3
                 {
                     let exprs: Vec<&Expr> = arguments
@@ -11213,7 +11301,7 @@ impl BytecodeCompiler {
                 if let Expr::Call { callee, arguments } = value.as_ref()
                     && matches!(callee.as_ref(), Expr::Identifier(n) if n == "map_set")
                     && !self.local_variables.contains_key("map_set")
-                    && !self.known_function_values.contains_key("map_set")
+                    && self.q_known("map_set").is_none()
                     && arguments.len() == 3
                 {
                     let mut exprs = Vec::with_capacity(3);
@@ -11446,7 +11534,7 @@ impl BytecodeCompiler {
             }
             if let Some(&reg) = self.local_variables.get(name) {
                 runtime_captures.push((name.clone(), reg));
-            } else if self.function_registry.contains_key(name) {
+            } else if self.q_registry(name).is_some() {
                 // A known user function (forward or mutual recursion
                 // through the lambda): the compiled body calls it
                 // through the registry — but the lambda's AST form
@@ -11456,7 +11544,7 @@ impl BytecodeCompiler {
                 // template example caught exactly that. Attached
                 // below via known_function_values; a registered name
                 // with no recorded value refuses.
-                if !self.known_function_values.contains_key(name) {
+                if self.q_known(name).is_none() {
                     return Err(BytecodeError::CompilationFailed(format!(
                         "Lambda references function '{}' with no recorded value",
                         name
@@ -11467,13 +11555,7 @@ impl BytecodeCompiler {
                     "Lambda captures '{}' before the enclosing function binds it",
                     name
                 )));
-            } else if !self.enclosing_closure.contains_key(name)
-                && self.enclosing_run.get(name).is_none()
-                && !self
-                    .module_scope
-                    .as_ref()
-                    .is_some_and(|m| m.contains_key(name))
-            {
+            } else if !self.q_free_present(name) {
                 // Not a local, not registered, not in the closure or the
                 // module's finished scope (a helper declared below). It
                 // may still be a user function declared LATER (mutual
@@ -11491,26 +11573,23 @@ impl BytecodeCompiler {
         // Attaching the full closure would defeat call_function's
         // empty-closure fast path: every call of a trivial lambda
         // would materialize the entire prelude into its environment.
+        // (A registry-resolved function is carried as a value so the
+        // escaped lambda resolves it interpreted too: `capture_value`
+        // ends at the known functions.)
         let captured: im::HashMap<String, Value> = free
             .iter()
             .filter(|name| !runtime_captures.iter().any(|(n, _)| n == *name))
-            .filter_map(|name| {
-                if let Some(value) = self.enclosing_closure.get(name) {
-                    return Some((name.clone(), value.clone()));
-                }
-                if let Some(value) = self.enclosing_run.get(name) {
-                    return Some((name.clone(), value.clone()));
-                }
-                if let Some(value) = self.module_scope.as_ref().and_then(|m| m.get(name)) {
-                    return Some((name.clone(), value.clone()));
-                }
-                // Registry-resolved function: carried as a value so
-                // the escaped lambda resolves it interpreted too
-                self.known_function_values
-                    .get(name)
-                    .map(|f| (name.clone(), Value::Function(f.clone())))
-            })
+            .filter_map(|name| self.capture_value(name).map(|v| (name.clone(), v)))
             .collect();
+        // a recorded compile writes the lambda as its parts and the
+        // names its closure took, looked up again when used
+        let lambda_src = || crate::compile_cache::LambdaSrc {
+            self_name: self_name.map(str::to_string),
+            params: parameters.to_vec(),
+            body: body.clone(),
+            captured: captured.keys().cloned().collect(),
+        };
+        let lambda_src = self.emitter.recording.then(lambda_src);
 
         let function = crate::ast::Function {
             name: self_name.map(|n| n.to_string()),
@@ -11532,9 +11611,10 @@ impl BytecodeCompiler {
 
         if runtime_captures.is_empty() && self_name.is_none() {
             // No runtime state: the lambda is a compile-time constant
-            let const_idx = self
-                .emitter
-                .add_constant(OvmValue::new_ast_function(std::sync::Arc::new(function)));
+            let const_idx = self.emitter.add_constant_from(
+                OvmValue::new_ast_function(std::sync::Arc::new(function)),
+                || crate::compile_cache::ConstSrc::Lambda(lambda_src.expect("recording")),
+            );
             let dst_reg = self.register_allocator.allocate_register();
             self.emitter.emit_load_const(dst_reg, const_idx);
             return Ok(dst_reg);
@@ -11571,6 +11651,7 @@ impl BytecodeCompiler {
             self_name.map(|n| (n.to_string(), capture_names.len())),
         ));
 
+        let capture_names_kept = capture_names.clone();
         let template = crate::ovm::value::ClosureObject {
             template: function,
             capture_names,
@@ -11578,9 +11659,14 @@ impl BytecodeCompiler {
             func_id: lambda_id,
             ast_closure: Default::default(),
         };
-        let template_const = self
-            .emitter
-            .add_constant(OvmValue::new_closure(Arc::new(template)));
+        let template_const = self.emitter.add_constant_from(
+            OvmValue::new_closure(Arc::new(template)),
+            || crate::compile_cache::ConstSrc::Closure {
+                src: lambda_src.expect("recording"),
+                capture_names: capture_names_kept,
+                func_id: lambda_id.raw(),
+            },
+        );
         let dst_reg = self.register_allocator.allocate_register();
         self.emitter.instructions.push(Instruction::MakeClosure {
             dst: dst_reg,
@@ -11611,9 +11697,9 @@ impl BytecodeCompiler {
                 // closure, resolvable only through the caller's runtime
                 // scope) refuses, because no snapshot can answer it.
                 if !self.local_variables.contains_key(name)
-                    && self.unit_variant_names.contains(name)
+                    && self.q_unit_variant(name)
                 {
-                    match self.lexical(name) {
+                    match self.q_lexical(name) {
                         Some(variant @ Value::Enum(_))
                             if matches!(
                                 &variant,
@@ -11621,9 +11707,10 @@ impl BytecodeCompiler {
                                     if e.variant_data == crate::ast::EnumVariantData::Unit
                             ) =>
                         {
-                            let const_idx = self
-                                .emitter
-                                .add_constant(OvmValue::from_ast(variant.clone()));
+                            let const_idx = self.emitter.add_constant_from(
+                                OvmValue::from_ast(variant.clone()),
+                                || crate::compile_cache::ConstSrc::Lexical(name.clone()),
+                            );
                             let const_reg = self.register_allocator.allocate_register();
                             self.emitter.emit_load_const(const_reg, const_idx);
                             let test_reg = self.register_allocator.allocate_register();
@@ -12363,12 +12450,12 @@ impl BytecodeCompiler {
             if name != "to_string"
                 || arguments.len() != 1
                 || self.local_variables.contains_key(name)
-                || self.function_registry.contains_key(name)
-                || !self.builtin_names.contains(name)
+                || self.q_registry(name).is_some()
+                || !self.q_builtin(name)
             {
                 return None;
             }
-            match self.lexical(name) {
+            match self.q_lexical(name) {
                 None => {}
                 Some(Value::Builtin(ref b)) if b.name == "to_string" => {}
                 Some(_) => return None,
@@ -12635,7 +12722,7 @@ impl BytecodeCompiler {
                 let let_check = let_decl
                     .type_annotation
                     .as_ref()
-                    .map(|ann| crate::ast::resolve_type_aliases(ann, &self.type_aliases, 16))
+                    .map(|ann| crate::ast::resolve_type_aliases(ann, self.q_aliases(), 16))
                     .and_then(|ann| crate::ast::FieldTypeCheck::from_annotation(&ann, &[]));
                 let value_reg = match &let_decl.value {
                     Some(expr) => self.compile_expression(expr)?,
@@ -12759,6 +12846,8 @@ impl InstructionEmitter {
             constant_map: HashMap::new(),
             current_line: 0,
             debug_info: BytecodeDebugInfo::default(),
+            recording: false,
+            const_srcs: Vec::new(),
         }
     }
 
@@ -12777,15 +12866,16 @@ impl InstructionEmitter {
         self.constant_map.clear();
         self.current_line = 0;
         self.debug_info = BytecodeDebugInfo::default();
+        self.const_srcs.clear();
     }
 
-    pub fn add_constant(&mut self, value: OvmValue) -> u32 {
-        // Constants normalize typed lists to the boxed layout: a constant
-        // is immutable (the typed layout buys nothing at the VM level for
-        // read-only data), and the boxed form is the one the JIT's list
-        // helpers read — which is what lets a lambda whose captured list
-        // was baked as a constant compile to native code.
-        let value = match &value.data {
+    /// Constants normalize typed lists to the boxed layout: a constant
+    /// is immutable (the typed layout buys nothing at the VM level for
+    /// read-only data), and the boxed form is the one the JIT's list
+    /// helpers read — which is what lets a lambda whose captured list
+    /// was baked as a constant compile to native code.
+    pub(crate) fn normalize_constant(value: OvmValue) -> OvmValue {
+        match &value.data {
             crate::ovm::value::ValueData::FloatList(_)
             | crate::ovm::value::ValueData::IntList(_) => OvmValue {
                 data: crate::ovm::value::ValueData::List(
@@ -12793,9 +12883,31 @@ impl InstructionEmitter {
                 ),
             },
             _ => value,
-        };
+        }
+    }
+
+    /// A literal constant (a recorded compile writes it as itself).
+    pub fn add_constant(&mut self, value: OvmValue) -> u32 {
+        if self.recording {
+            self.const_srcs.push(None);
+        }
         let idx = self.constants.len() as u32;
-        self.constants.push(value);
+        self.constants.push(Self::normalize_constant(value));
+        idx
+    }
+
+    /// A constant the compile took from its scope: a recorded compile
+    /// writes where it came from, and looks it up again when used.
+    pub fn add_constant_from(
+        &mut self,
+        value: OvmValue,
+        src: impl FnOnce() -> crate::compile_cache::ConstSrc,
+    ) -> u32 {
+        if self.recording {
+            self.const_srcs.push(Some(src()));
+        }
+        let idx = self.constants.len() as u32;
+        self.constants.push(Self::normalize_constant(value));
         idx
     }
 

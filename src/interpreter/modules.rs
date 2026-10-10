@@ -591,6 +591,8 @@ impl Interpreter {
         module_path: &str,
     ) -> Result<Value, InterpreterError> {
         let file_path_str = file_path.to_string_lossy().to_string();
+        // its compiled functions, read ahead while it loads
+        crate::compile_cache::prefetch(Some(&file_path_str));
         // What this load leaves on the heap is the program's, not its
         // values' (`runtime.memory()`).
         let _load = crate::memory::load_scope();

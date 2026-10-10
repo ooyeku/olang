@@ -927,6 +927,8 @@ fn os_exit(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     // a live profile's last snapshot, and the tier statistics a run
     // keeps, are written as it ends, however it ends
     let _ = crate::profile_live::finish(Some(exit_code));
+    crate::compile_cache::flush();
+    crate::boot_trace::finished();
     let exit_code = match crate::tier_stats::finish_run() {
         Some(guard) if exit_code == 0 => guard,
         _ => exit_code,

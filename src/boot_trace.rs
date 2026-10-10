@@ -7,7 +7,8 @@
 //! thread started, the entry file parsed, a window opened, the first frame
 //! presented — each stamped with the milliseconds since the process
 //! started (the kernel's clock of it, so the binary's own loading counts),
-//! and at the first frame a summary: modules read (parsed or from the
+//! and at the first frame (or at exit, for a program with no window) a
+//! summary: modules read (parsed or from the
 //! parse cache) and evaluated, functions compiled to bytecode and to
 //! native code, and how long each took.
 //!
@@ -104,9 +105,17 @@ pub enum Counter {
     Compile,
     /// A group of functions compiled to native code.
     Native,
+    /// A function's bytecode taken from the compile cache (its time:
+    /// reading, checking and rebuilding the entry).
+    CompileCacheHit,
+    /// A compile cache entry whose recorded questions this run answered
+    /// differently: compiled afresh.
+    CompileCacheStale,
+    /// A compile kept in the compile cache.
+    CompileCacheStored,
 }
 
-const N: usize = 7;
+const N: usize = 10;
 static COUNTS: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
 static NANOS: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
 
@@ -137,9 +146,12 @@ pub fn summary() -> String {
     let (_, load_ms) = read(Counter::ModuleLoad);
     let (compiled, compile_ms) = read(Counter::Compile);
     let (native, native_ms) = read(Counter::Native);
+    let (hits, hit_ms) = read(Counter::CompileCacheHit);
+    let (stale, _) = read(Counter::CompileCacheStale);
+    let (kept, _) = read(Counter::CompileCacheStored);
     format!(
         "modules {} in {:.1} ms (parsed {} in {:.1} ms, from the cache {} in {:.1} ms, cached {} in {:.1} ms, embedded {}); \
-         bytecode {} compiles in {:.1} ms; native {} groups in {:.1} ms",
+         bytecode {} compiles in {:.1} ms (from the cache {} in {:.1} ms, stale {}, kept {}); native {} groups in {:.1} ms",
         parsed + cached + embedded,
         load_ms,
         parsed,
@@ -151,6 +163,10 @@ pub fn summary() -> String {
         embedded,
         compiled,
         compile_ms,
+        hits,
+        hit_ms,
+        stale,
+        kept,
         native,
         native_ms
     )
@@ -164,6 +180,16 @@ pub fn frame_presented() {
     if on() && !FIRST_FRAME.swap(true, Ordering::Relaxed) {
         let at = since_start_ms();
         eprintln!("olang boot: {:7.1} ms  first frame presented", at);
+        eprintln!("olang boot:            {}", summary());
+    }
+}
+
+/// The process is ending: a program that never presented a frame (one
+/// with no window) has its summary here instead.
+pub fn finished() {
+    if on() && !FIRST_FRAME.swap(true, Ordering::Relaxed) {
+        let at = since_start_ms();
+        eprintln!("olang boot: {:7.1} ms  exit", at);
         eprintln!("olang boot:            {}", summary());
     }
 }

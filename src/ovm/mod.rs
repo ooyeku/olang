@@ -27,7 +27,7 @@ pub mod warm; // Warm start: cross-run tier profiles // Reference-counted runtim
 pub use value::OvmValue;
 
 /// Unique identifier for functions compiled to bytecode
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct FunctionId(u64);
 
 impl Default for FunctionId {
@@ -47,5 +47,11 @@ impl FunctionId {
     /// as direct indices into per-VM tables (no hashing on the call path).
     pub fn index(self) -> usize {
         self.0 as usize
+    }
+
+    /// The number behind the id: the compile cache writes it and maps it
+    /// to this run's id on the way back (`crate::compile_cache`).
+    pub fn raw(self) -> u64 {
+        self.0
     }
 }

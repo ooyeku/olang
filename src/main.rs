@@ -497,6 +497,9 @@ fn main() {
     olang::stdlib::tty::restore_terminal();
     olang::memory::report_if_asked();
     let _ = olang::profile_live::finish(Some(exit_code));
+    // what the run compiled, kept for the next (a moment at most)
+    olang::compile_cache::flush();
+    olang::boot_trace::finished();
     let exit_code = match olang::tier_stats::finish_run() {
         Some(guard) if exit_code == 0 => guard,
         _ => exit_code,
