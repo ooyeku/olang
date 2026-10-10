@@ -2585,21 +2585,26 @@ impl WinState {
             }
             if !rows.is_empty() {
                 let edge = content[1] + rows.iter().map(|r| r.1 + lh).fold(0.0f32, f32::max);
-                // a line the pinned rows half cover is hidden whole: no sliver
-                // of its glyphs under the hairline
-                let mut below = edge;
+                // a line the pinned rows half cover is hidden whole (its
+                // glyphs, by their baseline), so no sliver of it shows under
+                // the hairline; everything else is cut at the rows' edge
+                let mut half: Vec<(f32, f32)> = Vec::new();
                 for i in shown.clone() {
                     let (py, _, ph) = r.para(i);
                     let (t0, t1) = (oy + py, oy + py + ph);
                     if t0 < edge && t1 > edge && ph <= lh * 1.5 {
-                        below = below.max(t1);
+                        half.push((t0, t1));
                     }
                 }
                 for p in dl.prims[first_prim..].iter_mut() {
+                    let hidden = match p {
+                        Prim::Glyph { y, .. } => half.iter().any(|(a, b)| *y >= *a && *y <= *b),
+                        _ => false,
+                    };
                     let c = match p {
                         Prim::Rect { clip, .. } | Prim::Glyph { clip, .. } | Prim::Image { clip, .. } => clip,
                     };
-                    *c = c.intersect(Clip::rect(c.x0, below, c.x1, c.y1.max(below)));
+                    *c = if hidden { c.intersect(Clip::rect(c.x0, c.y1, c.x1, c.y1)) } else { c.intersect(Clip::rect(c.x0, edge, c.x1, c.y1.max(edge))) };
                 }
                 let x0 = content[0] - st.pad[3] * s;
                 let x1 = content[0] + content[2] + st.pad[1] * s;
