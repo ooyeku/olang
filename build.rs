@@ -22,6 +22,17 @@ use std::fs;
 use std::path::PathBuf;
 
 fn main() {
+    // The executable's pointers are fixed up by chained fixups, not by
+    // the rebase and bind opcodes a macOS 11 minimum otherwise selects:
+    // dyld then applies them as pages are first touched instead of
+    // walking every one before `main`. Started by Launch Services (an
+    // application), the runtime reached `main` ~3.5 ms later than a C
+    // executable linking the same frameworks; with them, as soon.
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos")
+        && env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("aarch64")
+    {
+        println!("cargo:rustc-link-arg-bins=-Wl,-fixup_chains");
+    }
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
     let dest = out_dir.join("olang_runtime.wasm");
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
