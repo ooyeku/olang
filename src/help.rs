@@ -1917,7 +1917,7 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "gui.platform()",
             "Map",
             "gui",
-            "What this platform's windows can do: #{ os, native_menu, clipboard_image, file_drop, drop_position, window_position, system_settings, ime, accessibility }, each a Bool (os a String).",
+            "What this platform's windows can do: #{ os, native_menu, clipboard_image, file_drop, drop_position, window_position, system_settings, ime, accessibility, window_tabs, open_documents, context_menu }, each a Bool (os a String).",
             &[r##"if map_get(gui.platform(), "window_position") != true => println("a drag stays in its window")"##],
         );
         self.doc_ex(
@@ -2047,6 +2047,14 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "gui",
             "The macOS menu bar from [#{ title, items: [#{ id, label, keys?, enabled?, checked? } or \"separator\"] }]; a chosen item sends a menu event with its id. Elsewhere answers false.",
             &[r##"gui.menu([#{ "title": "File", "items": [#{ "id": "open", "label": "Open…", "keys": "mod+o" }] }])"##],
+        );
+        self.doc_ex(
+            "gui.context_menu",
+            "gui.context_menu(window, items, at)",
+            "Bool",
+            "gui",
+            "A native context menu over the window at #{ x, y } (its content's logical pixels): items [#{ id, label, keys?, enabled?, checked?, submenu? } or \"separator\"]. True when shown: the window then hears a context event with the chosen id (() when dismissed). False on a headless window or where the platform has none (gui.platform().context_menu).",
+            &[r##"gui.context_menu(w, [#{ "id": "rename", "label": "Rename…" }, "separator", #{ "id": "trash", "label": "Move to Trash", "keys": "mod+backspace" }], #{ "x": 40, "y": 80 })"##],
         );
         self.doc_ex(
             "gui.prepare",

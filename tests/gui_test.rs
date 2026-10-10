@@ -1645,14 +1645,14 @@ fn the_platform_says_what_its_windows_can_do() {
         let p = gui.platform()
         [map_get(p, "os"), map_get(p, "native_menu"), map_get(p, "clipboard_image"), map_get(p, "file_drop"),
          map_get(p, "drop_position"), map_get(p, "window_position"), map_get(p, "system_settings"),
-         map_get(p, "ime"), map_get(p, "accessibility")]
+         map_get(p, "ime"), map_get(p, "accessibility"), map_get(p, "context_menu")]
     "#);
     let want = if cfg!(target_os = "macos") {
-        r#"["macos", true, true, true, true, true, true, true, true]"#
+        r#"["macos", true, true, true, true, true, true, true, true, true]"#
     } else if cfg!(target_os = "windows") {
-        r#"["windows", false, false, true, false, true, false, true, true]"#
+        r#"["windows", false, false, true, false, true, false, true, true, false]"#
     } else {
-        r#"["linux", false, false, false, false, false, false, true, true]"#
+        r#"["linux", false, false, false, false, false, false, true, true, false]"#
     };
     assert_eq!(text(&v), want);
     // and what is missing says so when asked for
@@ -1662,6 +1662,30 @@ fn the_platform_says_what_its_windows_can_do() {
         let v = run(r#"gui.menu([])"#);
         assert_eq!(text(&v), "false");
     }
+}
+
+/// `gui.context_menu`: its items read and checked on the program's
+/// thread (an id each, keys that parse, submenus), `false` on a headless
+/// window (the program keeps its own), and `gui.platform()` says whether
+/// a real window shows a native one.
+#[test]
+fn a_context_menu_is_checked_and_headless_windows_leave_it_to_the_program() {
+    let v = run(r#"
+        let w = gui.headless(#{ "size": (200, 100) })
+        let ok = gui.context_menu(w, [#{ "id": "a", "label": "Cut", "keys": "mod+x" }, "separator",
+                                      #{ "id": "c", "label": "Wrap", "checked": true, "enabled": false },
+                                      #{ "label": "More", "submenu": [#{ "id": "b", "label": "Inner" }] }], #{ "x": 10, "y": 20 })
+        let no_id = match attempt(() => gui.context_menu(w, [#{ "label": "A" }], #{})) { Ok(x) => "ok", Err(e) => e }
+        let bad_keys = match attempt(() => gui.context_menu(w, [#{ "id": "a", "label": "A", "keys": "mod+zz+q" }], #{})) { Ok(x) => "ok", Err(e) => e }
+        let bad_sub = match attempt(() => gui.context_menu(w, [#{ "label": "A", "submenu": 3 }], #{})) { Ok(x) => "ok", Err(e) => e }
+        [ok, map_get(gui.platform(), "context_menu"), no_id, bad_keys, bad_sub]
+    "#);
+    let t = text(&v);
+    let native = if cfg!(target_os = "macos") { "true" } else { "false" };
+    assert!(t.starts_with(&format!("[false, {native}, ")), "{t}");
+    assert!(t.contains(r#""A" needs an "id""#), "{t}");
+    assert!(t.contains(r#"keys "mod+zz+q""#), "{t}");
+    assert!(t.contains("a submenu is a list"), "{t}");
 }
 
 /// A code field's further carets, text after a line's end, rulers and

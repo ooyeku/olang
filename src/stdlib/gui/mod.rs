@@ -73,6 +73,7 @@ const FUNCTIONS: &[(&str, usize)] = &[
     ("image_info", 1),
     ("dialog", 2),
     ("menu", 1),
+    ("context_menu", 3),
     ("compare", 3),
     ("context", 0),
     ("platform", 0),
@@ -151,6 +152,7 @@ pub fn call_gui_function(name: &str, args: Vec<Value>) -> DynRes {
         "image_info" => gui_image_info(args),
         "dialog" => gui_dialog(args),
         "menu" => gui_menu(args),
+        "context_menu" => gui_context_menu(args),
         _ => Err(format!("Unknown gui function: {name}")),
     };
     r.map_err(|e| e.into())
@@ -755,6 +757,15 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
             )]);
             return Ok(Value::Unit);
         }
+        // A script's choice in the window's next context menu: the native
+        // menu shows, then closes as though the item `label` was chosen
+        // (nothing else can drive it).
+        Some("context_pick") => {
+            let label = get_str(&args[1], "label", what)?
+                .ok_or("gui.input: \"context_pick\" needs the item's \"label\"")?;
+            platform::context_pick(id, label.to_string());
+            return Ok(Value::Unit);
+        }
         Some("menu") => {
             let item = get_str(&args[1], "id", what)?
                 .ok_or("gui.input: \"menu\" needs the item's \"id\"")?;
@@ -1130,6 +1141,26 @@ fn gui_dialog(args: Vec<Value>) -> Res<Value> {
 fn gui_menu(args: Vec<Value>) -> Res<Value> {
     arity("gui.menu", &args, 1, 1)?;
     platform::menu(&args[0])
+}
+
+/// `gui.context_menu(window, items, #{ x, y })`: a native context menu
+/// over the window at `(x, y)` (its content's logical pixels), each item
+/// `#{ id, label, keys?, enabled?, checked?, submenu? }` or
+/// `"separator"`. `true` when shown: the window then hears `context`
+/// with the chosen item's `id` (`()` when dismissed) and the `items` as
+/// the native menu held them. `false` on a headless window or a platform
+/// without one (`gui.platform().context_menu`): the program draws its own.
+fn gui_context_menu(args: Vec<Value>) -> Res<Value> {
+    arity("gui.context_menu", &args, 3, 3)?;
+    let id = window_id("gui.context_menu", args.first())?;
+    let w = window("gui.context_menu", id)?;
+    let items = platform::context_items(&args[1], 0)?;
+    let x = get_num(&args[2], "x", "gui.context_menu")?.unwrap_or(0.0) as f64;
+    let y = get_num(&args[2], "y", "gui.context_menu")?.unwrap_or(0.0) as f64;
+    if w.lock().map_err(|_| "gui: window poisoned")?.headless {
+        return Ok(Value::Boolean(false));
+    }
+    Ok(platform::context_menu(id, items, x, y)?)
 }
 
 /// `gui.compare(a, b, opts)`: two PNGs (Bytes) compared pixel by pixel,

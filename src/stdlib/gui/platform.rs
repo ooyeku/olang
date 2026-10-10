@@ -51,6 +51,9 @@ pub enum Cmd {
     Exit(i32),
     A11y(accesskit_winit::Event),
     MenuEvent(String),
+    /// A context menu over window `id` at `(x, y)` (its content's
+    /// logical pixels), read and checked on the program's thread.
+    ContextMenu { id: u64, items: Vec<ContextItem>, x: f64, y: f64 },
     /// The system's settings may have changed (an AppKit notice, or a
     /// test posting one): read them again; `why` goes on the event.
     Settings(&'static str),
@@ -245,6 +248,7 @@ pub fn capabilities() -> Value {
         ("accessibility", b(true)),
         ("window_tabs", b(mac)),
         ("open_documents", b(mac)),
+        ("context_menu", b(mac)),
     ])
 }
 
@@ -301,6 +305,9 @@ fn run_loop(reply: crossbeam_channel::Sender<Result<(), String>>) -> Option<i32>
         nudged: None,
         #[cfg(target_os = "macos")]
         menu: None,
+        #[cfg(target_os = "macos")]
+        context: None,
+        ctrl_click: false,
     };
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("gui: the event loop ended: {e}");
@@ -507,6 +514,13 @@ struct App {
     nudged: Option<std::time::Instant>,
     #[cfg(target_os = "macos")]
     menu: Option<(muda::Menu, HashMap<muda::MenuId, String>)>,
+    /// The last context menu shown: its window, its items' ids (muda's
+    /// to the program's) and its titles as the native menu held them.
+    #[cfg(target_os = "macos")]
+    context: Option<(u64, HashMap<String, String>, Value)>,
+    /// A left press made a right one (⌃-click on macOS): its release is
+    /// the right button's too.
+    ctrl_click: bool,
 }
 
 /// The platform clipboard, as the window's editing sees it.
@@ -1186,6 +1200,7 @@ impl ApplicationHandler<Cmd> for App {
                 Cmd::Exit(c) => format!("exit {c}"),
                 Cmd::A11y(_) => "a11y".to_string(),
                 Cmd::MenuEvent(id) => format!("menu event {id}"),
+                Cmd::ContextMenu { id, .. } => format!("context menu {id}"),
                 Cmd::Settings(why) => format!("settings ({why})"),
             };
             eprintln!("gui: {what}");
@@ -1299,7 +1314,28 @@ impl ApplicationHandler<Cmd> for App {
                     eprintln!("{e}");
                 }
             }
-            Cmd::MenuEvent(id) => emit(vec![event("menu", vec![("id", s(&id))])]),
+            Cmd::MenuEvent(id) => {
+                // an item of a context menu: its window hears `context`
+                #[cfg(target_os = "macos")]
+                if id.starts_with(CTX_PREFIX) {
+                    if let Some((win, ids, titles)) = self.context.as_ref()
+                        && let Some(item) = ids.get(&id)
+                    {
+                        emit(vec![event(
+                            "context",
+                            vec![
+                                ("window", Value::Integer(*win as i64)),
+                                ("id", s(item)),
+                                ("items", titles.clone()),
+                                ("picked", Value::Boolean(false)),
+                            ],
+                        )]);
+                    }
+                    return;
+                }
+                emit(vec![event("menu", vec![("id", s(&id))])])
+            }
+            Cmd::ContextMenu { id, items, x, y } => self.show_context(id, items, x, y),
             Cmd::Settings(why) => self.settings_changed(why, None),
             Cmd::Exit(code) => {
                 self.exit = Some(code);
@@ -1450,7 +1486,17 @@ impl ApplicationHandler<Cmd> for App {
                     .get(&id)
                     .and_then(|pw| pw.state.lock().ok().map(|s| s.pointer))
                     .unwrap_or((0.0, 0.0));
+                // ⌃-click is the Mac's right click (the context menu)
+                let ctrl_left = cfg!(target_os = "macos")
+                    && button == MouseButton::Left
+                    && if state == ElementState::Pressed {
+                        self.ctrl_click = mods.ctrl && !mods.super_ && !mods.alt;
+                        self.ctrl_click
+                    } else {
+                        std::mem::take(&mut self.ctrl_click)
+                    };
                 let button = match button {
+                    MouseButton::Left if ctrl_left => "right",
                     MouseButton::Left => "left",
                     MouseButton::Right => "right",
                     MouseButton::Middle => "middle",
@@ -1858,13 +1904,277 @@ impl App {
             bar.append(&sub).map_err(|e| format!("{what}: {e}"))?;
         }
         bar.init_for_nsapp();
+        self.menu_handler();
+        self.menu = Some((bar, ids));
+        Ok(())
+    }
+
+    /// Every menu's chosen item comes back through the loop (the menu
+    /// bar's as `menu`, a context menu's as `context`).
+    #[cfg(target_os = "macos")]
+    fn menu_handler(&self) {
         let proxy = self.proxy.clone();
         muda::MenuEvent::set_event_handler(Some(move |e: muda::MenuEvent| {
             let _ = proxy.send_event(Cmd::MenuEvent(e.id.0.clone()));
         }));
-        self.menu = Some((bar, ids));
-        Ok(())
     }
+
+    #[cfg(not(target_os = "macos"))]
+    fn show_context(&mut self, id: u64, _items: Vec<ContextItem>, _x: f64, _y: f64) {
+        emit(vec![event(
+            "context",
+            vec![("window", Value::Integer(id as i64)), ("id", Value::Unit), ("items", Value::List(Arc::new(vec![]))), ("picked", Value::Boolean(false))],
+        )]);
+    }
+
+    /// A native context menu (NSMenu, `popUpMenuPositioningItem:
+    /// atLocation:inView:`) over window `id` at `(x, y)`. It tracks the
+    /// pointer until an item is chosen or it is dismissed: chosen, the
+    /// window hears `context` with the item's `id` (through the menu's
+    /// handler, after this returns); dismissed, `context` with `id` `()`.
+    /// A pick a script armed (`gui.input`'s `context_pick`) shows the
+    /// menu, then closes it after a moment as though that item was chosen.
+    #[cfg(target_os = "macos")]
+    fn show_context(&mut self, id: u64, items: Vec<ContextItem>, x: f64, y: f64) {
+        use muda::ContextMenu;
+        let dismissed = |titles: Value, picked: Option<String>| {
+            let got = picked.is_some();
+            emit(vec![event(
+                "context",
+                vec![
+                    ("window", Value::Integer(id as i64)),
+                    ("id", picked.map(|p| s(&p)).unwrap_or(Value::Unit)),
+                    ("items", titles),
+                    ("picked", Value::Boolean(got)),
+                ],
+            )]);
+        };
+        let Some(pw) = self.windows.get(&id) else {
+            return dismissed(Value::List(Arc::new(vec![])), None);
+        };
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let view = match pw.win.window_handle().ok().map(|h| h.as_raw()) {
+            Some(RawWindowHandle::AppKit(h)) => h.ns_view.as_ptr() as *const std::ffi::c_void,
+            _ => return dismissed(Value::List(Arc::new(vec![])), None),
+        };
+        let menu = muda::Menu::new();
+        let mut ids = HashMap::new();
+        let mut by_label = HashMap::new();
+        let mut n = 0usize;
+        if let Err(e) = context_fill(&menu, &items, &mut ids, &mut by_label, &mut n) {
+            eprintln!("gui.context_menu: {e}");
+            return dismissed(Value::List(Arc::new(vec![])), None);
+        }
+        self.menu_handler();
+        let ns_menu = menu.ns_menu() as *mut objc2::runtime::AnyObject;
+        // the titles as the native menu holds them (a live check reads
+        // what was shown, not what was asked)
+        let titles: Vec<Value> = unsafe {
+            let count: isize = objc2::msg_send![&*ns_menu, numberOfItems];
+            (0..count)
+                .filter_map(|i| {
+                    let it: *mut objc2::runtime::AnyObject = objc2::msg_send![&*ns_menu, itemAtIndex: i];
+                    if it.is_null() {
+                        return None;
+                    }
+                    let sep: bool = objc2::msg_send![&*it, isSeparatorItem];
+                    if sep {
+                        return Some(s("-"));
+                    }
+                    let t: *mut objc2::runtime::AnyObject = objc2::msg_send![&*it, title];
+                    ns_text(t).map(|t| s(&t))
+                })
+                .collect()
+        };
+        let titles = Value::List(Arc::new(titles));
+        let pick = context_picks().lock().ok().and_then(|mut p| p.remove(&id));
+        if pick.is_some() {
+            // closed by the run loop's tracking mode after a moment: the
+            // menu was up, as a person would see it
+            unsafe {
+                let modes = objc2_foundation::NSArray::from_retained_slice(&[
+                    objc2_foundation::NSString::from_str("NSEventTrackingRunLoopMode"),
+                    objc2_foundation::NSString::from_str("kCFRunLoopDefaultMode"),
+                ]);
+                let none: *const objc2::runtime::AnyObject = std::ptr::null();
+                let _: () = objc2::msg_send![&*ns_menu, performSelector: objc2::sel!(cancelTracking), withObject: none, afterDelay: 0.6f64, inModes: &*modes];
+            }
+        }
+        self.context = Some((id, ids, titles.clone()));
+        let shown_at = std::time::Instant::now();
+        let chosen = unsafe {
+            menu.show_context_menu_for_nsview(view, Some(winit::dpi::LogicalPosition::new(x, y).into()))
+        };
+        if let Some(label) = pick {
+            let open_ms = shown_at.elapsed().as_millis();
+            let item = by_label.get(&label).cloned();
+            if std::env::var_os("GUI_TRACE").is_some() {
+                eprintln!("gui: context menu open {open_ms} ms, picked {label:?}");
+            }
+            return dismissed(titles, item);
+        }
+        if !chosen {
+            dismissed(titles, None);
+        }
+    }
+}
+
+/// The prefix of a context menu item's id in muda (the menu bar's are the
+/// program's own ids).
+#[cfg(target_os = "macos")]
+const CTX_PREFIX: &str = "\u{1}ctx:";
+
+/// A context menu's items made into `menu` (a submenu's into its own).
+#[cfg(target_os = "macos")]
+fn context_fill(
+    menu: &dyn ContextAppend,
+    items: &[ContextItem],
+    ids: &mut HashMap<String, String>,
+    by_label: &mut HashMap<String, String>,
+    n: &mut usize,
+) -> Result<(), String> {
+    use muda::accelerator::Accelerator;
+    use muda::{CheckMenuItem, MenuItem, PredefinedMenuItem, Submenu};
+    for it in items {
+        match it {
+            ContextItem::Separator => menu.add(&PredefinedMenuItem::separator())?,
+            ContextItem::Item { id, label, enabled, keys, checked, submenu } => {
+                if let Some(subs) = submenu {
+                    let sub = Submenu::new(label, *enabled);
+                    context_fill(&sub, subs, ids, by_label, n)?;
+                    menu.add(&sub)?;
+                    continue;
+                }
+                *n += 1;
+                let mid = format!("{CTX_PREFIX}{n}");
+                let accel: Option<Accelerator> = keys.as_ref().and_then(|k| k.parse().ok());
+                match checked {
+                    Some(c) => menu.add(&CheckMenuItem::with_id(mid.clone(), label, *enabled, *c, accel))?,
+                    None => menu.add(&MenuItem::with_id(mid.clone(), label, *enabled, accel))?,
+                }
+                ids.insert(mid, id.clone());
+                if *enabled {
+                    by_label.entry(label.clone()).or_insert_with(|| id.clone());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A menu or a submenu, as a context menu's items are added to it.
+#[cfg(target_os = "macos")]
+trait ContextAppend {
+    fn add(&self, item: &dyn muda::IsMenuItem) -> Result<(), String>;
+}
+
+#[cfg(target_os = "macos")]
+impl ContextAppend for muda::Menu {
+    fn add(&self, item: &dyn muda::IsMenuItem) -> Result<(), String> {
+        self.append(item).map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl ContextAppend for muda::Submenu {
+    fn add(&self, item: &dyn muda::IsMenuItem) -> Result<(), String> {
+        self.append(item).map_err(|e| e.to_string())
+    }
+}
+
+/// The picks scripts armed, by window: the next context menu of that
+/// window is closed as though the item with that label was chosen.
+fn context_picks() -> &'static Mutex<HashMap<u64, String>> {
+    static PICKS: OnceLock<Mutex<HashMap<u64, String>>> = OnceLock::new();
+    PICKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Arm window `id`'s next context menu to be closed with `label` chosen
+/// (a live check's script: the native menu cannot be driven otherwise).
+pub fn context_pick(id: u64, label: String) {
+    if let Ok(mut p) = context_picks().lock() {
+        p.insert(id, label);
+    }
+}
+
+/// A context menu's item as `gui.context_menu` reads it.
+pub enum ContextItem {
+    Separator,
+    Item {
+        id: String,
+        label: String,
+        enabled: bool,
+        keys: Option<String>,
+        checked: Option<bool>,
+        submenu: Option<Vec<ContextItem>>,
+    },
+}
+
+/// A context menu's items read and checked (on the program's thread):
+/// each `#{ id, label, keys?, enabled?, checked?, submenu? }` or
+/// `"separator"`; a submenu's own items the same.
+pub fn context_items(v: &Value, depth: usize) -> Result<Vec<ContextItem>, String> {
+    let what = "gui.context_menu";
+    let items = match v {
+        Value::List(l) => l.clone(),
+        _ => return Err(format!("{what}: the items are a list")),
+    };
+    if depth > 4 {
+        return Err(format!("{what}: submenus nest at most four deep"));
+    }
+    let mut out = Vec::with_capacity(items.len());
+    for it in items.iter() {
+        if matches!(it, Value::String(t) if t.as_str() == "separator") {
+            out.push(ContextItem::Separator);
+            continue;
+        }
+        let label = get_str(it, "label", what)?
+            .ok_or_else(|| format!("{what}: an item needs a \"label\""))?
+            .to_string();
+        let submenu = match get(it, "submenu") {
+            Some(Value::List(_)) => Some(context_items(get(it, "submenu").expect("present"), depth + 1)?),
+            Some(Value::Unit) | None => None,
+            Some(_) => return Err(format!("{what}: \"{label}\": a submenu is a list of items")),
+        };
+        let id = match get_str(it, "id", what)? {
+            Some(i) => i.to_string(),
+            None if submenu.is_some() => String::new(),
+            None => return Err(format!("{what}: \"{label}\" needs an \"id\"")),
+        };
+        let keys = match get_str(it, "keys", what)? {
+            Some(k) => {
+                let spelled = accel_spelling(k);
+                #[cfg(target_os = "macos")]
+                spelled
+                    .parse::<muda::accelerator::Accelerator>()
+                    .map_err(|e| format!("{what}: keys \"{k}\": {e}"))?;
+                Some(spelled)
+            }
+            None => None,
+        };
+        out.push(ContextItem::Item {
+            id,
+            label,
+            enabled: get_bool(it, "enabled", what)?.unwrap_or(true),
+            keys,
+            checked: get_bool(it, "checked", what)?,
+            submenu,
+        });
+    }
+    Ok(out)
+}
+
+/// Show a native context menu over window `id` (macOS): `true` when it
+/// is shown (the choice arrives as a `context` event), `false` where the
+/// platform has none (the program draws its own).
+pub fn context_menu(id: u64, items: Vec<ContextItem>, x: f64, y: f64) -> Result<Value, String> {
+    if !cfg!(target_os = "macos") {
+        return Ok(Value::Boolean(false));
+    }
+    let p = proxy().map_err(|e| format!("gui.context_menu: {e}"))?;
+    p.send_event(Cmd::ContextMenu { id, items, x, y })
+        .map_err(|_| "gui.context_menu: the event loop has ended".to_string())?;
+    Ok(Value::Boolean(true))
 }
 
 /// Loom's chord spelling as muda's: `mod+shift+p` → `CmdOrCtrl+Shift+P`.

@@ -1328,13 +1328,23 @@ fn with_own(op: &mut crate::ast::ValueMap, gkey: &str, node: &Value) {
     {
         op.insert("description".into(), Value::String(d.clone()));
     }
-    if let Value::List(acts) = mget(p, "actions")
+    // its assistive actions: `actions`, or else a context menu given as a
+    // list (its items with a label, outside submenus, enabled or not, in
+    // order: the program maps an action's index back the same way)
+    let acts = match mget(p, "actions") {
+        Value::List(a) => Some(a),
+        _ => match mget(p, "context") {
+            Value::List(c) => Some(c),
+            _ => None,
+        },
+    };
+    if let Some(acts) = acts
         && !op.contains_key("actions")
     {
         let labels: Vec<Value> = acts
             .iter()
             .filter_map(|a| match a {
-                Value::Map(m) => match m.get("label") {
+                Value::Map(m) if !m.contains_key("submenu") => match m.get("label") {
                     Some(Value::String(l)) => Some(Value::String(l.clone())),
                     _ => None,
                 },
