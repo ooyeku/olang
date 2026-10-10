@@ -4,7 +4,9 @@
 //! the assertion's place, an error's frames, a pixel snapshot that
 //! differs, a block `--only` left out, a file's end, the finish — with
 //! several paths in one run, with `--verify-tiers` (a divergence named),
-//! and the human output unchanged without the flag.
+//! with `--record-args` (the last call each test made to a function, its
+//! arguments as olang source), and the human output unchanged without the
+//! flag.
 
 use serde_json::{Value as J, json};
 use std::path::{Path, PathBuf};
@@ -240,4 +242,58 @@ fn paths_are_said_as_they_were_given() {
     assert_eq!(of(&evs, "failed", "t")["file"], json!(given));
     assert_eq!(of(&evs, "failed", "t")["at"]["file"], json!(given));
     let _ = std::fs::remove_file(&link);
+}
+
+#[test]
+fn record_args_says_the_last_call_a_test_made_to_each_function() {
+    let m = "share fn scale(x, by) = x * by\n\nshare fn apply(f, x) = f(x)\n\nshare fn label(m) = map_get(m, \"name\")\n";
+    let t = r#"use lib.m { scale, apply, label }
+
+fn helper(n) = scale(n, 10)
+
+test "first" {
+    assert_eq(scale(2, 3), 6)
+}
+
+test "second" {
+    assert_eq(scale(1.5, 2.0), 3.0)
+    assert_eq(helper(4), 40)
+}
+
+test "lambda" {
+    assert_eq(apply((v) => v + 1, 2), 3)
+}
+
+test "record" {
+    assert_eq(label(#{ "name": "a \"q\"", "tags": [1, 2] }), "a \"q\"")
+}
+"#;
+    let dir = project("args", &[("lib/m.ol", m), ("tests/m_test.ol", t)]);
+    let (code, out, err) = olang(&dir, &["test", "--format", "json", "--record-args", "tests/m_test.ol"], &[]);
+    assert_eq!(code, 0, "{out}{err}");
+    let (evs, _) = events(&out);
+    let args: Vec<&J> = evs.iter().filter(|e| e["event"] == json!("args")).collect();
+    let of_fn = |name: &str| *args.iter().find(|e| e["fn"] == json!(name)).unwrap_or_else(|| panic!("no args for {name}: {args:?}"));
+    let lib = dir.join("lib/m.ol").display().to_string();
+    // the last call: helper's own call to scale, inside "second"
+    let scale = of_fn("scale");
+    assert_eq!(scale["file"], json!(lib));
+    assert_eq!(scale["params"], json!(["x", "by"]));
+    assert_eq!(scale["test"], json!("second"));
+    assert!(scale["args"] == json!(["4", "10"]) || scale["args"] == json!(["1.5", "2.0"]), "{scale}");
+    // a function in the test file is the project's too
+    let helper = of_fn("helper");
+    assert_eq!(helper["args"], json!(["4"]));
+    assert_eq!(helper["file"], json!(dir.join("tests/m_test.ol").display().to_string()));
+    // a function value has no literal: null, the rest still said
+    assert_eq!(of_fn("apply")["args"], json!([null, "2"]));
+    // a map's literal, its strings escaped, its keys in order
+    assert_eq!(of_fn("label")["args"], json!(["#{ \"name\": \"a \\\"q\\\"\", \"tags\": [1, 2] }"]));
+    assert_eq!(of_fn("label")["test"], json!("record"));
+    // the events come before the file's end; none without the flag
+    let at_args = evs.iter().position(|e| e["event"] == json!("args")).unwrap();
+    let at_file = evs.iter().position(|e| e["event"] == json!("file")).unwrap();
+    assert!(at_args < at_file);
+    let (_, plain, _) = olang(&dir, &["test", "--format", "json", "tests/m_test.ol"], &[]);
+    assert!(!plain.contains("\"event\":\"args\""), "{plain}");
 }

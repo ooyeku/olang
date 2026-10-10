@@ -3,7 +3,9 @@
 //! scope (its declarations, a parameter that is not bound, errors with
 //! frames), what a program prints, interrupting a tight loop on every
 //! tier without losing the session, a module reloaded (and a reload that
-//! fails keeping the old one), and a Loom view rendered headless.
+//! fails keeping the old one), a Loom view rendered headless, a
+//! function's parameters bound for one evaluation (`bind`), and an
+//! evaluation under no capability (`pure`) refused when it reaches out.
 
 use serde_json::{Value as J, json};
 use std::io::{BufRead, BufReader, Write};
@@ -244,6 +246,65 @@ fn a_file_scope_has_its_declarations_and_names_what_is_not_bound() {
     let bad = r.eval_at(&f, 12, "fn g(x) = x +");
     assert_eq!(bad["error"]["kind"], json!("parse"));
     assert_eq!(bad["error"]["line"], json!(12));
+}
+
+#[test]
+fn a_functions_parameters_are_named_then_bound_for_one_evaluation() {
+    let dir = project();
+    let (mut r, hello) = Repl::start(dir.path());
+    assert_eq!(hello["features"], json!(["bind", "pure"]));
+    let f = calc(dir.path());
+    // refused: the function and its parameters said
+    let p = r.eval_at(&f, 7, "let y = x * RATE");
+    assert_eq!(p["error"]["kind"], json!("unbound"));
+    assert_eq!(p["error"]["fn"], json!("scaled"));
+    assert_eq!(p["error"]["params"], json!(["x"]));
+    assert_eq!(p["error"]["fn_line"], json!(6));
+    // bound: each value an expression evaluated in the file's scope
+    let b = r.ask(json!({ "op": "eval", "code": "let y = x * RATE", "file": f, "line": 7, "bind": { "x": "RATE + 1" } }));
+    assert_eq!(b["ok"], json!(true), "{b}");
+    assert_eq!(b["binding"], json!("y"));
+    assert_eq!(b["value"]["s"], json!("12"));
+    let l = r.ask(json!({ "op": "eval", "code": "twice(x) + len(xs)", "file": f, "line": 8, "bind": { "x": "3", "xs": "[1, 2, #{ \"a\": \"b\" }]" } }));
+    assert_eq!(l["value"]["s"], json!("9"), "{l}");
+    // taken back afterwards: `x` is not bound for the next evaluation
+    let after = r.eval_at(&f, 30, "x");
+    assert_eq!(after["ok"], json!(false));
+    // a binding the scope had is put back
+    let _ = r.eval_at(&f, 30, "let k = 1");
+    let k = r.ask(json!({ "op": "eval", "code": "k * 10", "file": f, "line": 30, "bind": { "k": "5" } }));
+    assert_eq!(k["value"]["s"], json!("50"));
+    assert_eq!(r.eval_at(&f, 30, "k")["value"]["s"], json!("1"));
+    // a value that fails says which
+    let bad = r.ask(json!({ "op": "eval", "code": "x", "file": f, "line": 7, "bind": { "x": "1 / 0" } }));
+    assert_eq!(bad["ok"], json!(false));
+    assert!(bad["error"]["message"].as_str().unwrap().contains("the value given for `x` fails"), "{bad}");
+}
+
+#[test]
+fn a_pure_evaluation_runs_under_no_capability_and_says_which_it_wanted() {
+    let dir = project();
+    let (mut r, _) = Repl::start(dir.path());
+    let f = calc(dir.path());
+    let ok = r.ask(json!({ "op": "eval", "code": "scaled(5)", "file": f, "line": 30, "pure": true }));
+    assert_eq!(ok["value"]["s"], json!("30"), "{ok}");
+    let read = r.ask(json!({ "op": "eval", "code": "fs.read_file(\"calc.ol\")", "file": f, "line": 30, "pure": true }));
+    assert_eq!(read["ok"], json!(false));
+    assert_eq!(read["error"]["kind"], json!("impure"), "{read}");
+    assert_eq!(read["error"]["cap"], json!("fs"));
+    let env = r.ask(json!({ "op": "eval", "code": "os.get_env(\"HOME\")", "pure": true }));
+    assert_eq!(env["error"]["cap"], json!("env"), "{env}");
+    // the session's own grant is back: the same read runs
+    let again = r.eval_at(&f, 30, "fs.exists(\"calc.ol\")");
+    assert_eq!(again["value"]["s"], json!("true"), "{again}");
+    // a function that reaches out deep inside, on a compiled tier too
+    let _ = r.eval_at(&f, 30, "fn peek(n) = if n == 0 => fs.exists(\"calc.ol\") else => peek(n - 1)");
+    let _warm = r.eval_at(&f, 30, "peek(3)");
+    let deep = r.ask(json!({ "op": "eval", "code": "peek(3)", "file": f, "line": 30, "pure": true }));
+    assert_eq!(deep["error"]["kind"], json!("impure"), "{deep}");
+    // a plain error stays an error
+    let e = r.ask(json!({ "op": "eval", "code": "boom(1)", "file": f, "line": 30, "pure": true }));
+    assert_eq!(e["error"]["kind"], json!("runtime"));
 }
 
 #[test]

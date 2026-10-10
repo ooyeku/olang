@@ -66,6 +66,19 @@ impl Default for Caps {
 }
 
 impl Caps {
+    /// Nothing allowed: no filesystem, network, process, database or
+    /// environment. What a pure computation needs (`repl --serve`'s
+    /// `pure`: a lens re-run on save only when it touches none of these).
+    pub fn none() -> Caps {
+        Caps {
+            fs: FsCap::None,
+            net: false,
+            proc: false,
+            db: false,
+            env: false,
+        }
+    }
+
     /// The intersection of two capability sets: the result allows only
     /// what both allow. Attenuation composes through this, so a grant can
     /// only ever shrink.

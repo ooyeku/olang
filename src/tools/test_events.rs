@@ -17,6 +17,11 @@
 //! - `divergence` `--verify-tiers` found native code and the VM disagreeing
 //!               (the function and both values); the run ends after it
 //! - `file`      a file is done: its counts, and the error that stopped it
+//! - `args`      with `--record-args`, once a file is done: the last call
+//!               a test block made to each of the project's top-level
+//!               functions (file, fn, params, the block, and each
+//!               argument as olang source — `null` for one with no
+//!               literal: a function, a handle, a record)
 //! - `finished`  the totals, the milliseconds, and the exit status
 //!
 //! What the program under test prints still goes to stdout, between the
@@ -369,6 +374,97 @@ fn clip(s: String) -> (String, bool) {
     }
     let cut = (0..=CLIP).rev().find(|i| s.is_char_boundary(*i)).unwrap_or(0);
     (s[..cut].to_string(), true)
+}
+
+/// The last call a test made to a function (`--record-args`).
+pub fn args(call: &crate::interpreter::TestCallArgs) {
+    let args: Vec<J> = call.args.iter().map(|a| literal(a).map(J::String).unwrap_or(J::Null)).collect();
+    emit(json!({ "event": "args", "file": call.file, "fn": call.name, "params": call.params, "args": args, "test": call.test }));
+}
+
+/// The longest literal `args` says; a longer value is left for a person
+/// to give (`null`).
+const LITERAL_MAX: usize = 4000;
+
+/// A value as olang source that makes it again — scalars, strings, lists,
+/// tuples and maps of them — or None (a function, a handle, a record, a
+/// Result, a float that is not finite, a value too long to read).
+pub fn literal(v: &Value) -> Option<String> {
+    let mut out = String::new();
+    if write_literal(v, &mut out, 0) && out.len() <= LITERAL_MAX { Some(out) } else { None }
+}
+
+fn write_literal(v: &Value, out: &mut String, depth: usize) -> bool {
+    if depth > 16 || out.len() > LITERAL_MAX {
+        return false;
+    }
+    match v {
+        Value::Integer(n) => out.push_str(&n.to_string()),
+        Value::Float(x) if x.is_finite() => {
+            let t = format!("{:?}", x);
+            out.push_str(&t);
+            if !t.contains('.') && !t.contains('e') && !t.contains("inf") {
+                out.push_str(".0");
+            }
+        }
+        Value::Boolean(b) => out.push_str(if *b { "true" } else { "false" }),
+        Value::Unit => out.push_str("()"),
+        Value::String(s) => {
+            out.push('"');
+            for c in s.chars() {
+                match c {
+                    '"' => out.push_str("\\\""),
+                    '\\' => out.push_str("\\\\"),
+                    '\n' => out.push_str("\\n"),
+                    '\t' => out.push_str("\\t"),
+                    '\r' => out.push_str("\\r"),
+                    c => out.push(c),
+                }
+            }
+            out.push('"');
+        }
+        Value::List(items) | Value::Tuple(items) => {
+            let tuple = matches!(v, Value::Tuple(_));
+            // a tuple of one or none has no literal of its own
+            if tuple && items.len() < 2 {
+                return false;
+            }
+            out.push(if tuple { '(' } else { '[' });
+            for (i, it) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                if !write_literal(it, out, depth + 1) {
+                    return false;
+                }
+            }
+            out.push(if tuple { ')' } else { ']' });
+        }
+        Value::Map(m) => {
+            if m.is_empty() {
+                out.push_str("#{}");
+                return true;
+            }
+            let mut keys: Vec<&String> = m.keys().collect();
+            keys.sort();
+            out.push_str("#{ ");
+            for (i, k) in keys.into_iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                if !write_literal(&Value::String(std::sync::Arc::new(k.clone())), out, depth + 1) {
+                    return false;
+                }
+                out.push_str(": ");
+                if !write_literal(&m[k], out, depth + 1) {
+                    return false;
+                }
+            }
+            out.push_str(" }");
+        }
+        _ => return false,
+    }
+    true
 }
 
 /// A value for a reader: its type, its `show` form, a form one entry a

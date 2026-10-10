@@ -26,6 +26,10 @@ pub struct Options {
     /// `--format json`: the run as line-delimited JSON events
     /// (`super::test_events`) instead of the human report.
     pub json: bool,
+    /// `--record-args` (with `--format json`): after each file, the last
+    /// call its test blocks made to each of the project's functions, its
+    /// arguments as olang source (an `args` event each).
+    pub record_args: bool,
 }
 
 /// The project a file belongs to — its package root, canonical; None
@@ -222,6 +226,9 @@ pub fn run_paths(paths: &[std::path::PathBuf], coverage: bool, show_missing: boo
         }
         let absolute = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
         interpreter.set_current_file(&absolute);
+        if json && options.record_args {
+            interpreter.enable_arg_recording();
+        }
 
         // Resolve the file's package dependencies, as `olang <file>` would.
         let package_root = crate::pkg::manifest::Manifest::find_root(&absolute);
@@ -256,6 +263,11 @@ pub fn run_paths(paths: &[std::path::PathBuf], coverage: bool, show_missing: boo
             let _ = std::env::set_current_dir(cwd);
         }
         let results = interpreter.take_test_results();
+        if json && options.record_args {
+            for call in interpreter.take_test_calls() {
+                super::test_events::args(&call);
+            }
+        }
 
         // Fold this file's recorded lines into the run-wide tally. Keyed by
         // the file that owns each line, so a helper defined in one file and

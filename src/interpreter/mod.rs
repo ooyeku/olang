@@ -307,6 +307,15 @@ pub struct Interpreter {
     coverage: Option<HashMap<String, std::collections::BTreeSet<u32>>>,
     coverage_file_stack: Vec<Option<String>>,
 
+    /// The arguments of the calls test blocks made (`olang test
+    /// --record-args`): the last call of each function, keyed by the
+    /// function value, with the order it came in and the block that made
+    /// it. None (one branch a call) unless a run asks for it.
+    arg_record: Option<HashMap<usize, RecordedCall>>,
+    /// The test block running, while `arg_record` is on.
+    current_test: Option<Arc<str>>,
+    arg_seq: u64,
+
     /// Meta mode: this interpreter is running `meta fn` bodies at macro
     /// expansion time (src/expand.rs). The effectful and nondeterministic
     /// modules refuse, so expansion is a pure function of the source.
@@ -442,6 +451,9 @@ impl Interpreter {
             test_scope: None,
             coverage: None,
             coverage_file_stack: Vec::new(),
+            arg_record: None,
+            current_test: None,
+            arg_seq: 0,
             caps: None,
             meta_mode: false,
             caps_trace: None,
@@ -3207,6 +3219,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             let slots = arguments.into_iter().map(ArgSlot::Given).collect();
             arguments = self.fill_default_arguments(func, slots)?;
         }
+        if self.arg_record.is_some() {
+            self.record_test_call(func, &arguments);
+        }
         if self.call_depth >= self.max_call_depth {
             return Err(InterpreterError::RuntimeError {
                 message: format!(
@@ -3863,6 +3878,10 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             // Coverage is single-threaded: worker clones don't record.
             coverage: None,
             coverage_file_stack: Vec::new(),
+            // so is the record of a test's calls
+            arg_record: None,
+            current_test: None,
+            arg_seq: 0,
             // Capabilities follow the code onto every thread — the gate
             // (above, seeded into the worker tier) and the grant table both.
             caps: self.caps.clone(),
@@ -4594,6 +4613,12 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// Define a variable in the current environment (for REPL use)
     pub fn define_variable(&mut self, name: String, value: Value) {
         self.environment.define(name, value);
+    }
+
+    /// Remove a variable from the current environment (for REPL use: a
+    /// binding made for one evaluation taken back).
+    pub fn remove_variable(&mut self, name: &str) {
+        self.environment.remove_variable(name);
     }
 
     /// Perform safepoint poll for GC coordination
@@ -5512,6 +5537,11 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // module-level name for every later block in the file (a test's
         // `let fs = …` once shadowed the `fs` module 400 lines down).
         self.environment = Environment::with_parent(self.environment.clone());
+        let outer_test = if self.arg_record.is_some() {
+            self.current_test.replace(Arc::from(test_decl.name.as_str()))
+        } else {
+            None
+        };
         let events = crate::tools::test_events::enabled();
         let event_at = if events {
             let file = self.test_event_file();
@@ -5536,6 +5566,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 }
                 break;
             }
+        }
+        if self.arg_record.is_some() {
+            self.current_test = outer_test;
         }
         if let Some(parent) = self.environment.parent.take() {
             self.environment = Arc::try_unwrap(parent).unwrap_or_else(|arc| (*arc).clone());
@@ -5792,6 +5825,21 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     ),
                 })?;
         self.call_function_optimized(&function, args)
+    }
+
+    /// Put `caps` in force (None: everything allowed), answering what
+    /// was: the REPL evaluates a lens under no capability at all to tell
+    /// whether it is pure (`repl --serve`'s `pure`), then puts back what
+    /// the session had.
+    pub fn replace_capabilities(
+        &mut self,
+        caps: Option<std::sync::Arc<crate::caps::CapTable>>,
+    ) -> Option<std::sync::Arc<crate::caps::CapTable>> {
+        let was = std::mem::replace(&mut self.caps, caps);
+        if let Some(tier) = self.bytecode_tier.as_mut() {
+            tier.set_capabilities(self.caps.clone());
+        }
+        was
     }
 
     pub fn set_capabilities(&mut self, table: crate::caps::CapTable) {
@@ -6148,6 +6196,63 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         std::mem::take(&mut self.test_results)
     }
 
+    /// Record the arguments of the calls test blocks make (`olang test
+    /// --record-args`): the last call of each function. Every call that
+    /// enters through the interpreter is seen — a block's own calls, and
+    /// the calls of code the tiers did not compile.
+    pub fn enable_arg_recording(&mut self) {
+        self.arg_record = Some(HashMap::new());
+    }
+
+    /// The last call a test made to each of the project's top-level
+    /// functions (in the run's scope: not a dependency's, not the
+    /// runtime's), oldest first, clearing the record.
+    pub fn take_test_calls(&mut self) -> Vec<TestCallArgs> {
+        let Some(rec) = self.arg_record.as_mut().map(std::mem::take) else {
+            return Vec::new();
+        };
+        let mut calls: Vec<RecordedCall> = rec.into_values().collect();
+        calls.sort_by_key(|c| c.seq);
+        let mut last: Vec<TestCallArgs> = Vec::new();
+        for c in calls {
+            let (Some(name), Some(file)) = (c.func.name.clone(), c.func.def_file.clone()) else {
+                continue;
+            };
+            if let Some(scope) = &self.test_scope
+                && !Self::in_test_scope(&file, scope)
+            {
+                continue;
+            }
+            if file.starts_with("__") {
+                continue;
+            }
+            let file = std::fs::canonicalize(&file).map(|p| p.display().to_string()).unwrap_or(file);
+            last.retain(|t| !(t.file == file && t.name == name));
+            last.push(TestCallArgs {
+                file,
+                name,
+                params: c.func.parameters.iter().map(|p| p.name.clone()).collect(),
+                args: c.args,
+                test: c.test.to_string(),
+            });
+        }
+        last
+    }
+
+    #[inline]
+    fn record_test_call(&mut self, func: &Arc<Function>, arguments: &[Value]) {
+        if let (Some(rec), Some(test)) = (self.arg_record.as_mut(), self.current_test.as_ref())
+            && func.name.is_some()
+            && func.parent_scope == 0
+        {
+            self.arg_seq += 1;
+            rec.insert(
+                Arc::as_ptr(func) as usize,
+                RecordedCall { seq: self.arg_seq, func: func.clone(), args: arguments.to_vec(), test: test.clone() },
+            );
+        }
+    }
+
     /// Turn on line-coverage recording. Every executed located statement is
     /// tallied under the file that owns the code. Enable this *instead of*
     /// the bytecode tier: coverage is instrumented on the AST walk, so a
@@ -6161,6 +6266,27 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     pub fn take_coverage(&mut self) -> Option<HashMap<String, std::collections::BTreeSet<u32>>> {
         self.coverage.take()
     }
+}
+
+/// A call a test block made (`olang test --record-args`), as recorded:
+/// the function, its arguments, the block, and the order it came in.
+#[derive(Debug, Clone)]
+pub struct RecordedCall {
+    pub seq: u64,
+    pub func: Arc<Function>,
+    pub args: Vec<Value>,
+    pub test: Arc<str>,
+}
+
+/// The last call a test made to one of the project's top-level
+/// functions: its file, name, parameters, arguments and the block.
+#[derive(Debug, Clone)]
+pub struct TestCallArgs {
+    pub file: String,
+    pub name: String,
+    pub params: Vec<String>,
+    pub args: Vec<Value>,
+    pub test: String,
 }
 
 /// The result of one `test "name" { ... }` block under `olang test`.

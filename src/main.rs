@@ -309,6 +309,12 @@ enum Commands {
         /// goes, for an editor (docs/tooling.md)
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         format: String,
+        /// With `--format json`: after each file, the last call its test
+        /// blocks made to each of the project's functions, the arguments as
+        /// olang source (`args` events; an editor binds a function's
+        /// parameters from them)
+        #[arg(long)]
+        record_args: bool,
     },
 
     /// Compile a program to a self-contained executable
@@ -702,6 +708,7 @@ fn run() -> i32 {
             times,
             deps,
             format,
+            record_args,
         }) => {
             if format != "text" && format != "json" {
                 eprintln!("olang test: --format is `text` or `json`, not `{}`", format);
@@ -747,7 +754,7 @@ fn run() -> i32 {
                 &targets,
                 coverage || coverage_lines,
                 coverage_lines,
-                &olang::tools::test_runner::Options { only, times, deps, json: format == "json" },
+                &olang::tools::test_runner::Options { only, times, deps, json: format == "json", record_args },
             )
         }
 

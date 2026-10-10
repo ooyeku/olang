@@ -26,6 +26,16 @@
 //! - **Reload.** `reload` re-reads a saved file: its scope's declarations
 //!   again, and every scope's `use`s (the module cache sees the new
 //!   content). A file that no longer parses changes nothing.
+//! - **A function's parameters.** A snippet that stands inside a
+//!   function and names a parameter is refused as not bound, the
+//!   function and its parameters said (`fn`, `params`); `bind` gives
+//!   them values for one evaluation (`{"x": "3"}`: each an expression,
+//!   evaluated in the file's scope first) and takes them back after.
+//! - **Purity.** `pure: true` evaluates under no capability at all (no
+//!   filesystem, network, process, database or environment): code that
+//!   reaches for one is refused with `kind` `impure` and the capability
+//!   it wanted, and the session's own grant is back afterwards. An editor
+//!   re-runs on save only what passes.
 //! - **Views.** `render` draws a Loom view value headless (Loom's
 //!   `render_view`, from the project's dependency or a path given) and
 //!   answers a PNG.
@@ -248,6 +258,7 @@ impl Session {
             "event": "hello", "protocol": PROTOCOL, "olang": crate::version::VERSION,
             "root": self.root.to_string_lossy(), "pid": std::process::id(),
             "ops": ["hello", "eval", "command", "commands", "complete", "expand", "release", "interrupt", "ping", "reload", "render", "reset", "shutdown", "stats"],
+            "features": ["bind", "pure"],
         });
         if let Some(id) = id {
             v["id"] = id.clone();
@@ -419,6 +430,13 @@ impl Session {
 
     fn eval(&mut self, msg: &J, running: &AtomicBool) -> J {
         let code = msg.get("code").and_then(|c| c.as_str()).unwrap_or("").to_string();
+        // values for a function's parameters, for this evaluation only
+        let binds: Vec<(String, String)> = msg
+            .get("bind")
+            .and_then(|b| b.as_object())
+            .map(|o| o.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect())
+            .unwrap_or_default();
+        let pure = msg.get("pure").and_then(|p| p.as_bool()).unwrap_or(false);
         let file = msg.get("file").and_then(|f| f.as_str()).map(|f| self.resolve(f));
         let line = msg.get("line").and_then(|l| l.as_u64()).unwrap_or(1).max(1) as usize;
         let t0 = Instant::now();
@@ -457,9 +475,43 @@ impl Session {
         crate::interrupt::clear();
         let _ = crate::output::take_collected();
         running.store(true, Ordering::SeqCst);
+        // under no capability: a pure evaluation, or a refusal
+        let kept_caps = if pure {
+            Some(self.cmd.interpreter.replace_capabilities(Some(Arc::new(crate::caps::CapTable {
+                app: crate::caps::Caps::none(),
+                deps: Vec::new(),
+            }))))
+        } else {
+            None
+        };
+        // the parameters given, each evaluated where the snippet stands
+        let mut restore: Vec<(String, Option<Value>)> = Vec::new();
+        let mut bind_failed: Option<(String, InterpreterError)> = None;
+        for (name, src) in &binds {
+            let value = match self.parser.parse(src) {
+                Ok(p) => self.cmd.interpreter.eval_program(p),
+                Err(e) => Err(InterpreterError::RuntimeError { message: parse_message(&e) }),
+            };
+            match value {
+                Ok(v) => {
+                    restore.push((name.clone(), self.cmd.interpreter.get_environment().get(name)));
+                    self.cmd.interpreter.define_variable(name.clone(), v);
+                }
+                Err(e) => {
+                    let _ = self.cmd.interpreter.take_error_location();
+                    bind_failed = Some((name.clone(), e));
+                    break;
+                }
+            }
+        }
         let started = Instant::now();
         crate::profile::stats_sample_begin(crate::tier_stats::INTERVAL_US);
-        let outcome = self.cmd.interpreter.eval_program(program);
+        let outcome = match bind_failed.take() {
+            Some((name, e)) => Err(InterpreterError::RuntimeError {
+                message: format!("the value given for `{}` fails: {}", name, plain_message(&e)),
+            }),
+            None => self.cmd.interpreter.eval_program(program),
+        };
         crate::profile::stats_sample_end();
         let ms = started.elapsed().as_secs_f64() * 1000.0;
         running.store(false, Ordering::SeqCst);
@@ -475,6 +527,16 @@ impl Session {
             _ => None,
         };
         let bound_value = bound.as_ref().and_then(|n| self.cmd.interpreter.get_environment().get(n));
+        // the parameters taken back, the session's grant put back
+        for (name, was) in restore.into_iter().rev() {
+            match was {
+                Some(v) => self.cmd.interpreter.define_variable(name, v),
+                None => self.cmd.interpreter.remove_variable(&name),
+            }
+        }
+        if let Some(caps) = kept_caps {
+            self.cmd.interpreter.replace_capabilities(caps);
+        }
         let watched = if watching && outcome.is_ok() { self.cmd.watch_after() } else { Vec::new() };
         self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
         if outcome.is_ok() {
@@ -516,7 +578,15 @@ impl Session {
                 r
             }
             Err(e) => {
-                let err = self.error_json(&e, location, file.as_deref(), line, interrupted);
+                let mut err = self.error_json(&e, location, file.as_deref(), line, interrupted);
+                // under no capability, the one it wanted makes it impure
+                if pure {
+                    let m = err["message"].as_str().unwrap_or("").to_string();
+                    if let Some(cap) = denied_capability(&m) {
+                        err["kind"] = J::String("impure".to_string());
+                        err["cap"] = J::String(cap);
+                    }
+                }
                 json!({ "ok": false, "error": err })
             }
         };
@@ -783,16 +853,18 @@ impl Session {
         };
         // a parameter of the function the snippet stands in, not bound
         // here: the REPL evaluates code as written (SPEC §18.1 is open)
+        let mut within: Option<(String, u32, Vec<String>)> = None;
         if let (InterpreterError::UndefinedVariable { name }, Some(f)) = (e, file)
             && let Some(ix) = self.file_index(f)
         {
-            if let Some((fname, ..)) = ix
+            if let Some((fname, a, _, ps)) = ix
                 .fns
                 .iter()
                 .find(|(_, a, b, ps)| (*a as usize) < at_line && at_line <= *b as usize && ps.contains(name))
             {
                 message = format!("`{}` is a parameter of `{}` — not bound here", name, fname);
                 kind = "unbound";
+                within = Some((fname.clone(), *a, ps.clone()));
             } else if let Some((_, l)) = ix.skipped.iter().find(|(n, _)| n == name) {
                 message = format!("`{}` is a top-level binding that runs code — evaluate its line ({}) first", name, l);
                 kind = "unbound";
@@ -810,8 +882,15 @@ impl Session {
                         "line": place.as_ref().map(|p| p.1) })
             })
             .collect();
-        json!({ "kind": kind, "message": message, "file": efile.map(|f| f.to_string_lossy().into_owned()),
-                "line": line, "col": col, "stack": frames, "hint": hint })
+        let mut out = json!({ "kind": kind, "message": message, "file": efile.map(|f| f.to_string_lossy().into_owned()),
+                "line": line, "col": col, "stack": frames, "hint": hint });
+        // the function the snippet stands in: what `bind` would give
+        if let Some((fname, fline, params)) = within {
+            out["fn"] = J::String(fname);
+            out["fn_line"] = json!(fline);
+            out["params"] = json!(params);
+        }
+        out
     }
 
     /// Where function `name` is declared: in `near`'s file, else the
@@ -1244,6 +1323,15 @@ fn is_command_line(code: &str) -> bool {
     (code.starts_with(':') && code.chars().nth(1).is_some_and(|c| c.is_alphabetic() || c == '!'))
         || (code.starts_with('!') && code.len() > 1 && !code.starts_with("!="))
         || code == "quit"
+}
+
+/// The capability a refusal names (`capability 'fs' denied: …`), if the
+/// message is one.
+fn denied_capability(message: &str) -> Option<String> {
+    let at = message.find("capability '")? + "capability '".len();
+    let rest = &message[at..];
+    let end = rest.find('\'')?;
+    rest[end..].starts_with("' denied").then(|| rest[..end].to_string())
 }
 
 fn round3(x: f64) -> f64 {
