@@ -153,6 +153,43 @@ pid
 }
 
 #[test]
+fn close_reaps_an_interactive_shell_whose_output_nobody_read() {
+    // A session leader's exit waits for its terminal's output to drain:
+    // an interactive zsh hung up with its prompt unread stayed exiting
+    // (`?Es`) until the program ended. close reads and drops it.
+    if !std::path::Path::new("/bin/zsh").exists() {
+        return;
+    }
+    let out = eval(
+        r#"
+let p = unwrap(pty.spawn(["/bin/zsh", "-f", "-i"], #{ "rows": 24, "cols": 80 }))
+let _w = pty.write(p, "sleep 30\r")
+let mut n = 0
+while n < 100 && (pty.foreground(p) == () || pty.foreground(p).name != "sleep") { n = n + 1; let _x = pty.wait(p, 20) }
+let job = pty.foreground(p).pid
+let pid = pty.pid(p)
+pty.close(p)
+[pid, job]
+"#,
+    )
+    .unwrap();
+    let Value::List(ref ids) = out else { panic!("{out:?}") };
+    for v in ids.iter() {
+        let Value::Integer(pid) = v else { panic!("{v:?}") };
+        let mut alive = true;
+        for _ in 0..100 {
+            // SAFETY: signal 0 only asks whether the pid exists (a zombie does).
+            if unsafe { libc::kill(*pid as i32, 0) } != 0 {
+                alive = false;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(!alive, "{pid} outlived pty.close by 2 s");
+    }
+}
+
+#[test]
 fn a_screen_reads_sequences_and_draws_operations() {
     assert_all_true(
         r##"

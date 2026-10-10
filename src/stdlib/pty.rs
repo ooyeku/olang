@@ -733,10 +733,28 @@ mod imp {
         std::thread::Builder::new()
             .name("pty-reaper".into())
             .spawn(move || {
-                let until = Instant::now() + Duration::from_millis(500);
-                while status(&p).is_none() && Instant::now() < until {
-                    std::thread::sleep(Duration::from_millis(10));
-                }
+                // What the child writes as it ends is read and dropped: a
+                // session leader's exit waits for its terminal's output to
+                // drain, so a master nobody reads keeps a hung-up shell
+                // exiting forever (macOS: `?Es`).
+                let fd = p.master.as_raw_fd();
+                let drain = || {
+                    let mut buf = [0u8; 4096];
+                    // SAFETY: read(2) into our buffer from the master we
+                    // hold, non-blocking.
+                    while unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) } > 0 {}
+                };
+                let wait_for = |ms: u64| {
+                    let until = Instant::now() + Duration::from_millis(ms);
+                    loop {
+                        drain();
+                        if status(&p).is_some() || Instant::now() >= until {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                };
+                wait_for(500);
                 if status(&p).is_none() {
                     for g in &gs {
                         // SAFETY: kill(2) of a process group.
@@ -744,10 +762,19 @@ mod imp {
                             libc::kill(-g, libc::SIGKILL);
                         }
                     }
-                    let _ = p.child.lock().unwrap().wait();
+                    wait_for(5000);
                 }
+                let pid = p.pid;
+                let reaped = status(&p).is_some();
                 // the master closes as the last reference goes
                 drop(p);
+                if !reaped {
+                    // its terminal gone, it can end now: reaped, not a zombie
+                    // SAFETY: waitpid(2) on our own child.
+                    unsafe {
+                        libc::waitpid(pid, std::ptr::null_mut(), 0);
+                    }
+                }
             })
             .ok();
         Ok(ok(Value::Unit))
