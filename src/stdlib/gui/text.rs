@@ -13,8 +13,8 @@
 //! pixels by dividing by the scale.
 
 use parley::{
-    Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle, FontWeight, Layout,
-    LayoutContext, LineHeight, PositionedLayoutItem, StyleProperty,
+    Affinity, Alignment, AlignmentOptions, Cursor, FontContext, FontFamily, FontStyle, FontWeight,
+    Layout, LayoutContext, LineHeight, PositionedLayoutItem, Selection, StyleProperty,
 };
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -208,6 +208,58 @@ pub struct Shaped {
     pub scale: f32,
     pub lines: Vec<LineInfo>,
     pub runs: Vec<GlyphRun>,
+    /// A span's background, strike and underline (device pixels from the
+    /// layout's origin).
+    pub decos: Vec<Deco>,
+}
+
+/// What a span draws besides its glyphs: its `bg` behind them (`over`
+/// false), a strike or an underline over them.
+#[derive(Clone, Copy, Debug)]
+pub struct Deco {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub color: Color,
+    pub over: bool,
+}
+
+/// The decorations of `text`'s spans (character offsets) in `layout`.
+fn span_decos(layout: &Layout<Color>, text: &str, spans: &[(usize, usize, super::rich::SpanStyle)], fg: Color, scale: f32) -> Vec<Deco> {
+    let mut at: Vec<usize> = text.char_indices().map(|(b, _)| b).collect();
+    at.push(text.len());
+    let mut out = Vec::new();
+    for (a, b, st) in spans.iter() {
+        if st.bg.is_none() && !st.strike && !st.underline {
+            continue;
+        }
+        let (a, b) = (at[(*a).min(at.len() - 1)], at[(*b).min(at.len() - 1)]);
+        if a >= b {
+            continue;
+        }
+        let sel = Selection::new(
+            Cursor::from_byte_index(layout, a, Affinity::Downstream),
+            Cursor::from_byte_index(layout, b, Affinity::Upstream),
+        );
+        let mut boxes = Vec::new();
+        sel.geometry_with(layout, |bb, _| boxes.push(bb));
+        let c = st.color.unwrap_or(fg);
+        let thin = scale.max(1.0);
+        for bb in boxes {
+            let (x, y, w, h) = (bb.x0 as f32, bb.y0 as f32, (bb.x1 - bb.x0) as f32, (bb.y1 - bb.y0) as f32);
+            if let Some(bg) = st.bg {
+                out.push(Deco { x, y, w, h, color: bg, over: false });
+            }
+            if st.strike {
+                out.push(Deco { x, y: (y + h * 0.55).round(), w, h: thin, color: c, over: true });
+            }
+            if st.underline {
+                out.push(Deco { x, y: (y + h - 2.0 * scale).round(), w, h: thin, color: c, over: true });
+            }
+        }
+    }
+    out
 }
 
 impl Shaped {
@@ -409,7 +461,11 @@ impl TextSystem {
             Alignment::Start
         };
         layout.align(alignment, AlignmentOptions::default());
-        let shaped = Arc::new(shaped_of(&layout, scale));
+        let mut sh = shaped_of(&layout, scale);
+        if let Some(spans) = &font.spans {
+            sh.decos = span_decos(&layout, text, spans, color, scale);
+        }
+        let shaped = Arc::new(sh);
         self.cache.insert(key, shaped.clone());
         shaped
     }
@@ -454,6 +510,7 @@ pub fn shaped_of(layout: &Layout<Color>, scale: f32) -> Shaped {
         scale,
         lines,
         runs,
+        decos: Vec::new(),
     }
 }
 

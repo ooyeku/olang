@@ -2869,6 +2869,10 @@ fn solid(x: f32, y: f32, w: f32, h: f32, fill: Color, clip: Clip) -> Prim {
 }
 
 fn push_glyphs(shaped: &Shaped, ox: f32, oy: f32, clip: Clip, dl: &mut DisplayList) {
+    // a span's background behind its glyphs
+    for d in shaped.decos.iter().filter(|d| !d.over) {
+        dl.prims.push(solid(ox + d.x, oy + d.y, d.w, d.h, d.color, clip));
+    }
     for run in &shaped.runs {
         for (id, gx, gy) in &run.glyphs {
             let x = ox + gx;
@@ -2890,6 +2894,10 @@ fn push_glyphs(shaped: &Shaped, ox: f32, oy: f32, clip: Clip, dl: &mut DisplayLi
                 clip,
             });
         }
+    }
+    // a strike or an underline over them
+    for d in shaped.decos.iter().filter(|d| d.over) {
+        dl.prims.push(solid(ox + d.x, oy + d.y, d.w, d.h, d.color, clip));
     }
 }
 

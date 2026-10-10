@@ -763,6 +763,29 @@ fn the_application_hears_what_it_is_asked_to_open_and_the_tab_bar() {
 }
 
 #[test]
+fn a_text_span_draws_its_background_and_strike() {
+    // a span's `bg` behind its characters and its `strike` over them, on
+    // plain text as in a styled field (a replace's preview, a diff)
+    let _turn = events_turn();
+    let v = run(r##"
+        fn shot(spans) = {
+            let w = gui.headless(#{ "size": (200, 40) })
+            gui.apply(w, [#{ "key": "root", "box": (0, 0, 200, 40), "style": #{ "bg": "#ffffff" } },
+                          #{ "key": "t", "parent": "root", "role": "text", "box": (8, 8, 180, 20), "text": "twice double", "style": #{ "color": "#000000", "spans": spans } }])
+            let png = gui.read(w, "pixels")
+            gui.close(w)
+            png
+        }
+        let plain = shot([])
+        let colour = shot([(0, 5, #{ "color": "#000000" })])
+        let bg = shot([(6, 12, #{ "bg": "#22c55e" })])
+        let strike = shot([(0, 5, #{ "strike": true })])
+        [map_get(gui.compare(plain, colour), "same"), map_get(gui.compare(plain, bg), "same"), map_get(gui.compare(plain, strike), "same")]
+    "##);
+    assert_eq!(text(&v), r#"[true, false, false]"#);
+}
+
+#[test]
 fn compare_finds_what_changed_and_draws_where() {
     // its windows send events on the one channel
     let _turn = events_turn();
