@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **An application starts without checking its whole payload first.**
+  `olang build --app` writes each file's sha256 into the application's
+  index; a launch checks a file the first time it reads it (a file that
+  does not match is not there), instead of the whole section before the
+  program starts (`inspect --verify` still checks it whole). olang
+  Studio.app's payload (5.5 MB, Loom's fonts most of it) was ~22 ms of its
+  start; now ~2. `OLANG_BOOT_TRACE` says when the application's program
+  was read and its files installed.
+
 - **fs.search: what each match becomes.** `replace` (a template) makes
   each match say `with`, a regular expression's groups expanded (`$1`,
   `${name}`, `$$`): olang Studio's replace across files previews and

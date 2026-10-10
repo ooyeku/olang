@@ -11,6 +11,10 @@ use std::sync::{Arc, OnceLock};
 
 struct Vfs {
     files: HashMap<PathBuf, Arc<[u8]>>,
+    /// Each file's sha256 as built, checked at its first read (a file
+    /// whose bytes do not match is not there).
+    sums: HashMap<PathBuf, String>,
+    checked: std::sync::Mutex<HashMap<PathBuf, bool>>,
     dirs: HashSet<PathBuf>,
     dependencies: HashMap<String, PathBuf>,
 }
@@ -19,6 +23,12 @@ static VFS: OnceLock<Vfs> = OnceLock::new();
 
 /// Install the application's files (once, before it runs).
 pub fn install(files: HashMap<PathBuf, Arc<[u8]>>, dependencies: HashMap<String, PathBuf>) {
+    install_checked(files, HashMap::new(), dependencies)
+}
+
+/// Install the application's files with each one's sha256: a file is
+/// checked against it the first time it is read.
+pub fn install_checked(files: HashMap<PathBuf, Arc<[u8]>>, sums: HashMap<PathBuf, String>, dependencies: HashMap<String, PathBuf>) {
     let mut dirs = HashSet::new();
     for path in files.keys() {
         let mut at = path.parent();
@@ -32,6 +42,8 @@ pub fn install(files: HashMap<PathBuf, Arc<[u8]>>, dependencies: HashMap<String,
     note_package_roots(&dependencies);
     let _ = VFS.set(Vfs {
         files,
+        sums,
+        checked: std::sync::Mutex::new(HashMap::new()),
         dirs,
         dependencies,
     });
@@ -70,7 +82,20 @@ pub fn normalize(p: &Path) -> PathBuf {
 
 /// The bytes of `path` from the application, if it carries the file.
 pub fn read(path: &Path) -> Option<Arc<[u8]>> {
-    VFS.get()?.files.get(&normalize(path)).cloned()
+    let v = VFS.get()?;
+    let p = normalize(path);
+    let bytes = v.files.get(&p)?.clone();
+    if let Some(want) = v.sums.get(&p) {
+        let mut seen = v.checked.lock().unwrap_or_else(|e| e.into_inner());
+        let ok = *seen.entry(p).or_insert_with(|| {
+            use sha2::Digest;
+            format!("{:x}", sha2::Sha256::digest(&bytes[..])) == *want
+        });
+        if !ok {
+            return None;
+        }
+    }
+    Some(bytes)
 }
 
 /// `path` exists, in the application or on disk.
@@ -153,6 +178,10 @@ pub struct AppIndex {
     /// `(path, offset, length)` into the data that follows the index.
     pub files: Vec<(String, u64, u64)>,
     pub dependencies: HashMap<String, String>,
+    /// Each file's sha256, in `files`' order (an older section has none:
+    /// the whole section's is checked instead).
+    #[serde(default)]
+    pub sums: Vec<String>,
 }
 
 /// Serialize an application section: `[index_len u64][index json][data]`.
@@ -166,6 +195,8 @@ pub fn encode(files: &[(PathBuf, Vec<u8>)], dependencies: &HashMap<String, PathB
             bytes.len() as u64,
         ));
         data.extend_from_slice(bytes);
+        use sha2::Digest;
+        index.sums.push(format!("{:x}", sha2::Sha256::digest(bytes)));
     }
     index.dependencies = dependencies
         .iter()
@@ -181,6 +212,22 @@ pub fn encode(files: &[(PathBuf, Vec<u8>)], dependencies: &HashMap<String, PathB
 
 /// Read an application section back: the files and the dependency map.
 pub type Decoded = (HashMap<PathBuf, Arc<[u8]>>, HashMap<String, PathBuf>);
+
+/// Whether a section says each file's sha256 (then a launch checks each
+/// file at its first read, not the whole section before it starts).
+pub fn per_file_sums(section: &[u8]) -> bool {
+    sums_of(section).is_some_and(|s| !s.is_empty())
+}
+
+/// Each file's sha256 by its path, as the section says them.
+pub fn sums_of(section: &[u8]) -> Option<HashMap<PathBuf, String>> {
+    let n = u64::from_le_bytes(section.get(0..8)?.try_into().ok()?) as usize;
+    let index: AppIndex = serde_json::from_slice(section.get(8..8usize.checked_add(n)?)?).ok()?;
+    if index.sums.len() != index.files.len() {
+        return Some(HashMap::new());
+    }
+    Some(index.files.iter().zip(index.sums).map(|((p, _, _), s)| (PathBuf::from(p), s)).collect())
+}
 
 pub fn decode(section: &[u8]) -> Option<Decoded> {
     let n = u64::from_le_bytes(section.get(0..8)?.try_into().ok()?) as usize;

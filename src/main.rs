@@ -1826,7 +1826,13 @@ enum Bundle {
 /// source (rung A). `None` for the plain `olang` binary.
 fn embedded_program() -> Option<Bundle> {
     let exe = std::env::current_exe().ok()?;
-    read_bundle(&exe).or_else(|| app_sidecar(&exe).and_then(|p| read_bundle(&p)))
+    // to run: a section that says each file's sum is checked a file at a
+    // time as the program reads them, not whole before it starts
+    let b = read_bundle_with(&exe, false).or_else(|| app_sidecar(&exe).and_then(|p| read_bundle_with(&p, false)));
+    if b.is_some() {
+        olang::boot_trace::mark("the application's program read and checked");
+    }
+    b
 }
 
 /// A macOS application's program, beside its executable: a signed
@@ -1883,6 +1889,13 @@ fn validate_meta(meta: &BundleMeta) -> Option<()> {
 }
 
 fn read_bundle(path: &std::path::Path) -> Option<Bundle> {
+    read_bundle_with(path, true)
+}
+
+/// `whole`: an application's section checked whole against its sha256
+/// (`inspect`); else, when it says each file's sum, its files are checked
+/// as they are read (a launch).
+fn read_bundle_with(path: &std::path::Path, whole: bool) -> Option<Bundle> {
     use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(path).ok()?;
     let total = f.metadata().ok()?.len();
@@ -1940,7 +1953,7 @@ fn read_bundle(path: &std::path::Path) -> Option<Bundle> {
                 f.seek(SeekFrom::End(-(start as i64))).ok()?;
                 let mut buf = vec![0u8; a.len as usize];
                 f.read_exact(&mut buf).ok()?;
-                if sha256_hex(&buf) != a.sha256 {
+                if (whole || !olang::vfs::per_file_sums(&buf)) && sha256_hex(&buf) != a.sha256 {
                     return None;
                 }
                 Some(buf)
@@ -2037,7 +2050,8 @@ fn run_embedded(bundle: Bundle, logger: &Logger) -> i32 {
             {
                 match olang::vfs::decode(bytes) {
                     Some((files, deps)) => {
-                        olang::vfs::install(files, deps);
+                        olang::vfs::install_checked(files, olang::vfs::sums_of(bytes).unwrap_or_default(), deps);
+                        olang::boot_trace::mark("the application's files installed");
                         path = PathBuf::from(&m.entry);
                     }
                     None => {

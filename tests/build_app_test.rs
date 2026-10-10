@@ -66,5 +66,23 @@ fn an_application_runs_after_its_sources_are_gone() {
         String::from_utf8_lossy(&run.stderr)
     );
     assert_eq!(stdout.trim(), "HI YOU!\nHELLO FROM AN ASSET!\nfalse");
+    // a file changed inside the application: it starts (each file is
+    // checked as it is read, not the whole before), but the changed one is
+    // not there; inspect --verify, which checks the whole, refuses it
+    let mut bytes = fs::read(&exe).unwrap();
+    let at = bytes.windows(19).position(|w| w == b"hello from an asset").expect("the asset in the binary");
+    bytes[at] = b'j';
+    let bad = ws.join("tampered-app");
+    fs::write(&bad, &bytes).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&bad, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let run2 = Command::new(&bad).current_dir(&ws).output().expect("run the changed app");
+    let out2 = String::from_utf8_lossy(&run2.stdout).to_string() + &String::from_utf8_lossy(&run2.stderr);
+    assert!(out2.contains("HI YOU!"), "{out2}");
+    assert!(!out2.contains("JELLO"), "{out2}");
+    assert!(!run2.status.success(), "{out2}");
     let _ = fs::remove_dir_all(&ws);
 }
