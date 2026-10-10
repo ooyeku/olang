@@ -616,6 +616,24 @@ impl Field {
         }
     }
 
+    /// A right press (a context menu's) at `(x, y)`: the caret goes there
+    /// unless the press is inside the selection, which is kept — what a
+    /// Mac's text views do, so the menu's Copy and Go to Definition are
+    /// about what was pressed.
+    pub fn context_press(&mut self, x: f32, y: f32, ts: &mut TextSystem) {
+        let (a, f) = self.selection_chars();
+        self.press(x, y, 1, false, ts);
+        self.stop_drag();
+        let (c, _) = self.selection_chars();
+        let (lo, hi) = (a.min(f), a.max(f));
+        if lo != hi && c >= lo && c <= hi {
+            match self {
+                Field::Plain(e) => e.select_chars(a, f, ts),
+                Field::Rich(r) => r.select_chars(a, f),
+            }
+        }
+    }
+
     /// How far the text is scrolled (device pixels): a press lands there.
     pub fn scrolled(&self) -> (f32, f32) {
         match self {

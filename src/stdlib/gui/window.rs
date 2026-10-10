@@ -1363,6 +1363,26 @@ impl WinState {
                         !n.disabled && (scene::activates(&n.role) || n.focusable)
                     })
                 });
+                // a right press in a field: the focus and the caret go
+                // there (kept in a selection pressed inside), as a Mac's
+                // text views do before their context menu opens
+                if button == "right"
+                    && let Some(f) = hit
+                        .as_ref()
+                        .and_then(|h| self.scene.target_up(h, |n| n.focusable && !n.disabled))
+                    && self.editors.contains_key(&f)
+                    && let Some((ox, oy, _, h)) = self.edit_origin(&f)
+                    && let Ok(mut ts) = text::system().lock()
+                {
+                    let dy = self.edit_text_dy(&f, h, &mut ts);
+                    let ed = self.editors.get_mut(&f).expect("present");
+                    let (sx, sy) = ed.scrolled();
+                    ed.context_press(x * self.scale - ox + sx, y * self.scale - oy - dy + sy, &mut ts);
+                    drop(ts);
+                    self.set_focus(Some(f.clone()), out);
+                    self.report_selection(&f, out);
+                    self.dirty = true;
+                }
                 if button == "left" {
                     self.scene.pressed = target.clone();
                     let focus_to = hit
