@@ -123,3 +123,24 @@ fn search_matches_case_words_and_regular_expressions_and_stops_at_its_limit() {
     assert_eq!(eval(&format!(r#"is_err(fs.search("{}", "(", #{{ "regex": true }}))"#, r)), Value::Boolean(true));
     assert_eq!(eval(&format!(r#"unwrap(fs.search("{}", ""))"#, r)), eval("[]"));
 }
+
+#[test]
+fn search_says_what_each_match_becomes_with_a_replacement_groups_expanded() {
+    let d = tree();
+    let r = root_of(&d);
+    // a literal: the template as it is
+    let lit = s(eval(&format!(
+        r#"show(map(unwrap(fs.search("{}", "twice", #{{ "replace": "double", "files": ["app/lib/util.ol"] }})), (h) => map_get(h, "with")))"#,
+        r
+    )));
+    assert_eq!(lit, r#"["double", "double"]"#);
+    // a regular expression: its groups, by number and by name, and $$
+    let rx = s(eval(&format!(
+        r#"show(map(unwrap(fs.search("{}", "fn (?P<name>\\w+)\\((\\w*)\\)", #{{ "regex": true, "replace": "fn ${{name}}_v2($2) $$", "files": ["app/lib/util.ol"] }})), (h) => map_get(h, "with")))"#,
+        r
+    )));
+    assert_eq!(rx, r#"["fn twice_v2(n) $"]"#);
+    // no replacement asked: no `with`
+    assert_eq!(eval(&format!(r#"map_get(unwrap(fs.search("{}", "twice"))[0], "with")"#, r)), Value::Unit);
+    assert_eq!(eval(&format!(r#"is_err(fs.search("{}", "twice", #{{ "replace": 3 }}))"#, r)), Value::Boolean(true));
+}

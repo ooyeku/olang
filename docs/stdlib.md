@@ -1198,7 +1198,10 @@ files with it). `fs.search(root, query, opts)` searches those files (or
 `opts.files`) for a literal or, with `regex: true`, a regular
 expression — `case` and `word` as a find bar has them — in parallel,
 answering `Ok` of `#{ path, line, col, end, text }` by path then line
-(columns in characters; at most `limit` matches, 2,000 by default).
+(columns in characters; at most `limit` matches, 2,000 by default). With
+`replace` (a template) each match also says `with`, what it becomes — a
+regular expression's groups expanded (`$1`, `${name}`, `$$` a dollar) —
+for a replace across files to preview and apply.
 
 ```olang no-run
 let text = unwrap(fs.read_file("data.txt"))

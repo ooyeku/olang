@@ -276,9 +276,28 @@ fn line_matches(line: &str, needle: &Needle, word: bool) -> Vec<(usize, usize)> 
     out
 }
 
-/// One file's matches: `(line, start, end, text)` with columns in
-/// characters, at most `cap`.
-fn search_file(path: &Path, needle: &Needle, word: bool, cap: usize) -> Vec<(usize, usize, usize, String)> {
+/// What a match is replaced with: the template as it is for a literal;
+/// a regular expression's groups (`$1`, `${name}`, `$$` a dollar) taken
+/// from the match at `at` in `line`.
+fn replaced_with(line: &str, at: usize, needle: &Needle, template: &str) -> String {
+    match needle {
+        Needle::Literal { .. } => template.to_string(),
+        #[cfg(feature = "regex-module")]
+        Needle::Regex(rx) => match rx.captures_at(line, at) {
+            Some(caps) => {
+                let mut out = String::new();
+                caps.expand(template, &mut out);
+                out
+            }
+            None => template.to_string(),
+        },
+    }
+}
+
+/// One file's matches: `(line, start, end, text, with)` with columns in
+/// characters, at most `cap`; `with` what the match becomes when
+/// `replace` is given.
+fn search_file(path: &Path, needle: &Needle, word: bool, cap: usize, replace: Option<&str>) -> Vec<(usize, usize, usize, String, Option<String>)> {
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
         Err(_) => return Vec::new(),
@@ -311,7 +330,8 @@ fn search_file(path: &Path, needle: &Needle, word: bool, cap: usize) -> Vec<(usi
             let cb = ca + line[a..b].chars().count();
             // the line as it is shown: at most 400 characters
             let shown: String = if line.len() > 400 { line.chars().take(400).collect() } else { line.to_string() };
-            out.push((i, ca, cb, shown));
+            let with = replace.map(|tpl| replaced_with(line, a, needle, tpl));
+            out.push((i, ca, cb, shown, with));
             if out.len() >= cap {
                 return out;
             }
@@ -326,7 +346,9 @@ fn search_file(path: &Path, needle: &Needle, word: bool, cap: usize) -> Vec<(usi
 /// `text` the line), by path then line. The files are walked as `fs.scan`
 /// walks them, or are `opts.files` (paths relative to `root`). `opts`:
 /// `regex`, `case` (match case; default false), `word` (whole words),
-/// `limit` (matches, default 2,000), `per_file` (default 200), and
+/// `limit` (matches, default 2,000), `per_file` (default 200),
+/// `replace` (a template: each match also says `with`, what it becomes —
+/// a regular expression's groups expanded, `$1`, `${name}`, `$$`), and
 /// `fs.scan`'s `skip`, `exts`, `hidden`, `gitignore`, `max_depth`.
 pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() < 2 || args.len() > 3 {
@@ -345,7 +367,7 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Some(Some(m)) => m,
         Some(None) => return Ok(err("fs.search: options must be a map".to_string())),
     };
-    let extra = ["regex", "case", "word", "limit", "per_file", "files"];
+    let extra = ["regex", "case", "word", "limit", "per_file", "files", "replace"];
     // (the walk's own `limit` is `files_limit` here: `limit` counts matches)
     let w = match walk_opts(&opts, "fs.search", &extra) {
         Ok(w) => w,
@@ -377,6 +399,11 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Some(Ok(n)) => n.max(1),
         None => 200,
     };
+    let replace: Option<String> = match get("replace") {
+        None | Some(Value::Unit) => None,
+        Some(Value::String(s)) => Some(s.as_ref().clone()),
+        Some(other) => return Ok(err(format!("fs.search: \"replace\" is a string, got {}", other.type_name()))),
+    };
     if query.is_empty() {
         return Ok(Value::Ok(Box::new(Value::List(Vec::new().into()))));
     }
@@ -403,16 +430,16 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         None => walk_files(&root, &w),
     };
     use rayon::prelude::*;
-    let per: Vec<(usize, Vec<(usize, usize, usize, String)>)> = files
+    let per: Vec<(usize, Vec<(usize, usize, usize, String, Option<String>)>)> = files
         .par_iter()
         .enumerate()
-        .map(|(i, rel)| (i, search_file(&root.join(rel), &needle, word, per_file)))
+        .map(|(i, rel)| (i, search_file(&root.join(rel), &needle, word, per_file, replace.as_deref())))
         .filter(|(_, ms)| !ms.is_empty())
         .collect();
     let mut out: Vec<Value> = Vec::new();
     'files: for (i, ms) in per {
         let rel = Arc::new(files[i].clone());
-        for (line, a, b, text) in ms {
+        for (line, a, b, text, with) in ms {
             if out.len() >= limit {
                 break 'files;
             }
@@ -422,6 +449,9 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             m.insert("col".to_string(), Value::Integer(a as i64));
             m.insert("end".to_string(), Value::Integer(b as i64));
             m.insert("text".to_string(), Value::String(Arc::new(text)));
+            if let Some(w) = with {
+                m.insert("with".to_string(), Value::String(Arc::new(w)));
+            }
             out.push(Value::Map(Arc::new(m)));
         }
     }
