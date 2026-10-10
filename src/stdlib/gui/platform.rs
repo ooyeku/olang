@@ -223,6 +223,12 @@ pub fn available() -> bool {
 ///   caret) — everywhere winit has them (Wayland's text-input-v3).
 /// - `accessibility`: the platform's accessibility API through AccessKit
 ///   (NSAccessibility, UI Automation, AT-SPI).
+/// - `window_tabs`: `gui.open` takes `tabbing` and `tab_of`, `gui.set`
+///   takes `tab`, and windows say their `tabs` (macOS window tabs).
+/// - `open_documents`: the application hears `open` with the files the
+///   system asks it to open, and `new_tab` from a tab bar's + (macOS).
+///
+/// A program (Loom) asks before it uses what an older engine refuses.
 pub fn capabilities() -> Value {
     let mac = cfg!(target_os = "macos");
     let windows = cfg!(target_os = "windows");
@@ -237,6 +243,8 @@ pub fn capabilities() -> Value {
         ("system_settings", b(mac)),
         ("ime", b(true)),
         ("accessibility", b(true)),
+        ("window_tabs", b(mac)),
+        ("open_documents", b(mac)),
     ])
 }
 

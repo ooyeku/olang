@@ -2239,6 +2239,10 @@ impl WinState {
         let ox = content[0] - r.scroll_x;
         let oy = content[1] - r.scroll_y;
         let outer_clip = clip;
+        // what the text draws from here: clipped below the pinned rows of
+        // sticky scroll once they are known (the renderers draw glyphs over
+        // rectangles, so a row's background alone does not hide them)
+        let first_prim = dl.prims.len();
         let clip = clip.intersect(Clip::rect(
             content[0] - 1.0,
             content[1],
@@ -2580,6 +2584,23 @@ impl WinState {
                 rows.push((h, slot.min(end_view - lh)));
             }
             if !rows.is_empty() {
+                let edge = content[1] + rows.iter().map(|r| r.1 + lh).fold(0.0f32, f32::max);
+                // a line the pinned rows half cover is hidden whole: no sliver
+                // of its glyphs under the hairline
+                let mut below = edge;
+                for i in shown.clone() {
+                    let (py, _, ph) = r.para(i);
+                    let (t0, t1) = (oy + py, oy + py + ph);
+                    if t0 < edge && t1 > edge && ph <= lh * 1.5 {
+                        below = below.max(t1);
+                    }
+                }
+                for p in dl.prims[first_prim..].iter_mut() {
+                    let c = match p {
+                        Prim::Rect { clip, .. } | Prim::Glyph { clip, .. } | Prim::Image { clip, .. } => clip,
+                    };
+                    *c = c.intersect(Clip::rect(c.x0, below, c.x1, c.y1.max(below)));
+                }
                 let x0 = content[0] - st.pad[3] * s;
                 let x1 = content[0] + content[2] + st.pad[1] * s;
                 let field = outer_clip.intersect(Clip::rect(x0, content[1], x1, content[1] + content[3]));
