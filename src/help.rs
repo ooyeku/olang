@@ -6345,6 +6345,17 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
         });
 
         self.add_function(FunctionDoc {
+            name: "fs.trash".to_string(),
+            description: "Move a file or folder to the Trash (macOS's NSFileManager), never a permanent delete; answers its path in the Trash, from where moving it back puts it back".to_string(),
+            syntax: "fs.trash(path)".to_string(),
+            parameters: vec!["path: String - The file or folder to move to the Trash".to_string()],
+            return_type: "Result<String, Error>".to_string(),
+            examples: vec!["fs.trash(\"old_notes.txt\")  // Ok(\"/Users/me/.Trash/old_notes.txt\")".to_string()],
+            category: "Filesystem".to_string(),
+            see_also: vec!["fs.move_file".to_string(), "fs.remove_file".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
             name: "fs.move_file".to_string(),
             description: "Move or rename a file from old path to new path".to_string(),
             syntax: "fs.move_file(old_path, new_path)".to_string(),

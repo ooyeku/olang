@@ -1172,10 +1172,15 @@ rather than bugs. (Examples are `no-run`: they touch the disk.)
 
 | Group | Functions |
 |---|---|
-| Files | `read_file` `write_file` `append_file` `copy_file` `move_file` `remove_file` — and `read_bytes` / `write_bytes` for [binary data](#bytes--binary-data) |
+| Files | `read_file` `write_file` `append_file` `copy_file` `move_file` `remove_file` `trash` — and `read_bytes` / `write_bytes` for [binary data](#bytes--binary-data) |
 | Directories | `create_dir` `create_dir_all` `list_dir` `walk` `glob` `remove_dir` `remove_dir_all` |
 | Queries | `exists` `is_file` `is_dir` `file_size` `file_info` |
 | Paths | `join(parts)` `dirname` `basename` `ext` — pure string surgery, answering the string itself; `abs_path` answers a **`Result`** (`Ok(path)`): it resolves against the current directory, which can fail, and normalizes `.`/`..` without requiring the file to exist |
+
+`fs.trash(path)` moves a file or a folder to the Trash as the Finder's
+Move to Trash does (macOS's NSFileManager) — never a permanent delete —
+and answers `Ok(path in the Trash)`; moving it back from there with
+`fs.move_file` puts it back. Elsewhere it is an `Err` that says so.
 
 `fs.file_size(path)` answers a file's bytes and `fs.file_info(path)` a
 record — `size`, `is_file`, `is_dir`, `readonly`, and `modified_ms`

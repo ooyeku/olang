@@ -475,6 +475,16 @@ impl WinState {
                             r.mark_reported();
                         }
                     }
+                    // a plain field takes the program's selection too
+                    if let super::edit::Field::Plain(e) = &mut *ed
+                        && let Some((a, f, seq)) = props.select
+                        && seq != e.select_seq
+                        && (adopted || e.value() == *props.value)
+                    {
+                        e.select_seq = seq;
+                        e.select_chars(a.max(0) as usize, f.max(0) as usize, &mut ts);
+                        reselected = true;
+                    }
                     if adopted || reselected {
                         // Adopted the program's value (or its selection):
                         // say so, with the revision it now has (a styled
@@ -531,13 +541,12 @@ impl WinState {
                         }
                         Field::Rich(Box::new(r))
                     } else {
-                        Field::Plain(Editor::new(
-                            &props.value,
-                            &style.font,
-                            style.color,
-                            props.multiline,
-                            props.secure,
-                        ))
+                        let mut e = Editor::new(&props.value, &style.font, style.color, props.multiline, props.secure);
+                        if let Some((a, f, seq)) = props.select {
+                            e.select_seq = seq;
+                            e.select_chars(a.max(0) as usize, f.max(0) as usize, &mut ts);
+                        }
+                        Field::Plain(e)
                     };
                     self.editors.insert(k.clone(), ed);
                 }

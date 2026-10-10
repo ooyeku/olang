@@ -30,6 +30,8 @@ pub struct Editor {
     pub scroll_x: f32,
     /// The pointer is dragging a selection.
     pub dragging: bool,
+    /// The program's last selection applied (`select`'s seq).
+    pub select_seq: i64,
 }
 
 /// What an edit did.
@@ -64,6 +66,7 @@ impl Editor {
             redo: Vec::new(),
             scroll_x: 0.0,
             dragging: false,
+            select_seq: 0,
         };
         e.apply_font(font, color);
         e
@@ -312,6 +315,16 @@ impl Editor {
     pub fn select_all(&mut self, ts: &mut TextSystem) {
         let mut d = self.ed.driver(&mut ts.font_cx, &mut ts.layout_cx);
         d.select_all();
+    }
+
+    /// Select characters `a` to `f` (the program's selection: a rename's
+    /// name before its extension), clamped to the value.
+    pub fn select_chars(&mut self, a: usize, f: usize, ts: &mut TextSystem) {
+        let text = self.ed.raw_text().to_string();
+        let byte = |c: usize| text.char_indices().nth(c).map(|(i, _)| i).unwrap_or(text.len());
+        let (ba, bf) = (byte(a), byte(f));
+        let mut d = self.ed.driver(&mut ts.font_cx, &mut ts.layout_cx);
+        d.select_byte_range(ba, bf);
     }
 
     pub fn selected_text(&self) -> Option<String> {

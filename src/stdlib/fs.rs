@@ -135,6 +135,8 @@ pub fn create_fs_module() -> Value {
         "file_info".to_string(),
         create_builtin_function("file_info", 1),
     );
+    // Move to the Trash (macOS): never a permanent delete.
+    module.insert("trash".to_string(), create_builtin_function("trash", 1));
 
     Value::Struct {
         type_name: "Module".to_string(),
@@ -178,6 +180,7 @@ pub fn call_fs_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
         "remove_file" => remove_file(args),
         "copy_file" => copy_file(args),
         "move_file" => move_file(args),
+        "trash" => trash(args),
         "file_size" => file_size(args),
         "file_info" => file_info(args),
         _ => Err(format!("Unknown fs function: {}", name).into()),
@@ -840,6 +843,68 @@ fn move_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             src_str, dest_str, e
         )))))),
     }
+}
+
+/// Move a file or a folder to the Trash, as the Finder's Move to Trash
+/// does (NSFileManager `trashItemAtURL:resultingItemURL:error:`): never a
+/// permanent delete, and put back by moving the item from where it went.
+/// Usage: fs.trash(path) -> Result<String, Error> (the item's path in the
+/// Trash). An Err where there is no Trash (only macOS has one here).
+fn trash(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 1 {
+        return Err(format!("trash expects 1 argument, got {}", args.len()).into());
+    }
+    let path = match &args[0] {
+        Value::String(s) => s.to_string(),
+        _ => return Err("trash: path must be a string".to_string().into()),
+    };
+    let err = |m: String| Ok(Value::Err(Box::new(Value::String(Arc::new(m)))));
+    if std::fs::symlink_metadata(&path).is_err() {
+        return err(format!("Failed to move '{path}' to the Trash: no such file or folder"));
+    }
+    match trash_item(&path) {
+        Ok(to) => Ok(Value::Ok(Box::new(Value::String(Arc::new(to))))),
+        Err(e) => err(format!("Failed to move '{path}' to the Trash: {e}")),
+    }
+}
+
+#[cfg(all(target_os = "macos", feature = "gui"))]
+fn trash_item(path: &str) -> Result<String, String> {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    // SAFETY: Foundation's file manager and URLs, used as documented; the
+    // strings are NUL-terminated copies that outlive the calls.
+    unsafe {
+        let pool: *mut AnyObject = msg_send![class!(NSAutoreleasePool), new];
+        let c = std::ffi::CString::new(path).map_err(|_| "a NUL in the path".to_string())?;
+        let ns: *mut AnyObject = msg_send![class!(NSString), stringWithUTF8String: c.as_ptr()];
+        let url: *mut AnyObject = msg_send![class!(NSURL), fileURLWithPath: ns];
+        let fm: *mut AnyObject = msg_send![class!(NSFileManager), defaultManager];
+        let mut out: *mut AnyObject = std::ptr::null_mut();
+        let mut error: *mut AnyObject = std::ptr::null_mut();
+        let ok: bool = msg_send![fm, trashItemAtURL: url, resultingItemURL: &mut out, error: &mut error];
+        let text = |o: *mut AnyObject| -> Option<String> {
+            if o.is_null() {
+                return None;
+            }
+            let p: *const std::ffi::c_char = msg_send![o, UTF8String];
+            if p.is_null() { None } else { Some(std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()) }
+        };
+        let r = if ok {
+            let at: *mut AnyObject = if out.is_null() { std::ptr::null_mut() } else { msg_send![out, path] };
+            Ok(text(at).unwrap_or_default())
+        } else {
+            let d: *mut AnyObject = if error.is_null() { std::ptr::null_mut() } else { msg_send![error, localizedDescription] };
+            Err(text(d).unwrap_or_else(|| "the Trash refused it".to_string()))
+        };
+        let _: () = msg_send![pool, drain];
+        r
+    }
+}
+
+#[cfg(not(all(target_os = "macos", feature = "gui")))]
+fn trash_item(_path: &str) -> Result<String, String> {
+    Err("this platform has no Trash olang can use (macOS only)".to_string())
 }
 
 /// Get file size in bytes
