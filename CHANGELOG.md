@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **fs.search: what each match becomes.** `replace` (a template) makes
+  each match say `with`, a regular expression's groups expanded (`$1`,
+  `${name}`, `$$`): olang Studio's replace across files previews and
+  applies it.
+- **gui: a span's background, strike and underline on plain text**, as a
+  styled field drew them.
+
 - **gui: what a Mac application is asked to open, and window tabs.** An
   application hears `open` with the paths the Finder asks it to open
   (Open With, a drop on its Dock icon, `open -a`: AppKit's
