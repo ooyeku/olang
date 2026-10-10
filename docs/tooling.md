@@ -170,6 +170,14 @@ are absolute paths.
 | `divergence` | `--verify-tiers` found native code and the VM disagreeing: `function` (`fn name (native call)`, or an on-stack-replacement region), `native`, `vm` (the two results, rendered), and the block under way (`file`, `name`, `line`). A `finished` event with `aborted: "divergence"` and `code` 102 follows, and the process ends. |
 | `file` | A file is done: its `passed` and `failed`, and `error` — the file's parse error (`kind` `parse`) or an error outside any block (`kind` `error`, with its `line`, `col` and `frames`). |
 | `finished` | Last: the totals, `ms`, and the exit status `code`. |
+| `args` | With `--record-args` only, after a file's blocks ran (before its `file` event): the last call its test blocks made to each of the project's top-level functions — `file` (where the function is declared), `fn`, `params`, `test` (the block that made the call), and `args`, each argument as olang source that makes it again (`"200"`, `"\"text\""`, `"[1, 2]"`, `"#{ \"k\": 1 }"`) or `null` for one with no literal (a function, a handle, a record, a Result, a value past 4,000 characters). A dependency's functions and the runtime's are left out. |
+
+**`--record-args`** (with `--format json`) asks for the `args` events: an
+editor binds a function's parameters from them when a line inside the
+function is evaluated (olang Studio's ⌘↩). Every call that enters through
+the interpreter is seen — a block's own calls, and the calls of code the
+tiers did not compile; the last one of each function is kept. Without
+the flag nothing is recorded: one branch a call.
 
 What the program under test prints still goes to stdout, between the
 events, as it is printed: a reader takes a line holding `{"event":` as an
@@ -616,7 +624,8 @@ What a program prints while the session serves is collected and sent with
 the evaluation that printed it (`out`); stdout belongs to the protocol.
 
 **Handshake.** On start the server says
-`{"event":"hello","protocol":1,"olang":"0.87.0","root":…,"pid":…,"ops":[…]}`.
+`{"event":"hello","protocol":1,"olang":"0.87.0","root":…,"pid":…,"ops":[…],"features":["bind","pure"]}`
+(`features`: what an `eval` takes beyond the protocol's first version).
 A client that does not know the protocol's version stops there. `{"op":"hello"}`
 asks again.
 
@@ -628,11 +637,27 @@ or start a window) is not loaded; naming it says so. An `eval` with no
 `file` runs in the session's own scope. A snippet evaluated at `line` (1-based)
 is parsed as if it stood there, so every line an error names is the
 file's. Code is evaluated as written: a function's parameter named in a
-line of its body is not bound, and the error says whose parameter it is.
+line of its body is not bound, and the error says whose parameter it is
+(`kind` `unbound`, with `fn`, its `fn_line` and its `params`).
+
+**A function's parameters.** `"bind": {"amount": "200", "rate": "10"}`
+gives them values for one evaluation: each an expression, evaluated in
+the file's scope before the code (a value that fails says which:
+"the value given for `amount` fails: …"); afterwards each name is taken
+back (a binding the scope had is put back).
+
+**Purity.** `"pure": true` evaluates under no capability at all — no
+filesystem, network, process, database or environment (the [capability
+gate](packages.md#capabilities) with nothing granted, on every tier). Code
+that reaches for one is refused: `kind` `impure` and `cap`, the
+capability it wanted (`"fs"`). The session's own grant is back for the
+next request. An editor re-runs a result on save only when it is pure
+this way (and fast); the clock, randomness and printing are not
+capabilities and pass.
 
 | Request | Reply |
 |---|---|
-| `{"op":"eval","id":1,"code":"rows(10)","file":"/p/calc.ol","line":12}` | `{"id":1,"ok":true,"eval":7,"value":V,"binding":"x"?,"ms":0.4,"server_ms":0.5,"tier":"native","calls":{"bytecode":1,"native":1},"out":"…","notes":[…]?}` — or `"ok":false` with `"error":E` |
+| `{"op":"eval","id":1,"code":"rows(10)","file":"/p/calc.ol","line":12,"bind":{…}?,"pure":true?}` | `{"id":1,"ok":true,"eval":7,"value":V,"binding":"x"?,"ms":0.4,"server_ms":0.5,"tier":"native","calls":{"bytecode":1,"native":1},"out":"…","notes":[…]?}` — or `"ok":false` with `"error":E` |
 | `{"op":"expand","id":2,"h":3,"start":0,"count":100}` | more of a held value: a list's `items` (`{"i","v"}`), a map's or record's `entries` (`{"key","v"}`), a string's text (`s`), Bytes as base64 (`b64`) |
 | `{"op":"expand","id":3,"h":3,"table":true,"start":0,"count":50,"sort":{"col":2,"desc":true}}` | a table's `rows` (`{"i": index, "c": [cell text…]}`), sorted by a column |
 | `{"op":"release","id":4,"eval":7}` | the evaluation's handles are let go (the last 200 are kept anyway) |
@@ -699,9 +724,10 @@ A prompt's evaluations (no `file`) are the session's history (`:history`,
   and `h`, for `render`.
 
 **Errors (E).** `{"kind","message","file","line","col","stack","hint"}`,
-`kind` one of `parse`, `runtime`, `unbound` (a parameter or a top-level
-binding not loaded), `interrupted`, `reload`, `render`, `gone` (a handle
-let go). `stack` lists the frames outermost first, each
+`kind` one of `parse`, `runtime`, `unbound` (a parameter — with `fn`,
+`fn_line`, `params` — or a top-level binding not loaded), `impure` (a
+`pure` evaluation reached for `cap`), `interrupted`, `reload`, `render`,
+`gone` (a handle let go). `stack` lists the frames outermost first, each
 `{"name","file","line"}` (where the function is declared).
 
 **Interrupt.** Requests are read on a thread of their own, so

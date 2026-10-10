@@ -126,6 +126,17 @@ httplib  = { git = "https://github.com/u/httplib", tag = "v1.2.0" }
 json     = "^1.0"                                          # registry version
 ```
 
+**The olang it is written for.** `olang = "0.88"` under `[package]` pins
+the toolchain: a requirement read as a registry dependency's (`"0.88"` is
+`^0.88`, any 0.88.x; `"=0.88.1"` that release; `">=0.87, <0.90"`). `otc
+install` resolves it to the newest installed toolchain that satisfies it
+(see [Updating and toolchains](#updating-and-toolchains)) and records that
+version in `olang.lock`; `otc toolchain which` prints the binary a
+project's pin resolves to. A pin nothing installed satisfies is said, with
+the command that installs one (`otc toolchain install 0.88`) — never run
+for you. An editor runs the project's children with the pinned toolchain
+when it is installed (olang Studio does, and says the version it runs).
+
 Git dependencies take one of `tag`, `rev`, `branch` — or none, meaning the
 default branch's head. Registry requirements accept the usual semver
 operator syntax (`^1.0`, `>=1.2, <2.0`, an exact `1.4.0`).
@@ -274,7 +285,15 @@ otc toolchain list              # installed versions, default marked
 otc toolchain install 0.78.0    # add a specific release
 otc toolchain default 0.78.0    # switch the shims
 otc toolchain remove 0.78.0     # remove (the default refuses)
+otc toolchain which             # the olang this project's pin resolves to
+otc toolchain link 0.89.0 ../olang   # a local build as a toolchain (a binary, or a checkout's target/release/olang)
 ```
+
+A toolchain is a folder `~/.olang/toolchains/<version>/` holding
+`bin/olang`; its version is the folder's name. A project's `[package]
+olang` pin picks among them (the lock's exact version first, while the
+manifest still allows it; else the newest that satisfies the
+requirement; else the olang running when it satisfies it).
 
 Installations from Homebrew or cargo are independent of this
 machinery; `otc doctor` shows how the copies on PATH shadow one
@@ -399,7 +418,10 @@ machine resolves it through its own shelf rather than a path that only
 existed here; the git URL, the resolved commit, and the ref the
 manifest asked for; the resolved version for a registry dependency —
 plus a checksum of the source tree and the package's own direct
-dependencies. Commit it. A lock that names a path this machine does not
+dependencies — and `olang`, the toolchain version a `[package] olang`
+pin resolved to. An install keeps a lock's `olang` when the manifest names
+none, and re-resolves when the manifest's pin no longer allows it.
+Commit it. A lock that names a path this machine does not
 have is not an error: `otc install` says which entry it is re-resolving
 and rewrites the lock.
 

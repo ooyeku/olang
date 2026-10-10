@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **A project pins its olang.** `[package] olang = "0.88"` (a requirement,
+  as a registry dependency's) is resolved by `otc install` to the newest
+  installed toolchain that satisfies it and recorded as olang.lock's
+  `olang`; a lock's `olang` is kept by an install when the manifest names
+  none (it was dropped) and by `otc add`'s rewrite; a pin nothing
+  installed satisfies is said with `otc toolchain install …`, never
+  installed. `otc toolchain which` prints the binary a project's pin
+  resolves to; `otc toolchain link <version> <binary|checkout>` registers
+  a local build. otc/tests/olang_pin_test.rs.
+- **`olang repl --serve`: parameters and purity.** `eval` takes `bind`
+  (values for a function's parameters, for one evaluation) and `pure`
+  (evaluated under no capability: a refusal is `kind` `impure` with the
+  capability wanted); an unbound parameter's error names the function,
+  its line and its parameters; hello says `features`.
+- **`olang test --format json --record-args`:** after each file, the last
+  call its test blocks made to each of the project's functions, the
+  arguments as olang source (`args` events). Nothing recorded without the
+  flag; the human output is unchanged.
+
 - **An application starts without checking its whole payload first.**
   `olang build --app` writes each file's sha256 into the application's
   index; a launch checks a file the first time it reads it (a file that
