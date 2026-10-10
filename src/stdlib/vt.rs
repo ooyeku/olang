@@ -2123,6 +2123,37 @@ fn resolve(look: &Look, c: u32, fg: bool) -> (u8, u8, u8) {
     if n < 16 { look.pal[n as usize] } else { color256(n) }
 }
 
+fn lum(c: (u8, u8, u8)) -> f32 {
+    let f = |x: u8| {
+        let v = x as f32 / 255.0;
+        if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    };
+    0.2126 * f(c.0) + 0.7152 * f(c.1) + 0.0722 * f(c.2)
+}
+
+fn contrast(a: (u8, u8, u8), b: (u8, u8, u8)) -> f32 {
+    let (la, lb) = (lum(a), lum(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
+/// `fg` moved toward black or white (whichever the background leaves more
+/// room for) until it holds `want` against `bg`; itself when it does.
+fn legible_on(fg: (u8, u8, u8), bg: (u8, u8, u8), want: f32) -> (u8, u8, u8) {
+    if contrast(fg, bg) >= want {
+        return fg;
+    }
+    let to = if lum(bg) > 0.18 { (0, 0, 0) } else { (255, 255, 255) };
+    let mut k = 0.1;
+    while k < 1.0 {
+        let c = mix(fg, to, k);
+        if contrast(c, bg) >= want {
+            return c;
+        }
+        k += 0.1;
+    }
+    to
+}
+
 fn mix(a: (u8, u8, u8), b: (u8, u8, u8), k: f32) -> (u8, u8, u8) {
     let m = |x: u8, y: u8| (x as f32 * (1.0 - k) + y as f32 * k).round() as u8;
     (m(a.0, b.0), m(a.1, b.1), m(a.2, b.2))
@@ -2145,6 +2176,8 @@ fn render(t: &Term, o: Option<&crate::ast::ValueMap>) -> Vec<Value> {
     let text_dy = opt_num(o, "text_dy").unwrap_or(((ch - size * 1.3) / 2.0) as f64) as f32;
     let show_rows = opt_num(o, "rows").map(|r| r as usize).unwrap_or(t.rows).max(1);
     let bold_w = opt_num(o, "bold").unwrap_or(700.0);
+    let min_contrast = opt_num(o, "min_contrast").unwrap_or(0.0) as f32;
+    let mut legible: HashMap<((u8, u8, u8), (u8, u8, u8), bool), (u8, u8, u8)> = HashMap::new();
     let font = match o.and_then(|m| m.get("font")) {
         Some(Value::String(f)) => f.as_ref().clone(),
         _ => "mono".to_string(),
@@ -2244,6 +2277,19 @@ fn render(t: &Term, o: Option<&crate::ast::ValueMap>) -> Vec<Value> {
                 for c in (*c0).max(0)..(*c0 + *w).min(n as i64) {
                     bgs[c as usize] = Some(if *cur { look.find_cur } else { look.find });
                 }
+            }
+        }
+        // each character legible on what is under it (a program's white on
+        // a light background, a selection, a match): moved toward black or
+        // white until it holds `min_contrast` (dim text a little less)
+        if min_contrast > 1.0 {
+            for c in 0..n {
+                let b = bgs[c].unwrap_or(look.bg);
+                let a = line.cells[c].a;
+                let want = if a.fl & DIM != 0 { (min_contrast * 0.66).max(3.0) } else { min_contrast };
+                let key = (fgs[c], b, a.fl & DIM != 0);
+                let f = *legible.entry(key).or_insert_with(|| legible_on(fgs[c], b, want));
+                fgs[c] = f;
             }
         }
         // backgrounds, a rectangle a run

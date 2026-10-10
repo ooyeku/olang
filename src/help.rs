@@ -2226,7 +2226,7 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "vt.render(t, opts)",
             "List",
             "vt",
-            "The screen as canvas operations: backgrounds, text runs (bold, italic), underlines, strikes, the cursor. opts: cell_w, cell_h, size, font (\"mono\"), pad_x, pad_y, text_dy, rows, top (the first line's number; the screen by default), palette (16 colours), fg, bg, cursor_color, cursor_text, selection_color, find_color, find_current_color, link_color, selection (l0, c0, l1, c1), matches [(line, col, cells)] and match (the current), hover (line, c0, c1: a link underlined), cursor (false: hidden this blink), hollow, cursor_style, preedit (the input method's text at the cursor).",
+            "The screen as canvas operations: backgrounds, text runs (bold, italic), underlines, strikes, the cursor. opts: cell_w, cell_h, size, font (\"mono\"), pad_x, pad_y, text_dy, rows, top (the first line's number; the screen by default), palette (16 colours), fg, bg, cursor_color, cursor_text, selection_color, find_color, find_current_color, link_color, selection (l0, c0, l1, c1), matches [(line, col, cells)] and match (the current), min_contrast (each character moved toward black or white until it holds this ratio on what is under it), hover (line, c0, c1: a link underlined), cursor (false: hidden this blink), hollow, cursor_style, preedit (the input method's text at the cursor).",
             &[r##"let ops = vt.render(t, #{ "cell_w": 7.8, "cell_h": 17, "size": 13 })"##],
         );
         self.doc_ex(
