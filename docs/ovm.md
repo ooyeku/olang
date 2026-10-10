@@ -96,6 +96,69 @@ bytecode.
 
 The decision logic lives in `src/ovm/tier.rs`.
 
+### The compile cache
+
+A compile is kept between runs (`src/compile_cache.rs`,
+`src/ovm/bytecode/cached.rs`): olang Studio's first frame compiled ~545
+functions (~65 ms) at every launch from trees the parse cache had kept,
+and now takes ~8 ms to use what an earlier launch compiled.
+
+- **An entry** is one compile: the function's bytecode and its lambdas'
+  (a group), each constant written as where it came from — a literal, or
+  a name the compile looked up (a free identifier, a called function, a
+  known callee, a unit variant, a lambda's captures) and looks up again
+  when the entry is used — and each function id as what it named (a
+  member of the group, or a name in the registry, an owed callee's
+  included).
+- **The key** is a hash of what a compile reads besides its scope: the
+  build of olang (version, commit, checkout state, build date), the
+  declaration (name, parameters, body), its type checks, its file, and
+  whether callees compile at their first call.
+- **Exactness.** The compiler reads its scope only through recorded
+  questions: the registry, builtins, ambiguous, bridged and refused
+  names, unit variants, known functions, what a name resolves to
+  lexically, as a callee and as a free identifier, a module's builtin, a
+  struct's fields and field types, the type aliases, the capability
+  grant. Each answer is hashed as far as the compile looks at it — a
+  function's name and whether it is the known one, a builtin's name, a
+  constructor's arity, a Boolean's value (a constant condition folds and
+  its branch is swept), a known callee's parameters and defaults (a
+  short call splices them) — and an entry is used only when every
+  question, asked again at the same point (the ids it gave callees given
+  again), gets the same answer. A changed body, a rebuilt olang, a
+  callee's new arity, a renamed module, a name made ambiguous, a folded
+  flag flipped: each compiles afresh (tests/compile_cache_test.rs holds
+  every case to the same program with the cache off). A key keeps up to
+  four entries, for a function compiled under scopes that differ from
+  run to run (which callees the registry had met yet).
+- **Storage.** One pack a module under `~/.olang/state/compiled/`
+  (`OLANG_HOME` moves it), read ahead on a thread of its own while the
+  module loads; written on a writer thread, read again, merged and
+  renamed over, so a reader never meets half a pack and takes no lock,
+  and two processes writing one pack lose at most what the other added.
+  A pack whose header, index or an entry's checksum fails (truncated,
+  garbled, another build's) is not trusted. Entries unused for two weeks
+  are dropped when their pack is next written; the directory is held
+  under 64 MB (`OLANG_COMPILE_CACHE_MB`), the least recently written
+  packs removed first.
+- **Cost.** A cold cache costs ~10% more compiling (the questions are
+  recorded; entries are made, encoded and written off the program's
+  thread). `OLANG_COMPILE_CACHE=0` turns it off; `OLANG_BOOT_TRACE`
+  counts compiles taken from the cache, entries found stale, and
+  entries kept.
+
+**Native code is not kept.** What the JIT emits holds this run's
+addresses: calls to the runtime's helpers (moved by ASLR every run),
+pointers to interned shapes and constants, and the other members of its
+group; and it is specialized on the argument kinds its first call saw.
+Keeping it would need the code and its relocations written by symbol
+(each helper by name, each shape by its type and fields, each callee by
+its member), patched into freshly mapped executable memory on load
+(`MAP_JIT`, write protection toggled per thread), entered into the JIT's
+dispatch tables, and keyed by the bytecode entry's key, the kinds, and
+the CPU features Cranelift compiled for. olang Studio's launch spends
+~15 ms there (26 groups); the bytecode cache took the larger share.
+
 ### What can be promoted
 
 A function is eligible when its body uses only the subset the VM implements:
@@ -818,6 +881,8 @@ These are real boundaries, stated so you can predict them:
 | `src/resolve.rs` | Slot resolution for function bodies |
 | `src/ovm/tier.rs` | Promotion decisions and eligibility |
 | `src/ovm/bytecode.rs` | Compiler, instruction set, and dispatch loop |
+| `src/ovm/bytecode/cached.rs` | The compiler's side of the compile cache: recorded questions, entries made and used |
+| `src/compile_cache.rs` | The compile cache's keys, packs, writer and bounds |
 | `src/ovm/value.rs` | `OvmValue`, the 16-byte reference-counted value model |
 | `src/ovm/jit.rs` | The Cranelift JIT: whitelist, kind inference, guards, deopt |
 | `src/ovm/nanbox.rs` | 8-byte NaN-boxed value primitives (proven, not wired) |

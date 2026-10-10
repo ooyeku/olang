@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Compiled bytecode is kept between runs.** A function's compile —
+  its bytecode, and its lambdas' — is written to
+  `~/.olang/state/compiled/` (one pack a module) and, the next time the
+  same declaration compiles under the same build of olang, used instead
+  of compiling, when every question that compile asked of its scope
+  (which callees the registry holds, what a name resolves to as far as
+  the code depends on it, a Boolean a condition folded on, a known
+  callee's parameters, a struct's fields, the capability grant) gets the
+  same answer again; constants that came from the scope are looked up
+  again. A stale entry is never used: changed source, a rebuilt olang, a
+  callee's new arity, a renamed module or a name made ambiguous compiles
+  afresh. Packs are read ahead while their module loads, written off the
+  program's thread (renamed over, whole), held under 64 MB
+  (`OLANG_COMPILE_CACHE_MB`); a damaged one is ignored and rewritten.
+  `OLANG_COMPILE_CACHE=0` turns it off. Native code is compiled each run
+  as before. olang Studio's real-window start (`tools/launch.ol`): ~218 →
+  ~173 ms with a warm cache (its ~545 compiles ~65 → ~8 ms), ~225 cold;
+  olang Studio.app's first frame from its process's start ~252 → ~215–230
+  ms (it now waits on AppKit's warm-up).
+  `OLANG_BOOT_TRACE`'s summary counts compiles from the cache, stale and
+  kept, and is printed at exit by a program that opens no window.
+  tests/compile_cache_test.rs.
+- **The runtime is linked with chained fixups** (Apple silicon): started
+  by Launch Services it reached `main` ~3.5 ms after a C executable
+  linking the same frameworks; now as soon.
+
 - **A project pins its olang.** `[package] olang = "0.88"` (a requirement,
   as a registry dependency's) is resolved by `otc install` to the newest
   installed toolchain that satisfies it and recorded as olang.lock's
