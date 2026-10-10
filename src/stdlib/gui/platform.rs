@@ -277,6 +277,10 @@ fn run_loop(reply: crossbeam_channel::Sender<Result<(), String>>) -> Option<i32>
     super::context::set_live(super::context::read());
     #[cfg(target_os = "macos")]
     observe_settings(&proxy);
+    // before the application finishes launching: the documents it was
+    // opened with arrive as it does
+    #[cfg(target_os = "macos")]
+    observe_documents();
     let mut app = App {
         windows: HashMap::new(),
         by_winit: HashMap::new(),
@@ -529,6 +533,11 @@ impl App {
         if let Some((w, h)) = opts.min {
             attrs = attrs.with_min_inner_size(winit::dpi::LogicalSize::new(w, h));
         }
+        #[cfg(target_os = "macos")]
+        if let Some(t) = &opts.tabbing {
+            use winit::platform::macos::WindowAttributesExtMacOS;
+            attrs = attrs.with_tabbing_identifier(t);
+        }
         let win = Arc::new(
             el.create_window(attrs)
                 .map_err(|e| format!("creating the window: {e}"))?,
@@ -566,6 +575,15 @@ impl App {
             .map_err(|_| "gui: registry poisoned")?
             .insert(id, state.clone());
         self.by_winit.insert(win.id(), id);
+        // joined to another window's tab bar before it is shown: it opens
+        // as that window's tab, never as a window of its own first
+        #[cfg(target_os = "macos")]
+        if let Some(host) = opts.tab_of.and_then(|o| self.windows.get(&o))
+            && let (Some(a), Some(b)) = (ns_window(&host.win), ns_window(&win))
+        {
+            // SAFETY: two live NSWindows; NSWindowAbove is 1.
+            let _: () = unsafe { objc2::msg_send![&*a, addTabbedWindow: &*b, ordered: 1isize] };
+        }
         win.set_visible(true);
         win.request_redraw();
         self.windows.insert(
@@ -920,6 +938,159 @@ fn pointer_now(_win: &Window) -> Option<(f32, f32)> {
     None
 }
 
+/// The NSWindow behind `win`, retained.
+#[cfg(target_os = "macos")]
+fn ns_window(win: &Window) -> Option<objc2::rc::Retained<objc2::runtime::AnyObject>> {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let RawWindowHandle::AppKit(h) = win.window_handle().ok()?.as_raw() else {
+        return None;
+    };
+    let view = h.ns_view.as_ptr() as *mut objc2::runtime::AnyObject;
+    // SAFETY: the handle's view is a live NSView while `win` is.
+    unsafe { objc2::msg_send![&*view, window] }
+}
+
+/// An NSString's text.
+#[cfg(target_os = "macos")]
+unsafe fn ns_text(s: *mut objc2::runtime::AnyObject) -> Option<String> {
+    if s.is_null() {
+        return None;
+    }
+    // SAFETY: the caller's NSString; UTF8String lives as long as it.
+    let p: *const std::ffi::c_char = unsafe { objc2::msg_send![&*s, UTF8String] };
+    if p.is_null() {
+        return None;
+    }
+    Some(unsafe { std::ffi::CStr::from_ptr(p) }.to_string_lossy().into_owned())
+}
+
+/// `application:openURLs:` — the files and folders the application is
+/// asked to open (a document opened with it in the Finder, dropped on
+/// its Dock icon, `open -a`): the program hears `open` with their paths.
+#[cfg(target_os = "macos")]
+unsafe extern "C-unwind" fn app_open_urls(
+    _this: *mut objc2::runtime::AnyObject,
+    _cmd: objc2::runtime::Sel,
+    _app: *mut objc2::runtime::AnyObject,
+    urls: *mut objc2::runtime::AnyObject,
+) {
+    if urls.is_null() {
+        return;
+    }
+    let mut paths = Vec::new();
+    // SAFETY: AppKit's NSArray of NSURLs, alive for the call.
+    unsafe {
+        let n: usize = objc2::msg_send![&*urls, count];
+        for i in 0..n {
+            let url: *mut objc2::runtime::AnyObject = objc2::msg_send![&*urls, objectAtIndex: i];
+            if url.is_null() {
+                continue;
+            }
+            let file: bool = objc2::msg_send![&*url, isFileURL];
+            if !file {
+                continue;
+            }
+            let path: *mut objc2::runtime::AnyObject = objc2::msg_send![&*url, path];
+            if let Some(p) = ns_text(path) {
+                paths.push(s(&p));
+            }
+        }
+    }
+    if !paths.is_empty() {
+        emit(vec![event("open", vec![("paths", Value::List(Arc::new(paths)))])]);
+    }
+}
+
+/// `newWindowForTab:` — the tab bar's + button: the program hears
+/// `new_tab` (and the button shows because someone answers it).
+#[cfg(target_os = "macos")]
+unsafe extern "C-unwind" fn app_new_tab(
+    _this: *mut objc2::runtime::AnyObject,
+    _cmd: objc2::runtime::Sel,
+    _sender: *mut objc2::runtime::AnyObject,
+) {
+    emit(vec![event("new_tab", vec![])]);
+}
+
+/// Teach the application's delegate (winit's) to hear the documents it
+/// is asked to open and the tab bar's + button.
+#[cfg(target_os = "macos")]
+fn observe_documents() {
+    use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
+    let Some(mtm) = objc2_foundation::MainThreadMarker::new() else {
+        return;
+    };
+    let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
+    let Some(delegate) = app.delegate() else {
+        return;
+    };
+    let obj = objc2::rc::Retained::as_ptr(&delegate) as *const AnyObject;
+    // SAFETY: the delegate's class, a live class; methods added once (a
+    // second add of the same selector is refused by the runtime).
+    unsafe {
+        let cls = objc2::ffi::object_getClass(obj) as *mut AnyClass;
+        if cls.is_null() {
+            return;
+        }
+        let open: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject) = app_open_urls;
+        let tab: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject) = app_new_tab;
+        objc2::ffi::class_addMethod(
+            cls,
+            objc2::sel!(application:openURLs:),
+            std::mem::transmute::<_, Imp>(open),
+            c"v@:@@".as_ptr(),
+        );
+        objc2::ffi::class_addMethod(
+            cls,
+            objc2::sel!(newWindowForTab:),
+            std::mem::transmute::<_, Imp>(tab),
+            c"v@:@".as_ptr(),
+        );
+    }
+}
+
+impl App {
+    /// Say which windows window `id` is shown among as tabs (itself
+    /// alone when it has no tab bar), in the bar's order: `tabs`.
+    #[cfg(target_os = "macos")]
+    fn report_tabs(&self, id: u64) {
+        let Some(pw) = self.windows.get(&id) else {
+            return;
+        };
+        let Some(w) = ns_window(&pw.win) else {
+            return;
+        };
+        let mine: Vec<(usize, u64)> = self
+            .windows
+            .iter()
+            .filter_map(|(i, p)| ns_window(&p.win).map(|nw| (objc2::rc::Retained::as_ptr(&nw) as usize, *i)))
+            .collect();
+        let mut ids = Vec::new();
+        // SAFETY: a live NSWindow; tabbedWindows is an NSArray or nil.
+        unsafe {
+            let tabs: *mut objc2::runtime::AnyObject = objc2::msg_send![&*w, tabbedWindows];
+            if tabs.is_null() {
+                ids.push(id);
+            } else {
+                let n: usize = objc2::msg_send![&*tabs, count];
+                for k in 0..n {
+                    let o: *mut objc2::runtime::AnyObject = objc2::msg_send![&*tabs, objectAtIndex: k];
+                    if let Some((_, i)) = mine.iter().find(|(p, _)| *p == o as usize) {
+                        ids.push(*i);
+                    }
+                }
+            }
+        }
+        emit(vec![event(
+            "tabs",
+            vec![
+                ("window", Value::Integer(id as i64)),
+                ("tabs", Value::List(Arc::new(ids.into_iter().map(|i| Value::Integer(i as i64)).collect()))),
+            ],
+        )]);
+    }
+}
+
 impl ApplicationHandler<Cmd> for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         // Started ahead of a window (`prepare`): AppKit's first window
@@ -1043,6 +1214,27 @@ impl ApplicationHandler<Cmd> for App {
                     if let Ok(Some(true)) = get_bool(&v, "focus", "gui.set") {
                         pw.win.focus_window();
                     }
+                    // the window's tab bar (macOS): the next or previous
+                    // tab chosen, every window merged into this one's
+                    // tabs, this tab moved to a window of its own, the
+                    // bar shown or hidden
+                    #[cfg(target_os = "macos")]
+                    if let Ok(Some(op)) = get_str(&v, "tab", "gui.set")
+                        && let Some(w) = ns_window(&pw.win)
+                    {
+                        let none: *const objc2::runtime::AnyObject = std::ptr::null();
+                        // SAFETY: a live NSWindow and its standard actions.
+                        unsafe {
+                            match op {
+                                "next" => { let _: () = objc2::msg_send![&*w, selectNextTab: none]; }
+                                "previous" => { let _: () = objc2::msg_send![&*w, selectPreviousTab: none]; }
+                                "merge" => { let _: () = objc2::msg_send![&*w, mergeAllWindows: none]; }
+                                "detach" => { let _: () = objc2::msg_send![&*w, moveTabToNewWindow: none]; }
+                                "bar" => { let _: () = objc2::msg_send![&*w, toggleTabBar: none]; }
+                                _ => {}
+                            }
+                        }
+                    }
                     // a document's unsaved edits: the dot in the close
                     // button, as every Mac document window shows them
                     #[cfg(target_os = "macos")]
@@ -1051,6 +1243,10 @@ impl ApplicationHandler<Cmd> for App {
                         pw.win.set_document_edited(e);
                     }
                     pw.win.request_redraw();
+                }
+                #[cfg(target_os = "macos")]
+                if let Ok(Some(_)) = get_str(&v, "tab", "gui.set") {
+                    self.report_tabs(id);
                 }
                 if let Ok(Some(a)) = get_str(&v, "appearance", "gui.set")
                     && let Some(pw) = self.windows.get_mut(&id)
@@ -1286,6 +1482,11 @@ impl ApplicationHandler<Cmd> for App {
             },
             WindowEvent::Focused(on) => {
                 self.input(id, Input::Focused(on));
+                // the tabs it is shown among, as they stand now
+                #[cfg(target_os = "macos")]
+                if on {
+                    self.report_tabs(id);
+                }
                 // A notice missed (the settings changed while the process
                 // was suspended) is caught when a window comes forward.
                 if on {

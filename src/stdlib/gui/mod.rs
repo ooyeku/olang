@@ -237,6 +237,11 @@ pub struct OpenOpts {
     pub renderer: String,
     pub scale: f32,
     pub clear: Option<text::Color>,
+    /// The windows this one may share a tab bar with (macOS: the
+    /// window's `tabbingIdentifier`).
+    pub tabbing: Option<String>,
+    /// An open window this one joins as a tab (macOS), by its id.
+    pub tab_of: Option<u64>,
 }
 
 fn open_opts(function: &str, v: Option<&Value>) -> Res<OpenOpts> {
@@ -249,6 +254,8 @@ fn open_opts(function: &str, v: Option<&Value>) -> Res<OpenOpts> {
         renderer: std::env::var("LOOM_RENDERER").unwrap_or_else(|_| "gpu".to_string()),
         scale: 1.0,
         clear: None,
+        tabbing: None,
+        tab_of: None,
     };
     let Some(v) = v else {
         return Ok(o);
@@ -264,6 +271,8 @@ fn open_opts(function: &str, v: Option<&Value>) -> Res<OpenOpts> {
         "renderer",
         "scale",
         "background",
+        "tabbing",
+        "tab_of",
     ];
     match fields(v) {
         Some(f) => {
@@ -301,6 +310,11 @@ fn open_opts(function: &str, v: Option<&Value>) -> Res<OpenOpts> {
         o.scale = sc.clamp(0.5, 4.0);
     }
     o.clear = get_color(v, "background", function)?;
+    o.tabbing = get_str(v, "tabbing", function)?.map(str::to_string);
+    o.tab_of = match get_num(v, "tab_of", function)? {
+        Some(n) if n >= 1.0 => Some(n as u64),
+        _ => None,
+    };
     Ok(o)
 }
 
@@ -721,7 +735,7 @@ fn input_of(v: &Value) -> Res<Input> {
         }
         other => {
             return Err(format!(
-                "gui.input: unknown kind \"{other}\" (key, text, pointer, wheel, pinch, compose, commit, resize, window_focus, files, close, menu, clipboard, appearance, place, a11y)"
+                "gui.input: unknown kind \"{other}\" (key, text, pointer, wheel, pinch, compose, commit, resize, window_focus, files, close, menu, open, new_tab, clipboard, appearance, place, a11y)"
             ));
         }
     })
@@ -745,6 +759,21 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
             let item = get_str(&args[1], "id", what)?
                 .ok_or("gui.input: \"menu\" needs the item's \"id\"")?;
             emit(vec![event("menu", vec![("id", s(item))])]);
+            return Ok(Value::Unit);
+        }
+        // The application asked to open files and folders (the Finder's
+        // Open With, a drop on the Dock icon): `paths`.
+        Some("open") => {
+            let paths = match get(&args[1], "paths") {
+                Some(Value::List(l)) => l.clone(),
+                _ => return Err("gui.input: \"open\" needs \"paths\", a list".into()),
+            };
+            emit(vec![event("open", vec![("paths", Value::List(paths))])]);
+            return Ok(Value::Unit);
+        }
+        // The tab bar's + button.
+        Some("new_tab") => {
+            emit(vec![event("new_tab", vec![])]);
             return Ok(Value::Unit);
         }
         // The system's settings changing, as a platform window reports

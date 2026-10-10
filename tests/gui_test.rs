@@ -740,6 +740,29 @@ fn a_test_can_close_command_paste_and_see_the_caret() {
 }
 
 #[test]
+fn the_application_hears_what_it_is_asked_to_open_and_the_tab_bar() {
+    // what the Finder asks (Open With, a drop on the Dock icon) and the
+    // tab bar's + button, as a test sends them; a window may join a tab
+    // bar by its identifier and another window's id
+    let _turn = events_turn();
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (120, 40), "tabbing": "docs" })
+        let w2 = gui.headless(#{ "size": (120, 40), "tabbing": "docs", "tab_of": map_get(w, "id") })
+        let ev = gui.events()
+        gui.input(w, #{ "kind": "open", "paths": ["/tmp/a.ol", "/tmp/folder"] })
+        gui.input(w, #{ "kind": "new_tab" })
+        let mut seen = []
+        let mut more = true
+        while more { match chan.try_recv(ev) { Ok(e) => { seen = seen + [map_get(e, "kind") + (if map_get(e, "paths") == () => "" else => ":" + join(map_get(e, "paths"), ","))] }, _ => { more = false } } }
+        let bare = match attempt(() => gui.input(w, #{ "kind": "open" })) { Ok(v) => "taken", Err(e) => "refused" }
+        gui.close(w2)
+        gui.close(w)
+        [contains(seen, "open:/tmp/a.ol,/tmp/folder"), contains(seen, "new_tab"), bare]
+    "##);
+    assert_eq!(text(&v), r#"[true, true, "refused"]"#);
+}
+
+#[test]
 fn compare_finds_what_changed_and_draws_where() {
     // its windows send events on the one channel
     let _turn = events_turn();

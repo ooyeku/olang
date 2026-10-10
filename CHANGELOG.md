@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **gui: what a Mac application is asked to open, and window tabs.** An
+  application hears `open` with the paths the Finder asks it to open
+  (Open With, a drop on its Dock icon, `open -a`: AppKit's
+  `application:openURLs:`, taught to winit's delegate before the
+  application finishes launching), and `new_tab` from a tab bar's +
+  button (`newWindowForTab:`). A window may share a tab bar
+  (`gui.open`'s `tabbing`, and `tab_of` to open as another window's
+  tab); `gui.set`'s `tab` chooses the next or previous tab, merges every
+  window, moves a tab out or toggles the bar; a `tabs` event says which
+  windows a window is shown with as it comes forward. `gui.input` takes
+  `open` and `new_tab` for tests. What olang Studio.app's document
+  types and window tabs run on.
+
 - **runtime: modules loaded at run time, under their own grant.**
   `runtime.load_module(path, grant)` loads a file into the running
   program as a module (read afresh) whose code — everything under its
