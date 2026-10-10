@@ -32,6 +32,8 @@ pub mod meta;
 pub mod os;
 #[cfg(feature = "native")]
 pub mod proc;
+#[cfg(feature = "native")]
+pub mod pty;
 pub mod random;
 #[cfg(feature = "regex-module")]
 pub mod regex_mod;
@@ -45,6 +47,8 @@ pub mod toml_mod;
 #[cfg(feature = "native")]
 pub mod tty;
 pub mod vec;
+#[cfg(feature = "native")]
+pub mod vt;
 
 pub fn get_stdlib() -> crate::ast::ValueMap {
     let mut stdlib = crate::ast::ValueMap::default();
@@ -78,6 +82,10 @@ pub fn get_stdlib() -> crate::ast::ValueMap {
     stdlib.insert("runtime".to_string(), runtime::create_runtime_module());
     #[cfg(feature = "native")]
     stdlib.insert("proc".to_string(), proc::create_proc_module());
+    #[cfg(feature = "native")]
+    stdlib.insert("pty".to_string(), pty::create_pty_module());
+    #[cfg(feature = "native")]
+    stdlib.insert("vt".to_string(), vt::create_vt_module());
     stdlib.insert("random".to_string(), random::create_random_module());
     stdlib.insert("testing".to_string(), testing::create_testing_module());
     stdlib.insert("str".to_string(), string::create_string_module());

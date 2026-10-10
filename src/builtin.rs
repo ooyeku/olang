@@ -707,7 +707,7 @@ impl BuiltinFunctions {
         // Without the native feature (the browser playground), whole module
         // families don't exist: say so plainly instead of "unknown function".
         #[cfg(not(feature = "native"))]
-        for gated in ["fs.", "http.", "os.", "db.", "tty.", "gui."] {
+        for gated in ["fs.", "http.", "os.", "db.", "tty.", "gui.", "pty.", "vt."] {
             if name.starts_with(gated) {
                 return Err(InterpreterError::RuntimeError {
                     message: format!(
@@ -917,6 +917,20 @@ impl BuiltinFunctions {
         #[cfg(feature = "native")]
         if let Some(proc_function) = name.strip_prefix("proc.") {
             return crate::stdlib::proc::call_proc_function(proc_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
+        }
+
+        // Handle pty functions (a child on a pseudo-terminal)
+        #[cfg(feature = "native")]
+        if let Some(pty_function) = name.strip_prefix("pty.") {
+            return crate::stdlib::pty::call_pty_function(pty_function, arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string()));
+        }
+
+        // Handle vt functions (a terminal's screen)
+        #[cfg(feature = "native")]
+        if let Some(vt_function) = name.strip_prefix("vt.") {
+            return crate::stdlib::vt::call_vt_function(vt_function, arguments)
                 .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
 

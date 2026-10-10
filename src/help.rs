@@ -1477,6 +1477,7 @@ impl HelpSystem {
         // packages cli/term/ui/viz/dash), plus recent additions to os/str.
         self.add_process_and_concurrency_docs();
         self.add_tty_docs();
+        self.add_pty_vt_docs();
         self.add_gui_docs();
         self.add_time_and_encoding_docs();
         self.add_data_stack_docs();
@@ -2079,6 +2080,226 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "gui",
             "Two PNGs compared as a pixel snapshot is: #{ same, differing, total, worst, diff }. A pixel differs when a channel moves by more than opts.threshold (32); the images are the same when at most opts.ratio (0.001) of the pixels differ. diff is a PNG marking them in red, () when the sizes differ.",
             &[r##"map_get(gui.compare(fs.read_bytes("want.png").unwrap(), gui.read(w, "pixels")), "same")"##],
+        );
+    }
+
+    /// The `pty` and `vt` modules: a child on a pseudo-terminal, a terminal's screen.
+    fn add_pty_vt_docs(&mut self) {
+        self.doc_ex(
+            "pty.spawn",
+            "pty.spawn(argv, opts?)",
+            "Result",
+            "pty",
+            "Start argv[0] on a pseudo-terminal of its own: a session leader with the terminal as its controlling one, so job control, ^C and window sizes work. Ok(Pty) or Err. opts: cwd, env (a map: a String sets a variable, () removes one), clear_env (start from no environment), rows, cols (24 × 80 by default). macOS and Linux.",
+            &[r##"let p = unwrap(pty.spawn(["/bin/sh"], #{ "cwd": "/tmp", "rows": 24, "cols": 80, "env": #{ "TERM": "xterm-256color" } }))"##],
+        );
+        self.doc_ex(
+            "pty.read",
+            "pty.read(p, opts?)",
+            "Result",
+            "pty",
+            "What the child wrote: Ok(Bytes), Ok(()) when nothing came within timeout_ms (1000), Err(\"eof\") once its side is closed. Having read something it reads on while more arrives within settle_ms (2), up to max bytes (1 MiB), so a burst is one value. Meant for a reader task of its own. A closing terminal waits for its output to be read (macOS): keep reading until eof.",
+            &[r##"match pty.read(p, #{ "timeout_ms": 200 }) { Ok(b) => println(b), Err(e) => println(e) }"##],
+        );
+        self.doc_ex(
+            "pty.write",
+            "pty.write(p, data)",
+            "Result",
+            "pty",
+            "Write a String or Bytes to the terminal (the keys a person types): queued for a writer thread, so a large paste never blocks. Err once the terminal is closed.",
+            &[r##"pty.write(p, "ls\r")"##],
+        );
+        self.doc_ex(
+            "pty.resize",
+            "pty.resize(p, rows, cols)",
+            "Result",
+            "pty",
+            "Set the terminal's size (TIOCSWINSZ): its foreground job hears SIGWINCH.",
+            &[r##"pty.resize(p, 40, 120)"##],
+        );
+        self.doc_ex(
+            "pty.kill",
+            "pty.kill(p, signal?)",
+            "Result",
+            "pty",
+            "Send a signal (\"HUP\" by default; \"INT\", \"TERM\", \"KILL\", \"QUIT\", \"CONT\", \"STOP\" or a number) to the shell's process group and the terminal's foreground job's.",
+            &[r##"pty.kill(p, "INT")"##],
+        );
+        self.doc_ex(
+            "pty.wait",
+            "pty.wait(p, timeout_ms?)",
+            "Result",
+            "pty",
+            "How the child ended, Ok({ code, signal }) — waiting up to timeout_ms (0 by default) — or Ok(()) while it runs.",
+            &[r##"let e = unwrap(pty.wait(p, 1000))"##],
+        );
+        self.doc_ex(
+            "pty.pid",
+            "pty.pid(p)",
+            "Int",
+            "pty",
+            "The child's process id (the session's leader).",
+            &[r##"pty.pid(p)"##],
+        );
+        self.doc_ex(
+            "pty.foreground",
+            "pty.foreground(p)",
+            "Foreground",
+            "pty",
+            "The terminal's foreground job: { pid, name, shell } — shell true while the shell itself is at its prompt — or () once the child is gone. Ask before closing a terminal whose job is running.",
+            &[r##"let fg = pty.foreground(p)"##],
+        );
+        self.doc_ex(
+            "pty.cwd",
+            "pty.cwd(p)",
+            "String",
+            "pty",
+            "The foreground job's working directory (the shell's at its prompt), or () when it cannot be read.",
+            &[r##"pty.cwd(p)"##],
+        );
+        self.doc_ex(
+            "pty.close",
+            "pty.close(p)",
+            "Result",
+            "pty",
+            "Hang up: SIGHUP to the shell's and the foreground job's groups, the terminal closed, the child reaped (SIGKILL after 500 ms). Answers at once; the handle is gone.",
+            &[r##"pty.close(p)"##],
+        );
+        self.doc_ex(
+            "pty.shell",
+            "pty.shell()",
+            "String",
+            "pty",
+            "The user's login shell: $SHELL, else the user database's, else /bin/zsh (a program launchd started may have no $SHELL).",
+            &[r##"let argv = [pty.shell(), "-l"]"##],
+        );
+        self.doc_ex(
+            "pty.available",
+            "pty.available()",
+            "Bool",
+            "pty",
+            "Whether this platform has pseudo-terminals (macOS and Linux).",
+            &[r##"if pty.available() => println("a terminal can run here")"##],
+        );
+        self.doc_ex(
+            "vt.new",
+            "vt.new(rows, cols, opts?)",
+            "Screen",
+            "vt",
+            "A terminal's screen: what a program writes to a terminal (xterm's escape sequences) read into cells, with a scrollback. opts: scrollback (lines kept, 10000), fg and bg (\"#rrggbb\": what OSC 10 and 11 answer).",
+            &[r##"let t = vt.new(24, 80, #{ "scrollback": 10000 })"##],
+        );
+        self.doc_ex(
+            "vt.feed",
+            "vt.feed(t, data)",
+            "String",
+            "vt",
+            "Read a String or Bytes into the screen (UTF-8 split across calls is kept). Answers what the terminal says back to the program — a cursor report, its attributes — to write to it, often \"\".",
+            &[r##"let reply = vt.feed(t, "\u{1b}[1;32mok\u{1b}[0m\r\n")"##],
+        );
+        self.doc_ex(
+            "vt.resize",
+            "vt.resize(t, rows, cols)",
+            "Unit",
+            "vt",
+            "Resize the screen: the main screen's lines rewrapped at the new width (the cursor where its text went), the alternate screen cut or padded.",
+            &[r##"vt.resize(t, 40, 120)"##],
+        );
+        self.doc_ex(
+            "vt.info",
+            "vt.info(t)",
+            "TermInfo",
+            "vt",
+            "The screen's state: rows, cols, title, cwd (OSC 7), alt, cursor (line, col), cursor_row, cursor_visible, cursor_style, cursor_blink, app_cursor, app_keypad, bracketed_paste, mouse (\"\", \"click\", \"drag\", \"motion\"), mouse_sgr, focus_events, bell (a count), rev, first, screen and last (line numbers). Lines are numbered from the first ever kept, so a place stays on its text while the scrollback moves.",
+            &[r##"let i = vt.info(t)"##],
+        );
+        self.doc_ex(
+            "vt.claim",
+            "vt.claim(t)",
+            "Bool",
+            "vt",
+            "True the first time it is called after vt.info: a reader feeding the screen on its own thread says it changed once until the window has looked (coalescing a burst into frames).",
+            &[r##"if vt.claim(t) => println("tell the window")"##],
+        );
+        self.doc_ex(
+            "vt.render",
+            "vt.render(t, opts)",
+            "List",
+            "vt",
+            "The screen as canvas operations: backgrounds, text runs (bold, italic), underlines, strikes, the cursor. opts: cell_w, cell_h, size, font (\"mono\"), pad_x, pad_y, text_dy, rows, top (the first line's number; the screen by default), palette (16 colours), fg, bg, cursor_color, cursor_text, selection_color, find_color, find_current_color, link_color, selection (l0, c0, l1, c1), matches [(line, col, cells)] and match (the current), hover (line, c0, c1: a link underlined), cursor (false: hidden this blink), hollow, cursor_style, preedit (the input method's text at the cursor).",
+            &[r##"let ops = vt.render(t, #{ "cell_w": 7.8, "cell_h": 17, "size": 13 })"##],
+        );
+        self.doc_ex(
+            "vt.text",
+            "vt.text(t, l0, c0, l1, c1)",
+            "String",
+            "vt",
+            "The text between two places (a selection): wrapped lines joined, the others ended by a newline, trailing blanks dropped.",
+            &[r##"let s = vt.text(t, 0, 0, 2, 10)"##],
+        );
+        self.doc_ex(
+            "vt.line",
+            "vt.line(t, line)",
+            "TermLine",
+            "vt",
+            "A line's text and the column each character starts at ({ text, cols, wrapped }), or (): for finding links and paths in it.",
+            &[r##"let l = vt.line(t, vt.info(t).screen)"##],
+        );
+        self.doc_ex(
+            "vt.word_at",
+            "vt.word_at(t, line, col)",
+            "Tuple",
+            "vt",
+            "The word under a cell as (from, to) columns: a double click's selection (paths and URLs are words).",
+            &[r##"let (a, b) = vt.word_at(t, 3, 10)"##],
+        );
+        self.doc_ex(
+            "vt.link_at",
+            "vt.link_at(t, line, col)",
+            "TermLink",
+            "vt",
+            "The hyperlink (OSC 8) on a cell: { uri, from, to }, or ().",
+            &[r##"let l = vt.link_at(t, 3, 10)"##],
+        );
+        self.doc_ex(
+            "vt.find",
+            "vt.find(t, query, opts?)",
+            "List",
+            "vt",
+            "Every place a text is, scrollback first: [(line, col, cells)] (at most 2000). opts: case (Bool).",
+            &[r##"let hits = vt.find(t, "error", #{ "case": false })"##],
+        );
+        self.doc_ex(
+            "vt.clear",
+            "vt.clear(t)",
+            "Unit",
+            "vt",
+            "Clear the scrollback and the screen above the cursor's line (⌘K): that line becomes the first.",
+            &[r##"vt.clear(t)"##],
+        );
+        self.doc_ex(
+            "vt.reset",
+            "vt.reset(t)",
+            "Unit",
+            "vt",
+            "A full reset (RIS): modes, colours, the screen and the scrollback.",
+            &[r##"vt.reset(t)"##],
+        );
+        self.doc_ex(
+            "vt.set_colors",
+            "vt.set_colors(t, colors)",
+            "Unit",
+            "vt",
+            "The foreground and background the screen says it draws with (#{ fg, bg }), for programs that ask (OSC 10, 11).",
+            &[r##"vt.set_colors(t, #{ "fg": "#d4d4d8", "bg": "#18181b" })"##],
+        );
+        self.doc_ex(
+            "vt.free",
+            "vt.free(t)",
+            "Unit",
+            "vt",
+            "Forget a screen: its cells and scrollback freed (a reader still feeding it is answered quietly).",
+            &[r##"vt.free(t)"##],
         );
     }
 
@@ -11454,6 +11675,8 @@ mod tests {
             ("random", 14),
             ("os", 20),
             ("tty", 8),
+            ("pty", 12),
+            ("vt", 15),
             ("gui", 15),
         ] {
             let fns = h.functions_in_module(module);
