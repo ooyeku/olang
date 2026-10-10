@@ -1547,7 +1547,7 @@ elsewhere: `pty.available()`); capability-gated as `proc`.
 | `pty.foreground(p)` | the terminal's foreground job `{ pid, name, shell }` (`shell` while the shell is at its prompt), or `()` once it ended — ask before closing a terminal a program runs in |
 | `pty.cwd(p)` | the foreground job's working directory (the shell's at its prompt), or `()` |
 | `pty.pid(p)` · `pty.shell()` · `pty.available()` | the child's pid; the user's login shell (`$SHELL`, the user database's, `/bin/zsh`); whether ptys exist here |
-| `pty.close(p)` | hang up: SIGHUP to its groups, the master closed, the child reaped (SIGKILL after 500 ms). At once; the handle is gone |
+| `pty.close(p)` | hang up: SIGHUP to its groups, what it writes as it ends read and dropped, the child reaped (SIGKILL after 500 ms), the master closed. At once; the handle is gone |
 
 A terminal that closes waits for what it wrote to be read (macOS): keep
 reading until `eof`, then `wait`.
@@ -1592,7 +1592,7 @@ rewraps the main screen.
 | `vt.info(t)` | `{ rows, cols, title, cwd, alt, cursor (line, col), cursor_row, cursor_visible, cursor_style, cursor_blink, app_cursor, app_keypad, bracketed_paste, mouse, mouse_sgr, focus_events, bell, rev, first, screen, last }` |
 | `vt.claim(t)` | true once after each `vt.info`: a reader says "changed" once until the window looks (a burst is a frame) |
 | `vt.render(t, opts)` | canvas operations: backgrounds, text runs (bold, italic), underlines, strikes, the cursor (block, bar, underline; hollow; the input method's text). `opts`: `cell_w`, `cell_h`, `size`, `font`, `pad_x`, `pad_y`, `text_dy`, `rows`, `top`, `palette` (16), `fg`, `bg`, `cursor_color`, `cursor_text`, `selection_color`, `find_color`, `find_current_color`, `link_color`, `selection` `(l0, c0, l1, c1)`, `matches` and `match`, `hover`, `cursor`, `hollow`, `cursor_style`, `preedit` |
-| `vt.text(t, l0, c0, l1, c1)` · `vt.line(t, l)` · `vt.word_at(t, l, c)` · `vt.link_at(t, l, c)` · `vt.find(t, q, opts?)` | a selection's text; a line's text and each character's column; a double click's word; an OSC 8 link; every match `(line, col, cells)` |
+| `vt.text(t, l0, c0, l1, c1)` · `vt.line(t, l)` · `vt.word_at(t, l, c)` · `vt.link_at(t, l, c)` · `vt.find(t, q, opts?)` | a selection's text; a line's text and each character's column; a double click's word; an OSC 8 link; every match `(line, col, cells)` — a line that wrapped read as one (a match's `cells` may run onto the next row), the newest 2,000 |
 | `vt.set_colors(t, #{ fg, bg })` · `vt.free(t)` | |
 
 ## `cli` — command-line argument parsing

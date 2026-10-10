@@ -242,6 +242,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **pty.close reaps an interactive shell.** A session leader's exit waits
+  for its terminal's output to drain, and nothing read the master once
+  the handle was closed: an interactive zsh hung up with its prompt
+  unread stayed exiting (`?Es`) until the program ended (olang Studio's
+  terminal closed a session and left its shell). The reaper now reads
+  and drops what the child writes while it ends, then reaps it
+  (tests/pty_test.rs).
+- **vt.find reads a line that wrapped as one line and keeps the newest
+  matches.** A match across a wrap was missed, and past 2,000 matches the
+  oldest were kept, so "the match nearest the end" was not; a match
+  across a wrap is drawn on both rows.
+
 - **Nothing a client sends ends `olang lsp`.** A release build aborts on a
   panic, and the server had three left: semantic tokens sliced two bytes
   at any character that was not a word, a string or a comment, inside a

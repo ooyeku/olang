@@ -2000,43 +2000,52 @@ fn text_of(t: &Term, a: (i64, i64), b: (i64, i64)) -> String {
 }
 
 fn find(t: &Term, q: &str, case: bool) -> Vec<Value> {
-    let mut out = Vec::new();
     if q.is_empty() {
-        return out;
+        return Vec::new();
     }
     let needle: Vec<char> = if case { q.chars().collect() } else { q.to_lowercase().chars().collect() };
+    let low = |c: char| if case { c } else { c.to_lowercase().next().unwrap_or(c) };
     let first = if t.alt.is_some() { t.screen_id() } else { t.first_id() };
-    let last = t.last_id();
-    let mut id = first;
-    while id <= last && out.len() < 2000 {
-        if let Some(l) = t.line_by_id(id) {
-            // characters with their columns
-            let mut chars: Vec<(char, usize)> = Vec::new();
-            for (c, cell) in l.cells.iter().enumerate() {
-                if cell.w == 0 {
-                    continue;
-                }
-                let ch = if case { cell.ch } else { cell.ch.to_lowercase().next().unwrap_or(cell.ch) };
-                chars.push((ch, c));
-            }
-            if chars.len() >= needle.len() {
-                let mut i = 0;
-                while i + needle.len() <= chars.len() {
-                    if chars[i..i + needle.len()].iter().zip(needle.iter()).all(|((c, _), n)| c == n) {
-                        let c0 = chars[i].1;
-                        let last_c = chars[i + needle.len() - 1];
-                        let c1 = last_c.1 + l.cells[last_c.1].w.max(1) as usize;
-                        out.push(tuple(vec![int(id), int(c0 as i64), int((c1 - c0) as i64)]));
-                        i += needle.len();
-                    } else {
-                        i += 1;
+    // Logical lines (a line that wrapped joined to the next), from the
+    // end back: a match may cross a wrap, and the newest 2000 are kept.
+    let mut found: Vec<(i64, i64, i64)> = Vec::new();
+    let mut end = t.last_id();
+    while end >= first && found.len() < 2000 {
+        let mut start = end;
+        while start > first && t.line_by_id(start - 1).map(|l| l.wrapped).unwrap_or(false) {
+            start -= 1;
+        }
+        // its characters with their line and column
+        let mut chars: Vec<(char, i64, usize)> = Vec::new();
+        for id in start..=end {
+            if let Some(l) = t.line_by_id(id) {
+                for (c, cell) in l.cells.iter().enumerate() {
+                    if cell.w != 0 {
+                        chars.push((low(cell.ch), id, c));
                     }
                 }
             }
         }
-        id += 1;
+        let mut hits: Vec<(i64, i64, i64)> = Vec::new();
+        let mut i = 0;
+        while i + needle.len() <= chars.len() {
+            if chars[i..i + needle.len()].iter().zip(needle.iter()).all(|((c, _, _), n)| c == n) {
+                let (_, l0, c0) = chars[i];
+                let (_, l1, c1) = chars[i + needle.len() - 1];
+                let w1 = t.line_by_id(l1).and_then(|l| l.cells.get(c1)).map(|c| c.w.max(1) as i64).unwrap_or(1);
+                // cells from the first to past the last, across the wraps
+                let cells = (l1 - l0) * t.cols as i64 + c1 as i64 + w1 - c0 as i64;
+                hits.push((l0, c0 as i64, cells));
+                i += needle.len();
+            } else {
+                i += 1;
+            }
+        }
+        found.extend(hits.into_iter().rev());
+        end = start - 1;
     }
-    out
+    found.truncate(2000);
+    found.into_iter().rev().map(|(l, c, w)| tuple(vec![int(l), int(c), int(w)])).collect()
 }
 
 // ── drawing ──────────────────────────────────────────────────────────
@@ -2205,9 +2214,19 @@ fn render(t: &Term, o: Option<&crate::ast::ValueMap>) -> Vec<Value> {
             if let Value::Tuple(v) | Value::List(v) = m
                 && v.len() >= 3
             {
-                let l = num(v.first()).unwrap_or(0.0) as i64;
-                if l >= top && l < top + show_rows as i64 {
-                    marks.push((l, num(v.get(1)).unwrap_or(0.0) as i64, num(v.get(2)).unwrap_or(0.0) as i64, i as i64 == cur));
+                // a match that crosses a wrap goes on at the next line's start
+                let mut l = num(v.first()).unwrap_or(0.0) as i64;
+                let mut c0 = num(v.get(1)).unwrap_or(0.0) as i64;
+                let mut w = num(v.get(2)).unwrap_or(0.0) as i64;
+                let cols = t.cols as i64;
+                while w > 0 && l < top + show_rows as i64 {
+                    let seg = w.min(cols - c0).max(0);
+                    if l >= top && seg > 0 {
+                        marks.push((l, c0, seg, i as i64 == cur));
+                    }
+                    w -= seg;
+                    l += 1;
+                    c0 = 0;
                 }
             }
         }
@@ -2595,6 +2614,35 @@ mod tests {
         assert_eq!(text_of(&t, (s0, 6), (s0 + 2, 3)), "world\nfoo");
         assert_eq!(find(&t, "O", false).len(), 4);
         assert_eq!(find(&t, "O", true).len(), 0);
+    }
+
+    #[test]
+    fn find_crosses_a_wrap_and_keeps_the_newest() {
+        // "hello worl" wraps to "d": "world" is one match across it
+        let t = run(3, 10, "hello world\r\n");
+        let s0 = t.first_id();
+        let hits = find(&t, "world", false);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0], tuple(vec![int(s0), int(6), int(5)]));
+        // more than 2000 matches: the newest 2000, oldest first
+        let mut many = String::new();
+        for i in 0..2500 {
+            many.push_str(&format!("x{i}\r\n"));
+        }
+        let mut t2 = Term::new(5, 20, 5000);
+        t2.feed(many.as_bytes());
+        let hits = find(&t2, "x", true);
+        assert_eq!(hits.len(), 2000);
+        let last_line = |v: &Value| match v {
+            Value::Tuple(xs) => match &xs[0] {
+                Value::Integer(i) => *i,
+                _ => -1,
+            },
+            _ => -1,
+        };
+        assert!(last_line(&hits[0]) < last_line(&hits[1999]));
+        let l = t2.line_by_id(last_line(&hits[1999])).unwrap();
+        assert_eq!(l.text(0, 6).trim_end(), "x2499");
     }
 
     #[test]
