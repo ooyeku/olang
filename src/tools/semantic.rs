@@ -296,7 +296,9 @@ fn lex(text: &str) -> Vec<Lexeme> {
             continue;
         }
         // punctuation: two-character operators first
-        let two = if i + 1 < n { &text[i..(i + 2).min(n)] } else { "" };
+        // (the operators are ASCII: a character wider than a byte here is
+        // no operator, and `i + 2` may fall inside it)
+        let two = text.get(i..(i + 2).min(n)).unwrap_or("");
         let w = if matches!(two, "|>" | "=>" | "==" | "!=" | "<=" | ">=" | "&&" | "||" | "->" | "..") {
             2
         } else {

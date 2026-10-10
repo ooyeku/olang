@@ -243,12 +243,29 @@ fn main_loop(
                 if connection.handle_shutdown(&req)? {
                     return Ok(());
                 }
-                handle_request(connection, &docs, req, root.as_deref())?;
+                // a request the server cannot read (its params malformed)
+                // is answered with an error, never the server's end
+                let id = req.id.clone();
+                let method = req.method.clone();
+                if let Err(e) = handle_request(connection, &docs, req, root.as_deref()) {
+                    eprintln!("olang lsp: {method}: {e}");
+                    let resp = Response::new_err(id, lsp_server::ErrorCode::InvalidParams as i32, e.to_string());
+                    if connection.sender.send(Message::Response(resp)).is_err() {
+                        return Ok(());
+                    }
+                }
             }
             Message::Notification(note) => match note.method.as_str() {
                 DidOpenTextDocument::METHOD => {
                     let params: lsp_types::DidOpenTextDocumentParams =
-                        serde_json::from_value(note.params)?;
+                        match serde_json::from_value(note.params) {
+                            Ok(p) => p,
+                            // malformed: said, and the server goes on
+                            Err(e) => {
+                                eprintln!("olang lsp: {}: {e}", note.method);
+                                continue;
+                            }
+                        };
                     let uri = params.text_document.uri;
                     let text = params.text_document.text;
                     publish(connection, &uri, &text)?;
@@ -256,7 +273,14 @@ fn main_loop(
                 }
                 DidChangeTextDocument::METHOD => {
                     let params: lsp_types::DidChangeTextDocumentParams =
-                        serde_json::from_value(note.params)?;
+                        match serde_json::from_value(note.params) {
+                            Ok(p) => p,
+                            // malformed: said, and the server goes on
+                            Err(e) => {
+                                eprintln!("olang lsp: {}: {e}", note.method);
+                                continue;
+                            }
+                        };
                     // Each change is a range and its text (or, with no
                     // range, the whole text), applied in order.
                     let uri = params.text_document.uri;
@@ -271,7 +295,14 @@ fn main_loop(
                 }
                 DidCloseTextDocument::METHOD => {
                     let params: lsp_types::DidCloseTextDocumentParams =
-                        serde_json::from_value(note.params)?;
+                        match serde_json::from_value(note.params) {
+                            Ok(p) => p,
+                            // malformed: said, and the server goes on
+                            Err(e) => {
+                                eprintln!("olang lsp: {}: {e}", note.method);
+                                continue;
+                            }
+                        };
                     docs.remove(&params.text_document.uri);
                     stale.retain(|u| u != &params.text_document.uri);
                     // Clear diagnostics for closed files.
@@ -1767,7 +1798,10 @@ fn code_actions(
         // The nearest `let NAME` above the assignment.
         let assign_line = d.range.start.line as usize;
         for back in (0..=assign_line.min(lines.len().saturating_sub(1))).rev() {
-            let line = lines[back];
+            // an empty document has no line 0
+            let Some(&line) = lines.get(back) else {
+                continue;
+            };
             let t = line.trim_start();
             let pat = format!("let {}", name);
             if t.starts_with(&pat) && !t.starts_with(&format!("let mut {}", name)) {

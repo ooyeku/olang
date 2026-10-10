@@ -965,3 +965,42 @@ fn signature_help_reaches_an_imported_function_mid_edit() {
     assert!(c.child.wait().unwrap().success());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Nothing a client sends ends the server (release builds abort on a
+/// panic): semantic tokens over characters wider than a byte outside a
+/// comment (`“hi”`, `→`, `😀`), a code action on an empty document, and
+/// params that are not what the method takes — each answered, and the
+/// server still answers after.
+#[test]
+fn the_server_outlives_wide_characters_an_empty_document_and_bad_params() {
+    let mut c = Client::start();
+    c.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}));
+    c.recv_until(|m| m["id"] == 1);
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    let wide = "file:///wide.ol";
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+        "textDocument":{"uri":wide,"languageId":"olang","version":1,"text":"let s = “hi” → 😀 ─ é\nlet t = a — b…\n"}}}));
+    c.send(&serde_json::json!({"jsonrpc":"2.0","id":2,"method":"textDocument/semanticTokens/full","params":{"textDocument":{"uri":wide}}}));
+    let r = c.recv_until(|m| m["id"] == 2);
+    assert!(r["result"]["data"].is_array(), "{r}");
+    let empty = "file:///empty.ol";
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+        "textDocument":{"uri":empty,"languageId":"olang","version":1,"text":""}}}));
+    c.send(&serde_json::json!({"jsonrpc":"2.0","id":3,"method":"textDocument/codeAction","params":{
+        "textDocument":{"uri":empty},
+        "range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},
+        "context":{"diagnostics":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},
+                                   "message":"cannot assign to 'n': not declared mutable"}]}}}));
+    let r = c.recv_until(|m| m["id"] == 3);
+    assert!(r.get("error").is_none(), "{r}");
+    // malformed: a notification without its document, a request whose position is not one
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didChange","params":{"contentChanges":[]}}));
+    c.send(&serde_json::json!({"jsonrpc":"2.0","id":4,"method":"textDocument/completion","params":{
+        "textDocument":{"uri":wide},"position":{"line":0,"character":-1}}}));
+    let r = c.recv_until(|m| m["id"] == 4);
+    assert!(r["error"]["code"] == -32602, "{r}");
+    // still there
+    c.send(&serde_json::json!({"jsonrpc":"2.0","id":5,"method":"textDocument/semanticTokens/full","params":{"textDocument":{"uri":wide}}}));
+    let r = c.recv_until(|m| m["id"] == 5);
+    assert!(r["result"]["data"].is_array(), "{r}");
+}

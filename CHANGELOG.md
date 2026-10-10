@@ -242,6 +242,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Nothing a client sends ends `olang lsp`.** A release build aborts on a
+  panic, and the server had three left: semantic tokens sliced two bytes
+  at any character that was not a word, a string or a comment, inside a
+  character wider than two bytes (`“hi”`, `→`, `—`, `…`, an emoji, a `─`
+  outside a comment — every edit asks for tokens); a code action for an
+  assignment to a name not declared mutable read line 0 of an empty
+  document; and params a method cannot read (a notification without its
+  document, a position of -1) returned from the loop, ending the process.
+  Now the slice is taken only where it is one, the line looked for only
+  where there is one, and a request that cannot be read is answered
+  `InvalidParams` (a notification said on stderr) with the server going
+  on. tests/lsp_test.rs. (The crash reports of 2026-10-09 10:53–11:09 —
+  `olang` and a bisect's `olang-head`, SIGABRT in `handle_request`'s
+  `str::slice_error_fail` — were the completion panic 0067fab fixed.)
+
 - **The language server's problems are `olang check`'s.** The server ran
   its own analyzer and published where it stopped as an error, so an
   editor showed problems the checker and the program did not have:
