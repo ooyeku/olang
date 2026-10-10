@@ -207,6 +207,9 @@ pub struct WinState {
     /// The press being said was made with the command key (a styled
     /// field's `select` says `click_mod`).
     click_mod: bool,
+    /// The presses of the click that moved a field's selection (2: a
+    /// double click), said on its `select` as `clicks` (0: not a press).
+    click_count: u32,
 }
 
 /// An animated picture's playing: since when, and where it stopped.
@@ -318,6 +321,7 @@ impl WinState {
             next_frame: None,
             swallow_up: false,
             click_mod: false,
+            click_count: 0,
         }
     }
 
@@ -685,6 +689,7 @@ impl WinState {
             r.said_selection = sel;
         }
         let click_mod = std::mem::take(&mut self.click_mod);
+        let clicks = std::mem::take(&mut self.click_count);
         let place = self.rich_place(key);
         out.push(self.ev(
             "select",
@@ -696,6 +701,7 @@ impl WinState {
                 ("caret", rect_value(caret)),
                 ("top", top.map(|t| Value::Integer(t as i64)).unwrap_or(Value::Unit)),
                 ("click_mod", Value::Boolean(click_mod)),
+                ("clicks", Value::Integer(clicks as i64)),
             ],
         ));
     }
@@ -1454,6 +1460,7 @@ impl WinState {
                             ));
                         } else {
                             self.click_mod = cmd;
+                            self.click_count = clicks;
                             ed.press(tx, ty, clicks, shift, &mut ts);
                             drop(ts);
                             let f = f.clone();
