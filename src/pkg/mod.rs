@@ -9,6 +9,7 @@
 
 pub mod cache;
 pub mod lock;
+pub mod toolchain;
 pub mod manifest;
 pub mod registry;
 pub mod resolver;
@@ -140,6 +141,11 @@ pub fn install(root: &Path, options: &InstallOptions) -> Result<DependencyMap, P
             },
         );
     }
+
+    // The olang the project pins, resolved; a lock's kept when the
+    // manifest names none (src/pkg/toolchain.rs).
+    let previous = Lockfile::load(root).ok().and_then(|l| l.olang);
+    lock.olang = toolchain::lock_entry(manifest.package.olang.as_deref(), previous.as_deref());
 
     // Reproducibility gate for CI.
     if options.frozen {
@@ -372,6 +378,15 @@ fn replay_lock(
         return Ok(None);
     };
     if lock.package.is_empty() {
+        return Ok(None);
+    }
+
+    // A pin the lock's olang no longer satisfies (or one it never
+    // recorded) re-resolves, so the lock says what answers it now.
+    if let Some(req) = manifest.package.olang.as_deref()
+        && !lock.olang.as_deref().is_some_and(|v| toolchain::satisfies(req, v))
+        && toolchain::lock_entry(Some(req), None).is_some()
+    {
         return Ok(None);
     }
 

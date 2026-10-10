@@ -30,6 +30,15 @@ pub enum ToolchainCommand {
     Default { version: String },
     /// Remove an installed toolchain (never the default)
     Remove { version: String },
+    /// Print the olang a project runs: the toolchain its pin resolves to
+    /// (olang.toml `[package] olang`, olang.lock's `olang`)
+    Which {
+        /// The project's folder (default: the one this is run in)
+        dir: Option<String>,
+    },
+    /// Register a local build as a toolchain: VERSION's olang becomes
+    /// PATH (an olang binary, or a checkout holding target/release/olang)
+    Link { version: String, path: String },
 }
 
 /// `otc update [--check]`: install the latest release and make it the
@@ -103,6 +112,43 @@ pub fn toolchain(cmd: ToolchainCommand) -> Result<()> {
             }
             set_default(&v)?;
             print_path_hint()?;
+            Ok(())
+        }
+        ToolchainCommand::Which { dir } => {
+            let start = match dir {
+                Some(d) => PathBuf::from(d),
+                None => std::env::current_dir()?,
+            };
+            let root = olang::pkg::manifest::Manifest::find_root(&start)
+                .with_context(|| format!("no olang.toml at or above {}", start.display()))?;
+            use olang::pkg::toolchain::{Resolved, for_project, install_hint};
+            match for_project(&root) {
+                Resolved::Installed { bin, .. } => println!("{}", bin.display()),
+                Resolved::Running { .. } | Resolved::Unpinned => {
+                    println!("{}", std::env::current_exe()?.with_file_name("olang").display())
+                }
+                Resolved::Missing { pin } => bail!(
+                    "olang.toml pins olang {}, and no installed olang satisfies it ({} installs one)",
+                    pin,
+                    install_hint(&pin)
+                ),
+            }
+            Ok(())
+        }
+        ToolchainCommand::Link { version, path } => {
+            let v = normalize(&version);
+            let given = PathBuf::from(&path);
+            let bin = if given.is_dir() { given.join("target").join("release").join("olang") } else { given };
+            let bin = bin.canonicalize().with_context(|| format!("no olang at {}", bin.display()))?;
+            if !bin.is_file() {
+                bail!("{} is not an olang binary", bin.display());
+            }
+            let dir = toolchains_dir()?.join(&v).join("bin");
+            std::fs::create_dir_all(&dir)?;
+            let link = dir.join("olang");
+            let _ = std::fs::remove_file(&link);
+            std::os::unix::fs::symlink(&bin, &link).with_context(|| format!("linking {}", link.display()))?;
+            println!("toolchain {} is {}.", v, bin.display());
             Ok(())
         }
         ToolchainCommand::Remove { version } => {

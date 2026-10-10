@@ -59,6 +59,12 @@ pub struct PackageMeta {
     /// images, data.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub assets: Vec<String>,
+    /// The olang this package is written for: a requirement read as a
+    /// dependency's (`"0.88"` any 0.88.x; `"=0.88.1"`). `otc install`
+    /// records the toolchain that resolved it in olang.lock; an editor
+    /// runs that toolchain for the project (src/pkg/toolchain.rs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub olang: Option<String>,
 }
 
 /// A dependency's source. `toml` distinguishes these by which key is present,

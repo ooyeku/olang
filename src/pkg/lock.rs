@@ -15,6 +15,11 @@ pub struct Lockfile {
     /// Format version, so future changes can migrate.
     #[serde(default = "default_version")]
     pub version: u32,
+    /// The olang the project resolved its pin to (`[package] olang` in
+    /// olang.toml; src/pkg/toolchain.rs): an exact version. Kept as it is
+    /// by an install when the manifest names none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub olang: Option<String>,
     #[serde(default)]
     pub package: BTreeMap<String, LockedPackage>,
 }
@@ -79,6 +84,7 @@ impl Lockfile {
     pub fn new() -> Self {
         Lockfile {
             version: default_version(),
+            olang: None,
             package: BTreeMap::new(),
         }
     }
@@ -129,6 +135,16 @@ mod tests {
         let text = lock.to_toml();
         let reparsed = Lockfile::from_toml(&text).unwrap();
         assert_eq!(lock, reparsed);
+    }
+
+    #[test]
+    fn the_olang_a_lock_names_round_trips() {
+        let text = "version = 1\nolang = \"0.86.0\"\n";
+        let lock = Lockfile::from_toml(text).unwrap();
+        assert_eq!(lock.olang.as_deref(), Some("0.86.0"));
+        let again = lock.to_toml();
+        assert!(again.contains("olang = \"0.86.0\""), "{again}");
+        assert_eq!(Lockfile::from_toml(&again).unwrap(), lock);
     }
 
     #[test]

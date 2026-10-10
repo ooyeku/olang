@@ -40,6 +40,7 @@ fn root_or_init() -> anyhow::Result<PathBuf> {
             authors: Vec::new(),
             license: None,
             assets: Vec::new(),
+            olang: None,
         },
         dependencies: Default::default(),
         capabilities: None,
@@ -307,6 +308,16 @@ pub fn do_install(frozen: bool, update: bool, verbose: bool) -> anyhow::Result<(
         }
     }
     let map = install(&root, &opts).map_err(|e| anyhow::anyhow!("{}", e))?;
+    // a pin nothing installed satisfies: said, with the command (never run)
+    if let Some(pin) = olang::pkg::toolchain::manifest_pin(&root)
+        && olang::pkg::toolchain::lock_pin(&root).is_none_or(|v| !olang::pkg::toolchain::satisfies(&pin, &v))
+    {
+        println!(
+            "olang.toml pins olang {}, and no installed olang satisfies it — `{}` installs one",
+            pin,
+            olang::pkg::toolchain::install_hint(&pin)
+        );
+    }
     // A starter library shelved by an older toolchain lags the copy this
     // one ships (the shelf is seeded once): say so, with the command that
     // refreshes it, so a release note about `validate` reaches the shelf.
