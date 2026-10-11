@@ -829,7 +829,11 @@ sample the same stacks and answer the counts as data, for a `/profile`
 route. Time a thread spends parked — a channel receive, a sleep, a
 join, `http.serve` waiting for a connection, an idle http worker — is
 counted as blocked and charged to no function; a served app's profile
-is its handlers, not its server's idle loop. The report names, for
+is its handlers, not its server's idle loop. A program that ends with
+`os.exit` — every Loom application does, from its loop or a quit — is
+reported all the same (text or JSON), as it exits; a windowed program is
+sampled for its whole run, the platform's loop on the first thread and
+the program on its own. The report names, for
 every function that appeared:
 
 ```

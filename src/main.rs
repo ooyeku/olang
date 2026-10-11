@@ -780,17 +780,31 @@ fn run() -> i32 {
                 interval_us: interval,
                 label,
             });
-            let code = run_program(&cli, file, args, record, logger);
-            let doc = olang::profile_live::finish(Some(code)).unwrap_or_default();
-            let text = doc.to_string();
-            match out {
-                Some(path) => {
-                    if let Err(e) = std::fs::write(&path, text) {
-                        eprintln!("olang profile: cannot write {}: {}", path.display(), e);
-                        return 2;
+            // written when the program ends, by its return or `os.exit`
+            let failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let failed_write = failed.clone();
+            olang::profile::on_exit_report(Box::new(move |code| {
+                use std::io::Write as _;
+                let doc = olang::profile_live::finish(Some(code)).unwrap_or_default();
+                let text = doc.to_string();
+                match out {
+                    Some(path) => {
+                        if let Err(e) = std::fs::write(&path, text) {
+                            eprintln!("olang profile: cannot write {}: {}", path.display(), e);
+                            failed_write.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
+                    }
+                    None => {
+                        let mut so = std::io::stdout().lock();
+                        let _ = writeln!(so, "{}", text);
+                        let _ = so.flush();
                     }
                 }
-                None => println!("{}", text),
+            }));
+            let code = run_program(&cli, file, args, record, logger);
+            olang::profile::exit_report(code);
+            if failed.load(std::sync::atomic::Ordering::SeqCst) {
+                return 2;
             }
             code
         }
@@ -816,10 +830,16 @@ fn run() -> i32 {
                 .unwrap_or_else(|| file.display().to_string());
             let session = olang::profile::start(interval);
             let started = std::time::Instant::now();
+            // reported when the program ends, by its return or `os.exit`
+            olang::profile::on_exit_report(Box::new(move |_code| {
+                use std::io::Write as _;
+                let elapsed = started.elapsed();
+                let mut so = std::io::stdout().lock();
+                let _ = writeln!(so, "{}", session.finish(elapsed, top, &file_label));
+                let _ = so.flush();
+            }));
             let code = run_program(&cli, file, args, record, logger);
-            let elapsed = started.elapsed();
-            let label = file_label;
-            println!("{}", session.finish(elapsed, top, &label));
+            olang::profile::exit_report(code);
             code
         }
 

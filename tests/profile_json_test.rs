@@ -493,3 +493,61 @@ println(fs.exists(map_get(b, "exe")))
     }
     assert_eq!(out.lines().count(), 9);
 }
+
+// A program that starts the `gui` engine (a headless window, drawn and
+// read) and ends with `os.exit`, as every Loom application does from its
+// loop: the profile covers its whole run — the series' points sample
+// to the end — and is reported though the program never returns.
+const GUI_EXIT: &str = r##"use gui
+fn fib(n) = if n < 2 => n else => fib(n - 1) + fib(n - 2)
+let w = gui.headless(#{ "title": "profiled", "size": (240, 120) })
+let t0 = time.monotonic()
+let mut t = 0
+while time.monotonic() - t0 < 1500 {
+    let _a = gui.apply(w, [#{ "key": "root", "box": (0, 0, 240, 120), "style": #{ "bg": "#ffffff" } },
+                           #{ "key": "f", "parent": "root", "role": "input", "box": (10, 10, 200, 30), "edit": #{ "value": to_string(t) } }])
+    let _c = gui.read(w, "caret")
+    t = t + fib(16)
+}
+println(t > 0)
+os.exit(0)
+"##;
+
+#[test]
+fn a_gui_program_ending_with_os_exit_is_profiled_to_its_end() {
+    let dir = project("gui-exit", GUI_EXIT);
+    let (code, out, err) = olang(&dir, &["profile", "main.ol", "--format", "json", "--out", "p.json"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("true"), "{out}");
+    let doc = read(&dir.join("p.json"));
+    assert_eq!(doc["done"], true);
+    assert_eq!(doc["exit"], 0);
+    assert!(doc["elapsed_ms"].as_f64().unwrap() >= 1400.0, "{}", doc["elapsed_ms"]);
+    assert!(frame_named(&doc, "fib").is_some(), "fib sampled");
+    // a point of the series every half second, each with samples: the
+    // sampler ran from the first to the last
+    let series = doc["series"].as_array().unwrap();
+    let busy: Vec<&J> = series
+        .iter()
+        .filter(|p| p["t_ms"].as_f64().unwrap() > 100.0)
+        .collect();
+    assert!(busy.len() >= 3, "{series:?}");
+    for p in &busy[..busy.len() - 1] {
+        let n: u64 = p["samples"].as_object().unwrap().values().map(|v| v.as_u64().unwrap()).sum();
+        assert!(n > 0, "a point with no samples: {p} in {series:?}");
+    }
+    let last = busy[busy.len() - 2]["t_ms"].as_f64().unwrap();
+    assert!(last >= 1000.0, "sampled until {last} ms");
+    // and the text report, though the program never returned
+    let (code, out, err) = olang(&dir, &["profile", "main.ol"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("profile · main.ol"), "{out}");
+    assert!(out.contains("fib"), "{out}");
+    let secs: f64 = out
+        .split(" samples over ")
+        .nth(1)
+        .and_then(|r| r.split('s').next())
+        .and_then(|n| n.trim().parse().ok())
+        .unwrap_or(0.0);
+    assert!(secs >= 1.4, "{out}");
+}

@@ -615,6 +615,26 @@ pub fn pop() {
     instrument_pop();
 }
 
+/// What `olang profile` writes when the program ends, kept here so a
+/// program that ends with `os.exit` — every Loom application does, from
+/// its loop or a quit — still gets its report: the run's own end and
+/// `os.exit` both take it (`exit_report`), whichever comes first.
+static EXIT_REPORT: Mutex<Option<Box<dyn FnOnce(i32) + Send>>> = Mutex::new(None);
+
+/// Set what to report when the program ends (`olang profile`).
+pub fn on_exit_report(f: Box<dyn FnOnce(i32) + Send>) {
+    *EXIT_REPORT.lock().unwrap_or_else(|e| e.into_inner()) = Some(f);
+}
+
+/// Write the report set by `on_exit_report`, once: the program ended
+/// with `code` (returned, or `os.exit`).
+pub fn exit_report(code: i32) {
+    let f = EXIT_REPORT.lock().unwrap_or_else(|e| e.into_inner()).take();
+    if let Some(f) = f {
+        f(code);
+    }
+}
+
 /// A running profile: the sampler thread plus what it has collected.
 pub struct Session {
     stop: Arc<AtomicBool>,

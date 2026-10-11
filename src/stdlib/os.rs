@@ -924,8 +924,9 @@ fn os_exit(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     // anywhere gets its terminal back (atexit covers Unix too; Windows's
     // ExitProcess runs no atexit handlers, so this call is the guarantee).
     crate::stdlib::tty::restore_terminal();
-    // a live profile's last snapshot, and the tier statistics a run
-    // keeps, are written as it ends, however it ends
+    // `olang profile`'s report, a live profile's last snapshot, and the
+    // tier statistics a run keeps, are written as it ends, however it ends
+    crate::profile::exit_report(exit_code);
     let _ = crate::profile_live::finish(Some(exit_code));
     crate::compile_cache::flush();
     crate::boot_trace::finished();
