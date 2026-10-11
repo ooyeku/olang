@@ -287,6 +287,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`gui.context_menu` opened the menu mirrored about the window's
+  middle.** muda's `show_context_menu_for_nsview` turns y as though the
+  view were unflipped, and winit's view is flipped: a right click near a
+  window's top opened its menu near the bottom (over olang Studio's
+  terminal). The engine now places the menu itself
+  (`popUpMenuPositioningItem:atLocation:inView:` in the view's own
+  points), at the click, opening upward or to the left where the screen's
+  visible part has no room below or to the right
+  (`gui::platform::context_menu_origin`, tests/gui_test.rs). A script's
+  armed pick (`context_pick`) now also reports where it asked (`at`), the
+  menu's window as the window server had it (`frame`) and the menu's
+  `size`, in the window's content points, so a live check can see where
+  the menu opened.
+
 - **pty.close reaps an interactive shell.** A session leader's exit waits
   for its terminal's output to drain, and nothing read the master once
   the handle was closed: an interactive zsh hung up with its prompt

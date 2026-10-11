@@ -1688,6 +1688,27 @@ fn a_context_menu_is_checked_and_headless_windows_leave_it_to_the_program() {
     assert!(t.contains("a submenu is a list"), "{t}");
 }
 
+/// Where a native context menu's top left goes (AppKit's screen points,
+/// y up; the visible frame from y 50, 1440 × 825): at the click when it
+/// fits; near the bottom it opens upward from the click, near the right
+/// edge to its left; held inside when neither fits. (A menu once opened
+/// mirrored about the window's middle: muda turned y for an unflipped
+/// view, and winit's is flipped.)
+#[test]
+fn a_context_menu_opens_at_the_click_and_stays_on_the_screen() {
+    use olang::stdlib::gui::platform::context_menu_origin;
+    let vis = (0.0, 50.0, 1440.0, 825.0);
+    let menu = (220.0, 300.0);
+    assert_eq!(context_menu_origin((400.0, 700.0), menu, vis), (400.0, 700.0), "room below and right: at the click");
+    assert_eq!(context_menu_origin((400.0, 200.0), menu, vis), (400.0, 500.0), "near the bottom: upward, its bottom at the click");
+    assert_eq!(context_menu_origin((1300.0, 700.0), menu, vis), (1080.0, 700.0), "near the right: leftward, its right edge at the click");
+    assert_eq!(context_menu_origin((1300.0, 100.0), menu, vis), (1080.0, 400.0), "the bottom right corner: up and left");
+    let tall = (220.0, 800.0);
+    assert_eq!(context_menu_origin((400.0, 400.0), tall, vis), (400.0, 850.0), "too tall either way: its bottom at the screen's");
+    assert_eq!(context_menu_origin((400.0, 900.0), menu, vis), (400.0, 875.0), "a click above the visible part: held under its top");
+    assert_eq!(context_menu_origin((-30.0, 700.0), menu, vis), (0.0, 700.0), "left of the screen: held at its edge");
+}
+
 /// A code field's further carets, text after a line's end, rulers and
 /// sticky scroll are drawn (the pixels differ from the plain field); a
 /// press on a pinned line is said as a lens of id "sticky" with its

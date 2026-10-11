@@ -2006,20 +2006,221 @@ impl App {
         }
         self.context = Some((id, ids, titles.clone()));
         let shown_at = std::time::Instant::now();
-        let chosen = unsafe {
-            menu.show_context_menu_for_nsview(view, Some(winit::dpi::LogicalPosition::new(x, y).into()))
+        // a script's pick also measures where the platform put the menu
+        // (its window, read while it is up), in the window's content
+        // points: a live check compares it with where it asked
+        let content = unsafe { content_on_screen(view) };
+        let menu_size = unsafe {
+            let sz: objc2_foundation::NSSize = objc2::msg_send![&*ns_menu, size];
+            (sz.width, sz.height)
         };
+        let watch = pick.is_some().then(|| std::thread::spawn(menu_window_watch));
+        let chosen = unsafe { context_popup(ns_menu, view, x, y) };
         if let Some(label) = pick {
             let open_ms = shown_at.elapsed().as_millis();
             let item = by_label.get(&label).cloned();
             if std::env::var_os("GUI_TRACE").is_some() {
                 eprintln!("gui: context menu open {open_ms} ms, picked {label:?}");
             }
-            return dismissed(titles, item);
+            let frame = watch.and_then(|w| w.join().ok()).flatten();
+            let place = |v: f64, k: &str| (k.to_string(), Value::Float(v));
+            let at = vec![place(x, "x"), place(y, "y")];
+            let mut fields = vec![
+                ("window", Value::Integer(id as i64)),
+                ("id", item.map(|p| s(&p)).unwrap_or(Value::Unit)),
+                ("items", titles),
+                ("picked", Value::Boolean(true)),
+                ("at", map_of(at)),
+            ];
+            if let (Some((fx, fy, fw, fh)), Some((cx, cy))) = (frame, content) {
+                // the window server's frame holds the menu's shadow (and,
+                // on newer systems, room around it): the menu itself is
+                // `size`, in its middle
+                fields.push((
+                    "frame",
+                    map_of(vec![place(fx - cx, "x"), place(fy - cy, "y"), place(fw, "w"), place(fh, "h")]),
+                ));
+                fields.push(("size", map_of(vec![place(menu_size.0, "w"), place(menu_size.1, "h")])));
+            }
+            return emit(vec![event("context", fields)]);
         }
         if !chosen {
             dismissed(titles, None);
         }
+    }
+}
+
+/// A map of `fields` (a context event's places).
+#[cfg(target_os = "macos")]
+fn map_of(fields: Vec<(String, Value)>) -> Value {
+    let mut h = crate::ast::ValueMap::default();
+    for (k, v) in fields {
+        h.insert(k, v);
+    }
+    Value::Map(Arc::new(h))
+}
+
+/// Where a context menu's top left goes, in AppKit's screen points (y
+/// up): at the click, unless the menu would leave the screen's visible
+/// part — then it opens upward from the click (its bottom there), or to
+/// the left of it (its right edge there), as the Mac's own menus do; held
+/// inside when neither fits. `click` and the result are points, `menu`
+/// its size, `visible` the screen's visible frame `(x, y, w, h)` (y its
+/// bottom).
+pub fn context_menu_origin(click: (f64, f64), menu: (f64, f64), visible: (f64, f64, f64, f64)) -> (f64, f64) {
+    let (cx, cy) = click;
+    let (mw, mh) = menu;
+    let (vx, vy, vw, vh) = visible;
+    let (right, top) = (vx + vw, vy + vh);
+    let x = if cx + mw <= right {
+        cx
+    } else if cx - mw >= vx {
+        cx - mw
+    } else {
+        right - mw
+    };
+    let cy = cy.min(top);
+    let y = if cy - mh >= vy {
+        cy
+    } else if cy + mh <= top {
+        cy + mh
+    } else {
+        (vy + mh).min(top)
+    };
+    (x.max(vx), y)
+}
+
+/// Show `menu` with its top left at `(x, y)`, the window's content
+/// points from its top left (Loom's), over `view`. winit's view is
+/// flipped (y down), so the point is the view's own; a view that is not
+/// would be turned. muda's `show_context_menu_for_nsview` turned it as
+/// though every view were unflipped, so a menu opened mirrored about the
+/// window's middle (a click near the top opened it near the bottom).
+#[cfg(target_os = "macos")]
+unsafe fn context_popup(menu: *mut objc2::runtime::AnyObject, view: *const std::ffi::c_void, x: f64, y: f64) -> bool {
+    unsafe {
+        use objc2::msg_send;
+        use objc2::runtime::AnyObject;
+        use objc2_foundation::{NSPoint, NSRect, NSSize};
+        let view = view as *mut AnyObject;
+        let window: *mut AnyObject = msg_send![&*view, window];
+        let flipped: bool = msg_send![&*view, isFlipped];
+        let bounds: NSRect = msg_send![&*view, bounds];
+        let local = NSPoint::new(x, if flipped { y } else { bounds.size.height - y });
+        let none: *mut AnyObject = std::ptr::null_mut();
+        let mut at = local;
+        if !window.is_null() {
+            let in_win: NSPoint = msg_send![&*view, convertPoint: local, toView: none];
+            let on_screen: NSPoint = msg_send![&*window, convertPointToScreen: in_win];
+            let screen: *mut AnyObject = msg_send![&*window, screen];
+            if !screen.is_null() {
+                let vis: NSRect = msg_send![&*screen, visibleFrame];
+                let size: NSSize = msg_send![&*menu, size];
+                let (ox, oy) = context_menu_origin(
+                    (on_screen.x, on_screen.y),
+                    (size.width, size.height),
+                    (vis.origin.x, vis.origin.y, vis.size.width, vis.size.height),
+                );
+                let back: NSPoint = msg_send![&*window, convertPointFromScreen: NSPoint::new(ox, oy)];
+                at = msg_send![&*view, convertPoint: back, fromView: none];
+            }
+        }
+        let item: *mut AnyObject = std::ptr::null_mut();
+        msg_send![&*menu, popUpMenuPositioningItem: item, atLocation: at, inView: &*view]
+    }
+}
+
+/// The top left of `view`'s content in the screen's global points with y
+/// down from the top of the main screen (as the window server says
+/// windows' bounds).
+#[cfg(target_os = "macos")]
+unsafe fn content_on_screen(view: *const std::ffi::c_void) -> Option<(f64, f64)> {
+    unsafe {
+        use objc2::msg_send;
+        use objc2::runtime::AnyObject;
+        use objc2_foundation::NSRect;
+        let view = view as *mut AnyObject;
+        let window: *mut AnyObject = msg_send![&*view, window];
+        if window.is_null() {
+            return None;
+        }
+        let bounds: NSRect = msg_send![&*view, bounds];
+        let none: *mut AnyObject = std::ptr::null_mut();
+        let in_win: NSRect = msg_send![&*view, convertRect: bounds, toView: none];
+        let r: NSRect = msg_send![&*window, convertRectToScreen: in_win];
+        let screens: *mut AnyObject = msg_send![objc2::class!(NSScreen), screens];
+        let count: usize = msg_send![&*screens, count];
+        if count == 0 {
+            return None;
+        }
+        let main: *mut AnyObject = msg_send![&*screens, objectAtIndex: 0usize];
+        let mf: NSRect = msg_send![&*main, frame];
+        Some((r.origin.x, mf.size.height - (r.origin.y + r.size.height)))
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+    fn CGWindowListCopyWindowInfo(option: u32, relative_to: u32) -> *mut std::ffi::c_void;
+}
+
+/// This process's pop-up menu window as the window server has it (global
+/// points, y down): polled for a second from another thread while the
+/// menu tracks (a script's pick; the window server answers any thread).
+#[cfg(target_os = "macos")]
+fn menu_window_watch() -> Option<(f64, f64, f64, f64)> {
+    for _ in 0..40 {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        if let Some(f) = unsafe { menu_window_now() } {
+            return Some(f);
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn menu_window_now() -> Option<(f64, f64, f64, f64)> {
+    unsafe {
+        use objc2::msg_send;
+        use objc2::runtime::AnyObject;
+        use objc2_foundation::NSString;
+        // kCGWindowListOptionOnScreenOnly; kCGPopUpMenuWindowLevel is 101
+        let list = CGWindowListCopyWindowInfo(1, 0) as *mut AnyObject;
+        if list.is_null() {
+            return None;
+        }
+        let pid = std::process::id() as i64;
+        let key = |k: &str| NSString::from_str(k);
+        let (kpid, klayer, kbounds) = (key("kCGWindowOwnerPID"), key("kCGWindowLayer"), key("kCGWindowBounds"));
+        let num = |d: *mut AnyObject, k: &NSString| -> Option<f64> {
+            let v: *mut AnyObject = msg_send![&*d, objectForKey: k];
+            if v.is_null() {
+                None
+            } else {
+                let f: f64 = msg_send![&*v, doubleValue];
+                Some(f)
+            }
+        };
+        let count: usize = msg_send![&*list, count];
+        let mut found = None;
+        for i in 0..count {
+            let d: *mut AnyObject = msg_send![&*list, objectAtIndex: i];
+            if num(d, &kpid) != Some(pid as f64) || num(d, &klayer) != Some(101.0) {
+                continue;
+            }
+            let b: *mut AnyObject = msg_send![&*d, objectForKey: &*kbounds];
+            if b.is_null() {
+                continue;
+            }
+            let (bx, by, bw, bh) = (key("X"), key("Y"), key("Width"), key("Height"));
+            if let (Some(x), Some(y), Some(w), Some(h)) = (num(b, &bx), num(b, &by), num(b, &bw), num(b, &bh)) {
+                found = Some((x, y, w, h));
+                break;
+            }
+        }
+        let _: () = msg_send![&*list, release];
+        found
     }
 }
 
