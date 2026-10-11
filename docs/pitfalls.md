@@ -22,15 +22,18 @@ unwrap_or(m.z, 0)     // TYPE ERROR: unwrap_or's first arg must be a Result
 ```
 
 `unwrap_or` is for `Result`, so passing it a `Unit` is a type error. The
-lookup-with-default is `map_get_or`, and `map_has_key` guards the rare
-case where absent and stored-null must be told apart:
+lookup-with-default is `??` — `m.z ?? 0` is `map_get_or(m, "z", 0)`,
+evaluating its default only when it is used — and `map_has_key` guards
+the rare case where absent and stored-null must be told apart:
 
 ```olang
 let m = #{ "a": 1 }
-let a = map_get_or(m, "a", 0)
-let z = map_get_or(m, "z", 0)
+let a = m.a ?? 0
+let z = m.z ?? 0
 println(show(a) + " " + show(z))   // 1 0
 ```
+
+`??` replaces only `()`: `m.flag ?? true` keeps a stored `false`.
 
 A misspelt key is `Unit` too — `p.runing` reads nothing rather than
 raising; an object (`{ name: v }`) and a parsed JSON object read the

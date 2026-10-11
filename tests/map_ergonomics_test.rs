@@ -290,3 +290,157 @@ main()
     assert_eq!(agree(src), Ok(Value::Float(40.0)));
 }
 
+// ── E2: `a ?? b` ────────────────────────────────────────────────────────
+
+#[test]
+fn coalesce_takes_the_right_only_for_unit() {
+    let src = r#"
+fn main() = {
+    let m = #{ "a": 1, "u": (), "f": false, "z": 0, "e": "" }
+    [m.a ?? 9, m.u ?? 9, m.none ?? 9, m.f ?? 9, m.z ?? 9, m.e ?? 9, () ?? () ?? 7]
+}
+main()
+"#;
+    assert_eq!(
+        agree(src),
+        Ok(Value::List(std::sync::Arc::new(vec![
+            Value::Integer(1),
+            Value::Integer(9),
+            Value::Integer(9),
+            Value::Boolean(false),
+            Value::Integer(0),
+            s(""),
+            Value::Integer(7),
+        ])))
+    );
+}
+
+#[test]
+fn coalesce_is_map_get_or() {
+    let src = r#"
+fn main() = {
+    let m = #{ "a": 1, "u": (), "l": [] }
+    [m.a ?? 0, m.u ?? 0, m.x ?? 0, m.l ?? 0] == [map_get_or(m, "a", 0), map_get_or(m, "u", 0), map_get_or(m, "x", 0), map_get_or(m, "l", 0)]
+}
+main()
+"#;
+    assert_eq!(agree(src), Ok(Value::Boolean(true)));
+}
+
+#[test]
+fn the_right_side_is_evaluated_only_when_needed() {
+    // On every tier: a cell counts the right side's evaluations.
+    let src = r#"
+let hits = cell(0)
+fn bump(v) = {
+    cell.update(hits, (n) => n + 1)
+    v
+}
+fn pick(m) = m.k ?? bump(5)
+fn main() = {
+    let a = pick(#{ "k": 1 })
+    let b = pick(#{ "j": 1 })
+    let c = pick(#{ "k": () })
+    [a, b, c, cell.get(hits)]
+}
+main()
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(Value::List(std::sync::Arc::new(vec![
+            Value::Integer(1),
+            Value::Integer(5),
+            Value::Integer(5),
+            Value::Integer(2),
+        ])))
+    );
+}
+
+#[test]
+fn an_error_on_the_right_is_raised_only_when_taken() {
+    let src = r#"
+fn main() = {
+    let m = #{ "k": 1 }
+    m.k ?? (1 / 0)
+}
+main()
+"#;
+    assert_eq!(agree(src), Ok(Value::Integer(1)));
+    let taken = r#"
+fn main() = {
+    let m = #{ "j": 1 }
+    m.k ?? (1 / 0)
+}
+main()
+"#;
+    assert!(agree(taken).is_err());
+}
+
+#[test]
+fn coalesce_precedence() {
+    // below arithmetic, the pipeline and ranges; above comparisons
+    let src = r#"
+fn main() = {
+    let m = #{ "n": 5 }
+    let a = m.zz ?? 0 > 3          // (m.zz ?? 0) > 3
+    let b = m.n ?? 0 > 3           // (m.n ?? 0) > 3
+    let c = m.zz ?? 1 + 2          // m.zz ?? (1 + 2)
+    let d = 1 + 2 ?? 9             // (1 + 2) ?? 9
+    let e = [1, 2] |> len ?? 0     // ([1, 2] |> len) ?? 0
+    let f = m.zz ?? 0 == 0 && true // ((m.zz ?? 0) == 0) && true
+    let g = m.zz ?? m.yy ?? m.n    // chains
+    [a, b, c, d, e, f, g]
+}
+main()
+"#;
+    assert_eq!(
+        agree(src),
+        Ok(Value::List(std::sync::Arc::new(vec![
+            Value::Boolean(false),
+            Value::Boolean(true),
+            Value::Integer(3),
+            Value::Integer(3),
+            Value::Integer(2),
+            Value::Boolean(true),
+            Value::Integer(5),
+        ])))
+    );
+}
+
+#[test]
+fn coalesce_beside_try_and_across_lines() {
+    let src = r#"
+fn half(r) = {
+    let v = r?
+    Ok(v.x ?? 0)
+}
+fn main() = {
+    let wide = #{ "a": () }.a
+        ?? "fallback"
+    [half(Ok(#{ "x": 4 })), half(Ok(#{})), wide]
+}
+main()
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(Value::List(std::sync::Arc::new(vec![
+            Value::Ok(Box::new(Value::Integer(4))),
+            Value::Ok(Box::new(Value::Integer(0))),
+            s("fallback"),
+        ])))
+    );
+}
+
+#[test]
+fn coalesce_in_a_hot_loop_agrees() {
+    let src = r#"
+fn total(m, n) = {
+    let mut acc = 0
+    for i in 0..n { acc = acc + (m.step ?? 1) + (m.none ?? 2) }
+    acc
+}
+fn main() = total(#{ "step": 3 }, 100) + total(#{ "other": 3 }, 100)
+main()
+"#;
+    assert_eq!(agree(src), Ok(Value::Integer(500 + 300)));
+}

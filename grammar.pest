@@ -219,7 +219,7 @@ unary_op      = { "-" | "!" }
 
 // Precedence ladder, loosest → tightest (the 0.68 fix — the third and
 // final deliberate pre-1.0 breaking change):
-//   ||  <  &&  <  comparison  <  |>  <  ranges  <  + -  <  * / %  <  bitwise
+//   ||  <  &&  <  comparison  <  ??  <  |>  <  ranges  <  + -  <  * / %  <  bitwise
 // so `a || b && c` is `a || (b && c)`, `x + 1 |> f` pipes the sum, and
 // `0..n-1` is `0..(n-1)`. `|>` sits between comparison and ranges
 // (Elixir's placement): arithmetic feeds a pipeline, and a pipeline's
@@ -243,7 +243,7 @@ unary_op      = { "-" | "!" }
 // is never read as `<`.
 binary_expr   = { unary_expr ~ binary_tail* }
 binary_tail   = _{
-    (NL* ~ (or_op | and_op | pipe_op | bitwise_op | add_op | mul_op) ~ NL* ~ unary_expr)
+    (NL* ~ (or_op | and_op | coalesce_op | pipe_op | bitwise_op | add_op | mul_op) ~ NL* ~ unary_expr)
   | (NL* ~ comp_op ~ NL* ~ cmp_rhs)
   | (range_op ~ unary_expr)
 }
@@ -254,6 +254,10 @@ binary_tail   = _{
 // Comparing against a literal function is still writable, parenthesized.
 cmp_rhs = { unit | unary_expr }
 pipe_op       = { "|>" }
+// `a ?? b`: `b` when `a` is `()`, else `a`; `b` is evaluated only when
+// needed. Below the arithmetic (and the pipeline and ranges), above the
+// comparisons, as Kotlin's `?:` — `a.n ?? 0 > 3` is `(a.n ?? 0) > 3`.
+coalesce_op   = { "??" }
 unary_expr    = { unary_op* ~ call_expr }
 call_expr   = { primary ~ ( function_call | ("." ~ identifier) | ("[" ~ expr ~ "]") | postfix_op )* }
 
@@ -269,7 +273,9 @@ named_arg = { identifier ~ ":" ~ expr }
 // Try-catch expressions
 
 // Postfix operators
-postfix_op = { "?" }
+// Atomic, so the lookahead sees the very next character: not the first
+// `?` of `??`.
+postfix_op = @{ "?" ~ !"?" }
 
 // Primary expressions
 primary     = { lambda | spawn_expr | match_expr | if_expr | struct_literal | anonymous_object | map_literal | literal | macro_call | identifier | paren_expr | block }

@@ -123,7 +123,8 @@ and now takes ~8 ms to use what an earlier launch compiled.
   JSON object alike) asks nothing: it compiles to one `GetField`
   whatever the value turns out to be, and the value's kind is met at
   run time (an inline cache keyed by a struct's shape, a hash read for a
-  map's key) — no entry depends on a shape the compiler assumed.
+  map's key) — no entry depends on a shape the compiler assumed. `a ??
+  b` asks nothing either (a test of the left for `()`, and a branch).
   Each answer is hashed as far as the compile looks at it — a
   function's name and whether it is the known one, a builtin's name, a
   constructor's arity, a Boolean's value (a constant condition folds and
@@ -208,8 +209,9 @@ A function is eligible when its body uses only the subset the VM implements:
 - `Ok(..)` / `Err(..)` construction
 - field access (`p.x`, and `m.key` on a map, an object or a parsed JSON
   object, which is `map_get(m, "key")`; the JIT reads a map of one
-  payload kind natively, as it does `map_get`), and indexing (`xs[i]`,
-  negatives from the end)
+  payload kind natively, as it does `map_get`), `a ?? b` (a test of the
+  left for `()` and a branch), and indexing (`xs[i]`, negatives from
+  the end)
 - enum values end to end: unit variants bake as closure constants,
   tuple-variant constructors (`Circle(2.0)`) compile to a `MakeEnum`
   instruction with arity checked at compile time, `==`/`!=` compare

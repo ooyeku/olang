@@ -2150,7 +2150,12 @@ fn parameter_needs(function: &str, parameters: &[String], body: &Expr) -> Vec<Op
                     }
                 }
                 walk(left, function, live, all, out);
-                if !matches!(op, crate::ast::BinaryOp::And | crate::ast::BinaryOp::Or) {
+                if !matches!(
+                    op,
+                    crate::ast::BinaryOp::And
+                        | crate::ast::BinaryOp::Or
+                        | crate::ast::BinaryOp::Coalesce
+                ) {
                     walk(right, function, live, all, out);
                 }
             }
@@ -3182,6 +3187,14 @@ impl Checker {
                     | B::GreaterThanEqual
                     | B::And
                     | B::Or => SType::Bool,
+                    // the left's type when it is not `()`, else the right's
+                    B::Coalesce => {
+                        if l == r {
+                            l
+                        } else {
+                            SType::Unknown
+                        }
+                    }
                     B::Add | B::Subtract | B::Multiply | B::Divide | B::Modulo => {
                         match (l.base_name(), r.base_name()) {
                             (Some("Int"), Some("Int")) => SType::Int,

@@ -437,6 +437,8 @@ pub enum BinaryOp {
     GreaterThanEqual,
     And,
     Or,
+    /// `a ?? b`: `b` when `a` is `()`, else `a` — `b` evaluated only then.
+    Coalesce,
 }
 
 impl BinaryOp {
@@ -457,6 +459,7 @@ impl BinaryOp {
             BinaryOp::GreaterThanEqual => ">=",
             BinaryOp::And => "&&",
             BinaryOp::Or => "||",
+            BinaryOp::Coalesce => "??",
         }
     }
 }

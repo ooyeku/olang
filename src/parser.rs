@@ -135,6 +135,7 @@ fn humanize_rule(rule: Rule) -> &'static str {
         | Rule::comp_op
         | Rule::range_op
         | Rule::pipe_op
+        | Rule::coalesce_op
         | Rule::postfix_op => "an operator",
         Rule::function_call => "a function call",
         Rule::block => "a block",
@@ -1245,11 +1246,12 @@ impl Parser {
             Rule::or_op => 1,
             Rule::and_op => 2,
             Rule::comp_op => 3,
-            Rule::pipe_op => 4,
-            Rule::range_op => 5,
-            Rule::add_op => 6,
-            Rule::mul_op => 7,
-            _ => 8, // bitwise_op
+            Rule::coalesce_op => 4,
+            Rule::pipe_op => 5,
+            Rule::range_op => 6,
+            Rule::add_op => 7,
+            Rule::mul_op => 8,
+            _ => 9, // bitwise_op
         }
     }
 
@@ -1307,6 +1309,7 @@ impl Parser {
                     op: match text.as_str() {
                         "||" => BinaryOp::Or,
                         "&&" => BinaryOp::And,
+                        "??" => BinaryOp::Coalesce,
                         "==" => BinaryOp::Equal,
                         "!=" => BinaryOp::NotEqual,
                         "<" => BinaryOp::LessThan,

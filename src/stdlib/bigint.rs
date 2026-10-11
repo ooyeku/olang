@@ -308,6 +308,7 @@ impl crate::native::OvmModule for BigIntModule {
             _ => return None,
         };
         Some(match op {
+            B::Coalesce => return None,
             B::Add => Ok(bigint_value(a + b)),
             B::Subtract => Ok(bigint_value(a - b)),
             B::Multiply => Ok(bigint_value(a * b)),

@@ -148,7 +148,7 @@ fn is_keyword(w: &str) -> bool {
 }
 
 const MULTI_OPS: &[&str] = &[
-    "...", "|>", "=>", "->", "==", "!=", "<=", ">=", "&&", "||", "..", "#{",
+    "...", "|>", "=>", "->", "==", "!=", "<=", ">=", "&&", "||", "??", "..", "#{",
 ];
 
 /// Tokenize one line known to start in Code mode. Returns the tokens,
@@ -620,6 +620,12 @@ mod tests {
     fn strips_trailing_whitespace_and_collapses_blanks() {
         let src = "let x = 1   \n\n\n\nlet y = 2\t\n";
         assert_eq!(format_source(src), "let x = 1\n\nlet y = 2\n");
+    }
+
+    #[test]
+    fn the_default_operator_breathes_and_try_glues() {
+        let src = "let a = m.x??0\nlet b = r?  ??  m.y\n";
+        assert_eq!(format_source(src), "let a = m.x ?? 0\nlet b = r? ?? m.y\n");
     }
 
     #[test]

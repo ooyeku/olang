@@ -23,6 +23,11 @@ impl Interpreter {
         op: BinaryOp,
         right: Value,
     ) -> Result<Value, InterpreterError> {
+        // `??` with both sides already evaluated (the evaluator itself
+        // evaluates the right only when the left is `()`).
+        if matches!(op, BinaryOp::Coalesce) {
+            return Ok(if matches!(left, Value::Unit) { right } else { left });
+        }
         // Native extension values (OVM modules) get first refusal on any
         // operation touching them; no arm below can apply to one. The VM's
         // execute_binary_op calls the same hook on the same Arc-shared

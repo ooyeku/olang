@@ -299,7 +299,7 @@ fn lex(text: &str) -> Vec<Lexeme> {
         // (the operators are ASCII: a character wider than a byte here is
         // no operator, and `i + 2` may fall inside it)
         let two = text.get(i..(i + 2).min(n)).unwrap_or("");
-        let w = if matches!(two, "|>" | "=>" | "==" | "!=" | "<=" | ">=" | "&&" | "||" | "->" | "..") {
+        let w = if matches!(two, "|>" | "=>" | "==" | "!=" | "<=" | ">=" | "&&" | "||" | "??" | "->" | "..") {
             2
         } else {
             cl
@@ -330,7 +330,7 @@ fn lex(text: &str) -> Vec<Lexeme> {
 fn is_operator(p: &str) -> bool {
     matches!(
         p,
-        "|>" | "=>" | "==" | "!=" | "<=" | ">=" | "&&" | "||" | "->" | ".." | "+" | "-" | "*" | "/"
+        "|>" | "=>" | "==" | "!=" | "<=" | ">=" | "&&" | "||" | "??" | "->" | ".." | "+" | "-" | "*" | "/"
             | "%" | "=" | "<" | ">" | "!" | "?" | "|" | "&"
     )
 }

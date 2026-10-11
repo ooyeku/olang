@@ -10119,6 +10119,29 @@ impl BytecodeCompiler {
                 // errors in the And instruction, exactly like the tree-walk).
                 // PatternEq never errors and always yields a Boolean, which
                 // makes it safe to branch on.
+                // `a ?? b`: the left's value, unless it is `()` — then the
+                // right, compiled behind a branch taken only in that case,
+                // so it is evaluated only when needed (as `&&`'s is).
+                if matches!(op, BinaryOp::Coalesce) {
+                    let left_reg = self.compile_expression(left)?;
+                    let dst_reg = self.register_allocator.allocate_register();
+                    self.emitter.emit_move(dst_reg, left_reg);
+                    let unit_const = self.emitter.add_constant(OvmValue::new_unit());
+                    let unit_reg = self.register_allocator.allocate_register();
+                    self.emitter.emit_load_const(unit_reg, unit_const);
+                    let is_unit = self.register_allocator.allocate_register();
+                    self.emitter.instructions.push(Instruction::PatternEq {
+                        dst: is_unit,
+                        value: dst_reg,
+                        other: unit_reg,
+                    });
+                    let end_label = self.emitter.create_label();
+                    self.emitter.emit_branch_if_false(is_unit, end_label);
+                    let right_reg = self.compile_expression(right)?;
+                    self.emitter.emit_move(dst_reg, right_reg);
+                    self.emitter.place_label(end_label);
+                    return Ok(dst_reg);
+                }
                 if matches!(op, BinaryOp::And | BinaryOp::Or) {
                     let left_reg = self.compile_expression(left)?;
                     // The combine instruction reads the left register after

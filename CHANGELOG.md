@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`a ?? b`** (roadmap E2): `b` when `a` is `()`, else `a`, the right
+  side evaluated only when needed (as `&&`'s) on every tier — the
+  interpreter, the VM (a test of the left and a branch) and so the JIT.
+  Its level is below the arithmetic, the pipeline and the ranges and
+  above the comparisons, as Kotlin's `?:`: `a.n ?? 0 > 3` is
+  `(a.n ?? 0) > 3`. `opts.pad ?? 0` is `map_get_or(opts, "pad", 0)`
+  (which also takes the default for a stored `()`), and faster: ~1.5× on
+  the VM, ~3× on the interpreter. `olang fmt`, the language server's
+  tokens and the VS Code grammar know it; postfix `?` no longer takes the
+  first `?` of `??`. tests/map_ergonomics_test.rs.
 - **`m.key` reads a map's key** (roadmap E1): exactly
   `map_get(m, "key")` on a Map, an anonymous object and a parsed
   `JsonObject` — the key's value, or `()` when it is absent; chains read

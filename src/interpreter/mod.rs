@@ -2041,6 +2041,15 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                         let right = self.eval_expr(right)?;
                         self.eval_binary_op(left, op.clone(), right)
                     }
+                    // `a ?? b`: the right side only when the left is `()`.
+                    BinaryOp::Coalesce => {
+                        let left = self.eval_expr(left)?;
+                        if matches!(left, Value::Unit) {
+                            self.eval_expr(right)
+                        } else {
+                            Ok(left)
+                        }
+                    }
                     _ => {
                         let left = self.eval_expr(left)?;
                         let right = self.eval_expr(right)?;

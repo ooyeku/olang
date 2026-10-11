@@ -569,13 +569,14 @@ From loosest to tightest binding:
 | 1 | `\|\|` | logical or, short-circuit |
 | 2 | `&&` | logical and, short-circuit |
 | 3 | `==` `!=` `<` `<=` `>` `>=` | comparison |
-| 4 | `\|>` | pipeline |
-| 5 | `..` `..=` | ranges |
-| 6 | `+` `-` | additive |
-| 7 | `*` `/` `%` | multiplicative |
-| 8 | `&` `\|` `^` `<<` `>>` | bitwise |
-| 9 | `-` `!` (prefix) | unary |
-| 10 | `f(x)` `.field` `[i]` `?` | call, access, index, try |
+| 4 | `??` | default for `()`, short-circuit |
+| 5 | `\|>` | pipeline |
+| 6 | `..` `..=` | ranges |
+| 7 | `+` `-` | additive |
+| 8 | `*` `/` `%` | multiplicative |
+| 9 | `&` `\|` `^` `<<` `>>` | bitwise |
+| 10 | `-` `!` (prefix) | unary |
+| 11 | `f(x)` `.field` `[i]` `?` | call, access, index, try |
 
 All binary operators are **left-associative**, and comparisons do not
 chain (`a < b < c` is a type error — write `a < b && b < c`). The
@@ -587,9 +588,14 @@ ordering follows the conventional readings:
   `x + 1 |> f` pipes the sum — it is `f(x + 1)` — while
   `xs |> len == 3` compares the pipeline's result. (This is the
   pipeline placement Elixir uses.)
+- **`??` defaults what the operators below it compute, and feeds a
+  comparison.** It sits below the arithmetic (and the pipeline and
+  ranges) and above the comparisons, as Kotlin's `?:` does:
+  `a.n ?? 0 > 3` is `(a.n ?? 0) > 3`, and `m.n ?? 1 + 2` is
+  `m.n ?? (1 + 2)`.
 - **Range bounds are arithmetic.** `0..n-1` is `0..(n-1)`, so the
   everyday loop bound needs no parentheses.
-- **Bitwise (8) binds tighter than arithmetic.** `1 << 4 * 2` is
+- **Bitwise (9) binds tighter than arithmetic.** `1 << 4 * 2` is
   `(1 << 4) * 2` — parenthesize mixed shift/arithmetic expressions.
 
 ```olang
@@ -620,7 +626,8 @@ proceeds **left to right** everywhere: binary operands, call arguments,
 and the elements of list, tuple, and map literals all evaluate in
 source order. The exceptions are the constructs whose entire purpose is
 *not* evaluating something: `&&`/`||` skip the right operand when the
-left settles the answer, and `if`/`match` evaluate only the taken arm.
+left settles the answer, `??` evaluates its right operand only when the
+left is `()`, and `if`/`match` evaluate only the taken arm.
 
 ```olang
 fn side(tag, v) = {
@@ -714,6 +721,24 @@ println(to_string(ok))
 ```
 
 `!` negates a boolean.
+
+### The default operator `??`
+
+`a ?? b` is `b` when `a` is `()`, and `a` otherwise; `b` is evaluated
+only when it is needed, as `&&`'s right side is. With `.` on a map it
+is the lookup-with-default — `opts.pad ?? 0` is
+`map_get_or(opts, "pad", 0)` — and it folds the presence test
+`if x == () => d else => x` into one expression. Only `()` is replaced:
+`false`, `0` and `""` are values.
+
+```olang
+let opts = #{ "pad": 2, "label": "" }
+println(to_string(opts.pad ?? 0))          // 2
+println(to_string(opts.width ?? 80))       // 80: absent
+println("[" + (opts.label ?? "none") + "]") // []: "" is a value
+let first = opts.margin ?? opts.pad ?? 0   // chains: the first that is not ()
+println(to_string(first))                  // 2
+```
 
 ### Bitwise operators
 
@@ -902,13 +927,16 @@ println(to_string(map_get(p, key)))        // true
 
 `map_get` (and `.`) is the **raw read**: on a missing key it returns
 `Unit`, and distinguishing absent from stored-null takes `map_has_key`.
-The lookup-with-default is `map_get_or(m, key, default)`, which yields
-the default for a missing key *and* for a stored `Unit` — absence is
-one rule, not two:
+The lookup-with-default is [`??`](#the-default-operator-), or
+`map_get_or(m, key, default)` for a key that is not an identifier; both
+yield the default for a missing key *and* for a stored `Unit` — absence
+is one rule, not two — and `??` evaluates the default only when it is
+used:
 
 ```olang
 let m = #{ "a": 1 }
-println(to_string(map_get_or(m, "a", 0)))   // 1
+println(to_string(m.a ?? 0))                // 1
+println(to_string(m.z ?? 0))                // 0
 println(to_string(map_get_or(m, "z", 0)))   // 0
 ```
 
