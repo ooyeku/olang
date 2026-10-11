@@ -1387,6 +1387,7 @@ interfaces:
 | `OLANG_BRIDGE_TIER_OFF=1` | Disable the bridge interpreter's bytecode tier. |
 | `OLANG_DUMP_FN=<name>` | Print the compiled instruction stream for one function. |
 | `OLANG_ODS_TIMING=1` | Per-phase timings from the ods CSV reader and group-by. |
+| `OLANG_FIX_DEBUG=<dir>` | When `olang fix` leaves a file because its rewrite would read back differently, write the two trees as read back (`before.json`, `after.json`) and the rewrite (`after.ol`) into `dir`. |
 
 ## Writing custom tools with `meta`
 

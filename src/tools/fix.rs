@@ -97,7 +97,14 @@ pub fn fix_maps(src: &str) -> Result<(String, Report), String> {
     let after = parser
         .parse_raw(&out)
         .map_err(|e| format!("the rewrite does not parse ({}); left as it was", first_line(&e.to_string())))?;
-    if normalized(&before) != normalized(&after) {
+    let (b, a) = (normalized(&before), normalized(&after));
+    if b != a {
+        if let Some(dir) = std::env::var_os("OLANG_FIX_DEBUG") {
+            let dir = std::path::PathBuf::from(dir);
+            let _ = std::fs::write(dir.join("before.json"), serde_json::to_string_pretty(&b).unwrap_or_default());
+            let _ = std::fs::write(dir.join("after.json"), serde_json::to_string_pretty(&a).unwrap_or_default());
+            let _ = std::fs::write(dir.join("after.ol"), &out);
+        }
         return Err("the rewrite would change the program; left as it was".to_string());
     }
     let restored = if shebang_end > 0 {
@@ -161,6 +168,7 @@ fn normalize(v: &mut serde_json::Value) {
     o.remove("line");
     o.remove("column");
     o.remove("span");
+    o.remove("name_span");
     if o.len() != 1 {
         return;
     }
