@@ -1575,6 +1575,10 @@ impl BytecodeVm {
             // function that calls that one by name, on the tree-walker.
             "drop",
             "map_path",
+            "map_get_in",
+            "map_set_in",
+            "map_update",
+            "__spread",
             "map_get_or",
             "result_and_then",
             "result_or_else",
@@ -5657,6 +5661,22 @@ impl BytecodeVm {
                         && let Some(r) = Self::map_set_owned(&mut arg_values)
                     {
                         r
+                    } else if function_name == "map_set_in"
+                        && let Some(r) = Self::map_set_in_owned(&mut arg_values)
+                    {
+                        r
+                    } else if function_name == "map_update"
+                        && let Some(r) = self.map_update_owned(&mut arg_values)
+                    {
+                        r
+                    } else if function_name == "map_merge"
+                        && let Some(r) = Self::map_merge_owned(&mut arg_values)
+                    {
+                        r
+                    } else if function_name == crate::parser::SPREAD_BUILTIN
+                        && let Some(r) = Self::spread_native(&arg_values)
+                    {
+                        r
                     } else if self.builtin_names.contains(function_name)
                         || function_name.contains('.')
                     {
@@ -8797,6 +8817,241 @@ impl BytecodeVm {
                 None
             }
         }
+    }
+
+    /// A key the way `map_set` coerces one; `None` for what it refuses
+    /// (the bridge then raises the interpreter's error).
+    fn key_text_of(key: &OvmValue) -> Option<String> {
+        use crate::ovm::value::ValueData;
+        Some(match &key.data {
+            ValueData::String(st) => st.as_ref().clone(),
+            ValueData::Integer(i) => i.to_string(),
+            ValueData::Float(f) => f.to_string(),
+            ValueData::Boolean(b) => b.to_string(),
+            _ => return None,
+        })
+    }
+
+    /// `map_set_in(m, path, v)` on the VM's own maps and the interpreter
+    /// maps it holds wrapped, each level written in place when nothing
+    /// else holds it — `map_set`'s sole-owner write, along a path. A path
+    /// through anything else (a struct's layout, a non-record, an odd
+    /// key) answers `None`, before anything is written, and the bridge
+    /// takes the call (and raises its errors).
+    fn map_set_in_owned(args: &mut [OvmValue]) -> Option<Result<OvmValue, BytecodeError>> {
+        use crate::ovm::value::ValueData;
+        if args.len() != 3 {
+            return None;
+        }
+        let keys: Vec<String> = match &args[1].data {
+            ValueData::List(items) => items.iter().map(Self::key_text_of).collect::<Option<_>>()?,
+            _ => return None,
+        };
+        if keys.is_empty() {
+            return None;
+        }
+        // Check the native levels first: nothing is written unless the
+        // whole path is one this writes.
+        {
+            let mut at = &args[0];
+            for (i, key) in keys.iter().enumerate() {
+                match &at.data {
+                    ValueData::Map(m) => match m.get(key) {
+                        Some(next) if i + 1 < keys.len() => at = next,
+                        _ => break,
+                    },
+                    // The rest of the path is the interpreter's own values.
+                    ValueData::AstMap(_) => break,
+                    _ => return None,
+                }
+            }
+            // A native level whose next hop is not a map (or absent/unit).
+            let mut at = &args[0];
+            for key in &keys[..keys.len() - 1] {
+                let ValueData::Map(m) = &at.data else { break };
+                match m.get(key) {
+                    None => break,
+                    Some(next) => match &next.data {
+                        ValueData::Map(_) | ValueData::AstMap(_) | ValueData::Unit => at = next,
+                        _ => return None,
+                    },
+                }
+            }
+        }
+        let value = std::mem::replace(&mut args[2], OvmValue::new_unit());
+        let mut target = std::mem::replace(&mut args[0], OvmValue::new_unit());
+        fn write(at: &mut OvmValue, keys: &[String], value: OvmValue) -> Result<(), String> {
+            match &mut at.data {
+                ValueData::Map(m) => {
+                    let m = Arc::make_mut(m);
+                    if keys.len() == 1 {
+                        m.insert(keys[0].clone(), value);
+                        return Ok(());
+                    }
+                    let next = m.entry(keys[0].clone()).or_insert_with(OvmValue::new_unit);
+                    if matches!(next.data, ValueData::Unit) {
+                        *next = OvmValue::new_map(Arc::new(crate::ovm::value::OvmMap::default()));
+                    }
+                    write(next, &keys[1..], value)
+                }
+                ValueData::AstMap(m) => {
+                    let value = value.to_ast().map_err(|e| format!("{:?}", e))?;
+                    let mut wrapped = crate::ast::Value::Map(std::mem::take(m));
+                    let r = crate::builtin::set_in(&mut wrapped, keys, value);
+                    if let crate::ast::Value::Map(back) = &mut wrapped {
+                        *m = std::mem::take(back);
+                    }
+                    r
+                }
+                _ => unreachable!("checked before writing"),
+            }
+        }
+        Some(match write(&mut target, &keys, value) {
+            Ok(()) => Ok(target),
+            Err(message) => Err(BytecodeError::TypeError(message)),
+        })
+    }
+
+    /// `map_update(m, k, f)` on a VM map or a wrapped interpreter map: the
+    /// old value moved out (when nothing else holds the map) into `f`, its
+    /// answer set in place. Anything else bridges.
+    fn map_update_owned(
+        &mut self,
+        args: &mut [OvmValue],
+    ) -> Option<Result<OvmValue, BytecodeError>> {
+        use crate::ovm::value::ValueData;
+        if args.len() != 3 || !matches!(args[0].data, ValueData::Map(_) | ValueData::AstMap(_)) {
+            return None;
+        }
+        let key = Self::key_text_of(&args[1])?;
+        let f = args[2].clone();
+        let target = std::mem::replace(&mut args[0], OvmValue::new_unit());
+        Some((|| match target.into_data() {
+            ValueData::Map(mut m) => {
+                let owned = Arc::make_mut(&mut m);
+                let old = owned
+                    .get_mut(&key)
+                    .map(|v| std::mem::replace(v, OvmValue::new_unit()))
+                    .unwrap_or_else(OvmValue::new_unit);
+                let new = self.call_function_value(&f, &[old])?;
+                Arc::make_mut(&mut m).insert(key, new);
+                Ok(OvmValue::new_map(m))
+            }
+            ValueData::AstMap(mut m) => {
+                let old = match Arc::get_mut(&mut m) {
+                    Some(owned) => owned
+                        .get_mut(&key)
+                        .map(|v| std::mem::replace(v, crate::ast::Value::Unit))
+                        .unwrap_or(crate::ast::Value::Unit),
+                    None => m.get(&key).cloned().unwrap_or(crate::ast::Value::Unit),
+                };
+                let new = self.call_function_value(&f, &[OvmValue::from_ast(old)])?;
+                match new.to_ast() {
+                    Ok(ast) => {
+                        Arc::make_mut(&mut m).insert(key, ast);
+                        Ok(OvmValue {
+                            data: ValueData::AstMap(m),
+                        })
+                    }
+                    Err(_) => {
+                        let mut native = OvmValue::force_ast_map(&m);
+                        native.insert(key, new);
+                        Ok(OvmValue::new_map(Arc::new(native)))
+                    }
+                }
+            }
+            _ => unreachable!("checked above"),
+        })())
+    }
+
+    /// `m = map_merge(m, other)` with a VM map or a wrapped interpreter
+    /// map first: extended in place when nothing else holds it. The other
+    /// argument may be any record kind; anything else bridges.
+    fn map_merge_owned(args: &mut [OvmValue]) -> Option<Result<OvmValue, BytecodeError>> {
+        use crate::ovm::value::ValueData;
+        if args.len() != 2 {
+            return None;
+        }
+        let entries: Vec<(String, OvmValue)> = match &args[1].data {
+            ValueData::Map(m) => m.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            ValueData::AstMap(m) | ValueData::AstStruct(m, _) => m
+                .iter()
+                .map(|(k, v)| (k.clone(), OvmValue::from_ast(v.clone())))
+                .collect(),
+            ValueData::Struct(st) => st.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            _ => return None,
+        };
+        match &args[0].data {
+            ValueData::Map(_) => {}
+            ValueData::AstMap(_) if entries.iter().all(|(_, v)| v.to_ast().is_ok()) => {}
+            _ => return None,
+        }
+        let target = std::mem::replace(&mut args[0], OvmValue::new_unit());
+        Some(Ok(match target.into_data() {
+            ValueData::Map(mut m) => {
+                if !entries.is_empty() {
+                    let owned = Arc::make_mut(&mut m);
+                    for (k, v) in entries {
+                        owned.insert(k, v);
+                    }
+                }
+                OvmValue::new_map(m)
+            }
+            ValueData::AstMap(mut m) => {
+                if !entries.is_empty() {
+                    let owned = Arc::make_mut(&mut m);
+                    for (k, v) in entries {
+                        owned.insert(k, v.to_ast().expect("checked above"));
+                    }
+                }
+                OvmValue {
+                    data: ValueData::AstMap(m),
+                }
+            }
+            _ => unreachable!("checked above"),
+        }))
+    }
+
+    /// A map literal with spreads (`#{ ...m, "k": v }`) built natively: a
+    /// new VM map with each part's entries laid over it in order. An
+    /// object literal's (`{ ...o }`) keeps the struct layout's rules and
+    /// bridges, as does a part that is not a record (the bridge raises).
+    fn spread_native(args: &[OvmValue]) -> Option<Result<OvmValue, BytecodeError>> {
+        use crate::ovm::value::ValueData;
+        match args.first().map(|a| &a.data) {
+            Some(ValueData::Map(m)) if m.is_empty() => {}
+            _ => return None,
+        }
+        if !args[1..].iter().all(|a| {
+            matches!(
+                a.data,
+                ValueData::Map(_) | ValueData::AstMap(_) | ValueData::AstStruct(..) | ValueData::Struct(_)
+            )
+        }) {
+            return None;
+        }
+        let mut out = crate::ovm::value::OvmMap::default();
+        for part in &args[1..] {
+            match &part.data {
+                ValueData::Map(m) => {
+                    for (k, v) in m.iter() {
+                        out.insert(k.clone(), v.clone());
+                    }
+                }
+                ValueData::AstMap(m) | ValueData::AstStruct(m, _) => {
+                    for (k, v) in m.iter() {
+                        out.insert(k.clone(), OvmValue::from_ast(v.clone()));
+                    }
+                }
+                ValueData::Struct(st) => {
+                    for (k, v) in st.iter() {
+                        out.insert(k.clone(), v.clone());
+                    }
+                }
+                _ => unreachable!("checked above"),
+            }
+        }
+        Some(Ok(OvmValue::new_map(Arc::new(out))))
     }
 
     fn execute_builtin_call(
@@ -12532,6 +12787,16 @@ impl BytecodeCompiler {
             }
             E::List(items) => items.iter().all(Self::assignment_free),
             E::Tuple(items) => items.iter().all(Self::assignment_free),
+            // A map's or an object's literal is its entries; a lambda's
+            // body does not run where it is written (and a closure
+            // captures by value, so it never assigns the enclosing
+            // binding) — `m = map_update(m, k, (v) => v + 1)` and
+            // `m = map_merge(m, #{ "k": v })` take `m` by move.
+            E::MapLiteral { entries } => entries
+                .iter()
+                .all(|e| Self::assignment_free(&e.key) && Self::assignment_free(&e.value)),
+            E::AnonymousObject { fields } => fields.iter().all(|f| Self::assignment_free(&f.value)),
+            E::Lambda { .. } => true,
             // A template string is its interpolations; the missing arm
             // here silently disabled the append fusion for the extremely
             // common `xs = xs + [`...${i}...`]` accumulation shape,
@@ -12589,6 +12854,12 @@ impl BytecodeCompiler {
             }
             E::List(items) => items.iter().any(|e| Self::references_name(e, name)),
             E::Tuple(items) => items.iter().any(|e| Self::references_name(e, name)),
+            E::MapLiteral { entries } => entries.iter().any(|e| {
+                Self::references_name(&e.key, name) || Self::references_name(&e.value, name)
+            }),
+            E::AnonymousObject { fields } => {
+                fields.iter().any(|f| Self::references_name(&f.value, name))
+            }
             E::TemplateString { parts } => parts.iter().any(|p| match p {
                 crate::ast::TemplatePart::Literal(_) => false,
                 crate::ast::TemplatePart::Interpolation(e) => Self::references_name(e, name),

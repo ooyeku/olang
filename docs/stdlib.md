@@ -306,8 +306,10 @@ object and a parsed JSON object alike** (and a declared struct), reading
 *and* writing: updating a parsed JSON object yields a new JSON object,
 updating an object an object, a struct a new struct of the same type —
 a writer answers the kind of its first argument. Everything is immutable
-— writers return a new value (a value nothing else holds is updated in
-place). An identifier key reads as `m.key` (exactly `map_get(m, "key")`)
+— writers return a new value; a value nothing else holds is updated in
+place, so `m = map_set(m, k, v)`, `m = map_set_in(m, path, v)`,
+`m = map_update(m, k, f)` and `m = map_merge(m, other)` cost the keys
+they write, not the map's size. An identifier key reads as `m.key` (exactly `map_get(m, "key")`)
 and defaults with `m.key ?? d` (exactly `map_get_or(m, "key", d)`, the
 default evaluated only when used).
 
@@ -315,14 +317,16 @@ default evaluated only when used).
 |---|---|
 | `map_get(m, k)` | value, or `Unit` when absent |
 | `map_get_or(m, k, default)` | value, or `default` when absent (or stored Unit) |
-| `map_path(m, [k1, k2, …])` | a nested read in one call — the value at the end of the key path, or Unit at the first missing hop; every hop reads like `map_get` |
+| `map_get_in(m, [k1, k2, …])` | a nested read in one call — the value at the end of the key path, or Unit at the first missing hop; every hop reads like `map_get` (`map_path` is the same function) |
+| `map_set_in(m, [k1, k2, …], v)` | new value with the end of the key path set — each level a new value of its own kind, a missing level a new map |
+| `map_update(m, k, f)` | new value with `k` set to `f(m.k)` (`f` is given `()` for an absent key) |
 | `map_has_key(m, k)` | presence test (distinguishes absent from null) |
 | `map_keys(m)` / `map_values(m)` | key/value lists (unordered) |
 | `entries(m)` | `(key, value)` tuples, sorted by key — for `for (k, v) in` |
 | `map_len(m)` | entry count (an object's or a JSON object's fields) |
 | `map_set(m, k, v)` | new value of the same kind with `k` set |
 | `map_remove(m, k)` | new value of the same kind without `k` |
-| `map_merge(a, b)` | new value of `a`'s kind, `b`'s entries winning (`b` any of the kinds) |
+| `map_merge(a, b)` | new value of `a`'s kind, `b`'s entries winning (`b` any of the kinds); `#{ ...a, ...b }` is the literal form |
 | `map_clear(m)` | an empty value of the same kind |
 
 ```olang
@@ -334,6 +338,9 @@ let d = map_set(unwrap(json.parse("{\"a\": 1}")), "b", 2)
 println(typeof(d) + " " + show(map_get(d, "b")))  // JSON updates stay JSON
 let o = map_merge({ x: 1 }, #{ "y": 2 })
 println(typeof(o) + " " + show(map_len(o)))       // Object 2
+let s = #{ "pp": #{ "cur": 1 } }
+println(show(map_set_in(s, ["pp", "cur"], 2)))    // #{"pp": #{"cur": 2}}
+println(show(map_update(s, "n", (v) => (v ?? 0) + 1)))
 for (k, v) in entries(m2) { print(k + "=" + show(v) + " ") }
 println("")
 ```

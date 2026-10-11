@@ -940,6 +940,29 @@ println(to_string(m.z ?? 0))                // 0
 println(to_string(map_get_or(m, "z", 0)))   // 0
 ```
 
+A literal **spreads** another map or object with `...`: `#{ ...m, "k": v }`
+is a copy of `m` with `"k"` set, `{ ...o, k: v }` an object's copy, and
+entries are laid down in the order written, so a later key wins. The
+literal's own kind is the result's (`#{ ...o }` is a map, whatever `o`
+is). A nested write is `map_set_in(m, ["pp", "cur"], x)`, its read
+`map_get_in(m, ["pp", "cur"])`, and an update through a function
+`map_update(m, "n", (v) => (v ?? 0) + 1)`; like `map_set`, each writes
+in place a map that nothing else holds:
+
+```olang
+let base = #{ "pad": 2, "pp": #{ "cur": 1 } }
+let next = #{ ...base, "pad": 4, "title": "x" }
+println(to_string(next.pad) + " " + to_string(base.pad))   // 4 2
+let moved = map_set_in(base, ["pp", "cur"], 9)
+println(to_string(moved.pp.cur))                           // 9
+let counted = map_update(base, "hits", (n) => (n ?? 0) + 1)
+println(to_string(counted.hits))                           // 1
+```
+
+A spread belongs to the two literals only: a list joins with `+`, a
+declared struct's literal names every field, and a call takes its
+arguments one by one — the parser says so where one is written.
+
 A key wins over a trait method of the same name, as a struct's field
 does ([Traits](#traits)): `m.name()` calls the function stored under
 `"name"` when the map has that key, and the method only when it has

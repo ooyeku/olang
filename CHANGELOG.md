@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Spreads and nested updates** (roadmap E6): `#{ ...m, "k": v }` and
+  `{ ...o, k: v }` build a copy with the written keys laid over it in
+  source order (a later key wins; the literal's own kind is the
+  result's); `map_set_in(m, path, v)` (a missing level a new map),
+  `map_get_in(m, path)` (`map_path` under its pair's name) and
+  `map_update(m, k, f)`. Each writes in place a map nothing else holds,
+  as `map_set` does — `m = map_set_in(m, …)`, `m = map_update(m, …)` and
+  `m = map_merge(m, …)` take `m` by move on the interpreter and are
+  native on the VM for its maps (40,000 writes: 15 ms, where a copy each
+  time was quadratic). A spread written where there is none — a list, a
+  call's arguments, a declared struct's literal — is named by the parser
+  ("a spread `...` is not supported here"), and a parse error inside a
+  closed `{ … }` no longer blames an unclosed brace.
 - **`a ?? b`** (roadmap E2): `b` when `a` is `()`, else `a`, the right
   side evaluated only when needed (as `&&`'s) on every tier — the
   interpreter, the VM (a test of the left and a branch) and so the JIT.

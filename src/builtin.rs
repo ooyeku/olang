@@ -31,13 +31,45 @@ impl Default for BuiltinFunctions {
     }
 }
 
+/// `map_set_in`'s write: the value at the end of `keys` set in `at`, each
+/// level written in place when nothing else holds it (`Arc::make_mut`), a
+/// missing level made a new map. Shared with the VM, which writes an
+/// interpreter map it holds wrapped the same way.
+pub(crate) fn set_in(at: &mut Value, keys: &[String], value: Value) -> Result<(), String> {
+    let fields = match at {
+        Value::Map(fields) | Value::Struct { fields, .. } => std::sync::Arc::make_mut(fields),
+        other => {
+            return Err(format!(
+                "map_set_in: cannot set key '{}' in {}",
+                keys[0],
+                other.type_name()
+            ));
+        }
+    };
+    if keys.len() == 1 {
+        fields.insert(keys[0].clone(), value);
+        return Ok(());
+    }
+    let next = fields.entry(keys[0].clone()).or_insert(Value::Unit);
+    if matches!(next, Value::Unit) {
+        *next = Value::Map(std::sync::Arc::new(crate::ast::ValueMap::default()));
+    }
+    set_in(next, &keys[1..], value)
+}
+
 impl BuiltinFunctions {
     /// Every bare name the dispatcher accepts — the registration table's
     /// keys. The help-coverage test diffs this against the help registry,
     /// and the language server treats the registry as the single source
     /// for what a builtin is, so the two must not drift.
+    /// The builtins a program names. `__spread` is not one: it is how
+    /// the parser builds a literal with a spread, never written.
     pub fn global_names() -> Vec<String> {
-        Self::new().functions.keys().cloned().collect()
+        Self::new()
+            .functions
+            .into_keys()
+            .filter(|name| name != crate::parser::SPREAD_BUILTIN)
+            .collect()
     }
 
     pub fn new() -> Self {
@@ -459,6 +491,15 @@ impl BuiltinFunctions {
                 arity: 2,
             },
         );
+        for (name, arity) in [("map_get_in", 2), ("map_set_in", 3), ("map_update", 3), (crate::parser::SPREAD_BUILTIN, 0)] {
+            functions.insert(
+                name.to_string(),
+                BuiltinFunction {
+                    name: name.to_string(),
+                    arity,
+                },
+            );
+        }
 
         functions.insert(
             "map_set".to_string(),
@@ -1247,7 +1288,11 @@ impl BuiltinFunctions {
             "entries" => builtins.entries(arguments),
             "map_get" => builtins.map_get(arguments),
             "map_get_or" => builtins.map_get_or(arguments),
-            "map_path" => builtins.map_path(arguments),
+            "map_path" => builtins.map_path(arguments, "map_path"),
+            "map_get_in" => builtins.map_path(arguments, "map_get_in"),
+            "map_set_in" => builtins.map_set_in(arguments),
+            "map_update" => builtins.map_update(arguments, interpreter),
+            crate::parser::SPREAD_BUILTIN => builtins.spread(arguments),
             "map_set" => builtins.map_set(arguments),
             "map_has_key" => builtins.map_has_key(arguments),
             "map_keys" => builtins.map_keys(arguments),
@@ -1676,6 +1721,10 @@ impl BuiltinFunctions {
         "map_get",
         "map_get_or",
         "map_path",
+        "map_get_in",
+        "map_set_in",
+        "map_update",
+        "__spread",
         "map_has_key",
         "map_keys",
         "map_values",
@@ -3477,7 +3526,7 @@ impl BuiltinFunctions {
     /// JSON), so `map_get(map_get(map_get(e, "issue"), "fields"),
     /// "estimate")` is `map_path(e, ["issue", "fields", "estimate"])`,
     /// with the same absence-as-Unit safety at each level.
-    fn map_path(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+    fn map_path(&self, args: Vec<Value>, who: &str) -> Result<Value, InterpreterError> {
         if args.len() != 2 {
             return Err(InterpreterError::ArityMismatch {
                 expected: 2,
@@ -3489,7 +3538,8 @@ impl BuiltinFunctions {
             other => {
                 return Err(InterpreterError::TypeError {
                     message: format!(
-                        "map_path: the path must be a list of keys, got {}",
+                        "{}: the path must be a list of keys, got {}",
+                        who,
                         other.type_name()
                     ),
                 });
@@ -3505,7 +3555,8 @@ impl BuiltinFunctions {
                 other => {
                     return Err(InterpreterError::TypeError {
                         message: format!(
-                            "map_path: keys must be strings, integers, floats, or booleans, got {}",
+                            "{}: keys must be strings, integers, floats, or booleans, got {}",
+                            who,
                             other.type_name()
                         ),
                     });
@@ -3522,7 +3573,8 @@ impl BuiltinFunctions {
                 other => {
                     return Err(InterpreterError::TypeError {
                         message: format!(
-                            "map_path: cannot read key '{}' from {}",
+                            "{}: cannot read key '{}' from {}",
+                            who,
                             key_text,
                             other.type_name()
                         ),
@@ -3531,6 +3583,133 @@ impl BuiltinFunctions {
             };
         }
         Ok(current)
+    }
+
+    /// A path's keys as strings, each coerced as `map_set` coerces a key.
+    fn path_keys(who: &str, path: &Value) -> Result<Vec<String>, InterpreterError> {
+        let Value::List(keys) = path else {
+            return Err(InterpreterError::TypeError {
+                message: format!("{}: the path must be a list of keys, got {}", who, path.type_name()),
+            });
+        };
+        keys.iter().map(|k| Self::key_text(who, k)).collect()
+    }
+
+    fn key_text(who: &str, key: &Value) -> Result<String, InterpreterError> {
+        Ok(match key {
+            Value::String(s) => s.as_ref().clone(),
+            Value::Integer(n) => n.to_string(),
+            Value::Float(f) => f.to_string(),
+            Value::Boolean(b) => b.to_string(),
+            other => {
+                return Err(InterpreterError::TypeError {
+                    message: format!(
+                        "{}: keys must be strings, integers, floats, or booleans, got {}",
+                        who,
+                        other.type_name()
+                    ),
+                });
+            }
+        })
+    }
+
+    /// `map_set_in(m, [k1, k2, …], v)`: `m` with the value at the end of
+    /// the key path set — each level a new value of its own kind, a
+    /// missing level a new map. Every level nothing else holds is written
+    /// in place, as `map_set` writes a sole-owner map.
+    fn map_set_in(&self, mut args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 3 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 3,
+                got: args.len(),
+            });
+        }
+        let value = args.pop().expect("len checked");
+        let path = args.pop().expect("len checked");
+        let mut target = args.pop().expect("len checked");
+        let keys = Self::path_keys("map_set_in", &path)?;
+        if keys.is_empty() {
+            return Err(InterpreterError::TypeError {
+                message: "map_set_in: the path is empty — it names no key to set".to_string(),
+            });
+        }
+        set_in(&mut target, &keys, value).map_err(|message| InterpreterError::TypeError { message })?;
+        Ok(target)
+    }
+
+    /// `map_update(m, k, f)`: `m` with `k` set to `f(m.k)` (`f` is given
+    /// `()` for an absent key). The old value is moved into `f` when
+    /// nothing else holds the map, so `f` can extend it in place.
+    fn map_update(
+        &self,
+        mut args: Vec<Value>,
+        interpreter: &mut crate::interpreter::Interpreter,
+    ) -> Result<Value, InterpreterError> {
+        if args.len() != 3 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 3,
+                got: args.len(),
+            });
+        }
+        let f = args.pop().expect("len checked");
+        let key = Self::key_text("map_update", &args[1])?;
+        let mut target = args.swap_remove(0);
+        let old = match &mut target {
+            Value::Map(fields) | Value::Struct { fields, .. } => {
+                match std::sync::Arc::get_mut(fields) {
+                    Some(owned) => owned.get_mut(&key).map(|v| std::mem::replace(v, Value::Unit)).unwrap_or(Value::Unit),
+                    None => fields.get(&key).cloned().unwrap_or(Value::Unit),
+                }
+            }
+            _ => {
+                return Err(InterpreterError::TypeError {
+                    message: "map_update: first argument must be a map or object".to_string(),
+                });
+            }
+        };
+        let new = interpreter.call_function(f, vec![old])?;
+        match &mut target {
+            Value::Map(fields) | Value::Struct { fields, .. } => {
+                std::sync::Arc::make_mut(fields).insert(key, new);
+            }
+            _ => unreachable!("checked above"),
+        }
+        Ok(target)
+    }
+
+    /// A literal with spreads (`#{ ...m, "k": v }`, `{ ...o, k: v }`), as
+    /// the parser builds it: the first argument an empty literal of the
+    /// literal's kind, each later one a spread value or a run of written
+    /// entries, laid over it in order — a later key wins.
+    fn spread(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        let mut args = args.into_iter();
+        let Some(mut target) = args.next() else {
+            return Err(InterpreterError::ArityMismatch { expected: 1, got: 0 });
+        };
+        for part in args {
+            let Some(entries) = Self::field_map(&part) else {
+                return Err(InterpreterError::TypeError {
+                    message: format!(
+                        "a spread `...` takes a map or an object, got {}",
+                        part.type_name()
+                    ),
+                });
+            };
+            match &mut target {
+                Value::Map(fields) | Value::Struct { fields, .. } => {
+                    let fields = std::sync::Arc::make_mut(fields);
+                    for (key, value) in entries.iter() {
+                        fields.insert(key.clone(), value.clone());
+                    }
+                }
+                _ => {
+                    return Err(InterpreterError::TypeError {
+                        message: "a spread builds a map or an object".to_string(),
+                    });
+                }
+            }
+        }
+        Ok(target)
     }
 
     fn map_set(&self, mut args: Vec<Value>) -> Result<Value, InterpreterError> {

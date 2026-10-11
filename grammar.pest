@@ -352,12 +352,16 @@ literal_type = { string | integer | boolean }
 struct_literal = { identifier ~ "{" ~ field_value_list? ~ "}" }
 anonymous_object = { "{" ~ field_value_list? ~ "}" }
 field_value_list = { NL* ~ field_value ~ (NL* ~ "," ~ NL* ~ field_value)* ~ NL* ~ ","? ~ NL* }
-field_value = { identifier ~ ":" ~ expr }
+field_value = { spread | (identifier ~ ":" ~ expr) }
+// `...e` inside a `#{ }` or `{ }` literal: e's entries, in order with the
+// written ones — a later key wins. The parser builds it as a call (see
+// `Parser::spread_literal`), so no tier has a form of its own for it.
+spread = { "..." ~ expr }
 
 // Map literals
 map_literal = { "#{" ~ map_entry_list? ~ "}" }
 map_entry_list = { NL* ~ map_entry ~ (NL* ~ "," ~ NL* ~ map_entry)* ~ NL* ~ ","? ~ NL* }
-map_entry = { expr ~ ":" ~ expr }
+map_entry = { spread | (expr ~ ":" ~ expr) }
 
 // Loop constructs. The loop binding is a name or a tuple of names —
 // `for (i, x) in enumerate(xs)` destructures each element.

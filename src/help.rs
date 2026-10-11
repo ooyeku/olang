@@ -1716,6 +1716,34 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
                 "map_path(event, [\"issue\", \"fields\", \"estimate\"])  // () when any hop is missing",
             ),
             (
+                "map_get_in",
+                "map_get_in(value, keys)",
+                "Any",
+                "Maps",
+                "The value at the end of a key path, or Unit at the first missing hop — \
+                 map_set_in's reading half (map_path is the same function).",
+                "map_get_in(#{ \"pp\": #{ \"cur\": 3 } }, [\"pp\", \"cur\"])  // 3",
+            ),
+            (
+                "map_set_in",
+                "map_set_in(value, keys, v)",
+                "Map",
+                "Maps",
+                "A copy with the value at the end of the key path set: each level a new \
+                 value of its own kind, a missing level a new map. A level nothing else \
+                 holds is written in place, as map_set's sole-owner write.",
+                "map_set_in(#{ \"pp\": #{ \"cur\": 1 } }, [\"pp\", \"cur\"], 2)  // #{\"pp\": #{\"cur\": 2}}",
+            ),
+            (
+                "map_update",
+                "map_update(value, key, f)",
+                "Map",
+                "Maps",
+                "A copy with key set to f(the old value) — f is given Unit for an absent \
+                 key. The old value is moved into f when nothing else holds the map.",
+                "map_update(#{ \"n\": 1 }, \"n\", (v) => v + 1)  // #{\"n\": 2}",
+            ),
+            (
                 "map_get_or",
                 "map_get_or(map, key, default)",
                 "Any",

@@ -532,3 +532,168 @@ fn the_builtins_still_refuse_what_is_not_a_record() {
         assert!(err.contains("must be a map or object"), "{call}: {err}");
     }
 }
+
+// ── E6: spreads and nested updates ──────────────────────────────────────
+
+fn list(items: Vec<Value>) -> Value {
+    Value::List(std::sync::Arc::new(items))
+}
+
+#[test]
+fn spreads_copy_with_the_later_key_winning() {
+    let src = r#"
+fn main() = {
+    let m = #{ "a": 1, "b": 2 }
+    let o = { x: 1, y: 2 }
+    let over = #{ ...m, "a": 5, "c": 3 }
+    let under = #{ "a": 5, ...m }
+    let obj = { ...o, y: 9, z: 0 }
+    let mixed = #{ ...m, ...o, "k": [1] }
+    [over.a, over.b, over.c, under.a, obj.y, obj.z, typeof(obj), typeof(#{ ...o }), typeof({ ...m }),
+     len(map_keys(mixed)), m.c, map_len(o)]
+}
+main()
+"#;
+    assert_eq!(
+        agree(src),
+        Ok(list(vec![
+            Value::Integer(5),
+            Value::Integer(2),
+            Value::Integer(3),
+            Value::Integer(1),
+            Value::Integer(9),
+            Value::Integer(0),
+            s("Object"),
+            s("Map"),
+            s("Object"),
+            Value::Integer(5),
+            Value::Unit,
+            Value::Integer(2),
+        ]))
+    );
+}
+
+#[test]
+fn spreads_evaluate_in_source_order_and_refuse_non_records() {
+    let src = r#"
+let log = cell([])
+fn note(tag, v) = {
+    cell.update(log, (l) => l + [tag])
+    v
+}
+fn main() = {
+    let r = #{ "a": note("a", 1), ...note("m", #{ "b": 2 }), "c": note("c", 3) }
+    [cell.get(log), r.b]
+}
+main()
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(list(vec![list(vec![s("a"), s("m"), s("c")]), Value::Integer(2)]))
+    );
+    let err = agree("fn main() = #{ ...5 }\nmain()\n").unwrap_err();
+    assert!(err.contains("a spread `...` takes a map or an object, got Int"), "{err}");
+}
+
+#[test]
+fn nested_reads_and_writes() {
+    let src = r#"
+fn main() = {
+    let s = #{ "pp": #{ "cur": 1, "list": [1] }, "o": { k: 1 } }
+    let a = map_set_in(s, ["pp", "cur"], 2)
+    let b = map_set_in(s, ["qq", "new"], 3)
+    let c = map_set_in(s, ["o", "k"], 4)
+    let d = map_update(s, "n", (v) => (v ?? 0) + 1)
+    let e = map_update(map_update(#{ "n": 1 }, "n", (v) => v + 1), "n", (v) => v * 10)
+    [a.pp.cur, s.pp.cur, b.qq.new, typeof(c.o), c.o.k, d.n, e.n,
+     map_get_in(a, ["pp", "cur"]), map_get_in(s, ["pp", "none", "x"]), map_get_in(s, [])]
+}
+main()
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(list(vec![
+            Value::Integer(2),
+            Value::Integer(1),
+            Value::Integer(3),
+            s("Object"),
+            Value::Integer(4),
+            Value::Integer(1),
+            Value::Integer(20),
+            Value::Integer(2),
+            Value::Unit,
+            Value::Map(std::sync::Arc::new({
+                let mut m = olang::ast::ValueMap::default();
+                let mut pp = olang::ast::ValueMap::default();
+                pp.insert("cur".into(), Value::Integer(1));
+                pp.insert("list".into(), list(vec![Value::Integer(1)]));
+                m.insert("pp".into(), Value::Map(std::sync::Arc::new(pp)));
+                let mut o = olang::ast::ValueMap::default();
+                o.insert("k".into(), Value::Integer(1));
+                m.insert(
+                    "o".into(),
+                    Value::Struct { type_name: "Object".into(), fields: std::sync::Arc::new(o) },
+                );
+                m
+            })),
+        ]))
+    );
+    for (call, says) in [
+        ("map_set_in(#{ \"a\": 1 }, [\"a\", \"b\"], 2)", "cannot set key 'b' in Int"),
+        ("map_set_in(#{}, [], 2)", "the path is empty"),
+        ("map_update(5, \"k\", (v) => v)", "first argument must be a map or object"),
+    ] {
+        let err = agree(&format!("fn main() = {call}\nmain()\n")).unwrap_err();
+        assert!(err.contains(says), "{call}: {err}");
+    }
+}
+
+#[test]
+fn nested_writes_compile_on_the_vm() {
+    let src = r#"
+fn bump(s) = map_set_in(s, ["pp", "cur"], s.pp.cur + 1)
+fn main() = {
+    let mut s = #{ "pp": #{ "cur": 0 } }
+    for i in 0..30 { s = bump(s) }
+    let t = #{ ...s, "pp": #{ ...s.pp, "seen": true } }
+    [s.pp.cur, t.pp.seen, map_get_in(t, ["pp", "cur"])]
+}
+main()
+"#;
+    assert_eq!(
+        agree(src),
+        Ok(list(vec![Value::Integer(30), Value::Boolean(true), Value::Integer(30)]))
+    );
+}
+
+#[test]
+fn map_update_takes_a_lambda_on_every_tier() {
+    let src = r#"
+fn main() = {
+    let mut s = #{ "pp": #{ "cur": 0 }, "log": [] }
+    for i in 0..30 {
+        s = map_update(s, "log", (l) => l + [i])
+        s = map_update(s, "pp", (pp) => #{ ...pp, "cur": pp.cur + 1 })
+    }
+    [s.pp.cur, len(s.log)]
+}
+main()
+"#;
+    assert_eq!(agree_tiered(src), Ok(list(vec![Value::Integer(30), Value::Integer(30)])));
+}
+
+#[test]
+fn the_parser_names_an_unsupported_spread() {
+    for (src, says) in [
+        ("let xs = [1]\nlet ys = [...xs]\n", "a spread `...` is not supported here"),
+        ("fn f(a) = a\nlet xs = [1]\nf(...xs)\n", "a spread `...` is not supported here"),
+        (
+            "type P = struct { x: Int }\nlet p = P { x: 1 }\nlet q = P { ...p, x: 2 }\n",
+            "not supported in a declared struct's literal",
+        ),
+    ] {
+        let err = olang::Parser::new().parse(src).unwrap_err().to_string();
+        assert!(err.contains(says), "{src}: {err}");
+        assert!(!err.contains("Unclosed"), "{src}: {err}");
+    }
+}

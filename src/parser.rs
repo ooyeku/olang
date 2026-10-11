@@ -145,6 +145,17 @@ fn humanize_rule(rule: Rule) -> &'static str {
     }
 }
 
+/// The builtin a literal with spreads is built by (`Parser::spread_literal`):
+/// `__spread(base, parts...)` copies `base` (an empty literal of the
+/// literal's kind) and lays each part's entries over it in order.
+pub const SPREAD_BUILTIN: &str = "__spread";
+
+/// One item of a `#{ }` or `{ }` literal: a written entry, or `...e`.
+enum Spread<T> {
+    Entry(T),
+    Of(Expr),
+}
+
 /// Sources at least this large are parsed in chunks.
 const CHUNKED_FROM: usize = 16 * 1024;
 /// The least a chunk holds. A large source uses a sixteenth of itself:
@@ -328,12 +339,24 @@ fn humanize_pest_error(e: pest::error::Error<Rule>, input: &str) -> ParseError {
         ErrorVariant::CustomError { message } => message.clone(),
     };
 
+    // A spread where the grammar has none: name the form instead of what
+    // the parser wanted next (which read as a missing `}`).
+    let raw_line = input.lines().nth(line.saturating_sub(1)).unwrap_or("");
+    let at: String = raw_line.chars().skip(column.saturating_sub(1)).take(3).collect();
+    let message = if at == "..." {
+        "a spread `...` is not supported here: it spreads a map or an object into a \
+         `#{ ... }` or `{ ... }` literal only — a list (`xs + ys`), a call's arguments and \
+         a declared struct's literal (`map_merge(p, #{ ... })`) have none"
+            .to_string()
+    } else {
+        message
+    };
+
     // The nested-template mistake — a backtick inside `${...}` — ends the
     // template at the inner backtick, so the raw error lands "at an
     // unexpected position" with no mention of the cause. When the error
     // line up to the caret closes a template whose `${` never closed,
     // name the real problem.
-    let raw_line = input.lines().nth(line.saturating_sub(1)).unwrap_or("");
     let message = if template_nesting_suspected(raw_line, column) {
         format!(
             "{} — a backtick inside `${{...}}` ends the template (templates \
@@ -3327,7 +3350,20 @@ impl Parser {
         Ok(Expr::StructLiteral(StructLiteral { type_name, fields }))
     }
 
-    fn build_field_value(&self, mut pairs: Pairs<Rule>) -> Result<FieldValue, ParseError> {
+    fn build_field_value<'i>(
+        &self,
+        pairs: impl Iterator<Item = pest::iterators::Pair<'i, Rule>>,
+    ) -> Result<FieldValue, ParseError> {
+        let mut pairs = pairs.peekable();
+        if let Some(first) = pairs.peek()
+            && first.as_rule() == Rule::spread
+        {
+            return Err(ParseError::InvalidSyntax {
+                message: "a spread `...` is not supported in a declared struct's literal: its \
+                          fields are fixed — write `map_merge(p, #{ ... })`, or each field"
+                    .to_string(),
+            });
+        }
         let name = pairs
             .next()
             .ok_or_else(|| ParseError::InvalidSyntax {
@@ -3346,47 +3382,116 @@ impl Parser {
     }
 
     fn build_anonymous_object(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let mut fields = Vec::new();
+        let mut items = Vec::new();
         for pair in pairs {
             if pair.as_rule() == Rule::field_value_list {
                 for field_pair in pair.into_inner() {
                     if field_pair.as_rule() == Rule::field_value {
-                        fields.push(self.build_field_value(field_pair.into_inner())?);
+                        items.push(field_pair);
                     }
                 }
             } else if pair.as_rule() == Rule::field_value {
-                fields.push(self.build_field_value(pair.into_inner())?);
+                items.push(pair);
             }
         }
-
-        Ok(Expr::AnonymousObject { fields })
+        let mut parts: Vec<Spread<FieldValue>> = Vec::new();
+        for item in items {
+            let mut inner = item.into_inner().peekable();
+            match inner.peek() {
+                Some(p) if p.as_rule() == Rule::spread => {
+                    let spread = inner.next().expect("peeked");
+                    parts.push(Spread::Of(self.build_spread(spread)?));
+                }
+                _ => parts.push(Spread::Entry(self.build_field_value(inner)?)),
+            }
+        }
+        Ok(Self::spread_literal(parts, |fields| Expr::AnonymousObject { fields }))
     }
 
     fn build_map_literal(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
-        let mut entries = Vec::new();
+        let mut items = Vec::new();
         for pair in pairs {
             if pair.as_rule() == Rule::map_entry_list {
                 for entry_pair in pair.into_inner() {
                     if entry_pair.as_rule() == Rule::map_entry {
-                        entries.push(self.build_map_entry(entry_pair.into_inner())?);
+                        items.push(entry_pair);
                     }
                 }
             } else if pair.as_rule() == Rule::map_entry {
-                entries.push(self.build_map_entry(pair.into_inner())?);
+                items.push(pair);
             }
         }
-
-        Ok(Expr::MapLiteral { entries })
+        let mut parts: Vec<Spread<MapEntry>> = Vec::new();
+        for item in items {
+            let mut inner = item.into_inner().peekable();
+            match inner.peek() {
+                Some(p) if p.as_rule() == Rule::spread => {
+                    let spread = inner.next().expect("peeked");
+                    parts.push(Spread::Of(self.build_spread(spread)?));
+                }
+                _ => parts.push(Spread::Entry(self.build_map_entry_from(inner)?)),
+            }
+        }
+        Ok(Self::spread_literal(parts, |entries| Expr::MapLiteral { entries }))
     }
 
-    fn build_map_entry(&self, mut pairs: Pairs<Rule>) -> Result<MapEntry, ParseError> {
+    /// `...e`'s expression.
+    fn build_spread(&self, pair: pest::iterators::Pair<Rule>) -> Result<Expr, ParseError> {
+        let e = pair.into_inner().next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "a spread `...` needs a value to spread".to_string(),
+        })?;
+        self.build_expr(e.into_inner())
+    }
+
+    /// A literal with spreads, `#{ ...m, "k": v }`, as the call that builds
+    /// it: `__spread(#{}, m, #{ "k": v })` — an empty literal of the
+    /// literal's own kind (so `#{ }` stays a map and `{ }` an object),
+    /// then each spread and each run of written entries in source order;
+    /// a later key wins. Without a spread the literal is itself.
+    fn spread_literal<T>(parts: Vec<Spread<T>>, literal: impl Fn(Vec<T>) -> Expr) -> Expr {
+        if !parts.iter().any(|p| matches!(p, Spread::Of(_))) {
+            return literal(
+                parts
+                    .into_iter()
+                    .map(|p| match p {
+                        Spread::Entry(e) => e,
+                        Spread::Of(_) => unreachable!("no spread"),
+                    })
+                    .collect(),
+            );
+        }
+        let mut args = vec![Argument::Positional(literal(Vec::new()))];
+        let mut run: Vec<T> = Vec::new();
+        for part in parts {
+            match part {
+                Spread::Entry(e) => run.push(e),
+                Spread::Of(e) => {
+                    if !run.is_empty() {
+                        args.push(Argument::Positional(literal(std::mem::take(&mut run))));
+                    }
+                    args.push(Argument::Positional(e));
+                }
+            }
+        }
+        if !run.is_empty() {
+            args.push(Argument::Positional(literal(run)));
+        }
+        Expr::Call {
+            callee: Box::new(Expr::Identifier(SPREAD_BUILTIN.to_string())),
+            arguments: args,
+        }
+    }
+
+    fn build_map_entry_from<'i>(
+        &self,
+        mut pairs: impl Iterator<Item = pest::iterators::Pair<'i, Rule>>,
+    ) -> Result<MapEntry, ParseError> {
         let key = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing key in map entry".to_string(),
         })?;
         let value = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing value in map entry".to_string(),
         })?;
-
         Ok(MapEntry {
             key: self.build_expr(key.into_inner())?,
             value: self.build_expr(value.into_inner())?,
@@ -4257,6 +4362,10 @@ impl ErrorSuggestionEngine {
     /// The innermost delimiter still open at the error position, with the
     /// line/column where it was opened. String literals (with escapes) and
     /// `//` comments are skipped so a bracket inside either never counts.
+    ///
+    /// Only an opener the whole input never closes is reported: an error
+    /// inside a closed `{ ... }` (a form the grammar has no rule for) is
+    /// not a missing `}`, and saying so sent the reader to the wrong line.
     fn unclosed_opener_before(
         input: &str,
         err_line: usize,
@@ -4266,9 +4375,20 @@ impl ErrorSuggestionEngine {
         let mut line = 1usize;
         let mut col = 1usize;
         let mut chars = input.chars().peekable();
+        // The innermost opener at the error, once the scan passes it, and
+        // the depth it sits at; it is closed when the stack falls below.
+        let mut at_error: Option<((char, usize, usize), usize)> = None;
         while let Some(c) = chars.next() {
-            if line > err_line || (line == err_line && col >= err_column) {
-                break;
+            if at_error.is_none() && (line > err_line || (line == err_line && col >= err_column)) {
+                match stack.last() {
+                    Some(top) => at_error = Some((*top, stack.len())),
+                    None => return None,
+                }
+            }
+            if let Some((_, depth)) = at_error
+                && stack.len() < depth
+            {
+                return None;
             }
             match c {
                 '\n' => {
@@ -4325,7 +4445,11 @@ impl ErrorSuggestionEngine {
             }
             col += 1;
         }
-        stack.pop()
+        match at_error {
+            Some((opener, depth)) if stack.len() >= depth => Some(opener),
+            Some(_) => None,
+            None => stack.pop(),
+        }
     }
 
     /// When the parse position sits under an unclosed delimiter, say WHERE
