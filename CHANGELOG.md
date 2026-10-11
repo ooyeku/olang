@@ -19,7 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and reported; idempotent. (The design named a stored `()` as the
   inexact case: there is none — `map_get_or` takes the default for a
   stored `()` exactly as `??` does.) Run over every program in the
-  workspace, olang's own `.ol` first: 862 reads in 67 files.
+  workspace, each repository's suite and verify passing as before:
+  26,092 `map_get` → `.` and 2,119 `map_get_or` → `??` in 499 files
+  (olang's own 862 in 67; Loom 4,317 and 622; Heddle 1,681 and 142;
+  heddle-sql 863 and 76; Shuttle 2,546; olang Studio 8,921 and 994; open-track
+  desktop 2,468 and 281; open-track 4,178; Foundry 254 and 4); 19
+  flagged, 1,870 left (a key that is no identifier, a called value).
 - **Spreads and nested updates** (roadmap E6): `#{ ...m, "k": v }` and
   `{ ...o, k: v }` build a copy with the written keys laid over it in
   source order (a later key wins; the literal's own kind is the

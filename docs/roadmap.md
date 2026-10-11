@@ -100,7 +100,6 @@ get their own rows (E5, E6).
 
 | Item | Evidence | Done when |
 |---|---|---|
-| E3 `[tooling]` The migration | 18,485 + 2,120 call sites across seven programs | a codemod written in olang over `meta.parse` (`olang fix maps`, or tools/) rewriting `map_get(chain, "ident")` → `chain.ident` and `map_get_or(x, "k", d)` → `x.k ?? d`, run over every application with its suite passing unchanged. The one inexact case — `map_get_or` returns a *stored* `()` where `??` takes the default — is flagged by the codemod, never rewritten |
 | E4 `[tooling]` The checker sees keys | a misspelt key is `()` at run time (`p.runing`), and neither `olang check` nor the language server sees inside string keys, so the most common data shape gets the least checking. With E1 the key is syntax | `olang check` reports a `.key` read that no construction of that value can have (literal-keyed maps and objects, through `let`, parameters and returns within a module), with no false report over the workspace's corpus; the language server completes keys after `.` |
 
 ## Language and runtime
