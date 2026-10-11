@@ -2465,7 +2465,34 @@ impl WinState {
         for i in shown.clone() {
             let (py, layout, _) = r.para(i);
             let shaped = text::shaped_of(layout, s);
+            let first = dl.prims.len();
             push_glyphs(&shaped, ox, oy + py, clip, dl);
+            // a decoration that is only a colour (no fill, no underline)
+            // recolours its glyphs: a name the server says is unnecessary,
+            // faded
+            for &(di, a, b, sty) in decos.iter().filter(|d| d.0 == i) {
+                let Some(look) = r.style_of(sty).cloned() else {
+                    continue;
+                };
+                let (Some(c), None, false) = (look.color, look.bg, look.underline) else {
+                    continue;
+                };
+                let (ba, bb) = r.para_char_bytes(di, a, b);
+                let boxes = r.range_boxes(di, ba, bb);
+                for prim in dl.prims[first..].iter_mut() {
+                    if let Prim::Glyph { x, y, color, .. } = prim {
+                        let hit = boxes.iter().any(|bx| {
+                            *x >= ox + bx.x0 as f32 - 0.5
+                                && *x < ox + bx.x1 as f32 - 0.5
+                                && *y >= oy + py + bx.y0 as f32
+                                && *y <= oy + py + bx.y1 as f32
+                        });
+                        if hit {
+                            *color = fade(c);
+                        }
+                    }
+                }
+            }
             // underlines and strikes
             for (sp, look) in r.para_spans(i) {
                 if !look.underline && !look.strike {
@@ -2628,13 +2655,14 @@ impl WinState {
         // line arrives; numbered in the gutter; a hairline under them
         r.sticky_drawn.clear();
         let mut sticky_bottom = 0.0f32;
-        if let Some(stk) = r.sticky.clone()
+        let lh = st.font.size * s * if st.font.line_height > 0.0 { st.font.line_height } else { 1.2 };
+        let mut rows: Vec<(usize, f32)> = Vec::new();
+        let stk_now = r.sticky.clone();
+        if let Some(stk) = stk_now.clone()
             && stk.max > 0
             && !stk.scopes.is_empty()
         {
-            let lh = st.font.size * s * if st.font.line_height > 0.0 { st.font.line_height } else { 1.2 };
             let top = r.top_line(ts);
-            let mut rows: Vec<(usize, f32)> = Vec::new();
             for &(h, e) in &stk.scopes {
                 if rows.len() >= stk.max {
                     break;
@@ -2654,29 +2682,69 @@ impl WinState {
                 }
                 rows.push((h, slot.min(end_view - lh)));
             }
-            if !rows.is_empty() {
-                let edge = content[1] + rows.iter().map(|r| r.1 + lh).fold(0.0f32, f32::max);
-                // a line the pinned rows half cover is hidden whole (its
-                // glyphs, by their baseline), so no sliver of it shows under
-                // the hairline; everything else is cut at the rows' edge
-                let mut half: Vec<(f32, f32)> = Vec::new();
-                for i in shown.clone() {
-                    let (py, _, ph) = r.para(i);
-                    let (t0, t1) = (oy + py, oy + py + ph);
-                    if t0 < edge && t1 > edge && ph <= lh * 1.5 {
-                        half.push((t0, t1));
+        }
+        // the edge the text is cut at: the pinned rows' bottom, else the
+        // content's top. A row of text the edge half covers (a wrapped
+        // line's row as much as a line's) is hidden whole — its glyphs by
+        // their baseline, its line number with them — so no half-drawn row
+        // shows under the tab bar or the pinned rows; everything else is
+        // cut at the edge. A line whose first row went above it keeps its
+        // number on its first row still in view.
+        let edge = content[1] + rows.iter().map(|r| r.1 + lh).fold(0.0f32, f32::max);
+        let mut half: Vec<(f32, f32)> = Vec::new();
+        let mut carried: Vec<(usize, f32)> = Vec::new();
+        for i in shown.clone() {
+            let (py, _, ph) = r.para(i);
+            let (t0, t1) = (oy + py, oy + py + ph);
+            if t0 < edge - 0.5 && t1 > edge {
+                let mut first_seen: Option<f32> = None;
+                for (b0, b1) in r.row_bands(i) {
+                    let (a, b) = (t0 + b0, t0 + b1);
+                    if a < edge - 0.5 && b > edge {
+                        half.push((a, b));
+                    } else if a >= edge - 0.5 && first_seen.is_none() {
+                        first_seen = Some(a);
                     }
                 }
-                for p in dl.prims[first_prim..].iter_mut() {
-                    let hidden = match p {
-                        Prim::Glyph { y, .. } => half.iter().any(|(a, b)| *y >= *a && *y <= *b),
-                        _ => false,
-                    };
-                    let c = match p {
-                        Prim::Rect { clip, .. } | Prim::Glyph { clip, .. } | Prim::Image { clip, .. } => clip,
-                    };
-                    *c = if hidden { c.intersect(Clip::rect(c.x0, c.y1, c.x1, c.y1)) } else { c.intersect(Clip::rect(c.x0, edge, c.x1, c.y1.max(edge))) };
+                if let Some(a) = first_seen
+                    && !rows.iter().any(|(h, _)| *h == i)
+                {
+                    carried.push((i, a));
                 }
+            }
+        }
+        if !half.is_empty() || !rows.is_empty() {
+            for p in dl.prims[first_prim..].iter_mut() {
+                let hidden = match p {
+                    Prim::Glyph { y, .. } => half.iter().any(|(a, b)| *y >= *a && *y <= *b),
+                    _ => false,
+                };
+                let c = match p {
+                    Prim::Rect { clip, .. } | Prim::Glyph { clip, .. } | Prim::Image { clip, .. } => clip,
+                };
+                *c = if hidden { c.intersect(Clip::rect(c.x0, c.y1, c.x1, c.y1)) } else { c.intersect(Clip::rect(c.x0, edge, c.x1, c.y1.max(edge))) };
+            }
+        }
+        if let Some(g) = r.gutter.clone()
+            && g.numbers
+        {
+            let gx0 = content[0] - st.pad[3] * s;
+            let gclip = outer_clip.intersect(Clip::rect(gx0, edge, content[0], content[1] + content[3]));
+            let fi = r.focus_para();
+            let mut font = st.font.clone();
+            font.spans = None;
+            let base = g.color.unwrap_or(st.placeholder);
+            for &(i, a) in &carried {
+                let color = if i == fi { g.current.unwrap_or(st.color) } else { base };
+                let label = (i + 1).to_string();
+                let shaped = ts.shape(&label, &font, fade(color), None, Align::Start, s);
+                push_glyphs(&shaped, content[0] - 14.0 * s - shaped.width, a, gclip, dl);
+            }
+        }
+        if let Some(stk) = stk_now
+            && !rows.is_empty()
+        {
+            {
                 let x0 = content[0] - st.pad[3] * s;
                 let x1 = content[0] + content[2] + st.pad[1] * s;
                 let field = outer_clip.intersect(Clip::rect(x0, content[1], x1, content[1] + content[3]));

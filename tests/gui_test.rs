@@ -1709,6 +1709,79 @@ fn a_context_menu_opens_at_the_click_and_stays_on_the_screen() {
     assert_eq!(context_menu_origin((-30.0, 700.0), menu, vis), (0.0, 700.0), "left of the screen: held at its edge");
 }
 
+/// A decoration that is only a colour (no fill, no underline) recolours
+/// its glyphs — a name the server says is unnecessary, faded — and only
+/// those in its range.
+#[test]
+fn a_colour_only_decoration_recolours_its_glyphs() {
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (300, 60) })
+        gui.apply(w, [#{ "key": "root", "box": (0, 0, 300, 60), "style": #{ "bg": "#ffffff" } },
+                      #{ "key": "f", "parent": "root", "role": "textarea", "box": (0, 0, 300, 60),
+                         "style": #{ "pad": (4, 4, 4, 4), "font": "mono", "size": 13, "bg": "#ffffff", "color": "#000000" },
+                         "edit": #{ "value": "aaaa bbbb", "rich": true, "styles": [#{ "color": "#ff0000" }], "spans": [], "undo": false, "report": true,
+                                    "decorations": [(0, 5, 9, 0)] } }])
+        gui.read(w, "rgba")
+    "##);
+    let Value::Map(m) = &v else { panic!("{v}") };
+    let wpx = match m.get("width") { Some(Value::Integer(i)) => *i as usize, _ => panic!() };
+    let data = olang::stdlib::bytes::bytes_of(m.get("data").expect("data")).expect("bytes").to_vec();
+    let (mut red_left, mut red_right, mut dark_right) = (0, 0, 0);
+    for y in 0..30 {
+        for x in 0..120 {
+            let i = (y * wpx + x) * 4;
+            let (r, g, b) = (data[i], data[i + 1], data[i + 2]);
+            let red = r > 180 && g < 120 && b < 120;
+            let dark = r < 100 && g < 100 && b < 100;
+            if x < 40 && red { red_left += 1; }
+            if x >= 44 && red { red_right += 1; }
+            if x >= 44 && dark { dark_right += 1; }
+        }
+    }
+    assert!(red_right > 0, "the decorated word in its colour");
+    assert_eq!(red_left, 0, "the word before it untouched");
+    assert_eq!(dark_right, 0, "no glyph of the decorated word left in the text's colour");
+}
+
+/// A code field scrolled part of a row: the row its top edge half covers
+/// is hidden whole (no half-drawn glyphs under a tab bar), and a wrapped
+/// line whose first row went above the edge keeps its number on its first
+/// row still in view (its continuation had none: a row of text without a
+/// line number at the top).
+#[test]
+fn a_wrapped_code_field_hides_a_half_row_at_its_top_and_keeps_the_lines_number() {
+    let v = run(r##"
+        let long = join(map(range(0, 30), (i) => "word"), " ")
+        let text = join(["short", long] + map(range(0, 40), (i) => "x" + to_string(i)), "\n")
+        let w = gui.headless(#{ "size": (300, 160) })
+        gui.apply(w, [#{ "key": "root", "box": (0, 0, 300, 160), "style": #{ "bg": "#ffffff" } },
+                      #{ "key": "f", "parent": "root", "role": "textarea", "box": (0, 0, 300, 160),
+                         "style": #{ "pad": (4, 4, 4, 48), "font": "mono", "size": 13, "bg": "#ffffff", "color": "#000000" },
+                         "edit": #{ "value": text, "rich": true, "styles": [], "spans": [], "undo": false, "report": true, "gutter": #{ "numbers": true, "color": "#000000" } } }])
+        gui.input(w, #{ "kind": "pointer", "action": "move", "x": 150, "y": 80 })
+        gui.input(w, #{ "kind": "wheel", "dx": 0, "dy": -22.6 })
+        gui.read(w, "rgba")
+    "##);
+    let Value::Map(m) = &v else { panic!("{v}") };
+    let wpx = match m.get("width") { Some(Value::Integer(i)) => *i as usize, _ => panic!() };
+    let data = olang::stdlib::bytes::bytes_of(m.get("data").expect("data")).expect("bytes").to_vec();
+    let ink = |x0: usize, x1: usize, y0: usize, y1: usize| -> usize {
+        let mut n = 0;
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let i = (y * wpx + x) * 4;
+                if data[i] < 160 && data[i + 1] < 160 && data[i + 2] < 160 {
+                    n += 1;
+                }
+            }
+        }
+        n
+    };
+    assert_eq!(ink(52, 290, 4, 8), 0, "no half-drawn row of text under the field's top edge");
+    assert!(ink(52, 290, 14, 26) > 0, "the wrapped line's next row is drawn");
+    assert!(ink(4, 44, 13, 27) > 0, "the wrapped line's number on its first row in view");
+}
+
 /// A code field's further carets, text after a line's end, rulers and
 /// sticky scroll are drawn (the pixels differ from the plain field); a
 /// press on a pinned line is said as a lens of id "sticky" with its

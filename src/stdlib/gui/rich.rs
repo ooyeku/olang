@@ -1278,6 +1278,17 @@ impl RichEditor {
         (at, n.max(1))
     }
 
+    /// Paragraph `i`'s rows (a wrapped line has several): each one's top
+    /// and bottom, device pixels from the paragraph's top.
+    pub fn row_bands(&self, i: usize) -> Vec<(f32, f32)> {
+        let layout = self.layout_of(i);
+        let bands: Vec<(f32, f32)> = layout.lines().map(|line| {
+            let m = line.metrics();
+            (m.block_min_coord, m.block_max_coord)
+        }).collect();
+        if bands.is_empty() { vec![(0.0, self.paras[i].h)] } else { bands }
+    }
+
     fn line_mid(&self, i: usize, k: usize) -> f32 {
         let layout = self.layout_of(i);
         match layout.get(k) {

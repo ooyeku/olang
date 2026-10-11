@@ -287,6 +287,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A code field scrolled part of a row half-drew it under its top
+  edge**, and a wrapped line whose first row went above showed its
+  continuation with no line number. The row the edge half covers (a
+  wrapped line's row as much as a line's) is now hidden whole, as under
+  sticky scroll's pinned rows, and the line's number goes to its first
+  row still in view (tests/gui_test.rs). A decoration that is only a
+  colour (no fill, no underline) recolours its glyphs — olang Studio's
+  unused names, faded.
+
 - **`gui.context_menu` opened the menu mirrored about the window's
   middle.** muda's `show_context_menu_for_nsview` turns y as though the
   view were unflipped, and winit's view is flipped: a right click near a
