@@ -1004,3 +1004,90 @@ fn the_server_outlives_wide_characters_an_empty_document_and_bad_params() {
     let r = c.recv_until(|m| m["id"] == 5);
     assert!(r["result"]["data"].is_array(), "{r}");
 }
+
+#[test]
+fn a_renamed_file_moves_its_document_and_rechecks_its_importers() {
+    // Studio's Rename (its navigator) says `workspace/didRenameFiles` and
+    // reopens the document under its new name: the open documents follow
+    // it, its old name's problems are cleared, and an importer of the old
+    // name is checked again without an edit.
+    let dir = std::env::temp_dir().join(format!("olang-lsp-rename-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("lib")).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    // the importer names the new name, with a call its function refuses:
+    // no problem while the module is not there, one once it is
+    let main_text = "use lib.helpers { twice }\nprintln(twice(2, 3))\n";
+    let util_text = "share fn twice(x) = x * 2\n";
+    std::fs::write(dir.join("main.ol"), main_text).unwrap();
+    std::fs::write(dir.join("lib/util.ol"), util_text).unwrap();
+    let main_uri = format!("file://{}/main.ol", dir.display());
+    let old_uri = format!("file://{}/lib/util.ol", dir.display());
+    let new_uri = format!("file://{}/lib/helpers.ol", dir.display());
+
+    let mut c = Client::start();
+    c.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {}, "rootUri": format!("file://{}", dir.display()) }
+    }));
+    let init = c.recv_until(|m| m["id"] == 1);
+    let ops = &init["result"]["capabilities"]["workspace"]["fileOperations"];
+    assert!(ops["didRename"]["filters"].is_array(), "{init}");
+    assert!(ops["didDelete"]["filters"].is_array(), "{init}");
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    for (uri, text) in [(&main_uri, main_text), (&old_uri, util_text)] {
+        c.send(&serde_json::json!({
+            "jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+                "textDocument":{"uri":uri,"languageId":"olang","version":1,"text":text}}
+        }));
+        let m = c.recv_until(|m| diagnostics_of(m).is_some() && m["params"]["uri"] == *uri);
+        let errors: Vec<_> = diagnostics_of(&m)
+            .unwrap()
+            .iter()
+            .filter(|d| d["severity"] == 1)
+            .cloned()
+            .collect();
+        assert!(errors.is_empty(), "{uri}: {errors:?}");
+    }
+
+    // renamed on disk, then said
+    std::fs::rename(dir.join("lib/util.ol"), dir.join("lib/helpers.ol")).unwrap();
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"workspace/didRenameFiles","params":{
+            "files":[{"oldUri": old_uri, "newUri": new_uri}]}
+    }));
+    let mut seen: std::collections::HashMap<String, Vec<serde_json::Value>> = Default::default();
+    for _ in 0..3 {
+        let m = c.recv_until(|m| diagnostics_of(m).is_some());
+        seen.insert(
+            m["params"]["uri"].as_str().unwrap().to_string(),
+            diagnostics_of(&m).unwrap().clone(),
+        );
+    }
+    assert_eq!(seen.get(&old_uri), Some(&vec![]), "the old name's problems cleared: {seen:?}");
+    assert!(seen.contains_key(&new_uri), "the document re-checked under its new name: {seen:?}");
+    let main = seen.get(&main_uri).expect("the importer re-checked");
+    assert!(
+        main.iter().any(|d| d["severity"] == 1),
+        "the importer of the new name has a problem now: {main:?}"
+    );
+
+    // the document is answered under its new name
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":7,"method":"textDocument/documentSymbol","params":{
+            "textDocument":{"uri":new_uri}}
+    }));
+    let m = c.recv_until(|m| m["id"] == 7);
+    assert!(m["result"].to_string().contains("twice"), "{m}");
+
+    // the file deleted: said, and the importer re-checked (its problem gone)
+    std::fs::remove_file(dir.join("lib/helpers.ol")).unwrap();
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"workspace/didDeleteFiles","params":{
+            "files":[{"uri": new_uri}]}
+    }));
+    let m = c.recv_until(|m| diagnostics_of(m).is_some() && m["params"]["uri"] == main_uri);
+    assert!(!diagnostics_of(&m).unwrap().iter().any(|d| d["severity"] == 1), "{m}");
+    let _ = c.child.kill();
+    let _ = std::fs::remove_dir_all(&dir);
+}

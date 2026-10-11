@@ -762,6 +762,18 @@ pub fn keep_module_parses(on: bool) {
     }
 }
 
+/// Forget the parses kept for `path` — a file, or every file under a
+/// folder — on this thread: the language server, when the editor renames
+/// or deletes it.
+pub fn forget_module_parses(path: &std::path::Path) {
+    let p = path.to_string_lossy();
+    let folder = format!("{}/", p.trim_end_matches('/'));
+    MODULE_PARSES.with(|m| {
+        m.borrow_mut()
+            .retain(|file, _| file.as_str() != p && !file.starts_with(&folder))
+    });
+}
+
 fn cached_raw_parse(
     parser: &Parser,
     source: &str,

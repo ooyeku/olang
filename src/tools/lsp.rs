@@ -185,6 +185,17 @@ pub fn run() -> Result<(), Box<dyn Error + Sync + Send>> {
             retrigger_characters: None,
             work_done_progress_options: Default::default(),
         }),
+        // A file renamed, moved or deleted by the editor (olang Studio's
+        // Rename and Move to Trash): the open documents re-keyed and every
+        // one re-checked, so an importer's problem follows the file.
+        workspace: Some(lsp_types::WorkspaceServerCapabilities {
+            workspace_folders: None,
+            file_operations: Some(lsp_types::WorkspaceFileOperationsServerCapabilities {
+                did_rename: Some(file_operation_filters()),
+                did_delete: Some(file_operation_filters()),
+                ..Default::default()
+            }),
+        }),
         ..Default::default()
     };
     let init_params = connection.initialize(serde_json::to_value(capabilities)?)?;
@@ -310,12 +321,108 @@ fn main_loop(
                     // Clear diagnostics for closed files.
                     send_diagnostics(connection, params.text_document.uri, Vec::new())?;
                 }
+                "workspace/didRenameFiles" => {
+                    let params: lsp_types::RenameFilesParams =
+                        match serde_json::from_value(note.params) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                eprintln!("olang lsp: {}: {e}", note.method);
+                                continue;
+                            }
+                        };
+                    for f in &params.files {
+                        for (old, new) in renamed_docs(&docs, &f.old_uri, &f.new_uri) {
+                            if let Some(text) = docs.remove(&old) {
+                                docs.insert(new.clone(), text);
+                            }
+                            stale.retain(|u| u != &old);
+                            send_diagnostics(connection, old, Vec::new())?;
+                        }
+                        forget_parses(&f.old_uri);
+                    }
+                    // every open document again: an importer of the old
+                    // path (or the new) has a different answer now
+                    stale.clear();
+                    for (uri, text) in &docs {
+                        publish(connection, uri, text)?;
+                    }
+                }
+                "workspace/didDeleteFiles" => {
+                    let params: lsp_types::DeleteFilesParams =
+                        match serde_json::from_value(note.params) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                eprintln!("olang lsp: {}: {e}", note.method);
+                                continue;
+                            }
+                        };
+                    for f in &params.files {
+                        forget_parses(&f.uri);
+                    }
+                    stale.clear();
+                    for (uri, text) in &docs {
+                        publish(connection, uri, text)?;
+                    }
+                }
                 _ => {}
             },
             Message::Response(_) => {}
         }
     }
     Ok(())
+}
+
+/// The `did_rename` / `did_delete` registrations: olang files and the
+/// folders that may hold them.
+fn file_operation_filters() -> lsp_types::FileOperationRegistrationOptions {
+    let filter = |glob: &str, kind| lsp_types::FileOperationFilter {
+        scheme: Some("file".to_string()),
+        pattern: lsp_types::FileOperationPattern {
+            glob: glob.to_string(),
+            matches: Some(kind),
+            options: None,
+        },
+    };
+    lsp_types::FileOperationRegistrationOptions {
+        filters: vec![
+            filter("**/*.ol", lsp_types::FileOperationPatternKind::File),
+            filter("**", lsp_types::FileOperationPatternKind::Folder),
+        ],
+    }
+}
+
+/// The open documents a rename of `old` to `new` moves, each with its new
+/// URI: the file itself, or every document under a folder renamed.
+fn renamed_docs(docs: &HashMap<Uri, String>, old: &str, new: &str) -> Vec<(Uri, Uri)> {
+    let old = old.trim_end_matches('/');
+    let new = new.trim_end_matches('/');
+    let mut out = Vec::new();
+    for uri in docs.keys() {
+        let u = uri.as_str();
+        let moved = if u == old {
+            Some(new.to_string())
+        } else {
+            u.strip_prefix(old)
+                .filter(|rest| rest.starts_with('/'))
+                .map(|rest| format!("{new}{rest}"))
+        };
+        if let Some(m) = moved
+            && let Ok(m) = Uri::parse(&m)
+        {
+            out.push((uri.clone(), m));
+        }
+    }
+    out
+}
+
+/// Forget the module parses kept for a path renamed or deleted (a file,
+/// or everything under a folder).
+fn forget_parses(uri: &str) {
+    if let Ok(u) = Uri::parse(uri)
+        && let Ok(path) = u.to_file_path()
+    {
+        crate::expand::forget_module_parses(&path);
+    }
 }
 
 fn handle_request(

@@ -24,6 +24,7 @@ supported editors.
 | Rename | all occurrences in the file; refuses keywords and standard-library names with a reason |
 | Signature help | the signature and active parameter as you type a call — local functions and every registry entry alike |
 | Formatting | the `olang fmt` engine — AST-verified, whitespace-only |
+| Files renamed, moved or deleted | `workspace/didRenameFiles` and `workspace/didDeleteFiles` (registered for olang files and folders): the open documents follow a rename (a folder's too), the old name's problems are cleared, and every open document is checked again — an importer of the name that went or came hears it at once, without an edit |
 
 Positions cross the wire in UTF-16 code units, the protocol's default,
 converted at every boundary — a `π` or an emoji earlier in a line never
