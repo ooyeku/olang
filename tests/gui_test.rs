@@ -1848,3 +1848,70 @@ fn a_code_field_pins_scopes_says_problems_and_hands_over_chords() {
     "##);
     assert_eq!(text(&v), r#"[true, "sticky", 0, "alt+up", true, "grip", "under"]"#);
 }
+
+#[test]
+fn headless_windows_have_one_key_window() {
+    // as the platform's: the window opened last is key, a press in another
+    // makes that one key, `window_focus` moves it, the key window closed
+    // hands it to the one key before; each change said as `window_focus`
+    let _turn = events_turn();
+    let v = run(r##"
+        let events = gui.events()
+        let mut draining = true
+        while draining { match chan.try_recv(events) { Ok(e) => (), Err(e) => { draining = false } } }
+        fn said(events) = {
+            let mut out = []
+            let mut going = true
+            while going {
+                match chan.try_recv(events) {
+                    Ok(e) => { if map_get(e, "kind") == "window_focus" => { out = out + [map_get(e, "on")] } },
+                    Err(e) => { going = false }
+                }
+            }
+            out
+        }
+        let a = gui.headless(#{ "size": (120, 80) })
+        let one = [gui.read(a, "key"), said(events)]
+        let b = gui.headless(#{ "size": (120, 80) })
+        let two = [gui.read(a, "key"), gui.read(b, "key"), said(events)]
+        gui.input(a, #{ "kind": "pointer", "action": "down", "x": 5, "y": 5 })
+        gui.input(a, #{ "kind": "pointer", "action": "up", "x": 5, "y": 5 })
+        let three = [gui.read(a, "key"), gui.read(b, "key"), said(events)]
+        gui.input(b, #{ "kind": "window_focus", "on": true })
+        let four = [gui.read(a, "key"), gui.read(b, "key")]
+        gui.input(b, #{ "kind": "window_focus", "on": false })
+        let five = [gui.read(a, "key"), gui.read(b, "key")]
+        gui.input(b, #{ "kind": "window_focus", "on": true })
+        let _s = said(events)
+        gui.close(b)
+        let six = [gui.read(a, "key"), said(events)]
+        gui.close(a)
+        [one, two, three, four, five, six]
+    "##);
+    assert_eq!(
+        text(&v),
+        "[[true, [true]], [false, true, [false, true]], [true, false, [false, true]], [false, true], [false, false], [true, [true]]]"
+    );
+}
+
+#[test]
+fn a_caret_is_drawn_only_in_the_key_window() {
+    let _turn = events_turn();
+    let v = run(r##"
+        fn field(w) = gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 200, 60), "style": #{ "bg": "#ffffff" } },
+          #{ "key": "f", "parent": "root", "role": "input", "box": (10, 10, 180, 30), "edit": #{ "value": "abc" } },
+          #{ "op": "focus", "key": "f" }])
+        let a = gui.headless(#{ "size": (200, 60) })
+        let _fa = field(a)
+        let b = gui.headless(#{ "size": (200, 60) })
+        let _fb = field(b)
+        let ca = gui.read(a, "caret")
+        let cb = gui.read(b, "caret")
+        gui.close(b)
+        let ca2 = gui.read(a, "caret")
+        gui.close(a)
+        [ca == (), cb != (), ca2 != ()]
+    "##);
+    assert_eq!(text(&v), "[true, true, true]");
+}

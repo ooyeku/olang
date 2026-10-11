@@ -337,11 +337,122 @@ fn gui_headless(args: Vec<Value>) -> Res<Value> {
     if let Some(c) = opts.clear {
         st.clear = c;
     }
+    // not key until the key model makes it so, as a window the platform
+    // opens becomes key: the one before it hears it is not
+    st.focused_window = false;
     windows()
         .lock()
         .map_err(|_| "gui: registry poisoned")?
         .insert(id, Arc::new(Mutex::new(st)));
+    let mut out = Vec::new();
+    headless_key(id, &mut out);
+    emit(out);
     Ok(window_value(id, true))
+}
+
+/// The headless windows' key window. The platform has one key window — a
+/// window opened becomes key, a click on another makes that one key, the
+/// key window closed hands the key to the one key before it — and the
+/// headless windows keep the same among themselves (a test's two windows
+/// both showed a caret before 0.88). Kept per thread that made the
+/// windows: a thread driving headless windows is one application, so
+/// tests running side by side in one process (a Rust test binary) do not
+/// take each other's key. `key` is the key window, `order` the windows by
+/// when each was last key.
+#[derive(Default)]
+struct HeadlessKeys {
+    key: Option<u64>,
+    order: Vec<u64>,
+}
+
+#[derive(Default)]
+struct KeyModel {
+    apps: HashMap<std::thread::ThreadId, HeadlessKeys>,
+    owner: HashMap<u64, std::thread::ThreadId>,
+}
+
+static KEY_MODEL: OnceLock<Mutex<KeyModel>> = OnceLock::new();
+
+fn key_model() -> std::sync::MutexGuard<'static, KeyModel> {
+    KEY_MODEL
+        .get_or_init(|| Mutex::new(KeyModel::default()))
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+}
+
+fn headless_window(id: u64) -> Option<Shared> {
+    windows().lock().ok()?.get(&id).cloned()
+}
+
+fn set_key(id: u64, on: bool, out: &mut Vec<Value>) {
+    if let Some(w) = headless_window(id)
+        && let Ok(mut st) = w.lock()
+    {
+        st.set_key(on, out);
+    }
+}
+
+/// Make headless window `id` the key one of its application: the window
+/// key before it hears `window_focus` off, then `id` hears it on (each
+/// only when it changes).
+fn headless_key(id: u64, out: &mut Vec<Value>) {
+    let old = {
+        let mut m = key_model();
+        let app = *m.owner.entry(id).or_insert_with(|| std::thread::current().id());
+        let keys = m.apps.entry(app).or_default();
+        let old = keys.key.filter(|k| *k != id);
+        keys.order.retain(|k| *k != id);
+        keys.order.push(id);
+        keys.key = Some(id);
+        old
+    };
+    if let Some(old) = old {
+        set_key(old, false, out);
+    }
+    set_key(id, true, out);
+}
+
+/// Headless window `id` is not key any more (`window_focus` off: the
+/// application left); no other window becomes key.
+fn headless_unkey(id: u64, out: &mut Vec<Value>) {
+    {
+        let mut m = key_model();
+        if let Some(app) = m.owner.get(&id).copied()
+            && let Some(keys) = m.apps.get_mut(&app)
+            && keys.key == Some(id)
+        {
+            keys.key = None;
+        }
+    }
+    set_key(id, false, out);
+}
+
+/// Headless window `id` closed: when it was key, the window key before
+/// it becomes key.
+fn headless_closed(id: u64, out: &mut Vec<Value>) {
+    let next = {
+        let mut m = key_model();
+        let Some(app) = m.owner.remove(&id) else {
+            return;
+        };
+        let Some(keys) = m.apps.get_mut(&app) else {
+            return;
+        };
+        keys.order.retain(|k| *k != id);
+        let next = if keys.key == Some(id) {
+            keys.key = None;
+            keys.order.last().copied()
+        } else {
+            None
+        };
+        if keys.order.is_empty() {
+            m.apps.remove(&app);
+        }
+        next
+    };
+    if let Some(next) = next {
+        headless_key(next, out);
+    }
 }
 
 fn gui_close(args: Vec<Value>) -> Res<Value> {
@@ -355,6 +466,10 @@ fn gui_close(args: Vec<Value>) -> Res<Value> {
         let headless = w.lock().map(|s| s.headless).unwrap_or(true);
         if !headless {
             platform::close(id);
+        } else {
+            let mut out = Vec::new();
+            headless_closed(id, &mut out);
+            emit(out);
         }
     }
     Ok(Value::Unit)
@@ -903,6 +1018,27 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
     }
     let input = input_of(&args[1])?;
     let mut out = Vec::new();
+    // A headless window's key, as the platform moves it: `window_focus`
+    // makes the window key (or not), and a press in a window that is not
+    // key makes it key first, as a click does.
+    if w.lock().map_err(|_| "gui: window poisoned")?.headless {
+        match &input {
+            Input::Focused(on) => {
+                if *on {
+                    headless_key(id, &mut out);
+                } else {
+                    headless_unkey(id, &mut out);
+                }
+                emit(out);
+                return Ok(Value::Unit);
+            }
+            Input::Pointer {
+                action: PointerAction::Down,
+                ..
+            } => headless_key(id, &mut out),
+            _ => {}
+        }
+    }
     let headless = {
         let mut st = w.lock().map_err(|_| "gui: window poisoned")?;
         let headless = st.headless;

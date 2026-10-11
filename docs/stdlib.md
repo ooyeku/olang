@@ -1847,7 +1847,7 @@ Native-only; on in the released binaries (the `gui` cargo feature).
 |---|---|
 | `gui.available()` | a window can be opened here: olang's own main thread, and a display (on Linux, a Wayland display) |
 | `gui.open(opts)` | open a window → `Ok(window)`, or `Err` when there is no display. `opts`: `title`, `size` `(w, h)`, `min` `(w, h)`, `resizable`, `renderer` (`"gpu"`, the default, or `"software"`; also `LOOM_RENDERER`), `background`, `tabbing` (the windows it may share a tab bar with: macOS's tabbing identifier), `tab_of` (an open window's id: this one opens as that window's tab, macOS). A `resize` event with the real size and scale follows at once |
-| `gui.headless(opts)` | a window with no display: drawn in software, fed by `gui.input`, read by `gui.read`. The same options, plus `scale` |
+| `gui.headless(opts)` | a window with no display: drawn in software, fed by `gui.input`, read by `gui.read`. The same options, plus `scale`. The headless windows a thread made have one key window, as the platform's do: the one opened last is key, a press in another (or `gui.input` `"window_focus"` with `on`) makes that one key, `on: false` leaves none key, and the key window closed hands the key to the one key before it; each change is a `window_focus` event to the window it changes. A field's caret and focus ring are drawn only in the key window (`gui.read(w, "key")`) |
 | `gui.close(w)` | close a window. Closing is the program's: the close button only sends `close_requested` |
 | `gui.events()` | the channel every window's events arrive on (below) |
 | `gui.apply(w, patch)` | apply a list of operations to the window's tree → `Ok(())`, or `Err` naming the operation and what is wrong with it |

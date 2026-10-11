@@ -287,6 +287,20 @@ fn badge_picture(side: u32, play: bool) -> Arc<super::canvas::Picture> {
 const WHITE: Color = [255, 255, 255, 255];
 
 impl WinState {
+    /// Make the window the key one (`on`) or not, as the platform says
+    /// it with `window_focus`: the flag, a redraw, and the event — only
+    /// when it changes. The headless windows' one key window is kept by
+    /// `gui` (`mod.rs`'s key model) through this.
+    pub fn set_key(&mut self, on: bool, out: &mut Vec<Value>) {
+        if self.focused_window == on {
+            return;
+        }
+        self.focused_window = on;
+        self.dirty = true;
+        self.a11y_dirty = true;
+        out.push(self.ev("window_focus", vec![("on", Value::Boolean(on))]));
+    }
+
     pub fn new(id: u64, headless: bool, title: &str, width: f32, height: f32, scale: f32) -> Self {
         WinState {
             id,
