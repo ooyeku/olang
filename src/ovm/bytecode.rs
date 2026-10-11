@@ -8290,6 +8290,33 @@ impl BytecodeVm {
             "map_get" if args.len() == 2 => {
                 Some(Self::native_map_get(&args[0], &args[1], "map_get"))
             }
+            // A nested read, hop by hop as map_get reads (Unit at the first
+            // missing hop), without converting the map it walks: bridged,
+            // a VM map crossed whole for each read.
+            "map_get_in" | "map_path" if args.len() == 2 => {
+                let ValueData::List(keys) = &args[1].data else {
+                    return None;
+                };
+                let mut at = args[0].clone();
+                for key in keys.iter() {
+                    if matches!(at.data, ValueData::Unit) {
+                        break;
+                    }
+                    if !matches!(
+                        at.data,
+                        ValueData::Map(_) | ValueData::AstMap(_) | ValueData::AstStruct(..) | ValueData::Struct(_)
+                    ) || Self::key_text_of(key).is_none()
+                    {
+                        // the bridge raises the interpreter's error
+                        return None;
+                    }
+                    at = match Self::native_map_get(&at, key, name) {
+                        Ok(v) => v,
+                        Err(_) => return None,
+                    };
+                }
+                Some(Ok(at))
+            }
             // Read in place, as `map_get` is: bridged, a VM map converted
             // whole into the interpreter's form for one key.
             // Read and copied in place: bridged, a VM map (a frame with its
