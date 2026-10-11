@@ -450,6 +450,8 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
     };
     Ok(match what.as_str() {
         "focus" => opt_str(st.scene.focus.as_deref()),
+        // whether the window is the key one (its caret and focus shown)
+        "key" => Value::Boolean(st.focused_window),
         "title" => opt_str(Some(st.title.as_str())),
         "hover" => opt_str(st.scene.hover.as_deref()),
         "size" => Value::Tuple(Arc::new(vec![
@@ -597,7 +599,7 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
         }
         other => {
             return Err(format!(
-                "gui.read: unknown \"{other}\" (focus, hover, size, hit, node, value, selection, keys, a11y, pixels, rgba, prims, caret, ime, settings, animation, next_frame)"
+                "gui.read: unknown \"{other}\" (focus, key, hover, size, hit, node, value, selection, keys, a11y, pixels, rgba, prims, caret, ime, settings, animation, next_frame)"
             ));
         }
     })
