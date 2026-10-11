@@ -189,9 +189,11 @@ fn recorded_of(op: &str) -> bool {
             | "os.exe_path"
             | "os.pid"
             | "os.is_tty"
+            | "os.stdin_is_tty"
             // filesystem reads: external, mutable state.
             | "fs.read_file"
             | "fs.exists"
+            | "fs.real_path"
             | "fs.is_file"
             | "fs.is_dir"
             | "fs.list_dir"
@@ -261,6 +263,7 @@ fn fs_read_only(name: &str) -> bool {
             | "scan"
             | "search"
             | "abs_path"
+            | "real_path"
     )
 }
 

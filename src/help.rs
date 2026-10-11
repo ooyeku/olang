@@ -4543,6 +4543,14 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             &[r##"if os.is_tty() == Ok(true) => term.green("ok") else => "ok""##],
         );
         self.doc_ex(
+            "os.stdin_is_tty",
+            "os.stdin_is_tty()",
+            "Bool",
+            "os",
+            "whether standard input is a terminal (false when the program reads a pipe or a file)",
+            &[r##"if !os.stdin_is_tty() => read_rows_from_stdin() else => ()"##],
+        );
+        self.doc_ex(
             "os.color_enabled",
             "os.color_enabled()",
             "Bool",
@@ -4780,6 +4788,14 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             "fs",
             "resolve a path to an absolute path against the current directory",
             &[r##"unwrap(fs.abs_path("./data"))"##],
+        );
+        self.doc_ex(
+            "fs.real_path",
+            "fs.real_path(path)",
+            "Result",
+            "fs",
+            "the absolute path with its symbolic links resolved (for a path not there yet, its nearest existing folder made real)",
+            &[r##"unwrap(fs.real_path("/tmp/x"))  // "/private/tmp/x" on macOS"##],
         );
         self.doc_ex(
             "fs.walk",
@@ -6189,6 +6205,22 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             "The concatenation of two Bytes values.",
             &[r##"bytes.concat(header, payload)"##],
         );
+        self.doc_ex(
+            "bytes.to_hex",
+            "bytes.to_hex(b)",
+            "String",
+            "Bytes",
+            "Lowercase hex, two digits a byte.",
+            &[r##"bytes.to_hex(bytes.from_list([0, 171, 255]))  // "00abff""##],
+        );
+        self.doc_ex(
+            "bytes.from_hex",
+            "bytes.from_hex(s)",
+            "Result",
+            "Bytes",
+            "Hex text (either case, an even number of digits) as Bytes; Err naming the first character that is not a digit.",
+            &[r##"unwrap(bytes.from_hex("00ABff"))  // the bytes 0, 171, 255"##],
+        );
         // The compress module: gzip and deflate in memory.
         self.doc_ex(
             "compress.gzip",
@@ -6903,7 +6935,22 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
             return_type: "Int | Unit".to_string(),
             examples: vec!["str.char_code(\"A\")  // 65".to_string()],
             category: "String".to_string(),
-            see_also: vec!["str.char_at".to_string()],
+            see_also: vec!["str.char_at".to_string(), "str.from_char_code".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "str.from_char_code".to_string(),
+            description:
+                "The character of a Unicode code point, or the string of a list of them; a number that is no character raises."
+                    .to_string(),
+            syntax: "str.from_char_code(n)".to_string(),
+            parameters: vec!["n: Int | List<Int>".to_string()],
+            return_type: "String".to_string(),
+            examples: vec![
+                "str.from_char_code(65)  // \"A\"".to_string(),
+                "str.from_char_code([27, 91, 72])  // ESC [ H".to_string(),
+            ],
+            category: "String".to_string(),
+            see_also: vec!["str.char_code".to_string()],
         });
         self.add_function(FunctionDoc {
             name: "collections.heap.new".to_string(),

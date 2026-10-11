@@ -56,6 +56,10 @@ pub fn create_os_module() -> Value {
     // Terminal
     module.insert("is_tty".to_string(), create_builtin_function("is_tty", 0));
     module.insert(
+        "stdin_is_tty".to_string(),
+        create_builtin_function("stdin_is_tty", 0),
+    );
+    module.insert(
         "color_enabled".to_string(),
         create_builtin_function("color_enabled", 0),
     );
@@ -158,6 +162,7 @@ pub fn call_os_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
         "exec" => os_exec(args),
         "read_line" => os_read_line(args),
         "is_tty" => os_is_tty(args),
+        "stdin_is_tty" => os_stdin_is_tty(args),
         "color_enabled" => os_color_enabled(args),
         "flush" => os_flush(args),
         "on_interrupt" => os_on_interrupt(args),
@@ -952,6 +957,18 @@ fn os_is_tty(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         use std::io::IsTerminal;
         std::io::stdout().is_terminal()
     })))
+}
+
+/// Whether standard input is a terminal — where `os.is_tty` asks of
+/// standard output (`tty.is_tty` of both): a program reading a pipe
+/// (`cat rows.csv | app`) answers `false` while still drawing to the
+/// terminal.
+fn os_stdin_is_tty(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if !args.is_empty() {
+        return Err(format!("os.stdin_is_tty expects 0 arguments, got {}", args.len()).into());
+    }
+    use std::io::IsTerminal;
+    Ok(Value::Boolean(std::io::stdin().is_terminal()))
 }
 
 /// Flush standard output. `print` without a newline is buffered, so a

@@ -381,6 +381,8 @@ every function returns a new string.
 |---|---|
 | `str.length(s)` | character count |
 | `str.char_at(s, i)` | 1-char string, `""` out of bounds |
+| `str.char_code(s)` | the Unicode code point of the first character, `()` for `""` |
+| `str.from_char_code(n)` | the character of code point `n`, or the string of a list of them (`[27, 91, 72]` is ESC `[` `H`); a number that is no character raises |
 | `str.chars(s)` | list of characters (codepoints) |
 | `str.graphemes(s)` | list of visible characters (UAX #29 clusters) |
 | `str.width(s)` | display width in terminal cells (see below) |
@@ -1104,6 +1106,7 @@ preview. `fs.read_bytes`/`fs.write_bytes` move it to and from disk;
 | `bytes.len(b)` | byte count (the global `len` works too) |
 | `bytes.slice(b, from, to)` | half-open, clamped — the shape of `str.substring` |
 | `bytes.concat(a, b)` | concatenation |
+| `bytes.to_hex(b)` / `bytes.from_hex(s)` | lowercase hex, two digits a byte; `from_hex` reads either case and answers a `Result` (an odd count or a character that is not a digit is `Err`) |
 
 ```olang
 let b = bytes.from_list([104, 105, 33])
@@ -1177,7 +1180,7 @@ rather than bugs. (Examples are `no-run`: they touch the disk.)
 | Files | `read_file` `write_file` `append_file` `copy_file` `move_file` `remove_file` `trash` — and `read_bytes` / `write_bytes` for [binary data](#bytes--binary-data) |
 | Directories | `create_dir` `create_dir_all` `list_dir` `walk` `glob` `remove_dir` `remove_dir_all` |
 | Queries | `exists` `is_file` `is_dir` `file_size` `file_info` |
-| Paths | `join(parts)` `dirname` `basename` `ext` — pure string surgery, answering the string itself; `abs_path` answers a **`Result`** (`Ok(path)`): it resolves against the current directory, which can fail, and normalizes `.`/`..` without requiring the file to exist |
+| Paths | `join(parts)` `dirname` `basename` `ext` — pure string surgery, answering the string itself; `abs_path` answers a **`Result`** (`Ok(path)`): it resolves against the current directory, which can fail, and normalizes `.`/`..` without requiring the file to exist; `real_path` (a `Result` too) also resolves symbolic links — `/tmp/x` is `/private/tmp/x` on macOS — and for a path that does not exist yet makes its nearest existing folder real and keeps the rest |
 
 `fs.trash(path)` moves a file or a folder to the Trash as the Finder's
 Move to Trash does (macOS's NSFileManager) — never a permanent delete —
@@ -1379,7 +1382,7 @@ else.
 | Group | Functions |
 |---|---|
 | Process | `args` `exit(code)` `pid` `exe_path` `exec(program, args)` |
-| Terminal | `is_tty()` — is stdout a terminal? (`Bool`); `color_enabled()` — will ANSI styling render? (`CLICOLOR_FORCE` set, or a terminal with `NO_COLOR` unset; decided once, re-decided after the program's own `set_env`/`remove_env`); `flush()` — flush buffered stdout, for progress bars |
+| Terminal | `is_tty()` — is stdout a terminal? (`Bool`); `stdin_is_tty()` — is stdin? (`Bool`: `false` reading a pipe or a file); `color_enabled()` — will ANSI styling render? (`CLICOLOR_FORCE` set, or a terminal with `NO_COLOR` unset; decided once, re-decided after the program's own `set_env`/`remove_env`); `flush()` — flush buffered stdout, for progress bars |
 | Input | `read_line()` — one line from stdin as `Ok(line)`, `Err("eof")` at end; `stdin()` — everything to end-of-file as one string; `stdin_lines()` — everything as a list of lines, endings stripped. The stdin pair is what makes olang pipe-friendly: `cat access.log \| olang analyze.ol` |
 | Environment | `get_env` `set_env` `remove_env` `has_env` `list_env` |
 | Directories | `cwd` `chdir` `home_dir` `temp_dir` |
@@ -1402,7 +1405,7 @@ unbounded and `timed_out` is `false`.
 
 Most of `os` cannot fail, and as of 0.64 says so: `args`, `arch`,
 `os_type`, `family`, `pid`, `path_separator`, `temp_dir`, `username`,
-`is_tty`, `color_enabled`, `flush`, `has_env`, `list_env`, `set_env`, `remove_env`,
+`is_tty`, `stdin_is_tty`, `color_enabled`, `flush`, `has_env`, `list_env`, `set_env`, `remove_env`,
 `interrupted`, and `reset_interrupt` all return their value directly.
 The ones that keep `Result` are the ones that genuinely can fail:
 `get_env` (the variable may be absent), `cwd`, `chdir`, `home_dir`,

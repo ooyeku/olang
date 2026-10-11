@@ -99,10 +99,34 @@ fn err(msg: String) -> Value {
     Value::Err(Box::new(Value::String(Arc::new(msg))))
 }
 
-/// Compile a pattern, mapping a failure to an olang `Err` rather than a
-/// runtime abort.
+/// Patterns compiled on this thread, by their text: a `re` call compiled
+/// its pattern every time (~28 µs for a character class against 0.1 µs
+/// for `str.contains`; Heddle's painter asked thousands of times a
+/// frame). A compiled `Regex` is shared by reference, so a hit is a
+/// clone of a pointer. Bounded: past `PATTERNS_KEPT` the cache starts
+/// over (a program building patterns from data does not grow it).
+const PATTERNS_KEPT: usize = 256;
+
+thread_local! {
+    static PATTERNS: std::cell::RefCell<rustc_hash::FxHashMap<String, Regex>> =
+        std::cell::RefCell::new(rustc_hash::FxHashMap::default());
+}
+
+/// Compile a pattern (or take it compiled), mapping a failure to an olang
+/// `Err` rather than a runtime abort.
 fn compile(pattern: &str) -> Result<Regex, Value> {
-    Regex::new(pattern).map_err(|e| err(format!("invalid pattern: {}", e)))
+    if let Some(r) = PATTERNS.with(|p| p.borrow().get(pattern).cloned()) {
+        return Ok(r);
+    }
+    let r = Regex::new(pattern).map_err(|e| err(format!("invalid pattern: {}", e)))?;
+    PATTERNS.with(|p| {
+        let mut p = p.borrow_mut();
+        if p.len() >= PATTERNS_KEPT {
+            p.clear();
+        }
+        p.insert(pattern.to_string(), r.clone());
+    });
+    Ok(r)
 }
 
 fn string(s: &str) -> Value {
@@ -114,7 +138,7 @@ fn string(s: &str) -> Value {
 /// Total: does the pattern compile at all?
 fn re_is_valid(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let pattern = arg_str(&args, 0, "is_valid")?;
-    Ok(Value::Boolean(Regex::new(pattern).is_ok()))
+    Ok(Value::Boolean(compile(pattern).is_ok()))
 }
 
 fn re_is_match(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {

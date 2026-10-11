@@ -2372,6 +2372,20 @@ acc + show(n)
     assert_tier_transparent(src);
 }
 
+#[test]
+fn from_char_code_promotes_and_agrees() {
+    // the inverse of `str.char_code`: one code point, or a list of them
+    let src = r#"
+fn esc(n) = str.from_char_code([27, 91]) + to_string(n) + str.from_char_code(72)
+fn round(s) = str.from_char_code(str.char_code(s))
+let mut acc = ""
+for i in 0..30 { acc = esc(i) + round("é") + round("😀") }
+acc
+"#;
+    assert!(promotion_count(src, 2) >= 2, "esc and round should promote");
+    assert_tier_transparent(src);
+}
+
 // ── enums: construction, unit variants, and patterns ──────────────────
 
 #[test]

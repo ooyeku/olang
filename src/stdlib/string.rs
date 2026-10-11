@@ -34,6 +34,7 @@ pub fn create_string_module() -> Value {
         "parse_int",
         "parse_float",
         "char_code",
+        "from_char_code",
     ];
     for name in unary {
         module.insert(name.to_string(), create_builtin_function(name, 1));
@@ -119,6 +120,7 @@ pub fn call_string_function(
         "fuzzy_score" => str_fuzzy_score(args),
         "char_at" => str_char_at(args),
         "char_code" => str_char_code(args),
+        "from_char_code" => str_from_char_code(args),
         "replace" => str_replace(args, false),
         "replace_first" => str_replace(args, true),
         "substring" => str_substring(args),
@@ -507,6 +509,37 @@ fn str_char_code(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         Some(c) => Value::Integer(c as i64),
         None => Value::Unit,
     })
+}
+
+/// The inverse of `char_code`: the character of a Unicode code point, or
+/// the string of a list of them (`str.from_char_code([27, 91])`). A
+/// number that is no character (a surrogate, past U+10FFFF, negative)
+/// raises, naming it.
+fn str_from_char_code(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let one = |v: &Value| -> Result<char, Box<dyn std::error::Error>> {
+        match v {
+            Value::Integer(n) => u32::try_from(*n)
+                .ok()
+                .and_then(char::from_u32)
+                .ok_or_else(|| format!("str.from_char_code: {n} is not a Unicode code point").into()),
+            other => Err(format!(
+                "str.from_char_code: argument must be an Int or a list of Int, got {}",
+                other.type_name()
+            )
+            .into()),
+        }
+    };
+    match args.first() {
+        Some(Value::List(xs)) => {
+            let mut out = String::with_capacity(xs.len());
+            for x in xs.iter() {
+                out.push(one(x)?);
+            }
+            Ok(ok_string(out))
+        }
+        Some(v) => Ok(ok_string(one(v)?.to_string())),
+        None => Err("str.from_char_code expects 1 argument".into()),
+    }
 }
 
 fn str_replace(args: Vec<Value>, first_only: bool) -> Result<Value, Box<dyn std::error::Error>> {

@@ -203,3 +203,32 @@ fn abs_path_and_home_dir_resolve() {
     let home = std::env::var("HOME").expect("HOME set in test env");
     assert_eq!(eval("unwrap(os.home_dir())"), Value::String(home.into()));
 }
+
+#[test]
+fn real_path_resolves_links_and_a_path_not_there_yet() {
+    let base = std::env::temp_dir().join(format!("olang-real-path-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(base.join("real")).unwrap();
+    std::os::unix::fs::symlink(base.join("real"), base.join("link")).unwrap();
+    let real = base.join("real").canonicalize().unwrap();
+    let ask = |p: std::path::PathBuf| eval(&format!("unwrap(fs.real_path({:?}))", p.to_string_lossy()));
+    // through the link, and through `..`
+    assert_eq!(ask(base.join("link")), Value::String(real.to_string_lossy().into_owned().into()));
+    assert_eq!(ask(base.join("link/../link")), Value::String(real.to_string_lossy().into_owned().into()));
+    // a file not there yet: its folder made real, its name kept
+    assert_eq!(
+        ask(base.join("link/new.txt")),
+        Value::String(real.join("new.txt").to_string_lossy().into_owned().into())
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn stdin_is_tty_says_a_pipe_is_not_a_terminal() {
+    let out = Command::new(olang_bin())
+        .args(["eval", "os.stdin_is_tty()"])
+        .stdin(Stdio::piped())
+        .output()
+        .expect("run");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "false");
+}

@@ -68,6 +68,9 @@ A *test file* is any `.ol` file containing a top-level `test "name" { ... }`
 block. Each test file runs in a fresh interpreter, top to bottom — helper
 functions, fixtures, and imports work exactly as they do under
 `olang <file>`, and files inside a package get the package's dependencies.
+Each runs with the working directory set to the file's own folder (and
+set back after), so a relative path in a test — `fs.read_file("fixtures/a.txt")`
+— is read beside the test file, as `olang <file>` run from there reads it.
 Files without test blocks are not executed at all.
 
 `olang test` answers for the project's own files. An imported module's

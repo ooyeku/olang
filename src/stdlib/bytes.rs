@@ -128,6 +128,8 @@ pub fn create_bytes_module() -> Value {
         ("len", 1),
         ("slice", 3),
         ("concat", 2),
+        ("to_hex", 1),
+        ("from_hex", 1),
     ] {
         module.insert(
             name.to_string(),
@@ -155,6 +157,8 @@ pub fn call_bytes_function(
         "len" => len(args),
         "slice" => slice(args),
         "concat" => concat(args),
+        "to_hex" => to_hex(args),
+        "from_hex" => from_hex(args),
         _ => Err(format!("Unknown bytes function: {}", name).into()),
     }
 }
@@ -232,6 +236,58 @@ fn to_string(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             "bytes are not valid UTF-8: {e}"
         ))))),
     })
+}
+
+/// Lowercase hex, two digits a byte (heddle-sql drew a blob's bytes
+/// through a 256-entry table in olang: ~90 ms a MB).
+fn to_hex(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let b = bytes_of(one_arg(&args, "to_hex")?).map_err(|e| format!("bytes.to_hex: {e}"))?;
+    let mut out = String::with_capacity(b.len() * 2);
+    for &x in b.iter() {
+        out.push(DIGITS[(x >> 4) as usize] as char);
+        out.push(DIGITS[(x & 15) as usize] as char);
+    }
+    Ok(Value::String(Arc::new(out)))
+}
+
+/// Hex text (either case, an even number of digits) as Bytes — a
+/// `Result`, since text may not be hex.
+fn from_hex(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let s = match one_arg(&args, "from_hex")? {
+        Value::String(s) => s.clone(),
+        other => {
+            return Err(format!("bytes.from_hex: argument must be a string, got {}", other.type_name()).into());
+        }
+    };
+    let digit = |c: u8| -> Option<u8> {
+        match c {
+            b'0'..=b'9' => Some(c - b'0'),
+            b'a'..=b'f' => Some(c - b'a' + 10),
+            b'A'..=b'F' => Some(c - b'A' + 10),
+            _ => None,
+        }
+    };
+    let text = s.as_bytes();
+    if text.len() % 2 != 0 {
+        return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+            "bytes.from_hex: an odd number of digits ({})",
+            text.len()
+        ))))));
+    }
+    let mut out = Vec::with_capacity(text.len() / 2);
+    for (i, pair) in text.chunks(2).enumerate() {
+        match (digit(pair[0]), digit(pair[1])) {
+            (Some(h), Some(l)) => out.push(h << 4 | l),
+            _ => {
+                return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                    "bytes.from_hex: not a hex digit at {}",
+                    if digit(pair[0]).is_none() { i * 2 } else { i * 2 + 1 }
+                ))))));
+            }
+        }
+    }
+    Ok(Value::Ok(Box::new(to_value(out))))
 }
 
 fn len(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {

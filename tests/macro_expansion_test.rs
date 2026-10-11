@@ -251,6 +251,19 @@ fn meta_lit_round_trips_every_literal_shape() {
 }
 
 #[test]
+fn meta_lit_renders_an_object_as_its_literal() {
+    let out = eval(
+        "let o = { b: \"x\", a: 1, m: #{ \"k\": [1] }, inner: { z: 2.5 } }\n\
+         [meta.lit(o), unwrap(meta.eval(meta.lit(o))) == o]\n",
+    )
+    .expect("object");
+    assert_eq!(
+        format!("{out}"),
+        r#"["{ a: 1, b: "x", inner: { z: 2.5 }, m: #{"k": [1]} }", true]"#
+    );
+}
+
+#[test]
 fn meta_fresh_yields_distinct_names() {
     let out = eval("meta.fresh(\"tmp\") != meta.fresh(\"tmp\")\n").expect("fresh");
     assert_eq!(out, Value::Boolean(true));

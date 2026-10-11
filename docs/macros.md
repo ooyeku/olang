@@ -102,7 +102,8 @@ other bindings are its working state, not the evaluated program's.
 (Called at ordinary runtime, outside
 expansion, `meta.eval` is real evaluation — effects allowed, under the
 run's own capability grants.) And `meta.lit` renders a value back into
-source — together
+source — scalars, lists, tuples, maps, results and anonymous objects
+(`{ a: 1 }`); a function or a handle has no source and is refused — together
 they are compile-time computation in userland:
 
 ```olang

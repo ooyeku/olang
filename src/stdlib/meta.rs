@@ -1249,6 +1249,25 @@ fn render_literal(v: &Value) -> Result<String, Box<dyn std::error::Error>> {
                 .collect();
             format!("#{{{}}}", parts?.join(", "))
         }
+        // An anonymous object as its literal, `{ a: 1, b: "x" }`, its
+        // fields in order (Heddle's recordings converted objects to maps
+        // first). Its fields are identifiers, as its literal wrote them.
+        Value::Struct { type_name, fields } if type_name == "Object" => {
+            let mut keys: Vec<_> = fields.keys().collect();
+            keys.sort();
+            let parts: Result<Vec<_>, Box<dyn std::error::Error>> = keys
+                .iter()
+                .map(|k| {
+                    let ident = k.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
+                        && k.chars().all(|c| c.is_alphanumeric() || c == '_');
+                    if !ident {
+                        return Err(format!("meta.lit: an object's field {k:?} is not a name").into());
+                    }
+                    Ok(format!("{}: {}", k, render_literal(fields.get(*k).expect("key exists"))?))
+                })
+                .collect();
+            format!("{{ {} }}", parts?.join(", "))
+        }
         Value::Ok(inner) => format!("Ok({})", render_literal(inner)?),
         Value::Err(inner) => format!("Err({})", render_literal(inner)?),
         other => {

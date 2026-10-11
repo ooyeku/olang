@@ -250,3 +250,32 @@ fn col_splice_replaces_a_run_in_one_copy() {
     assert_eq!(s(eval(r#"show(col.splice([1, 2], 9, 1, [3]))"#)), "[1, 2, 3]");
     assert_eq!(s(eval(r#"show(col.splice([1, 2, 3], 0, 99, []))"#)), "[]");
 }
+
+#[test]
+fn from_char_code_is_char_code_inverted() {
+    assert_eq!(s(eval(r#"str.from_char_code(65)"#)), "A");
+    assert_eq!(s(eval(r#"str.from_char_code([27, 91, 72])"#)), "\u{1b}[H");
+    assert_eq!(s(eval(r#"str.from_char_code(str.char_code("😀"))"#)), "😀");
+    assert_eq!(s(eval(r#"str.from_char_code([])"#)), "");
+    for bad in ["str.from_char_code(55296)", "str.from_char_code(-1)", "str.from_char_code(1114112)", "str.from_char_code(\"a\")"] {
+        let program = Parser::new().parse(bad).expect("parse");
+        assert!(Interpreter::new().eval_program(program).is_err(), "{bad} must raise");
+    }
+}
+
+#[test]
+fn re_patterns_kept_compiled_answer_as_before() {
+    // the same pattern many times (taken compiled), past the cache's bound
+    // with distinct ones, and a bad pattern still an Err each time
+    let v = eval(
+        r#"
+        let mut hits = 0
+        for i in 0..2000 { if re.is_match("^[a-z]+[0-9]{2,}$", "abc" + to_string(i + 10)) => { hits = hits + 1 } }
+        let mut distinct = 0
+        for i in 0..600 { if re.is_match("x" + to_string(i) + "$", "ax" + to_string(i)) => { distinct = distinct + 1 } }
+        let bad = [is_err(re.find("(", "a")), is_err(re.find("(", "a")), re.is_valid("("), re.is_valid("a+")]
+        [hits, distinct, bad]
+    "#,
+    );
+    assert_eq!(format!("{v}"), "[2000, 600, [true, true, false, true]]");
+}

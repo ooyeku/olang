@@ -90,6 +90,10 @@ pub fn create_fs_module() -> Value {
         "abs_path".to_string(),
         create_builtin_function("abs_path", 1),
     );
+    module.insert(
+        "real_path".to_string(),
+        create_builtin_function("real_path", 1),
+    );
     module.insert("glob".to_string(), create_builtin_function("glob", 1));
     // A checkout walked (its .gitignores respected) and searched, on worker
     // threads: src/stdlib/fs_scan.rs.
@@ -166,6 +170,7 @@ pub fn call_fs_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
         "basename" => path_basename(args),
         "ext" => path_ext(args),
         "abs_path" => path_abs(args),
+        "real_path" => path_real(args),
         "is_file" => is_file(args),
         "is_dir" => is_dir(args),
         "list_dir" => list_dir(args),
@@ -448,6 +453,20 @@ fn path_abs(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             path, e
         )))))),
     }
+}
+
+/// The path with its symbolic links resolved (`/tmp/x` is
+/// `/private/tmp/x` on macOS), absolute and normalized: for a path that
+/// does not exist yet, its nearest existing folder made real and the rest
+/// kept — the same answer the capability gate checks a path by.
+fn path_real(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let path = match one_path_arg("real_path", &args) {
+        Ok(p) => p,
+        Err(e) => return Ok(e),
+    };
+    Ok(Value::Ok(Box::new(Value::String(Arc::new(
+        crate::caps::gate_path(path).to_string_lossy().into_owned(),
+    )))))
 }
 
 fn exists(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
