@@ -283,6 +283,25 @@ enum Commands {
         check: bool,
     },
 
+    /// Rewrite programs to a newer idiom. `olang fix maps`: `map_get(x, "k")`
+    /// becomes `x.k` and `map_get_or(x, "k", d)` becomes `x.k ?? d`, layout
+    /// and comments kept; a default that may have an effect is flagged, not
+    /// rewritten
+    Fix {
+        /// What to fix: `maps`
+        #[arg(value_name = "WHAT")]
+        what: String,
+        /// Files or directories (default: current directory)
+        #[arg(value_name = "PATH")]
+        paths: Vec<PathBuf>,
+        /// Report what would change and exit non-zero; write nothing
+        #[arg(long)]
+        check: bool,
+        /// A file or directory to leave untouched (repeatable)
+        #[arg(long, value_name = "PATH")]
+        skip: Vec<PathBuf>,
+    },
+
     /// Discover and run test blocks
     Test {
         /// Files or directories to test (default: current directory)
@@ -887,6 +906,24 @@ fn run() -> i32 {
         }
 
         Some(Commands::Eval { source }) => run_eval(&cli, &source),
+
+        Some(Commands::Fix {
+            what,
+            mut paths,
+            check,
+            skip,
+        }) => {
+            if paths.is_empty() {
+                paths.push(PathBuf::from("."));
+            }
+            match what.as_str() {
+                "maps" => std::process::exit(olang::tools::fix::run_maps(&paths, check, &skip)),
+                other => {
+                    eprintln!("olang fix: nothing called '{other}' to fix (there is: maps)");
+                    std::process::exit(2)
+                }
+            }
+        }
 
         Some(Commands::Fmt { mut paths, check }) => {
             if paths.is_empty() {

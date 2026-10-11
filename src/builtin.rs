@@ -1770,7 +1770,7 @@ impl BuiltinFunctions {
         }
     }
 
-    fn expr_is_pure(e: &crate::ast::Expr) -> bool {
+    pub(crate) fn expr_is_pure(e: &crate::ast::Expr) -> bool {
         use crate::ast::{Argument, Expr};
         match e {
             Expr::Integer(_) | Expr::Float(_) | Expr::String(_) | Expr::Boolean(_) => true,

@@ -8,6 +8,7 @@ pub mod coverage; // `olang test --coverage` — line coverage from the runner
 pub mod doc; // `olang doc` — API reference from /// comments
 #[cfg(feature = "native")]
 pub mod doctor; // `olang doctor` — audit a project
+pub mod fix; // `olang fix maps` — the migration to `.` and `??`
 pub mod fmt;
 #[cfg(feature = "native")]
 pub mod lsp; // `olang lsp` — the language server over stdio

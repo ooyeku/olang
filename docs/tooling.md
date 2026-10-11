@@ -28,6 +28,7 @@ language server has [its own chapter](editors.md).
 | `olang doctor [path]` | Audit a project: the manifest, its dependencies, the lock, the browser runtime the binary carries, stale runtime copies |
 | `olang eval SOURCE` | Evaluate one expression and print its value, with the working directory's project libraries in scope |
 | `olang fmt [path]` | Format sources in place; `--check` reports instead of writing |
+| `olang fix maps [path]` | Rewrite `map_get(x, "k")` as `x.k` and `map_get_or(x, "k", d)` as `x.k ?? d`, layout and comments kept; `--check` reports instead of writing |
 | `olang test [path]` | Discover and run `test` blocks; `--coverage` reports coverage |
 | `olang build <file>` | Compile to a self-contained executable; `-o OUT` names it; `--app` carries the program's modules, its dependencies', and their assets |
 | `olang inspect <binary>` | Read a built binary's source, manifest, capabilities, provenance |
@@ -262,6 +263,43 @@ change its meaning — or that doesn't parse — is skipped and reported,
 never modified. Macro-using files are compared on the raw
 pre-expansion tree, so a file importing its meta fns still formats.
 Formatting is idempotent: a formatted tree passes `--check`.
+
+## `olang fix maps`
+
+The migration to [`.` and `??`](language.md#maps): every
+`map_get(chain, "ident")` becomes `chain.ident`, and every
+`map_get_or(x, "k", d)` becomes `x.k ?? d`.
+
+```bash
+olang fix maps                  # the current directory, in place
+olang fix maps --check src/     # report what would change; non-zero exit
+olang fix maps . --skip lib/vendored.ol   # leave a file (or folder) alone
+```
+
+Both rewrites are exact: `m.key` *is* `map_get(m, "key")` on a map, an
+object and a parsed JSON object, and `x.k ?? d` takes the default
+exactly where `map_get_or` does — for an absent key and for a stored
+`()`. The one difference is *when* the default is evaluated: `??`
+evaluates it only when it is used. So a `map_get_or` whose default may
+have an effect — a call to one of the program's own functions, or to a
+builtin outside the pure set — is **flagged, never rewritten**
+(`flagged file:line: …`), for a person to decide.
+
+The rewrite is made in the source text: parentheses are added only
+where precedence needs them (`(m.pad ?? 0) + 1`, `(a + b).k`), and
+everything else — layout, comments, blank lines — stays byte for byte.
+Left alone, and counted in the summary: a key that is not an identifier
+(`"content-type"`) or is a reserved word, a computed key, a call whose
+value is called (`map_get(m, "f")(x)` would read as a method call), the
+right side of a pipeline (which passes the first argument), a call with
+a comment inside it, a macro's arguments (the macro is handed their
+text), and every call in a file that declares or imports its own
+`map_get` or `map_get_or`.
+
+The safety property is `olang fmt`'s: the rewritten file must parse to
+the original's tree once both are read back the same way (each `a.k`
+as `map_get(a, "k")`, each `a.k ?? d` as `map_get_or(a, "k", d)`), or
+the file is left untouched and reported. A second run changes nothing.
 
 ## `olang check`
 
