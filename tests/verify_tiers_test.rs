@@ -64,3 +64,24 @@ fn an_out_of_range_rate_is_refused() {
     assert_eq!(code, 2, "expected a usage error:\n{text}");
     assert!(text.contains("rate in 0..=1"), "{text}");
 }
+
+#[test]
+fn a_map_built_on_both_tiers_is_compared_as_a_value() {
+    // Two maps built by the two tiers are two allocations: compared by
+    // pointer, every function building a map of three keys "diverged".
+    let dir = std::env::temp_dir().join("olang_verify_tiers_maps");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let path = dir.join("maps.ol");
+    std::fs::write(
+        &path,
+        "fn add(a, b) = #{ \"x\": map_get(a, \"x\") + map_get(b, \"x\"), \"y\": map_get(a, \"y\") + map_get(b, \"y\"), \"z\": map_get(a, \"z\") + map_get(b, \"z\") }\n\
+         let mut acc = #{ \"x\": 0.0, \"y\": 0.0, \"z\": 0.0 }\n\
+         for i in 0..300 { acc = add(acc, #{ \"x\": 0.5, \"y\": 1.0, \"z\": 2.0 }) }\n\
+         println(show(acc))",
+    )
+    .expect("write");
+    let out = Command::new(env!("CARGO_BIN_EXE_olang")).args(["--verify-tiers", "1", "run"]).arg(&path).output().expect("run");
+    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.status.code(), Some(0), "verified run diverged:\n{text}");
+    assert!(text.contains("600.0"), "result missing:\n{text}");
+}

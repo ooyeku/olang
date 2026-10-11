@@ -3178,8 +3178,19 @@ impl BytecodeVm {
     fn verify_report(&mut self, what: &str, outcome: Result<OvmValue, BytecodeError>, native: &OvmValue) {
         self.stats.verified_calls += 1;
         let selftest = std::env::var_os("OLANG_VERIFY_SELFTEST").is_some();
+        // Two maps (or records) built by the two tiers are two
+        // allocations: `OvmValue`'s equality compares those by pointer,
+        // so the results are compared as values (every Studio run under
+        // --verify-tiers stopped at its first function building a map)
+        let same = |vm: &OvmValue| {
+            vm == native
+                || match (vm.to_ast(), native.to_ast()) {
+                    (Ok(a), Ok(b)) => a == b,
+                    _ => false,
+                }
+        };
         let diverged = match &outcome {
-            Ok(vm) => vm != native || selftest,
+            Ok(vm) => !same(vm) || selftest,
             Err(_) => true,
         };
         if !diverged {
