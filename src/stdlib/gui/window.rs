@@ -2563,12 +2563,12 @@ impl WinState {
                 if shaped.width > avail {
                     let n = label.chars().count();
                     let keep = ((n as f32) * (avail / shaped.width.max(1.0))).floor() as usize;
-                    let keep = keep.saturating_sub(2);
-                    if keep < 4 {
-                        continue;
+                    match eol_cut(&label, keep.saturating_sub(1)) {
+                        Some(cut) => shaped = ts.shape(&cut, &ef, c, None, Align::Start, s),
+                        // too little of it would show: it gives way whole
+                        // (its underline and its hover still say it)
+                        None => continue,
                     }
-                    let cut: String = label.chars().take(keep).collect::<String>().trim_end().to_string() + "…";
-                    shaped = ts.shape(&cut, &ef, c, None, Align::Start, s);
                 }
                 let ty = oy + py + ey0 + (((ey1 - ey0) - shaped.height) / 2.0).max(0.0);
                 push_glyphs(&shaped, x, ty, clip, dl);
@@ -3031,6 +3031,37 @@ fn solid(x: f32, y: f32, w: f32, h: f32, fill: Color, clip: Clip) -> Prim {
         radii: [0.0; 4],
         clip,
     }
+}
+
+/// Text after a line's end cut to `keep` characters, at a word's end,
+/// with an ellipsis (no colon or comma left hanging before it); `None`
+/// when what would show says too little (under 16 characters, under a
+/// third of it, or a "what: which" cut before its which), so it gives
+/// way whole rather than as a stub.
+pub fn eol_cut(label: &str, keep: usize) -> Option<String> {
+    let n = label.chars().count();
+    if keep >= n {
+        return Some(label.to_string());
+    }
+    if keep < 16 || keep * 3 < n {
+        return None;
+    }
+    let head: String = label.chars().take(keep).collect();
+    let at_word = match head.rfind(char::is_whitespace) {
+        Some(b) if head[..b].chars().count() >= 12 => &head[..b],
+        _ => head.as_str(),
+    };
+    let trimmed = at_word.trim_end().trim_end_matches(|c: char| matches!(c, ':' | ',' | ';' | '-' | '—' | '(')).trim_end();
+    if trimmed.chars().count() < 12 {
+        return None;
+    }
+    // "what: which" cut before the which says nothing of use
+    if let Some(p) = label.find(": ")
+        && trimmed.len() <= p + 1
+    {
+        return None;
+    }
+    Some(trimmed.to_string() + "…")
 }
 
 fn push_glyphs(shaped: &Shaped, ox: f32, oy: f32, clip: Clip, dl: &mut DisplayList) {

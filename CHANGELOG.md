@@ -294,7 +294,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   sticky scroll's pinned rows, and the line's number goes to its first
   row still in view (tests/gui_test.rs). A decoration that is only a
   colour (no fill, no underline) recolours its glyphs — olang Studio's
-  unused names, faded.
+  unused names, faded. Text after a line's end gives way at the field's
+  edge: cut at a word's end with nothing hanging before the ellipsis, or
+  left out whole where only a stub ("unused variable:…") would show.
 
 - **`gui.context_menu` opened the menu mirrored about the window's
   middle.** muda's `show_context_menu_for_nsview` turns y as though the

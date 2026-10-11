@@ -1709,6 +1709,20 @@ fn a_context_menu_opens_at_the_click_and_stays_on_the_screen() {
     assert_eq!(context_menu_origin((-30.0, 700.0), menu, vis), (0.0, 700.0), "left of the screen: held at its edge");
 }
 
+/// Text after a line's end gives way gracefully at the field's edge: cut
+/// at a word's end with an ellipsis (nothing hanging before it), or not
+/// shown at all when only a stub would fit.
+#[test]
+fn a_problem_after_a_line_gives_way_at_the_edge() {
+    use olang::stdlib::gui::window::eol_cut;
+    let msg = "unused variable: pm_descendants";
+    assert_eq!(eol_cut(msg, 40).as_deref(), Some(msg), "room for it all");
+    assert_eq!(eol_cut("expected an expression after the operator", 30).as_deref(), Some("expected an expression after…"));
+    assert_eq!(eol_cut(msg, 17), None, "\"unused variable:…\" says too little: it gives way whole");
+    assert_eq!(eol_cut(msg, 8), None);
+    assert_eq!(eol_cut("this name is never read, so it can go", 26).as_deref(), Some("this name is never read…"), "no comma left before the ellipsis");
+}
+
 /// A decoration that is only a colour (no fill, no underline) recolours
 /// its glyphs — a name the server says is unnecessary, faded — and only
 /// those in its range.
