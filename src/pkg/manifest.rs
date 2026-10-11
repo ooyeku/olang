@@ -65,7 +65,19 @@ pub struct PackageMeta {
     /// runs that toolchain for the project (src/pkg/toolchain.rs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub olang: Option<String>,
+    /// Who may write this project's `olang.lock`: `"auto"` (the default)
+    /// lets any install refresh it; `"never"` keeps every incidental
+    /// install (a run, `olang test`, the REPL, the language server, a
+    /// check) from creating or rewriting it — the existing lock is still
+    /// replayed, and without one resolution happens in memory. Only an
+    /// explicit `otc install` / `add` / `remove` writes it. For test
+    /// fixtures whose committed lock must not drift.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock: Option<String>,
 }
+
+/// The values `[package] lock` accepts.
+pub const LOCK_VALUES: &[&str] = &["auto", "never"];
 
 /// A dependency's source. `toml` distinguishes these by which key is present,
 /// so the enum is untagged.
@@ -162,6 +174,25 @@ impl Manifest {
     /// Write `olang.toml` into a directory.
     pub fn save(&self, dir: &Path) -> Result<(), ManifestError> {
         std::fs::write(dir.join("olang.toml"), self.to_toml()).map_err(ManifestError::Io)
+    }
+
+    /// `[package] lock = "never"`: no incidental install writes the lock.
+    /// An unknown value reads as `"auto"` (`olang check` warns about it).
+    pub fn lock_never(&self) -> bool {
+        self.package.lock.as_deref() == Some("never")
+    }
+
+    /// A `[package] lock` value olang does not know, with the message
+    /// `olang check` warns with.
+    pub fn lock_value_problem(&self) -> Option<String> {
+        let v = self.package.lock.as_deref()?;
+        if LOCK_VALUES.contains(&v) {
+            return None;
+        }
+        Some(format!(
+            "[package] lock = \"{}\" is not a lock policy (expected \"auto\" or \"never\"); treated as \"auto\"",
+            v
+        ))
     }
 
     /// Walk upward from `start` to find the nearest directory containing an

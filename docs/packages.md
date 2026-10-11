@@ -471,6 +471,28 @@ editor sets it for the children it runs on its own (a language server,
 a REPL, `olang check`), so opening a project without a lockfile leaves
 the project as it was.
 
+A project can say the same of itself in its manifest — for a test
+fixture, whose committed lock (or deliberate lack of one) must not drift
+when someone runs `olang test` or `olang main.ol` in it by hand:
+
+```toml
+[package]
+name = "fixture"
+version = "0.1.0"
+lock = "never"   # "auto" (the default) or "never"
+```
+
+With `lock = "never"` every *incidental* install — a run, `olang test`,
+the REPL, the language server, `olang check --tier` — treats the project
+as `OLANG_LOCK_READONLY=1` does: a lock that covers the manifest is
+replayed, a stale one is resolved past in memory and left byte-for-byte
+as it was, and a project without one gets none. The *explicit* commands
+`otc install`, `otc add` and `otc remove` still write the lock, and say
+that they did so on purpose — the flag is about writes nobody asked for,
+not about forbidding the lock. (A third value, "readonly", would mean
+the same thing, so there is none.) `olang check` warns about any other
+value, which reads as `"auto"`.
+
 Fetched sources are cached content-addressed by commit under
 `~/.olang/cache` (override with `OLANG_CACHE`), so any given revision is
 downloaded once and shared across every project on the machine. Path

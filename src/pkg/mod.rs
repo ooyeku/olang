@@ -67,6 +67,11 @@ pub struct InstallOptions {
     /// than replayed. Off for running a program, where such a lock is
     /// refused instead of quietly drifted past; `frozen` still fails on it.
     pub repin_shelf: bool,
+    /// The user asked for this install (`otc install`, `add`, `remove`):
+    /// it writes the lock even where `[package] lock = "never"`, which
+    /// only keeps incidental installs — a run, a test, the REPL, the
+    /// language server, a check — from touching it.
+    pub explicit: bool,
 }
 
 /// Resolve and fetch all dependencies of the project rooted at `root`,
@@ -159,8 +164,10 @@ pub fn install(root: &Path, options: &InstallOptions) -> Result<DependencyMap, P
 
     // An editor's passive children (a language server, a REPL, a check)
     // resolve as a run does but never write into the project they read:
-    // OLANG_LOCK_READONLY=1 keeps the lock (or its absence) as it is.
-    if !lock_readonly() {
+    // OLANG_LOCK_READONLY=1 keeps the lock (or its absence) as it is. A
+    // project whose manifest says `lock = "never"` (a test fixture) is read
+    // the same way by everything but an explicit otc command.
+    if !lock_readonly() && (options.explicit || !manifest.lock_never()) {
         lock.save(root).map_err(PkgError::Lock)?;
     }
     Ok(dep_map)

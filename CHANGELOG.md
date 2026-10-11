@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`[package] lock = "never"`** keeps a project's `olang.lock` as it is
+  for everything but an explicit `otc install` / `add` / `remove`: a run,
+  `olang test`, the REPL, the language server and `olang check --tier`
+  replay the lock when it covers the manifest and otherwise resolve in
+  memory, writing nothing — as `OLANG_LOCK_READONLY=1` does, but carried
+  by the project. Meant for test fixtures, whose locks were rewritten (or
+  created) by hand runs in an editor's terminal. The explicit commands
+  still write and add a note saying so; `"auto"` is the default and
+  `olang check` warns on any other value. tests/lock_never_test.rs.
 - **Compiled bytecode is kept between runs.** A function's compile —
   its bytecode, and its lambdas' — is written to
   `~/.olang/state/compiled/` (one pack a module) and, the next time the

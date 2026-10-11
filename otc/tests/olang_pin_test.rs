@@ -150,3 +150,24 @@ fn a_local_build_is_linked_as_a_toolchain() {
     assert!(ok, "{out}");
     assert_eq!(std::fs::canonicalize(out.trim()).unwrap(), std::fs::canonicalize(bin.join("olang")).unwrap());
 }
+
+#[test]
+fn otc_install_writes_a_lock_never_lock_and_says_so() {
+    // `[package] lock = "never"` keeps runs, tests and the editor from
+    // writing olang.lock; an explicit `otc install` still writes it, with
+    // a note, because the user asked.
+    let home = scratch("never-home");
+    let dir = scratch("never");
+    project(&dir, None);
+    let toml = std::fs::read_to_string(dir.join("olang.toml")).unwrap();
+    std::fs::write(dir.join("olang.toml"), toml.replace("version = \"0.1.0\"\n", "version = \"0.1.0\"\nlock = \"never\"\n")).unwrap();
+    let (ok, out) = otc(&dir, &home, &["install"]);
+    assert!(ok, "{out}");
+    assert!(lock(&dir).contains("[package.lib]"), "{out}");
+    assert!(out.contains("lock = \"never\""), "{out}");
+    // a second install that changes nothing says nothing extra
+    let (ok, out) = otc(&dir, &home, &["install"]);
+    assert!(ok && out.contains("olang.lock unchanged") && !out.contains("lock = \"never\""), "{out}");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&home);
+}

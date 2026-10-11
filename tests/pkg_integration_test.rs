@@ -133,6 +133,7 @@ fn frozen_install_rejects_a_stale_lock() {
         registry: None,
         refresh: false,
         repin_shelf: false,
+        explicit: false,
     };
     assert!(
         install(&app, &frozen).is_err(),

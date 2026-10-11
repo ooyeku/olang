@@ -84,6 +84,26 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
 
     let mut problems = 0usize;
     let mut warnings = 0usize;
+    // The manifests of the projects checked: a `[package] lock` value
+    // olang does not know is said once per project (it reads as "auto").
+    let mut roots = std::collections::BTreeSet::new();
+    for path in paths {
+        if let Some(root) = std::path::absolute(path)
+            .ok()
+            .and_then(|p| crate::pkg::manifest::Manifest::find_root(&p))
+        {
+            roots.insert(root);
+        }
+    }
+    for root in &roots {
+        if let Some(problem) = crate::pkg::manifest::Manifest::load(root)
+            .ok()
+            .and_then(|m| m.lock_value_problem())
+        {
+            eprintln!("{}: warning: {}", root.join("olang.toml").display(), problem);
+            warnings += 1;
+        }
+    }
     let parser = crate::parser::Parser::new();
     for file in &files {
         let source = match std::fs::read_to_string(file) {

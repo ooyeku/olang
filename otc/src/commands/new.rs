@@ -68,6 +68,7 @@ pub fn execute(name: String, lib: bool, web: bool, web_bare: bool, verbose: bool
             license: None,
             assets: Vec::new(),
             olang: None,
+            lock: None,
         },
         dependencies,
         capabilities: None,

@@ -41,6 +41,7 @@ fn root_or_init() -> anyhow::Result<PathBuf> {
             license: None,
             assets: Vec::new(),
             olang: None,
+            lock: None,
         },
         dependencies: Default::default(),
         capabilities: None,
@@ -147,11 +148,23 @@ pub fn add(spec: &str, path_flag: Option<&str>, force: bool) -> anyhow::Result<(
     // second command you may not know about".
     let opts = InstallOptions {
         registry: registry_from_env(),
+        explicit: true,
         ..Default::default()
     };
     install(&root, &opts).map_err(|e| anyhow::anyhow!("{}", e))?;
     println!("Added '{}' and updated olang.lock", name);
+    lock_never_note(&root);
     Ok(())
+}
+
+/// An explicit otc command wrote the lock of a `lock = "never"` project:
+/// say so, since runs, tests and the editor leave that lock alone.
+fn lock_never_note(root: &Path) {
+    if Manifest::load(root).is_ok_and(|m| m.lock_never()) {
+        println!(
+            "note: olang.toml sets lock = \"never\" — runs, tests and the editor leave olang.lock alone; this command wrote it because you asked"
+        );
+    }
 }
 
 fn describe_dependency(dep: &Dependency) -> String {
@@ -186,10 +199,12 @@ pub fn remove(name: &str) -> anyhow::Result<()> {
     // Re-resolve so the lock drops the entry too.
     let opts = InstallOptions {
         registry: registry_from_env(),
+        explicit: true,
         ..Default::default()
     };
     install(&root, &opts).map_err(|e| anyhow::anyhow!("{}", e))?;
     println!("Removed '{}' and updated olang.lock", name);
+    lock_never_note(&root);
     Ok(())
 }
 
@@ -268,6 +283,7 @@ pub fn do_install(frozen: bool, update: bool, verbose: bool) -> anyhow::Result<(
         registry: registry_from_env(),
         refresh: update,
         repin_shelf: true,
+        explicit: true,
     };
     // A shelf library re-shelved since the lock was written (another
     // commit, or pinned/unpinned) is re-pinned to what the shelf holds now:
@@ -361,6 +377,7 @@ pub fn do_install(frozen: bool, update: bool, verbose: bool) -> anyhow::Result<(
         println!("olang.lock unchanged");
     } else {
         println!("Wrote olang.lock");
+        lock_never_note(&root);
     }
     Ok(())
 }
