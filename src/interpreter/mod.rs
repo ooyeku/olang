@@ -1821,10 +1821,13 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 // access that happens to hold a callable.
                 if let Expr::FieldAccess { object, field } = callee.as_ref() {
                     let receiver = self.eval_expr(object)?;
-                    let is_struct_field = matches!(
-                        &receiver,
-                        Value::Struct { fields, .. } if fields.contains_key(field)
-                    );
+                    // A map's key, as a struct's field, wins over a
+                    // trait method of the same name.
+                    let is_struct_field = match &receiver {
+                        Value::Struct { fields, .. } => fields.contains_key(field),
+                        Value::Map(map) => map.contains_key(field),
+                        _ => false,
+                    };
                     if !is_struct_field
                         && let Some(method) = self.lookup_method(&receiver.type_name(), field)
                     {
@@ -1837,6 +1840,14 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                             arg_values.push(self.eval_expr(expr)?);
                         }
                         return self.call_function(Value::Function(Arc::new(method)), arg_values);
+                    }
+                    // A map without the key, and no method of the name:
+                    // reading the key would give `()`, and calling that
+                    // would blame the call, not the missing key.
+                    if !is_struct_field && crate::ast::reads_absent_as_unit(&receiver) {
+                        return Err(InterpreterError::TypeError {
+                            message: crate::ast::no_key_or_method(&receiver.type_name(), field),
+                        });
                     }
                 }
 
@@ -4506,6 +4517,11 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                         .ok_or_else(|| InterpreterError::TypeError {
                             message: module_member_miss(field, fields.keys().map(|k| k.as_str())),
                         })
+                } else if type_name == "JsonObject" || type_name == "Object" {
+                    // An object and a parsed JSON object read as a map
+                    // does: `o.key` is `map_get(o, "key")`, and an absent
+                    // key is `()`. A declared struct's fields are fixed.
+                    Ok(fields.get(field).cloned().unwrap_or(Value::Unit))
                 } else {
                     // Handle regular struct field access
                     fields
@@ -4516,6 +4532,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                         })
                 }
             }
+            // `m.key` on a map is `map_get(m, "key")`: the key's value,
+            // or `()` when it is absent.
+            Value::Map(ref map) => Ok(map.get(field).cloned().unwrap_or(Value::Unit)),
             _ => Err(InterpreterError::TypeError {
                 message: format!("Cannot access field '{}' on non-struct value", field),
             }),

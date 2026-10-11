@@ -11,13 +11,14 @@ division — account for most early confusion.
 
 ## Missing map keys return Unit, not a Result
 
-`map_get` on a key that is not present returns **`Unit`** (`()`), not an
-error and not a `Result`. This is the single most common trip-up.
+`m.key` (and `map_get(m, "key")`, which it is) on a key that is not
+present returns **`Unit`** (`()`), not an error and not a `Result`.
+This is the single most common trip-up.
 
 ```olang no-run
 let m = #{ "a": 1 }
-map_get(m, "z")               // => ()  (Unit), not Err, not None
-unwrap_or(map_get(m, "z"), 0) // TYPE ERROR: unwrap_or's first arg must be a Result
+m.z                   // => ()  (Unit), not Err, not None
+unwrap_or(m.z, 0)     // TYPE ERROR: unwrap_or's first arg must be a Result
 ```
 
 `unwrap_or` is for `Result`, so passing it a `Unit` is a type error. The
@@ -30,6 +31,11 @@ let a = map_get_or(m, "a", 0)
 let z = map_get_or(m, "z", 0)
 println(show(a) + " " + show(z))   // 1 0
 ```
+
+A misspelt key is `Unit` too — `p.runing` reads nothing rather than
+raising; an object (`{ name: v }`) and a parsed JSON object read the
+same way. A declared struct is the record with fixed fields: reading a
+field it does not have raises.
 
 Contrast this with parsing, which *does* speak `Result` (below): the two
 are easy to conflate.
@@ -218,7 +224,7 @@ fn f() = 1
 Rule of thumb: you can call downward, but you must *reference a value*
 upward. Define helpers you assign to variables before the assignment.
 
-## Indexing: negative wraps, no slicing, maps use `map_get`
+## Indexing: negative wraps, no slicing, maps use `.`
 
 `[i]` indexing works on lists, tuples, and strings — and a **negative
 index counts from the end** (`xs[-1]` is the last element, as in Python).
@@ -233,7 +239,8 @@ Three things `[]` does *not* do:
 
 - **No slicing.** `xs[1..3]` is a runtime type error — use `take`/`skip`
   (`take(skip(xs, 1), 2)`).
-- **Maps are not subscriptable.** `m["k"]` fails; use `map_get(m, "k")`.
+- **Maps are not subscriptable.** `m["k"]` fails; read `m.k`, or
+  `map_get(m, k)` for a key that is not an identifier or is computed.
   A Frame *is* — `f["amount"]` is its column — which is easy to
   over-generalize: the string subscript belongs to the data stack's types,
   not to maps.

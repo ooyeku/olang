@@ -119,7 +119,12 @@ and now takes ~8 ms to use what an earlier launch compiled.
   names, unit variants, known functions, what a name resolves to
   lexically, as a callee and as a free identifier, a module's builtin, a
   struct's fields and field types, the type aliases, the capability
-  grant. Each answer is hashed as far as the compile looks at it — a
+  grant. A field read (`.key`, on a struct, an object, a map or a parsed
+  JSON object alike) asks nothing: it compiles to one `GetField`
+  whatever the value turns out to be, and the value's kind is met at
+  run time (an inline cache keyed by a struct's shape, a hash read for a
+  map's key) — no entry depends on a shape the compiler assumed.
+  Each answer is hashed as far as the compile looks at it — a
   function's name and whether it is the known one, a builtin's name, a
   constructor's arity, a Boolean's value (a constant condition folds and
   its branch is swept), a known callee's parameters and defaults (a
@@ -201,7 +206,10 @@ A function is eligible when its body uses only the subset the VM implements:
   equality match, not a binding — the interpreter's rule), and struct /
   anonymous-object patterns — nested to any depth
 - `Ok(..)` / `Err(..)` construction
-- field access (`p.x`) and indexing (`xs[i]`, negatives from the end)
+- field access (`p.x`, and `m.key` on a map, an object or a parsed JSON
+  object, which is `map_get(m, "key")`; the JIT reads a map of one
+  payload kind natively, as it does `map_get`), and indexing (`xs[i]`,
+  negatives from the end)
 - enum values end to end: unit variants bake as closure constants,
   tuple-variant constructors (`Circle(2.0)`) compile to a `MakeEnum`
   instruction with arity checked at compile time, `==`/`!=` compare

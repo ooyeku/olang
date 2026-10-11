@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`m.key` reads a map's key** (roadmap E1): exactly
+  `map_get(m, "key")` on a Map, an anonymous object and a parsed
+  `JsonObject` — the key's value, or `()` when it is absent; chains read
+  nested maps (`m.pp.cur`). A key wins over a trait method of the same
+  name, as a struct's field does (`m.f(x)` calls the function stored
+  under `"f"`; with no key and no method, "Map has no key or method
+  'f'"). On the interpreter, the VM's `GetField` (and its `CallMethod`)
+  and the JIT, which reads a map of one payload kind natively as it does
+  `map_get` (measured level with `map_get` there; 2–3× faster than
+  `map_get` on the VM and the interpreter). The compile cache records no
+  new question: a field read compiles the same whatever the value.
+  tests/map_ergonomics_test.rs runs every case on the three tiers.
 - **`olang check --format json`**: every file's problems as one
   document, each exactly as `olang lsp` publishes it — severity, the rule
   as `code` (`syntax`, `scope`, `runtime`, `type`, `advisory`, an
@@ -232,6 +244,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **An object's or a parsed JSON object's missing field is `()`**
+  (roadmap E1): `.` on the three map-like kinds is `map_get`, so
+  rewriting one as the other never changes a program. Both raised "has
+  no field or method"; a declared struct still does. language.md's
+  "Anonymous objects" ruling (maps read with `map_get` only) is
+  rewritten, and pitfalls.md's map entries with it.
 - **`re` keeps the patterns it compiled** (per thread, up to 256): a
   call compiled its pattern every time (~28 µs for a character class;
   Heddle's painter asked thousands of times a frame).

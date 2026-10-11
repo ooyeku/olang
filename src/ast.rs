@@ -546,6 +546,23 @@ pub enum EnumVariantData {
 /// between them from changing its cost.
 pub type ValueMap = HashMap<String, Value, rustc_hash::FxBuildHasher>;
 
+/// Whether `.key` on this value reads `()` for an absent key: a map, an
+/// anonymous object and a parsed JSON object, for each of which `.key`
+/// is `map_get(v, "key")`. A declared struct (and a module) raises.
+pub fn reads_absent_as_unit(value: &Value) -> bool {
+    match value {
+        Value::Map(_) => true,
+        Value::Struct { type_name, .. } => type_name == "JsonObject" || type_name == "Object",
+        _ => false,
+    }
+}
+
+/// `m.go(1)` on a map with no key `go` and no method of that name: the
+/// message every tier raises.
+pub fn no_key_or_method(type_name: &str, key: &str) -> String {
+    format!("{type_name} has no key or method '{key}': `.{key}` reads `()`, which cannot be called")
+}
+
 /// Runtime values
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Value {

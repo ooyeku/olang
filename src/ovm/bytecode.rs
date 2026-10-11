@@ -5380,9 +5380,12 @@ impl BytecodeVm {
                     // callable stays field access.
                     let field_callee = match &receiver.data {
                         crate::ovm::value::ValueData::Struct(st) => st.field(method).cloned(),
-                        crate::ovm::value::ValueData::AstStruct(m, _) => m
+                        crate::ovm::value::ValueData::AstStruct(m, _)
+                        | crate::ovm::value::ValueData::AstMap(m) => m
                             .get(method.as_str())
                             .map(|v| OvmValue::from_ast(v.clone())),
+                        // A map's key wins over a method, as a field does.
+                        crate::ovm::value::ValueData::Map(m) => m.get(method.as_str()).cloned(),
                         _ => None,
                     };
                     let result = if let Some(callee) = field_callee {
@@ -5417,11 +5420,30 @@ impl BytecodeVm {
                         // No field, no method: the interpreter's generic path
                         // evaluates the field access, which raises the
                         // missing-field / non-struct error.
-                        return Err(match self.execute_get_field(&receiver, method) {
-                            Err(e) => e,
-                            Ok(_) => BytecodeError::RuntimeError(
-                                "method dispatch reached an impossible state".to_string(),
+                        // No field, no method: a map (or a parsed JSON
+                        // object) names the missing key; anything else
+                        // raises the field access's own error.
+                        use crate::ovm::value::ValueData;
+                        let keyed = match &receiver.data {
+                            ValueData::Map(_) | ValueData::AstMap(_) => Some("Map"),
+                            ValueData::AstStruct(_, kind) => Some(kind.type_name()),
+                            ValueData::Struct(st)
+                                if matches!(st.type_name(), "JsonObject" | "Object") =>
+                            {
+                                Some(st.type_name())
+                            }
+                            _ => None,
+                        };
+                        return Err(match keyed {
+                            Some(type_name) => BytecodeError::TypeError(
+                                crate::ast::no_key_or_method(type_name, method),
                             ),
+                            None => match self.execute_get_field(&receiver, method) {
+                                Err(e) => e,
+                                Ok(_) => BytecodeError::RuntimeError(
+                                    "method dispatch reached an impossible state".to_string(),
+                                ),
+                            },
                         });
                     };
                     self.execution_state.set_register(*dst, result)?;
@@ -9202,13 +9224,22 @@ impl BytecodeVm {
     fn execute_get_field(&self, object: &OvmValue, field: &str) -> Result<OvmValue, BytecodeError> {
         use crate::ovm::value::ValueData;
         match &object.data {
-            // Read through the wrapper: the one field converts.
-            ValueData::AstStruct(m, kind) => m
+            // `m.key` on a map is `map_get(m, "key")`: the key's value, or
+            // `()` when it is absent (the interpreter's eval_field_access).
+            ValueData::Map(m) => Ok(m.get(field).cloned().unwrap_or_else(OvmValue::new_unit)),
+            ValueData::AstMap(m) => Ok(m
                 .get(field)
                 .map(|v| OvmValue::from_ast(v.clone()))
-                .ok_or_else(|| {
-                    BytecodeError::TypeError(self.no_field_or_method(kind.type_name(), field))
-                }),
+                .unwrap_or_else(OvmValue::new_unit)),
+            // Read through the wrapper: the one field converts. An object
+            // and a parsed JSON object read as a map does: absent is `()`.
+            ValueData::AstStruct(m, _) => Ok(m
+                .get(field)
+                .map(|v| OvmValue::from_ast(v.clone()))
+                .unwrap_or_else(OvmValue::new_unit)),
+            ValueData::Struct(s) if matches!(s.type_name(), "JsonObject" | "Object") => {
+                Ok(s.field(field).cloned().unwrap_or_else(OvmValue::new_unit))
+            }
             ValueData::Struct(s) => s.field(field).cloned().ok_or_else(|| {
                 if s.type_name() == "Module" {
                     // Same wording (and nearest-member suggestion) as the

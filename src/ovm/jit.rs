@@ -4931,12 +4931,24 @@ impl PlanFn {
                     name_const,
                     ..
                 } => {
-                    narrow!(object.0, K_STRUCT);
+                    narrow!(object.0, K_STRUCT | K_MAP);
                     // The object's kind (a callee's return, resolving a
                     // fixpoint iteration late) or its shape spec (merged
                     // between iterations) may lag: defer, don't refuse.
                     let sid = match self.exotic[object.0 as usize] {
                         Some(Kind::Struct(sid)) => sid,
+                        // `m.key` on a map: map_get's read and its kinds.
+                        Some(Kind::Map(p)) => {
+                            let k = match p {
+                                Payload::Int => Kind::Int,
+                                Payload::Bool => Kind::Bool,
+                                Payload::Float => Kind::Float,
+                                Payload::Str => Kind::Str,
+                                Payload::Absent => Kind::Int,
+                            };
+                            grow!(self.writes[dst.0 as usize], kind_mask(k));
+                            continue;
+                        }
                         None => continue,
                         Some(_) => {
                             if jit_debug() {
@@ -7280,8 +7292,48 @@ fn translate_body(
                 name_const,
                 ..
             } => {
-                let Kind::Struct(sid) = r#gen.kind(object.0)? else {
-                    return None;
+                let sid = match r#gen.kind(object.0)? {
+                    Kind::Struct(sid) => sid,
+                    // `m.key` on a map is `map_get(m, "key")`: the same
+                    // key-guarded read, the key the constant's own string
+                    // (the bytecode, which the JittedFn owns, keeps it).
+                    Kind::Map(p) => {
+                        let (name_ptr, (expect, load_ty)) =
+                            match &bytecode.constants[*name_const as usize].data {
+                                ValueData::String(n) => (
+                                    Arc::as_ptr(n) as i64,
+                                    match p {
+                                        Payload::Int => (FIELD_INT, types::I64),
+                                        Payload::Float => (FIELD_FLOAT, types::F64),
+                                        Payload::Bool => (FIELD_BOOL, types::I64),
+                                        Payload::Str => (FIELD_STR, types::I64),
+                                        Payload::Absent => (FIELD_NEVER, types::I64),
+                                    },
+                                ),
+                                _ => return None,
+                            };
+                        let m = builder.use_var(Variable::from_u32(object.0));
+                        let k = builder.ins().iconst(types::I64, name_ptr);
+                        let exp_v = builder.ins().iconst(types::I64, expect as i64);
+                        let slot = builder.create_sized_stack_slot(
+                            cranelift_codegen::ir::StackSlotData::new(
+                                cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+                                8,
+                                3,
+                            ),
+                        );
+                        let out_ptr = builder.ins().stack_addr(types::I64, slot, 0);
+                        let helper_ref = module.declare_func_in_func(map_get_helper, builder.func);
+                        let call = builder.ins().call(helper_ref, &[m, k, exp_v, out_ptr]);
+                        let status = builder.inst_results(call)[0];
+                        let ok_block = builder.create_block();
+                        builder.ins().brif(status, deopt_block, &[], ok_block, &[]);
+                        builder.switch_to_block(ok_block);
+                        let val = builder.ins().stack_load(ptr_ty, load_ty, slot, 0);
+                        r#gen.write(builder, dst.0, val);
+                        continue;
+                    }
+                    _ => return None,
                 };
                 let spec = shapes.get(&sid)?;
                 let name = match &bytecode.constants[*name_const as usize].data {

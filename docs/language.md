@@ -886,17 +886,37 @@ println(`${map_has_key(scores, "cyn")}/${map_has_key(scores2, "cyn")}`)
 println(to_string(sort(map_keys(scores2))))
 ```
 
-`map_get` is the **raw read**: on a missing key it returns `Unit`, and
-distinguishing absent from stored-null takes `map_has_key`. The
-lookup-with-default is `map_get_or(m, key, default)`, which yields the
-default for a missing key *and* for a stored `Unit` — absence is one
-rule, not two:
+**`m.key` reads a key** whose name is an identifier: it is exactly
+`map_get(m, "key")`. A missing key is `Unit`, and a chain reads nested
+maps. A key that is not an identifier (`"content-type"`), or one
+computed at run time, is read with `map_get(m, k)`:
+
+```olang
+let p = #{ "running": true, "pp": #{ "cur": 3 } }
+println(to_string(p.running))              // true
+println(to_string(p.pp.cur))               // 3
+println(to_string(p.live_id == ()))        // true: absent is ()
+let key = "running"
+println(to_string(map_get(p, key)))        // true
+```
+
+`map_get` (and `.`) is the **raw read**: on a missing key it returns
+`Unit`, and distinguishing absent from stored-null takes `map_has_key`.
+The lookup-with-default is `map_get_or(m, key, default)`, which yields
+the default for a missing key *and* for a stored `Unit` — absence is
+one rule, not two:
 
 ```olang
 let m = #{ "a": 1 }
 println(to_string(map_get_or(m, "a", 0)))   // 1
 println(to_string(map_get_or(m, "z", 0)))   // 0
 ```
+
+A key wins over a trait method of the same name, as a struct's field
+does ([Traits](#traits)): `m.name()` calls the function stored under
+`"name"` when the map has that key, and the method only when it has
+not. `.` only reads; olang has no field assignment, so a write is
+`map_set`.
 
 The `map_*` accessors also read **any struct-like value** —
 anonymous objects, structs, and parsed JSON objects — so dynamic key access
@@ -917,9 +937,32 @@ let user = { name: "ada", age: 36 }
 println(`${user.name} is ${user.age}`)
 ```
 
-Objects and maps differ: object fields are identifiers accessed with dot;
-map keys are arbitrary strings accessed with `map_get`. A `{ ... }` with
-`identifier: value` pairs is an object; `#{ ... }` is always a map.
+Objects and maps are both read with `.`, and `.key` on either is
+`map_get(v, "key")`: the key's value, or `Unit` when it is absent. The
+same holds for a **parsed JSON object** (`json.parse`), which carries
+outside data, where absence is ordinary. They differ in their keys: an
+object's are identifiers written in its literal, a map's are any
+strings (a key that is not an identifier is read with `map_get`). A
+**declared struct** is the record with fixed fields: reading a field
+it does not have raises. A `{ ... }` with `identifier: value` pairs is
+an object; `#{ ... }` is always a map.
+
+```olang
+let o = { name: "ada" }
+let j = unwrap(json.parse("{\"name\": \"ada\"}"))
+println(o.name + " " + j.name)
+println(to_string(o.email == () && j.email == ()))   // true: absent is ()
+```
+
+> **History.** Before 0.88 a map was read with `map_get` only, `.` on
+> a map was a type error, and `.` on an object or a parsed JSON object
+> raised on a missing field. `.` reading a map's key was added (roadmap
+> E1, after a review found 77% of the workspace's 24,000 `map_get`
+> calls read an identifier key off a name), and made exactly `map_get`
+> on the three map-like kinds, so that rewriting one as the other never
+> changes a program; an object's or a JSON object's absent field
+> reading `Unit` is the one change of meaning, ruled here. A misspelt
+> key is caught by `olang check` rather than at run time.
 
 **Disambiguation note:** `{ ... }` containing statements is a
 [block](#blocks-are-expressions); `{ name: expr }` is an object literal.
@@ -1507,7 +1550,9 @@ println(to_string(implements(P {}, "Show")))
 ```
 
 Field access wins over methods: if a struct has a field `value`, `x.value`
-is the field even if a trait method of the same name exists.
+is the field even if a trait method of the same name exists. A map's
+key wins the same way: `m.value()` calls the function stored under the
+key `"value"` when the map has it, and the method otherwise.
 
 ## Error handling
 
