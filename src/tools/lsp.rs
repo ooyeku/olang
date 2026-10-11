@@ -441,7 +441,9 @@ fn handle_request(
             let position = params.text_document_position.position;
             // Inside `map_get(t, "` / `t["` / after `t.` on a value whose
             // declared shape is known: the shape's keys, and nothing else.
-            let items = match shape_key_completions(text, position, dir.as_deref()) {
+            let items = match shape_key_completions(text, position, dir.as_deref())
+                .or_else(|| built_key_completions(text, position))
+            {
                 Some(keys) => keys,
                 None => completions(text, position),
             };
@@ -1238,6 +1240,58 @@ fn record_fields(text: &str) -> Vec<(String, String)> {
         }
     }
     out
+}
+
+/// After `name.`, the keys the maps and objects built for `name` in this
+/// file have (the checker's key analysis, `tools::keys`): the line being
+/// typed is read without its `.partial`, so the file parses.
+fn built_key_completions(text: &str, pos: Position) -> Option<Vec<CompletionItem>> {
+    if text.len() > BIG_FILE_BYTES {
+        return None;
+    }
+    let line_no = pos.line as usize;
+    let line = text.lines().nth(line_no)?;
+    let cursor = utf16_to_char_col(line, pos.character);
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = cursor.min(chars.len());
+    while i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_') {
+        i -= 1;
+    }
+    if i == 0 || chars[i - 1] != '.' {
+        return None;
+    }
+    let mut j = i - 1;
+    while j > 0 && (chars[j - 1].is_alphanumeric() || chars[j - 1] == '_') {
+        j -= 1;
+    }
+    let receiver: String = chars[j..i - 1].iter().collect();
+    if receiver.is_empty() || receiver.starts_with(|c: char| c.is_ascii_digit()) {
+        return None;
+    }
+    if MODULES.contains(&receiver.as_str()) || USE_MODULES.contains(&receiver.as_str()) {
+        return None;
+    }
+    // the line without the `.partial` being typed
+    let fixed_line: String = chars[..i - 1].iter().chain(chars[cursor.min(chars.len())..].iter()).collect();
+    let fixed: String = text
+        .lines()
+        .enumerate()
+        .map(|(n, l)| if n == line_no { fixed_line.as_str() } else { l })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let program = OlangParser::new().parse_raw(&fixed).ok()?;
+    let keys = crate::tools::keys::keys_of_name(&program, &receiver)?;
+    Some(
+        keys.into_iter()
+            .map(|k| CompletionItem {
+                label: k.clone(),
+                kind: Some(CompletionItemKind::FIELD),
+                detail: Some(format!("a key of {receiver}")),
+                insert_text: Some(k),
+                ..Default::default()
+            })
+            .collect(),
+    )
 }
 
 fn completions(text: &str, pos: Position) -> Vec<CompletionItem> {

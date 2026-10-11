@@ -715,3 +715,22 @@ main()
         assert!(err.contains("did you mean 'trim'"), "{call}: {err}");
     }
 }
+
+#[test]
+fn nested_reads_are_native_on_the_vm() {
+    let src = r#"
+fn main() = {
+    let s = #{ "pp": #{ "cur": 3, "o": { k: [1, 2] } }, "n": 1 }
+    [map_get_in(s, ["pp", "cur"]), map_get_in(s, ["pp", "o", "k"]), map_get_in(s, ["pp", "none", "x"]),
+     map_path(s, ["n"]), map_get_in(s, [])]
+}
+main()
+"#;
+    let got = agree(src).expect("reads");
+    let Value::List(items) = &got else { panic!() };
+    assert_eq!(items[0], Value::Integer(3));
+    assert_eq!(items[2], Value::Unit);
+    assert_eq!(items[3], Value::Integer(1));
+    let err = agree("fn main() = map_get_in(#{ \"a\": 1 }, [\"a\", \"b\"])\nmain()\n").unwrap_err();
+    assert!(err.contains("cannot read key 'b'"), "{err}");
+}

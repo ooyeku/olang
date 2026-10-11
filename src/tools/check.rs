@@ -52,6 +52,7 @@ pub fn file_diagnostics(
     diagnostics.extend(unimported_names(program, source, &modules, dir, unresolved));
     diagnostics.extend(template_escape_warnings(source));
     diagnostics.extend(shadow_warnings_in(program, source));
+    diagnostics.extend(key_warnings(program, source));
     // The project's `[check] promote`: the advisory classes it names
     // are errors here, so an exhaustiveness or shape finding gates
     // without a rules file.
@@ -1840,6 +1841,70 @@ pub fn promotions_for(dir: Option<&Path>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// `.key` reads no construction of their value has (roadmap E4), each
+/// at the read itself: the statement's line, and the first `.key` from
+/// there on.
+pub fn key_warnings(program: &Program, source: &str) -> Vec<CheckDiagnostic> {
+    let lines: Vec<&str> = source.lines().collect();
+    if std::env::var_os("OLANG_KEYS_STATS").is_some() {
+        let (known, total) = crate::tools::keys::read_coverage(program);
+        eprintln!("keys-stats {known} {total}");
+    }
+    crate::tools::keys::impossible_reads(program)
+        .into_iter()
+        .map(|f| {
+            let needle = format!(".{}", f.key);
+            let mut at = (f.line, f.column);
+            'find: for (i, text) in lines.iter().enumerate().skip(f.line.saturating_sub(1) as usize).take(40) {
+                let from = if i + 1 == f.line as usize { f.column.saturating_sub(1) as usize } else { 0 };
+                let chars: Vec<char> = text.chars().collect();
+                let hay: String = chars.iter().skip(from).collect();
+                let mut search = 0;
+                while let Some(pos) = hay[search..].find(&needle) {
+                    let end = search + pos + needle.len();
+                    let rest = hay[end..].trim_start();
+                    // the read itself, not a presence test of the key
+                    let presence = rest.starts_with("== ()")
+                        || rest.starts_with("!= ()")
+                        || rest.starts_with("??");
+                    if !presence && !hay[end..].starts_with(|c: char| c.is_alphanumeric() || c == '_') {
+                        let col = from + hay[..search + pos].chars().count() + 2;
+                        at = ((i + 1) as u32, col as u32);
+                        break 'find;
+                    }
+                    search = end;
+                }
+            }
+            let nearest = f
+                .known
+                .iter()
+                .filter(|k| edit_distance(k, &f.key) <= 2.max(f.key.len() / 3))
+                .min_by_key(|k| edit_distance(k, &f.key));
+            let hint = match nearest {
+                Some(k) => format!(" — did you mean `{}`?", k),
+                None => String::new(),
+            };
+            let what = if f.receiver.is_empty() { "this value".to_string() } else { format!("`{}`", f.receiver) };
+            let known = if f.known.is_empty() {
+                "none".to_string()
+            } else {
+                f.known.iter().map(|k| format!("`{k}`")).collect::<Vec<_>>().join(", ")
+            };
+            CheckDiagnostic {
+                line: at.0,
+                column: at.1,
+                message: format!(
+                    "`{}` is not a key any construction of {} has (it has {}): the read is () at run time{}",
+                    f.key, what, known, hint
+                ),
+                runtime: false,
+                warning: true,
+                scope: false,
+            }
+        })
+        .collect()
+}
+
 /// The class a warning belongs to, by its message: `exhaustiveness`,
 /// `shape`, `result`, `shadow`, `copy`, or none.
 pub fn warning_class(message: &str) -> Option<&'static str> {
@@ -1847,6 +1912,9 @@ pub fn warning_class(message: &str) -> Option<&'static str> {
         Some("exhaustiveness")
     } else if message.contains("is not a key of the declared shape") {
         Some("shape")
+    } else if message.contains("is not a key any construction of") {
+        // roadmap E4: a `.key` read no map or object built here has
+        Some("keys")
     } else if message.contains("the Result from") && message.contains("is discarded") {
         Some("result")
     } else if message.contains("is copied on every pass") || message.contains("moves every element")
@@ -1891,6 +1959,7 @@ pub fn promoted_label(message: &str) -> Option<&'static str> {
         "shadow" => "shadows the module from here",
         "exhaustiveness" => "this match misses a case",
         "shape" => "the declared shape has no such key",
+        "keys" => "no construction has this key",
         "result" => "the Result is dropped here",
         "copy" => "the collection is copied here on every pass",
         _ => return None,

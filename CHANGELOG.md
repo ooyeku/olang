@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The checker sees keys** (roadmap E4): `olang check` (and the
+  language server) reports a `.key` read that no construction of its
+  value has — literal-keyed maps and objects followed through `let`s,
+  assignments, `map_set`/`map_set_in`/`map_update`/`map_merge`, spreads,
+  `if`/`match`/`??`, the parameters of a module's functions (every call's
+  argument) and their returns — with the keys it has and the nearest
+  (advisory class `keys`); a value it cannot follow is never reported,
+  and a presence test (`== ()`, `??`) is not. Over the workspace's
+  corpus it checks the reads whose keys it knows (about 440 of 49,000
+  `.` reads) and reports two, both true: open-track's `run_key` reads
+  `entry.send` and `entry.arg` in a branch no caller can reach (its one
+  caller passes `#{ "island": … }`). The language server completes those
+  keys after `name.`. `tools/keys.rs`; tests in it and
+  tests/lsp_test.rs.
 - **`olang fix maps`** (roadmap E3): the migration to `.` and `??` —
   `map_get(chain, "ident")` → `chain.ident`, `map_get_or(x, "k", d)` →
   `x.k ?? d` — made in the source text from the grammar's own parse

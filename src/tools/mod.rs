@@ -10,6 +10,7 @@ pub mod doc; // `olang doc` — API reference from /// comments
 pub mod doctor; // `olang doctor` — audit a project
 pub mod fix; // `olang fix maps` — the migration to `.` and `??`
 pub mod fmt;
+pub mod keys; // the checker's key analysis: a `.key` read no construction has
 #[cfg(feature = "native")]
 pub mod lsp; // `olang lsp` — the language server over stdio
 #[cfg(feature = "native")]

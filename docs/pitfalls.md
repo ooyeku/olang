@@ -36,7 +36,7 @@ println(show(a) + " " + show(z))   // 1 0
 `??` replaces only `()`: `m.flag ?? true` keeps a stored `false`.
 
 A misspelt key is `Unit` too — `p.runing` reads nothing rather than
-raising; an object (`{ name: v }`) and a parsed JSON object read the
+raising (`olang check` reports a key no map built in the module has); an object (`{ name: v }`) and a parsed JSON object read the
 same way. A declared struct is the record with fixed fields: reading a
 field it does not have raises.
 

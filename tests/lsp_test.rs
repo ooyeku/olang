@@ -806,6 +806,57 @@ fn a_declared_shape_completes_its_keys() {
 }
 
 #[test]
+fn a_built_map_completes_its_keys_after_the_dot() {
+    let ws = std::env::temp_dir().join(format!("olang_lsp_built_keys_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&ws);
+    std::fs::create_dir_all(&ws).unwrap();
+    let main = ws.join("main.ol");
+    // the third line is being typed: `opts.wi`
+    let text = "fn draw(opts) = opts.pad\nlet opts = #{ \"pad\": 1, \"width\": 80 }\nlet w = opts.wi\nlet x = draw(map_set(opts, \"title\", \"t\"))\n";
+    std::fs::write(&main, text).unwrap();
+    let uri = format!("file://{}", main.display());
+    let mut c = Client::start();
+    c.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {} }
+    }));
+    c.recv_until(|m| m["id"] == 1);
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+            "textDocument":{"uri":uri,"languageId":"olang","version":1,"text":text}}
+    }));
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":{
+            "textDocument":{"uri":uri},"position":{"line":2,"character":15}}
+    }));
+    let r = c.recv_until(|m| m["id"] == 2);
+    let labels: Vec<String> = r["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["label"].as_str().unwrap().to_string())
+        .collect();
+    // every map built under the name in the file (here the parameter of
+    // the same name is given one with a title too)
+    assert_eq!(labels, vec!["pad", "title", "width"]);
+    // a parameter: the keys of what its callers pass
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":3,"method":"textDocument/completion","params":{
+            "textDocument":{"uri":uri},"position":{"line":0,"character":21}}
+    }));
+    let r = c.recv_until(|m| m["id"] == 3);
+    let labels: Vec<String> = r["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["label"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(labels, vec!["pad", "title", "width"]);
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+#[test]
 fn every_undefined_name_is_reported_in_one_pass() {
     // The analysis stopped at the first undefined name, so the editor
     // showed them one save at a time.

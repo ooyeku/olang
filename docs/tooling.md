@@ -322,8 +322,8 @@ an editor's Problems and a pipeline's agree — as `#{ severity, code,
 message, tags, line, column, end_line, end_column, range }`:
 `severity` `error`, `warning`, `information` or `hint`; `code` the rule
 (`syntax`, `macro`, `scope`, `runtime`, `type`, `advisory`, an
-advisory's class — `shadow`, `exhaustiveness`, `shape`, `result`,
-`copy` — `unused` for a name nothing reads, `manifest` for olang.toml);
+advisory's class — `shadow`, `exhaustiveness`, `shape`, `keys`,
+`result`, `copy` — `unused` for a name nothing reads, `manifest` for olang.toml);
 `tags` `["unnecessary"]` on an unused name (a hint, faded by an editor,
 never a problem); `line`/`column` to `end_line`/`end_column` 1-based in
 characters, and `range` the server's own (0-based, UTF-16). The exit
@@ -443,6 +443,21 @@ judgement about intent rather than a provable contradiction.
   the runtime answers such a read with Unit. The shape reaches the
   checker from wherever it was written — a macro's output included —
   and the runtime does not enforce it (a map's keys are data).
+- **A key no construction has.** `m.key` on a map without the key is
+  `()`, so a misspelt key fails nowhere. The checker follows each map
+  and object literal whose keys are written (`#{ "running": true }`,
+  `{ id: 1 }`) through `let`s and assignments, `map_set`, `map_set_in`,
+  `map_update`, `map_merge`, spreads, `if`/`match` and `??`, into the
+  parameters of the module's functions (the join of every call's
+  argument) and out of their returns, and reports a `.key` read that
+  none of them has, with the keys they do have and the nearest
+  (`` `runing` is not a key any construction of `p` has (it has
+  `live_id`, `running`) … did you mean `running`? ``). A value it cannot
+  follow — a shared function's parameter, a function used as a value, a
+  computed key, anything from another module or the outside — is never
+  reported, and a read compared with `()` or defaulted with `??` is a
+  presence test, not reported either. The language server completes the
+  same keys after `name.`.
 - **A parameter that shadows a function its body calls.** `fn row(s,
   span) = span(s)` with `span` imported: the call reaches the argument,
   and the runtime can only say so at the call, in the browser, frames
@@ -608,7 +623,8 @@ promote = ["exhaustiveness", "shape"]
 
 The classes are `exhaustiveness` (a `match` over an enum or a literal
 union that misses a case), `shape` (a literal key a declared record
-shape does not carry, read or written), `result` (a discarded `Result`),
+shape does not carry, read or written), `keys` (a `.key` read no map or
+object built in the module has), `result` (a discarded `Result`),
 `shadow` (a `let` that takes a stdlib module's name — `let cell = …`
 turns every later `cell.get` in its scope into a run-time failure far
 from the `let`), `copy` (a loop that copies the collection it is
