@@ -66,6 +66,126 @@ pub fn file_diagnostics(
 /// provable annotation violations. With `--rules`, also run project-authored
 /// lints written in olang over the meta AST. Exit 0 when everything is clean
 /// (or unknowable), 1 when a violation, parse error, or rule finding appears.
+/// `olang check --format json`: every file's problems as the language
+/// server publishes them (`lsp::file_diagnostics`: the same checker, the
+/// same rules, the unused names as hints tagged `unnecessary`), one
+/// document on stdout. Each diagnostic says its severity (`error`,
+/// `warning`, `information`, `hint`), its rule (`code`), where it is —
+/// `line`/`column` to `end_line`/`end_column`, 1-based, in characters,
+/// and `range` as the server's (0-based, UTF-16) — its message and its
+/// tags. Exit 1 when any is an error, as the text form.
+#[cfg(feature = "native")]
+pub fn run_json(paths: &[PathBuf]) -> i32 {
+    use lsp_types::{DiagnosticSeverity as S, DiagnosticTag as T, NumberOrString};
+    crate::expand::keep_module_parses(true);
+    let mut files = Vec::new();
+    for path in paths {
+        if !path.exists() {
+            eprintln!("olang check: path not found: {}", path.display());
+            return 1;
+        }
+        files.extend(super::discover_ol_files(path));
+    }
+    let (mut errors, mut warnings) = (0usize, 0usize);
+    let mut rows: Vec<serde_json::Value> = Vec::new();
+    let mut roots = std::collections::BTreeSet::new();
+    for path in paths {
+        if let Some(root) = std::path::absolute(path)
+            .ok()
+            .and_then(|p| crate::pkg::manifest::Manifest::find_root(&p))
+        {
+            roots.insert(root);
+        }
+    }
+    for root in &roots {
+        if let Some(problem) = crate::pkg::manifest::Manifest::load(root)
+            .ok()
+            .and_then(|m| m.lock_value_problem())
+        {
+            warnings += 1;
+            rows.push(serde_json::json!({
+                "file": root.join("olang.toml").to_string_lossy(),
+                "diagnostics": [{
+                    "severity": "warning", "code": "manifest", "message": problem, "tags": [],
+                    "line": 1, "column": 1, "end_line": 1, "end_column": 1,
+                    "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 0 } },
+                }],
+            }));
+        }
+    }
+    // a UTF-16 column on `line` of `text` as a 1-based character column
+    let char_col = |text: &str, line: u32, utf16: u32| -> usize {
+        let l = text.lines().nth(line as usize).unwrap_or("");
+        let mut units = 0u32;
+        let mut chars = 0usize;
+        for c in l.chars() {
+            if units >= utf16 {
+                break;
+            }
+            units += c.len_utf16() as u32;
+            chars += 1;
+        }
+        chars + 1
+    };
+    for file in &files {
+        let text = match std::fs::read_to_string(file) {
+            Ok(t) => t,
+            Err(e) => {
+                errors += 1;
+                rows.push(serde_json::json!({
+                    "file": file.to_string_lossy(), "error": format!("cannot read: {}", e), "diagnostics": [] }));
+                continue;
+            }
+        };
+        let found = crate::tools::lsp::file_diagnostics(&text, file.parent());
+        let mut out = Vec::with_capacity(found.len());
+        for d in found {
+            let severity = match d.severity {
+                Some(S::ERROR) | None => "error",
+                Some(S::WARNING) => "warning",
+                Some(S::INFORMATION) => "information",
+                _ => "hint",
+            };
+            match severity {
+                "error" => errors += 1,
+                "warning" => warnings += 1,
+                _ => {}
+            }
+            let code = match &d.code {
+                Some(NumberOrString::String(c)) => serde_json::Value::String(c.clone()),
+                Some(NumberOrString::Number(n)) => serde_json::Value::from(*n),
+                None => serde_json::Value::Null,
+            };
+            let tags: Vec<&str> = d
+                .tags
+                .iter()
+                .flatten()
+                .map(|t| if *t == T::UNNECESSARY { "unnecessary" } else { "deprecated" })
+                .collect();
+            let (s, e) = (d.range.start, d.range.end);
+            out.push(serde_json::json!({
+                "severity": severity, "code": code, "message": d.message, "tags": tags,
+                "line": s.line + 1, "column": char_col(&text, s.line, s.character),
+                "end_line": e.line + 1, "end_column": char_col(&text, e.line, e.character),
+                "range": d.range,
+            }));
+        }
+        rows.push(serde_json::json!({ "file": file.to_string_lossy(), "diagnostics": out }));
+    }
+    println!(
+        "{}",
+        serde_json::json!({
+            "format": 1,
+            "kind": "check",
+            "olang": crate::version::VERSION,
+            "files": rows,
+            "errors": errors,
+            "warnings": warnings,
+        })
+    );
+    if errors > 0 { 1 } else { 0 }
+}
+
 pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
     // Many files of one project: keep each imported module's parse.
     crate::expand::keep_module_parses(true);
@@ -1742,6 +1862,25 @@ pub fn warning_class(message: &str) -> Option<&'static str> {
     }
 }
 
+/// The rule a finding comes from, as `olang check --format json` and the
+/// language server's `code` name it: an advisory's class (`shadow`,
+/// `exhaustiveness`, `shape`, `result`, `copy`), else `scope` (refused
+/// before the program runs), `runtime` (would fail when it runs),
+/// `advisory` (another warning) or `type` (an annotation's promise).
+pub fn rule_of(d: &CheckDiagnostic) -> &'static str {
+    if let Some(class) = warning_class(&d.message) {
+        class
+    } else if d.scope {
+        "scope"
+    } else if d.runtime {
+        "runtime"
+    } else if d.warning {
+        "advisory"
+    } else {
+        "type"
+    }
+}
+
 /// The label an advisory promoted by `[check] promote` is rendered with:
 /// what its class says about the spot, not the annotation checker's.
 pub fn promoted_label(message: &str) -> Option<&'static str> {
@@ -2940,6 +3079,11 @@ impl Checker {
                     Box::new(val.unwrap_or(SType::Unknown)),
                 )
             }
+            // `()` is Unit, the absence value, not an empty tuple: a
+            // binding set to it is a placeholder for a value assigned later
+            // (`let mut fg = ()`, then a String), and comparing anything
+            // with it is the presence test — so it has no type to judge by.
+            Expr::Tuple(elems) if elems.is_empty() => SType::Unknown,
             Expr::Tuple(elems) => SType::Tuple(elems.iter().map(|e| self.infer(e)).collect()),
             Expr::StructLiteral(lit) => SType::Named(lit.type_name.clone()),
             Expr::ResultOk(e) => SType::Result(Box::new(self.infer(e)), Box::new(SType::Unknown)),

@@ -14,7 +14,7 @@ supported editors.
 
 | Capability | Source |
 |---|---|
-| Diagnostics as you type | the real parser (with its line/column info), the semantic analyzer, and the [`olang check`](tooling.md#olang-check) static checker — provable type-annotation violations appear as errors, down to element types (`[1, "a"]` against `List<Int>` flags element 1); warnings sit on the exact declaration span |
+| Diagnostics as you type (each with its rule as `code`, as `olang check --format json` writes them) | the real parser (with its line/column info), the semantic analyzer, and the [`olang check`](tooling.md#olang-check) static checker — provable type-annotation violations appear as errors, down to element types (`[1, "a"]` against `List<Int>` flags element 1); warnings sit on the exact declaration span |
 | Completions | keywords, the global builtins, the stdlib modules, and `fn`/`type`/`let` names from the open file |
 | Cross-file awareness | `use`d modules are resolved and parsed alongside the open file: imported signatures feed the checker's diagnostics, hover shows an imported function's typed signature (marked `// from <file>`), and go-to-definition crosses into the module |
 | Hover | the declaration with the checker's type knowledge: annotated signatures in full (`fn dist(a: Float, b: Float) -> Float`), and unannotated `let`s with their inferred types when the checker knows one (`let total: Int`) |

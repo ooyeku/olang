@@ -671,6 +671,14 @@ fn doc_dir(uri: &Uri) -> Option<std::path::PathBuf> {
 
 // ── diagnostics ────────────────────────────────────────────────────────
 
+/// A file's problems exactly as the server publishes them (what
+/// `olang check --format json` writes): syntax, macro expansion, the
+/// checker's errors and advisories, and the unused names as hints tagged
+/// unnecessary; each with its rule as `code`.
+pub fn file_diagnostics(text: &str, doc_dir: Option<&std::path::Path>) -> Vec<Diagnostic> {
+    diagnostics(text, doc_dir)
+}
+
 fn diagnostics(text: &str, doc_dir: Option<&std::path::Path>) -> Vec<Diagnostic> {
     let parser = OlangParser::new();
     // Syntax always comes from the RAW parse, so its positions point into
@@ -694,6 +702,7 @@ fn diagnostics(text: &str, doc_dir: Option<&std::path::Path>) -> Vec<Diagnostic>
                     Err(e) => vec![Diagnostic {
                         range: Range::new(Position::new(0, 0), Position::new(0, 1)),
                         severity: Some(DiagnosticSeverity::ERROR),
+                        code: Some(lsp_types::NumberOrString::String("macro".to_string())),
                         source: Some("olang".to_string()),
                         message: format!("macro expansion produced text that does not parse: {e}"),
                         ..Default::default()
@@ -754,6 +763,7 @@ fn expansion_error_diagnostic(text: &str, message: &str) -> Diagnostic {
     Diagnostic {
         range: Range::new(Position::new(line, 0), Position::new(line, 1)),
         severity: Some(DiagnosticSeverity::ERROR),
+        code: Some(lsp_types::NumberOrString::String("macro".to_string())),
         source: Some("olang".to_string()),
         message: message.to_string(),
         ..Default::default()
@@ -795,6 +805,9 @@ fn program_diagnostics(
                 Diagnostic {
                     range: utf16_range(text, line, col, col + 1),
                     severity: Some(severity),
+                    code: Some(lsp_types::NumberOrString::String(
+                        crate::tools::check::rule_of(&d).to_string(),
+                    )),
                     source: Some("olang".to_string()),
                     message: d.message,
                     ..Default::default()
@@ -810,6 +823,7 @@ fn program_diagnostics(
                 range,
                 severity: Some(DiagnosticSeverity::HINT),
                 tags: Some(vec![lsp_types::DiagnosticTag::UNNECESSARY]),
+                code: Some(lsp_types::NumberOrString::String("unused".to_string())),
                 source: Some("olang".to_string()),
                 message: format!("unused variable: {}", name),
                 ..Default::default()
@@ -862,6 +876,7 @@ fn parse_error_diagnostic(text: &str, e: &ParseError) -> Diagnostic {
     Diagnostic {
         range: utf16_range(text, l, c, line_len.max(c + 1)),
         severity: Some(DiagnosticSeverity::ERROR),
+        code: Some(lsp_types::NumberOrString::String("syntax".to_string())),
         source: Some("olang".to_string()),
         message,
         ..Default::default()

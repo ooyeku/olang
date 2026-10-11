@@ -221,8 +221,10 @@ enum Commands {
         /// the tree-walker)
         #[arg(long)]
         tier: bool,
-        /// With --tier: `json` prints every function with its verdict,
-        /// reason, reason code, line and pin (docs/tooling.md)
+        /// `json`: every file's problems as the language server publishes
+        /// them (severity, rule, range, message, tags); with --tier, every
+        /// function with its verdict, reason, reason code, line and pin
+        /// (docs/tooling.md)
         #[arg(long, value_name = "text|json", default_value = "text")]
         format: String,
     },
@@ -864,8 +866,11 @@ fn run() -> i32 {
                 return olang::tools::check::run_tier_as(&paths, format == "json");
             }
             if format == "json" {
-                eprintln!("olang check: --format json is for --tier");
-                return 2;
+                if rules.is_some() || fix {
+                    eprintln!("olang check: --format json does not take --rules or --fix");
+                    return 2;
+                }
+                return olang::tools::check::run_json(&paths);
             }
             if fix {
                 let fixed = olang::tools::check::fix(&paths);

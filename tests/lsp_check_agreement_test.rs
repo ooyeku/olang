@@ -396,3 +396,103 @@ fn shadow_advisories_taken_cheaply_are_the_full_findings() {
         "{compared} compared, {warned} with findings"
     );
 }
+
+/// `olang check --format json FILE`: its exit code and document.
+fn check_json(file: &Path) -> (i32, serde_json::Value) {
+    let out = Command::new(env!("CARGO_BIN_EXE_olang"))
+        .args(["check", "--format", "json"])
+        .arg(file)
+        .current_dir(file.parent().unwrap())
+        .output()
+        .expect("run olang check --format json");
+    let doc = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+        panic!("{e}: {}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))
+    });
+    (out.status.code().unwrap_or(-1), doc)
+}
+
+#[test]
+fn check_as_json_is_what_the_server_publishes() {
+    let dir = project(
+        "json",
+        &[
+            ("lib/util.ol", UTIL),
+            (
+                "main.ol",
+                "use lib.util { find }\nfn f(x: Int) -> Int = x + 1\nlet unused_thing = 3\nlet s = \"😀\"; let e = f(s)\nlet n = 1 == \"a\"\nprintln(find([1], 1))\n",
+            ),
+            ("bad.ol", "fn f(x) = {\nlet y = \n}\n"),
+        ],
+    );
+    let mut c = Client::start();
+    let main = dir.join("main.ol");
+    let served = c.diagnostics(&main);
+    let (code, doc) = check_json(&main);
+    assert_eq!(code, 1, "an error: exit 1 as the text form ({doc})");
+    assert_eq!(doc["kind"], "check");
+    let file = &doc["files"][0];
+    assert_eq!(file["file"].as_str().unwrap(), main.to_str().unwrap());
+    let ds = file["diagnostics"].as_array().unwrap();
+    assert_eq!(ds.len(), served.len(), "{ds:#?}\nserver: {served:#?}");
+    let sev = |n: &serde_json::Value| match n.as_u64() {
+        Some(1) => "error",
+        Some(2) => "warning",
+        Some(3) => "information",
+        _ => "hint",
+    };
+    for (d, s) in ds.iter().zip(served.iter()) {
+        assert_eq!(d["message"], s["message"]);
+        assert_eq!(d["range"], s["range"]);
+        assert_eq!(d["code"], s["code"]);
+        assert_eq!(d["severity"], sev(&s["severity"]));
+        assert_eq!(d["line"].as_u64().unwrap(), s["range"]["start"]["line"].as_u64().unwrap() + 1);
+    }
+    let by_code = |c: &str| ds.iter().filter(|d| d["code"] == c).count();
+    assert_eq!(by_code("runtime"), 1, "{ds:#?}");
+    assert_eq!(by_code("advisory"), 1, "{ds:#?}");
+    assert!(by_code("unused") >= 1, "{ds:#?}");
+    let unused = ds.iter().find(|d| d["code"] == "unused").unwrap();
+    assert_eq!(unused["severity"], "hint");
+    assert_eq!(unused["tags"], serde_json::json!(["unnecessary"]));
+    // a column counts characters (the server's range counts UTF-16 units)
+    let typed = ds.iter().find(|d| d["code"] == "runtime").unwrap();
+    assert_eq!((typed["line"].as_u64(), typed["column"].as_u64()), (Some(4), Some(14)), "{typed}");
+    assert_eq!(typed["range"]["start"]["character"], 14, "after a character of two UTF-16 units: {typed}");
+    assert_eq!(doc["errors"], 1);
+    assert_eq!(doc["warnings"], 1);
+
+    // a syntax error, and a folder of files
+    let (code, doc) = check_json(&dir);
+    assert_eq!(code, 1);
+    let files = doc["files"].as_array().unwrap();
+    assert_eq!(files.len(), 3, "{doc}");
+    let bad = files.iter().find(|f| f["file"].as_str().unwrap().ends_with("bad.ol")).unwrap();
+    assert_eq!(bad["diagnostics"][0]["code"], "syntax");
+    let util = files.iter().find(|f| f["file"].as_str().unwrap().ends_with("util.ol")).unwrap();
+    assert!(util["diagnostics"].as_array().unwrap().iter().all(|d| d["severity"] != "error"));
+}
+
+#[test]
+fn a_unit_binding_is_not_a_tuple() {
+    // `let mut fg = ()` set to a String later is a placeholder, and any
+    // value compared with `()` is the presence test: no always-true or
+    // always-false advisory (Studio's tui/view.ol)
+    let dir = project(
+        "unit",
+        &[(
+            "main.ol",
+            "fn f(k) = {\n    let mut fg = ()\n    let mut bg = ()\n    if k > 1 => { fg = \"danger\" }\n    if k > 2 => { bg = \"selection\" }\n    let u = ()\n    (fg != \"danger\", bg == \"selection\", u == \"x\", \"y\" != ())\n}\nprintln(f(3))\nlet t = (1, 2) == \"a\"\nprintln(t)\n",
+        )],
+    );
+    let main = dir.join("main.ol");
+    let mut c = Client::start();
+    let ds = agree(&mut c, &main);
+    let warnings: Vec<&str> = ds
+        .iter()
+        .filter(|d| d["severity"] == 2)
+        .map(|d| d["message"].as_str().unwrap())
+        .collect();
+    // a real tuple against a String is still said
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("between Tuple and String"), "{warnings:?}");
+}

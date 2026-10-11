@@ -270,7 +270,24 @@ tells that story) and now reports three distinct classes of finding.
 olang check               # every .ol file under the current directory
 olang check src/ app/     # specific paths or a single file
 olang check --fix         # apply the unambiguous rewrites first (template escapes)
+olang check --format json # every problem as data, as the language server publishes it
 ```
+
+**As data.** `--format json` prints one document: `#{ format: 1, kind:
+"check", olang, files, errors, warnings }`, each file `#{ file,
+diagnostics }` (`error` too when it could not be read), each diagnostic
+exactly what `olang lsp` publishes for that file — the same checker, so
+an editor's Problems and a pipeline's agree — as `#{ severity, code,
+message, tags, line, column, end_line, end_column, range }`:
+`severity` `error`, `warning`, `information` or `hint`; `code` the rule
+(`syntax`, `macro`, `scope`, `runtime`, `type`, `advisory`, an
+advisory's class — `shadow`, `exhaustiveness`, `shape`, `result`,
+`copy` — `unused` for a name nothing reads, `manifest` for olang.toml);
+`tags` `["unnecessary"]` on an unused name (a hint, faded by an editor,
+never a problem); `line`/`column` to `end_line`/`end_column` 1-based in
+characters, and `range` the server's own (0-based, UTF-16). The exit
+code is the text form's: 1 when any is an error. `--rules` and `--fix`
+are text-only; `--tier --format json` is the tier report below.
 
 ```text
   × parameter 'a' of add expects Int, got String
