@@ -22,7 +22,7 @@ Variable 'x' updated to: 5
 
 === Memory ===
   Values are reference-counted and reclaimed deterministically.
-  User bindings: 46
+  User bindings: 48
 Current configuration:
   prompt: olang> 
   show_types: false
