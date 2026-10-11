@@ -18,14 +18,14 @@ fn priority_tone(p) =
     if p == "ship" => "accent" else if p == "polish" => "blue" else => "amber"
 
 fn task_row(t) = {
-    let done = map_get(t, "done") == 1
-    let id = to_string(map_get(t, "id"))
+    let done = t.done == 1
+    let id = to_string(t.id)
     list_row([
         icon_btn(if done => "✓" else => "", "toggle:" + id, done),
         span(#{ "class": if done => "grow muted strike" else => "grow" },
-            [map_get(t, "title")]),
-        badge_tone(map_get(t, "priority"), priority_tone(map_get(t, "priority"))),
-        muted(to_string(map_get(t, "points")) + " pt"),
+            [t.title]),
+        badge_tone(t.priority, priority_tone(t.priority)),
+        muted(to_string(t.points) + " pt"),
         btn_danger("×", "del:" + id)
     ])
 }
@@ -35,10 +35,10 @@ fn tab(label_text, name, active) =
     else => btn(label_text, "filter:" + name)
 
 fn visible(s) = {
-    let f = map_get(s, "filter")
-    filter(map_get(s, "tasks"), (t) =>
-        if f == "open" => map_get(t, "done") == 0
-        else if f == "done" => map_get(t, "done") == 1
+    let f = s.filter
+    filter(s.tasks, (t) =>
+        if f == "open" => t.done == 0
+        else if f == "done" => t.done == 1
         else => true)
 }
 
@@ -46,9 +46,9 @@ fn burn_chart(tasks) = {
     if len(tasks) == 0 => text("")
     else => {
         let by = map(tasks, (t) => #{
-            "priority": map_get(t, "priority"),
-            "points": map_get(t, "points"),
-            "state": if map_get(t, "done") == 1 => "shipped" else => "open"
+            "priority": t.priority,
+            "points": t.points,
+            "state": if t.done == 1 => "shipped" else => "open"
         })
         card([stack([
             h2(#{}, ["points by priority"]),
@@ -60,12 +60,12 @@ fn burn_chart(tasks) = {
 }
 
 fn stats_strip(s) = {
-    let st = map_get(s, "stats")
+    let st = s.stats
     if st == () => text("")
     else => row([
-        stat(to_string(map_get(st, "open")), "open"),
-        stat(to_string(map_get(st, "done")), "shipped"),
-        stat(to_string(map_get(st, "open_pts")), "pts in flight")
+        stat(to_string(st.open), "open"),
+        stat(to_string(st.done), "shipped"),
+        stat(to_string(st.open_pts), "pts in flight")
     ])
 }
 
@@ -74,22 +74,22 @@ fn view(s) = stack([
     div(#{ "class": "card form-inline" }, [stack([
         row([
             div(#{ "class": "grow", "style": "flex: 1" }, [
-                form_fields(task_fields, #{}, map_get(s, "errors"))
+                form_fields(task_fields, #{}, s.errors)
             ]),
             btn_primary("Add", "add")
         ])
     ])]),
     spread(
         tabs([
-            tab("All", "all", map_get(s, "filter") == "all"),
-            tab("Open", "open", map_get(s, "filter") == "open"),
-            tab("Shipped", "done", map_get(s, "filter") == "done")
+            tab("All", "all", s.filter == "all"),
+            tab("Open", "open", s.filter == "open"),
+            tab("Shipped", "done", s.filter == "done")
         ]),
         muted(to_string(len(visible(s))) + " of "
-            + to_string(len(map_get(s, "tasks"))) + " tasks")
+            + to_string(len(s.tasks)) + " tasks")
     ),
     list_card(map(visible(s), (t) => task_row(t))),
-    burn_chart(map_get(s, "tasks"))
+    burn_chart(s.tasks)
 ])
 
 fn refresh() = {

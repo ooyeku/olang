@@ -118,10 +118,10 @@ share fn dispatch_with(routes, req, log) = dispatch_in(routes, req, log, under_t
 fn dispatch_in(routes, req, log, hop) = {
     let started = time.monotonic_ms()
     let outcome = find(routes, req.method, req.path)
-    let hit = map_get(outcome, "hit")
-    let response = if map_get(hit, "found") => {
-        let h = map_get(hit, "handler")
-        let params = map_get(hit, "params")
+    let hit = outcome.hit
+    let response = if hit.found => {
+        let h = hit.handler
+        let params = hit.params
         let result = if hop => task.join(spawn { h(req, params) })
             else => h(req, params)
         match result {
@@ -129,13 +129,13 @@ fn dispatch_in(routes, req, log, hop) = {
             Ok(v) => if is_response(v) => v else => ok_data(v),
             v => if is_response(v) => v else => ok_data(v)
         }
-    } else => if len(map_get(outcome, "allowed")) > 0 =>
+    } else => if len(outcome.allowed) > 0 =>
         http.response_with_headers(405,
             unwrap(json.stringify(#{ "error": #{ "code": "method_not_allowed",
                 "message": req.method + " not allowed here",
-                "allow": map_get(outcome, "allowed") } })),
+                "allow": outcome.allowed } })),
             #{ "Content-Type": "application/json",
-               "Allow": join(map_get(outcome, "allowed"), ", ") })
+               "Allow": join(outcome.allowed, ", ") })
     else =>
         error_response(404, "not_found", "no route for " + req.method + " " + req.path)
     let ms = time.monotonic_ms() - started
@@ -178,15 +178,15 @@ fn locked_web_dir() = {
         Ok(text) => match toml.parse(text) {
             Err(e2) => (),
             Ok(lock) => {
-                let packages = map_get(lock, "package")
-                let entry = if packages == () => () else => map_get(packages, "web")
-                let source = if entry == () => () else => map_get(entry, "source")
+                let packages = lock.package
+                let entry = if packages == () => () else => packages.web
+                let source = if entry == () => () else => entry.source
                 if source == () => ()
-                else if map_get(source, "kind") == "path" => {
-                    let p = map_get(source, "path")
+                else if source.kind == "path" => {
+                    let p = source.path
                     if fs.exists(p + "/olang.toml") => p else => ()
                 }
-                else if map_get(source, "kind") == "shelf" => shelf_dir(map_get(source, "shelf"))
+                else if source.kind == "shelf" => shelf_dir(source.shelf)
                 else => ()
             }
         }
@@ -214,7 +214,7 @@ fn shelf_dir(name) = {
         Ok(text) => match toml.parse(text) {
             Err(e2) => (),
             Ok(t) => {
-                let libs = map_get(t, "libraries")
+                let libs = t.libraries
                 if libs != () && map_has_key(libs, name) => map_get(libs, name) else => ()
             }
         }
@@ -400,7 +400,7 @@ share fn client_fn_names(client_sources) = {
         match meta.parse(src) {
             Ok(nodes) => {
                 for node in nodes {
-                    if map_get(node, "kind") == "fn" => { names = names + [map_get(node, "name")] }
+                    if node.kind == "fn" => { names = names + [node.name] }
                 }
             },
             Err(e) => ()
@@ -569,7 +569,7 @@ share fn serve(config) = {
     // silences them; absent, OLANG_ACCESS_LOG (all, errors, off) levels
     // the default line.
     let log = if map_has_key(config, "log") => {
-        let given = map_get(config, "log")
+        let given = config.log
         if given == () => "off" else => given
     } else => access_level()
     let view_fn = get_or(config, "view", ())
@@ -623,7 +623,7 @@ share fn serve(config) = {
     let shim_tag = etag_of(shim)
     let bundle_tag = etag_of(bundle)
     let image_tag = if image == () => "" else => etag_of(image)
-    let wasm_hash = if wasm == () => "" else => map_get(wasm, "hash")
+    let wasm_hash = if wasm == () => "" else => wasm.hash
     let wasm_tag = if wasm_hash == "" => "" else => "\"" + wasm_hash + "\""
     let hashed_wasm_url = if wasm_hash == "" => "/olang.wasm" else => "/olang." + wasm_hash + ".wasm"
 
@@ -658,14 +658,14 @@ share fn serve(config) = {
         else => {
             let accepts = if map_has_key(req.headers, "accept-encoding") =>
                 map_get(req.headers, "accept-encoding") else => ""
-            let encoded = if str.contains(accepts, "br") && map_get(wasm, "br") != () =>
-                ["br", map_get(wasm, "br")]
-            else if str.contains(accepts, "gzip") && map_get(wasm, "gzip") != () =>
-                ["gzip", map_get(wasm, "gzip")]
+            let encoded = if str.contains(accepts, "br") && wasm.br != () =>
+                ["br", wasm.br]
+            else if str.contains(accepts, "gzip") && wasm.gzip != () =>
+                ["gzip", wasm.gzip]
             else => ()
             let base = #{ "Content-Type": "application/wasm", "ETag": wasm_tag,
                           "Cache-Control": cache, "Vary": "Accept-Encoding" }
-            if encoded == () => { status: 200, body: map_get(wasm, "bytes"), headers: base }
+            if encoded == () => { status: 200, body: wasm.bytes, headers: base }
             else => { status: 200, body: encoded[1],
                       headers: map_set(base, "Content-Encoding", encoded[0]) }
         }
@@ -786,7 +786,7 @@ test "dispatch: hit, wrap, 404, 405 with Allow, Err becomes 500" {
     // Wrong method on a real path: 405 naming what IS allowed.
     let r405 = dispatch(table, fake_req("GET", "/only-post"))
     assert_eq(r405.status, 405)
-    assert_eq(map_get(r405.headers, "Allow"), "POST")
+    assert_eq(r405.headers.Allow, "POST")
     // A handler's Err is a clean 500 envelope, not a dropped socket.
     let r500 = dispatch(table, fake_req("GET", "/boom"))
     assert_eq(r500.status, 500)
@@ -796,7 +796,7 @@ test "dispatch: hit, wrap, 404, 405 with Allow, Err becomes 500" {
 test "dispatch: HEAD rides GET; params reach the handler" {
     let table = [
         #{ "method": "GET", "pattern": "/t/:id", "name": "",
-           "handler": (req, p) => "id=" + map_get(p, "id") }
+           "handler": (req, p) => "id=" + p.id }
     ]
     assert_eq(dispatch(table, fake_req("HEAD", "/t/9")).status, 200)
     let r = dispatch(table, fake_req("GET", "/t/9"))
@@ -806,7 +806,7 @@ test "dispatch: HEAD rides GET; params reach the handler" {
 test "body_json: parsed or a ready 400" {
     let good = body_json(fake_req_body("POST", "/x", "{\"a\": 1}"))
     assert_eq(is_ok(good), true)
-    assert_eq(map_get(unwrap(good), "a"), 1)
+    assert_eq(unwrap(good).a, 1)
     let bad = body_json(fake_req_body("POST", "/x", "not json"))
     assert_eq(is_ok(bad), false)
     let status = match bad { Err(resp) => resp.status, Ok(v) => 0 }
@@ -874,7 +874,7 @@ test "static responses revalidate: 304 on a matching ETag" {
     let tag = etag_of("body text")
     let cold = static_response(fake_req("GET", "/x"), "body text", "text/css", tag)
     assert_eq(cold.status, 200)
-    assert_eq(map_get(cold.headers, "ETag"), tag)
+    assert_eq(cold.headers.ETag, tag)
     assert_eq(map_get(cold.headers, "Cache-Control"), "no-cache")
     let warm = static_response(
         { method: "GET", path: "/x", query: #{}, body: "",

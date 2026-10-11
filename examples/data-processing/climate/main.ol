@@ -33,11 +33,11 @@ let co2_file = unwrap(fetch(
 let energy_file = unwrap(fetch(
     "https://raw.githubusercontent.com/owid/energy-data/master/owid-energy-data.csv",
     fs.join("data", "owid-energy-data.csv"), 3000000))
-stage("fetch", `co2 ${map_get(co2_file, "bytes")} bytes (cached=${map_get(co2_file, "cached")}), energy ${map_get(energy_file, "bytes")} bytes (cached=${map_get(energy_file, "cached")})`)
+stage("fetch", `co2 ${co2_file.bytes} bytes (cached=${co2_file.cached}), energy ${energy_file.bytes} bytes (cached=${energy_file.cached})`)
 
 // ── 2. load ──────────────────────────────────────────────────────────
-let co2_raw = unwrap(ods.read_csv_file(map_get(co2_file, "path")))
-let energy_raw = unwrap(ods.read_csv_file(map_get(energy_file, "path")))
+let co2_raw = unwrap(ods.read_csv_file(co2_file.path))
+let energy_raw = unwrap(ods.read_csv_file(energy_file.path))
 stage("load", `co2 ${ods.n_rows(co2_raw)}x${ods.n_cols(co2_raw)}, energy ${ods.n_rows(energy_raw)}x${ods.n_cols(energy_raw)}`)
 
 // ── 3. prep ──────────────────────────────────────────────────────────
@@ -135,9 +135,9 @@ let joined = ods.drop_null(ods.join(with_gdp_pc, energy_side, "country"))
 let r_energy = math.round(stats.corr(joined["co2_per_capita"], joined["energy_per_capita"]) * 1000.0) / 1000.0
 let r_gdp = math.round(stats.corr(joined["co2_per_capita"], joined["gdp_per_capita"]) * 1000.0) / 1000.0
 let fit = stats.lm(joined["co2_per_capita"], [joined["energy_per_capita"]])
-let coefs = ods.to_list(map_get(fit, "coef"))
+let coefs = ods.to_list(fit.coef)
 let slope = math.round(coefs[1] * 100000.0) / 100000.0
-let r2 = math.round(map_get(fit, "r2") * 1000.0) / 1000.0
+let r2 = math.round(fit.r2 * 1000.0) / 1000.0
 let scatter_svg = plot.scatter(joined["energy_per_capita"], joined["co2_per_capita"],
     #{ "title": `CO2 vs energy per capita, ${both_year}`, "x_label": "kWh per person", "y_label": "t CO2 per person" })
 let sorted_by_gdp = ods.sort_by(joined, "gdp_per_capita", true)
@@ -145,7 +145,7 @@ let half = ods.n_rows(sorted_by_gdp) / 2
 let rich = ods.head(sorted_by_gdp, half)["co2_per_capita"]
 let poor = ods.tail(sorted_by_gdp, half)["co2_per_capita"]
 let tt = stats.t_test(rich, poor)
-let p_raw = map_get(tt, "p_value")
+let p_raw = tt.p_value
 let p_value = if p_raw < 0.001 => "<0.001" else => show(math.round(p_raw * 1000.0) / 1000.0)
 section(`Relationships (${both_year}, ${ods.n_rows(joined)} countries)`,
     `Per-capita CO2 correlates with per-capita energy use at **r=${r_energy}** (GDP per capita: r=${r_gdp}). A linear model gives slope ${slope} t per kWh with **R²=${r2}**. The richer half of countries emits more per person than the poorer half (t-test p=${p_value}).` + "\n\n" + chart("energy-co2.svg", scatter_svg))

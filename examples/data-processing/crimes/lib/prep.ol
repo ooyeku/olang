@@ -36,8 +36,8 @@ test "derive_time reads the extract's timestamp format" {
         "11/20/2019 12:00:00 PM",
         "03/02/2008 11:59:00 PM"
     ])
-    assert_eq(map_get(tm, "months"), ["07", "01", "11", "03"])
-    assert_eq(map_get(tm, "hours"), [3, 0, 12, 23])
+    assert_eq(tm.months, ["07", "01", "11", "03"])
+    assert_eq(tm.hours, [3, 0, 12, 23])
 }
 
 test "one_hot marks exactly the matching rows" {

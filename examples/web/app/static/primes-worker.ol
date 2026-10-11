@@ -20,7 +20,7 @@ fn is_prime(n) = {
 }
 
 dom.on_message((m) => {
-    let upto = map_get(m, "upto")
+    let upto = m.upto
     let chunk = upto / 20
     let mut count = 0
     let mut lo = 2

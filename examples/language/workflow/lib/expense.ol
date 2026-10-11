@@ -13,8 +13,8 @@ let THRESHOLD = 1000
 fn record(field) = (ctx, event) => map_set(ctx, field, event.actor)
 
 // Guards branch on the amount held in the context.
-fn amount_at_most(limit) = (ctx, event) => map_get(ctx, "amount") <= limit
-fn amount_over(limit) = (ctx, event) => map_get(ctx, "amount") > limit
+fn amount_at_most(limit) = (ctx, event) => ctx.amount <= limit
+fn amount_over(limit) = (ctx, event) => ctx.amount > limit
 
 // The transition table. Two `submitted --approve--> ...` rows share a
 // from-state/event pair and are told apart by their amount guards.

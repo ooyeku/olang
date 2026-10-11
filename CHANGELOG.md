@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`olang fix maps`** (roadmap E3): the migration to `.` and `??` —
+  `map_get(chain, "ident")` → `chain.ident`, `map_get_or(x, "k", d)` →
+  `x.k ?? d` — made in the source text from the grammar's own parse
+  tree, so layout and comments stay byte for byte and parentheses come
+  only where precedence needs them; a default that may have an effect
+  is flagged, never rewritten (`??` evaluates it only when used); the
+  rewritten file must read back to the original's tree, or it is left
+  and reported; idempotent. (The design named a stored `()` as the
+  inexact case: there is none — `map_get_or` takes the default for a
+  stored `()` exactly as `??` does.) Run over every program in the
+  workspace, olang's own `.ol` first: 862 reads in 67 files.
 - **Spreads and nested updates** (roadmap E6): `#{ ...m, "k": v }` and
   `{ ...o, k: v }` build a copy with the written keys laid over it in
   source order (a later key wins; the literal's own kind is the

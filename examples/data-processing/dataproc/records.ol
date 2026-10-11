@@ -34,15 +34,15 @@ println(`records: ${len(records)}`)
 
 // ── revenue per row, total, and per-region totals, by fold ──
 let with_rev = records
-    |> map((r) => map_set(r, "revenue", map_get(r, "amount") * to_float(map_get(r, "quantity"))))
+    |> map((r) => map_set(r, "revenue", r.amount * to_float(r.quantity)))
 
-let total = with_rev |> fold(0.0, (acc, r) => acc + map_get(r, "revenue"))
-let units = with_rev |> fold(0, (acc, r) => acc + map_get(r, "quantity"))
+let total = with_rev |> fold(0.0, (acc, r) => acc + r.revenue)
+let units = with_rev |> fold(0, (acc, r) => acc + r.quantity)
 
 let by_region = with_rev |> fold(#{}, (acc, r) => {
-    let region = map_get(r, "region")
+    let region = r.region
     let sofar = if map_has_key(acc, region) => map_get(acc, region) else => 0.0
-    map_set(acc, region, sofar + map_get(r, "revenue"))
+    map_set(acc, region, sofar + r.revenue)
 })
 
 println("── revenue by region ──")

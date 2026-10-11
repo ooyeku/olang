@@ -19,8 +19,8 @@ fn store() = {
 
 // Compiled: reads two keys, writes one. Called 3,000 times.
 fn step(m, msg) = {
-    let n = map_get(m, "count") + map_get(msg, "by")
-    let first = map_get(head(map_get(m, "rows")), "id")
+    let n = m.count + msg.by
+    let first = head(m.rows).id
     map_set(m, "count", n + first)
 }
 
@@ -32,5 +32,5 @@ while i < 3000 {
     m = step(m, msg)
     i = i + 1
 }
-println(`CHECK ${map_get(m, "count")}`)
+println(`CHECK ${m.count}`)
 println(`MS ${time.monotonic_ms() - t0}`)

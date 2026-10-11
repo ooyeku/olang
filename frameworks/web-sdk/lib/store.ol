@@ -99,7 +99,7 @@ meta fn store(prefix, fields) = {
 
 // ── hydration ────────────────────────────────────────────────────────
 
-share fn default_of(spec, name) = map_get(map_get(spec, "defaults"), name)
+share fn default_of(spec, name) = map_get(spec.defaults, name)
 
 // The last querystring this store wrote or restored — so persist only
 // pushes real changes, and the first persist after boot is a no-op.
@@ -109,20 +109,20 @@ let last_qs = cell.new("")
 /// query parameters (url fields) and localStorage (local fields).
 /// Natively there is no browser, so hydrate IS the defaults.
 share fn hydrate(spec) = {
-    let mut s = map_get(spec, "defaults")
+    let mut s = spec.defaults
     if dom.available() => {
-        let qmap = map_get(dom.location(), "query")
+        let qmap = dom.location().query
         // What this browser holds wins over a server-rendered state at
         // `mount`: the address bar's fields and the stored preferences.
         let mut held_names = []
-        for name in map_get(spec, "url") {
+        for name in spec.url {
             if map_has_key(qmap, name) => {
                 s = map_set(s, name, map_get(qmap, name))
                 held_names = held_names + [name]
             }
         }
-        for name in map_get(spec, "local") {
-            let held = dom.storage_get(map_get(spec, "prefix") + "-" + name)
+        for name in spec.local {
+            let held = dom.storage_get(spec.prefix + "-" + name)
             if held != "" => {
                 s = map_set(s, name, held)
                 held_names = held_names + [name]
@@ -152,7 +152,7 @@ fn urlencode(v) = v
 /// `/`. Pure, so it tests without a browser.
 share fn querystring(spec, s) = {
     let mut parts = []
-    for name in map_get(spec, "url") {
+    for name in spec.url {
         let v = map_get(s, name)
         if v != default_of(spec, name) && typeof(v) == "String" && v != "" => {
             parts = parts + [name + "=" + urlencode(v)]
@@ -173,8 +173,8 @@ share fn persist(spec, s) =
             dom.push_state(if qs == "" => "/" else => "/?" + qs)
         }
         else => ()
-        for name in map_get(spec, "local") {
-            let key = map_get(spec, "prefix") + "-" + name
+        for name in spec.local {
+            let key = spec.prefix + "-" + name
             let v = map_get(s, name)
             if v == default_of(spec, name) => dom.storage_remove(key)
             else => dom.storage_set(key, v)
@@ -188,9 +188,9 @@ share fn persist(spec, s) =
 share fn on_restore(spec, handler) =
     if dom.available() =>
         dom.on_route((r) => {
-            let qmap = map_get(r, "query")
+            let qmap = r.query
             let mut fields = #{}
-            for name in map_get(spec, "url") {
+            for name in spec.url {
                 fields = map_set(fields, name,
                     if map_has_key(qmap, name) => map_get(qmap, name)
                     else => default_of(spec, name))
@@ -211,20 +211,20 @@ let TEST_SPEC = @store("t", [
 ])
 
 test "the macro bakes a normalized spec with class buckets" {
-    assert_eq(map_get(TEST_SPEC, "prefix"), "t")
-    assert_eq(map_get(TEST_SPEC, "names"),
+    assert_eq(TEST_SPEC.prefix, "t")
+    assert_eq(TEST_SPEC.names,
         ["mode", "query", "theme", "items", "stats"])
-    assert_eq(map_get(TEST_SPEC, "url"), ["mode", "query"])
-    assert_eq(map_get(TEST_SPEC, "local"), ["theme"])
+    assert_eq(TEST_SPEC.url, ["mode", "query"])
+    assert_eq(TEST_SPEC.local, ["theme"])
     assert_eq(default_of(TEST_SPEC, "query"), "state: open")
     assert_eq(default_of(TEST_SPEC, "stats"), ())
 }
 
 test "hydrate without a browser is exactly the defaults" {
     let s = hydrate(TEST_SPEC)
-    assert_eq(map_get(s, "mode"), "list")
-    assert_eq(map_get(s, "items"), [])
-    assert_eq(map_get(s, "theme"), "system")
+    assert_eq(s.mode, "list")
+    assert_eq(s.items, [])
+    assert_eq(s.theme, "system")
 }
 
 test "querystring: declaration order, defaults omitted, encoding" {

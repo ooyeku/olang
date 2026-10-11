@@ -51,14 +51,14 @@ fn create_note(req, params) = {
 }
 
 fn get_note(req, params) = {
-    let id = map_get(params, "id")
+    let id = params.id
     let rows = unwrap(db.query(conn, "SELECT id, text FROM notes WHERE id = ?", [id]))
     if len(rows) == 0 => json_response(404, { message: "no note " + id })
     else => json_response(200, rows[0])
 }
 
 fn delete_note(req, params) = {
-    let id = map_get(params, "id")
+    let id = params.id
     unwrap(db.execute(conn, "DELETE FROM notes WHERE id = ?", [id]))
     json_response(200, { deleted: id })
 }
@@ -85,7 +85,7 @@ fn env_or(name, fallback) = match os.get_env(name) {
 fn response_status(response) = {
     if typeof(response) == "String" => 200
     else => {
-        let status = map_get(response, "status")
+        let status = response.status
         if typeof(status) == "Int" => status else => 200
     }
 }
@@ -93,7 +93,7 @@ fn response_status(response) = {
 fn response_size(response) = {
     if typeof(response) == "String" => len(response)
     else => {
-        let body = map_get(response, "body")
+        let body = response.body
         if typeof(body) == "String" => len(body) else => 0
     }
 }

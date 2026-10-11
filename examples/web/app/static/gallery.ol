@@ -111,7 +111,7 @@ let forecast = map(range(0, 30), (d) => {
 })
 fn draw_forecast(lo, hi) = {
     let window = filter(forecast, (r) =>
-        map_get(r, "day") >= lo && map_get(r, "day") <= hi)
+        r.day >= lo && r.day <= hi)
     let title = if lo == 0 && hi == 29 => "ensemble forecast (brush to zoom)"
         else => "ensemble forecast · days " + show(to_int(lo)) + "–" + show(to_int(hi)) + " (dblclick resets)"
     card("g-layers", viz.chart(map_set(spec(#{ "data": window, "layers": [
@@ -122,8 +122,8 @@ fn draw_forecast(lo, hi) = {
 }
 draw_forecast(0, 29)
 viz.brush(dom.query("#g-layers"), (b) => {
-    let lo = math.round(map_get(b, "from") * 29.0)
-    let hi = math.round(map_get(b, "to") * 29.0)
+    let lo = math.round(b.from * 29.0)
+    let hi = math.round(b.to * 29.0)
     if hi > lo + 1.0 => draw_forecast(lo, hi)
 })
 dom.on(dom.query("#g-layers"), "dblclick", (e) => { draw_forecast(0, 29) })
@@ -188,7 +188,7 @@ dom.on_frame((f) => {
         "sy": 165.0 * (1.0 + 0.1 * math.cos(tt * 0.8)),
         "tx": 560.0, "ty": 190.0 })
     dom.set_text(big_hud, "50,000 points · " +
-        show(to_int(math.round(1000.0 / math.max(map_get(f, "delta"), 1.0)))) + " fps")
+        show(to_int(math.round(1000.0 / math.max(f.delta, 1.0)))) + " fps")
 })
 
 // ── the live piece: rose curves morphing, one draw-list per frame ────

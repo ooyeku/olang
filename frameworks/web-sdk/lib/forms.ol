@@ -27,9 +27,9 @@ share fn field(name, label_text, kind, opts) =
 /// check as "num", everything else as "str".
 share fn rules(fields) =
     map(fields, (f) => {
-        let k = map_get(f, "kind")
+        let k = f.kind
         let kind = if typeof(k) == "String" && k == "number" => "num" else => "str"
-        [map_get(f, "name"), kind, map_get(f, "opts")]
+        [f.name, kind, f.opts]
     })
 
 /// The submitted payload narrowed to the declared fields; "number"
@@ -38,10 +38,10 @@ share fn rules(fields) =
 share fn read(payload, fields) = {
     let mut out = #{}
     for f in fields {
-        let name = map_get(f, "name")
+        let name = f.name
         if map_has_key(payload, name) => {
             let v = map_get(payload, name)
-            let k = map_get(f, "kind")
+            let k = f.kind
             let parsed = if typeof(k) == "String" && k == "number" && typeof(v) == "String" =>
                 match str.parse_int(v) {
                     Ok(n) => n,
@@ -55,18 +55,18 @@ share fn read(payload, fields) = {
 }
 
 fn control(f, value, has_error) = {
-    let name = map_get(f, "name")
-    let kind = map_get(f, "kind")
+    let name = f.name
+    let kind = f.kind
     let classes = if has_error => "field-input field-error" else => "field-input"
     if typeof(kind) == "Map" && map_has_key(kind, "select") =>
         select(#{ "name": name, "id": name, "class": classes },
-            map(map_get(kind, "select"), (o) =>
+            map(kind.select, (o) =>
                 option(#{ "value": o, "selected": o == value }, [o])))
     else if kind == "textarea" =>
         textarea(#{ "name": name, "id": name, "class": classes }, [to_string_value(value)])
     else =>
         input(#{ "name": name, "id": name, "type": kind, "class": classes,
-                 "placeholder": map_get(f, "label"),
+                 "placeholder": f.label,
                  "value": to_string_value(value) })
 }
 
@@ -78,13 +78,13 @@ fn to_string_value(v) =
 /// "field: problem" strings from `validate.check` — names it).
 share fn form_fields(fields, values, errors) =
     div(#{ "class": "form-fields" }, map(fields, (f) => {
-        let name = map_get(f, "name")
+        let name = f.name
         let mine = errors
             |> filter((e) => str.starts_with(e, name + ":"))
             |> map((e) => str.trim(str.substring(e, str.length(name) + 1, str.length(e))))
         let value = if map_has_key(values, name) => map_get(values, name) else => ()
         div(#{ "class": "field" }, [
-            label(#{ "for": name }, [map_get(f, "label")]),
+            label(#{ "for": name }, [f.label]),
             control(f, value, len(mine) > 0),
             if len(mine) > 0 =>
                 span(#{ "class": "field-message" }, [mine[0]])

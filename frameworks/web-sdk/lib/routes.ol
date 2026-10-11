@@ -54,12 +54,12 @@ share fn match_path(pattern, path) = {
 /// index at start, so a hundred rpc routes cost one map lookup per
 /// request instead of a hundred pattern matches.
 share fn index_routes(routes) = {
-    let is_exact = (r) => !str.contains(map_get(r, "pattern"), ":")
+    let is_exact = (r) => !str.contains(r.pattern, ":")
     // The first route at a method and path wins, as the walk's first
     // match does: `serve` lists the app's routes before its own, so an
     // app's page at `/` is the one the index answers with.
     let exact = fold(filter(routes, is_exact), #{}, (acc, r) => {
-        let key = map_get(r, "method") + " " + map_get(r, "pattern")
+        let key = r.method + " " + r.pattern
         if map_has_key(acc, key) => acc else => map_set(acc, key, r)
     })
     #{ "exact": exact, "dynamic": filter(routes, (r) => !is_exact(r)), "routes": routes }
@@ -72,17 +72,17 @@ share fn find(routes, method, path) = {
     // 405 there reads as "down".
     let m = if method == "HEAD" => "GET" else => method
     if is_index(routes) => {
-        let exact = map_get(routes, "exact")
+        let exact = routes.exact
         let key = m + " " + path
         if map_has_key(exact, key) => {
             let r = map_get(exact, key)
-            #{ "hit": #{ "found": true, "handler": map_get(r, "handler"), "params": #{}, "name": map_get(r, "name") },
-               "allowed": [map_get(r, "method")] }
+            #{ "hit": #{ "found": true, "handler": r.handler, "params": #{}, "name": r.name },
+               "allowed": [r.method] }
         }
         // A miss on the exact table: the parameterized routes may match,
         // and a 405 needs every method the path answers to, so the walk
         // runs over the whole list as before.
-        else => find(map_get(routes, "routes"), method, path)
+        else => find(routes.routes, method, path)
     }
     else => find_by_walk(routes, m)(path)
 }
@@ -91,12 +91,12 @@ fn find_by_walk(routes, m) = (path) => {
     let mut hit = #{ "found": false, "handler": 0, "params": #{}, "name": "" }
     let mut allowed = []
     for r in routes {
-        let matched = match_path(map_get(r, "pattern"), path)
+        let matched = match_path(r.pattern, path)
         if matched.ok => {
-            allowed = concat(allowed, [map_get(r, "method")])
-            if !map_get(hit, "found") && map_get(r, "method") == m => {
-                hit = #{ "found": true, "handler": map_get(r, "handler"),
-                         "params": matched.params, "name": map_get(r, "name") }
+            allowed = concat(allowed, [r.method])
+            if !hit.found && r.method == m => {
+                hit = #{ "found": true, "handler": r.handler,
+                         "params": matched.params, "name": r.name }
             }
         }
     }
@@ -107,18 +107,18 @@ test "an indexed table answers exact paths in one lookup and walks the rest" {
     let table = index_routes([
         route("GET", "/a", (req, p) => "a"),
         route("POST", "/a", (req, p) => "posted"),
-        route("GET", "/t/:id", (req, p) => map_get(p, "id"))
+        route("GET", "/t/:id", (req, p) => p.id)
     ])
-    let hit = map_get(find(table, "GET", "/a"), "hit")
-    assert_eq(map_get(hit, "found"), true)
+    let hit = find(table, "GET", "/a").hit
+    assert_eq(hit.found, true)
     assert_eq(map_get(hit, "handler")((), #{}), "a")
     let dyn = find(table, "GET", "/t/9")
-    assert_eq(map_get(map_get(dyn, "hit"), "params"), #{ "id": "9" })
+    assert_eq(dyn.hit.params, #{ "id": "9" })
     // A method miss on an exact path still reports every allowed method.
     let miss = find(table, "DELETE", "/a")
-    assert_eq(map_get(map_get(miss, "hit"), "found"), false)
-    assert_eq(sort(map_get(miss, "allowed")), ["GET", "POST"])
-    assert_eq(map_get(map_get(find(table, "HEAD", "/a"), "hit"), "found"), true)
+    assert_eq(miss.hit.found, false)
+    assert_eq(sort(miss.allowed), ["GET", "POST"])
+    assert_eq(find(table, "HEAD", "/a").hit.found, true)
 }
 
 test "the index keeps the first route at a path, as the walk does" {
@@ -126,18 +126,18 @@ test "the index keeps the first route at a path, as the walk does" {
         route("GET", "/", (req, p) => "the app's page"),
         route("GET", "/", (req, p) => "serve's shell")
     ])
-    let hit = map_get(find(table, "GET", "/"), "hit")
+    let hit = find(table, "GET", "/").hit
     assert_eq(map_get(hit, "handler")((), #{}), "the app's page")
     // The unindexed walk agrees.
-    let walk = map_get(find(map_get(table, "routes"), "GET", "/"), "hit")
+    let walk = find(table.routes, "GET", "/").hit
     assert_eq(map_get(walk, "handler")((), #{}), "the app's page")
 }
 
 test "patterns capture :params and reject shape mismatches" {
     let m = match_path("/todos/:id/comments/:cid", "/todos/7/comments/9")
     assert_eq(m.ok, true)
-    assert_eq(map_get(m.params, "id"), "7")
-    assert_eq(map_get(m.params, "cid"), "9")
+    assert_eq(m.params.id, "7")
+    assert_eq(m.params.cid, "9")
     assert_eq(match_path("/todos/:id", "/todos").ok, false)
     assert_eq(match_path("/todos", "/todos/7").ok, false)
     assert_eq(match_path("/", "/").ok, true)
@@ -149,15 +149,15 @@ test "find honors method, HEAD rides GET, allowed collects" {
         route("POST", "/t", (req, p) => "post")
     ]
     let f = find(table, "POST", "/t")
-    assert_eq(map_get(map_get(f, "hit"), "found"), true)
-    assert_eq(map_get(find(table, "HEAD", "/t"), "hit") |> map_get("found"), true)
-    assert_eq(map_get(find(table, "DELETE", "/t"), "hit") |> map_get("found"), false)
-    assert_eq(len(map_get(find(table, "DELETE", "/t"), "allowed")), 2)
+    assert_eq(f.hit.found, true)
+    assert_eq(find(table, "HEAD", "/t").hit |> map_get("found"), true)
+    assert_eq(find(table, "DELETE", "/t").hit |> map_get("found"), false)
+    assert_eq(len(find(table, "DELETE", "/t").allowed), 2)
 }
 
 test "rpc routes mount under /api/rpc by name" {
     let r = rpc("todos.create", (req) => 1)
-    assert_eq(map_get(r, "pattern"), "/api/rpc/todos.create")
+    assert_eq(r.pattern, "/api/rpc/todos.create")
     let f = find([r], "POST", "/api/rpc/todos.create")
-    assert_eq(map_get(map_get(f, "hit"), "name"), "todos.create")
+    assert_eq(f.hit.name, "todos.create")
 }

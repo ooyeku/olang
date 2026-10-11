@@ -19,7 +19,7 @@ let routes = [
     rpc("todos.list", (req, p) => rows(conn, "SELECT * FROM todos ORDER BY id", [])),
     rpc("todos.create", (req, p) => {
         let payload = unwrap(json.parse(req.body))
-        let id = insert_row(conn, "todos", #{ "title": map_get(payload, "title"), "done": 0 })
+        let id = insert_row(conn, "todos", #{ "title": payload.title, "done": 0 })
         row(conn, "SELECT * FROM todos WHERE id = ?", [id])
     }),
     // A long poll: the handler parks its connection and a task answers
@@ -48,7 +48,7 @@ let server = spawn {
 let painted = spawn {
     serve(#{ "title": "painted", "client": "", "port": port + 1,
              "view": (s) => div(#{ "class": "count" },
-                                [to_string(map_get(s, "n")) + " notes"]),
+                                [to_string(s.n) + " notes"]),
              "initial": () => #{ "n": 3, "tag": "<b>" },
              "headers": #{ "X-Content-Type-Options": "nosniff" },
              "head": (req) => "<meta name=\"path\" content=\"" + req.path + "\">" })
@@ -119,11 +119,11 @@ test "rpc round-trips over the wire" {
     let created = unwrap(http.post(base + "/api/rpc/todos.create",
         unwrap(json.stringify(#{ "title": "over the wire" }))))
     assert_eq(created.status, 200)
-    let todo = map_get(unwrap(json.parse(created.body)), "data")
-    assert_eq(map_get(todo, "title"), "over the wire")
+    let todo = unwrap(json.parse(created.body)).data
+    assert_eq(todo.title, "over the wire")
 
     let listed = unwrap(http.post(base + "/api/rpc/todos.list", "{}"))
-    assert_eq(len(map_get(unwrap(json.parse(listed.body)), "data")), 1)
+    assert_eq(len(unwrap(json.parse(listed.body)).data), 1)
 }
 
 test "a deferred handler answers over the wire under olang test" {
@@ -173,7 +173,7 @@ test "a large text response is gzipped only for a client that accepts it" {
         #{ "headers": #{ "Accept-Encoding": "gzip" } }))
     assert_eq(packed.status, 200)
     assert_eq(map_get(packed.headers, "content-encoding"), "gzip")
-    assert_eq(map_get(packed.headers, "vary"), "Accept-Encoding")
+    assert_eq(packed.headers.vary, "Accept-Encoding")
     // The configured headers ride the compressed response too.
     assert_eq(map_get(packed.headers, "x-content-type-options"), "nosniff")
     assert_eq(str.length(packed.body) < str.length(plain.body), true)
@@ -188,13 +188,13 @@ test "the embedded runtime is served from memory, with the configured headers" {
             assert_eq(resp.status, 200)
             assert_eq(map_get(resp.headers, "content-type"), "application/wasm")
             assert_eq(map_get(resp.headers, "x-content-type-options"), "nosniff")
-            assert_eq(map_get(resp.headers, "etag"), "\"" + map_get(r, "hash") + "\"")
-            let hashed = unwrap(http.get(painted_base + "/olang." + map_get(r, "hash") + ".wasm"))
+            assert_eq(resp.headers.etag, "\"" + r.hash + "\"")
+            let hashed = unwrap(http.get(painted_base + "/olang." + r.hash + ".wasm"))
             assert_eq(hashed.status, 200)
             assert_eq(str.contains(map_get(hashed.headers, "cache-control"), "immutable"), true)
             // The shell names the content-addressed URL.
             let shell = unwrap(http.get(painted_base + "/"))
-            assert_eq(str.contains(shell.body, "/olang." + map_get(r, "hash") + ".wasm"), true)
+            assert_eq(str.contains(shell.body, "/olang." + r.hash + ".wasm"), true)
             // Negotiated: brotli when accepted, the raw bytes otherwise.
             let br = unwrap(http.get(painted_base + "/olang.wasm", #{ "headers": #{ "Accept-Encoding": "br" } }))
             assert_eq(map_get(br.headers, "content-encoding"), "br")

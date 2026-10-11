@@ -33,8 +33,8 @@ let program = unwrap(meta.parse(sample))
 
 // ── Imports: the whole of `otc deps`, in olang ──────────────────────
 println("── imports ──")
-for node in program |> filter((n) => map_get(n, "kind") == "use") {
-    println("  " + map_get(node, "path") + " " + show(map_get(node, "items")))
+for node in program |> filter((n) => n.kind == "use") {
+    println("  " + node.path + " " + show(node.items))
 }
 
 // ── A lint: count bare unwrap() call sites, walking the tree ────────
@@ -42,7 +42,7 @@ for node in program |> filter((n) => map_get(n, "kind") == "use") {
 // lists of maps. One recursive walk counts `unwrap` call targets.
 fn count_unwraps(node) = {
     if typeof(node) == "Map" => {
-        let here = if map_get(node, "kind") == "call" && map_get(node, "target") == "unwrap"
+        let here = if node.kind == "call" && node.target == "unwrap"
             => 1 else => 0
         here + (entries(node) |> fold(0, (acc, kv) => acc + count_unwraps(kv[1])))
     }
@@ -52,24 +52,24 @@ fn count_unwraps(node) = {
 }
 
 println("── bare unwrap() call sites, per function ──")
-let fns = program |> filter((n) => map_get(n, "kind") == "fn")
+let fns = program |> filter((n) => n.kind == "fn")
 for f in fns {
-    let n = count_unwraps(map_get(f, "body"))
-    let shared = if map_get(f, "shared") => "share " else => ""
-    println("  " + shared + "fn " + map_get(f, "name") + ": " + show(n) + " unwrap(s)")
+    let n = count_unwraps(f.body)
+    let shared = if f.shared => "share " else => ""
+    println("  " + shared + "fn " + f.name + ": " + show(n) + " unwrap(s)")
 }
 
-let total_unwraps = fns |> fold(0, (acc, f) => acc + count_unwraps(map_get(f, "body")))
+let total_unwraps = fns |> fold(0, (acc, f) => acc + count_unwraps(f.body))
 println("── " + show(len(program)) + " top-level declarations, " +
     show(total_unwraps) + " bare unwraps ──")
 
 test "meta.parse exposes the program as walkable data" {
     let p = unwrap(meta.parse("use x { a }\nfn f() = unwrap(g())\n"))
     testing.assert_eq(len(p), 2)
-    testing.assert_eq(map_get(p[0], "kind"), "use")
-    testing.assert_eq(map_get(p[0], "path"), "x")
-    testing.assert_eq(map_get(p[1], "kind"), "fn")
-    testing.assert_eq(map_get(p[1], "name"), "f")
+    testing.assert_eq(p[0].kind, "use")
+    testing.assert_eq(p[0].path, "x")
+    testing.assert_eq(p[1].kind, "fn")
+    testing.assert_eq(p[1].name, "f")
     // a syntax error is a normal Err, not a crash
     testing.assert_true(is_err(meta.parse("fn (")))
 }

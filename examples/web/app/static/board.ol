@@ -18,8 +18,8 @@ fn themed(s, title) =
         "width", 560), "height", 340)
 
 fn sel_status() = {
-    let q = map_get(dom.location(), "query")
-    if map_has_key(q, "status") => map_get(q, "status") else => ""
+    let q = dom.location().query
+    if map_has_key(q, "status") => q.status else => ""
 }
 
 fn pct(a, b) = if b == 0 => "0%"
@@ -28,11 +28,11 @@ fn pct(a, b) = if b == 0 => "0%"
 fn render(items) = {
     let sel = sel_status()
     let picked = if sel == "" => items
-        else => filter(items, (i) => map_get(i, "status") == sel)
+        else => filter(items, (i) => i.status == sel)
     let rows = map(picked, (i) => map_set(i, "one", 1))
-    let points = map(picked, (i) => map_get(i, "points"))
-    let open_n = len(filter(items, (i) => map_get(i, "status") == "open"))
-    let done_n = len(filter(items, (i) => map_get(i, "status") == "done"))
+    let points = map(picked, (i) => i.points)
+    let open_n = len(filter(items, (i) => i.status == "open"))
+    let done_n = len(filter(items, (i) => i.status == "done"))
     let total_pts = sum(points)
 
     dom.set_html(mount, dash.styles() + dash.grid([
@@ -65,7 +65,7 @@ fn render(items) = {
         let mut n = 1
         let mut cum = []
         for i in picked {
-            total = total + map_get(i, "points")
+            total = total + i.points
             cum = cum + [#{ "n": n, "total": total }]
             n = n + 1
         }
@@ -79,13 +79,13 @@ fn render(items) = {
 
 fn refresh() = dom.fetch_json("GET", "/api/issues?limit=500", "", (resp) => {
     // A fetch failure delivers #{ "error": ... } — keep the last render.
-    if map_has_key(resp, "items") => render(map_get(resp, "items"))
+    if map_has_key(resp, "items") => render(resp.items)
 })
 
 // The filter writes the URL; the URL drives the render. Back and
 // forward replay filters for free.
 dom.on(dom.query("#b-flt"), "change", (e) => {
-    let v = map_get(e, "value")
+    let v = e.value
     dom.push_state(if v == "" => "/board.html" else => "/board.html?status=" + v)
     refresh()
 })

@@ -41,7 +41,7 @@ share fn check(schema, data, path) = {
     let mut errs = []
 
     if map_has_key(schema, "type") => {
-        let t = map_get(schema, "type")
+        let t = schema.type
         if !type_ok(t, data) =>
             { errs = errs + [path + ": expected " + t + ", got " + json_type(data)] }
     }
@@ -54,13 +54,13 @@ share fn check(schema, data, path) = {
 
     if json_type(data) == "object" => {
         if map_has_key(schema, "required") => {
-            for req in map_get(schema, "required") {
+            for req in schema.required {
                 if !map_has_key(data, req) =>
                     { errs = errs + [path + "." + req + ": required property is missing"] }
             }
         }
         if map_has_key(schema, "properties") => {
-            let props = map_get(schema, "properties")
+            let props = schema.properties
             for key in map_keys(props) {
                 if map_has_key(data, key) =>
                     { errs = errs + check(map_get(props, key), map_get(data, key), path + "." + key) }
@@ -70,31 +70,31 @@ share fn check(schema, data, path) = {
 
     if json_type(data) == "array" => {
         if map_has_key(schema, "items") => {
-            let item_schema = map_get(schema, "items")
+            let item_schema = schema.items
             let mut i = 0
             for elem in data {
                 errs = errs + check(item_schema, elem, `${path}[${i}]`)
                 i = i + 1
             }
         }
-        if map_has_key(schema, "minItems") && (len(data) < map_get(schema, "minItems")) =>
-            { errs = errs + [`${path}: has ${len(data)} items, needs at least ${map_get(schema, "minItems")}`] }
-        if map_has_key(schema, "maxItems") && (len(data) > map_get(schema, "maxItems")) =>
-            { errs = errs + [`${path}: has ${len(data)} items, allows at most ${map_get(schema, "maxItems")}`] }
+        if map_has_key(schema, "minItems") && (len(data) < schema.minItems) =>
+            { errs = errs + [`${path}: has ${len(data)} items, needs at least ${schema.minItems}`] }
+        if map_has_key(schema, "maxItems") && (len(data) > schema.maxItems) =>
+            { errs = errs + [`${path}: has ${len(data)} items, allows at most ${schema.maxItems}`] }
     }
 
     if is_number(data) => {
-        if map_has_key(schema, "minimum") && (data < map_get(schema, "minimum")) =>
-            { errs = errs + [`${path}: ${data} is below minimum ${map_get(schema, "minimum")}`] }
-        if map_has_key(schema, "maximum") && (data > map_get(schema, "maximum")) =>
-            { errs = errs + [`${path}: ${data} is above maximum ${map_get(schema, "maximum")}`] }
+        if map_has_key(schema, "minimum") && (data < schema.minimum) =>
+            { errs = errs + [`${path}: ${data} is below minimum ${schema.minimum}`] }
+        if map_has_key(schema, "maximum") && (data > schema.maximum) =>
+            { errs = errs + [`${path}: ${data} is above maximum ${schema.maximum}`] }
     }
 
     if json_type(data) == "string" => {
-        if map_has_key(schema, "minLength") && (str.length(data) < map_get(schema, "minLength")) =>
-            { errs = errs + [`${path}: length ${str.length(data)} is below minLength ${map_get(schema, "minLength")}`] }
-        if map_has_key(schema, "maxLength") && (str.length(data) > map_get(schema, "maxLength")) =>
-            { errs = errs + [`${path}: length ${str.length(data)} is above maxLength ${map_get(schema, "maxLength")}`] }
+        if map_has_key(schema, "minLength") && (str.length(data) < schema.minLength) =>
+            { errs = errs + [`${path}: length ${str.length(data)} is below minLength ${schema.minLength}`] }
+        if map_has_key(schema, "maxLength") && (str.length(data) > schema.maxLength) =>
+            { errs = errs + [`${path}: length ${str.length(data)} is above maxLength ${schema.maxLength}`] }
     }
 
     errs

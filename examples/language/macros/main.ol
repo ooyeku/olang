@@ -26,8 +26,8 @@ meta fn dbg(expr) = `{ let v = ${expr}; println("${expr} = " + show(v)); v }`
 // the field names, and emits the declaration plus a to_json function.
 meta fn json(decl) = {
     let t = head(unwrap(meta.parse(decl)))
-    let tname = str.to_lower(map_get(t, "name"))
-    let fields = map_get(t, "fields") |> map((f) => map_get(f, "name"))
+    let tname = str.to_lower(t.name)
+    let fields = t.fields |> map((f) => f.name)
     let pairs = fields |> map((f) => `"${f}": v.${f}`) |> join(", ")
     `${decl}
 fn ${tname}_to_json(v) = unwrap(json.stringify(#{ ${pairs} }))`

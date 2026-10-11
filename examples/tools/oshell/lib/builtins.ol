@@ -77,7 +77,7 @@ fn bi_ls(state, args) = {
     if target != "." && fs.exists(target) && !fs.is_dir(target) => {
         if long => {
             match fs.file_info(target) {
-                Ok(info) => done(state, "- " + str.pad_start(to_string(map_get(info, "size")), 10, " ") + "  " + target + "\n", 0),
+                Ok(info) => done(state, "- " + str.pad_start(to_string(info.size), 10, " ") + "  " + target + "\n", 0),
                 Err(e) => fail(state, `ls: ${target}: ${e}`)
             }
         } else => done(state, target + "\n", 0)
@@ -90,8 +90,8 @@ fn bi_ls(state, args) = {
                     let p = if target == "." => n else => target + "/" + n
                     match fs.file_info(p) {
                         Ok(info) => {
-                            let kind = if map_get(info, "is_dir") => "d" else => "-"
-                            kind + " " + str.pad_start(to_string(map_get(info, "size")), 10, " ") + "  " + n
+                            let kind = if info.is_dir => "d" else => "-"
+                            kind + " " + str.pad_start(to_string(info.size), 10, " ") + "  " + n
                         },
                         Err(e) => "?" + " " + str.pad_start("?", 10, " ") + "  " + n
                     }

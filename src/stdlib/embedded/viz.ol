@@ -63,8 +63,8 @@ fn plot_opts(spec) = {
             o = map_set(o, k, map_get(spec, k))
         }
     }
-    if map_has_key(spec, "w") && !map_has_key(spec, "width") => { o = map_set(o, "width", map_get(spec, "w")) }
-    if map_has_key(spec, "h") && !map_has_key(spec, "height") => { o = map_set(o, "height", map_get(spec, "h")) }
+    if map_has_key(spec, "w") && !map_has_key(spec, "width") => { o = map_set(o, "width", spec.w) }
+    if map_has_key(spec, "h") && !map_has_key(spec, "height") => { o = map_set(o, "height", spec.h) }
     o
 }
 
@@ -90,7 +90,7 @@ fn spec_problems(spec, where_) = {
         }
     }
     if map_has_key(spec, "layers") => {
-        for layer in map_get(spec, "layers") {
+        for layer in spec.layers {
             problems = problems + spec_problems(layer, "a layer")
         }
     }
@@ -98,9 +98,9 @@ fn spec_problems(spec, where_) = {
 }
 
 fn has_data(spec) =
-    if map_has_key(spec, "data") && len(map_get(spec, "data")) > 0 => true
+    if map_has_key(spec, "data") && len(spec.data) > 0 => true
     else if map_has_key(spec, "layers") =>
-        len(filter(map_get(spec, "layers"), (l) => has_data(l))) > 0
+        len(filter(spec.layers, (l) => has_data(l))) > 0
     else => false
 
 fn check_spec_keys(spec, where_) = {
@@ -148,15 +148,15 @@ fn ramp_colors(vals, scale) = {
 // Entry columns are lists on the record path and Series on the
 // columnar path — downstream code accepts either.
 fn layer_entries(layer, fallback_data) = {
-    let d = if map_has_key(layer, "data") => map_get(layer, "data")
+    let d = if map_has_key(layer, "data") => layer.data
         else => fallback_data
-    let x = map_get(layer, "x")
-    let y = map_get(layer, "y")
+    let x = layer.x
+    let y = layer.y
     let mark = norm_mark(opt(layer, "mark", "line"))
     if map_has_key(layer, "color") || typeof(d) == "List" => {
         let records = records_of(d)
         if map_has_key(layer, "color") => {
-            let c = map_get(layer, "color")
+            let c = layer.color
             map(groups(records, c), (g) => {
                 let rows = filter(records, (r) => map_get(r, c) == g)
                 [to_label(g), mark, col(rows, x), col(rows, y)]
@@ -164,7 +164,7 @@ fn layer_entries(layer, fallback_data) = {
         } else => {
             let base = [to_label(opt(layer, "label", y)), mark, col(records, x), col(records, y)]
             if map_has_key(layer, "color_by") => [base + [ramp_colors(
-                col(records, map_get(layer, "color_by")), opt(layer, "scale", "thermal"))]]
+                col(records, layer.color_by), opt(layer, "scale", "thermal"))]]
             else => [base]
         }
     } else => {
@@ -172,16 +172,16 @@ fn layer_entries(layer, fallback_data) = {
         // no per-row conversion, the fast lane for large data.
         let base = [to_label(opt(layer, "label", y)), mark, ods.column(d, x), ods.column(d, y)]
         if map_has_key(layer, "color_by") => [base + [ramp_colors(
-            ods.to_list(ods.column(d, map_get(layer, "color_by"))),
+            ods.to_list(ods.column(d, layer.color_by)),
             opt(layer, "scale", "thermal"))]]
         else => [base]
     }
 }
 
 fn xy_entries(spec) = {
-    let data = if map_has_key(spec, "data") => map_get(spec, "data")
+    let data = if map_has_key(spec, "data") => spec.data
         else => []
-    let layers = if map_has_key(spec, "layers") => map_get(spec, "layers")
+    let layers = if map_has_key(spec, "layers") => spec.layers
         else => [spec]
     let mut entries = []
     for layer in layers {
@@ -206,21 +206,21 @@ share fn chart(spec) = {
             if len(en) == 5 => [en[0], en[1], as_series(en[2]), as_series(en[3]), en[4]]
             else => [en[0], en[1], as_series(en[2]), as_series(en[3])]), o)
     } else => {
-        let records = records_of(map_get(spec, "data"))
+        let records = records_of(spec.data)
         if mark == "hist" => plot.hist(
-            ods.series(col(records, map_get(spec, "y"))), opt(spec, "bins", 20), o)
+            ods.series(col(records, spec.y)), opt(spec, "bins", 20), o)
         else => {
-            let xcol = map_get(spec, "x")
+            let xcol = spec.x
             let cats = groups(records, xcol)
             let labels = map(cats, (v) => to_label(v))
             if mark == "box" => plot.box(map(cats, (cat) =>
                 [to_label(cat), ods.series(col(filter(records, (r) =>
-                    map_get(r, xcol) == cat), map_get(spec, "y")))]), o)
+                    map_get(r, xcol) == cat), spec.y))]), o)
             else => {
                 // bar: rows sharing a category sum; color splits series.
-                let ycol = map_get(spec, "y")
+                let ycol = spec.y
                 if map_has_key(spec, "color") => {
-                    let ccol = map_get(spec, "color")
+                    let ccol = spec.color
                     let pairs = map(groups(records, ccol), (g) => [to_label(g),
                         ods.series(map(cats, (cat) =>
                             sum(col(filter(records, (r) =>
@@ -350,14 +350,14 @@ fn is_mark(d) =
 
 // One line per mark family; values arrive as attribute strings.
 fn tip_text(d) = {
-    let prefix = if map_has_key(d, "s") && map_get(d, "s") != "" => map_get(d, "s") + " · " else => ""
-    if map_has_key(d, "med") => prefix + "median " + map_get(d, "med")
-            + "  [" + map_get(d, "q1") + " – " + map_get(d, "q3") + "]"
+    let prefix = if map_has_key(d, "s") && d.s != "" => d.s + " · " else => ""
+    if map_has_key(d, "med") => prefix + "median " + d.med
+            + "  [" + d.q1 + " – " + d.q3 + "]"
     else => {
-        if map_has_key(d, "xl") => map_get(d, "xl") + " × " + map_get(d, "yl") + ": " + map_get(d, "value")
+        if map_has_key(d, "xl") => d.xl + " × " + d.yl + ": " + d.value
         else => {
-            if map_has_key(d, "value") => prefix + map_get(d, "label") + ": " + map_get(d, "value")
-            else => prefix + "(" + map_get(d, "x") + ", " + map_get(d, "y") + ")"
+            if map_has_key(d, "value") => prefix + d.label + ": " + d.value
+            else => prefix + "(" + d.x + ", " + d.y + ")"
         }
     }
 }
@@ -376,11 +376,11 @@ share fn tooltip(el) = {
     }
     dom.append(dom.query("body"), tip)
     dom.on(el, "pointermove", (e) => {
-        let d = map_get(e, "data")
+        let d = e.data
         if is_mark(d) => {
             dom.set_text(tip, tip_text(d))
-            dom.set_style(tip, "left", show(map_get(e, "x") + 14) + "px")
-            dom.set_style(tip, "top", show(map_get(e, "y") + 12) + "px")
+            dom.set_style(tip, "left", show(e.x + 14) + "px")
+            dom.set_style(tip, "top", show(e.y + 12) + "px")
             dom.set_style(tip, "display", "block")
         } else => dom.set_style(tip, "display", "none")
     })
@@ -393,7 +393,7 @@ share fn tooltip(el) = {
 // was an interactive mark, and receives the mark's data map.
 share fn on_mark(el, event, handler) =
     dom.on(el, event, (e) => {
-        let d = map_get(e, "data")
+        let d = e.data
         if is_mark(d) => handler(d)
     })
 
@@ -423,6 +423,6 @@ share fn brush(el, handler) = {
 
 fn x_frac(el, e) = {
     let r = dom.measure(el)
-    let f = (to_float(map_get(e, "x")) - map_get(r, "x")) / map_get(r, "width")
+    let f = (to_float(e.x) - r.x) / r.width
     math.max(0.0, math.min(1.0, f))
 }

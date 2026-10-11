@@ -52,7 +52,7 @@ fn migrate(conn) = {
 
 // First run seeds a starter category set only — never transactions.
 share fn seed_if_empty(conn) = {
-    let n = map_get(unwrap(db.query_one(conn, "SELECT COUNT(*) AS n FROM categories")), "n")
+    let n = unwrap(db.query_one(conn, "SELECT COUNT(*) AS n FROM categories")).n
     if n == 0 => {
         let starters = [
             ["Groceries", "expense"], ["Rent", "expense"], ["Transport", "expense"],
@@ -95,9 +95,9 @@ share fn create_transaction(conn, fields) = {
     let made = unwrap(db.query_one(conn,
         "INSERT INTO transactions (date, amount_cents, category_id, note, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
-        [map_get(fields, "date"), map_get(fields, "amount_cents"),
-         map_get(fields, "category_id"), map_get(fields, "note"), now, now]))
-    unwrap(get_transaction(conn, map_get(made, "id")))
+        [fields.date, fields.amount_cents,
+         fields.category_id, fields.note, now, now]))
+    unwrap(get_transaction(conn, made.id))
 }
 
 // Partial update from a validated field map; Err when the id is unknown.
@@ -158,8 +158,8 @@ share fn rename_category(conn, id, name) = match db.query_one(conn,
 // caller turns "in use" into a 409. Budget rows for an unused category
 // are removed in the same transaction as the category itself.
 share fn delete_category(conn, id) = {
-    let used = map_get(unwrap(db.query_one(conn,
-        "SELECT COUNT(*) AS n FROM transactions WHERE category_id = ?", [id])), "n")
+    let used = unwrap(db.query_one(conn,
+        "SELECT COUNT(*) AS n FROM transactions WHERE category_id = ?", [id])).n
     if used > 0 => Err("in use")
     else => {
         unwrap(db.begin(conn))
@@ -201,30 +201,30 @@ test "migrations, seed, and transaction round-trip" {
     seed_if_empty(conn)
     let cats = list_categories(conn)
     assert_true(len(cats) >= 8, "starter categories seeded")
-    let cid = map_get(cats[0], "id")
+    let cid = cats[0].id
     let made = create_transaction(conn, #{
         "date": "2026-08-15", "amount_cents": -1250, "category_id": cid, "note": "coffee" })
-    assert_eq(map_get(made, "amount_cents"), -1250)
+    assert_eq(made.amount_cents, -1250)
     let listed = list_transactions(conn, "2026-08", "2026-08")
     assert_eq(len(listed), 1)
-    let up = unwrap(update_transaction(conn, map_get(made, "id"), #{ "amount_cents": -1300 }))
-    assert_eq(map_get(up, "amount_cents"), -1300)
-    assert_true(is_ok(delete_transaction(conn, map_get(made, "id"))), "delete works")
-    assert_true(is_err(get_transaction(conn, map_get(made, "id"))), "gone after delete")
+    let up = unwrap(update_transaction(conn, made.id, #{ "amount_cents": -1300 }))
+    assert_eq(up.amount_cents, -1300)
+    assert_true(is_ok(delete_transaction(conn, made.id)), "delete works")
+    assert_true(is_err(get_transaction(conn, made.id)), "gone after delete")
 }
 
 test "category delete guards and budget upsert" {
     let conn = open_store(":memory:")
     seed_if_empty(conn)
     let cats = list_categories(conn)
-    let cid = map_get(cats[0], "id")
+    let cid = cats[0].id
     let t = create_transaction(conn, #{
         "date": "2026-08-01", "amount_cents": -100, "category_id": cid, "note": "" })
     assert_true(is_err(delete_category(conn, cid)), "in-use category refuses delete")
     let b1 = unwrap(put_budget(conn, cid, "2026-08", 50000))
-    assert_eq(map_get(b1, "amount_cents"), 50000)
+    assert_eq(b1.amount_cents, 50000)
     let b2 = unwrap(put_budget(conn, cid, "2026-08", 60000))
-    assert_eq(map_get(b2, "amount_cents"), 60000)
+    assert_eq(b2.amount_cents, 60000)
     assert_eq(len(list_budgets(conn, "2026-08", "2026-08")), 1)
     unwrap(put_budget(conn, cid, "2026-08", 0))
     assert_eq(len(list_budgets(conn, "2026-08", "2026-08")), 0)

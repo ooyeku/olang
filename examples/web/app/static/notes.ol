@@ -11,15 +11,15 @@ fn load() = unwrap_or(json.parse(dom.storage_get("notes-v1")), [])
 fn save(notes) = dom.storage_set("notes-v1", unwrap(json.stringify(notes)))
 
 fn selected() = {
-    let q = map_get(dom.location(), "query")
-    if map_has_key(q, "sel") => map_get(q, "sel") else => ""
+    let q = dom.location().query
+    if map_has_key(q, "sel") => q.sel else => ""
 }
 
 fn note_row(n, sel) = {
-    let id = map_get(n, "id")
+    let id = n.id
     let classes = if id == sel => "n-row sel" else => "n-row"
     hk(id, "div", #{ "class": classes, "id": "note-" + id }, [
-        h("span", #{ "id": "t-" + id }, [map_get(n, "title")]),
+        h("span", #{ "id": "t-" + id }, [n.title]),
         h("button", #{ "id": "del-" + id }, ["x"])
     ])
 }
@@ -43,10 +43,10 @@ fn add_note() = {
     }
 }
 
-fn without(notes, id) = filter(notes, (n) => map_get(n, "id") != id)
+fn without(notes, id) = filter(notes, (n) => n.id != id)
 
 fn on_list_click(e) = {
-    let tid = map_get(e, "id")
+    let tid = e.id
     if starts_with(tid, "del-") => {
         save(without(load(), str.substring(tid, 4, len(tid))))
         draw()

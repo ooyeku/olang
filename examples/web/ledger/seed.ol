@@ -21,8 +21,8 @@ seed_if_empty(conn)
 let cats = list_categories(conn)
 
 fn cat_id(name) = {
-    let hit = cats |> filter((c) => map_get(c, "name") == name)
-    map_get(hit[0], "id")
+    let hit = cats |> filter((c) => c.name == name)
+    hit[0].id
 }
 
 // Plausible monthly shapes: [category, low_cents, high_cents, times_per_month]

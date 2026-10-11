@@ -24,7 +24,7 @@ share fn open_db(path, migrations) = {
 /// The recorded schema version.
 share fn version(conn) = {
     let rows = unwrap(db.query(conn, "SELECT version FROM schema_version"))
-    if len(rows) == 0 => 0 else => map_get(rows[0], "version")
+    if len(rows) == 0 => 0 else => rows[0].version
 }
 
 /// All rows for a parameterized query.
@@ -58,7 +58,7 @@ share fn insert_row(conn, table_name, fields) = {
     unwrap(db.execute(conn,
         "INSERT INTO " + table_name + " (" + join(cols, ", ") + ") VALUES (" + marks + ")",
         vals))
-    map_get(unwrap(db.query(conn, "SELECT last_insert_rowid() AS id"))[0], "id")
+    unwrap(db.query(conn, "SELECT last_insert_rowid() AS id"))[0].id
 }
 
 /// Update by id from a map; the affected-row count (0 = no such row).
@@ -85,7 +85,7 @@ test "migrations apply once, in order, and record the version" {
     ])
     assert_eq(version(conn), 2)
     let id = insert_row(conn, "todos", #{ "title": "ship" })
-    assert_eq(map_get(row(conn, "SELECT * FROM todos WHERE id = ?", [id]), "done"), 0)
+    assert_eq(row(conn, "SELECT * FROM todos WHERE id = ?", [id]).done, 0)
 }
 
 test "insert, update, one, and absence as Unit" {
@@ -94,7 +94,7 @@ test "insert, update, one, and absence as Unit" {
     ])
     let id = insert_row(conn, "t", #{ "a": "x", "b": 1 })
     assert_eq(update_row(conn, "t", id, #{ "a": "y" }), 1)
-    assert_eq(map_get(row(conn, "SELECT * FROM t WHERE id = ?", [id]), "a"), "y")
+    assert_eq(row(conn, "SELECT * FROM t WHERE id = ?", [id]).a, "y")
     assert_eq(row(conn, "SELECT * FROM t WHERE id = ?", [999]), ())
     assert_eq(update_row(conn, "t", 999, #{ "a": "z" }), 0)
 }

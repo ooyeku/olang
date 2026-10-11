@@ -15,8 +15,8 @@
 // cache's growth rather than trusting the speedup.
 meta fn memo(decl) = {
     let node = head(unwrap(meta.parse(decl)))
-    let name = map_get(node, "name")
-    let p0 = head(map_get(node, "params"))
+    let name = node.name
+    let p0 = head(node.params)
     let impl_name = meta.fresh(name)
     let cache = meta.fresh("cache")
     let renamed = str.replace(decl, `fn ${name}(`, `fn ${impl_name}(`)
@@ -38,8 +38,8 @@ fn ${name}_cache_size() = map_len(cell.get(${cache}))`
 // ── @trace: log every call with its arguments and result ─────────────
 meta fn trace(decl) = {
     let node = head(unwrap(meta.parse(decl)))
-    let name = map_get(node, "name")
-    let params = map_get(node, "params")
+    let name = node.name
+    let params = node.params
     let plist = params |> join(", ")
     let shown = params |> map((p) => `show(${p})`) |> join(` + ", " + `)
     let impl_name = meta.fresh(name)

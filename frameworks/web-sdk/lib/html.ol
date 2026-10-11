@@ -75,8 +75,8 @@ share fn take_memo_tally() = {
 }
 
 fn keyed(node, key) =
-    if contains(["Map", "JsonObject"], typeof(node)) && map_has_key(node, "tag") && map_get(node, "tag") != "" =>
-        map_set(node, "attrs", map_set(map_get(node, "attrs"), "data-key", key))
+    if contains(["Map", "JsonObject"], typeof(node)) && map_has_key(node, "tag") && node.tag != "" =>
+        map_set(node, "attrs", map_set(node.attrs, "data-key", key))
     else => node
 
 share fn memo(key, inputs, build) =
@@ -169,15 +169,15 @@ share fn fragment(children) =
 /// A node's children as a flat list of nodes: nested lists spliced,
 /// strings wrapped as text, fragments opened. For code that inspects a
 /// tree; `render` and the browser's patcher do this as they walk.
-share fn children_of(node) = flatten_children(map_get(node, "children"))
+share fn children_of(node) = flatten_children(node.children)
 
 fn flatten_children(children) = {
     let mut out = []
     for c in children {
         if typeof(c) == "List" => { out = out + flatten_children(c) }
         else if typeof(c) == "String" => { out = out + [text(c)] }
-        else if contains(["Map", "JsonObject"], typeof(c)) && map_has_key(c, "tag") && map_get(c, "tag") == "" =>
-            { out = out + flatten_children(map_get(c, "children")) }
+        else if contains(["Map", "JsonObject"], typeof(c)) && map_has_key(c, "tag") && c.tag == "" =>
+            { out = out + flatten_children(c.children) }
         else => { out = out + [c] }
     }
     out
@@ -256,17 +256,17 @@ fn render_attrs(attrs) = {
 share fn render(node) = {
     if typeof(node) == "String" => escape(node)
     else if typeof(node) == "List" => node |> map((c) => render(c)) |> join("")
-    else if map_has_key(node, "text") => escape(map_get(node, "text"))
-    else if map_has_key(node, "raw") => map_get(node, "raw")
+    else if map_has_key(node, "text") => escape(node.text)
+    else if map_has_key(node, "raw") => node.raw
     // A memo's keep marker only exists for the browser's patch; markup
     // has nothing to keep.
     else if map_has_key(node, "keep") || map_has_key(node, "keeps") => ""
     else => {
-        let tag = map_get(node, "tag")
-        let inner = map_get(node, "children") |> map((c) => render(c)) |> join("")
+        let tag = node.tag
+        let inner = node.children |> map((c) => render(c)) |> join("")
         if tag == "" => inner
-        else if is_void(tag) => "<" + tag + render_attrs(map_get(node, "attrs")) + ">"
-        else => "<" + tag + render_attrs(map_get(node, "attrs")) + ">" + inner + "</" + tag + ">"
+        else if is_void(tag) => "<" + tag + render_attrs(node.attrs) + ">"
+        else => "<" + tag + render_attrs(node.attrs) + ">" + inner + "</" + tag + ">"
     }
 }
 
@@ -317,7 +317,7 @@ test "memo builds where there is no dom, and stamps its key on the element" {
 test "children stay nested and render the same; children_of flattens for a reader" {
     let node = ul(#{}, [[li(#{}, ["a"]), [li(#{}, ["b"])]], fragment(["c"])])
     assert_eq(render(node), "<ul><li>a</li><li>b</li>c</ul>")
-    assert_eq(len(map_get(node, "children")), 2)
+    assert_eq(len(node.children), 2)
     assert_eq(len(children_of(node)), 3)
 }
 
@@ -331,7 +331,7 @@ test "volatile always builds and leaves no stamp; memo with () inputs is volatil
 
 test "memo_list keys its rows and builds every one where there is no dom" {
     let rows = [#{ "id": 1, "t": "a" }, #{ "id": 2, "t": "b" }]
-    let nodes = memo_list("rows", rows, (r) => map_get(r, "id"), (r) => r, (r) => li(#{}, [map_get(r, "t")]))
+    let nodes = memo_list("rows", rows, (r) => r.id, (r) => r, (r) => li(#{}, [r.t]))
     assert_eq(render(ul(#{}, nodes)), "<ul><li data-key=\"rows:1\">a</li><li data-key=\"rows:2\">b</li></ul>")
 }
 

@@ -29,22 +29,22 @@ fn save_bodies(bodies) = dom.set_value(state, unwrap(json.stringify(bodies)))
 fn load_bodies() = unwrap_or(json.parse(dom.value(state)), seed_bodies())
 
 fn step_body(b, dt) = body(
-    map_get(b, "r"),
-    map_get(b, "speed"),
-    map_get(b, "size"),
-    map_get(b, "hue"),
-    map_get(b, "angle") + map_get(b, "speed") * dt
+    b.r,
+    b.speed,
+    b.size,
+    b.hue,
+    b.angle + b.speed * dt
 )
 
 fn hsl(hue) = "hsl(" + show(hue) + " 80% 62%)"
 
 fn body_ops(b) = {
-    let a = map_get(b, "angle")
-    let r = map_get(b, "r")
+    let a = b.angle
+    let r = b.r
     let x = cx + r * math.cos(a)
     let y = cy + r * math.sin(a)
-    let size = map_get(b, "size")
-    let color = hsl(map_get(b, "hue"))
+    let size = b.size
+    let color = hsl(b.hue)
     [
         #{ "op": "circle", "x": cx, "y": cy, "r": r,
            "stroke": "rgba(127,147,163,0.14)", "line_width": 1 },
@@ -70,7 +70,7 @@ fn scene(bodies) = {
 }
 
 fn on_frame(f) = {
-    let dt = map_get(f, "delta") / 1000.0
+    let dt = f.delta / 1000.0
     let mut stepped = []
     for b in load_bodies() {
         stepped = stepped + [step_body(b, dt)]
@@ -82,8 +82,8 @@ fn on_frame(f) = {
 
 fn on_click(e) = {
     let rect = dom.measure(sky)
-    let px = map_get(e, "x") - map_get(rect, "x")
-    let py = map_get(e, "y") - map_get(rect, "y")
+    let px = e.x - rect.x
+    let py = e.y - rect.y
     let dx = px - cx
     let dy = py - cy
     let r = math.sqrt(dx * dx + dy * dy)

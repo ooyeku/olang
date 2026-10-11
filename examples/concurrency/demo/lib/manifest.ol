@@ -36,7 +36,7 @@ share fn events_by_kind(lines) =
     lines |> fold(#{}, (acc, line) => {
         match parse_log_line(line) {
             Ok(rec) => {
-                let k = map_get(rec, "event")
+                let k = rec.event
                 let n = if map_has_key(acc, k) => map_get(acc, k) else => 0
                 map_set(acc, k, n + 1)
             },
@@ -57,15 +57,15 @@ share fn day_to_json(day: Int, revenue: Float, vessels_served: Int) = {
 
 share fn day_from_json(doc) = {
     let parsed = unwrap(json.parse(doc))
-    { day: map_get(parsed, "day"), revenue: map_get(parsed, "revenue"),
-      vessels: map_get(parsed, "vessels") }
+    { day: parsed.day, revenue: parsed.revenue,
+      vessels: parsed.vessels }
 }
 
 // ── CSV: the charge log as an exportable table ──────────────────────
 share fn charges_to_csv(rows) = {
     let table = concat([["callsign", "kind", "units", "amount"]],
-        rows |> map((r) => [map_get(r, "callsign"), map_get(r, "kind"),
-                            show(map_get(r, "units")), show(map_get(r, "amount"))]))
+        rows |> map((r) => [r.callsign, r.kind,
+                            show(r.units), show(r.amount)]))
     csv.stringify(table)
 }
 
@@ -77,11 +77,11 @@ test "log lines round-trip through the parser" {
     let line = log_line(42, "berthed", "ABCD-123", 2, "MV Iron Duke")
     testing.assert_eq(line, "T0042 BERTHED ABCD-123 @2 | MV Iron Duke")
     let rec = unwrap(parse_log_line(line))
-    testing.assert_eq(map_get(rec, "tick"), 42)
-    testing.assert_eq(map_get(rec, "event"), "BERTHED")
-    testing.assert_eq(map_get(rec, "callsign"), "ABCD-123")
-    testing.assert_eq(map_get(rec, "berth"), 2)
-    testing.assert_eq(map_get(rec, "name"), "MV Iron Duke")
+    testing.assert_eq(rec.tick, 42)
+    testing.assert_eq(rec.event, "BERTHED")
+    testing.assert_eq(rec.callsign, "ABCD-123")
+    testing.assert_eq(rec.berth, 2)
+    testing.assert_eq(rec.name, "MV Iron Duke")
     testing.assert_true(is_err(parse_log_line("not a log line")))
 }
 
@@ -93,8 +93,8 @@ test "event tallies" {
         "garbage line"
     ]
     let tally = events_by_kind(lines)
-    testing.assert_eq(map_get(tally, "ARRIVED"), 2)
-    testing.assert_eq(map_get(tally, "BERTHED"), 1)
+    testing.assert_eq(tally.ARRIVED, 2)
+    testing.assert_eq(tally.BERTHED, 1)
     testing.assert_false(map_has_key(tally, "garbage"))
 }
 

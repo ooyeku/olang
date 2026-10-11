@@ -59,18 +59,18 @@ let routes = [
 
     rpc("tasks.toggle", (req, p) => {
         let payload = match json.parse(req.body) { Ok(v) => v, Err(e) => #{} }
-        let id = map_get(payload, "id")
+        let id = payload.id
         let t = row(conn, "SELECT * FROM tasks WHERE id = ?", [id])
         if t == () => Err("no task " + to_string(id))
         else => {
-            let n = update_row(conn, "tasks", id, #{ "done": 1 - map_get(t, "done") })
+            let n = update_row(conn, "tasks", id, #{ "done": 1 - t.done })
             row(conn, "SELECT * FROM tasks WHERE id = ?", [id])
         }
     }),
 
     rpc("tasks.delete", (req, p) => {
         let payload = match json.parse(req.body) { Ok(v) => v, Err(e) => #{} }
-        let n = exec(conn, "DELETE FROM tasks WHERE id = ?", [map_get(payload, "id")])
+        let n = exec(conn, "DELETE FROM tasks WHERE id = ?", [payload.id])
         #{ "deleted": n }
     }),
 
@@ -80,8 +80,8 @@ let routes = [
             "SELECT COUNT(*) AS n, COALESCE(SUM(points), 0) AS pts FROM tasks WHERE done = 0", [])
         let done_row = row(conn,
             "SELECT COUNT(*) AS n, COALESCE(SUM(points), 0) AS pts FROM tasks WHERE done = 1", [])
-        #{ "open": map_get(open_row, "n"), "open_pts": map_get(open_row, "pts"),
-           "done": map_get(done_row, "n"), "done_pts": map_get(done_row, "pts") }
+        #{ "open": open_row.n, "open_pts": open_row.pts,
+           "done": done_row.n, "done_pts": done_row.pts }
     })
 ]
 

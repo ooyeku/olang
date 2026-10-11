@@ -22,7 +22,7 @@ let by_region = sales
     |> ods.sort_by("region", false)
 println("── revenue by region ──")
 for rec in ods.to_records(by_region) {
-    println("  " + str.pad_end(map_get(rec, "region"), 6, " ") + "$" + to_string(map_get(rec, "revenue")))
+    println("  " + str.pad_end(rec.region, 6, " ") + "$" + to_string(rec.revenue))
 }
 
 // ── totals ──
@@ -33,14 +33,14 @@ println("  revenue: $" + to_string(total))
 println(`  units:   ${units}`)
 
 let top = head(sales |> ods.sort_by("revenue", true) |> ods.head(1) |> ods.to_records())
-println("  top sale: " + map_get(top, "product") + " in " + map_get(top, "region") + " ($" + to_string(map_get(top, "revenue")) + ")")
+println("  top sale: " + top.product + " in " + top.region + " ($" + to_string(top.revenue) + ")")
 
 // ── emit a JSON report ──
 let report = {
     total_revenue: total,
     total_units: units,
     regions: ods.to_list(by_region["region"]),
-    top_product: map_get(top, "product")
+    top_product: top.product
 }
 let out = unwrap(json.stringify(report))
 unwrap(fs.write_file("report.json", out))

@@ -61,6 +61,6 @@ fn cluster(xs, ys, k, iters) = {
 }
 let pts = gen(n)
 let t0 = time.monotonic_ms()
-let largest = cluster(map_get(pts, "xs"), map_get(pts, "ys"), k, iters)
+let largest = cluster(pts.xs, pts.ys, k, iters)
 println(`CHECK ${largest}`)
 println(`MS ${time.monotonic_ms() - t0}`)

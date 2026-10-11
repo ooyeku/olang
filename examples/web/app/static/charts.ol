@@ -26,7 +26,7 @@ let statuses = ["open", "in-progress", "done"]
 let priorities = ["low", "medium", "high"]
 
 fn count_where(items, st, pr) = len(filter(items, (i) =>
-    map_get(i, "status") == st && map_get(i, "priority") == pr))
+    i.status == st && i.priority == pr))
 
 fn draw(items) = {
     // The cross-filter: a clicked status narrows every card but the
@@ -36,7 +36,7 @@ fn draw(items) = {
     let saved = dom.state_get("filter")
     let sel = if typeof(saved) == "String" => saved else => ""
     let picked = if sel == "" => items
-        else => filter(items, (i) => map_get(i, "status") == sel)
+        else => filter(items, (i) => i.status == sel)
 
     // One derived column: every issue counts once. That is the whole
     // aggregation story — bar marks sum rows sharing a category.
@@ -74,7 +74,7 @@ fn draw(items) = {
     let mut n = 1
     let mut cum = []
     for i in picked {
-        total = total + map_get(i, "points")
+        total = total + i.points
         cum = cum + [#{ "n": n, "total": total }]
         n = n + 1
     }
@@ -91,7 +91,7 @@ fn draw(items) = {
 fn refresh() = dom.fetch_json("GET", "/api/issues?limit=500", "", (resp) => {
     // A fetch failure delivers #{ "error": ... } — keep the last render.
     if map_has_key(resp, "items") => {
-        let items = map_get(resp, "items")
+        let items = resp.items
         if len(items) == 0 => dom.set_text(dom.query("#hud"), "no issues to chart — add some in the tracker")
         else => draw(items)
     }
@@ -104,7 +104,7 @@ for id in ["c-status", "c-grouped", "c-stacked", "c-hist", "c-box", "c-heat", "c
     viz.tooltip(dom.query("#" + id))
 }
 viz.on_mark(dom.query("#c-status"), "click", (d) => {
-    let hit = map_get(d, "label")
+    let hit = d.label
     let saved = dom.state_get("filter")
     let cur = if typeof(saved) == "String" => saved else => ""
     dom.state_set("filter", if cur == hit => "" else => hit)

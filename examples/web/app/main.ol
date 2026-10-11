@@ -148,11 +148,11 @@ fn olang_wasm(req, params) = {
         let accepts = if map_has_key(req.headers, "accept-encoding") =>
             map_get(req.headers, "accept-encoding") else => ""
         let base = #{ "Content-Type": "application/wasm", "Cache-Control": "no-cache", "Vary": "Accept-Encoding" }
-        if str.contains(accepts, "br") && map_get(runtime_wasm, "br") != () =>
-            { status: 200, body: map_get(runtime_wasm, "br"), headers: map_set(base, "Content-Encoding", "br") }
-        else if str.contains(accepts, "gzip") && map_get(runtime_wasm, "gzip") != () =>
-            { status: 200, body: map_get(runtime_wasm, "gzip"), headers: map_set(base, "Content-Encoding", "gzip") }
-        else => { status: 200, body: map_get(runtime_wasm, "bytes"), headers: base }
+        if str.contains(accepts, "br") && runtime_wasm.br != () =>
+            { status: 200, body: runtime_wasm.br, headers: map_set(base, "Content-Encoding", "br") }
+        else if str.contains(accepts, "gzip") && runtime_wasm.gzip != () =>
+            { status: 200, body: runtime_wasm.gzip, headers: map_set(base, "Content-Encoding", "gzip") }
+        else => { status: 200, body: runtime_wasm.bytes, headers: base }
     }
 }
 fn app_image(req, params) =
@@ -193,7 +193,7 @@ fn issues_create(req, params) = match parse_body(req) {
     }
 }
 
-fn issues_get(req, params) = match validate_id(map_get(params, "id")) {
+fn issues_get(req, params) = match validate_id(params.id) {
     Err(msg) => error_response(400, "bad_id", msg),
     Ok(id) => match get_issue(conn, id) {
         Err(e) => error_response(404, "not_found", "no issue " + show(id)),
@@ -201,7 +201,7 @@ fn issues_get(req, params) = match validate_id(map_get(params, "id")) {
     }
 }
 
-fn issues_update(req, params) = match validate_id(map_get(params, "id")) {
+fn issues_update(req, params) = match validate_id(params.id) {
     Err(msg) => error_response(400, "bad_id", msg),
     Ok(id) => match parse_body(req) {
         Err(e) => error_response(400, "bad_json", "body must be JSON"),
@@ -215,17 +215,17 @@ fn issues_update(req, params) = match validate_id(map_get(params, "id")) {
     }
 }
 
-fn issues_delete(req, params) = match validate_id(map_get(params, "id")) {
+fn issues_delete(req, params) = match validate_id(params.id) {
     Err(msg) => error_response(400, "bad_id", msg),
     Ok(id) => match delete_issue(conn, id) {
         Err(e) => error_response(404, "not_found", "no issue " + show(id)),
-        Ok(gone) => json_response(200, { deleted: map_get(gone, "id"), title: map_get(gone, "title") })
+        Ok(gone) => json_response(200, { deleted: gone.id, title: gone.title })
     }
 }
 
 // ── comments ──
 
-fn comments_list(req, params) = match validate_id(map_get(params, "id")) {
+fn comments_list(req, params) = match validate_id(params.id) {
     Err(msg) => error_response(400, "bad_id", msg),
     Ok(id) => match get_issue(conn, id) {
         Err(e) => error_response(404, "not_found", "no issue " + show(id)),
@@ -233,7 +233,7 @@ fn comments_list(req, params) = match validate_id(map_get(params, "id")) {
     }
 }
 
-fn comments_add(req, params) = match validate_id(map_get(params, "id")) {
+fn comments_add(req, params) = match validate_id(params.id) {
     Err(msg) => error_response(400, "bad_id", msg),
     Ok(id) => match get_issue(conn, id) {
         Err(e) => error_response(404, "not_found", "no issue " + show(id)),
@@ -291,13 +291,13 @@ fn backup(req, params) = {
     let snapshot = { taken: dates.utc_now(), issues: all_issues(conn) }
     let name = "backups/tracker-" + show(time.now_ms()) + ".json"
     match fs.write_file(name, unwrap(json.stringify(snapshot))) {
-        Ok(v) => json_response(201, { backup: name, issues: len(map_get(snapshot, "issues")) }),
+        Ok(v) => json_response(201, { backup: name, issues: len(snapshot.issues) }),
         Err(e) => error_response(500, "backup_failed", show(e))
     }
 }
 
 fn health(req, params) = {
-    let n = map_get(unwrap(db.query_one(conn, "SELECT COUNT(*) AS n FROM issues")), "n")
+    let n = unwrap(db.query_one(conn, "SELECT COUNT(*) AS n FROM issues")).n
     json_response(200, {
         status: "ok", service: "olang-tracker", db: db_path,
         issues: n, uptime_ms: time.monotonic_ms() - boot_ms
@@ -352,13 +352,13 @@ let standing_headers = #{ "X-Content-Type-Options": "nosniff", "Referrer-Policy"
                           "X-Frame-Options": "DENY" }
 
 fn finish(req, response) = {
-    let own = if map_has_key(response, "headers") => map_get(response, "headers") else => #{}
+    let own = if map_has_key(response, "headers") => response.headers else => #{}
     let hs = fold(map_keys(standing_headers), own,
         (acc, k) => map_set(acc, k, map_get(standing_headers, k)))
     let with_hs = map_set(response, "headers", hs)
     let accepts = if map_has_key(req.headers, "accept-encoding") =>
         map_get(req.headers, "accept-encoding") else => ""
-    let body = if map_has_key(with_hs, "body") => map_get(with_hs, "body") else => ()
+    let body = if map_has_key(with_hs, "body") => with_hs.body else => ()
     if typeof(body) == "String" && str.length(body) >= 1024 && str.contains(accepts, "gzip")
         && map_has_key(hs, "Content-Encoding") == false =>
         map_set(map_set(with_hs, "body", compress.gzip(body)),

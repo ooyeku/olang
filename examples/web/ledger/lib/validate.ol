@@ -23,22 +23,22 @@ share fn validate_transaction(doc, partial) = {
     let mut problems = []
 
     if map_has_key(doc, "date") || !partial => {
-        let v = map_get(doc, "date")
+        let v = doc.date
         if valid_date(v) => { fields = map_set(fields, "date", v) }
         else => { problems = concat(problems, [problem("date", "must be YYYY-MM-DD")]) }
     }
     if map_has_key(doc, "amount_cents") || !partial => {
-        let v = map_get(doc, "amount_cents")
+        let v = doc.amount_cents
         if typeof(v) == "Int" && v != 0 => { fields = map_set(fields, "amount_cents", v) }
         else => { problems = concat(problems, [problem("amount_cents", "must be a non-zero integer (cents)")]) }
     }
     if map_has_key(doc, "category_id") || !partial => {
-        let v = map_get(doc, "category_id")
+        let v = doc.category_id
         if typeof(v) == "Int" && v > 0 => { fields = map_set(fields, "category_id", v) }
         else => { problems = concat(problems, [problem("category_id", "must be a positive integer")]) }
     }
     if map_has_key(doc, "note") => {
-        let v = map_get(doc, "note")
+        let v = doc.note
         if typeof(v) == "String" && str.length(v) <= 500 => { fields = map_set(fields, "note", v) }
         else => { problems = concat(problems, [problem("note", "must be a string of at most 500 characters")]) }
     }
@@ -54,8 +54,8 @@ share fn validate_transaction(doc, partial) = {
 
 share fn validate_category(doc) = {
     let mut problems = []
-    let name = if map_has_key(doc, "name") => map_get(doc, "name") else => ""
-    let kind = if map_has_key(doc, "kind") => map_get(doc, "kind") else => ""
+    let name = if map_has_key(doc, "name") => doc.name else => ""
+    let kind = if map_has_key(doc, "kind") => doc.kind else => ""
     let clean_name = if typeof(name) == "String" => str.trim(name) else => ""
     if clean_name == "" || str.length(clean_name) > 60 =>
         { problems = concat(problems, [problem("name", "must be 1-60 characters")]) }
@@ -66,7 +66,7 @@ share fn validate_category(doc) = {
 }
 
 share fn validate_rename(doc) = {
-    let name = if map_has_key(doc, "name") => map_get(doc, "name") else => ""
+    let name = if map_has_key(doc, "name") => doc.name else => ""
     let clean = if typeof(name) == "String" => str.trim(name) else => ""
     if clean == "" || str.length(clean) > 60 =>
         Err([problem("name", "must be 1-60 characters")])
@@ -77,9 +77,9 @@ share fn validate_rename(doc) = {
 
 share fn validate_budget(doc) = {
     let mut problems = []
-    let cid = if map_has_key(doc, "category_id") => map_get(doc, "category_id") else => 0
-    let month = if map_has_key(doc, "month") => map_get(doc, "month") else => ""
-    let amount = if map_has_key(doc, "amount_cents") => map_get(doc, "amount_cents") else => -1
+    let cid = if map_has_key(doc, "category_id") => doc.category_id else => 0
+    let month = if map_has_key(doc, "month") => doc.month else => ""
+    let amount = if map_has_key(doc, "amount_cents") => doc.amount_cents else => -1
     if !(typeof(cid) == "Int" && cid > 0) =>
         { problems = concat(problems, [problem("category_id", "must be a positive integer")]) }
     if !valid_month(month) =>
@@ -95,13 +95,13 @@ share fn validate_budget(doc) = {
 test "transaction validation catches each field and honors partial" {
     let good = unwrap(validate_transaction(
         #{ "date": "2026-08-15", "amount_cents": -1250, "category_id": 3, "note": "coffee" }, false))
-    assert_eq(map_get(good, "amount_cents"), -1250)
+    assert_eq(good.amount_cents, -1250)
     let bad = validate_transaction(#{ "date": "8/15/26", "amount_cents": 0, "category_id": 0 }, false)
     assert_true(is_err(bad), "three bad fields must fail")
     let problem_count = match bad { Err(problems) => len(problems), Ok(v) => 0 }
     assert_eq(problem_count, 3)
     let patch = unwrap(validate_transaction(#{ "note": "renamed" }, true))
-    assert_eq(map_get(patch, "note"), "renamed")
+    assert_eq(patch.note, "renamed")
     assert_true(is_err(validate_transaction(#{}, true)), "empty patch rejected")
     assert_true(is_err(validate_transaction(#{ "amount_cents": 12.5, "date": "2026-08-01", "category_id": 1 }, false)),
         "float cents rejected")
@@ -109,7 +109,7 @@ test "transaction validation catches each field and honors partial" {
 
 test "category, rename, and budget validation" {
     assert_true(is_ok(validate_category(#{ "name": "  Books ", "kind": "expense" })))
-    assert_eq(map_get(unwrap(validate_category(#{ "name": " Books ", "kind": "expense" })), "name"), "Books")
+    assert_eq(unwrap(validate_category(#{ "name": " Books ", "kind": "expense" })).name, "Books")
     assert_true(is_err(validate_category(#{ "name": "", "kind": "expense" })))
     assert_true(is_err(validate_category(#{ "name": "x", "kind": "loan" })))
     assert_true(is_err(validate_rename(#{ "name": "   " })))

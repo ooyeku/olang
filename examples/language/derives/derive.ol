@@ -15,11 +15,11 @@ meta fn type_info(decl) = head(unwrap(meta.parse(decl)))
 // as declared.
 meta fn json(decl) = {
     let node = type_info(decl)
-    let type_name = map_get(node, "name")
+    let type_name = node.name
     let fn_name = str.to_lower(type_name) + "_to_json"
-    let sets = map_get(node, "fields")
+    let sets = node.fields
         |> map((f) => {
-            let n = map_get(f, "name")
+            let n = f.name
             `let m = map_set(m, "${n}", v.${n})`
         })
         |> join("\n    ")
@@ -35,26 +35,26 @@ fn ${fn_name}(v) = {
 // values by type), and one with_<field> per field; build(b) constructs.
 meta fn builder(decl) = {
     let node = type_info(decl)
-    let type_name = map_get(node, "name")
+    let type_name = node.name
     let prefix = str.to_lower(type_name)
-    let fields = map_get(node, "fields")
+    let fields = node.fields
     let zero = (t) =>
         if t == "Int" => "0"
         else if t == "Float" => "0.0"
         else if t == "Bool" => "false"
         else => "\"\""
     let defaults = fields
-        |> map((f) => `"${map_get(f, "name")}": ${zero(map_get(f, "type"))}`)
+        |> map((f) => `"${f.name}": ${zero(f.type)}`)
         |> join(", ")
     let withs = fields
         |> map((f) => {
-            let n = map_get(f, "name")
+            let n = f.name
             `fn with_${n}(b, value) = map_set(b, "${n}", value)`
         })
         |> join("\n")
     let ctor_fields = fields
         |> map((f) => {
-            let n = map_get(f, "name")
+            let n = f.name
             `${n}: map_get(b, "${n}")`
         })
         |> join(", ")
@@ -69,15 +69,15 @@ fn ${prefix}_build(b) = ${type_name} { ${ctor_fields} }`
 // asserting the type round-trips through its builder.
 meta fn arbitrary(decl) = {
     let node = type_info(decl)
-    let type_name = map_get(node, "name")
+    let type_name = node.name
     let prefix = str.to_lower(type_name)
-    let fields = map_get(node, "fields")
+    let fields = node.fields
     let cases = range(0, 4) |> map((i) => {
         let seed = (i * 1103515245 + 12345) % 2147483648
         let sets = fields
             |> map((f) => {
-                let n = map_get(f, "name")
-                let t = map_get(f, "type")
+                let n = f.name
+                let t = f.type
                 let value =
                     if t == "Int" => to_string((seed / (100 + i)) % 997)
                     else if t == "Float" => to_string(to_float(seed % 100)) + ".5"

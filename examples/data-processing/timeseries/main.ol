@@ -76,14 +76,14 @@ println(to_string(ods.head(ods.tail(analyzed, 21), 7)))
 let by_jump = analyzed |> ods.drop_null(["delta"]) |> ods.sort_by("delta", true)
 let onset = head(ods.to_records(ods.head(by_jump, 1)))
 println("── biggest single-day jump ──")
-println(`  ${map_get(onset, "date")}: +${map_get(onset, "delta")}ms  (to ${map_get(onset, "latency_ms")}ms)`)
+println(`  ${onset.date}: +${onset.delta}ms  (to ${onset.latency_ms}ms)`)
 
 // The three worst days by rank — the incident, found by ordering rather
 // than by a hand-picked threshold.
 let worst = analyzed |> ods.sort_by("rank", true) |> ods.head(3)
 println("── three worst days (by severity rank) ──")
 for rec in ods.to_records(worst) {
-    println(`  #${map_get(rec, "rank")}  ${map_get(rec, "date")}  ${map_get(rec, "latency_ms")}ms`)
+    println(`  #${rec.rank}  ${rec.date}  ${rec.latency_ms}ms`)
 }
 
 // Days that ran hot relative to their own trailing average — a spike is
@@ -95,14 +95,14 @@ let ready = analyzed |> ods.drop_null(["ma7"])
 let flagged = ready[ready["latency_ms"] > ready["ma7"] * 1.4]
 println("── days running >40% above their 7-day average ──")
 for rec in ods.to_records(flagged) {
-    println(`  ${map_get(rec, "date")}  ${map_get(rec, "latency_ms")}ms  vs ma7 ${math.round(map_get(rec, "ma7"))}ms`)
+    println(`  ${rec.date}  ${rec.latency_ms}ms  vs ma7 ${math.round(rec.ma7)}ms`)
 }
 
 // The running peak never decreases: by the last day it holds the
 // incident's high-water mark, whatever happened since.
 println("── high-water mark by month end ──")
 let last = head(ods.to_records(ods.tail(analyzed, 1)))
-println(`  peak latency this month: ${map_get(last, "peak")}ms`)
+println(`  peak latency this month: ${last.peak}ms`)
 
 // ── windows and the bag, together ───────────────────────────────────
 // The sequence view does not replace the group view; they answer
@@ -115,7 +115,7 @@ let by_weekday = with_weekday
     |> ods.sort_by("weekday", false)
 println("── average latency by weekday (0 = Mon) ──")
 for rec in ods.to_records(by_weekday) {
-    println(`  day ${map_get(rec, "weekday")}: ${math.round(map_get(rec, "avg_latency"))}ms`)
+    println(`  day ${rec.weekday}: ${math.round(rec.avg_latency)}ms`)
 }
 
 // ── self-checks: the windows compute what they claim ────────────────

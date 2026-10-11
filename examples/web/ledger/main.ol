@@ -82,11 +82,11 @@ fn wasm_binary(req, params) = {
         let accepts = if map_has_key(req.headers, "accept-encoding") =>
             map_get(req.headers, "accept-encoding") else => ""
         let base = #{ "Content-Type": "application/wasm", "Cache-Control": "no-cache", "Vary": "Accept-Encoding" }
-        if str.contains(accepts, "br") && map_get(runtime_wasm, "br") != () =>
-            { status: 200, body: map_get(runtime_wasm, "br"), headers: map_set(base, "Content-Encoding", "br") }
-        else if str.contains(accepts, "gzip") && map_get(runtime_wasm, "gzip") != () =>
-            { status: 200, body: map_get(runtime_wasm, "gzip"), headers: map_set(base, "Content-Encoding", "gzip") }
-        else => { status: 200, body: map_get(runtime_wasm, "bytes"), headers: base }
+        if str.contains(accepts, "br") && runtime_wasm.br != () =>
+            { status: 200, body: runtime_wasm.br, headers: map_set(base, "Content-Encoding", "br") }
+        else if str.contains(accepts, "gzip") && runtime_wasm.gzip != () =>
+            { status: 200, body: runtime_wasm.gzip, headers: map_set(base, "Content-Encoding", "gzip") }
+        else => { status: 200, body: runtime_wasm.bytes, headers: base }
     }
 }
 fn frontend_image(req, params) =
@@ -129,7 +129,7 @@ fn transactions_create(req, params) = match parse_body(req) {
     }
 }
 
-fn transactions_update(req, params) = match validate_id(map_get(params, "id")) {
+fn transactions_update(req, params) = match validate_id(params.id) {
     Err(msg) => error_response(400, "bad_id", msg),
     Ok(id) => match parse_body(req) {
         Err(e) => error_response(400, "bad_json", "body must be JSON"),
@@ -143,11 +143,11 @@ fn transactions_update(req, params) = match validate_id(map_get(params, "id")) {
     }
 }
 
-fn transactions_delete(req, params) = match validate_id(map_get(params, "id")) {
+fn transactions_delete(req, params) = match validate_id(params.id) {
     Err(msg) => error_response(400, "bad_id", msg),
     Ok(id) => match delete_transaction(conn, id) {
         Err(e) => error_response(404, "not_found", "no transaction " + show(id)),
-        Ok(gone) => json_response(200, { deleted: map_get(gone, "id") })
+        Ok(gone) => json_response(200, { deleted: gone.id })
     }
 }
 
@@ -159,7 +159,7 @@ fn categories_create(req, params) = match parse_body(req) {
     Err(e) => error_response(400, "bad_json", "body must be JSON"),
     Ok(doc) => match validate_category(doc) {
         Err(problems) => error_with_details(422, "invalid", "validation failed", problems),
-        Ok(c) => match create_category(conn, map_get(c, "name"), map_get(c, "kind")) {
+        Ok(c) => match create_category(conn, c.name, c.kind) {
             Err(e) => error_with_details(422, "invalid", "validation failed",
                 [{ field: "name", message: show(e) }]),
             Ok(row) => json_response(201, row)
@@ -167,13 +167,13 @@ fn categories_create(req, params) = match parse_body(req) {
     }
 }
 
-fn categories_rename(req, params) = match validate_id(map_get(params, "id")) {
+fn categories_rename(req, params) = match validate_id(params.id) {
     Err(msg) => error_response(400, "bad_id", msg),
     Ok(id) => match parse_body(req) {
         Err(e) => error_response(400, "bad_json", "body must be JSON"),
         Ok(doc) => match validate_rename(doc) {
             Err(problems) => error_with_details(422, "invalid", "validation failed", problems),
-            Ok(c) => match rename_category(conn, id, map_get(c, "name")) {
+            Ok(c) => match rename_category(conn, id, c.name) {
                 Err(msg) => if msg == "not found" =>
                     error_response(404, "not_found", "no category " + show(id))
                 else =>
@@ -185,7 +185,7 @@ fn categories_rename(req, params) = match validate_id(map_get(params, "id")) {
     }
 }
 
-fn categories_delete(req, params) = match validate_id(map_get(params, "id")) {
+fn categories_delete(req, params) = match validate_id(params.id) {
     Err(msg) => error_response(400, "bad_id", msg),
     Ok(id) => match delete_category(conn, id) {
         Err(msg) => if msg == "in use" =>
@@ -207,8 +207,8 @@ fn budgets_put(req, params) = match parse_body(req) {
     Err(e) => error_response(400, "bad_json", "body must be JSON"),
     Ok(doc) => match validate_budget(doc) {
         Err(problems) => error_with_details(422, "invalid", "validation failed", problems),
-        Ok(b) => match put_budget(conn, map_get(b, "category_id"), map_get(b, "month"),
-                                  map_get(b, "amount_cents")) {
+        Ok(b) => match put_budget(conn, b.category_id, b.month,
+                                  b.amount_cents) {
             Err(msg) => error_with_details(422, "invalid", "validation failed",
                 [{ field: "category_id", message: msg }]),
             Ok(row) => json_response(200, row)
@@ -219,8 +219,8 @@ fn budgets_put(req, params) = match parse_body(req) {
 // ── health ──
 
 fn health(req, params) = {
-    let txs = map_get(unwrap(db.query_one(conn, "SELECT COUNT(*) AS n FROM transactions")), "n")
-    let cats = map_get(unwrap(db.query_one(conn, "SELECT COUNT(*) AS n FROM categories")), "n")
+    let txs = unwrap(db.query_one(conn, "SELECT COUNT(*) AS n FROM transactions")).n
+    let cats = unwrap(db.query_one(conn, "SELECT COUNT(*) AS n FROM categories")).n
     json_response(200, {
         status: "ok", service: "olang-ledger", db: db_path,
         transactions: txs, categories: cats,
@@ -261,13 +261,13 @@ let standing_headers = #{ "X-Content-Type-Options": "nosniff", "Referrer-Policy"
                           "X-Frame-Options": "DENY" }
 
 fn finish(req, response) = {
-    let own = if map_has_key(response, "headers") => map_get(response, "headers") else => #{}
+    let own = if map_has_key(response, "headers") => response.headers else => #{}
     let hs = fold(map_keys(standing_headers), own,
         (acc, k) => map_set(acc, k, map_get(standing_headers, k)))
     let with_hs = map_set(response, "headers", hs)
     let accepts = if map_has_key(req.headers, "accept-encoding") =>
         map_get(req.headers, "accept-encoding") else => ""
-    let body = if map_has_key(with_hs, "body") => map_get(with_hs, "body") else => ()
+    let body = if map_has_key(with_hs, "body") => with_hs.body else => ()
     if typeof(body) == "String" && str.length(body) >= 1024 && str.contains(accepts, "gzip")
         && map_has_key(hs, "Content-Encoding") == false =>
         map_set(map_set(with_hs, "body", compress.gzip(body)),

@@ -33,4 +33,4 @@ share fn make_server(port, workers) = {
 // Total hits the server actually recorded — the ground truth clients are
 // checked against.
 share fn server_hit_count(conn) =
-    map_get(unwrap(db.query_one(conn, "SELECT COUNT(*) AS c FROM hits")), "c")
+    unwrap(db.query_one(conn, "SELECT COUNT(*) AS c FROM hits")).c

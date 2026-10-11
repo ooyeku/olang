@@ -18,12 +18,12 @@ let treated = stats.norm.sample(n, 101.2, 15.0)     // a subtle 1.2-point lift
 let d = stats.describe(treated)
 println("═══ statlab ═══")
 println("arms: n=" + show(n) + " each; treated mean="
-    + show(math.round(map_get(d, "mean") * 100.0) / 100.0)
-    + " std=" + show(math.round(map_get(d, "std") * 100.0) / 100.0))
+    + show(math.round(d.mean * 100.0) / 100.0)
+    + " std=" + show(math.round(d.std * 100.0) / 100.0))
 
 // ── parametric: Welch's t-test ──
 let t = stats.t_test(treated, control)
-let p_param = map_get(t, "p_value")
+let p_param = t.p_value
 println("welch t-test:      p = " + show(p_param))
 
 // ── nonparametric check: permutation test, parallel Monte Carlo ──
@@ -77,11 +77,11 @@ let x3 = stats.norm.sample(n, 0.0, 1.0)
 let eps = stats.norm.sample(n, 0.0, 1.0)
 let y = x1 * 2.0 + x2 * -1.0 + x3 * 0.5 + eps + 3.0
 let fit = stats.lm(y, [x1, x2, x3])
-let coef = map_get(fit, "coef")
+let coef = fit.coef
 println("ols n=5000: b1=" + show(math.round(ods.get(coef, 1) * 100.0) / 100.0)
     + " b2=" + show(math.round(ods.get(coef, 2) * 100.0) / 100.0)
     + " b3=" + show(math.round(ods.get(coef, 3) * 100.0) / 100.0)
-    + " r2=" + show(math.round(map_get(fit, "r2") * 1000.0) / 1000.0)
+    + " r2=" + show(math.round(fit.r2 * 1000.0) / 1000.0)
     )
 
 // ── charts ──
@@ -95,13 +95,13 @@ let elapsed = time.monotonic_ms() - t_start
 println("wrote bootstrap.svg, fit.svg · total " + show(elapsed) + "ms")
 
 test "statlab inferences hold at scale" {
-    assert_eq(map_get(d, "count"), 5000)
+    assert_eq(d.count, 5000)
     assert_eq(p_param < 0.01, true)             // parametric: detects the lift
     assert_eq(p_perm < 0.05, true)              // nonparametric agrees
     assert_eq(ci_lo > 0.0, true)                // CI excludes zero...
     assert_eq(ci_hi < 2.5, true)                // ...and brackets the true 1.2
     assert_eq(ods.get(coef, 1) > 1.9 && ods.get(coef, 1) < 2.1, true)
     assert_eq(ods.get(coef, 2) > -1.1 && ods.get(coef, 2) < -0.9, true)
-    assert_eq(map_get(fit, "r2") > 0.8, true)
+    assert_eq(fit.r2 > 0.8, true)
     assert_eq(str.contains(null_svg, "<svg") && str.contains(fit_svg, "<svg"), true)
 }

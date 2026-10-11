@@ -248,7 +248,6 @@ test "normalize maps to the unit interval" {
     assert_eq(normalize([2.0, 4.0, 6.0]), [0.0, 0.5, 1.0])
 }
 
-
 /// Confusion counts and derived metrics at an arbitrary threshold.
 share fn classification_report_at(preds, labels, threshold) = {
     let mut tp = 0

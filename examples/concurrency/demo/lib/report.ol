@@ -14,7 +14,7 @@ use schedule { date_of, day_of }
 // ── The digest text ─────────────────────────────────────────────────
 share fn build_digest(tick: Int, charge_rows, served: Int, queue_len: Int) = {
     let by_kind = total_by(charge_rows,
-        (r) => map_get(r, "kind"), (r) => map_get(r, "amount"))
+        (r) => r.kind, (r) => r.amount)
     let revenue = map_keys(by_kind) |> fold(0.0, (a, k) => a + map_get(by_kind, k))
     let top = top_entry(by_kind)
     let body = share_lines(by_kind) |> map((l) => "  " + l) |> join("\n")

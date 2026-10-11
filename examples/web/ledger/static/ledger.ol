@@ -103,8 +103,8 @@ fn month_add(month, delta) =
     unwrap(dates.format_date(unwrap(dates.add_months(month + "-01", delta)), "%Y-%m"))
 
 fn cur_month() = {
-    let q = map_get(dom.location(), "query")
-    if map_has_key(q, "month") => map_get(q, "month") else => this_month()
+    let q = dom.location().query
+    if map_has_key(q, "month") => q.month else => this_month()
 }
 
 fn goto_month(m) = {
@@ -134,19 +134,19 @@ fn err_text(envelope) = {
     if typeof(envelope) != "Map" && typeof(envelope) != "JsonObject" => "server unreachable"
     else => {
         if map_has_key(envelope, "details") => {
-            let ds = map_get(envelope, "details")
+            let ds = envelope.details
             if typeof(ds) == "List" && len(ds) > 0 =>
-                ds |> map((d) => show(map_get(d, "field")) + ": " + show(map_get(d, "message")))
+                ds |> map((d) => show(d.field) + ": " + show(d.message))
                    |> join(" · ")
-            else => show(map_get(envelope, "message"))
+            else => show(envelope.message)
         }
-        else => { if map_has_key(envelope, "message") => show(map_get(envelope, "message"))
+        else => { if map_has_key(envelope, "message") => show(envelope.message)
                   else => "server unreachable" }
     }
 }
 
 fn toast_error(prefix, resp) =
-    toast(prefix + ": " + err_text(if map_has_key(resp, "error") => map_get(resp, "error") else => resp), "err")
+    toast(prefix + ": " + err_text(if map_has_key(resp, "error") => resp.error else => resp), "err")
 
 // ── rendering: transactions ────────────────────────────────────────────
 
@@ -155,23 +155,23 @@ fn toast_error(prefix, resp) =
 fn armed() = { let v = dom.state_get("armed"); if typeof(v) == "Unit" => "" else => v }
 
 fn row_html(t) = {
-    let id = show(map_get(t, "id"))
-    let cents = map_get(t, "amount_cents")
+    let id = show(t.id)
+    let cents = t.amount_cents
     let tone = if cents < 0 => "neg" else => "pos"
     let del = if armed() == id
         => "<button class=\"sure\" id=\"del-" + id + "\" title=\"click again to delete\">sure?</button>"
         else => "<button class=\"del\" id=\"del-" + id + "\" title=\"delete\">×</button>"
     "<tr data-key=\"" + id + "\">"
-        + "<td class=\"date\">" + esc(map_get(t, "date")) + "</td>"
-        + "<td class=\"cat\">" + esc(map_get(t, "category")) + "</td>"
-        + "<td><input class=\"cell\" id=\"note-" + id + "\" value=\"" + esc(map_get(t, "note")) + "\"></td>"
+        + "<td class=\"date\">" + esc(t.date) + "</td>"
+        + "<td class=\"cat\">" + esc(t.category) + "</td>"
+        + "<td><input class=\"cell\" id=\"note-" + id + "\" value=\"" + esc(t.note) + "\"></td>"
         + "<td class=\"amt " + tone + "\"><input class=\"cell\" style=\"width:7rem;text-align:right\" id=\"amt-"
         + id + "\" value=\"" + dollars(cents) + "\"></td>"
         + "<td class=\"act\">" + del + "</td>"
         + "</tr>"
 }
 
-fn month_rows() = txs() |> filter((t) => month_of(map_get(t, "date")) == cur_month())
+fn month_rows() = txs() |> filter((t) => month_of(t.date) == cur_month())
 
 fn render_rows() = {
     let rows = month_rows()
@@ -180,10 +180,10 @@ fn render_rows() = {
     dom.morph(dom.query("#rows"),
         if len(rows) == 0 => "<tr><td colspan=\"5\" class=\"empty\">no transactions this month</td></tr>"
         else => rows |> map(row_html) |> join(""))
-    let income = rows |> filter((t) => map_get(t, "amount_cents") > 0)
-        |> map((t) => map_get(t, "amount_cents")) |> sum()
-    let spent = rows |> filter((t) => map_get(t, "amount_cents") < 0)
-        |> map((t) => 0 - map_get(t, "amount_cents")) |> sum()
+    let income = rows |> filter((t) => t.amount_cents > 0)
+        |> map((t) => t.amount_cents) |> sum()
+    let spent = rows |> filter((t) => t.amount_cents < 0)
+        |> map((t) => 0 - t.amount_cents) |> sum()
     let net = income - spent
     dom.set_html(dom.query("#summary"),
         "<div class=\"stat\"><small>in</small><b class=\"pos\">" + money(income) + "</b></div>"
@@ -198,9 +198,9 @@ fn render_rows() = {
 fn spent_by_category() = {
     let mut acc = #{}
     for t in month_rows() {
-        let cents = map_get(t, "amount_cents")
+        let cents = t.amount_cents
         if cents < 0 => {
-            let key = show(map_get(t, "category_id"))
+            let key = show(t.category_id)
             let sofar = if map_has_key(acc, key) => map_get(acc, key) else => 0
             acc = map_set(acc, key, sofar + (0 - cents))
         }
@@ -211,12 +211,12 @@ fn spent_by_category() = {
 fn budget_for(cid) = {
     let month = cur_month()
     let hit = budgets() |> filter((b) =>
-        map_get(b, "category_id") == cid && map_get(b, "month") == month)
-    if len(hit) == 0 => 0 else => map_get(hit[0], "amount_cents")
+        b.category_id == cid && b.month == month)
+    if len(hit) == 0 => 0 else => hit[0].amount_cents
 }
 
 fn budget_row_html(c, spent_map) = {
-    let cid = map_get(c, "id")
+    let cid = c.id
     let planned = budget_for(cid)
     let key = show(cid)
     let spent = if map_has_key(spent_map, key) => map_get(spent_map, key) else => 0
@@ -232,7 +232,7 @@ fn budget_row_html(c, spent_map) = {
         else => { let p = spent * 100 / planned; if p > 100 => 100 else => p }
     let bar_tone = if planned == 0 => "none" else => { if over => "over" else => "" }
     "<div class=\"budget-row\">"
-        + "<span class=\"name\">" + esc(map_get(c, "name")) + "</span>"
+        + "<span class=\"name\">" + esc(c.name) + "</span>"
         + status
         + "<input id=\"bud-" + key + "\" placeholder=\"0.00\" inputmode=\"decimal\" value=\""
         + (if planned == 0 => "" else => dollars(planned)) + "\">"
@@ -241,7 +241,7 @@ fn budget_row_html(c, spent_map) = {
 }
 
 fn render_budgets() = {
-    let expense_cats = cats() |> filter((c) => map_get(c, "kind") == "expense")
+    let expense_cats = cats() |> filter((c) => c.kind == "expense")
     let spent_map = spent_by_category()
     dom.morph(dom.query("#budgets"),
         if len(expense_cats) == 0 => "<div class=\"empty\">no expense categories</div>"
@@ -256,14 +256,14 @@ fn render_budgets() = {
 fn armed_cat() = { let v = dom.state_get("armed_cat"); if typeof(v) == "Unit" => "" else => v }
 
 fn cat_row_html(c) = {
-    let id = show(map_get(c, "id"))
-    let kind = map_get(c, "kind")
-    let n = if map_has_key(c, "tx_count") => map_get(c, "tx_count") else => 0
+    let id = show(c.id)
+    let kind = c.kind
+    let n = if map_has_key(c, "tx_count") => c.tx_count else => 0
     let del = if armed_cat() == id
         => "<button class=\"sure\" id=\"cdel-" + id + "\" title=\"click again to delete\">sure?</button>"
         else => "<button class=\"del\" id=\"cdel-" + id + "\" title=\"delete\">×</button>"
     "<div class=\"cat-row\" data-key=\"" + id + "\">"
-        + "<input class=\"cell\" id=\"cname-" + id + "\" value=\"" + esc(map_get(c, "name")) + "\">"
+        + "<input class=\"cell\" id=\"cname-" + id + "\" value=\"" + esc(c.name) + "\">"
         + "<span class=\"kind " + (if kind == "income" => "income" else => "") + "\">" + esc(kind) + "</span>"
         + "<span class=\"count\" title=\"transactions\">" + show(n) + "</span>"
         + del
@@ -293,9 +293,9 @@ let PAL_OUT = "#ef6b73"
 // This month's expenses by category, summed on an ods Frame.
 fn render_cats_chart() = {
     let mut recs = month_rows()
-        |> filter((t) => map_get(t, "amount_cents") < 0)
-        |> map((t) => #{ "category": map_get(t, "category"),
-                         "dollars": cents_to_f(0 - map_get(t, "amount_cents")) })
+        |> filter((t) => t.amount_cents < 0)
+        |> map((t) => #{ "category": t.category,
+                         "dollars": cents_to_f(0 - t.amount_cents) })
     if len(recs) == 0 => dom.set_html(dom.query("#chart-cats"),
         "<div class=\"empty\">no spending this month</div>")
     else => {
@@ -315,14 +315,14 @@ fn render_budget_chart() = {
     let spent_map = spent_by_category()
     let mut recs = []
     for c in cats() {
-        if map_get(c, "kind") == "expense" => {
-            let key = show(map_get(c, "id"))
-            let planned = budget_for(map_get(c, "id"))
+        if c.kind == "expense" => {
+            let key = show(c.id)
+            let planned = budget_for(c.id)
             let spent = if map_has_key(spent_map, key) => map_get(spent_map, key) else => 0
             if planned > 0 || spent > 0 => {
                 recs = recs + [
-                    #{ "category": map_get(c, "name"), "kind": "budget", "dollars": cents_to_f(planned) },
-                    #{ "category": map_get(c, "name"), "kind": "actual", "dollars": cents_to_f(spent) }
+                    #{ "category": c.name, "kind": "budget", "dollars": cents_to_f(planned) },
+                    #{ "category": c.name, "kind": "actual", "dollars": cents_to_f(spent) }
                 ]
             }
         }
@@ -338,8 +338,8 @@ fn render_budget_chart() = {
 // Six-month in/out trend over the whole fetched window.
 fn render_trend_chart() = {
     let mut recs = txs() |> map((t) => {
-        let cents = map_get(t, "amount_cents")
-        #{ "month": month_of(map_get(t, "date")),
+        let cents = t.amount_cents
+        #{ "month": month_of(t.date),
            "kind": if cents < 0 => "out" else => "in",
            "dollars": cents_to_f(if cents < 0 => 0 - cents else => cents) }
     })
@@ -353,8 +353,8 @@ fn render_trend_chart() = {
         // rows arrive in data order — put "in" rows first so mint is
         // always money in and red always money out.
         let rows = ods.to_records(by_month)
-        let ordered = (rows |> filter((r) => map_get(r, "kind") == "in"))
-            + (rows |> filter((r) => map_get(r, "kind") == "out"))
+        let ordered = (rows |> filter((r) => r.kind == "in"))
+            + (rows |> filter((r) => r.kind == "out"))
         dom.set_html(dom.query("#chart-trend"), viz.chart(themed(#{
             "data": ordered,
             "mark": "bar", "x": "month", "y": "dollars",
@@ -381,8 +381,8 @@ fn render_all() = {
 
 fn render_category_select() = {
     let options = cats() |> map((c) =>
-        "<option value=\"" + show(map_get(c, "id")) + "\">"
-        + esc(map_get(c, "name")) + "</option>") |> join("")
+        "<option value=\"" + show(c.id) + "\">"
+        + esc(c.name) + "</option>") |> join("")
     let el = dom.query("#new-category")
     let before = dom.value(el)
     dom.set_html(el, options)
@@ -392,8 +392,8 @@ fn render_category_select() = {
 
 fn selected_kind() = {
     let cid = unwrap_or(str.parse_int(dom.value(dom.query("#new-category"))), 0)
-    let hit = cats() |> filter((c) => map_get(c, "id") == cid)
-    if len(hit) == 0 => "expense" else => map_get(hit[0], "kind")
+    let hit = cats() |> filter((c) => c.id == cid)
+    if len(hit) == 0 => "expense" else => hit[0].kind
 }
 
 fn update_kind_tag() = {
@@ -421,12 +421,12 @@ fn reload() = {
     let to = cur_month()
     let from = month_add(to, -5)
     dom.fetch_json("GET", "/api/transactions?from=" + from + "&to=" + to, "", (resp) => {
-        if map_has_key(resp, "items") => dom.state_set("txs", map_get(resp, "items"))
+        if map_has_key(resp, "items") => dom.state_set("txs", resp.items)
         else => toast_error("load", resp)
         arrived()
     })
     dom.fetch_json("GET", "/api/budgets?from=" + from + "&to=" + to, "", (resp) => {
-        if map_has_key(resp, "items") => dom.state_set("budgets", map_get(resp, "items"))
+        if map_has_key(resp, "items") => dom.state_set("budgets", resp.items)
         else => toast_error("load", resp)
         arrived()
     })
@@ -500,8 +500,8 @@ fn on_rows_click(tid) = {
 }
 
 fn on_rows_change(e) = {
-    let tid = map_get(e, "id")
-    let value = map_get(e, "value")
+    let tid = e.id
+    let value = e.value
     if starts_with(tid, "amt-") => {
         let id = str.substring(tid, 4, len(tid))
         match to_cents(value) {
@@ -519,10 +519,10 @@ fn on_rows_change(e) = {
 // ── mutations: budgets ─────────────────────────────────────────────────
 
 fn on_budget_change(e) = {
-    let tid = map_get(e, "id")
+    let tid = e.id
     if starts_with(tid, "bud-") => {
         let cid = unwrap_or(str.parse_int(str.substring(tid, 4, len(tid))), 0)
-        let raw = str.trim(map_get(e, "value"))
+        let raw = str.trim(e.value)
         let cents = if raw == "" => Ok(0) else => to_cents(raw)
         match cents {
             Err(msg) => { toast("budget: " + msg, "err") reload() },
@@ -574,10 +574,10 @@ fn on_cats_click(tid) = {
 }
 
 fn on_cats_change(e) = {
-    let tid = map_get(e, "id")
+    let tid = e.id
     if starts_with(tid, "cname-") => {
         let id = str.substring(tid, 6, len(tid))
-        let name = str.trim(map_get(e, "value"))
+        let name = str.trim(e.value)
         if name == "" => { toast("category: name must not be empty", "err") render_cats_manager() }
         else => dom.fetch_json("PATCH", "/api/categories/" + id,
             "{\"name\": \"" + json_esc(name) + "\"}", (resp) => {
@@ -596,10 +596,10 @@ dom.on(dom.query("#add-btn"), "click", (e) => { add_transaction() })
 dom.on(dom.query("#new-amount"), "enter", (e) => { add_transaction() })
 dom.on(dom.query("#new-note"), "enter", (e) => { add_transaction() })
 dom.on(dom.query("#new-category"), "change", (e) => { update_kind_tag() })
-dom.on(dom.query("#rows"), "click", (e) => { on_rows_click(map_get(e, "id")) })
+dom.on(dom.query("#rows"), "click", (e) => { on_rows_click(e.id) })
 dom.on(dom.query("#rows"), "change", (e) => { on_rows_change(e) })
 dom.on(dom.query("#budgets"), "change", (e) => { on_budget_change(e) })
-dom.on(dom.query("#cats"), "click", (e) => { on_cats_click(map_get(e, "id")) })
+dom.on(dom.query("#cats"), "click", (e) => { on_cats_click(e.id) })
 dom.on(dom.query("#cats"), "change", (e) => { on_cats_change(e) })
 dom.on(dom.query("#cat-add-btn"), "click", (e) => { add_category() })
 dom.on(dom.query("#cat-name"), "enter", (e) => { add_category() })

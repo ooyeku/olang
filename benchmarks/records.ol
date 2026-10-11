@@ -10,10 +10,10 @@ let issues = map(range(0, n), (i) => #{
     "priority": i % 5, "assignee": "user" + to_string(i % 17), "labels": ["a", "b"],
     "description": "- [ ] one\n- [x] two\n", "updated": 1700000000 + i * 37 })
 fn run(rows) = {
-    let open = filter(rows, (r) => map_get(r, "state") == "open")
-    let shaped = map(open, (r) => #{ "id": map_get(r, "id"), "title": map_get(r, "title"),
-        "score": map_get(r, "priority") * 10 + str.length(map_get(r, "assignee")) })
-    col.sort_by(shaped, (r) => map_get(r, "score"))
+    let open = filter(rows, (r) => r.state == "open")
+    let shaped = map(open, (r) => #{ "id": r.id, "title": r.title,
+        "score": r.priority * 10 + str.length(r.assignee) })
+    col.sort_by(shaped, (r) => r.score)
 }
 let t0 = time.monotonic_ms()
 let mut out = []

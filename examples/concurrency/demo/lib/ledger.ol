@@ -113,27 +113,27 @@ test "the ledger records, settles atomically, and aggregates" {
     testing.assert_eq(n, 2)
 
     let totals = ledger_totals(conn)
-    testing.assert_eq(map_get(totals, "movements"), 3)
-    testing.assert_eq(map_get(totals, "departures"), 1)
-    testing.assert_eq(map_get(totals, "charge_rows"), 2)
-    testing.assert_eq(map_get(totals, "revenue"), 430.0)
+    testing.assert_eq(totals.movements, 3)
+    testing.assert_eq(totals.departures, 1)
+    testing.assert_eq(totals.charge_rows, 2)
+    testing.assert_eq(totals.revenue, 430.0)
 
     let by_kind = revenue_by_kind(conn)
-    testing.assert_eq(map_get(head(by_kind), "kind"), "hazmat")
+    testing.assert_eq(head(by_kind).kind, "hazmat")
 
     let track = movements_for(conn, "TEST-100")
     testing.assert_eq(len(track), 3)
-    testing.assert_eq(map_get(track[2], "event"), "departed")
+    testing.assert_eq(track[2].event, "departed")
 
     // pruning drops the old window but reports exactly what it dropped,
     // so cumulative accounting survives the archive
     let dropped = prune_before(conn, 5)
-    testing.assert_eq(map_get(dropped, "movements"), 2)
-    testing.assert_eq(map_get(dropped, "departures"), 0)
+    testing.assert_eq(dropped.movements, 2)
+    testing.assert_eq(dropped.departures, 0)
     let left = ledger_totals(conn)
-    testing.assert_eq(map_get(left, "movements"), 1)
-    testing.assert_eq(map_get(left, "departures"), 1)
-    testing.assert_eq(map_get(left, "charge_rows"), 2)
+    testing.assert_eq(left.movements, 1)
+    testing.assert_eq(left.departures, 1)
+    testing.assert_eq(left.charge_rows, 2)
 
     close_ledger(conn)
 }

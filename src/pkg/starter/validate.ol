@@ -52,7 +52,7 @@ fn field_problems(m, rule) = {
     let field = rule[0]
     let kind = rule[1]
     let opts = if len(rule) > 2 => rule[2] else => #{}
-    let required = if map_has_key(opts, "required") => map_get(opts, "required") else => true
+    let required = if map_has_key(opts, "required") => opts.required else => true
 
     if !map_has_key(m, field) => {
         if required => [`${field}: required`] else => []
@@ -63,31 +63,31 @@ fn field_problems(m, rule) = {
         else => {
             let mut problems = []
             let size = if kind == "date" => () else => measure(value)
-            if map_has_key(opts, "min") && size != () && size < map_get(opts, "min") => {
-                problems = problems + [`${field}: below minimum ${map_get(opts, "min")}`]
+            if map_has_key(opts, "min") && size != () && size < opts.min => {
+                problems = problems + [`${field}: below minimum ${opts.min}`]
             }
-            if map_has_key(opts, "max") && size != () && size > map_get(opts, "max") => {
-                problems = problems + [`${field}: above maximum ${map_get(opts, "max")}`]
+            if map_has_key(opts, "max") && size != () && size > opts.max => {
+                problems = problems + [`${field}: above maximum ${opts.max}`]
             }
-            if map_has_key(opts, "one_of") && !contains(map_get(opts, "one_of"), value) => {
-                problems = problems + [`${field}: must be one of ${to_string(map_get(opts, "one_of"))}`]
+            if map_has_key(opts, "one_of") && !contains(opts.one_of, value) => {
+                problems = problems + [`${field}: must be one of ${to_string(opts.one_of)}`]
             }
             if map_has_key(opts, "pattern") && typeof(value) == "String" => {
-                let hit = match re.is_match(map_get(opts, "pattern"), value) {
+                let hit = match re.is_match(opts.pattern, value) {
                     Ok(b) => b,
                     Err(e) => false
                 }
                 if !hit => {
-                    problems = problems + [`${field}: does not match ${map_get(opts, "pattern")}`]
+                    problems = problems + [`${field}: does not match ${opts.pattern}`]
                 }
             }
             // Dates compare as ISO day strings, which order lexically.
             if kind == "date" => {
-                if map_has_key(opts, "min") && value < map_get(opts, "min") => {
-                    problems = problems + [`${field}: before ${map_get(opts, "min")}`]
+                if map_has_key(opts, "min") && value < opts.min => {
+                    problems = problems + [`${field}: before ${opts.min}`]
                 }
-                if map_has_key(opts, "max") && value > map_get(opts, "max") => {
-                    problems = problems + [`${field}: after ${map_get(opts, "max")}`]
+                if map_has_key(opts, "max") && value > opts.max => {
+                    problems = problems + [`${field}: after ${opts.max}`]
                 }
             }
             if map_has_key(opts, "where") => {

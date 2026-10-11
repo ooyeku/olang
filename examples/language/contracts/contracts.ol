@@ -36,7 +36,7 @@ meta fn fmtc(fmt, args) = {
     }
     let holes = len(str.split(fmt_value, "{}")) - 1
     let arg_node = head(unwrap(meta.parse(args)))
-    let n_args = len(map_get(map_get(arg_node, "value"), "items"))
+    let n_args = len(arg_node.value.items)
     if holes != n_args =>
         unwrap(Err(`@fmtc: the format string has ${holes} placeholder(s) but ${n_args} argument(s) were given`))
     else => ()

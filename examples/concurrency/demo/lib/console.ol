@@ -25,9 +25,9 @@ share fn tick_line(tick: Int, berths, queue_len: Int, revenue: Float) = {
 share fn day_table(rows) = {
     if len(rows) == 0 => "  (no charges today)"
     else => term.table(["kind", "n", "revenue"],
-        rows |> map((r) => [map_get(r, "kind"),
-                            show(map_get(r, "n")),
-                            money(map_get(r, "revenue"))]))
+        rows |> map((r) => [r.kind,
+                            show(r.n),
+                            money(r.revenue)]))
 }
 
 // A utilization bar for the day summary.

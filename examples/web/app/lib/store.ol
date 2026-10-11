@@ -53,7 +53,7 @@ fn migrate(conn) = {
 }
 
 share fn seed_if_empty(conn) = {
-    let n = map_get(unwrap(db.query_one(conn, "SELECT COUNT(*) AS n FROM issues")), "n")
+    let n = unwrap(db.query_one(conn, "SELECT COUNT(*) AS n FROM issues")).n
     if n == 0 => {
         let rows = [
             ["Ship the tracker example", "in-progress", "high", "ada", 3, "the app you are looking at"],
@@ -95,8 +95,8 @@ share fn list_issues(conn, f) = {
         vals = concat(vals, [needle, needle])
     }
     let where_sql = if len(where_parts) == 0 => "" else => " WHERE " + join(where_parts, " AND ")
-    let total = map_get(unwrap(db.query_one(conn,
-        "SELECT COUNT(*) AS n FROM issues" + where_sql, vals)), "n")
+    let total = unwrap(db.query_one(conn,
+        "SELECT COUNT(*) AS n FROM issues" + where_sql, vals)).n
     // The list also carries each issue's comment count, so the grid can
     // show a discussion badge without n+1 requests.
     let items = unwrap(db.query(conn,
@@ -120,10 +120,10 @@ share fn create_issue(conn, fields) = {
     let made = unwrap(db.query_one(conn,
         "INSERT INTO issues (title, status, priority, assignee, points, notes, updated)
          VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING " + select_cols,
-        [map_get(fields, "title"), map_get(fields, "status"),
-         map_get(fields, "priority"), map_get(fields, "assignee"),
-         map_get(fields, "points"), map_get(fields, "notes"), dates.utc_now()]))
-    log_event(conn, "create", map_get(made, "id"), map_get(fields, "title"))
+        [fields.title, fields.status,
+         fields.priority, fields.assignee,
+         fields.points, fields.notes, dates.utc_now()]))
+    log_event(conn, "create", made.id, fields.title)
     made
 }
 
@@ -158,7 +158,7 @@ share fn delete_issue(conn, id) = {
             unwrap(db.execute(conn, "DELETE FROM comments WHERE issue_id = ?", [id]))
             unwrap(db.execute(conn, "DELETE FROM issues WHERE id = ?", [id]))
             unwrap(db.commit(conn))
-            log_event(conn, "delete", to_int(id), map_get(issue, "title"))
+            log_event(conn, "delete", to_int(id), issue.title)
             Ok(issue)
         }
     }
@@ -201,7 +201,7 @@ share fn stats(conn) = {
         "SELECT COUNT(*) AS issues, COALESCE(SUM(points), 0) AS points FROM issues"))
     let point_rows = unwrap(db.query(conn, "SELECT points FROM issues"))
     { by_status: by_status, by_assignee: by_assignee, totals: totals,
-      point_values: point_rows |> map((r) => map_get(r, "points")) }
+      point_values: point_rows |> map((r) => r.points) }
 }
 
 share fn all_issues(conn) = unwrap(db.query(conn,

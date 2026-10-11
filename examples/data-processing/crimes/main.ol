@@ -71,10 +71,10 @@ fn section(title, body) =
 let src = unwrap(fetch(
     "https://data.cityofchicago.org/api/views/ijzp-q8t2/rows.csv?accessType=DOWNLOAD",
     fs.join("data", "chicago-crimes.csv"), 1500000000))
-stage("fetch", `${map_get(src, "bytes")} bytes (cached=${map_get(src, "cached")})`)
+stage("fetch", `${src.bytes} bytes (cached=${src.cached})`)
 
 // ── 2. load + profile ────────────────────────────────────────────────
-let raw = unwrap(ods.read_csv_file(map_get(src, "path")))
+let raw = unwrap(ods.read_csv_file(src.path))
 let n_all = ods.n_rows(raw)
 let f = ods.select(raw, ["Date", "Primary Type", "Location Description",
     "Arrest", "Domestic", "District", "Year", "Latitude", "Longitude"])
@@ -83,8 +83,8 @@ stage("load", `${n_all} rows x ${ods.n_cols(raw)} cols; ${null_lat} rows lack co
 
 // ── 3. derive: month and hour for all 8.6M rows ─────────────────────
 let tm = derive_time(ods.to_list(f["Date"]))
-let f2 = ods.with_column(ods.with_column(f, "month", ods.series(map_get(tm, "months"))),
-    "hour", ods.series(map_get(tm, "hours")))
+let f2 = ods.with_column(ods.with_column(f, "month", ods.series(tm.months)),
+    "hour", ods.series(tm.hours))
 let arrest_f = ods.cast(f2["Arrest"], "Float")
 let overall_rate = math.round(ods.mean(arrest_f) * 1000.0) / 10.0
 stage("derive", `month+hour for ${n_all} rows; overall arrest rate ${overall_rate}%`)
@@ -94,14 +94,14 @@ let complete = ods.filter(f2, f2["Year"] <= 2024)
 let by_year = ods.sort_by(ods.group_by(ods.filter(complete, complete["Year"] >= 2001),
     ["Year"], [["n", "count"]]), "Year", false)
 let year_fit = stats.lm(ods.cast(by_year["n"], "Float"), [ods.cast(by_year["Year"], "Float")])
-let slope = math.round(ods.to_list(map_get(year_fit, "coef"))[1])
+let slope = math.round(ods.to_list(year_fit.coef)[1])
 let peak_n = ods.max(by_year["n"])
 let last_n = ods.to_list(by_year["n"])[ods.n_rows(by_year) - 1]
 let trend_svg = plot.line(by_year["Year"], by_year["n"],
     #{ "title": "Reported crimes per year, 2001—2024", "x_label": "year", "y_label": "incidents" })
 let yr_rows = derived_csv("by_year.csv", by_year)
 section("The two-decade trend",
-    `From a peak of **${peak_n}** incidents in a year to **${last_n}** in 2024 — the fitted linear trend loses **${0 - slope} incidents per year** (R²=${math.round(map_get(year_fit, "r2") * 100.0) / 100.0}).` + "\n\n" + chart("trend.svg", trend_svg))
+    `From a peak of **${peak_n}** incidents in a year to **${last_n}** in 2024 — the fitted linear trend loses **${0 - slope} incidents per year** (R²=${math.round(year_fit.r2 * 100.0) / 100.0}).` + "\n\n" + chart("trend.svg", trend_svg))
 stage("trend", `${yr_rows} years, slope ${slope}/yr`)
 
 // ── 5. seasonality and temporal dependence ──────────────────────────
@@ -111,7 +111,7 @@ let m_counts = map(ods.to_list(monthly["n"]), (v) => to_float(v))
 let n_months = len(m_counts)
 let t_idx = map(0..n_months, (i) => to_float(i))
 let m_fit = stats.lm(ods.series(m_counts), [ods.series(t_idx)])
-let m_coef = ods.to_list(map_get(m_fit, "coef"))
+let m_coef = ods.to_list(m_fit.coef)
 let detrended = map(0..n_months, (i) => m_counts[i] - m_coef[0] - m_coef[1] * t_idx[i])
 let month_labels = ods.to_list(monthly["month"])
 let mut seas_sum = map(0..12, (m) => 0.0)
@@ -187,10 +187,10 @@ let exp = ods.series([
     (1.0 - p_arrest) * p_dom * n_total,
     (1.0 - p_arrest) * (1.0 - p_dom) * n_total])
 let chi = stats.chi2_test(obs, exp)
-let chi_stat = math.round(map_get(chi, "chi2"))
-let cramers_v = math.round(math.sqrt(map_get(chi, "chi2") / n_total) * 1000.0) / 1000.0
+let chi_stat = math.round(chi.chi2)
+let cramers_v = math.round(math.sqrt(chi.chi2 / n_total) * 1000.0) / 1000.0
 section("Are arrests independent of the domestic flag?",
-    `A chi-square test against independence: χ²=**${chi_stat}** (p ${if map_get(chi, "p_value") < 0.001 => "<0.001" else => show(map_get(chi, "p_value"))}) on ${n_all} incidents — arrest and the domestic flag are decisively not independent. The effect size tells the fuller story: Cramér's V=**${cramers_v}**, a real but weak association. At 8.6 million rows essentially any dependence is significant; V is the number that says how much it matters.`)
+    `A chi-square test against independence: χ²=**${chi_stat}** (p ${if chi.p_value < 0.001 => "<0.001" else => show(chi.p_value)}) on ${n_all} incidents — arrest and the domestic flag are decisively not independent. The effect size tells the fuller story: Cramér's V=**${cramers_v}**, a real but weak association. At 8.6 million rows essentially any dependence is significant; V is the number that says how much it matters.`)
 stage("chi2", `chi2=${chi_stat}, V=${cramers_v}`)
 
 // ── 8. spatial structure: k-means on the recent city ────────────────
@@ -204,7 +204,7 @@ let e_stride = math.max(1, len(lats) / 60000)
 let e_lats = map(0..(len(lats) / e_stride), (i) => lats[i * e_stride])
 let e_lons = map(0..(len(lats) / e_stride), (i) => lons[i * e_stride])
 let elbow_ks = map(0..9, (i) => i + 2)
-let elbow_in = map(elbow_ks, (k) => map_get(kmeans2(e_lats, e_lons, k, 8), "inertia"))
+let elbow_in = map(elbow_ks, (k) => kmeans2(e_lats, e_lons, k, 8).inertia)
 let elbow_svg = plot.line(ods.series(elbow_ks), ods.series(elbow_in),
     #{ "title": "k-means inertia by k (60k-point subsample)", "x_label": "k", "y_label": "within-cluster SS" })
 let elbow_drop = math.round((1.0 - elbow_in[8] / elbow_in[0]) * 1000.0) / 10.0
@@ -212,11 +212,11 @@ stage("elbow", `k swept 2—11 on ${len(e_lats)} points; inertia falls ${elbow_d
 
 let km = kmeans2(lats, lons, 10, 12,
     (done, total) => progress("k-means over 900k points, iteration", done, total, ""))
-let sizes = map_get(km, "sizes")
+let sizes = km.sizes
 let centroids = ods.frame_from_records(map(0..10, (c) => #{
     "cluster": c,
-    "lat": math.round(map_get(km, "cx")[c] * 10000.0) / 10000.0,
-    "lon": math.round(map_get(km, "cy")[c] * 10000.0) / 10000.0,
+    "lat": math.round(km.cx[c] * 10000.0) / 10000.0,
+    "lon": math.round(km.cy[c] * 10000.0) / 10000.0,
     "incidents": sizes[c] }))
 let cl_rows = derived_csv("clusters.csv", centroids)
 let spatial_svg = plot.scatter(ods.series(map(0..2000, (i) => lons[i * (len(lons) / 2000)])),
@@ -249,8 +249,8 @@ let features = concat([
     normalize(ods.to_list(ml_frame["Longitude"]))
 ], one_hot(type_list, top5))
 let split = train_test_indices(n_ml, 5)
-let train_idx = map_get(split, "train")
-let test_idx = map_get(split, "test")
+let train_idx = split.train
+let test_idx = split.test
 fn gather(vals, idx) = map(idx, (i) => vals[i])
 let train_cols = map(features, (colv) => gather(colv, train_idx))
 let test_cols = map(features, (colv) => gather(colv, test_idx))
@@ -261,9 +261,9 @@ let feat_names = concat(["hour", "month", "domestic", "district", "latitude", "l
 
 // ── 10. principal structure of the feature space ─────────────────────
 let pca = pca2(train_cols)
-let share1 = math.round(map_get(pca, "share1") * 1000.0) / 10.0
-let share2 = math.round(map_get(pca, "share2") * 1000.0) / 10.0
-let v1_load = map_get(pca, "v1")
+let share1 = math.round(pca.share1 * 1000.0) / 10.0
+let share2 = math.round(pca.share2 * 1000.0) / 10.0
+let v1_load = pca.v1
 let mut lead_j = 0
 for j in 0..len(v1_load) {
     if math.abs(v1_load[j]) > math.abs(v1_load[lead_j]) => { lead_j = j }
@@ -271,7 +271,7 @@ for j in 0..len(v1_load) {
 let load_frame = ods.frame_from_records(map(0..len(feat_names), (j) => #{
     "feature": feat_names[j],
     "PC1": math.round(v1_load[j] * 1000.0) / 1000.0,
-    "PC2": math.round(map_get(pca, "v2")[j] * 1000.0) / 1000.0 }))
+    "PC2": math.round(pca.v2[j] * 1000.0) / 1000.0 }))
 section("Principal structure of the feature space",
     `The two leading principal components of the standardized ${len(feat_names)}-feature design matrix (power iteration with deflation, written in olang) explain **${share1}%** and **${share2}%** of total variance. No single axis dominates — the design matrix is genuinely multivariate, which is the property that lets the classifiers below improve on any one-variable rule. The loadings name the structure: PC1 is led by ${feat_names[lead_j]}, pairing the one-hot categories against the geography.` + "\n\n" + table(load_frame, 11))
 stage("pca", `PC1 ${share1}%, PC2 ${share2}% of variance; led by ${feat_names[lead_j]}`)
@@ -296,8 +296,8 @@ wipe()
 let preds = logistic_predict(model, test_cols, len(test_y))
 let nb_preds = gnb_predict(nb, test_cols, len(test_y))
 let tree_preds = tree_predict(tree, test_cols, len(test_y))
-let losses = map_get(model, "loss_curve")
-stage("models", `logistic ${t_log} ms, naive bayes ${t_gnb} ms, tree ${t_tree} ms (${len(map_get(tree, "feat"))} nodes)`)
+let losses = model.loss_curve
+stage("models", `logistic ${t_log} ms, naive bayes ${t_gnb} ms, tree ${t_tree} ms (${len(tree.feat)} nodes)`)
 
 // ── 12. evaluation: AUC with intervals, F1-optimal operating points ──
 let n_pos = to_int(math.round(ods.mean(ods.series(test_y)) * to_float(len(test_y))))
@@ -306,7 +306,7 @@ fn eval_model(ps, ys) = {
     let a = auc(ps, ys)
     let ci = auc_ci(a, n_pos, n_neg)
     let sw = threshold_sweep(ps, ys)
-    #{ "auc": a, "lo": ci[0], "hi": ci[1], "best": map_get(sw, "best"), "curve": map_get(sw, "curve") }
+    #{ "auc": a, "lo": ci[0], "hi": ci[1], "best": sw.best, "curve": sw.curve }
 }
 let ev_log = eval_model(preds, test_y)
 let ev_nb = eval_model(nb_preds, test_y)
@@ -314,21 +314,21 @@ let ev_tree = eval_model(tree_preds, test_y)
 fn r3(x) = math.round(x * 1000.0) / 1000.0
 fn pct(x) = math.round(x * 1000.0) / 10.0
 fn model_row(name, ev, ms) = {
-    let b = map_get(ev, "best")
-    #{ "model": name, "AUC": r3(map_get(ev, "auc")),
-       "95% CI": `${r3(map_get(ev, "lo"))}—${r3(map_get(ev, "hi"))}`,
-       "best F1": r3(map_get(b, "f1")), "threshold": map_get(b, "threshold"),
-       "precision": r3(map_get(b, "precision")), "recall": r3(map_get(b, "recall")),
-       "accuracy %": pct(map_get(b, "accuracy")), "train ms": ms }
+    let b = ev.best
+    #{ "model": name, "AUC": r3(ev.auc),
+       "95% CI": `${r3(ev.lo)}—${r3(ev.hi)}`,
+       "best F1": r3(b.f1), "threshold": b.threshold,
+       "precision": r3(b.precision), "recall": r3(b.recall),
+       "accuracy %": pct(b.accuracy), "train ms": ms }
 }
 let compare = ods.frame_from_records([
     model_row("logistic (GD)", ev_log, t_log),
     model_row("gaussian NB", ev_nb, t_gnb),
     model_row("CART (depth 6)", ev_tree, t_tree)])
 let base_rate = math.round((1.0 - ods.mean(ods.series(test_y))) * 1000.0) / 10.0
-let model_auc = r3(map_get(ev_log, "auc"))
-let best_log = map_get(ev_log, "best")
-let acc = pct(map_get(best_log, "accuracy"))
+let model_auc = r3(ev_log.auc)
+let best_log = ev_log.best
+let acc = pct(best_log.accuracy)
 
 // Calibration of the logistic probabilities.
 let calib = calibration(preds, test_y, 10)
@@ -339,23 +339,23 @@ for r in calib {
     let d = math.abs(r[0] - r[1])
     if d > calib_dev && r[2] > 100.0 => { calib_dev = d }
 }
-let sweep_svg = plot.line(ods.series(map(map_get(ev_log, "curve"), (r) => r[0])),
-    ods.series(map(map_get(ev_log, "curve"), (r) => r[3])),
+let sweep_svg = plot.line(ods.series(map(ev_log.curve, (r) => r[0])),
+    ods.series(map(ev_log.curve, (r) => r[3])),
     #{ "title": "Logistic F1 by decision threshold", "x_label": "threshold", "y_label": "F1" })
 let loss_svg = plot.line(ods.series(map(0..len(losses), (i) => i * 10)), ods.series(losses),
     #{ "title": "Logistic regression training loss", "x_label": "epoch", "y_label": "log loss" })
 
 // Feature importance: standardized logistic weights, and the tree's
 // first two levels of splits.
-let weights = map_get(model, "weights")
-let sds = map_get(pca, "sd")
+let weights = model.weights
+let sds = pca.sd
 let imp = map(0..len(feat_names), (j) => [feat_names[j], math.abs(weights[j] * sds[j])])
 let imp_ranked = col.sort_by(imp, (r) => 0.0 - r[1])
 let imp_frame = ods.frame_from_records(map(0..6, (r) => #{
     "feature": imp_ranked[r][0], "|standardized weight|": r3(imp_ranked[r][1]) }))
-let tfeat = map_get(tree, "feat")
-let tleft = map_get(tree, "left")
-let tright = map_get(tree, "right")
+let tfeat = tree.feat
+let tleft = tree.left
+let tright = tree.right
 let root_f = feat_names[tfeat[0]]
 let l2 = map(filter([tleft[0], tright[0]], (c) => c >= 0 && tfeat[c] >= 0), (c) => feat_names[tfeat[c]])
 let l2_text = if len(l2) > 0 => `, then ${str.join(l2, " and ")}` else => ""
@@ -373,18 +373,18 @@ section("Limitations and threats to validity",
         "- **Class labels are administrative.** An arrest is the outcome of process and discretion, not a ground-truth severity measure; the models predict the record, not justice."
     ], "\n"))
 let acc_b = term.bold(`${acc}%`)
-stage("evaluate", `best AUC ${term.bold(show(r3(map_get(ev_log, "auc"))))} (logistic); accuracy ${acc_b} at F1-optimal threshold`)
+stage("evaluate", `best AUC ${term.bold(show(r3(ev_log.auc)))} (logistic); accuracy ${acc_b} at F1-optimal threshold`)
 preview(["model", "AUC", "95% CI", "best F1", "acc %"], [
-    ["logistic (GD)", show(r3(map_get(ev_log, "auc"))), `${r3(map_get(ev_log, "lo"))}—${r3(map_get(ev_log, "hi"))}`, show(r3(map_get(map_get(ev_log, "best"), "f1"))), show(pct(map_get(map_get(ev_log, "best"), "accuracy")))],
-    ["gaussian NB", show(r3(map_get(ev_nb, "auc"))), `${r3(map_get(ev_nb, "lo"))}—${r3(map_get(ev_nb, "hi"))}`, show(r3(map_get(map_get(ev_nb, "best"), "f1"))), show(pct(map_get(map_get(ev_nb, "best"), "accuracy")))],
-    ["CART (depth 6)", show(r3(map_get(ev_tree, "auc"))), `${r3(map_get(ev_tree, "lo"))}—${r3(map_get(ev_tree, "hi"))}`, show(r3(map_get(map_get(ev_tree, "best"), "f1"))), show(pct(map_get(map_get(ev_tree, "best"), "accuracy")))]])
+    ["logistic (GD)", show(r3(ev_log.auc)), `${r3(ev_log.lo)}—${r3(ev_log.hi)}`, show(r3(ev_log.best.f1)), show(pct(ev_log.best.accuracy))],
+    ["gaussian NB", show(r3(ev_nb.auc)), `${r3(ev_nb.lo)}—${r3(ev_nb.hi)}`, show(r3(ev_nb.best.f1)), show(pct(ev_nb.best.accuracy))],
+    ["CART (depth 6)", show(r3(ev_tree.auc)), `${r3(ev_tree.lo)}—${r3(ev_tree.hi)}`, show(r3(ev_tree.best.f1)), show(pct(ev_tree.best.accuracy))]])
 let loss_span = term.dim(`${losses[0]} → ${losses[len(losses) - 1]}`)
 println(`      ${term.dim("loss")} ${term.cyan(spark(losses))} ${loss_span}`)
 
 // ── 10. report ───────────────────────────────────────────────────────
-let ev_best = if map_get(ev_tree, "auc") > map_get(ev_log, "auc") => ev_tree else => ev_log
-let ci_txt = `${r3(map_get(ev_best, "lo"))}—${r3(map_get(ev_best, "hi"))}`
-let abstract = `We analyze the complete City of Chicago incident record — **${n_all} reported crimes, 2001—present** — end to end in olang: every statistic, test, and learning algorithm below is written in the language itself and executed by its tiered runtime. Reported crime declines by ${0 - slope} incidents per year over two decades, with a stable seasonal cycle of ${seas_amp} incidents peak to trough (ACF(12)=${acf12}) superimposed on the trend. Arrest rates differ enormously by category (99% for narcotics, 11% for theft; Wilson intervals rule out sampling noise) and are associated with the domestic flag (χ²=${chi_stat}, though Cramér's V=${cramers_v} shows the effect is weak). Spatially, incidents since 2023 concentrate into activity centers well described by k=10 clusters. Three classifiers trained on identical splits — logistic regression, gaussian naive Bayes, and a depth-6 CART — predict arrest from time, place, and category with AUC up to **${r3(map_get(ev_best, "auc"))}** (95% CI ${ci_txt}) against a ${base_rate}%-negative base rate, with calibrated probabilities and concordant feature importance across model families.`
+let ev_best = if ev_tree.auc > ev_log.auc => ev_tree else => ev_log
+let ci_txt = `${r3(ev_best.lo)}—${r3(ev_best.hi)}`
+let abstract = `We analyze the complete City of Chicago incident record — **${n_all} reported crimes, 2001—present** — end to end in olang: every statistic, test, and learning algorithm below is written in the language itself and executed by its tiered runtime. Reported crime declines by ${0 - slope} incidents per year over two decades, with a stable seasonal cycle of ${seas_amp} incidents peak to trough (ACF(12)=${acf12}) superimposed on the trend. Arrest rates differ enormously by category (99% for narcotics, 11% for theft; Wilson intervals rule out sampling noise) and are associated with the domestic flag (χ²=${chi_stat}, though Cramér's V=${cramers_v} shows the effect is weak). Spatially, incidents since 2023 concentrate into activity centers well described by k=10 clusters. Three classifiers trained on identical splits — logistic regression, gaussian naive Bayes, and a depth-6 CART — predict arrest from time, place, and category with AUC up to **${r3(ev_best.auc)}** (95% CI ${ci_txt}) against a ${base_rate}%-negative base rate, with calibrated probabilities and concordant feature importance across model families.`
 let methods = str.join([
     `**Data.** The full public extract (data.cityofchicago.org, dataset ijzp-q8t2), fetched as part of the run (~2 GB CSV, cached), ${n_all} rows x ${ods.n_cols(raw)} columns. No sampling anywhere except where stated (the spatial scatter and the elbow subsample).`,
     `**Statistics.** Linear trends by ordinary least squares; independence by chi-square with Cramér's V for effect size; proportions carry Wilson 95% intervals; monthly structure by additive trend-plus-seasonal decomposition and the autocorrelation function.`,

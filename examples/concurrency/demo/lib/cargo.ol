@@ -77,12 +77,12 @@ share fn show_tariff(t) = match t {
 // The harbor's published tariff schedule, one tree per cargo kind.
 // Rates come from config; the trees encode structure.
 share fn tariff_for(c, rates) = match c {
-    Container(teu)   => AtLeast(PerUnit(map_get(rates, "container")), 80.0),
-    Reefer(teu)      => Sum(AtLeast(PerUnit(map_get(rates, "container")), 80.0),
-                            PerUnit(map_get(rates, "reefer_power"))),
-    Bulk(t)          => AtLeast(PerUnit(map_get(rates, "bulk")), 120.0),
-    Hazmat(class, t) => Surcharge(PerUnit(map_get(rates, "bulk")),
-                                  1.0 + to_float(class) * map_get(rates, "hazmat_step"))
+    Container(teu)   => AtLeast(PerUnit(rates.container), 80.0),
+    Reefer(teu)      => Sum(AtLeast(PerUnit(rates.container), 80.0),
+                            PerUnit(rates.reefer_power)),
+    Bulk(t)          => AtLeast(PerUnit(rates.bulk), 120.0),
+    Hazmat(class, t) => Surcharge(PerUnit(rates.bulk),
+                                  1.0 + to_float(class) * rates.hazmat_step)
 }
 
 // Units the tariff meters: TEU for boxes, tonnes for loose cargo.

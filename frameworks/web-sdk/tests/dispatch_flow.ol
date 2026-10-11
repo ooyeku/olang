@@ -39,12 +39,12 @@ test "create then list round-trips through the envelope" {
     let created = dispatch(table, fake("POST", "/api/rpc/todos.create", "{\"title\": \"ship\"}"))
     assert_eq(created.status, 200)
     let body = unwrap(json.parse(created.body))
-    let todo = map_get(body, "data")
-    assert_eq(map_get(todo, "title"), "ship")
-    assert_eq(map_get(todo, "done"), 0)
+    let todo = body.data
+    assert_eq(todo.title, "ship")
+    assert_eq(todo.done, 0)
 
     let listed = dispatch(table, fake("POST", "/api/rpc/todos.list", "{}"))
-    let items = map_get(unwrap(json.parse(listed.body)), "data")
+    let items = unwrap(json.parse(listed.body)).data
     assert_eq(len(items), 1)
 }
 
@@ -52,9 +52,9 @@ test "validation failures wear the 422 envelope with details" {
     let table = fresh()
     let r = dispatch(table, fake("POST", "/api/rpc/todos.create", "{\"title\": \"\"}"))
     assert_eq(r.status, 422)
-    let e = map_get(unwrap(json.parse(r.body)), "error")
-    assert_eq(map_get(e, "code"), "invalid")
-    assert_eq(len(map_get(e, "details")), 1)
+    let e = unwrap(json.parse(r.body)).error
+    assert_eq(e.code, "invalid")
+    assert_eq(len(e.details), 1)
 
     let long = dispatch(table, fake("POST", "/api/rpc/todos.create",
         "{\"title\": \"" + str.repeat("x", 50) + "\"}"))
@@ -67,7 +67,7 @@ test "a malformed body never reaches the data layer" {
     // The handler's empty-map fallback validates and fails cleanly.
     assert_eq(r.status, 422)
     let listed = dispatch(table, fake("POST", "/api/rpc/todos.list", "{}"))
-    assert_eq(len(map_get(unwrap(json.parse(listed.body)), "data")), 0)
+    assert_eq(len(unwrap(json.parse(listed.body)).data), 0)
 }
 
 test "sql injection strings are data, not structure" {
@@ -77,6 +77,6 @@ test "sql injection strings are data, not structure" {
         unwrap(json.stringify(#{ "title": evil }))))
     assert_eq(r.status, 200)
     let listed = dispatch(table, fake("POST", "/api/rpc/todos.list", "{}"))
-    let items = map_get(unwrap(json.parse(listed.body)), "data")
-    assert_eq(map_get(items[0], "title"), evil)
+    let items = unwrap(json.parse(listed.body)).data
+    assert_eq(items[0].title, evil)
 }

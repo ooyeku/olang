@@ -38,9 +38,9 @@ fn cmds_of(spec) = opt(spec, "commands", [])
 fn ftype(f) = opt(f, "type", "string")
 fn strip(tok, pfx) = str.replace_first(tok, pfx, "")
 
-fn by_long(flags, name) = filter(flags, (f) => map_get(f, "name") == name)
+fn by_long(flags, name) = filter(flags, (f) => f.name == name)
 fn by_short(flags, ch) = filter(flags,
-    (f) => map_has_key(f, "short") && map_get(f, "short") == ch)
+    (f) => map_has_key(f, "short") && f.short == ch)
 
 // ── value coercion (Result, so type errors surface cleanly) ────────────
 
@@ -68,13 +68,13 @@ fn parse_core(spec, argv) = {
     // unwrap_or / map_has_key).
     let mut out = #{ "help": false }
     for f in flags {
-        let name = map_get(f, "name")
+        let name = f.name
         if ftype(f) == "bool" => { out = map_set(out, name, false) }
         else => {
-            if map_has_key(f, "default") => { out = map_set(out, name, map_get(f, "default")) }
+            if map_has_key(f, "default") => { out = map_set(out, name, f.default) }
             else => {
-                if map_has_key(f, "env") && os.has_env(map_get(f, "env")) => {
-                    out = map_set(out, name, unwrap_or(os.get_env(map_get(f, "env")), ""))
+                if map_has_key(f, "env") && os.has_env(f.env) => {
+                    out = map_set(out, name, unwrap_or(os.get_env(f.env), ""))
                 }
             }
         }
@@ -124,7 +124,7 @@ fn parse_core(spec, argv) = {
                 let matches = by_short(flags, ch)
                 if len(matches) == 0 => { return Err("unknown flag: -" + ch) }
                 let f = matches[0]
-                let name = map_get(f, "name")
+                let name = f.name
                 if ftype(f) == "bool" => {
                     out = map_set(out, name, true)
                     i = i + 1
@@ -154,7 +154,7 @@ fn parse_core(spec, argv) = {
     // Assign collected positionals to declared slots, in order.
     let mut pi = 0
     for pa in pargs {
-        let name = map_get(pa, "name")
+        let name = pa.name
         if pi < len(pos) => {
             out = map_set(out, name, pos[pi])
             pi = pi + 1
@@ -162,15 +162,15 @@ fn parse_core(spec, argv) = {
             if opt(pa, "required", false) => {
                 return Err("missing required argument: <" + name + ">")
             }
-            if map_has_key(pa, "default") => { out = map_set(out, name, map_get(pa, "default")) }
+            if map_has_key(pa, "default") => { out = map_set(out, name, pa.default) }
         }
     }
     if pi < len(pos) => { return Err("unexpected argument: " + pos[pi]) }
 
     // Required typed flags must have landed a value.
     for f in flags {
-        if opt(f, "required", false) && map_has_key(out, map_get(f, "name")) == false => {
-            return Err("missing required flag: --" + map_get(f, "name"))
+        if opt(f, "required", false) && map_has_key(out, f.name) == false => {
+            return Err("missing required flag: --" + f.name)
         }
     }
     Ok(out)
@@ -188,7 +188,7 @@ share fn parse(spec, argv) = {
             let head = argv[0]
             if head == "-h" || head == "--help" => Ok(#{ "help": true, "command": "" })
             else => {
-                let matches = filter(cmds, (c) => map_get(c, "name") == head)
+                let matches = filter(cmds, (c) => c.name == head)
                 if len(matches) == 0 => Err("unknown command: " + head)
                 else => match parse_core(matches[0], skip(argv, 1)) {
                     Err(e) => Err(e),
@@ -218,32 +218,32 @@ share fn help(spec) = {
     if len(cmds) > 0 => {
         out = out + "Usage: " + name + " <command> [options]\n\nCommands:\n"
         for c in cmds {
-            out = out + "  " + pad(map_get(c, "name"), 12) + opt(c, "about", "") + "\n"
+            out = out + "  " + pad(c.name, 12) + opt(c, "about", "") + "\n"
         }
     } else => {
         let mut usage = "Usage: " + name
         if len(flags) > 0 => { usage = usage + " [options]" }
         for pa in pargs {
-            let nm = map_get(pa, "name")
+            let nm = pa.name
             usage = usage + (if opt(pa, "required", false) => " <" + nm + ">" else => " [" + nm + "]")
         }
         out = out + usage + "\n"
         if len(pargs) > 0 => {
             out = out + "\nArguments:\n"
             for pa in pargs {
-                out = out + "  " + pad(map_get(pa, "name"), 14) + opt(pa, "help", "") + "\n"
+                out = out + "  " + pad(pa.name, 14) + opt(pa, "help", "") + "\n"
             }
         }
     }
 
     out = out + "\nOptions:\n"
     for f in flags {
-        let short = if map_has_key(f, "short") => "-" + map_get(f, "short") + ", " else => "    "
-        let val = if ftype(f) == "bool" => "" else => " <" + map_get(f, "name") + ">"
-        let head = short + "--" + map_get(f, "name") + val
+        let short = if map_has_key(f, "short") => "-" + f.short + ", " else => "    "
+        let val = if ftype(f) == "bool" => "" else => " <" + f.name + ">"
+        let head = short + "--" + f.name + val
         let mut line = "  " + pad(head, 24) + opt(f, "help", "")
         if map_has_key(f, "default") => {
-            line = line + " (default: " + show(map_get(f, "default")) + ")"
+            line = line + " (default: " + show(f.default) + ")"
         }
         out = out + line + "\n"
     }

@@ -37,15 +37,15 @@ fn is_void(tag) =
 share fn html(node) = {
     if typeof(node) == "String" => esc(node)
     else => {
-        let tag = map_get(node, "tag")
+        let tag = node.tag
         let mut out = "<" + tag
-        for (name, value) in entries(map_get(node, "attrs")) {
+        for (name, value) in entries(node.attrs) {
         out = out + " " + name + "=\"" + esc(value) + "\""
         }
         if is_void(tag) => out + " />"
         else => {
             let mut inner = ""
-            for child in map_get(node, "children") {
+            for child in node.children {
             inner = inner + html(child)
             }
             out + ">" + inner + "</" + tag + ">"
@@ -60,7 +60,7 @@ fn wrapper_id(mount, key) = "ui-" + mount + "-" + key
 fn child_key(child, index) = {
     if typeof(child) == "String" => "i" + show(index)
     else => {
-        let k = map_get(child, "key")
+        let k = child.key
         if k == "" => "i" + show(index) else => k
     }
 }
@@ -71,8 +71,8 @@ share fn render(el, children) = {
     let mount = dom.get_attr(el, "id")
     let prev = unwrap_or(json.parse(dom.get_attr(el, "data-ui")),
         #{ "order": [], "html": #{} })
-    let prev_order = map_get(prev, "order")
-    let prev_html = map_get(prev, "html")
+    let prev_order = prev.order
+    let prev_html = prev.html
 
     let mut order = []
     let mut html_map = #{}

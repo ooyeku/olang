@@ -47,15 +47,15 @@ fn paint_once(f, root) = {
     let told = contains(["Map", "JsonObject"], typeof(answer))
     let last = #{
         "view_ms": view_ms,
-        "serialize_ms": if told => map_get(answer, "serialize_ms") else => 0.0,
-        "patch_ms": if told => map_get(answer, "patch_ms") else => 0.0,
-        "nodes": if told => map_get(answer, "nodes") else => 0,
-        "memo_hits": map_get(tally, "hits"),
-        "memo_misses": map_get(tally, "misses")
+        "serialize_ms": if told => answer.serialize_ms else => 0.0,
+        "patch_ms": if told => answer.patch_ms else => 0.0,
+        "nodes": if told => answer.nodes else => 0,
+        "memo_hits": tally.hits,
+        "memo_misses": tally.misses
     }
     cell.update(paint_log, (log) => fold(map_keys(last), map_set(log, "last", last),
         (acc, k) => map_set(acc, k, map_get(acc, k) + map_get(last, k))))
-    if told => map_get(answer, "missing") else => []
+    if told => answer.missing else => []
 }
 
 /// Repaint now: the view function over the current state, rendered
@@ -74,7 +74,7 @@ share fn rerender() = {
         let missing = paint_once(f, root)
         if len(missing) > 0 => {
             forget_memos(missing)
-            cell.update(paint_log, (log) => map_set(log, "healed", map_get(log, "healed") + 1))
+            cell.update(paint_log, (log) => map_set(log, "healed", log.healed + 1))
             paint_once(f, root)
             ()
         } else => ()
@@ -138,7 +138,7 @@ fn repaint_for(before, after) = {
     cell.set(judged, cell.get(judged) + 1)
     cell.set(judged_state, after)
     if moved_watched(before, after) => rerender()
-    else => cell.update(paint_log, (log) => map_set(log, "skipped", map_get(log, "skipped") + 1))
+    else => cell.update(paint_log, (log) => map_set(log, "skipped", log.skipped + 1))
 }
 
 /// Update state and repaint — what an event handler calls:
@@ -181,8 +181,8 @@ test "actions registers a table in one update" {
 /// action with the PRE-change values and the async repaint snapped the
 /// open dropdown shut.
 fn click_on_form_control(ev) =
-    map_get(ev, "type") == "click"
-        && contains(["input", "select", "textarea"], map_get(ev, "tag"))
+    ev.type == "click"
+        && contains(["input", "select", "textarea"], ev.tag)
 
 // An input's action fires on Enter (the keydown delegation) and again
 // on the `change` event the same Enter produces — two invocations for
@@ -193,11 +193,11 @@ fn click_on_form_control(ev) =
 let last_enter = cell(#{ "id": "", "at": 0 })
 
 fn is_repeat_of_enter(ev) = {
-    if map_get(ev, "type") != "change" => false
+    if ev.type != "change" => false
     else => {
         let seen = cell.get(last_enter)
-        map_get(seen, "id") != "" && map_get(seen, "id") == map_get(ev, "id")
-            && time.monotonic_ms() - map_get(seen, "at") < 100
+        seen.id != "" && seen.id == ev.id
+            && time.monotonic_ms() - seen.at < 100
     }
 }
 
@@ -216,7 +216,7 @@ share fn confirm_armed(name) =
     if !dom.available() => false
     else => {
         let a = cell.get(armed_confirm)
-        map_get(a, "name") == name && time.monotonic_ms() - map_get(a, "at") < 4000
+        a.name == name && time.monotonic_ms() - a.at < 4000
     }
 
 fn resolve_confirm(name) =
@@ -239,15 +239,15 @@ fn resolve_confirm(name) =
 /// number, range, color, file) fires on `change`. `data-on="change enter
 /// click"` names the events explicitly and overrides the default.
 fn event_fires(ev, data) = {
-    let ty = map_get(ev, "type")
-    let on = if data == () => () else => map_get(data, "on")
+    let ty = ev.type
+    let on = if data == () => () else => data.on
     if on != () => {
         let wanted = " " + on + " "
         let name = if ty == "keydown" => "enter" else => ty
         str.contains(wanted, " " + name + " ")
     }
-    else if ty == "change" && map_get(ev, "tag") == "input" => {
-        let kind = map_get(ev, "input_type")
+    else if ty == "change" && ev.tag == "input" => {
+        let kind = ev.input_type
         !contains(["", "text", "search", "email", "url", "tel", "password"], if kind == () => "" else => kind)
     }
     else => true
@@ -255,29 +255,29 @@ fn event_fires(ev, data) = {
 
 test "a text box's change does not fire its action; a select's does; data-on decides" {
     let text_change = #{ "type": "change", "tag": "input", "input_type": "text", "data": #{ "action": "a" } }
-    assert_eq(event_fires(text_change, map_get(text_change, "data")), false)
+    assert_eq(event_fires(text_change, text_change.data), false)
     let select_change = #{ "type": "change", "tag": "select", "input_type": (), "data": #{ "action": "a" } }
-    assert_eq(event_fires(select_change, map_get(select_change, "data")), true)
+    assert_eq(event_fires(select_change, select_change.data), true)
     let checkbox = #{ "type": "change", "tag": "input", "input_type": "checkbox", "data": #{ "action": "a" } }
-    assert_eq(event_fires(checkbox, map_get(checkbox, "data")), true)
+    assert_eq(event_fires(checkbox, checkbox.data), true)
     let opted = #{ "type": "change", "tag": "input", "input_type": "text", "data": #{ "action": "a", "on": "change enter" } }
-    assert_eq(event_fires(opted, map_get(opted, "data")), true)
+    assert_eq(event_fires(opted, opted.data), true)
     let enter = #{ "type": "keydown", "tag": "input", "input_type": "text", "data": #{ "action": "a", "on": "change enter" } }
-    assert_eq(event_fires(enter, map_get(enter, "data")), true)
+    assert_eq(event_fires(enter, enter.data), true)
     let click_off = #{ "type": "click", "tag": "button", "input_type": (), "data": #{ "action": "a", "on": "enter" } }
-    assert_eq(event_fires(click_off, map_get(click_off, "data")), false)
+    assert_eq(event_fires(click_off, click_off.data), false)
 }
 
 fn dispatch_action(ev) = {
-    let data = map_get(ev, "data")
+    let data = ev.data
     let raw_name = if data == () || click_on_form_control(ev) || is_repeat_of_enter(ev)
         || !event_fires(ev, data) => "" else => {
-        let a = map_get(data, "action")
+        let a = data.action
         if a == () => "" else => a
     }
     let name = if raw_name == "" => "" else => resolve_confirm(raw_name)
-    if map_get(ev, "type") == "keydown" && map_get(ev, "id") != () && map_get(ev, "id") != "" => {
-        cell.set(last_enter, #{ "id": map_get(ev, "id"), "at": time.monotonic_ms() })
+    if ev.type == "keydown" && ev.id != () && ev.id != "" => {
+        cell.set(last_enter, #{ "id": ev.id, "at": time.monotonic_ms() })
     }
     if name != "" => {
         let handlers = cell.get(mount_actions)
@@ -334,9 +334,9 @@ share fn patch(id, node) =
 /// action ("confirm:del:7", what `btn_confirm` renders) carries the
 /// same argument as the action it confirms.
 share fn action_arg(ev) = {
-    let data = map_get(ev, "data")
+    let data = ev.data
     let name = if data == () => "" else => {
-        let a = map_get(data, "action")
+        let a = data.action
         if a == () => "" else => a
     }
     let bare = if str.starts_with(name, "confirm:") =>
@@ -347,15 +347,15 @@ share fn action_arg(ev) = {
 
 test "one repaint per handled action: a handler that applies is not painted again, one that only updates is painted once, one that changes nothing is not painted" {
     let s0 = init(#{ "n": 0 })
-    action("t.apply", (ev) => apply((s) => map_set(s, "n", map_get(s, "n") + 1)))
-    action("t.update", (ev) => update((s) => map_set(s, "n", map_get(s, "n") + 1)))
+    action("t.apply", (ev) => apply((s) => map_set(s, "n", s.n + 1)))
+    action("t.update", (ev) => update((s) => map_set(s, "n", s.n + 1)))
     action("t.idle", (ev) => ())
     let click = (name) => #{ "type": "click", "tag": "button", "data": #{ "action": name } }
     let p0 = paint_count()
     dispatch_action(click("t.apply"))
-    assert_eq((paint_count() - p0, map_get(current(), "n")), (1, 1))
+    assert_eq((paint_count() - p0, current().n), (1, 1))
     dispatch_action(click("t.update"))
-    assert_eq((paint_count() - p0, map_get(current(), "n")), (2, 2))
+    assert_eq((paint_count() - p0, current().n), (2, 2))
     dispatch_action(click("t.idle"))
     assert_eq(paint_count() - p0, 2)
 }
@@ -366,9 +366,9 @@ test "a change confined to unwatched keys does not repaint; watch narrows to the
     cell.set(unwatched, [])
     unwatch(["live"])
     let p0 = paint_count()
-    let k0 = map_get(paint_stats(), "skipped")
+    let k0 = paint_stats().skipped
     apply((s) => map_set(s, "live", 1))
-    assert_eq((paint_count() - p0, map_get(paint_stats(), "skipped") - k0), (0, 1))
+    assert_eq((paint_count() - p0, paint_stats().skipped - k0), (0, 1))
     apply((s) => map_set(s, "other", 1))
     assert_eq(paint_count() - p0, 1)
     watch(["n"])
@@ -426,7 +426,7 @@ share fn mount(selector, view_fn, initial) = {
         dom.on(root, "change", (ev) => dispatch_action(ev))
         dom.on(root, "submit", (ev) => dispatch_action(ev))
         dom.on(root, "keydown", (ev) => {
-            if map_get(ev, "key") == "Enter" => dispatch_action(ev) else => ()
+            if ev.key == "Enter" => dispatch_action(ev) else => ()
         })
     }
     else => {
@@ -477,7 +477,7 @@ test "a key the browser holds survives the server's state, and the first paint i
     let server = unwrap(json.parse("{\"theme\": \"system\", \"notes\": [1]}"))
     let initial = #{ "theme": "dark", "notes": [] }
     let merged = keep_held(merge_state(initial, server), initial, ["theme"])
-    assert_eq((map_get(merged, "theme"), len(map_get(merged, "notes"))), ("dark", 1))
+    assert_eq((merged.theme, len(merged.notes)), ("dark", 1))
     assert_eq(adopts_first_paint(merged, server), false)
     // Nothing held: the server's state stands and its paint is adopted.
     let plain = keep_held(merge_state(initial, server), initial, [])
@@ -487,8 +487,8 @@ test "a key the browser holds survives the server's state, and the first paint i
 test "merge_state: the server's keys over the caller's defaults" {
     let merged = merge_state(#{ "notes": [], "errors": [], "theme": "dark" },
                              unwrap(json.parse("{\"notes\": [1, 2], \"errors\": []}")))
-    assert_eq(len(map_get(merged, "notes")), 2)
-    assert_eq(map_get(merged, "theme"), "dark")
+    assert_eq(len(merged.notes), 2)
+    assert_eq(merged.theme, "dark")
     // A non-map state is replaced wholesale.
     assert_eq(merge_state(0, 5), 5)
 }

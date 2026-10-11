@@ -17,7 +17,7 @@ let api_headers = cell.new(#{})
 /// Configure the client half: `configure(#{ "headers": #{ "Authorization":
 /// "Bearer " + token } })`. Every later `call` and `fetch` sends them.
 share fn configure(options) = {
-    if map_has_key(options, "headers") => cell.set(api_headers, map_get(options, "headers"))
+    if map_has_key(options, "headers") => cell.set(api_headers, options.headers)
     else => ()
     ()
 }
@@ -32,8 +32,8 @@ fn request(method, path, body, k) = {
     let h = headers()
     let timed = (resp) => {
         if maplike(resp) && map_has_key(resp, "network_ms") =>
-            cell.set(api_timing, #{ "network_ms": map_get(resp, "network_ms"),
-                                    "queue_ms": map_get(resp, "queue_ms") })
+            cell.set(api_timing, #{ "network_ms": resp.network_ms,
+                                    "queue_ms": resp.queue_ms })
         else => ()
         k(resp)
     }
@@ -70,10 +70,10 @@ share fn fetch(path, k) =
 /// (status 0) or a body that is not JSON is an `Err` carrying the
 /// status and the text.
 share fn from_response(resp) = {
-    let status = if map_has_key(resp, "status") => map_get(resp, "status") else => 0
-    let body = if map_has_key(resp, "body") => map_get(resp, "body") else => ""
+    let status = if map_has_key(resp, "status") => resp.status else => 0
+    let body = if map_has_key(resp, "body") => resp.body else => ""
     if status == 0 => Err(#{ "message": "request failed: " +
-        (if map_has_key(resp, "error") => to_string(map_get(resp, "error")) else => "no response"),
+        (if map_has_key(resp, "error") => to_string(resp.error) else => "no response"),
         "details": [], "status": 0 })
     else => match json.parse(body) {
         Ok(v) => unwrap_envelope(v),
@@ -89,14 +89,14 @@ fn maplike(v) = {
 
 /// The message inside an `api` Err — for callers that only want text.
 share fn err_message(e) =
-    if maplike(e) && map_has_key(e, "message") => map_get(e, "message")
+    if maplike(e) && map_has_key(e, "message") => e.message
     else if typeof(e) == "String" => e
     else => "request failed"
 
 /// The validation details inside an `api` Err (possibly empty) — the
 /// problem list a 422 envelope carried, ready for `form_fields`.
 share fn err_details(e) =
-    if maplike(e) && map_has_key(e, "details") => map_get(e, "details")
+    if maplike(e) && map_has_key(e, "details") => e.details
     else => []
 
 /// The envelope, unwrapped: `{ data }` becomes `Ok(data)`; `{ error }`
@@ -107,17 +107,17 @@ share fn err_details(e) =
 share fn unwrap_envelope(resp) = {
     if !maplike(resp) => Ok(resp)
     else if map_has_key(resp, "error") => {
-        let e = map_get(resp, "error")
+        let e = resp.error
         if maplike(e) => {
-            let message = if map_has_key(e, "message") => map_get(e, "message")
+            let message = if map_has_key(e, "message") => e.message
                 else => "request failed"
-            let details = if map_has_key(e, "details") => map_get(e, "details") else => []
+            let details = if map_has_key(e, "details") => e.details else => []
             Err(#{ "message": message, "details": details })
         }
         else => Err(#{ "message": if typeof(e) == "String" => e else => "request failed",
                        "details": [] })
     }
-    else if map_has_key(resp, "data") => Ok(map_get(resp, "data"))
+    else if map_has_key(resp, "data") => Ok(resp.data)
     else => Ok(resp)
 }
 
@@ -141,8 +141,8 @@ test "from_response: the envelope when JSON, the status when not" {
     assert_eq(err_details(match enveloped { Err(e) => e, Ok(v) => #{} }), ["title: required"])
     let plain = from_response(#{ "status": 500, "headers": #{}, "body": "internal server error" })
     let e = match plain { Err(x) => x, Ok(v) => #{} }
-    assert_eq(map_get(e, "message"), "HTTP 500: internal server error")
-    assert_eq(map_get(e, "status"), 500)
+    assert_eq(e.message, "HTTP 500: internal server error")
+    assert_eq(e.status, 500)
     let down = from_response(#{ "status": 0, "headers": #{}, "body": "", "error": "TypeError: Failed to fetch" })
     assert_eq(str.starts_with(err_message(match down { Err(x) => x, Ok(v) => #{} }), "request failed"), true)
 }
@@ -150,7 +150,7 @@ test "from_response: the envelope when JSON, the status when not" {
 test "configure sets the headers every call carries" {
     assert_eq(len(map_keys(headers())), 0)
     configure(#{ "headers": #{ "Authorization": "Bearer t0k" } })
-    assert_eq(map_get(headers(), "Authorization"), "Bearer t0k")
+    assert_eq(headers().Authorization, "Bearer t0k")
     configure(#{ "headers": #{} })
 }
 

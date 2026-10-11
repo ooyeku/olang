@@ -51,21 +51,21 @@ share fn describe_series(xs) = {
     let s = ods.series(xs)
     let d = stats.describe(s)
     {
-        count: map_get(d, "count"),
-        mean: map_get(d, "mean"),
-        std: map_get(d, "std"),
-        min: map_get(d, "min"),
-        max: map_get(d, "max")
+        count: d.count,
+        mean: d.mean,
+        std: d.std,
+        min: d.min,
+        max: d.max
     }
 }
 
 // Dwell times: how long each departed vessel spent in harbor, from its
 // movement rows (arrived tick -> departed tick).
 share fn dwell_hours(movement_rows) = {
-    let arrivals = movement_rows |> filter((m) => map_get(m, "event") == "arrived")
-    let departures = movement_rows |> filter((m) => map_get(m, "event") == "departed")
+    let arrivals = movement_rows |> filter((m) => m.event == "arrived")
+    let departures = movement_rows |> filter((m) => m.event == "departed")
     if len(arrivals) == 0 || len(departures) == 0 => 0
-    else => map_get(head(departures), "tick") - map_get(head(arrivals), "tick")
+    else => head(departures).tick - head(arrivals).tick
 }
 
 // ── Self-checks ─────────────────────────────────────────────────────
@@ -76,7 +76,7 @@ test "group-by, leaderboard, shares" {
         { kind: "container", amount: 40.0 }
     ]
     let by_kind = total_by(rows, (r) => r.kind, (r) => r.amount)
-    testing.assert_eq(map_get(by_kind, "container"), 140.0)
+    testing.assert_eq(by_kind.container, 140.0)
     let top = top_entry(by_kind)
     testing.assert_eq(top[0], "container")
     let lines = share_lines(by_kind)

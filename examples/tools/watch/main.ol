@@ -62,7 +62,7 @@ fn stream_once(argv) = {
                 }
             }
             let exit = unwrap_or(proc.wait(p), #{ "code": -1 })
-            map_get(exit, "code")
+            exit.code
         }
     }
 }
@@ -74,16 +74,16 @@ fn run_pipeline(cmd) = {
     match proc.pipeline(stages) {
         Err(e) => { println(term.red("watch: ") + e); -1 },
         Ok(r) => {
-            let out = str.trim_end(map_get(r, "stdout"))
+            let out = str.trim_end(r.stdout)
             if out != "" => { println(out) }
-            let err = str.trim_end(map_get(r, "stderr"))
+            let err = str.trim_end(r.stderr)
             if err != "" => { println(term.dim(err)) }
             // Colored per-stage exit codes: green 0, red non-zero.
-            let codes = map_get(r, "codes")
+            let codes = r.codes
             let badges = map(codes, (c) =>
                 if c == 0 => term.green(show(c)) else => term.red(show(c)))
             println(term.dim("stages: ") + join(badges, term.dim(" | ")))
-            map_get(r, "code")
+            r.code
         }
     }
 }
@@ -134,8 +134,8 @@ let argv = cli.args()
 match cli.parse(spec, argv) {
     Err(e) => { println(term.red("watch: ") + e); os.exit(2) },
     Ok(a) => {
-        if map_get(a, "help") && len(argv) > 0 => println(cli.help(spec))
-        else => watch(map_get(a, "cmd"), map_get(a, "pipe"),
-                      map_get(a, "interval"), map_get(a, "count"))
+        if a.help && len(argv) > 0 => println(cli.help(spec))
+        else => watch(a.cmd, a.pipe,
+                      a.interval, a.count)
     }
 }

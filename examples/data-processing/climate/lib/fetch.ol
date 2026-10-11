@@ -39,9 +39,9 @@ share fn fetch(url, dest, min_bytes) = {
 
 fn try_fetch(url, dest, min_bytes) = {
     let response = http.get(url, #{ "timeout_ms": 120000 })?
-    let status = map_get(response, "status")
+    let status = response.status
     if status != 200 => return Err(`HTTP ${status} from ${url}`)
-    let body = map_get(response, "body")
+    let body = response.body
     let size = str.length(body)
     if size < min_bytes => return Err(`response is ${size} bytes — expected at least ${min_bytes}`)
     let part = dest + ".part"

@@ -72,8 +72,8 @@ fn flag(opts, key) = if map_has_key(opts, key) => map_get(opts, key) else => fal
 /// Style `s` with `opts`: `fg`, `bg`, `bold`, `dim`, `italic`, `underline`.
 share fn style(s, opts) = {
     let mut codes = []
-    if map_has_key(opts, "fg") => { codes = codes + [fg_code(map_get(opts, "fg"))] }
-    if map_has_key(opts, "bg") => { codes = codes + [bg_code(map_get(opts, "bg"))] }
+    if map_has_key(opts, "fg") => { codes = codes + [fg_code(opts.fg)] }
+    if map_has_key(opts, "bg") => { codes = codes + [bg_code(opts.bg)] }
     if flag(opts, "bold") => { codes = codes + ["1"] }
     if flag(opts, "dim") => { codes = codes + ["2"] }
     if flag(opts, "italic") => { codes = codes + ["3"] }

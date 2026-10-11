@@ -15,20 +15,20 @@ let dial = dom.query("#dial")
 let w = dom.worker("/primes-worker.ol")
 
 dom.worker_on(w, (m) => {
-    let kind = map_get(m, "kind")
+    let kind = m.kind
     if kind == "ready" => {
         dom.set_text(status, "worker ready")
         dom.remove_attr(btn, "disabled")
     }
     if kind == "progress" => {
-        let pct = map_get(m, "done") * 100 / map_get(m, "upto")
+        let pct = m.done * 100 / m.upto
         dom.set_style(bar, "width", show(pct) + "%")
-        dom.set_text(status, show(pct) + "% · " + show(map_get(m, "count")) + " primes so far")
+        dom.set_text(status, show(pct) + "% · " + show(m.count) + " primes so far")
     }
     if kind == "done" => {
         dom.set_style(bar, "width", "100%")
         dom.set_text(status, "done")
-        dom.set_text(out, show(map_get(m, "count")) + " primes below " + show(map_get(m, "upto")))
+        dom.set_text(out, show(m.count) + " primes below " + show(m.upto))
         dom.remove_attr(btn, "disabled")
     }
 })

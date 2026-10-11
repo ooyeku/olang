@@ -107,7 +107,7 @@ fn scan(root) = {
 
 fn total_lines(report) = {
     let mut sum = 0
-    for (lang, fl) in entries(map_get(report, "by_lang")) {
+    for (lang, fl) in entries(report.by_lang) {
         sum = sum + fl[1]
     }
     sum
@@ -115,7 +115,7 @@ fn total_lines(report) = {
 
 // Languages as [lang, files, lines], sorted by lines descending.
 fn ranked(report) = {
-    let rows = map(entries(map_get(report, "by_lang")),
+    let rows = map(entries(report.by_lang),
         (e) => [e[0], e[1][0], e[1][1]])
     // sort by lines desc: sort by negative lines via a keyed comparison
     sort_by_lines(rows)
@@ -157,7 +157,7 @@ fn commas(n) = {
 // ── the three views ─────────────────────────────────────────────────────
 
 fn view_summary(report) = {
-    let files = map_get(report, "files")
+    let files = report.files
     let lines = total_lines(report)
     println(term.bold("survey") + term.dim("  " + show(files) + " files · "
         + commas(lines) + " lines"))
@@ -187,7 +187,7 @@ fn view_langs(report, limit) = {
 }
 
 fn view_files(report, limit) = {
-    let ranked_files = sort_files(map_get(report, "per_file"))
+    let ranked_files = sort_files(report.per_file)
     let shown = if len(ranked_files) > limit => take(ranked_files, limit) else => ranked_files
     let rows = map(shown, (r) => [paint(lang_of(fs.ext(r[0])), r[0]), commas(r[1])])
     println(term.table(["file", "lines"], rows))
@@ -211,17 +211,17 @@ fn sort_files(files) = {
 // ── dispatch ────────────────────────────────────────────────────────────
 
 fn run(a) = {
-    let path = if map_has_key(a, "path") => map_get(a, "path") else => "."
+    let path = if map_has_key(a, "path") => a.path else => "."
     if fs.is_dir(path) == false => {
         println(term.red("survey: ") + "not a directory: " + path)
         os.exit(1)
     }
     let report = scan(path)
-    if map_get(report, "files") == 0 => { println(term.dim("no source files under " + path)) }
+    if report.files == 0 => { println(term.dim("no source files under " + path)) }
     else => {
-        let cmd = if map_has_key(a, "command") && map_get(a, "command") != ""
-            => map_get(a, "command") else => "summary"
-        let top = if map_has_key(a, "top") => map_get(a, "top") else => 10
+        let cmd = if map_has_key(a, "command") && a.command != ""
+            => a.command else => "summary"
+        let top = if map_has_key(a, "top") => a.top else => 10
         match cmd {
             "langs" => view_langs(report, top),
             "files" => view_files(report, top),
@@ -239,7 +239,7 @@ match cli.parse(spec, argv) {
     Ok(a) => {
         // `-h`/`--help` explicitly asked → usage. No args at all → survey
         // the current directory (the friendly default).
-        if map_get(a, "help") && len(argv) > 0 => println(cli.help(spec))
+        if a.help && len(argv) > 0 => println(cli.help(spec))
         else => run(a)
     }
 }

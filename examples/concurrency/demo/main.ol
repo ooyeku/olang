@@ -64,16 +64,16 @@ fn load_config(path) = {
         Ok(p) => p,
         Err(e) => return Err(BadConfig("bad toml: " + e))
     }
-    let harbor = map_get(parsed, "harbor")
-    let rates = map_get(parsed, "rates")
-    let berths = map_get(harbor, "berths")
+    let harbor = parsed.harbor
+    let rates = parsed.rates
+    let berths = harbor.berths
     if berths < 2 => return Err(BadConfig("need at least 2 berths (one is sealed)"))
-    if map_get(harbor, "arrival_chance") <= 0.0 => return Err(BadConfig("arrival_chance must be positive"))
+    if harbor.arrival_chance <= 0.0 => return Err(BadConfig("arrival_chance must be positive"))
     Ok({
         berths: berths,
-        crews: map_get(harbor, "crews"),
-        arrival_chance: map_get(harbor, "arrival_chance"),
-        tick_ms: map_get(harbor, "tick_ms"),
+        crews: harbor.crews,
+        arrival_chance: harbor.arrival_chance,
+        tick_ms: harbor.tick_ms,
         rates: rates
     })
 }
@@ -102,7 +102,7 @@ let args = match cli.parse(spec, cli.args()) {
         os.exit(2)
     }
 }
-if map_get(args, "help") => {
+if args.help => {
     println(cli.help(spec))
     os.exit(0)
 }
@@ -115,11 +115,11 @@ let config = match load_config("config.toml") {
     }
 }
 
-let max_ticks = map_get(args, "ticks")
-let seed = map_get(args, "seed")
-let fast = map_get(args, "fast")
-let quiet = map_get(args, "quiet")
-let out_dir = map_get(args, "out")
+let max_ticks = args.ticks
+let seed = args.seed
+let fast = args.fast
+let quiet = args.quiet
+let out_dir = args.out
 
 random.seed(seed)
 unwrap(os.on_interrupt())
@@ -288,8 +288,8 @@ fn close_day(w) = {
     let w2 = if w.tick + 1 > LEDGER_WINDOW_TICKS => {
         let dropped = prune_before(w.conn, w.tick + 1 - LEDGER_WINDOW_TICKS)
         patch(w, #{ "archived": #{
-            "departures": map_get(w.archived, "departures") + map_get(dropped, "departures"),
-            "revenue": map_get(w.archived, "revenue") + map_get(dropped, "revenue")
+            "departures": w.archived.departures + dropped.departures,
+            "revenue": w.archived.revenue + dropped.revenue
         } })
     } else => w
     patch(w2, #{ "log": [], "chain": link, "day_start": w2.tick + 1 })
@@ -306,9 +306,9 @@ fn expect(label, cond: Bool) = {
 
 fn check_invariants(w) = {
     let totals = ledger_totals(w.conn)
-    let departures = map_get(totals, "departures") + map_get(w.archived, "departures")
+    let departures = totals.departures + w.archived.departures
     expect(`departures ledger=${departures} world=${w.served}`, departures == w.served)
-    let ledger_rev = map_get(totals, "revenue") + map_get(w.archived, "revenue")
+    let ledger_rev = totals.revenue + w.archived.revenue
     expect(`revenue ledger=${ledger_rev} world=${w.revenue}`,
         math.abs(ledger_rev - w.revenue) < 0.01)
     let u = utilization(w.berths)
@@ -327,7 +327,7 @@ fn check_invariants(w) = {
 }
 
 // ── The run loop ────────────────────────────────────────────────────
-let conn = open_ledger(map_get(args, "db"))
+let conn = open_ledger(args.db)
 let mut world = new_world(conn)
 
 loop {
@@ -348,12 +348,12 @@ let totals = ledger_totals(conn)
 println(term.bold("HARBORLINE SHUTDOWN"))
 println(`  ticks: ${world.tick}   days: ${day_of(world.tick)}   date: ${date_of(world.tick)}`)
 println(`  vessels served: ${final_world.served}   diverted: ${final_world.diverted}   revenue: ${money(final_world.revenue)}`)
-println(`  live ledger rows: ${map_get(totals, "movements")} movements, ${map_get(totals, "charge_rows")} charges (older days archived into the chain)`)
+println(`  live ledger rows: ${totals.movements} movements, ${totals.charge_rows} charges (older days archived into the chain)`)
 close_ledger(conn)
 
 let verdict = testing.test_summary()
-println(`  invariants: ${map_get(verdict, "passed")} passed, ${map_get(verdict, "failed")} failed`)
-if map_get(verdict, "failed") > 0 => {
+println(`  invariants: ${verdict.passed} passed, ${verdict.failed} failed`)
+if verdict.failed > 0 => {
     println(term.red("INVARIANT FAILURES — the soak found something"))
     os.exit(1)
 }

@@ -47,11 +47,11 @@ let LINE = "#e4e4e7"
 let ACCENT = "#2563eb"
 
 fn view(m) = {
-    let width = map_get(m, "width")
-    let height = map_get(m, "height")
-    let name = map_get(m, "name")
-    let people = map_get(m, "people")
-    let at = map_get(m, "at")
+    let width = m.width
+    let height = m.height
+    let name = m.name
+    let people = m.people
+    let at = m.at
     let pad = 24
     let inner = width - 2 * pad
     let list_top = 136
@@ -63,7 +63,7 @@ fn view(m) = {
         #{ "key": "label", "parent": "root", "role": "text", "box": (pad, 60, inner, 18),
            "text": "Name", "style": #{ "size": 13, "weight": 500, "color": MUTED } },
         #{ "key": "name", "parent": "root", "role": "input", "name": "Name", "box": (pad, 82, inner - 92, 36),
-           "edit": #{ "value": name, "rev": map_get(m, "rev"), "placeholder": "e.g. Dennis Ritchie" },
+           "edit": #{ "value": name, "rev": m.rev, "placeholder": "e.g. Dennis Ritchie" },
            "style": #{ "bg": "#ffffff", "border": "#d4d4d8", "border_width": 1, "radius": 8,
                        "pad": (0, 10, 0, 10), "size": 15, "color": INK,
                        "focus": #{ "border": ACCENT, "border_width": 2 } } },
@@ -87,40 +87,40 @@ fn view(m) = {
                         "hover": #{ "bg": if selected => "#dbeafe" else => "#f4f4f5" } } }]
     }
     ops + [#{ "key": "status", "parent": "root", "role": "status", "box": (pad, height - 40, inner, 20),
-              "text": map_get(m, "status"), "style": #{ "size": 13, "color": MUTED } }]
+              "text": m.status, "style": #{ "size": 13, "color": MUTED } }]
 }
 
 fn select(m, i) = {
-    let people = map_get(m, "people")
+    let people = m.people
     let m2 = map_set(m, "at", i)
     map_set(m2, "status", people[i] + " selected.")
 }
 
 fn add_person(m) = {
-    let name = map_get(m, "name")
+    let name = m.name
     if name == "" => m
     else => {
-        let people = map_get(m, "people") + [name]
+        let people = m.people + [name]
         let m2 = map_set(map_set(m, "people", people), "at", len(people) - 1)
         let m3 = map_set(map_set(m2, "status", "Added " + name + "."), "name", "")
-        map_set(m3, "rev", map_get(m3, "rev") + 1)
+        map_set(m3, "rev", m3.rev + 1)
     }
 }
 
 /// One event in, the next model out.
 fn update(m, e) = {
-    let kind = map_get(e, "kind")
-    if kind == "resize" => map_set(map_set(m, "width", map_get(e, "width")), "height", map_get(e, "height"))
-    else if kind == "changed" && map_get(e, "key") == "name" =>
-        map_set(map_set(m, "name", map_get(e, "value")), "rev", map_get(e, "rev"))
+    let kind = e.kind
+    if kind == "resize" => map_set(map_set(m, "width", e.width), "height", e.height)
+    else if kind == "changed" && e.key == "name" =>
+        map_set(map_set(m, "name", e.value), "rev", e.rev)
     else if kind == "submit" => add_person(m)
-    else if kind == "activate" && map_get(e, "key") == "add" => add_person(m)
-    else if kind == "activate" && str.starts_with(map_get(e, "key"), "p") =>
-        select(m, to_int(str.slice(map_get(e, "key"), 1, str.length(map_get(e, "key")))))
-    else if kind == "key" && map_get(e, "target") == "people" && map_get(e, "key") == "down" =>
-        select(m, min(map_get(m, "at") + 1, len(map_get(m, "people")) - 1))
-    else if kind == "key" && map_get(e, "target") == "people" && map_get(e, "key") == "up" =>
-        select(m, max(map_get(m, "at") - 1, 0))
+    else if kind == "activate" && e.key == "add" => add_person(m)
+    else if kind == "activate" && str.starts_with(e.key, "p") =>
+        select(m, to_int(str.slice(e.key, 1, str.length(e.key))))
+    else if kind == "key" && e.target == "people" && e.key == "down" =>
+        select(m, min(m.at + 1, len(m.people) - 1))
+    else if kind == "key" && e.target == "people" && e.key == "up" =>
+        select(m, max(m.at - 1, 0))
     else => m
 }
 
@@ -154,12 +154,12 @@ let mut running = true
 while running {
     match chan.recv_timeout(events, 100) {
         Ok(e) => {
-            if map_get(e, "kind") == "close_requested" => { running = false }
-            let before = map_get(m, "people")
+            if e.kind == "close_requested" => { running = false }
+            let before = m.people
             m = update(m, e)
             gui.apply(w, view(m))
-            if len(map_get(m, "people")) != len(before) =>
-                { gui.apply(w, [#{ "op": "scroll", "key": "people", "to": (0, map_get(m, "at") * ROW) }]) }
+            if len(m.people) != len(before) =>
+                { gui.apply(w, [#{ "op": "scroll", "key": "people", "to": (0, m.at * ROW) }]) }
             ()
         },
         _ => ()

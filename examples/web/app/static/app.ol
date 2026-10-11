@@ -48,24 +48,24 @@ fn pill(kind, value, id_prefix, id) =
         + esc(value) + "</button>"
 
 fn row_html(issue) = {
-    let id = show(map_get(issue, "id"))
-    let status = map_get(issue, "status")
+    let id = show(issue.id)
+    let status = issue.status
     let selected = if st("sel") == id => " selected" else => ""
     "<tr class=\"status-" + status + selected + "\" data-key=\"" + id + "\">"
         + "<td class=\"id\">" + id + "</td>"
-        + "<td class=\"title-cell\" id=\"open-" + id + "\">" + esc(map_get(issue, "title")) + "</td>"
+        + "<td class=\"title-cell\" id=\"open-" + id + "\">" + esc(issue.title) + "</td>"
         + "<td>" + pill("st", status, "adv-", id) + "</td>"
-        + "<td>" + pill("pr", map_get(issue, "priority"), "pri-", id) + "</td>"
+        + "<td>" + pill("pr", issue.priority, "pri-", id) + "</td>"
         + "<td><input class=\"cell\" id=\"asg-" + id + "\" value=\""
-        + esc(map_get(issue, "assignee")) + "\"></td>"
+        + esc(issue.assignee) + "\"></td>"
         + "<td class=\"num\"><input class=\"cell num\" id=\"pts-" + id + "\" value=\""
-        + show(map_get(issue, "points")) + "\"></td>"
+        + show(issue.points) + "\"></td>"
         + "<td class=\"del\"><button id=\"del-" + id + "\" title=\"delete\">×</button></td>"
         + "</tr>"
 }
 
 fn update_footer(items, total) = {
-    let by = (s) => len(items |> filter((i) => map_get(i, "status") == s))
+    let by = (s) => len(items |> filter((i) => i.status == s))
     dom.set_text(dom.query("#count"), show(total) + " issues")
     dom.set_text(dom.query("#summary"),
         show(by("open")) + " open · " + show(by("in-progress"))
@@ -87,23 +87,23 @@ fn stat_card(n, label, tone) =
         + "</div><div class=\"l\">" + label + "</div></div>"
 
 fn status_count(rows, name) = {
-    let hit = rows |> filter((r) => map_get(r, "status") == name)
-    if len(hit) == 0 => 0 else => map_get(hit[0], "n")
+    let hit = rows |> filter((r) => r.status == name)
+    if len(hit) == 0 => 0 else => hit[0].n
 }
 
 fn render_stats() = {
     dom.fetch("GET", "/api/stats", "", (resp) => {
         let s = unwrap(json.parse(resp))
-        let by = map_get(s, "by_status")
-        let totals = map_get(s, "totals")
+        let by = s.by_status
+        let totals = s.totals
         // point_quantiles is computed server-side on the ods data stack.
-        let median = show(to_int(map_get(map_get(s, "point_quantiles"), "p50")))
+        let median = show(to_int(s.point_quantiles.p50))
         dom.set_html(dom.query("#stats"),
-            stat_card(show(map_get(totals, "issues")), "issues", "")
+            stat_card(show(totals.issues), "issues", "")
             + stat_card(show(status_count(by, "open")), "open", "blue")
             + stat_card(show(status_count(by, "in-progress")), "in progress", "amber")
             + stat_card(show(status_count(by, "done")), "done", "mint")
-            + stat_card(show(map_get(totals, "points")), "total points", "")
+            + stat_card(show(totals.points), "total points", "")
             + stat_card(median, "median points · ods", "mint"))
     })
 }
@@ -111,9 +111,9 @@ fn render_stats() = {
 // ── rendering: the activity ticker ─────────────────────────────────────
 
 fn event_html(ev) =
-    "<span class=\"ev\"><span class=\"k\">" + esc(map_get(ev, "action"))
-        + "</span> <b>#" + show(map_get(ev, "issue_id")) + "</b> "
-        + esc(map_get(ev, "detail")) + "</span>"
+    "<span class=\"ev\"><span class=\"k\">" + esc(ev.action)
+        + "</span> <b>#" + show(ev.issue_id) + "</b> "
+        + esc(ev.detail) + "</span>"
 
 fn render_activity() = {
     dom.fetch("GET", "/api/activity?limit=8", "", (resp) => {
@@ -125,20 +125,20 @@ fn render_activity() = {
 // ── rendering: the drawer ──────────────────────────────────────────────
 
 fn comment_html(c) =
-    "<div class=\"comment\"><div class=\"who\">" + esc(map_get(c, "author"))
-        + " · " + esc(map_get(c, "at")) + "</div>" + esc(map_get(c, "text")) + "</div>"
+    "<div class=\"comment\"><div class=\"who\">" + esc(c.author)
+        + " · " + esc(c.at) + "</div>" + esc(c.text) + "</div>"
 
 fn render_drawer(issue) = {
-    let id = show(map_get(issue, "id"))
+    let id = show(issue.id)
     dom.set_text(dom.query("#drawer-id"), "issue #" + id)
-    dom.set_value(dom.query("#dtitle"), map_get(issue, "title"))
+    dom.set_value(dom.query("#dtitle"), issue.title)
     dom.set_html(dom.query("#dmeta"),
-        pill("st", map_get(issue, "status"), "dadv-", id)
-        + pill("pr", map_get(issue, "priority"), "dpri-", id)
-        + "<span>" + esc(map_get(issue, "assignee")) + "</span>"
-        + "<span>" + show(map_get(issue, "points")) + " pts</span>"
-        + "<span>updated " + esc(map_get(issue, "updated")) + "</span>")
-    let comments = map_get(issue, "comments")
+        pill("st", issue.status, "dadv-", id)
+        + pill("pr", issue.priority, "dpri-", id)
+        + "<span>" + esc(issue.assignee) + "</span>"
+        + "<span>" + show(issue.points) + " pts</span>"
+        + "<span>updated " + esc(issue.updated) + "</span>")
+    let comments = issue.comments
     dom.morph(dom.query("#comments"),
         if len(comments) == 0 => "<div class=\"comment\">no comments yet</div>"
         else => comments |> map(comment_html) |> join(""))
@@ -168,8 +168,8 @@ fn close_drawer() = {
 fn reload_rows() = {
     dom.fetch("GET", issues_url(), "", (resp) => {
         let parsed = unwrap(json.parse(resp))
-        if map_has_key(parsed, "error") => flash("error: " + map_get(parsed, "error"))
-        else => render_rows(map_get(parsed, "items"), map_get(parsed, "total"))
+        if map_has_key(parsed, "error") => flash("error: " + parsed.error)
+        else => render_rows(parsed.items, parsed.total)
     })
 }
 
@@ -283,8 +283,8 @@ fn on_rows_click(tid) = {
 }
 
 fn on_rows_change(e) = {
-    let tid = map_get(e, "id")
-    let value = map_get(e, "value")
+    let tid = e.id
+    let value = e.value
     let id = str.substring(tid, 4, len(tid))
     if starts_with(tid, "asg-") => {
         patch(id, "{\"assignee\": \"" + json_esc(value) + "\"}")
@@ -314,11 +314,11 @@ fn on_sort_click(tid) = {
 
 // ── boot: bind once, render forever ────────────────────────────────────
 
-dom.on(dom.query("#rows"), "click", (e) => { on_rows_click(map_get(e, "id")) })
+dom.on(dom.query("#rows"), "click", (e) => { on_rows_click(e.id) })
 dom.on(dom.query("#rows"), "change", (e) => { on_rows_change(e) })
-dom.on(dom.query("#filters"), "click", (e) => { on_filter_click(map_get(e, "id")) })
-dom.on(dom.query("#sort-row"), "click", (e) => { on_sort_click(map_get(e, "id")) })
-dom.on(dom.query("#dmeta"), "click", (e) => { on_meta_click(map_get(e, "id")) })
+dom.on(dom.query("#filters"), "click", (e) => { on_filter_click(e.id) })
+dom.on(dom.query("#sort-row"), "click", (e) => { on_sort_click(e.id) })
+dom.on(dom.query("#dmeta"), "click", (e) => { on_meta_click(e.id) })
 dom.on(dom.query("#search"), "input", (e) => { reload_rows() })
 dom.on(dom.query("#new-title"), "enter", (e) => { add_issue() })
 dom.on(dom.query("#add-btn"), "click", (e) => { add_issue() })
@@ -326,7 +326,7 @@ dom.on(dom.query("#new-comment"), "enter", (e) => { add_comment() })
 dom.on(dom.query("#comment-btn"), "click", (e) => { add_comment() })
 dom.on(dom.query("#drawer-close"), "click", (e) => { close_drawer() })
 dom.on(dom.query("#dtitle"), "change", (e) => {
-    if st("sel") != "" => patch(st("sel"), "{\"title\": \"" + json_esc(map_get(e, "value")) + "\"}")
+    if st("sel") != "" => patch(st("sel"), "{\"title\": \"" + json_esc(e.value) + "\"}")
 })
 
 flash("frontend: olang (wasm) · backend: olang · sqlite")

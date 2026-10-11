@@ -31,7 +31,7 @@ fn run(a) = {
     add_task(conn, "Ship 0.25.0", 2)
     complete_task(conn, 2)
 
-    match map_get(a, "command") {
+    match a.command {
         "list" => {
             println(term.bold("All tasks"))
             for t in all_tasks(conn) { println("  " + format_task(t)) }
@@ -52,9 +52,9 @@ fn run(a) = {
             println(term.table(["priority", "count"], rows))
         },
         "add" => {
-            add_task(conn, map_get(a, "title"), map_get(a, "priority"))
-            println(term.green("added") + ": \"" + map_get(a, "title") + "\" (priority "
-                + show(map_get(a, "priority")) + ")")
+            add_task(conn, a.title, a.priority)
+            println(term.green("added") + ": \"" + a.title + "\" (priority "
+                + show(a.priority) + ")")
         },
         _ => println(cli.help(spec))
     }
@@ -68,5 +68,5 @@ match cli.parse(spec, cli.args()) {
         println("taskcli: " + e)
         os.exit(2)
     },
-    Ok(a) => if map_get(a, "help") => println(cli.help(spec)) else => run(a)
+    Ok(a) => if a.help => println(cli.help(spec)) else => run(a)
 }
