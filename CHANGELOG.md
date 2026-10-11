@@ -307,10 +307,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   points), at the click, opening upward or to the left where the screen's
   visible part has no room below or to the right
   (`gui::platform::context_menu_origin`, tests/gui_test.rs). A script's
-  armed pick (`context_pick`) now also reports where it asked (`at`), the
-  menu's window as the window server had it (`frame`) and the menu's
-  `size`, in the window's content points, so a live check can see where
-  the menu opened.
+  armed pick (`context_pick`) now also reports where it asked (`at`) and
+  the menu's own window as AppKit placed it (`frame`, its
+  NSPopupMenuWindow read on the main thread while the menu tracks; the
+  window server's list holds a larger shadow window instead), both in
+  the screen's points, and the menu's `size`, so a live check can see
+  where the menu opened.
 
 - **pty.close reaps an interactive shell.** A session leader's exit waits
   for its terminal's output to drain, and nothing read the master once

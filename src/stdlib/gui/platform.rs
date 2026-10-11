@@ -2006,40 +2006,43 @@ impl App {
         }
         self.context = Some((id, ids, titles.clone()));
         let shown_at = std::time::Instant::now();
-        // a script's pick also measures where the platform put the menu
-        // (its window, read while it is up), in the window's content
-        // points: a live check compares it with where it asked
+        // a script's pick also measures where the platform put the menu:
+        // a live check compares it with where it asked
         let content = unsafe { content_on_screen(view) };
         let menu_size = unsafe {
             let sz: objc2_foundation::NSSize = objc2::msg_send![&*ns_menu, size];
             (sz.width, sz.height)
         };
-        let watch = pick.is_some().then(|| std::thread::spawn(menu_window_watch));
+        // the menu's own window, read on the main thread while it tracks
+        let seen = std::sync::Arc::new(Mutex::new(None::<(f64, f64, f64, f64)>));
+        let timer = pick.is_some().then(|| unsafe { menu_frame_timer(seen.clone()) });
         let chosen = unsafe { context_popup(ns_menu, view, x, y) };
+        if let Some(tm) = &timer {
+            unsafe {
+                let _: () = objc2::msg_send![&**tm, invalidate];
+            }
+        }
         if let Some(label) = pick {
             let open_ms = shown_at.elapsed().as_millis();
             let item = by_label.get(&label).cloned();
             if std::env::var_os("GUI_TRACE").is_some() {
                 eprintln!("gui: context menu open {open_ms} ms, picked {label:?}");
             }
-            let frame = watch.and_then(|w| w.join().ok()).flatten();
+            let frame = seen.lock().ok().and_then(|f| *f);
             let place = |v: f64, k: &str| (k.to_string(), Value::Float(v));
-            let at = vec![place(x, "x"), place(y, "y")];
             let mut fields = vec![
                 ("window", Value::Integer(id as i64)),
                 ("id", item.map(|p| s(&p)).unwrap_or(Value::Unit)),
                 ("items", titles),
                 ("picked", Value::Boolean(true)),
-                ("at", map_of(at)),
             ];
+            // both in the screen's global points (y down from the top of the
+            // main display): the point asked for (the window's content
+            // origin on the screen plus the point) and the menu's own window
+            // as AppKit placed it; `size` the menu's
             if let (Some((fx, fy, fw, fh)), Some((cx, cy))) = (frame, content) {
-                // the window server's frame holds the menu's shadow (and,
-                // on newer systems, room around it): the menu itself is
-                // `size`, in its middle
-                fields.push((
-                    "frame",
-                    map_of(vec![place(fx - cx, "x"), place(fy - cy, "y"), place(fw, "w"), place(fh, "h")]),
-                ));
+                fields.push(("at", map_of(vec![place(cx + x, "x"), place(cy + y, "y")])));
+                fields.push(("frame", map_of(vec![place(fx, "x"), place(fy, "y"), place(fw, "w"), place(fh, "h")])));
                 fields.push(("size", map_of(vec![place(menu_size.0, "w"), place(menu_size.1, "h")])));
             }
             return emit(vec![event("context", fields)]);
@@ -2159,68 +2162,45 @@ unsafe fn content_on_screen(view: *const std::ffi::c_void) -> Option<(f64, f64)>
     }
 }
 
+/// A timer on the main run loop's tracking mode that keeps the frame of
+/// this process's popup menu window (AppKit's NSPopupMenuWindow: the
+/// menu itself; its shadow and glass are another, larger window) in
+/// `out`, in the screen's global points with y down from the top of the
+/// main display. A script's pick reads it: where the menu really opened.
 #[cfg(target_os = "macos")]
-#[link(name = "CoreGraphics", kind = "framework")]
-unsafe extern "C" {
-    fn CGWindowListCopyWindowInfo(option: u32, relative_to: u32) -> *mut std::ffi::c_void;
-}
-
-/// This process's pop-up menu window as the window server has it (global
-/// points, y down): polled for a second from another thread while the
-/// menu tracks (a script's pick; the window server answers any thread).
-#[cfg(target_os = "macos")]
-fn menu_window_watch() -> Option<(f64, f64, f64, f64)> {
-    for _ in 0..40 {
-        std::thread::sleep(std::time::Duration::from_millis(25));
-        if let Some(f) = unsafe { menu_window_now() } {
-            return Some(f);
-        }
-    }
-    None
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn menu_window_now() -> Option<(f64, f64, f64, f64)> {
+unsafe fn menu_frame_timer(out: std::sync::Arc<Mutex<Option<(f64, f64, f64, f64)>>>) -> objc2::rc::Retained<objc2::runtime::AnyObject> {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::NSRect;
     unsafe {
-        use objc2::msg_send;
-        use objc2::runtime::AnyObject;
-        use objc2_foundation::NSString;
-        // kCGWindowListOptionOnScreenOnly; kCGPopUpMenuWindowLevel is 101
-        let list = CGWindowListCopyWindowInfo(1, 0) as *mut AnyObject;
-        if list.is_null() {
-            return None;
-        }
-        let pid = std::process::id() as i64;
-        let key = |k: &str| NSString::from_str(k);
-        let (kpid, klayer, kbounds) = (key("kCGWindowOwnerPID"), key("kCGWindowLayer"), key("kCGWindowBounds"));
-        let num = |d: *mut AnyObject, k: &NSString| -> Option<f64> {
-            let v: *mut AnyObject = msg_send![&*d, objectForKey: k];
-            if v.is_null() {
-                None
-            } else {
-                let f: f64 = msg_send![&*v, doubleValue];
-                Some(f)
+        let block = block2::RcBlock::new(move |_t: *mut AnyObject| {
+            let app: *mut AnyObject = msg_send![objc2::class!(NSApplication), sharedApplication];
+            let wins: *mut AnyObject = msg_send![&*app, windows];
+            let n: usize = msg_send![&*wins, count];
+            let screens: *mut AnyObject = msg_send![objc2::class!(NSScreen), screens];
+            let ns: usize = msg_send![&*screens, count];
+            if ns == 0 {
+                return;
             }
-        };
-        let count: usize = msg_send![&*list, count];
-        let mut found = None;
-        for i in 0..count {
-            let d: *mut AnyObject = msg_send![&*list, objectAtIndex: i];
-            if num(d, &kpid) != Some(pid as f64) || num(d, &klayer) != Some(101.0) {
-                continue;
+            let main: *mut AnyObject = msg_send![&*screens, objectAtIndex: 0usize];
+            let mf: NSRect = msg_send![&*main, frame];
+            for i in 0..n {
+                let w: *mut AnyObject = msg_send![&*wins, objectAtIndex: i];
+                let vis: bool = msg_send![&*w, isVisible];
+                let cls = (*w).class().name().to_string_lossy().to_string();
+                if vis && cls.contains("PopupMenuWindow") {
+                    let f: NSRect = msg_send![&*w, frame];
+                    if let Ok(mut o) = out.lock() {
+                        *o = Some((f.origin.x, mf.size.height - (f.origin.y + f.size.height), f.size.width, f.size.height));
+                    }
+                }
             }
-            let b: *mut AnyObject = msg_send![&*d, objectForKey: &*kbounds];
-            if b.is_null() {
-                continue;
-            }
-            let (bx, by, bw, bh) = (key("X"), key("Y"), key("Width"), key("Height"));
-            if let (Some(x), Some(y), Some(w), Some(h)) = (num(b, &bx), num(b, &by), num(b, &bw), num(b, &bh)) {
-                found = Some((x, y, w, h));
-                break;
-            }
-        }
-        let _: () = msg_send![&*list, release];
-        found
+        });
+        let timer: objc2::rc::Retained<AnyObject> = msg_send![objc2::class!(NSTimer), timerWithTimeInterval: 0.05f64, repeats: true, block: &*block];
+        let rl: *mut AnyObject = msg_send![objc2::class!(NSRunLoop), mainRunLoop];
+        let mode = objc2_foundation::NSString::from_str("NSEventTrackingRunLoopMode");
+        let _: () = msg_send![&*rl, addTimer: &*timer, forMode: &*mode];
+        timer
     }
 }
 
