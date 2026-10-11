@@ -293,8 +293,8 @@ Left alone, and counted in the summary: a key that is not an identifier
 value is called (`map_get(m, "f")(x)` would read as a method call), the
 right side of a pipeline (which passes the first argument), a call with
 a comment inside it, a macro's arguments (the macro is handed their
-text), and every call in a file that declares or imports its own
-`map_get` or `map_get_or`.
+text), and the calls of a `map_get` or a `map_get_or` the file declares or
+imports itself.
 
 The safety property is `olang fmt`'s: the rewritten file must parse to
 the original's tree once both are read back the same way (each `a.k`

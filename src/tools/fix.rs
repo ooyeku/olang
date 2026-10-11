@@ -19,8 +19,9 @@
 //! reserved word), a computed key, a call whose value is called
 //! (`map_get(m, "f")(x)` would read as a method call), a call a pipeline
 //! feeds (`x |> map_get(m, "k")` passes `x` first), a call with a
-//! comment inside it (the comment would be lost), and every call in a
-//! file that defines or imports its own `map_get` or `map_get_or`.
+//! comment inside it (the comment would be lost), a macro's arguments
+//! (the macro is handed their text), and the calls of a `map_get` or a
+//! `map_get_or` the file defines or imports itself.
 //!
 //! The safety property is `olang fmt`'s: the rewritten file must parse,
 //! and to the original's tree once both are read back the same way (each
@@ -69,7 +70,8 @@ pub fn fix_maps(src: &str) -> Result<(String, Report), String> {
     let before = parser
         .parse_raw(&masked)
         .map_err(|e| format!("does not parse: {}", first_line(&e.to_string())))?;
-    if shadows_the_builtins(&masked) {
+    let shadowed = [shadows(&masked, "map_get"), shadows(&masked, "map_get_or")];
+    if shadowed == [true, true] {
         return Ok((src.to_string(), Report::default()));
     }
     let program = OlangParser::parse(Rule::program, &masked)
@@ -81,6 +83,7 @@ pub fn fix_maps(src: &str) -> Result<(String, Report), String> {
         base: 0,
         file: &masked,
         report: Report::default(),
+        shadowed,
     };
     let span = program.as_span();
     let out = format!(
@@ -119,22 +122,23 @@ fn first_line(s: &str) -> String {
     s.lines().next().unwrap_or("").to_string()
 }
 
-/// A file that declares, binds or imports a `map_get` or `map_get_or`
-/// of its own: its calls are not the builtins'.
-fn shadows_the_builtins(src: &str) -> bool {
-    let word = |rest: &str, name: &str| {
-        rest.strip_prefix(name)
+/// Whether the file declares, binds or imports a `name` of its own: its
+/// calls of `name` are not the builtin's (Shuttle's weft shares a
+/// `map_get_or` of its own, which evaluates its default eagerly).
+fn shadows(src: &str, name: &str) -> bool {
+    let word = |rest: &str| {
+        rest.trim_start()
+            .strip_prefix(name)
             .is_some_and(|after| !after.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_'))
     };
     src.lines().any(|line| {
         let t = line.trim_start();
         let t = t.strip_prefix("share ").unwrap_or(t).trim_start();
         let decl = ["fn ", "let mut ", "let "].iter().find_map(|kw| t.strip_prefix(kw));
-        let named = |rest: &str| word(rest.trim_start(), "map_get") || word(rest.trim_start(), "map_get_or");
-        decl.is_some_and(named)
+        decl.is_some_and(word)
             || (t.starts_with("use ")
                 && t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                    .any(|w| w == "map_get" || w == "map_get_or"))
+                    .any(|w| w == name))
     })
 }
 
@@ -237,6 +241,8 @@ struct Fixer<'a> {
     base: usize,
     file: &'a str,
     report: Report,
+    /// The file has its own `map_get`, its own `map_get_or`.
+    shadowed: [bool; 2],
 }
 
 impl<'a> Fixer<'a> {
@@ -452,6 +458,7 @@ impl<'a> Fixer<'a> {
             base: self.base + at + lead.len(),
             file: self.file,
             report: Report::default(),
+            shadowed: self.shadowed,
         };
         let text = sub.render(expr, Ctx::default()).text;
         self.report.gets += sub.report.gets;
@@ -478,6 +485,9 @@ impl<'a> Fixer<'a> {
         let is_get = name == "map_get";
         let is_get_or = name == "map_get_or";
         if !(is_get || is_get_or) || children.len() < 2 || children[1].as_rule() != Rule::function_call {
+            return plain(self, pair);
+        }
+        if (is_get && self.shadowed[0]) || (is_get_or && self.shadowed[1]) {
             return plain(self, pair);
         }
         let line = self.line_of(pair.as_span().start());
@@ -860,11 +870,17 @@ mod tests {
             "let x = map_get(m, // why\n \"k\")\n",
             "let x = map_get_or(m, \"k\", fresh())\n",
             "fn map_get(a, b) = 1\nlet x = map_get(m, \"k\")\n",
+            "use lib.w { map_get_or }\nlet x = map_get_or(m, \"k\", 0)\n",
         ] {
             assert_eq!(fixed(src), src, "{src}");
         }
         let (_, report) = fix_maps("let x = map_get_or(m, \"k\", fresh())\n").unwrap();
         assert_eq!(report.flagged.len(), 1);
+        // its own map_get_or leaves the builtin map_get's calls rewritable
+        assert_eq!(
+            fixed("fn map_get_or(m, k, d) = d\nlet x = map_get_or(m, \"k\", map_get(m, \"j\"))\n"),
+            "fn map_get_or(m, k, d) = d\nlet x = map_get_or(m, \"k\", m.j)\n"
+        );
     }
 
     #[test]
