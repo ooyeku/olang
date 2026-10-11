@@ -159,6 +159,30 @@ fn role_of(node: &Value) -> &str {
     }
 }
 
+/// A group that cannot give room (lib/layout.ol's `ly_rigid`): said so
+/// (`keep: true`), or its children all controls and pictures — shrunk, a
+/// row of buttons only cut its last ones to slivers.
+fn rigid_group(spec: &Spec, node: &Value, p: Option<&crate::ast::ValueMap>, role: &str) -> bool {
+    if role != "group" {
+        return false;
+    }
+    if is_true(mget(p, "keep")) {
+        return true;
+    }
+    let kids = children_of(node);
+    let mut n = 0;
+    for k in kids {
+        if *k == Value::Unit {
+            continue;
+        }
+        n += 1;
+        if spec.shrinks.contains(role_of(k)) {
+            return false;
+        }
+    }
+    n > 0
+}
+
 fn children_of(node: &Value) -> &[Value] {
     match node {
         Value::Map(m) => match m.get("children") {
@@ -773,7 +797,7 @@ fn node_entry(
             hk,
             rk,
             ck,
-            spec.shrinks.contains(role) as i64,
+            (spec.shrinks.contains(role) && !rigid_group(spec, node, p, role)) as i64,
             parent,
             (kind == 2 || spec.ctx.contains(role)) as i64,
         ],
