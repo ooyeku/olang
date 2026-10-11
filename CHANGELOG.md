@@ -278,6 +278,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **A module's member reads like a key** (with roadmap E1): reading a
+  member a module does not have is `()`, as `map_get` answers, so
+  `map_get(plugin, "init")` and `plugin.init` are one read (a plugin
+  host asks a module it loaded whether it has a hook); calling a missing
+  member still raises and names the nearest, through a call, a method
+  call and a pipeline, on every tier.
 - **Every `map_*` builtin takes a map, an object and a parsed JSON
   object alike** (roadmap E5), on every tier: `map_len`, `map_merge` and
   `map_clear` refused the two record kinds ("argument must be a map")

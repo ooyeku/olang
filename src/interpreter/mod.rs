@@ -1849,6 +1849,14 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                             message: crate::ast::no_key_or_method(&receiver.type_name(), field),
                         });
                     }
+                    if !is_struct_field
+                        && let Value::Struct { type_name, fields } = &receiver
+                        && type_name == "Module"
+                    {
+                        return Err(InterpreterError::TypeError {
+                            message: module_member_miss(field, fields.keys().map(|k| k.as_str())),
+                        });
+                    }
                 }
 
                 let callee_value = self.eval_expr(callee)?;
@@ -1914,7 +1922,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 match right.as_ref() {
                     Expr::Call { callee, arguments } => {
                         // Enhanced named argument resolution for pipelines
-                        let callee_value = self.eval_expr(callee)?;
+                        let callee_value = self.callee_value(callee)?;
 
                         // The piped value fills the first parameter, so resolve
                         // the explicit arguments against the remaining ones —
@@ -1949,7 +1957,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     // interpreter used to refuse them, so the same program
                     // ran in the browser and failed natively.
                     other => {
-                        let function_value = self.eval_expr(other)?;
+                        let function_value = self.callee_value(other)?;
                         self.call_function(function_value, vec![left_value])
                     }
                 }
@@ -4503,12 +4511,34 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         }
     }
 
+    /// A callee's value: a module's member the module lacks raises,
+    /// naming the nearest (`fs.reed_file(p)`), where a read is `()`.
+    fn callee_value(&mut self, callee: &crate::ast::Expr) -> Result<Value, InterpreterError> {
+        if let crate::ast::Expr::FieldAccess { object, field } = callee {
+            let receiver = self.eval_expr(object)?;
+            if let Value::Struct { type_name, fields } = &receiver
+                && type_name == "Module"
+                && !fields.contains_key(field.as_str())
+            {
+                return Err(InterpreterError::TypeError {
+                    message: module_member_miss(field, fields.keys().map(|k| k.as_str())),
+                });
+            }
+            return self.field_of(receiver, field);
+        }
+        self.eval_expr(callee)
+    }
+
     fn eval_field_access(
         &mut self,
         object: &crate::ast::Expr,
         field: &str,
     ) -> Result<Value, InterpreterError> {
         let object_value = self.eval_expr(object)?;
+        self.field_of(object_value, field)
+    }
+
+    fn field_of(&mut self, object_value: Value, field: &str) -> Result<Value, InterpreterError> {
 
         match object_value {
             Value::Struct {
@@ -4516,17 +4546,12 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 ref type_name,
             } => {
                 if type_name == "Module" {
-                    // Handle module function access (e.g., fs.read_file).
-                    // A miss names the nearest member — `heap` for
-                    // `headp` — because at a module boundary the mistake
-                    // is almost always a spelling, and the module knows
-                    // its own names.
-                    fields
-                        .get(field)
-                        .cloned()
-                        .ok_or_else(|| InterpreterError::TypeError {
-                            message: module_member_miss(field, fields.keys().map(|k| k.as_str())),
-                        })
+                    // A module's member (`fs.read_file`). Read, a member
+                    // the module lacks is `()`, as `map_get` answers — a
+                    // plugin host asks a module it loaded whether it has
+                    // an `init`. Called, the miss raises and names the
+                    // nearest member (`callee_value`).
+                    Ok(fields.get(field).cloned().unwrap_or(Value::Unit))
                 } else if type_name == "JsonObject" || type_name == "Object" {
                     // An object and a parsed JSON object read as a map
                     // does: `o.key` is `map_get(o, "key")`, and an absent

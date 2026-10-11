@@ -1986,7 +1986,11 @@ only the alias — `area` itself is not brought into scope by
 Importing a shared **enum type also imports its variant constructors**,
 so `Sq(2)` constructs in the importer. A `use` also binds the module's
 name as a namespace (`geometry.area(3, 4)`), and the bare form imports
-everything shared *and* binds the namespace. Because a later wildcard
+everything shared *and* binds the namespace. A namespace reads like any
+record: calling a member it does not have raises, naming the nearest
+(`geometry.aera(3, 4)` — did you mean `area`?), and reading one is `()`,
+as `map_get` answers — how a program asks a module it loaded at run time
+whether it has a hook (`if plugin.init == () => …`). Because a later wildcard
 import rebinds any earlier explicit import of the same name,
 `olang check` warns when it can see the collision; the alias form is
 the resolution that keeps both names.

@@ -5442,6 +5442,13 @@ impl BytecodeVm {
                             Some(type_name) => BytecodeError::TypeError(
                                 crate::ast::no_key_or_method(type_name, method),
                             ),
+                            None if matches!(&receiver.data, ValueData::Struct(st) if st.type_name() == "Module") => {
+                                let ValueData::Struct(st) = &receiver.data else { unreachable!() };
+                                BytecodeError::TypeError(crate::interpreter::module_member_miss(
+                                    method,
+                                    st.iter().map(|(name, _)| name.as_str()),
+                                ))
+                            }
                             None => match self.execute_get_field(&receiver, method) {
                                 Err(e) => e,
                                 Ok(_) => BytecodeError::RuntimeError(
@@ -9493,6 +9500,11 @@ impl BytecodeVm {
                 .map(|v| OvmValue::from_ast(v.clone()))
                 .unwrap_or_else(OvmValue::new_unit)),
             ValueData::Struct(s) if matches!(s.type_name(), "JsonObject" | "Object") => {
+                Ok(s.field(field).cloned().unwrap_or_else(OvmValue::new_unit))
+            }
+            // A module's member read: `()` when the module lacks it, as
+            // `map_get` answers (a call raises; see CallMethod).
+            ValueData::Struct(s) if s.type_name() == "Module" => {
                 Ok(s.field(field).cloned().unwrap_or_else(OvmValue::new_unit))
             }
             ValueData::Struct(s) => s.field(field).cloned().ok_or_else(|| {

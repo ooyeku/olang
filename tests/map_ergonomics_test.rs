@@ -697,3 +697,21 @@ fn the_parser_names_an_unsupported_spread() {
         assert!(!err.contains("Unclosed"), "{src}: {err}");
     }
 }
+
+// ── a module reads like a record ───────────────────────────────────────
+
+#[test]
+fn a_module_member_read_is_unit_when_absent_and_a_call_raises() {
+    let src = r#"
+fn main() = [str.trimm == (), str.trim == (), map_get(str, "trimm") == ()]
+main()
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(list(vec![Value::Boolean(true), Value::Boolean(false), Value::Boolean(true)]))
+    );
+    for call in ["str.trimm(\" x\")", "\" x\" |> str.trimm", "\" x\" |> str.trimm()"] {
+        let err = agree_tiered(&format!("fn main() = {call}\nmain()\n")).unwrap_err();
+        assert!(err.contains("did you mean 'trim'"), "{call}: {err}");
+    }
+}
