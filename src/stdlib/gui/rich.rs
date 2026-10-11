@@ -257,6 +257,14 @@ pub struct RichEditor {
     pub scroll_x: f32,
     /// The widest paragraph laid out, device pixels (with `nowrap`).
     widest: f32,
+    /// A one-line paragraph's measured height, device pixels (0 until one
+    /// is laid out): the estimate of a line not laid out yet, so the tops
+    /// past the view hold still as they are measured.
+    line_seen: f32,
+    /// Its width and scale were set by a frame drawn (`set_geometry`):
+    /// until then the caret is not followed, or the view would be placed
+    /// by the default width's lines.
+    placed: bool,
 }
 
 /// Sticky scroll: `scopes` as `(first line, last line)`, sorted by their
@@ -552,6 +560,8 @@ impl RichEditor {
             band: 16,
             scroll_x: 0.0,
             widest: 0.0,
+            line_seen: 0.0,
+            placed: false,
         };
         e.set_buffer(value);
         e
@@ -600,10 +610,28 @@ impl RichEditor {
         }
         self.built = 0;
         self.char_w = (0.0, 0.0);
+        self.line_seen = 0.0;
         self.ys_ok = false;
     }
 
+    /// `set_geometry`, keeping the caret in view when its lines break
+    /// again at a new width and it was in view before (the window made
+    /// narrower or wider while typing: the place typed at stays shown).
+    pub fn set_geometry_keeping(&mut self, width: f32, scale: f32, ts: &mut TextSystem) {
+        let w = (width * scale).max(1.0);
+        let moves = self.placed && self.view_h > 0.0 && ((self.width - w).abs() > 0.01 || self.scale != scale) && !self.nowrap;
+        let was_in = moves && {
+            let c = self.caret_box(1.0, ts);
+            (c.y1 as f32) > self.scroll_y && (c.y0 as f32) < self.scroll_y + self.view_h
+        };
+        self.set_geometry(width, scale);
+        if was_in {
+            self.follow = true;
+        }
+    }
+
     pub fn set_geometry(&mut self, width: f32, scale: f32) {
+        self.placed = true;
         if self.scale != scale {
             self.scale = scale;
             self.invalidate();
@@ -906,6 +934,9 @@ impl RichEditor {
             self.char_w.0 += l.width();
             self.char_w.1 += text.chars().count() as f32;
         }
+        if l.len() == 1 && h > 0.0 {
+            self.line_seen = h;
+        }
         let p = &mut self.paras[i];
         let h2 = if h > 0.0 { h } else { line_h };
         if !p.measured || (h2 - p.h).abs() > 0.01 {
@@ -924,7 +955,7 @@ impl RichEditor {
         if p.measured {
             return p.h;
         }
-        let line_h = self.font.size * self.scale * 1.2;
+        let line_h = if self.line_seen > 0.0 { self.line_seen } else { self.font.size * self.scale * 1.2 };
         let cw = if self.char_w.1 > 0.0 {
             self.char_w.0 / self.char_w.1
         } else {
@@ -1740,19 +1771,40 @@ impl RichEditor {
 
     /// Keep the caret in a view `h` high: adjust `scroll_y`.
     pub fn follow_caret(&mut self, h: f32, ts: &mut TextSystem) {
-        self.view_h = h;
-        let total = self.content_height(ts);
-        let max = (total - h).max(0.0);
-        if self.follow {
+        // the view made shorter (a panel docked under it) keeps a caret
+        // that was in view in view
+        if self.placed && self.view_h > 0.0 && h + 0.01 < self.view_h && !self.follow {
             let c = self.caret_box(1.0, ts);
-            let (y0, y1) = (c.y0 as f32, c.y1 as f32);
-            if y1 - self.scroll_y > h {
-                self.scroll_y = y1 - h;
+            let was_in = (c.y1 as f32) > self.scroll_y && (c.y0 as f32) < self.scroll_y + self.view_h;
+            let now_out = (c.y1 as f32) > self.scroll_y + h;
+            if was_in && now_out {
+                self.follow = true;
             }
-            if y0 < self.scroll_y {
-                self.scroll_y = y0;
+        }
+        self.view_h = h;
+        if self.follow && self.placed {
+            // the paragraphs between the old view and the caret are
+            // estimates until laid out: the band scrolled to is laid out
+            // and the caret found again until it holds still (a jump to
+            // the end left the caret a line below the view)
+            for _ in 0..4 {
+                let c = self.caret_box(1.0, ts);
+                let (y0, y1) = (c.y0 as f32, c.y1 as f32);
+                let before = self.scroll_y;
+                if y1 - self.scroll_y > h {
+                    self.scroll_y = y1 - h;
+                }
+                if y0 < self.scroll_y {
+                    self.scroll_y = y0;
+                }
+                let _ = self.visible(self.scroll_y, self.scroll_y + h, ts);
+                let c2 = self.caret_box(1.0, ts);
+                if self.scroll_y == before && c2.y0 == c.y0 && c2.y1 == c.y1 {
+                    break;
+                }
             }
             if self.nowrap {
+                let c = self.caret_box(1.0, ts);
                 let margin = 32.0 * self.scale;
                 let (x0, x1) = (c.x0 as f32, c.x1 as f32);
                 if x1 - self.scroll_x > self.width - margin {
@@ -1764,6 +1816,8 @@ impl RichEditor {
             }
             self.follow = false;
         }
+        let total = self.content_height(ts);
+        let max = (total - h).max(0.0);
         self.scroll_y = self.scroll_y.clamp(0.0, max);
     }
 

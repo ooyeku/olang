@@ -2305,7 +2305,7 @@ impl WinState {
             .and_then(|e| e.rich_mut())
             .expect("present");
         r.set_font(&st.font, st.color);
-        r.set_geometry(content[2] / s, s);
+        r.set_geometry_keeping(content[2] / s, s, ts);
         r.follow_caret(content[3], ts);
         let ox = content[0] - r.scroll_x;
         let oy = content[1] - r.scroll_y;
