@@ -296,6 +296,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **gui: a code editor's caret stays whole in view.** A jump far down (⌘↓
+  a page in) left the caret a line below the view — the lines between
+  were estimates until laid out; the band scrolled to is now laid out and
+  the caret found again, and a line not laid out is estimated as a
+  measured one. The caret is not followed before the first frame places
+  the editor, and is kept in view when its lines break at a new width or
+  the view gets shorter (a panel docked under it).
+- **gui flat layout: a group of controls alone never gives room** in a row
+  too narrow (nor one with `keep: true`): shrunk, its last buttons were
+  cut to slivers.
+- **`--verify-tiers` compares results as values.** Maps built on both
+  tiers are two allocations, which `OvmValue`'s equality compares by
+  pointer: every function building a map of three keys was reported a
+  divergence. tests/verify_tiers_test.rs.
+
+### Added (gui)
+
+- `gui.read(w, "key")`: whether the window is the key one.
+
 - **A code field scrolled part of a row half-drew it under its top
   edge**, and a wrapped line whose first row went above showed its
   continuation with no line number. The row the edge half covers (a
