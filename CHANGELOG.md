@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`olang check --format json`**: every file's problems as one
+  document, each exactly as `olang lsp` publishes it — severity, the rule
+  as `code` (`syntax`, `scope`, `runtime`, `type`, `advisory`, an
+  advisory's class, `unused`, …), message, tags (`unnecessary` on an
+  unused name), 1-based `line`/`column` to `end_line`/`end_column` in
+  characters and the server's own `range`; exit 1 on an error, as the
+  text form. The server's diagnostics now carry the same `code`.
+  (olang Studio's `--check` opened every file in a language server to
+  hear its problems.) tests/lsp_check_agreement_test.rs.
+- **The language server follows files renamed, moved and deleted**
+  (`workspace/didRenameFiles`, `workspace/didDeleteFiles`, registered
+  for olang files and folders): the open documents are re-keyed (a
+  folder's too), the old name's problems cleared, and every open
+  document checked again, so an importer hears at once that a module came
+  or went. tests/lsp_test.rs.
+- **`str.from_char_code(n)`**, the inverse of `str.char_code`: a code
+  point's character, or the string of a list of them; a number that is no
+  character raises. `str.char_code` is in stdlib.md at last, and
+  tooling.md says `olang test` runs each file from its own folder.
+- **`fs.real_path(p)`**: the path with its symbolic links resolved
+  (`/tmp/x` → `/private/tmp/x`), its nearest existing folder made real
+  for a path not there yet — the answer the capability gate checks by.
+- **`os.stdin_is_tty()`**: whether standard input is a terminal (a
+  program reading a pipe still draws to one).
+- **`bytes.to_hex(b)` / `bytes.from_hex(s)`.**
+- **`meta.lit` renders an anonymous object** as its literal,
+  `{ a: 1, b: "x" }`.
+
 - **`[package] lock = "never"`** keeps a project's `olang.lock` as it is
   for everything but an explicit `otc install` / `add` / `remove`: a run,
   `olang test`, the REPL, the language server and `olang check --tier`
@@ -204,6 +232,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`re` keeps the patterns it compiled** (per thread, up to 256): a
+  call compiled its pattern every time (~28 µs for a character class;
+  Heddle's painter asked thousands of times a frame).
+
 - **A program's start: callees compile at their first call, and the
   rest of a window's first 600 ms.** olang Studio in a real window, from
   the process's start to its first frame (medians of nine, load 2.4–3.0):
@@ -295,6 +327,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   hands a lambda to the VM (heddle-sql measured ~1.3 KB a call; now 3 B).
 
 ### Fixed
+
+- **`olang profile` reports a program that ends with `os.exit`** — every
+  Loom application, from its loop or a quit — in text and as JSON
+  (`--out`); before, such a run printed nothing at all, so a windowed
+  application could not be profiled from the command line. Sampling a
+  program that starts the `gui` engine covers its whole run, headless or
+  in a real window (checked over a 12 s busy real window, a hidden one,
+  a Loom loop on a timer, Studio's Control Center opened 1,800 times
+  headless — 39,804 ticks over 10.2 s at 200 µs — and olang Studio in a
+  real window for 10.6 s of typing and palettes, ended by its quit:
+  14,883 samples, 700–740 in every half second to the end); the "1,499
+  samples over 0.46 s" the roadmap recorded did not reproduce. tests/profile_json_test.rs.
+- **`OvmValue`'s equality is structural.** Maps, records, enums and
+  tuples compared by pointer for every Rust caller of `==` (the VM's own
+  `==` instruction already compared contents): two equal maps built apart
+  were unequal, a map against the same contents wrapped from the
+  interpreter too. Now every collection compares by contents — the map
+  kinds with one another, an Int and a Float distinct inside a
+  collection — with the same value equal to itself without a walk.
+  tests/bytecode_differential_test.rs.
+- **The checker no longer types `()` as a Tuple.** `let mut fg = ()`
+  later set to a String made `fg != "danger"` "always true"; `()` is the
+  absence value, and comparing anything with it is the presence test, so
+  it has no type to judge by. tests/lsp_check_agreement_test.rs.
+- **Headless windows have one key window**, as the platform's: the one
+  opened last is key, a press in another or `window_focus` moves it,
+  closing the key window hands the key back, each change said as a
+  `window_focus` event; a field's caret and focus ring are drawn only
+  there and `gui.read(w, "key")` says which. Every headless window was
+  key, so two windows both showed a caret (olang Studio's fuzzer, seed
+  1028). Kept per thread that made the windows, so tests side by side in
+  one process do not take each other's key. tests/gui_test.rs.
 
 - **gui: a code editor's caret stays whole in view.** A jump far down (⌘↓
   a page in) left the caret a line below the view — the lines between

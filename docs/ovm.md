@@ -148,16 +148,45 @@ and now takes ~8 ms to use what an earlier launch compiled.
   entries kept.
 
 **Native code is not kept.** What the JIT emits holds this run's
-addresses: calls to the runtime's helpers (moved by ASLR every run),
-pointers to interned shapes and constants, and the other members of its
-group; and it is specialized on the argument kinds its first call saw.
-Keeping it would need the code and its relocations written by symbol
-(each helper by name, each shape by its type and fields, each callee by
-its member), patched into freshly mapped executable memory on load
-(`MAP_JIT`, write protection toggled per thread), entered into the JIT's
-dispatch tables, and keyed by the bytecode entry's key, the kinds, and
-the CPU features Cranelift compiled for. olang Studio's launch spends
-~15 ms there (26 groups); the bytecode cache took the larger share.
+addresses, and it is specialized on the argument kinds its first call
+saw. Keeping it exactly — the bar, since a cached body that is wrong
+for one run is a miscompile no test of a single run catches — needs
+three changes, none of them a cache's own (looked at again for
+0.88; the ~15 ms of olang Studio's launch in 26 groups was not worth a
+partial version):
+
+1. **Code that holds no address of this run.** Cranelift relocates the
+   calls it is told about (the ~60 `olang_jit_*` helpers are imports
+   declared by name, so those are already symbols), but jit.rs also
+   bakes addresses in as immediates (`iconst`): the interrupt flag a
+   poll loads (`interrupt::flag_address`), a call counter's cell
+   (`CALL_COUNTERS`), a string or list constant's `Arc` (the constant
+   tables), a struct shape's `Arc` passed to `olang_jit_make_struct`, and
+   the expected shape a field read's guard compares with — a guard that
+   compares pointers, so a shape must be the very one this run interned.
+   Each would become a load from a per-group table of slots (or a data
+   symbol Cranelift relocates), filled when the group is installed: the
+   shape found again by its type and fields, the constant rebuilt from
+   its value, the flag and counters this run's.
+2. **The relocations kept.** `JITModule` applies relocations and
+   forgets them (`finalize_definitions`); the bytes with their
+   relocation list come from compiling each function with
+   `Context::compile` and reading `MachBufferFinalized::relocs()` before
+   the module is given it, members of a group named by their member
+   index.
+3. **A loader.** Map `MAP_JIT` memory, write with the thread's write
+   protection off (`pthread_jit_write_protect_np`), apply the
+   relocations (each helper by name, each member by index), turn
+   protection back on, invalidate the instruction cache, and enter the
+   group into the dispatch tables and the inline caches as a fresh
+   compile would — keyed by the bytecode entry's key, the argument
+   kinds, the CPU features Cranelift compiled for, and the build of
+   olang, with `--verify-tiers` able to re-run a loaded body against
+   the VM.
+
+Of the three, the first is most of the work and most of the risk: it
+touches every constant-carrying instruction the JIT lowers and the
+guards that make native code sound.
 
 ### What can be promoted
 
