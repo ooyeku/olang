@@ -989,3 +989,61 @@ fn a_builtin_passed_as_a_value_crosses_the_boundary() {
         assert_same(src, "f", &args);
     }
 }
+
+// ── collection equality: structural on every tier, and for every Rust
+// caller of `OvmValue`'s `==` (it compared maps and records by pointer) ──
+
+fn vmap(pairs: &[(&str, Value)]) -> Value {
+    let mut m = olang::ast::ValueMap::default();
+    for (k, v) in pairs {
+        m.insert(k.to_string(), v.clone());
+    }
+    Value::Map(std::sync::Arc::new(m))
+}
+
+#[test]
+fn ovm_values_compare_collections_by_contents() {
+    let small = || vmap(&[("a", Value::Integer(1)), ("b", Value::String(std::sync::Arc::new("x".into())))]);
+    // two maps built apart (the native layout)
+    let (a, b) = (OvmValue::from_ast(small()), OvmValue::from_ast(small()));
+    assert!(a == b, "{a:?} != {b:?}");
+    assert!(a == a.clone());
+    // a large map crosses wrapped; against the same contents built natively
+    let big: Vec<(String, Value)> = (0..40).map(|i| (format!("k{i}"), Value::Integer(i))).collect();
+    let big_pairs: Vec<(&str, Value)> = big.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
+    let wrapped = OvmValue::from_ast(vmap(&big_pairs));
+    let wrapped2 = OvmValue::from_ast(vmap(&big_pairs));
+    assert!(wrapped == wrapped2);
+    // nested: a map in a list in a tuple
+    let nest = || Value::Tuple(std::sync::Arc::new(vec![Value::List(std::sync::Arc::new(vec![small(), small()])), Value::Integer(2)]));
+    assert!(OvmValue::from_ast(nest()) == OvmValue::from_ast(nest()));
+    // a record (an anonymous object) and a parsed JSON object
+    let obj = |t: &str| {
+        let mut f = olang::ast::ValueMap::default();
+        f.insert("a".into(), Value::Integer(1));
+        f.insert("m".into(), small());
+        Value::Struct { type_name: t.to_string(), fields: f.into() }
+    };
+    assert!(OvmValue::from_ast(obj("Object")) == OvmValue::from_ast(obj("Object")));
+    assert!(OvmValue::from_ast(obj("JsonObject")) == OvmValue::from_ast(obj("JsonObject")));
+    // contents differ: unequal
+    let other = OvmValue::from_ast(vmap(&[("a", Value::Integer(2)), ("b", Value::String(std::sync::Arc::new("x".into())))]));
+    assert!(a != other);
+    // inside a collection an Int and a Float stay distinct, as `loose_eq`
+    let i = OvmValue::from_ast(vmap(&[("a", Value::Integer(1))]));
+    let f = OvmValue::from_ast(vmap(&[("a", Value::Float(1.0))]));
+    assert!(i != f);
+    assert!(OvmValue::new_integer(1) != OvmValue::new_float(1.0));
+}
+
+#[test]
+fn collections_built_apart_compare_equal_on_every_tier() {
+    let src = "fn mk(i) = #{ \"a\": i, \"b\": [i, 2], \"c\": #{ \"d\": \"x\" } }\n\
+               fn rec(i) = { a: i, m: mk(i) }\n\
+               fn cnt(xs, v) = { let mut n = 0\n for x in xs { if x == v => { n = n + 1 } }\n n }\n\
+               fn cmp(i) = [mk(i) == mk(i), mk(i) != mk(i + 1), [mk(i)] == [mk(i)], (mk(i), 1) == (mk(i), 1),\n\
+                            rec(i) == rec(i), rec(i) == rec(i + 1), contains([mk(1), mk(i)], mk(i)),\n\
+                            cnt([mk(0), mk(i), mk(i)], mk(i)), mk(i) == #{ \"a\": i, \"b\": [i, 2], \"c\": #{ \"d\": \"x\" } }]";
+    assert_same(src, "cmp", &ints(&[5]));
+    assert_same(src, "cmp", &ints(&[0]));
+}

@@ -9015,57 +9015,10 @@ impl BytecodeVm {
         }
     }
 
-    /// Two collections equal as the interpreter's `loose_eq` says, read
-    /// in place: a value is equal to itself without a walk (a view's
-    /// unchanged subtree, a model an arm handed back), and a walk does
-    /// not first copy both sides into the interpreter's form — which
-    /// made comparing a 100,000-entry map with itself cost milliseconds.
-    /// Kinds this does not read directly fall back to that conversion.
+    /// Two collections equal as the interpreter's `loose_eq` says
+    /// (`OvmValue::coll_eq`).
     fn coll_eq(a: &OvmValue, b: &OvmValue) -> bool {
-        use crate::ovm::value::ValueData as D;
-        let loose = crate::interpreter::ops::loose_eq;
-        match (&a.data, &b.data) {
-            (D::List(x), D::List(y)) | (D::Tuple(x), D::Tuple(y)) => {
-                Arc::ptr_eq(x, y)
-                    || x.len() == y.len()
-                        && x.iter().zip(y.iter()).all(|(v, w)| Self::inner_eq(v, w))
-            }
-            (D::Map(x), D::Map(y)) => {
-                Arc::ptr_eq(x, y)
-                    || x.len() == y.len()
-                        && x.iter()
-                            .all(|(k, v)| y.get(k).is_some_and(|w| Self::inner_eq(v, w)))
-            }
-            (D::AstMap(x), D::AstMap(y)) | (D::AstStruct(x, _), D::AstStruct(y, _)) => {
-                Arc::ptr_eq(x, y) || loose(&Value::Map(x.clone()), &Value::Map(y.clone()))
-            }
-            (D::AstList(x), D::AstList(y)) => {
-                Arc::ptr_eq(x, y) || loose(&Value::List(x.clone()), &Value::List(y.clone()))
-            }
-            (D::FloatList(x), D::FloatList(y)) => Arc::ptr_eq(x, y) || x == y,
-            (D::IntList(x), D::IntList(y)) => Arc::ptr_eq(x, y) || x == y,
-            _ => match (a.to_ast(), b.to_ast()) {
-                (Ok(x), Ok(y)) => loose(&x, &y),
-                _ => false,
-            },
-        }
-    }
-
-    /// Equality inside a collection: as `coll_eq`, but an Int and a
-    /// Float stay distinct (`[1] != [1.0]`), as `loose_eq` keeps them.
-    fn inner_eq(v: &OvmValue, w: &OvmValue) -> bool {
-        use crate::ovm::value::ValueData as D;
-        match (&v.data, &w.data) {
-            (D::Integer(x), D::Integer(y)) => x == y,
-            (D::Float(x), D::Float(y)) => x == y,
-            (D::Boolean(x), D::Boolean(y)) => x == y,
-            (D::String(x), D::String(y)) => Arc::ptr_eq(x, y) || x == y,
-            (D::Unit, D::Unit) => true,
-            (D::Integer(_), D::Float(_)) | (D::Float(_), D::Integer(_)) => false,
-            (D::Integer(_) | D::Float(_) | D::Boolean(_) | D::String(_) | D::Unit, _)
-            | (_, D::Integer(_) | D::Float(_) | D::Boolean(_) | D::String(_) | D::Unit) => false,
-            _ => Self::coll_eq(v, w),
-        }
+        a.coll_eq(b)
     }
 
     /// Whether a value survives conversion to the OVM model and back.

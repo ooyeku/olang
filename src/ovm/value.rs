@@ -827,111 +827,133 @@ impl OvmValue {
 }
 
 impl PartialEq for OvmValue {
+    /// Structural equality, as the language's `==` inside a collection
+    /// (`loose_eq`): every collection kind compares by contents — maps,
+    /// records, enums, tuples and every list layout — and the map kinds
+    /// (a map, a wrapped interpreter map, an object, a parsed JSON
+    /// object) with one another; an Int and a Float stay distinct
+    /// (`[1] != [1.0]`). The same value is equal to itself without a
+    /// walk. Functions, builtins and errors are equal only to themselves.
+    /// (Maps and records compared by pointer here before 0.88: two equal
+    /// maps built apart were unequal to every Rust caller of `==`.)
     fn eq(&self, other: &Self) -> bool {
-        // Compare type tags first for quick rejection — except between the
-        // list layouts, which the mixed arms below compare by element (the
-        // rejection used to make those arms unreachable: a typed list never
-        // equalled the boxed list of the same numbers).
-        let list_layout = |d: &ValueData| {
-            matches!(
-                d,
-                ValueData::List(_)
-                    | ValueData::AstList(_)
-                    | ValueData::FloatList(_)
-                    | ValueData::IntList(_)
-            )
-        };
-        if std::mem::discriminant(&self.data) != std::mem::discriminant(&other.data)
-            && !(list_layout(&self.data) && list_layout(&other.data))
-        {
-            return false;
-        }
+        self.structural_eq(other)
+    }
+}
 
-        // Compare based on value data
+impl OvmValue {
+    /// Equality as a value inside a collection: see `PartialEq`.
+    pub fn structural_eq(&self, other: &OvmValue) -> bool {
+        use ValueData as D;
         match (&self.data, &other.data) {
-            (ValueData::Integer(a), ValueData::Integer(b)) => a == b,
-            (ValueData::Float(a), ValueData::Float(b)) => a == b,
-            (ValueData::Boolean(a), ValueData::Boolean(b)) => a == b,
-            (ValueData::Unit, ValueData::Unit) => true,
-
-            (ValueData::String(a), ValueData::String(b)) => a == b,
-
-            (ValueData::List(a), ValueData::List(b)) => a == b,
-            (ValueData::AstList(a), ValueData::AstList(b)) => a == b,
-            // Mixed representations compare element-wise through a
-            // conversion — an O(n) comparison was O(n) already.
-            (ValueData::List(a), ValueData::AstList(b))
-            | (ValueData::AstList(b), ValueData::List(a)) => {
-                a.len() == b.len()
-                    && a.iter()
-                        .zip(b.iter())
-                        .all(|(x, y)| *x == OvmValue::from_ast(y.clone()))
-            }
-            // Typed lists: element equality is strict per the language
-            // ([1] != [1.0]), so a FloatList never equals an IntList,
-            // and against boxed forms only the matching scalar arm hits.
-            (ValueData::FloatList(a), ValueData::FloatList(b)) => a == b,
-            (ValueData::IntList(a), ValueData::IntList(b)) => a == b,
-            (ValueData::FloatList(_), ValueData::IntList(_))
-            | (ValueData::IntList(_), ValueData::FloatList(_)) => false,
-            (ValueData::FloatList(a), ValueData::List(b))
-            | (ValueData::List(b), ValueData::FloatList(a)) => {
-                a.len() == b.len()
-                    && a.iter()
-                        .zip(b.iter())
-                        .all(|(x, y)| matches!(y.data, ValueData::Float(f) if f == *x))
-            }
-            (ValueData::IntList(a), ValueData::List(b))
-            | (ValueData::List(b), ValueData::IntList(a)) => {
-                a.len() == b.len()
-                    && a.iter()
-                        .zip(b.iter())
-                        .all(|(x, y)| matches!(y.data, ValueData::Integer(n) if n == *x))
-            }
-            (ValueData::FloatList(a), ValueData::AstList(b))
-            | (ValueData::AstList(b), ValueData::FloatList(a)) => {
-                a.len() == b.len()
-                    && a.iter()
-                        .zip(b.iter())
-                        .all(|(x, y)| matches!(y, Value::Float(f) if f == x))
-            }
-            (ValueData::IntList(a), ValueData::AstList(b))
-            | (ValueData::AstList(b), ValueData::IntList(a)) => {
-                a.len() == b.len()
-                    && a.iter()
-                        .zip(b.iter())
-                        .all(|(x, y)| matches!(y, Value::Integer(n) if n == x))
-            }
-
-            (ValueData::Tuple(a), ValueData::Tuple(b)) => a == b,
-
-            (ValueData::Range(a), ValueData::Range(b)) => {
+            (D::Integer(x), D::Integer(y)) => x == y,
+            (D::Float(x), D::Float(y)) => x == y,
+            (D::Boolean(x), D::Boolean(y)) => x == y,
+            (D::String(x), D::String(y)) => Arc::ptr_eq(x, y) || x == y,
+            (D::Unit, D::Unit) => true,
+            (D::Integer(_) | D::Float(_) | D::Boolean(_) | D::String(_) | D::Unit, _)
+            | (_, D::Integer(_) | D::Float(_) | D::Boolean(_) | D::String(_) | D::Unit) => false,
+            (D::Range(a), D::Range(b)) => {
                 a.start == b.start && a.end == b.end && a.inclusive == b.inclusive
             }
-
-            (ValueData::Result(a), ValueData::Result(b)) => match (&a.ok, &a.err, &b.ok, &b.err) {
-                (Some(a_val), None, Some(b_val), None) => a_val == b_val,
-                (None, Some(a_val), None, Some(b_val)) => a_val == b_val,
+            (D::Result(a), D::Result(b)) => match (&a.ok, &a.err, &b.ok, &b.err) {
+                (Some(x), None, Some(y), None) | (None, Some(x), None, Some(y)) => {
+                    x.structural_eq(y)
+                }
                 (None, None, None, None) => true,
                 _ => false,
             },
+            (D::Function(a), D::Function(b)) => Arc::ptr_eq(a, b),
+            (D::AstFunction(a), D::AstFunction(b)) => Arc::ptr_eq(a, b),
+            (D::Closure(a), D::Closure(b)) => Arc::ptr_eq(a, b),
+            (D::Builtin(a), D::Builtin(b)) => Arc::ptr_eq(a, b),
+            (D::Error(a), D::Error(b)) => Arc::ptr_eq(a, b),
+            (
+                D::Function(_)
+                | D::AstFunction(_)
+                | D::Closure(_)
+                | D::Builtin(_)
+                | D::Error(_)
+                | D::Native(_)
+                | D::Range(_)
+                | D::Result(_),
+                _,
+            )
+            | (
+                _,
+                D::Function(_)
+                | D::AstFunction(_)
+                | D::Closure(_)
+                | D::Builtin(_)
+                | D::Error(_)
+                | D::Native(_)
+                | D::Range(_)
+                | D::Result(_),
+            ) => false,
+            _ => self.coll_eq(other),
+        }
+    }
 
-            // For complex types, fall back to pointer comparison for now
-            (ValueData::Function(a), ValueData::Function(b)) => Arc::ptr_eq(a, b),
-            (ValueData::AstFunction(a), ValueData::AstFunction(b)) => Arc::ptr_eq(a, b),
-            (ValueData::Closure(a), ValueData::Closure(b)) => Arc::ptr_eq(a, b),
-            (ValueData::Enum(a), ValueData::Enum(b)) => Arc::ptr_eq(a, b),
-            (ValueData::Map(a), ValueData::Map(b)) => Arc::ptr_eq(a, b),
-            (ValueData::AstMap(a), ValueData::AstMap(b)) => Arc::ptr_eq(a, b) || a == b,
-            (ValueData::Struct(a), ValueData::Struct(b)) => Arc::ptr_eq(a, b),
-            (ValueData::AstStruct(a, ka), ValueData::AstStruct(b, kb)) => {
-                ka == kb && (Arc::ptr_eq(a, b) || a == b)
+    /// Two collections equal as the interpreter's `loose_eq` says, read
+    /// in place: a value is equal to itself without a walk (a view's
+    /// unchanged subtree, a model an arm handed back), and a walk does
+    /// not first copy both sides into the interpreter's form — which
+    /// made comparing a 100,000-entry map with itself cost milliseconds.
+    /// Kinds this does not read directly fall back to that conversion.
+    pub fn coll_eq(&self, other: &OvmValue) -> bool {
+        use ValueData as D;
+        let loose = crate::interpreter::ops::loose_eq;
+        match (&self.data, &other.data) {
+            (D::List(x), D::List(y)) | (D::Tuple(x), D::Tuple(y)) => {
+                Arc::ptr_eq(x, y)
+                    || x.len() == y.len() && x.iter().zip(y.iter()).all(|(v, w)| v.structural_eq(w))
             }
-            (ValueData::Builtin(a), ValueData::Builtin(b)) => Arc::ptr_eq(a, b),
-            (ValueData::Error(a), ValueData::Error(b)) => Arc::ptr_eq(a, b),
-
-            // Different types are never equal
-            _ => false,
+            (D::Map(x), D::Map(y)) => {
+                Arc::ptr_eq(x, y)
+                    || x.len() == y.len()
+                        && x.iter().all(|(k, v)| y.get(k).is_some_and(|w| v.structural_eq(w)))
+            }
+            (D::Struct(x), D::Struct(y)) if Arc::ptr_eq(x, y) => true,
+            (D::Enum(x), D::Enum(y)) if Arc::ptr_eq(x, y) => true,
+            (D::AstMap(x), D::AstMap(y)) | (D::AstStruct(x, _), D::AstStruct(y, _)) => {
+                Arc::ptr_eq(x, y) || loose(&Value::Map(x.clone()), &Value::Map(y.clone()))
+            }
+            (D::AstList(x), D::AstList(y)) => {
+                Arc::ptr_eq(x, y) || loose(&Value::List(x.clone()), &Value::List(y.clone()))
+            }
+            (D::FloatList(x), D::FloatList(y)) => Arc::ptr_eq(x, y) || x == y,
+            (D::IntList(x), D::IntList(y)) => Arc::ptr_eq(x, y) || x == y,
+            (D::FloatList(_), D::IntList(_)) | (D::IntList(_), D::FloatList(_)) => false,
+            (D::FloatList(a), D::List(b)) | (D::List(b), D::FloatList(a)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|(x, y)| matches!(y.data, D::Float(f) if f == *x))
+            }
+            (D::IntList(a), D::List(b)) | (D::List(b), D::IntList(a)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|(x, y)| matches!(y.data, D::Integer(n) if n == *x))
+            }
+            (D::FloatList(a), D::AstList(b)) | (D::AstList(b), D::FloatList(a)) => {
+                a.len() == b.len()
+                    && a.iter().zip(b.iter()).all(|(x, y)| matches!(y, Value::Float(f) if f == x))
+            }
+            (D::IntList(a), D::AstList(b)) | (D::AstList(b), D::IntList(a)) => {
+                a.len() == b.len()
+                    && a.iter().zip(b.iter()).all(|(x, y)| matches!(y, Value::Integer(n) if n == x))
+            }
+            (D::List(a), D::AstList(b)) | (D::AstList(b), D::List(a)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|(x, y)| x.structural_eq(&OvmValue::from_ast(y.clone())))
+            }
+            _ => match (self.to_ast(), other.to_ast()) {
+                (Ok(x), Ok(y)) => loose(&x, &y),
+                _ => false,
+            },
         }
     }
 }
