@@ -254,6 +254,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Every `map_*` builtin takes a map, an object and a parsed JSON
+  object alike** (roadmap E5), on every tier: `map_len`, `map_merge` and
+  `map_clear` refused the two record kinds ("argument must be a map")
+  while `map_get`, `map_set` and `map_keys` took them. `map_len` counts
+  the fields; `map_merge` answers a value of its first argument's kind
+  (as `map_set` does), the second's entries winning, either argument
+  any of the kinds, extended in place when nothing else holds the first;
+  `map_clear` answers an empty value of the same kind. stdlib.md's map
+  table says so.
 - **An object's or a parsed JSON object's missing field is `()`**
   (roadmap E1): `.` on the three map-like kinds is `map_get`, so
   rewriting one as the other never changes a program. Both raised "has

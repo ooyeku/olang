@@ -444,3 +444,91 @@ main()
 "#;
     assert_eq!(agree(src), Ok(Value::Integer(500 + 300)));
 }
+
+// ── E5: one record kind for the builtins ────────────────────────────────
+
+#[test]
+fn every_map_builtin_takes_every_record_kind() {
+    // Each builtin over a map, an object (small and wide, the VM's two
+    // layouts) and a parsed JSON object, compiled: the answers are the
+    // interpreter's on every tier.
+    let src = r#"
+fn kinds() = [
+    #{ "a": 1, "b": 2 },
+    { a: 1, b: 2 },
+    { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10, k: 11, l: 12, m: 13, n: 14, o: 15, p: 16, q: [17] },
+    unwrap(json.parse("{\"a\": 1, \"b\": 2}")),
+]
+fn probe(m) = [
+    map_get(m, "a"), map_get_or(m, "z", 0), map_path(m, ["a"]), map_has_key(m, "b"),
+    sort(map_keys(m)) |> take(2), len(map_values(m)), len(entries(m)), map_len(m),
+    typeof(map_set(m, "z", 3)), map_len(map_remove(m, "a")),
+    typeof(map_merge(m, #{ "c": 3 })), map_get(map_merge(m, #{ "a": 9 }), "a"),
+    typeof(map_merge(#{ "c": 3 }, m)), map_len(map_merge(#{}, m)) == map_len(m),
+    typeof(map_clear(m)), map_len(map_clear(m)),
+    m.a, m.zz ?? "absent",
+]
+fn main() = map(kinds(), probe)
+main()
+"#;
+    let got = agree_tiered(src).expect("every builtin answers");
+    let Value::List(rows) = &got else { panic!() };
+    assert_eq!(rows.len(), 4);
+    for row in rows.iter() {
+        let Value::List(cells) = row else { panic!() };
+        assert!(matches!(cells[7], Value::Integer(_)), "map_len answered: {row:?}");
+        assert_eq!(cells[0], Value::Integer(1));
+        assert_eq!(cells[17], s("absent"));
+    }
+    // the kinds survive the writers
+    let kinds = r#"
+fn main() = [
+    typeof(map_merge({ a: 1 }, #{ "b": 2 })),
+    typeof(map_merge(unwrap(json.parse("{}")), { b: 2 })),
+    typeof(map_clear({ a: 1 })),
+    map_len({ a: 1, b: 2, c: 3 }),
+    map_len(unwrap(json.parse("{\"x\": [1, 2]}"))),
+]
+main()
+"#;
+    assert_eq!(
+        agree_tiered(kinds),
+        Ok(Value::List(std::sync::Arc::new(vec![
+            s("Object"),
+            s("JsonObject"),
+            s("Object"),
+            Value::Integer(3),
+            Value::Integer(1),
+        ])))
+    );
+}
+
+#[test]
+fn map_builtins_on_objects_compile_on_the_vm() {
+    let src = r#"
+fn main() = {
+    let o = { a: 1, b: 2 }
+    let merged = map_merge(o, #{ "c": 3 })
+    [map_len(o), map_len(merged), map_len(map_clear(o)), merged.c]
+}
+main()
+"#;
+    assert_eq!(
+        agree(src),
+        Ok(Value::List(std::sync::Arc::new(vec![
+            Value::Integer(2),
+            Value::Integer(3),
+            Value::Integer(0),
+            Value::Integer(3),
+        ])))
+    );
+}
+
+#[test]
+fn the_builtins_still_refuse_what_is_not_a_record() {
+    for call in ["map_len(5)", "map_merge(5, #{})", "map_merge(#{}, [1])", "map_clear(\"x\")"] {
+        let src = format!("fn main() = {call}\nmain()\n");
+        let err = agree(&src).unwrap_err();
+        assert!(err.contains("must be a map or object"), "{call}: {err}");
+    }
+}

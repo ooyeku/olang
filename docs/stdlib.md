@@ -301,11 +301,15 @@ The full string toolkit lives in [`str`](#str--strings).
 
 ### The `map_*` family
 
-Read and update maps — and **any struct-like value** (anonymous objects,
-structs, parsed JSON objects) works the same way, reading *and* writing:
-updating a parsed JSON object yields a new JSON object, updating a struct a
-new struct of the same type. Everything is immutable — writers return a new
-value.
+Read and update maps. **Every builtin here takes a map, an anonymous
+object and a parsed JSON object alike** (and a declared struct), reading
+*and* writing: updating a parsed JSON object yields a new JSON object,
+updating an object an object, a struct a new struct of the same type —
+a writer answers the kind of its first argument. Everything is immutable
+— writers return a new value (a value nothing else holds is updated in
+place). An identifier key reads as `m.key` (exactly `map_get(m, "key")`)
+and defaults with `m.key ?? d` (exactly `map_get_or(m, "key", d)`, the
+default evaluated only when used).
 
 | Function | Description |
 |---|---|
@@ -315,11 +319,11 @@ value.
 | `map_has_key(m, k)` | presence test (distinguishes absent from null) |
 | `map_keys(m)` / `map_values(m)` | key/value lists (unordered) |
 | `entries(m)` | `(key, value)` tuples, sorted by key — for `for (k, v) in` |
-| `map_len(m)` | entry count |
+| `map_len(m)` | entry count (an object's or a JSON object's fields) |
 | `map_set(m, k, v)` | new value of the same kind with `k` set |
 | `map_remove(m, k)` | new value of the same kind without `k` |
-| `map_merge(a, b)` | new map, `b`'s entries winning |
-| `map_clear(m)` | fresh empty map |
+| `map_merge(a, b)` | new value of `a`'s kind, `b`'s entries winning (`b` any of the kinds) |
+| `map_clear(m)` | an empty value of the same kind |
 
 ```olang
 let m = #{ "a": 1, "b": 2 }
@@ -328,6 +332,8 @@ println(show(map_len(m)) + " -> " + show(map_len(m2)))
 println(show(map_get({ x: 42 }, "x")))            // objects read like maps
 let d = map_set(unwrap(json.parse("{\"a\": 1}")), "b", 2)
 println(typeof(d) + " " + show(map_get(d, "b")))  // JSON updates stay JSON
+let o = map_merge({ x: 1 }, #{ "y": 2 })
+println(typeof(o) + " " + show(map_len(o)))       // Object 2
 for (k, v) in entries(m2) { print(k + "=" + show(v) + " ") }
 println("")
 ```

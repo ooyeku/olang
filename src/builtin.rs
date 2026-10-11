@@ -3716,17 +3716,14 @@ impl BuiltinFunctions {
                 got: args.len(),
             });
         }
-
-        let map = match &args[0] {
-            Value::Map(map) => map,
-            _ => {
-                return Err(InterpreterError::TypeError {
-                    message: "map_len: argument must be a map".to_string(),
-                });
-            }
-        };
-
-        Ok(Value::Integer(map.len() as i64))
+        // A map's entries, an object's or a parsed JSON object's fields:
+        // every `map_*` builtin takes the three alike.
+        match Self::field_map(&args[0]) {
+            Some(map) => Ok(Value::Integer(map.len() as i64)),
+            None => Err(InterpreterError::TypeError {
+                message: "map_len: argument must be a map or object".to_string(),
+            }),
+        }
     }
 
     fn map_clear(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
@@ -3736,53 +3733,55 @@ impl BuiltinFunctions {
                 got: args.len(),
             });
         }
-
+        // An empty value of the same kind, as the other writers answer.
         match &args[0] {
-            Value::Map(_) => {
-                // Return an empty map
-                Ok(Value::Map(std::sync::Arc::new(
-                    crate::ast::ValueMap::default(),
-                )))
-            }
+            Value::Map(_) => Ok(Value::Map(std::sync::Arc::new(
+                crate::ast::ValueMap::default(),
+            ))),
+            Value::Struct { type_name, .. } => Ok(Value::Struct {
+                type_name: type_name.clone(),
+                fields: std::sync::Arc::new(crate::ast::ValueMap::default()),
+            }),
             _ => Err(InterpreterError::TypeError {
-                message: "map_clear: argument must be a map".to_string(),
+                message: "map_clear: argument must be a map or object".to_string(),
             }),
         }
     }
 
-    fn map_merge(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+    fn map_merge(&self, mut args: Vec<Value>) -> Result<Value, InterpreterError> {
         if args.len() != 2 {
             return Err(InterpreterError::ArityMismatch {
                 expected: 2,
                 got: args.len(),
             });
         }
-
-        let map1 = match &args[0] {
-            Value::Map(map) => map,
-            _ => {
-                return Err(InterpreterError::TypeError {
-                    message: "map_merge: first argument must be a map".to_string(),
-                });
-            }
-        };
-
-        let map2 = match &args[1] {
-            Value::Map(map) => map,
-            _ => {
-                return Err(InterpreterError::TypeError {
-                    message: "map_merge: second argument must be a map".to_string(),
-                });
-            }
-        };
-
-        // Create a new map that merges both maps (map2 values overwrite map1 values)
-        let mut new_map = (**map1).clone();
-        for (key, value) in map2.iter() {
-            new_map.insert(key.clone(), value.clone());
+        let second = args.pop().expect("len checked");
+        let mut target = args.pop().expect("len checked");
+        if Self::field_map(&target).is_none() {
+            return Err(InterpreterError::TypeError {
+                message: "map_merge: first argument must be a map or object".to_string(),
+            });
         }
-
-        Ok(Value::Map(std::sync::Arc::new(new_map)))
+        let Some(entries) = Self::field_map(&second) else {
+            return Err(InterpreterError::TypeError {
+                message: "map_merge: second argument must be a map or object".to_string(),
+            });
+        };
+        // A new value of the first argument's kind with the second's
+        // entries winning, as map_set answers; a sole-owner first
+        // argument is extended in place.
+        match &mut target {
+            Value::Map(fields) | Value::Struct { fields, .. } => {
+                if !entries.is_empty() {
+                    let fields = std::sync::Arc::make_mut(fields);
+                    for (key, value) in entries.iter() {
+                        fields.insert(key.clone(), value.clone());
+                    }
+                }
+                Ok(target)
+            }
+            _ => unreachable!("checked above"),
+        }
     }
 
     // Result type utility functions
