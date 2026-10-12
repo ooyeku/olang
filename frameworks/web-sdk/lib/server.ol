@@ -382,11 +382,11 @@ share fn bundle_clients_in(dir, client_sources) = {
     // was the whole of a 4.5 s session start once the download was
     // solved.
     let expanded = match meta.expand(bundled) {
-        Err(e) => unwrap(Err("client bundle does not expand: " + e)),
+        Err(e) => raise("client bundle does not expand: " + e),
         Ok(text) => text
     }
     match meta.parse(expanded) {
-        Err(e) => unwrap(Err("client bundle does not parse: " + e)),
+        Err(e) => raise("client bundle does not parse: " + e),
         Ok(tree) => expanded
     }
 }
@@ -489,8 +489,8 @@ share fn shell(title, head, wasm_url, has_image, first_paint, state) = {
 /// escaped, so no string value can close the element early.
 fn state_json(state) = match json.stringify(state) {
     Ok(text) => str.replace(text, "<", "\\u003c"),
-    Err(e) => unwrap(Err("first paint: the initial state must be JSON data "
-        + "(maps, lists, strings, numbers, booleans): " + show(e)))
+    Err(e) => raise("first paint: the initial state must be JSON data "
+        + "(maps, lists, strings, numbers, booleans): " + show(e))
 }
 
 test "the shell carries the first paint and its state when given a view" {
@@ -605,7 +605,7 @@ share fn serve(config) = {
     // the shim's fallback when the runtime in the browser is another
     // olang version than this server.
     let image = if bundle == "" => () else => match meta.encode(bundle, #{ "hot": hot }) {
-        Err(e) => unwrap(Err("client bundle does not encode: " + e)),
+        Err(e) => raise("client bundle does not encode: " + e),
         Ok(bytes) => bytes
     }
     // The browser runtime this binary embeds: its bytes, its content

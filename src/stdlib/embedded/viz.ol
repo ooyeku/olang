@@ -105,7 +105,7 @@ fn has_data(spec) =
 
 fn check_spec_keys(spec, where_) = {
     let problems = spec_problems(spec, where_)
-    if len(problems) > 0 => unwrap(Err(problems[0])) else => ()
+    if len(problems) > 0 => raise(problems[0]) else => ()
 }
 
 /// The spec's problems as a Result: `Ok(spec)` when it will render, or

@@ -48,7 +48,7 @@ while going {
             say(h, describe(ev))
             let chord = if f(ev, "kind") == "key" => f(ev, "chord") else => ""
             if chord == "q" || chord == "ctrl+c" => { going = false }
-            else if chord == "!" => { unwrap(Err("raised on purpose from echo.ol")) }
+            else if chord == "!" => { raise("raised on purpose from echo.ol") }
             else if chord == "x" => { os.exit(3) }
             else if chord == "z" => { let _ = tty.suspend(h) }
         },

@@ -60,7 +60,7 @@ meta fn store(prefix, fields) = {
         ok
     }
     if typeof(p) != "String" || !ident_ok(p) =>
-        unwrap(Err("@store: prefix must be a lowercase identifier, got " + show(p)))
+        raise("@store: prefix must be a lowercase identifier, got " + show(p))
     else => ()
     let mut names = []
     let mut defaults = #{}
@@ -68,25 +68,25 @@ meta fn store(prefix, fields) = {
     let mut local_fields = []
     for f in fs {
         if typeof(f) != "List" || len(f) != 3 =>
-            unwrap(Err("@store: each field is [name, class, default], got " + show(f)))
+            raise("@store: each field is [name, class, default], got " + show(f))
         else => ()
         let name = f[0]
         let class = f[1]
         let default = f[2]
         if typeof(name) != "String" || !ident_ok(name) =>
-            unwrap(Err("@store: field name must be a lowercase identifier, got "
-                + show(name)))
+            raise("@store: field name must be a lowercase identifier, got "
+                + show(name))
         else => ()
         if contains(names, name) =>
-            unwrap(Err("@store: duplicate field '" + name + "'"))
+            raise("@store: duplicate field '" + name + "'")
         else => ()
         if !contains(["mem", "url", "local"], class) =>
-            unwrap(Err("@store: field '" + name + "' has unknown class '"
-                + show(class) + "' (mem | url | local)"))
+            raise("@store: field '" + name + "' has unknown class '"
+                + show(class) + "' (mem | url | local)")
         else => ()
         if class != "mem" && typeof(default) != "String" =>
-            unwrap(Err("@store: field '" + name + "' is '" + class
-                + "'-persisted, so its default must be a String"))
+            raise("@store: field '" + name + "' is '" + class
+                + "'-persisted, so its default must be a String")
         else => ()
         names = names + [name]
         defaults = map_set(defaults, name, default)
