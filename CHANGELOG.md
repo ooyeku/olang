@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **A date format string olang cannot read is an `Err`.**
+  `dates.format_date(d, "%Q")` aborted the process (exit 134, past
+  `attempt`); `format_date`, `format_datetime` and `format_time` now
+  answer `Err("…: invalid format string '%Q'")` for an unknown
+  specifier, a trailing `%`, or a field the value does not have (`%H`
+  of a date).
+
+- **An empty `heap` or `deque` reads `()` and pops to itself.**
+  `deque.pop_front` on an empty deque answered a corrupted handle (size
+  −1); `heap.top_item`, `heap.top_prio`, `heap.pop`, `deque.front` and
+  `deque.back` on empty raised an internal index error, and after a
+  heap was drained `top_item` read back the popped slot. A read of an
+  element that is not there is now `()`, and a pop of an empty
+  structure answers the handle unchanged (stdlib.md, "Collections, in
+  olang").
+
 ## [0.88.0] - 2026-10-12
 
 ### Upgrading

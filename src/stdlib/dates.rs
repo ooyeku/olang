@@ -711,6 +711,23 @@ fn dates_parse_time(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
     }
 }
 
+/// Formats with a format string the caller gave: one chrono cannot read
+/// (`%Q`, a trailing `%`) or that asks for a field the value lacks (`%H`
+/// of a date) is an `Err` naming it. chrono reports either as a
+/// `fmt::Error` from `Display`, which `to_string` turns into a panic.
+fn format_checked(
+    value: impl std::fmt::Display,
+    format_str: &str,
+    name: &str,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    use std::fmt::Write;
+    let mut out = String::new();
+    match write!(out, "{}", value) {
+        Ok(()) => Ok(Value::String(out.into())),
+        Err(_) => Err(format!("{}: invalid format string '{}'", name, format_str).into()),
+    }
+}
+
 /// Format a date with a custom format string
 /// Usage: dates.format_date("2024-06-15", "%B %d, %Y") -> "June 15, 2024"
 fn dates_format_date(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
@@ -728,8 +745,7 @@ fn dates_format_date(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
         _ => return Err(misuse("format_date: second argument must be a string")),
     };
 
-    let formatted = date.format(format_str).to_string();
-    Ok(Value::String(formatted.into()))
+    format_checked(date.format(format_str), format_str, "format_date")
 }
 
 /// Format a datetime with a custom format string
@@ -754,8 +770,7 @@ fn dates_format_datetime(args: Vec<Value>) -> Result<Value, Box<dyn std::error::
 
     let datetime = parse_datetime_flexible(datetime_str)?;
 
-    let formatted = datetime.format(format_str).to_string();
-    Ok(Value::String(formatted.into()))
+    format_checked(datetime.format(format_str), format_str, "format_datetime")
 }
 
 /// Format a time with a custom format string
@@ -789,8 +804,7 @@ fn dates_format_time(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
         }
     };
 
-    let formatted = time.format(format_str).to_string();
-    Ok(Value::String(formatted.into()))
+    format_checked(time.format(format_str), format_str, "format_time")
 }
 
 /// Add days to a date

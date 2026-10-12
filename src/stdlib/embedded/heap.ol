@@ -32,15 +32,16 @@ share fn new() = [0]
 // The number of pairs in the heap.
 share fn size(h) = h[0]
 
-// True when the heap holds nothing. `top_prio`/`top_item`/`pop` are
-// undefined on an empty heap (they raise an index error).
+// True when the heap holds nothing. On an empty heap `top_prio` and
+// `top_item` answer `()` and `pop` answers the heap unchanged.
 share fn is_empty(h) = h[0] == 0
 
-// The smallest priority in the heap, without removing it.
-share fn top_prio(h) = h[1]
+// The smallest priority in the heap, without removing it; `()` when empty.
+share fn top_prio(h) = if h[0] == 0 => () else => h[1]
 
-// The item paired with the smallest priority, without removing it.
-share fn top_item(h) = h[2]
+// The item paired with the smallest priority, without removing it; `()`
+// when empty.
+share fn top_item(h) = if h[0] == 0 => () else => h[2]
 
 // The heap with (prio, item) added: `h = heap.push(h, prio, item)`.
 share fn push(h, prio, item) = {
@@ -66,8 +67,9 @@ share fn push(h, prio, item) = {
 }
 
 // The heap with its smallest pair removed: read `top_prio`/`top_item`
-// first, then `h = heap.pop(h)`.
+// first, then `h = heap.pop(h)`. An empty heap is answered unchanged.
 share fn pop(h) = {
+    if h[0] == 0 => { return h }
     let n = h[0] - 1
     h = col.set(h, 0, n)
     // The last pair moves to the root, then sifts down to its place.
@@ -130,6 +132,20 @@ test "push and pop order by priority" {
     testing.assert_eq(top_prio(h), 5)
     h = pop(h)
     testing.assert_eq(is_empty(h), true)
+}
+
+test "an empty heap reads () and pops to itself" {
+    let mut h = new()
+    testing.assert_eq(top_prio(h), ())
+    testing.assert_eq(top_item(h), ())
+    h = pop(h)
+    testing.assert_eq(size(h), 0)
+    h = push(h, 4, "four")
+    h = pop(h)
+    // The popped slot is kept for reuse; it is not read back.
+    testing.assert_eq(top_item(h), ())
+    h = pop(h)
+    testing.assert_eq(size(h), 0)
 }
 
 test "duplicate priorities all surface" {

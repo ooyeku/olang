@@ -16,9 +16,8 @@
 // (`q = deque.push_back(q, x)`), read (`front`, `back`, `size`) without
 // rebinding.
 //
-// `front`/`back`/`pop_front`/`pop_back` are undefined on an empty deque
-// (they raise an index error): emptiness is the caller's check, the same
-// contract as `heap`.
+// On an empty deque `front` and `back` answer `()` and `pop_front` and
+// `pop_back` answer the deque unchanged, the same contract as `heap`.
 
 // A new, empty deque (with a small initial ring).
 share fn new() = [0, 0, 4, (), (), (), ()]
@@ -29,15 +28,15 @@ share fn size(q) = q[1]
 // True when the deque holds nothing.
 share fn is_empty(q) = q[1] == 0
 
-// The front element, without removing it.
+// The front element, without removing it; `()` when empty.
 share fn front(q) = {
-    if q[1] == 0 => { q[len(q)] }  // one past the end: raises, by contract
+    if q[1] == 0 => { () }
     else => { q[3 + q[0]] }
 }
 
-// The back element, without removing it.
+// The back element, without removing it; `()` when empty.
 share fn back(q) = {
-    if q[1] == 0 => { q[len(q)] }  // one past the end: raises, by contract
+    if q[1] == 0 => { () }
     else => { q[3 + (q[0] + q[1] - 1) % q[2]] }
 }
 
@@ -61,8 +60,9 @@ share fn push_front(q, x) = {
 }
 
 // The deque with its front element removed: read `front` first, then
-// `q = deque.pop_front(q)`.
+// `q = deque.pop_front(q)`. An empty deque is answered unchanged.
 share fn pop_front(q) = {
+    if q[1] == 0 => { return q }
     let head = q[0]
     q = col.set(q, 3 + head, ())
     q = col.set(q, 0, (head + 1) % q[2])
@@ -71,8 +71,9 @@ share fn pop_front(q) = {
 }
 
 // The deque with its back element removed: read `back` first, then
-// `q = deque.pop_back(q)`.
+// `q = deque.pop_back(q)`. An empty deque is answered unchanged.
 share fn pop_back(q) = {
+    if q[1] == 0 => { return q }
     let at = (q[0] + q[1] - 1) % q[2]
     q = col.set(q, 3 + at, ())
     q = col.set(q, 1, q[1] - 1)
@@ -129,6 +130,21 @@ test "both ends and growth" {
     testing.assert_eq(front(q), -5)
     testing.assert_eq(back(q), 5)
     testing.assert_eq(to_list(q), [-5, -4, -3, -2, -1, 0, 0, 1, 2, 3, 4, 5])
+}
+
+test "empty reads are () and empty pops change nothing" {
+    let mut q = new()
+    testing.assert_eq(front(q), ())
+    testing.assert_eq(back(q), ())
+    q = pop_front(q)
+    q = pop_back(q)
+    testing.assert_eq(size(q), 0)
+    q = push_back(q, 1)
+    q = pop_front(q)
+    q = pop_front(q)
+    testing.assert_eq(size(q), 0)
+    q = push_back(q, 7)
+    testing.assert_eq(to_list(q), [7])
 }
 
 test "drain to empty and reuse" {

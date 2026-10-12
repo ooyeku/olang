@@ -696,6 +696,12 @@ the next write through either handle pays a one-time copy; the
 language's aliasing guarantee is never suspended, only the speed
 changes.
 
+**Empty structures.** A read of an element that is not there answers
+`()`: `heap.top_prio`, `heap.top_item`, `deque.front` and `deque.back`
+on an empty structure. A removal from an empty structure (`heap.pop`,
+`deque.pop_front`, `deque.pop_back`) answers the handle unchanged, so a
+drain loop may test `is_empty` or the read, whichever it holds.
+
 **The representation discipline.** Every handle is one flat list with a
 small metadata prefix — a heap is `[size, p0, i0, p1, i1, ...]`, a
 union-find is `[n, parents..., ranks...]`, a graph is CSR offsets and
@@ -841,7 +847,7 @@ ISO-8601 strings in, ISO-8601 strings out; fallible operations return
 |---|---|
 | Now | `now` `utc_now` `today` · `stamp` — the storage form: UTC, second precision, `Z` suffix (`2026-08-31T23:40:06Z`), sortable as text · `stamp_ms` — the same at millisecond precision (`…06.503Z`), the one to key a row's version on: two edits inside one second are identical under `stamp` |
 | Build | `date(y, m, d)` → `Date` · `datetime(y, m, d, h, mi, s)` `time(h, mi, s)` |
-| Parse/format | `parse(s)` → `Date` · `parse_date` `parse_datetime` `parse_time` `format_date` `format_datetime` `format_time` |
+| Parse/format | `parse(s)` → `Date` · `parse_date` `parse_datetime` `parse_time` · `format_date(d, fmt)` `format_datetime(dt, fmt)` `format_time(t, fmt)` — `fmt` in strftime's `%` form (`"%B %d, %Y"`); a specifier it does not know, a trailing `%`, or a field the value lacks (`%H` of a date) is an `Err` |
 | Fields | `year` `month` `day` `hour` `minute` `second` `weekday` |
 | Arithmetic | `add_days` `add_weeks` `add_months` `add_years` `diff_days` — or Date operators |
 | Calendar | `start_of_week(d)` — the Monday on or before `d` · `start_of_month(d)` — its first day |
