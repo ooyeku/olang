@@ -37,7 +37,7 @@ enum Commands {
         #[arg(long)]
         lib: bool,
         /// A full-stack web app on the web SDK: JSON API + wasm frontend,
-        /// one process, two files
+        /// one process, three files (main.ol, lib/pages.ol, client.ol)
         #[arg(long)]
         web: bool,
         /// The web app with every seam hand-rolled on the raw stdlib —

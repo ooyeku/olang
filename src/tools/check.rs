@@ -4386,6 +4386,7 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
         files.extend(super::discover_ol_files(path));
     }
     let mut refused_total = 0usize;
+    let mut unchecked = 0usize;
     let mut promoted_errors = 0usize;
     let mut file_rows: Vec<serde_json::Value> = Vec::new();
     for file in &files {
@@ -4399,11 +4400,15 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
         let program = match parser.parse_with_dir(&source, file.parent()) {
             Ok(p) => p,
             Err(e) => {
-                // `olang check` proper reports parse errors
+                // A file that does not parse has no verdict; the text form
+                // says so rather than counting it as compiling.
                 if json {
                     file_rows.push(serde_json::json!({
                         "file": absolute.to_string_lossy(), "error": e.to_string(), "functions": [] }));
+                } else {
+                    println!("{}\n  × not checked: {}", file.display(), e);
                 }
+                unchecked += 1;
                 continue;
             }
         };
@@ -4477,6 +4482,8 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
             if json {
                 file_rows.push(serde_json::json!({
                     "file": absolute.to_string_lossy(), "error": e.to_string(), "functions": [] }));
+            } else {
+                println!("{}\n  ⚠ not checked (its declarations did not load): {}", file.display(), e);
             }
             continue;
         }
@@ -4582,6 +4589,14 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
             })
         );
         return if promoted_errors > 0 { 1 } else { 0 };
+    }
+    if unchecked > 0 {
+        println!(
+            "olang check --tier: {} file{} not checked (it does not parse)",
+            unchecked,
+            if unchecked == 1 { "" } else { "s" }
+        );
+        return 1;
     }
     if refused_total == 0 {
         println!(
