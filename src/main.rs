@@ -286,9 +286,10 @@ enum Commands {
     /// Rewrite programs to a newer idiom. `olang fix maps`: `map_get(x, "k")`
     /// becomes `x.k` and `map_get_or(x, "k", d)` becomes `x.k ?? d`, layout
     /// and comments kept; a default that may have an effect is flagged, not
-    /// rewritten
+    /// rewritten. `olang fix deprecated`: a deprecated builtin's calls
+    /// renamed to its current name
     Fix {
-        /// What to fix: `maps`
+        /// What to fix: `maps`, `deprecated`
         #[arg(value_name = "WHAT")]
         what: String,
         /// Files or directories (default: current directory)
@@ -918,8 +919,11 @@ fn run() -> i32 {
             }
             match what.as_str() {
                 "maps" => std::process::exit(olang::tools::fix::run_maps(&paths, check, &skip)),
+                "deprecated" => {
+                    std::process::exit(olang::tools::fix::run_deprecated(&paths, check, &skip))
+                }
                 other => {
-                    eprintln!("olang fix: nothing called '{other}' to fix (there is: maps)");
+                    eprintln!("olang fix: nothing called '{other}' to fix (there are: maps, deprecated)");
                     std::process::exit(2)
                 }
             }

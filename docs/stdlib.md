@@ -165,7 +165,7 @@ the evidence rather than from a feeling.
 |---|---|
 | `typeof(v)` | runtime type name as a string |
 | `show(v)` | display rendering: strings bare, others as `to_string` |
-| `to_string(v)` | repr rendering: strings quoted |
+| `to_string(v)` | the same text as `show` (strings bare) |
 | `to_int(v)` | string/float → Int (floats truncate) |
 | `to_float(v)` | string/int → Float |
 | `len(v)` | length of a list, string, tuple, or map |
@@ -322,7 +322,7 @@ default evaluated only when used).
 |---|---|
 | `map_get(m, k)` | value, or `Unit` when absent |
 | `map_get_or(m, k, default)` | value, or `default` when absent (or stored Unit) |
-| `map_get_in(m, [k1, k2, …])` | a nested read in one call — the value at the end of the key path, or Unit at the first missing hop; every hop reads like `map_get` (`map_path` is the same function) |
+| `map_get_in(m, [k1, k2, …])` | a nested read in one call — the value at the end of the key path, or Unit at the first missing hop; every hop reads like `map_get` (`map_path`, deprecated, is the same function) |
 | `map_set_in(m, [k1, k2, …], v)` | new value with the end of the key path set — each level a new value of its own kind, a missing level a new map |
 | `map_update(m, k, f)` | new value with `k` set to `f(m.k)` (`f` is given `()` for an absent key) |
 | `map_has_key(m, k)` | presence test (distinguishes absent from null) |
@@ -386,6 +386,17 @@ source compatibility with code written against them.
 let deferred = lazy([1, 2, 3] |> map((x) => x * 10))
 println(to_string(force(deferred)))
 ```
+
+### Deprecated names
+
+A function renamed before 1.0 keeps its old name as an alias: a program
+using it runs as before, `olang check` warns at each call, and `olang
+fix deprecated` rewrites the calls ([tooling](tooling.md#olang-fix-deprecated)).
+An alias is never removed in the release that deprecates it.
+
+| Old name | Use | Since |
+|---|---|---|
+| `map_path(m, keys)` | `map_get_in(m, keys)`, `map_set_in`'s reading half | 0.88 |
 
 ## `str` — strings
 

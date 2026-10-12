@@ -1761,11 +1761,10 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
                 "map_path(value, keys)",
                 "Any",
                 "Maps",
-                "A nested read in one call: follow the list of keys through maps, objects, \
-                 structs, and parsed JSON, returning the value at the end or Unit at the \
-                 first missing hop — the same absence-as-Unit rule as map_get, without \
-                 spelling it once per level.",
-                "map_path(event, [\"issue\", \"fields\", \"estimate\"])  // () when any hop is missing",
+                "Deprecated (0.88): map_get_in under an older name, kept working; olang fix \
+                 deprecated renames the calls. A nested read in one call — the value at the \
+                 end of the key path, or Unit at the first missing hop.",
+                "map_get_in(event, [\"issue\", \"fields\", \"estimate\"])  // write map_get_in",
             ),
             (
                 "map_get_in",
@@ -1773,7 +1772,7 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
                 "Any",
                 "Maps",
                 "The value at the end of a key path, or Unit at the first missing hop — \
-                 map_set_in's reading half (map_path is the same function).",
+                 map_set_in's reading half (map_path, deprecated, is the same function).",
                 "map_get_in(#{ \"pp\": #{ \"cur\": 3 } }, [\"pp\", \"cur\"])  // 3",
             ),
             (

@@ -391,6 +391,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`map_path` is deprecated** in favour of `map_get_in`, the same
+  function under the name that pairs with `map_set_in`. It keeps
+  working; `olang check` warns at each call (advisory class
+  `deprecated`, struck through in an editor), and `olang fix deprecated`
+  renames the calls. This is the one clear-cut case of the stdlib naming
+  audit made before the freeze; the others are listed for decision in
+  docs/roadmap.md ("Stdlib naming audit").
 - **`testing.snapshot` keeps a String as its text**, without the quotes
   its display form added (a snapshot of HTML read as one long quoted
   line). A snapshot written quoted before still matches, and an update

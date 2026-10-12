@@ -918,6 +918,8 @@ fn program_diagnostics(
                         crate::tools::check::rule_of(&d).to_string(),
                     )),
                     source: Some("olang".to_string()),
+                    tags: (crate::tools::check::rule_of(&d) == "deprecated")
+                        .then(|| vec![lsp_types::DiagnosticTag::DEPRECATED]),
                     message: d.message,
                     ..Default::default()
                 }

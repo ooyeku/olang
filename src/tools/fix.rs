@@ -891,3 +891,151 @@ mod tests {
         assert_eq!(fixed(&once), once);
     }
 }
+
+
+/// `olang fix deprecated`: every call of a deprecated builtin
+/// (`check::DEPRECATED_GLOBALS`) renamed to the name it is now, in the
+/// source text — strings, templates and comments untouched, a name the
+/// file binds itself (a `fn`, a `let`, a parameter, an import) left
+/// alone, and the file written only when it still parses.
+pub fn run_deprecated(paths: &[PathBuf], check: bool, skip: &[PathBuf]) -> i32 {
+    let mut changed_files = 0;
+    let mut renamed = 0;
+    for path in paths {
+        for file in crate::tools::discover_ol_files(path) {
+            if skip.iter().any(|s| file.starts_with(s)) {
+                continue;
+            }
+            let Ok(source) = std::fs::read_to_string(&file) else {
+                continue;
+            };
+            let (fixed, n) = rename_deprecated(&source);
+            if n == 0 {
+                continue;
+            }
+            if crate::Parser::new().parse_raw(&fixed).is_err() {
+                println!("{}: left (the rewrite does not parse)", file.display());
+                continue;
+            }
+            changed_files += 1;
+            renamed += n;
+            println!("{}: {} call{} renamed", file.display(), n, if n == 1 { "" } else { "s" });
+            if !check {
+                let _ = std::fs::write(&file, fixed);
+            }
+        }
+    }
+    println!(
+        "olang fix deprecated: {} call{} in {} file{}{}",
+        renamed,
+        if renamed == 1 { "" } else { "s" },
+        changed_files,
+        if changed_files == 1 { "" } else { "s" },
+        if check && renamed > 0 { " would change" } else { "" }
+    );
+    if check && renamed > 0 { 1 } else { 0 }
+}
+
+/// The text with each deprecated builtin's calls renamed, and how many.
+pub fn rename_deprecated(source: &str) -> (String, usize) {
+    // A file that binds the old name means its own thing by it.
+    let bound: Vec<&str> = crate::tools::check::DEPRECATED_GLOBALS
+        .iter()
+        .map(|(old, _)| *old)
+        .filter(|old| binds(source, old))
+        .collect();
+    let chars: Vec<char> = source.chars().collect();
+    let mut out = String::with_capacity(source.len());
+    let mut n = 0;
+    let mut i = 0;
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+    while i < chars.len() {
+        let c = chars[i];
+        // strings, raw strings and templates are copied whole
+        if c == '"' || c == '`' {
+            let close = c;
+            out.push(c);
+            i += 1;
+            while i < chars.len() {
+                let d = chars[i];
+                out.push(d);
+                i += 1;
+                if d == '\\' && i < chars.len() {
+                    out.push(chars[i]);
+                    i += 1;
+                } else if d == close {
+                    break;
+                }
+            }
+            continue;
+        }
+        if c == '/' && chars.get(i + 1) == Some(&'/') {
+            while i < chars.len() && chars[i] != '\n' {
+                out.push(chars[i]);
+                i += 1;
+            }
+            continue;
+        }
+        if is_ident(c) && (i == 0 || !is_ident(chars[i - 1])) {
+            let start = i;
+            while i < chars.len() && is_ident(chars[i]) {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            let after_dot = start > 0 && chars[start - 1] == '.';
+            let called = chars[i..].iter().find(|c| !c.is_whitespace()) == Some(&'(');
+            match crate::tools::check::DEPRECATED_GLOBALS.iter().find(|(old, _)| *old == word) {
+                Some((old, now)) if !after_dot && called && !bound.contains(old) => {
+                    out.push_str(now);
+                    n += 1;
+                }
+                _ => out.push_str(&word),
+            }
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    (out, n)
+}
+
+/// Whether the file binds `name` itself: declares it, imports it, or
+/// takes it as a parameter or a `let`.
+fn binds(source: &str, name: &str) -> bool {
+    let Ok(program) = crate::Parser::new().parse_raw(source) else {
+        return true;
+    };
+    source.contains(&format!("fn {name}"))
+        || source.contains(&format!("let {name}"))
+        || source.contains(&format!("let mut {name}"))
+        || program.statements.iter().any(|s| match s.unwrapped() {
+            crate::ast::Statement::UseDecl(u)
+            | crate::ast::Statement::ShareDecl(crate::ast::ShareDecl::Use(u)) => {
+                u.items.iter().any(|i| i.bound_name() == Some(name) || i.bound_name().is_none())
+            }
+            _ => false,
+        })
+        || source.contains(&format!("({name},"))
+        || source.contains(&format!("({name})"))
+        || source.contains(&format!(", {name})"))
+        || source.contains(&format!(", {name},"))
+}
+
+#[cfg(test)]
+mod deprecated_tests {
+    use super::rename_deprecated;
+
+    #[test]
+    fn a_deprecated_call_is_renamed_and_nothing_else() {
+        let src = "let v = map_path(m, [\"a\"])\n// map_path(x)\nlet s = \"map_path(m)\"\nlet t = mod.map_path(1)\nlet f = map_path\n";
+        let (out, n) = rename_deprecated(src);
+        assert_eq!(n, 1);
+        assert_eq!(
+            out,
+            "let v = map_get_in(m, [\"a\"])\n// map_path(x)\nlet s = \"map_path(m)\"\nlet t = mod.map_path(1)\nlet f = map_path\n"
+        );
+        // A file with its own map_path is left.
+        let (_, n) = rename_deprecated("fn map_path(a, b) = a\nmap_path(1, 2)\n");
+        assert_eq!(n, 0);
+    }
+}

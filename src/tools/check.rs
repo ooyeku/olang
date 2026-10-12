@@ -2108,6 +2108,8 @@ pub fn warning_class(message: &str) -> Option<&'static str> {
     {
         // A loop that rebuilds the collection it is accumulating.
         Some("copy")
+    } else if message.contains("is deprecated: it is `") {
+        Some("deprecated")
     } else if message.contains("shadows the stdlib module") {
         // `let cell = …`: every later `cell.get` in the scope reaches the
         // binding and fails at run time, far from the `let`.
@@ -2656,6 +2658,11 @@ struct Checker {
     out: Vec<CheckDiagnostic>,
 }
 
+/// Builtins kept under an older name, with the name they are now: each
+/// still works, `olang check` says so, and `olang fix deprecated`
+/// rewrites the calls (docs/stdlib.md, "Deprecated names").
+pub const DEPRECATED_GLOBALS: &[(&str, &str)] = &[("map_path", "map_get_in")];
+
 /// How many arguments each global builtin takes, as its implementation
 /// counts them (`min`, `max`): a call outside the range raises. Measured
 /// against the runtime and pinned by `builtin_arity_table_agrees_with_the_runtime`.
@@ -2789,6 +2796,19 @@ impl Checker {
                 || me.scopes.iter().any(|scope| scope.contains_key(n))
         };
         let got = arguments.len();
+        if let Expr::Identifier(name) = callee
+            && !bound(self, name)
+            && let Some((_, now)) = DEPRECATED_GLOBALS.iter().find(|(old, _)| old == name)
+        {
+            self.warn(
+                span,
+                format!(
+                    "`{}` is deprecated: it is `{}` under an older name, kept working — \
+`olang fix deprecated` rewrites the call",
+                    name, now
+                ),
+            );
+        }
         match callee {
             Expr::Identifier(name) if !self.wildcard_use && !bound(self, name) => {
                 let Some(&(_, min, max)) = GLOBAL_ARITY.iter().find(|(n, _, _)| n == name) else {

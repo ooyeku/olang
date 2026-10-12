@@ -29,6 +29,7 @@ since 2026-10-07); those rows are kept together under
 - [The desktop engine (`gui`)](#the-desktop-engine-gui)
 - [Web SDK](#web-sdk)
 - [Platforms (parked)](#platforms-parked)
+- [Stdlib naming audit](#stdlib-naming-audit)
 - [Process](#process)
 
 ## Language and runtime
@@ -106,6 +107,36 @@ Kept, not scheduled, while the work is macOS-only.
 | `[gui]` Windows and Linux windows run | Windows compiles (a `cargo check` and a MinGW link) and has never run; Linux builds and its headless tests pass in an arm64 container with no compositor and no GPU. Narrator, NVDA and Orca untried; input methods off macOS untried | the L0 window works by keyboard, pointer, screen reader and input method on Windows and on a Wayland compositor |
 | `[gui]` The capabilities `gui.platform()` reports false | no file drops on Wayland (winit); a Windows drop lands at the pointer's last place; the clipboard's picture is read on macOS only (arboard without `image-data`); contrast, motion, transparency and the accent are not read off macOS | each flag true where the platform allows it |
 | `[stdlib]` The terminal on Windows | `tty.query` and suspend are not implemented on Windows; the H0 criterion names Windows Terminal | both on Windows Terminal |
+
+## Stdlib naming audit
+
+Every global builtin (80) and every function of the native modules was
+listed on 2026-10-11 and read against docs/STYLE.md and stability.md's
+conventions (a function returns its value, a `Result` when it can fail
+for a reason the caller can handle, and raises when called wrongly; a
+lookup's absence is `()`; the subject is the first argument, so a call
+pipes). One case was clear-cut and changed in 0.88; the rest are open
+for the owner's decision before the freeze. Each would be a rename with
+the old name kept as a deprecated alias (`olang check` flags it, `olang
+fix deprecated` rewrites it), so none breaks a program.
+
+| Finding | Names | Kind | Status |
+|---|---|---|---|
+| Two names, one function | `map_path` / `map_get_in` | duplicate | changed: `map_path` deprecated (stdlib.md, "Deprecated names") |
+| Two names, one function | `skip` / `drop` (and `col.skip` / `col.drop`) | duplicate | debatable: `drop` is documented as the name most languages pair with `take`; deprecate one, or keep both as stated |
+| Two names, one function | `fold` / `reduce` (same arguments: list, initial, function) | duplicate | debatable: `reduce` usually takes no initial value elsewhere, so the shared shape misleads; deprecate `reduce`, or give it the no-initial form (a behaviour change) |
+| Two names, one rendering | `show` / `to_string` | duplicate | debatable: both render the same text (stdlib.md's table said `to_string` quotes strings; it does not); keep one as the documented spelling |
+| Identity functions | `lazy`, `force` | vestigial | debatable: documented as the identity "kept for source compatibility"; deprecate both |
+| A lookup that is a `Result` | `find(xs, pred)` answers `Ok`/`Err`, `col.index_of` answers the index or `()` | convention | debatable: the 0.69 rule says a lookup's absence is `()`; changing `find` breaks its callers' `match`es |
+| The subject is not first | `re.find(pattern, text)` and every `re.*`; `str.*` take the text first | argument order | debatable: `text \|> re.find(p)` does not pipe; a reordering needs new names (`re.find_in(text, pattern)`) |
+| One verb, two meanings | `str.replace` replaces every match (`str.replace_first` the first); `re.replace` replaces the first (`re.replace_all` every one) | naming | debatable: a `re.replace_first` alias and `re.replace` replacing all would align them, but changes `re.replace`'s behaviour |
+| Text-level JSON helpers | `json.get_keys`, `json.get_values`, `json.get_type`, `json.array_length`, `json.get`, `json.set` on JSON text, beside `map_keys`, `typeof`, `len` on parsed values | overlap | debatable: they predate `json.parse` returning dot-readable values; deprecate the text-level set |
+| Module-prefixed names inside a module | `random.randint`, `random.randbool`, `random.randstr*` | naming | debatable: `random.int`, `random.bool`, `random.string` read better under the module name |
+| Hex both ways, twice | `crypto.hex_encode` / `crypto.hex_decode` (strings) and `bytes.to_hex` / `bytes.from_hex` | overlap | debatable: one pair could serve both, the String form converting through bytes |
+| A tty test in two modules | `os.is_tty` and `tty.is_tty` | overlap | debatable: the same question; keep the one in `tty` |
+| `entries` beside `map_*` | `entries(m)`, `map_keys(m)`, `map_values(m)` | naming | debatable: a `map_entries` alias would complete the family |
+| Clocks in two modules | `time.now_ms`, `time.monotonic_ms`, `dates.stamp_ms`, `dates.timestamp`, `dates.now` | overlap | kept: `time` is clocks for measuring, `dates` is calendar time; stdlib.md says which to use |
+| Modules registering a usual count | `ods`, `gui`, `vt` register a function by its usual argument count, the other modules by the fewest it takes | convention | debatable (internal): the checker judges only the latter's counts; registering the fewest everywhere would let it judge all |
 
 ## Process
 

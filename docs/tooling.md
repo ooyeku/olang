@@ -29,6 +29,7 @@ language server has [its own chapter](editors.md).
 | `olang eval SOURCE` | Evaluate one expression and print its value, with the working directory's project libraries in scope |
 | `olang fmt [path]` | Format sources in place; `--check` reports instead of writing |
 | `olang fix maps [path]` | Rewrite `map_get(x, "k")` as `x.k` and `map_get_or(x, "k", d)` as `x.k ?? d`, layout and comments kept; `--check` reports instead of writing |
+| `olang fix deprecated [path]` | Rename every call of a deprecated builtin to its current name (`map_path` → `map_get_in`); `--check` reports instead of writing |
 | `olang test [path]` | Discover and run `test` blocks; `--coverage` reports coverage |
 | `olang build <file>` | Compile to a self-contained executable; `-o OUT` names it; `--app` carries the program's modules, its dependencies', and their assets |
 | `olang inspect <binary>` | Read a built binary's source, manifest, capabilities, provenance |
@@ -305,6 +306,16 @@ the original's tree once both are read back the same way (each `a.k`
 as `map_get(a, "k")`, each `a.k ?? d` as `map_get_or(a, "k", d)`), or
 the file is left untouched and reported. A second run changes nothing.
 
+## `olang fix deprecated`
+
+A builtin kept under an older name (the [deprecated
+names](stdlib.md#deprecated-names)) still works, and `olang check`
+warns at each call (advisory class `deprecated`; an editor shows it
+struck through). `olang fix deprecated [path] [--check] [--skip path]`
+renames the calls in the source text: a name after a `.`, inside a
+string, template or comment, or that the file binds itself is left, and
+a file is written only when it still parses.
+
 ## `olang check`
 
 Everything the compiler can tell you before the program runs. It began
@@ -327,7 +338,7 @@ message, tags, line, column, end_line, end_column, range }`:
 `severity` `error`, `warning`, `information` or `hint`; `code` the rule
 (`syntax`, `macro`, `scope`, `runtime`, `type`, `advisory`, an
 advisory's class — `shadow`, `exhaustiveness`, `shape`, `keys`,
-`result`, `copy` — `unused` for a name nothing reads, `manifest` for olang.toml);
+`result`, `copy`, `deprecated` — `unused` for a name nothing reads, `manifest` for olang.toml);
 `tags` `["unnecessary"]` on an unused name (a hint, faded by an editor,
 never a problem); `line`/`column` to `end_line`/`end_column` 1-based in
 characters, and `range` the server's own (0-based, UTF-16). The exit
