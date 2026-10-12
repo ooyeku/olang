@@ -52,7 +52,6 @@ would be a 2.0 change. Every row in the other tables is `after`.
 | Item | Evidence | Done when | 1.0 |
 |---|---|---|---|
 | `[docs]` stability.md does not place every module in a tier | its tiers name `str`, `col`, `math`, `json`, `toml`, `csv`, `re`, `dates`, `time`, `base64`, `fs`, `os`, `db`, `random`, `crypto`, `chan`, `task`, `cell`, `proc`, `meta`, `caps`, the packages, the data stack, `http.serve`, `dom` and `testing`'s session state; `gui`, `tty`, `pty`, `vt`, `runtime`, `bytes`, `compress`, `vec`, `bigint`, `asset` and `http`'s client are documented in stdlib.md and placed in none. Loom, Studio, open-track desktop, Heddle and heddle-sql are built on `gui`, `tty`, `pty` and `vt`, whose surface still grows (the desktop engine's rows below); stdlib.md calls `gui.flatten`, the `gui.flat_` family and `gui.roles` Loom's internals | every module stdlib.md documents is in one of stability.md's tiers (`gui`, `tty`, `pty`, `vt` Experimental unless decided otherwise), and the internals stdlib.md names are stated as outside the contract | before |
-| `[stdlib]` Three of the naming audit's choices change behaviour | in the [audit](#stdlib-naming-audit): `find` answers `Err("NotFound")` against the 0.69 absence rule (1 call in the corpus); `reduce` is `fold` under another name (0 calls); `re.replace` replaces the first match while `str.replace` replaces every one (0 calls). **Decided 2026-10-12:** `find` answers the element or `()`; `reduce(xs, f)` takes no initial value (an empty list answers `()`), `fold` unchanged; `re.replace` replaces every match, `re.replace_first` replaces one, `re.replace_all` a deprecated alias | the three changed with their migration notes (migrating.md, CHANGELOG) and tests on every tier | before |
 
 ### The freeze audit (2026-10-12)
 
@@ -207,19 +206,19 @@ for the owner's decision. A rename keeps the old name as a deprecated
 alias (`olang check` flags it, `olang fix deprecated` rewrites it), so
 it breaks no program and may come in any 1.x release (stability.md
 allows a deprecation in a minor). The three rows whose other option
-changes behaviour (`find`, `reduce`, `re.replace`) are decided
-[before 1.0](#before-10).
+changed behaviour (`find`, `reduce`, `re.replace`) were decided on
+2026-10-12 and changed in the freeze pass.
 
 | Finding | Names | Kind | Status | 1.0 |
 |---|---|---|---|---|
 | Two names, one function | `map_path` / `map_get_in` | duplicate | changed: `map_path` deprecated (stdlib.md, "Deprecated names") | — |
 | Two names, one function | `skip` / `drop` (and `col.skip` / `col.drop`) | duplicate | debatable: `drop` is documented as the name most languages pair with `take`; deprecate one, or keep both as stated | after |
-| Two names, one function | `fold` / `reduce` (same arguments: list, initial, function) | duplicate | debatable: `reduce` usually takes no initial value elsewhere, so the shared shape misleads; deprecate `reduce`, or give it the no-initial form (a behaviour change) | after to deprecate; before for the no-initial form |
+| Two names, one function | `fold` / `reduce` | duplicate | changed: `reduce(xs, f)` takes no initial value, `fold` unchanged | — |
 | Two names, one rendering | `show` / `to_string` | duplicate | debatable: both render the same text (stdlib.md's table said `to_string` quotes strings; it does not); keep one as the documented spelling | after |
 | Identity functions | `lazy`, `force` | vestigial | debatable: documented as the identity "kept for source compatibility"; deprecate both | after |
-| A lookup that is a `Result` | `find(xs, pred)` answers `Ok`/`Err`, `col.index_of` answers the index or `()` | convention | debatable: the 0.69 rule says a lookup's absence is `()`; changing `find` breaks its callers' `match`es | before |
+| A lookup that is a `Result` | `find(xs, pred)` answered `Ok`/`Err` | convention | changed: `find` answers the element or `()` | — |
 | The subject is not first | `re.find(pattern, text)` and every `re.*`; `str.*` take the text first | argument order | debatable: `text \|> re.find(p)` does not pipe; a reordering needs new names (`re.find_in(text, pattern)`) | after |
-| One verb, two meanings | `str.replace` replaces every match (`str.replace_first` the first); `re.replace` replaces the first (`re.replace_all` every one) | naming | debatable: a `re.replace_first` alias and `re.replace` replacing all would align them, but changes `re.replace`'s behaviour | after for an alias; before to change `re.replace` |
+| One verb, two meanings | `re.replace` replaced the first match | naming | changed: `re.replace` replaces every match, `re.replace_first` one, `re.replace_all` deprecated | — |
 | Text-level JSON helpers | `json.get_keys`, `json.get_values`, `json.get_type`, `json.array_length`, `json.get`, `json.set` on JSON text, beside `map_keys`, `typeof`, `len` on parsed values | overlap | debatable: they predate `json.parse` returning dot-readable values; deprecate the text-level set | after |
 | Module-prefixed names inside a module | `random.randint`, `random.randbool`, `random.randstr*` | naming | debatable: `random.int`, `random.bool`, `random.string` read better under the module name | after |
 | Hex both ways, twice | `crypto.hex_encode` / `crypto.hex_decode` (strings) and `bytes.to_hex` / `bytes.from_hex` | overlap | debatable: one pair could serve both, the String form converting through bytes | after |

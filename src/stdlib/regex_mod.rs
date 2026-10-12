@@ -37,6 +37,12 @@ pub fn create_regex_module() -> Value {
     module.insert("split".to_string(), create_builtin_function("split", 2));
     module.insert("replace".to_string(), create_builtin_function("replace", 3));
     module.insert(
+        "replace_first".to_string(),
+        create_builtin_function("replace_first", 3),
+    );
+    // Deprecated: `re.replace` replaces every match, as `str.replace`
+    // does; `replace_all` is the same function under its old name.
+    module.insert(
         "replace_all".to_string(),
         create_builtin_function("replace_all", 3),
     );
@@ -67,8 +73,9 @@ pub fn call_regex_function(
         "find_all" => re_find_all(args),
         "captures" => re_captures(args),
         "split" => re_split(args),
-        "replace" => re_replace(args, false),
-        "replace_all" => re_replace(args, true),
+        "replace" => re_replace(args, "replace", true),
+        "replace_first" => re_replace(args, "replace_first", false),
+        "replace_all" => re_replace(args, "replace_all", true),
         _ => Err(format!("Unknown re function: {}", name).into()),
     }
 }
@@ -238,8 +245,11 @@ fn re_split(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     Ok(ok(Value::List(parts.into())))
 }
 
-fn re_replace(args: Vec<Value>, all: bool) -> Result<Value, Box<dyn std::error::Error>> {
-    let func = if all { "replace_all" } else { "replace" };
+fn re_replace(
+    args: Vec<Value>,
+    func: &str,
+    all: bool,
+) -> Result<Value, Box<dyn std::error::Error>> {
     let pattern = arg_str(&args, 0, func)?;
     let text = arg_str(&args, 1, func)?;
     let replacement = arg_str(&args, 2, func)?;

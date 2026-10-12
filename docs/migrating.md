@@ -1,26 +1,78 @@
-# Migrating to 0.88
+# Migrating
 
 Part of [the olang book](README.md) · [What's new in 0.88](whats-new.md) ·
 [Stability and compatibility](stability.md)
 
-This chapter lists what a program written for 0.87 may need to change
-for 0.88, and how to find each case. Most programs need nothing: the
-changes below are settled now because 1.0 freezes them. Run `olang
-check` over a project after upgrading; it reports the cases it can
-find.
+This chapter lists what a program written for an earlier release may
+need to change, and how to find each case: first the changes made since
+0.88 in the pass that settles what 1.0 freezes, then those of 0.88. Most
+programs need nothing. Run `olang check` over a project after
+upgrading; it reports the cases it can find.
 
 ## Table of contents
 
-- [A missing field of an object is `()`](#a-missing-field-of-an-object-is-)
-- [A module's missing member reads as `()`](#a-modules-missing-member-reads-as-)
-- [The precedence of `??`](#the-precedence-of-)
-- [A lambda stage ends at the next `|>`](#a-lambda-stage-ends-at-the-next-)
-- [Renamed functions](#renamed-functions)
-- [Snapshots of strings](#snapshots-of-strings)
-- [A capability grant olang cannot honour](#a-capability-grant-olang-cannot-honour)
-- [Moving to `.` and `??`](#moving-to--and-)
+- [Since 0.88](#since-088)
+  - [`find` answers the element or `()`](#find-answers-the-element-or-)
+  - [`reduce` starts from the first element](#reduce-starts-from-the-first-element)
+  - [`re.replace` replaces every match](#rereplace-replaces-every-match)
+- [In 0.88](#in-088)
+  - [A missing field of an object is `()`](#a-missing-field-of-an-object-is-)
+  - [A module's missing member reads as `()`](#a-modules-missing-member-reads-as-)
+  - [The precedence of `??`](#the-precedence-of-)
+  - [A lambda stage ends at the next `|>`](#a-lambda-stage-ends-at-the-next-)
+  - [Renamed functions](#renamed-functions)
+  - [Snapshots of strings](#snapshots-of-strings)
+  - [A capability grant olang cannot honour](#a-capability-grant-olang-cannot-honour)
+  - [Moving to `.` and `??`](#moving-to--and-)
 
-## A missing field of an object is `()`
+## Since 0.88
+
+These are listed in the CHANGELOG's Unreleased section, each with what
+to change.
+
+### `find` answers the element or `()`
+
+`find(xs, pred)` answered `Ok(element)`, or `Err("NotFound")` when no
+element matched; it now answers the element, or `()`, as every lookup's
+absence is `()`. A program that unwrapped the result drops the
+`unwrap`; one that matched `Ok`/`Err` matches the element against `()`,
+or defaults with `??`:
+
+```olang
+let first_big = find([3, 8, 2], (x) => x > 5)        // 8, was Ok(8)
+let none = find([3, 8, 2], (x) => x > 9) ?? 0         // 0, was Err("NotFound")
+println(`${first_big} ${none}`)
+```
+
+`unwrap` of the new result raises (it is not a `Result`), so a missed
+call site stops at its first run rather than reading on.
+
+### `reduce` starts from the first element
+
+`reduce(xs, init, f)` was `fold` under another name. It now takes no
+initial value: `reduce(xs, f)` combines the elements from the first,
+and answers `()` for an empty list. A three-argument call is an arity
+error that `olang check` reports; rename it to `fold`, which is
+unchanged.
+
+```olang
+println(reduce([3, 9, 4], (a, b) => if a > b => a else => b))   // 9
+println(fold([3, 9, 4], 0, (a, b) => a + b))                    // 16
+```
+
+### `re.replace` replaces every match
+
+`re.replace(pattern, text, rep)` replaced the first match while
+`str.replace` replaced every occurrence. It now replaces every match;
+`re.replace_first` replaces one. `re.replace_all`, the old name for
+every match, is deprecated and keeps working. A program that relied on
+`re.replace` changing only the first match calls `re.replace_first`.
+
+## In 0.88
+
+What a program written for 0.87 may need to change for 0.88.
+
+### A missing field of an object is `()`
 
 Reading a field an anonymous object (`{ … }`) or a parsed JSON object
 does not have answered an error; it now answers `()`, as `map_get` and a
@@ -38,7 +90,7 @@ println(o.age ?? 36)        // 36
 
 This rule is settled for 1.0 ([Stability](stability.md#settled-in-088)).
 
-## A module's missing member reads as `()`
+### A module's missing member reads as `()`
 
 `plugin.init` for a module without `init` answered an error; it now
 answers `()`, so a plugin host can ask a module it loaded whether it
@@ -46,7 +98,7 @@ has a hook. Calling the missing member still raises and names the
 nearest member (`fs.reed_file(p)` says "did you mean 'read_file'"), as
 does reading a field of it or calling a method on it.
 
-## The precedence of `??`
+### The precedence of `??`
 
 `a ?? b` is new in 0.88. Its level is below `+`, `*`, `|>` and the
 ranges and above the comparisons, so `m.n ?? 0 > 3` is `(m.n ?? 0) >
@@ -59,7 +111,7 @@ println(m.n ?? 0 + 1)       // 4: the default is 0 + 1
 println((m.n ?? 0) + 1)     // 5
 ```
 
-## A lambda stage ends at the next `|>`
+### A lambda stage ends at the next `|>`
 
 An unparenthesized lambda written as a pipeline stage took the stages
 after it into its body; the `|>` after it now begins the next stage.
@@ -78,7 +130,7 @@ println(5 |> (v) => (if v > 3 => v else => 0 |> wrap))     // 5: wrap inside the
 Over the workspace's programs 33 stages read differently; 29 give the
 same value, and the other four were a bug the new reading fixes.
 
-## Renamed functions
+### Renamed functions
 
 `map_path` is `map_get_in` under an older name, deprecated in 0.88. It
 keeps working; `olang check` warns at each call, and `olang fix
@@ -86,14 +138,14 @@ deprecated` renames them. The [stdlib naming
 audit](roadmap.md#stdlib-naming-audit) lists further candidates; none of
 them is renamed in 0.88.
 
-## Snapshots of strings
+### Snapshots of strings
 
 `testing.snapshot` writes a String as its text, without the quotes it
 had. A snapshot recorded quoted still matches, and is rewritten bare the
 next time snapshots are refreshed (`OLANG_UPDATE_SNAPSHOTS=1`), so
 nothing needs to change at once.
 
-## A capability grant olang cannot honour
+### A capability grant olang cannot honour
 
 A `[capabilities]` block olang cannot honour stops the program before
 it runs, where it used to run with no restriction at all: a key the gate
@@ -103,7 +155,7 @@ capabilities. `olang check` fails on each and names the problem; fix the
 manifest. A tool's own table kept in `olang.toml` belongs under its own
 name — olang Studio's plugins write `[plugin.capabilities]`.
 
-## Moving to `.` and `??`
+### Moving to `.` and `??`
 
 `map_get` and `map_get_or` keep working. To move a project to the new
 forms, run `olang fix maps` (with `--check` first to see what it would

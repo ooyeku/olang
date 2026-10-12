@@ -464,7 +464,7 @@ impl HelpSystem {
                     code: "range(10) |> map((x) => x * x) |> filter((x) => x > 10)".to_string(),
                     expected_output: "[16, 25, 36, 49, 64, 81]".to_string(),
                     explanation: "Pipelines allow chaining operations left-to-right".to_string(),
-                    hints: vec!["Add |> reduce(0, (a, b) => a + b) to sum the results".to_string()],
+                    hints: vec!["Add |> fold(0, (a, b) => a + b) to sum the results".to_string()],
                 },
             ],
         });
@@ -1027,17 +1027,17 @@ impl HelpSystem {
 
         self.add_function(FunctionDoc {
             name: "reduce".to_string(),
-            description: "Reduces a list to a single value using a binary function".to_string(),
-            syntax: "reduce(list, initial, function)".to_string(),
+            description: "Combines a list's elements with a binary function, starting from the first element; () for an empty list".to_string(),
+            syntax: "reduce(list, function)".to_string(),
             parameters: vec![
                 "list: List[T] - The list to reduce".to_string(),
-                "initial: U - Initial accumulator value".to_string(),
-                "function: (U, T)  // U - Binary function for reduction".to_string(),
+                "function: (T, T)  // T - Binary function: the result so far, then the next element".to_string(),
             ],
-            return_type: "U".to_string(),
+            return_type: "T | ()".to_string(),
             examples: vec![
-                "reduce([1, 2, 3, 4], 0, (acc, x) => acc + x)  // 10".to_string(),
-                "reduce([\"a\", \"b\", \"c\"], \"\", (acc, s) => acc + s)  // \"abc\"".to_string(),
+                "reduce([1, 2, 3, 4], (acc, x) => acc + x)  // 10".to_string(),
+                "reduce([3, 9, 4], (a, b) => if a > b => a else => b)  // 9".to_string(),
+                "reduce([], (a, b) => a + b)  // ()".to_string(),
             ],
             category: "List".to_string(),
             see_also: vec!["fold".to_string(), "map".to_string(), "filter".to_string()],
@@ -1045,7 +1045,7 @@ impl HelpSystem {
 
         self.add_function(FunctionDoc {
             name: "fold".to_string(),
-            description: "Alias for reduce - folds a list into a single value".to_string(),
+            description: "Folds a list into a single value from an initial accumulator".to_string(),
             syntax: "fold(list, initial, function)".to_string(),
             parameters: vec![
                 "list: List[T] - The list to fold".to_string(),
@@ -1437,11 +1437,14 @@ impl HelpSystem {
         });
         self.add_function(FunctionDoc {
             name: "find".to_string(),
-            description: "First element satisfying predicate; Err if none".to_string(),
+            description: "First element satisfying predicate; () if none".to_string(),
             syntax: "find(list, predicate)".to_string(),
             parameters: vec!["list: [T]".to_string(), "predicate: T->Bool".to_string()],
-            return_type: "Result<T, NotFound>".to_string(),
-            examples: vec!["find([1,2,3], (x)=>x>2)  // Ok(3)".to_string()],
+            return_type: "T | ()".to_string(),
+            examples: vec![
+                "find([1,2,3], (x)=>x>2)  // 3".to_string(),
+                "find([1,2,3], (x)=>x>5) ?? 0  // 0".to_string(),
+            ],
             category: "Search".to_string(),
             see_also: vec!["filter".to_string()],
         });
@@ -6022,23 +6025,37 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
         });
         self.add_function(FunctionDoc {
             name: "re.replace".to_string(),
-            description: "Replace the first match.".to_string(),
+            description:
+                "Replace every match, as str.replace does (re.replace_first replaces one)."
+                    .to_string(),
             syntax: "re.replace(pattern, text, rep)".to_string(),
             parameters: vec![],
             return_type: "Result".to_string(),
-            examples: vec!["re.replace(\"[0-9]\", \"a1b1\", \"X\")".to_string()],
+            examples: vec!["re.replace(\"[0-9]\", \"a1b1\", \"X\")  // Ok(\"aXbX\")".to_string()],
             category: "Regex".to_string(),
-            see_also: vec![],
+            see_also: vec!["re.replace_first".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "re.replace_first".to_string(),
+            description: "Replace the first match.".to_string(),
+            syntax: "re.replace_first(pattern, text, rep)".to_string(),
+            parameters: vec![],
+            return_type: "Result".to_string(),
+            examples: vec![
+                "re.replace_first(\"[0-9]\", \"a1b1\", \"X\")  // Ok(\"aXb1\")".to_string(),
+            ],
+            category: "Regex".to_string(),
+            see_also: vec!["re.replace".to_string()],
         });
         self.add_function(FunctionDoc {
             name: "re.replace_all".to_string(),
-            description: "Replace all matches.".to_string(),
+            description: "Deprecated: re.replace, which replaces every match.".to_string(),
             syntax: "re.replace_all(pattern, text, rep)".to_string(),
             parameters: vec![],
             return_type: "Result".to_string(),
             examples: vec!["re.replace_all(\" +\", \"a  b\", \"_\")".to_string()],
             category: "Regex".to_string(),
-            see_also: vec![],
+            see_also: vec!["re.replace".to_string()],
         });
     }
 
@@ -9126,7 +9143,7 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
             examples: vec![
                 ":time range(1000) |> map((x) => x * x)  // Time complex operation".to_string(),
                 ":time fibonacci(20)     // Time recursive function".to_string(),
-                ":time [1..10000] |> reduce(0, (a,b) => a + b)  // Time reduction".to_string(),
+                ":time [1..10000] |> fold(0, (a,b) => a + b)  // Time reduction".to_string(),
             ],
             category: "REPL".to_string(),
             see_also: vec![":benchmark".to_string(), ":memory".to_string()],
@@ -9467,7 +9484,7 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
   let numbers = [1, 2, 3, 4, 5]
   numbers |> map((x) => x * 2)           // [2, 4, 6, 8, 10]
   numbers |> filter((x) => x > 3)        // [4, 5]
-  numbers |> reduce(0, (a, b) => a + b)  // 15
+  numbers |> reduce((a, b) => a + b)  // 15
 
 {}Function Definition:{}
   fn square(x) = x * x

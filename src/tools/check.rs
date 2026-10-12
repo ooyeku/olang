@@ -2771,7 +2771,7 @@ const GLOBAL_ARITY: &[(&str, usize, usize)] = &[
     ("par_map", 2, 2),
     ("raise", 1, 1),
     ("range", 1, 3),
-    ("reduce", 3, 3),
+    ("reduce", 2, 2),
     ("result_map", 2, 2),
     ("result_map_err", 2, 2),
     ("reverse", 1, 1),

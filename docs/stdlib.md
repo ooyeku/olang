@@ -255,9 +255,9 @@ println(`${abs(-3)} ${abs(2.5)}`)   // 3 2.5
 | `filter(xs, pred)` | keep matching elements |
 | `par_map(xs, f)` | `map` fanned out across OS threads |
 | `par_filter(xs, pred)` | `filter` fanned out across OS threads |
-| `fold(xs, init, f)` | reduce left with an accumulator |
-| `reduce(xs, init, f)` | same shape as `fold` |
-| `find(xs, pred)` | `Ok(first match)`, or `Err("NotFound")` when nothing matches |
+| `fold(xs, init, f)` | combine left to right from the accumulator `init`: `f(acc, x)` for each element |
+| `reduce(xs, f)` | `fold` from the first element, with no initial value: `reduce([3, 9, 4], max_of)` is `max_of(max_of(3, 9), 4)`; a one-element list answers its element, an empty one `()` |
+| `find(xs, pred)` | the first element `pred` accepts, or `()` when none does |
 | `all(xs, pred)` / `any(xs, pred)` | does every / some element match? Stops at the first that settles it (`col.all` / `col.any`) |
 | `map_filtered(xs, pred, f)` | fused filter-then-map in one pass |
 
@@ -269,7 +269,9 @@ let total = [1, 2, 3, 4, 5]
     |> map((x) => x * x)
     |> fold(0, (a, x) => a + x)
 println(to_string(total))                       // 1 + 9 + 25
-println(to_string(unwrap(find([3, 8, 2], (x) => x > 5))))
+println(to_string(find([3, 8, 2], (x) => x > 5)))       // 8
+println(to_string(find([3, 8, 2], (x) => x > 9) ?? 0))  // 0: none matched
+println(to_string(reduce([3, 9, 4], (a, b) => if a > b => a else => b)))   // 9
 println(`${all([2, 4], (x) => x % 2 == 0)} ${any([1, 3], (x) => x > 5)}`)   // true false
 ```
 
@@ -413,6 +415,7 @@ An alias is never removed in the release that deprecates it.
 | Old name | Use | Since |
 |---|---|---|
 | `map_path(m, keys)` | `map_get_in(m, keys)`, `map_set_in`'s reading half | 0.88 |
+| `re.replace_all(pat, s, rep)` | `re.replace(pat, s, rep)`, which now replaces every match | unreleased |
 
 ## `str` — strings
 
@@ -845,14 +848,15 @@ its Unicode tables are a fifth of the runtime's code); a page that calls
 | `re.find_all(pat, s)` | all match texts |
 | `re.find_spans(pat, s)` | where every match is: `(start, end)` character offsets |
 | `re.captures(pat, s)` | full match + capture groups |
-| `re.replace(pat, s, rep)` / `re.replace_all` | substitution |
+| `re.replace(pat, s, rep)` | every match replaced, as `str.replace` replaces every occurrence; `$1` and `${name}` in `rep` name a capture |
+| `re.replace_first(pat, s, rep)` | the first match replaced |
 | `re.split(pat, s)` | split by pattern |
 | `re.is_valid(pat)` | is the pattern itself well-formed? |
 
 ```olang
 println(to_string(unwrap(re.find_all("\\d+", "a1 b22 c333"))))
 println(to_string(unwrap(re.captures("(\\w+)@(\\w+)", "ada@lovelace"))))
-println(unwrap(re.replace_all("\\s+", "too   many spaces", " ")))
+println(unwrap(re.replace("\\s+", "too   many spaces", " ")))
 ```
 
 ## `dates` — dates and times

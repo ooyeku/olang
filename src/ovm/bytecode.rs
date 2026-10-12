@@ -8223,7 +8223,7 @@ impl BytecodeVm {
                 };
                 Some(run())
             }
-            "fold" | "reduce" if args.len() == 3 => {
+            "fold" if args.len() == 3 => {
                 // A list, or a range walked as integers without a list.
                 enum Seq {
                     List(Arc<Vec<OvmValue>>),

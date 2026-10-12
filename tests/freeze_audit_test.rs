@@ -280,3 +280,62 @@ main()
         Ok(l(vec![t.clone(), f.clone(), t.clone(), f, t.clone(), t]))
     );
 }
+
+// ── The naming decisions: find, reduce, re.replace ─────────────────────
+
+#[test]
+fn find_answers_the_element_or_unit() {
+    let src = r#"
+fn main() = [find([3, 8, 2], (x) => x > 5), find([3, 8, 2], (x) => x > 9)]
+main()
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(l(vec![Value::Integer(8), Value::Unit]))
+    );
+}
+
+#[test]
+fn reduce_starts_from_the_first_element() {
+    let src = r#"
+fn main() = [
+    reduce([3, 9, 4], (a, b) => if a > b => a else => b),
+    reduce([7], (a, b) => a + b),
+    reduce([], (a, b) => a + b),
+    reduce(1..=4, (a, b) => a * b),
+    reduce(0..0, (a, b) => a + b),
+    fold([1, 2], 10, (a, b) => a + b)
+]
+main()
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(l(vec![
+            Value::Integer(9),
+            Value::Integer(7),
+            Value::Unit,
+            Value::Integer(24),
+            Value::Unit,
+            Value::Integer(13),
+        ]))
+    );
+    let err = agree_tiered("fn main() = reduce([1], 0, (a, b) => a + b)\nmain()\n")
+        .expect_err("an initial value is an arity error");
+    assert!(err.contains('2') || err.contains("argument"), "{err}");
+}
+
+#[test]
+fn re_replace_replaces_every_match_and_replace_first_one() {
+    let src = r#"
+fn main() = [
+    unwrap(re.replace("[0-9]", "a1b1", "X")),
+    unwrap(re.replace_first("[0-9]", "a1b1", "X")),
+    unwrap(re.replace_all("[0-9]", "a1b1", "X"))
+]
+main()
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(l(vec![s("aXbX"), s("aXb1"), s("aXbX")]))
+    );
+}

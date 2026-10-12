@@ -1,13 +1,13 @@
 # What's new in 0.88
 
-Part of [the olang book](README.md) · [Migrating to 0.88](migrating.md) ·
+Part of [the olang book](README.md) · [Migrating](migrating.md#in-088) ·
 [Stability and compatibility](stability.md)
 
 This chapter summarises what olang 0.88 adds and changes, for a reader
 who knows 0.87. It is the last release before 1.0: what it settles is
 what 1.0 freezes. The complete record, with the evidence behind each
 change, is in [CHANGELOG.md](../CHANGELOG.md); what a program may need
-to change is in [Migrating to 0.88](migrating.md).
+to change is in [Migrating](migrating.md#in-088).
 
 ## Table of contents
 

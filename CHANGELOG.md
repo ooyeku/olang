@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Upgrading
+
+- **`find(xs, pred)` answers the element, or `()`** when none matches
+  (it answered `Ok(element)` or `Err("NotFound")`); drop the `unwrap`,
+  or default with `??`.
+- **`reduce(xs, f)` takes no initial value**: it combines the elements
+  from the first, and an empty list answers `()`. A three-argument
+  `reduce` is `fold`, unchanged; `olang check` reports the arity.
+- **`re.replace` replaces every match**, as `str.replace` does;
+  `re.replace_first` replaces one. `re.replace_all` is deprecated and
+  keeps working.
+
+### Added
+
+- **`re.replace_first(pattern, text, rep)`** replaces the first match.
+
 ### Changed
 
 - **`ods.version()` answers the plain version** (the release, as
@@ -14,7 +30,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   test hooks `ods.probe` and `ods.probe_tag` left the `ods` namespace
   (they were never documented; the test suite reaches them under an
   internal name).
-
 
 ### Fixed
 

@@ -59,7 +59,7 @@ For the conventions used throughout the book, see the
 | [Case study: building robust systems](demo.md) | A design study of the flagship example, `examples/concurrency/demo` (Harborline): state threading, algebraic data types, `Result` discipline, testable concurrency, and self-checking invariants. |
 | [Stability and compatibility](stability.md) | What is stable, what is experimental, the platforms 1.0 promises, and how the language evolves. |
 | [What's new in 0.88](whats-new.md) | What the last release before 1.0 adds and settles. |
-| [Migrating to 0.88](migrating.md) | What a program written for 0.87 may need to change, and how to find it. |
+| [Migrating](migrating.md) | What a program written for an earlier release may need to change, and how to find it. |
 | [Roadmap](roadmap.md) | What olang still has to do, each item with the evidence from the program that ran into it. |
 
 ## Reading paths

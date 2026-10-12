@@ -159,7 +159,7 @@ impl BuiltinFunctions {
             "reduce".to_string(),
             BuiltinFunction {
                 name: "reduce".to_string(),
-                arity: 3,
+                arity: 2,
             },
         );
 
@@ -2112,7 +2112,63 @@ impl BuiltinFunctions {
         Ok(Value::List(kept.into()))
     }
 
+    /// `reduce(xs, f)`: `fold` from the first element, with no initial
+    /// value; an empty list (or range) answers `()`.
     fn reduce(
+        &self,
+        args: Vec<Value>,
+        interpreter: &mut crate::interpreter::Interpreter,
+    ) -> Result<Value, InterpreterError> {
+        if args.len() != 2 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 2,
+                got: args.len(),
+            });
+        }
+        let mut args = args.into_iter();
+        let (Some(xs), Some(function)) = (args.next(), args.next()) else {
+            unreachable!("two arguments checked")
+        };
+        match xs {
+            Value::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                let empty = if inclusive { start > end } else { start >= end };
+                if empty {
+                    return Ok(Value::Unit);
+                }
+                if start == end || (!inclusive && start.checked_add(1) == Some(end)) {
+                    return Ok(Value::Integer(start));
+                }
+                self.fold(
+                    vec![
+                        Value::Range {
+                            start: start + 1,
+                            end,
+                            inclusive,
+                        },
+                        Value::Integer(start),
+                        function,
+                    ],
+                    interpreter,
+                )
+            }
+            Value::List(ref items) => match items.split_first() {
+                None => Ok(Value::Unit),
+                Some((first, rest)) => self.fold(
+                    vec![Value::List(rest.to_vec().into()), first.clone(), function],
+                    interpreter,
+                ),
+            },
+            _ => Err(InterpreterError::TypeError {
+                message: "reduce: first argument must be a list".to_string(),
+            }),
+        }
+    }
+
+    fn fold(
         &self,
         args: Vec<Value>,
         interpreter: &mut crate::interpreter::Interpreter,
@@ -2160,7 +2216,7 @@ impl BuiltinFunctions {
             Value::List(items) => items,
             _ => {
                 return Err(InterpreterError::TypeError {
-                    message: "reduce: first argument must be a list".to_string(),
+                    message: "fold: first argument must be a list".to_string(),
                 });
             }
         };
@@ -2177,14 +2233,6 @@ impl BuiltinFunctions {
             acc = interpreter.call_function(function.clone(), vec![acc, item.clone()])?;
         }
         Ok(acc)
-    }
-
-    fn fold(
-        &self,
-        args: Vec<Value>,
-        interpreter: &mut crate::interpreter::Interpreter,
-    ) -> Result<Value, InterpreterError> {
-        self.reduce(args, interpreter)
     }
 
     fn len(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
@@ -3193,12 +3241,11 @@ impl BuiltinFunctions {
         for item in list_rc.iter() {
             let res = interpreter.call_function(predicate.clone(), vec![item.clone()])?;
             if matches!(res, Value::Boolean(true)) {
-                return Ok(Value::Ok(Box::new(item.clone())));
+                return Ok(item.clone());
             }
         }
-        Ok(Value::Err(Box::new(Value::String(
-            "NotFound".to_string().into(),
-        ))))
+        // Absence is `()`, as every lookup's is.
+        Ok(Value::Unit)
     }
 
     fn starts_with(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {

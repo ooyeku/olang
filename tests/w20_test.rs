@@ -88,14 +88,14 @@ fn folds_and_sums_over_ranges_need_no_list() {
         "let n = 2000000\n\
          println(to_string(fold(0..n, 0, (acc, i) => acc + i)))\n\
          println(to_string(sum(0..n)) + \" \" + to_string(sum(1..=10)) + \" \" + to_string(sum(5..5)))\n\
-         println(to_string(fold(1..=4, 1, (a, i) => a * i)) + \" \" + to_string(reduce(0..0, 5, (a, i) => a + i)))\n\
+         println(to_string(fold(1..=4, 1, (a, i) => a * i)) + \" \" + to_string(fold(0..0, 5, (a, i) => a + i)) + \" \" + to_string(reduce(1..=4, (a, i) => a + i)))\n\
          fn infn(m) = fold(0..m, 0, (a, i) => a + i * 2)\n\
          println(to_string(infn(100)))\n",
     );
     in_both_tiers(
         &ws,
         "r.ol",
-        "1999999000000\n1999999000000 55 0\n24 5\n9900\n",
+        "1999999000000\n1999999000000 55 0\n24 5 10\n9900\n",
     );
 }
 
