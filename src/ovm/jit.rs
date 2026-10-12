@@ -3956,6 +3956,7 @@ pub(crate) fn for_each_reg(
             target,
             index,
             value,
+            ..
         } => {
             f(target);
             f(index);
@@ -4983,6 +4984,7 @@ impl PlanFn {
                     target,
                     index,
                     value,
+                    ..
                 } => {
                     narrow!(target.0, K_LIST);
                     narrow!(index.0, K_INT);
@@ -7032,6 +7034,7 @@ fn translate_body(
                 target,
                 index,
                 value,
+                ..
             } => {
                 let (which, val_is_float) = match r#gen.kind(target.0)? {
                     Kind::ListFloatRaw => (set_rawf_helper, true),

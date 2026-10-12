@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`xs[i] = v`**: one element of a `let mut` list replaced, as an
+  assignment of the list (the binding must be `mut` and not a capture;
+  another binding of the list keeps its elements; a negative index
+  counts from the end; an index outside the list raises the read's
+  error). Written in place when nothing else holds the list — the
+  interpreter and the VM fuse it as they fuse `xs = col.set(xs, i, v)`,
+  and the JIT takes it with the typed lists. One level into a map or
+  object, `m.k[i] = v` replaces an element of the list at `m.k` (in place
+  when `m` and the list are held once); deeper paths and `m.k = v` are
+  not supported. It was a parse error ("possible assignment in
+  expression context"), and olang Studio's replace rebuilt each list a
+  line changed in.
+
 - **The checker sees keys** (roadmap E4): `olang check` (and the
   language server) reports a `.key` read that no construction of its
   value has — literal-keyed maps and objects followed through `let`s,

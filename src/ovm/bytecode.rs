@@ -609,6 +609,9 @@ pub enum Instruction {
         target: Register,
         index: Register,
         value: Register,
+        /// Written `xs[i] = v` (the parser's `__index_set`): its errors
+        /// are a subscript's, not `col.set`'s.
+        subscript: bool,
     },
     /// `x = col.swap(x, i, j)`, fused: exchange two elements in place
     /// under the same sole-owner discipline.
@@ -1579,6 +1582,8 @@ impl BytecodeVm {
             "map_set_in",
             "map_update",
             "__spread",
+            "__index_set",
+            "__index_set_in",
             "map_get_or",
             "result_and_then",
             "result_or_else",
@@ -4279,11 +4284,16 @@ impl BytecodeVm {
                     target,
                     index,
                     value,
+                    subscript,
                 } => {
                     use crate::ovm::value::ValueData;
                     let idx_val = self.execution_state.get_register(*index)?;
                     let idx = match &idx_val.data {
                         ValueData::Integer(i) => *i,
+                        _ if *subscript => {
+                            let target_val = self.execution_state.get_register(*target)?;
+                            return Err(Self::subscript_error(&target_val, &idx_val));
+                        }
                         _ => {
                             return Err(BytecodeError::TypeError(format!(
                                 "col.set: argument 2 must be an Int, got {}",
@@ -4303,8 +4313,7 @@ impl BytecodeVm {
                         let ValueData::FloatList(mut arc) = target_val.into_data() else {
                             unreachable!()
                         };
-                        let at = crate::stdlib::collections::resolve_index("set", idx, arc.len())
-                            .map_err(BytecodeError::RuntimeError)?;
+                        let at = Self::list_set_position(*subscript, idx, arc.len())?;
                         if let ValueData::Float(f) = v.data {
                             match std::sync::Arc::get_mut(&mut arc) {
                                 Some(items) => items[at] = f,
@@ -4338,8 +4347,7 @@ impl BytecodeVm {
                         let ValueData::IntList(mut arc) = target_val.into_data() else {
                             unreachable!()
                         };
-                        let at = crate::stdlib::collections::resolve_index("set", idx, arc.len())
-                            .map_err(BytecodeError::RuntimeError)?;
+                        let at = Self::list_set_position(*subscript, idx, arc.len())?;
                         if let ValueData::Integer(n) = v.data {
                             match std::sync::Arc::get_mut(&mut arc) {
                                 Some(items) => items[at] = n,
@@ -4399,8 +4407,7 @@ impl BytecodeVm {
                                 self.execution_state.debug_base()
                             );
                         }
-                        let at = crate::stdlib::collections::resolve_index("set", idx, arc.len())
-                            .map_err(BytecodeError::RuntimeError)?;
+                        let at = Self::list_set_position(*subscript, idx, arc.len())?;
                         let ast_v = v
                             .to_ast()
                             .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
@@ -4422,6 +4429,11 @@ impl BytecodeVm {
                         continue;
                     }
                     if !matches!(target_val.data, ValueData::List(_)) {
+                        if *subscript {
+                            let e = Self::subscript_error(&target_val, &OvmValue::new_integer(idx));
+                            self.execution_state.set_register(*target, target_val)?;
+                            return Err(e);
+                        }
                         let msg = format!(
                             "col.set: argument 1 must be a list, got {}",
                             target_val.type_name()
@@ -4432,8 +4444,7 @@ impl BytecodeVm {
                     let ValueData::List(mut arc) = target_val.into_data() else {
                         unreachable!("matched above");
                     };
-                    let at = crate::stdlib::collections::resolve_index("set", idx, arc.len())
-                        .map_err(BytecodeError::RuntimeError)?;
+                    let at = Self::list_set_position(*subscript, idx, arc.len())?;
                     match std::sync::Arc::get_mut(&mut arc) {
                         Some(items) => items[at] = v,
                         None => {
@@ -9088,6 +9099,31 @@ impl BytecodeVm {
         Some(Ok(OvmValue::new_map(Arc::new(out))))
     }
 
+    /// Where `xs[i] = v` (subscript) or `col.set` writes in a list of
+    /// `len`, or the error each raises — a subscript's is the
+    /// interpreter's `__index_set`'s, through the bridge's conversion.
+    fn list_set_position(subscript: bool, idx: i64, len: usize) -> Result<usize, BytecodeError> {
+        if subscript {
+            BuiltinFunctions::subscript_position(idx, len)
+                .map_err(|e| BytecodeError::RuntimeError(e.to_string()))
+        } else {
+            crate::stdlib::collections::resolve_index("set", idx, len)
+                .map_err(BytecodeError::RuntimeError)
+        }
+    }
+
+    /// `xs[i] = v`'s error for a target that is not a list or an index
+    /// that is not an Int, as the interpreter's `__index_set` raises it.
+    fn subscript_error(target: &OvmValue, index: &OvmValue) -> BytecodeError {
+        let (Ok(t), Ok(i)) = (target.to_ast(), index.to_ast()) else {
+            return BytecodeError::TypeError("Index must be an integer".to_string());
+        };
+        match BuiltinFunctions::subscript_index(&t, &i) {
+            Err(e) => BytecodeError::RuntimeError(e.to_string()),
+            Ok(_) => BytecodeError::TypeError("Index must be an integer".to_string()),
+        }
+    }
+
     fn execute_builtin_call(
         &mut self,
         name: &str,
@@ -11540,14 +11576,30 @@ impl BytecodeCompiler {
                 // interpreter's: the real builtin (an unshadowed `col`),
                 // three positional args naming the target first, and
                 // assignment-free index/value expressions.
-                if let Expr::Call { callee, arguments } = value.as_ref()
-                    && let Expr::FieldAccess { object, field } = callee.as_ref()
-                    && matches!(object.as_ref(), Expr::Identifier(m)
-                        if m == "col" && !self.local_variables.contains_key(m))
-                    && matches!(field.as_str(), "set" | "swap")
-                    && self.q_builtin(&format!("col.{}", field))
-                    && arguments.len() == 3
-                {
+                // `xs[i] = v` is the parser's `xs = __index_set(xs, i, v)`:
+                // the same write, raising a subscript's errors.
+                let fused = match value.as_ref() {
+                    Expr::Call { callee, arguments } if arguments.len() == 3 => match callee.as_ref() {
+                        Expr::FieldAccess { object, field }
+                            if matches!(object.as_ref(), Expr::Identifier(m)
+                                if m == "col" && !self.local_variables.contains_key(m))
+                                && matches!(field.as_str(), "set" | "swap")
+                                && self.q_builtin(&format!("col.{}", field)) =>
+                        {
+                            Some((field.as_str(), arguments))
+                        }
+                        Expr::Identifier(name)
+                            if name == crate::parser::INDEX_SET_BUILTIN
+                                && !self.local_variables.contains_key(name)
+                                && self.q_builtin(name) =>
+                        {
+                            Some(("subscript", arguments))
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some((field, arguments)) = fused {
                     let exprs: Vec<&Expr> = arguments
                         .iter()
                         .filter_map(|a| match a {
@@ -11564,11 +11616,12 @@ impl BytecodeCompiler {
                     {
                         let a1 = self.compile_expression(exprs[1])?;
                         let a2 = self.compile_expression(exprs[2])?;
-                        self.emitter.instructions.push(if field == "set" {
+                        self.emitter.instructions.push(if field != "swap" {
                             Instruction::ListSetAssign {
                                 target: target_reg,
                                 index: a1,
                                 value: a2,
+                                subscript: field == "subscript",
                             }
                         } else {
                             Instruction::ListSwapAssign {
@@ -13851,6 +13904,7 @@ impl BytecodeOptimizer {
                 target,
                 index,
                 value,
+                ..
             } => {
                 uses.push(target.0);
                 uses.push(index.0);

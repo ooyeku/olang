@@ -848,6 +848,39 @@ println(to_string(xs |> map((x) => x * 2) |> filter((x) => x > 4)))
 println(to_string(xs |> fold(0, (acc, x) => acc + x)))
 ```
 
+`xs[i] = v` replaces one element of a list held in a `let mut`
+binding. A list is a value, so this is an assignment of `xs` — the list
+with element `i` replaced — and follows every rule an assignment has:
+the binding must be `mut`, and it cannot be a variable captured by a
+closure. Another binding of the same list keeps its old elements. A
+negative `i` counts from the end, as a read does, and an index outside
+the list is the error a read raises. When nothing else holds the list
+the element is written in place, so a loop of element writes costs
+O(1) a write.
+
+```olang
+let mut grid = [0, 0, 0, 0]
+let before = grid
+for i in 0..len(grid) {
+    grid[i] = i * i
+}
+grid[-1] = 99
+println(grid)     // [0, 1, 4, 99]
+println(before)   // [0, 0, 0, 0]
+```
+
+The same holds one level into a map or an object: `m.k[i] = v` replaces
+element `i` of the list at `m.k` and rebinds `m`. Deeper paths
+(`m.a.b[i] = v`, `xs[i][j] = v`) and assigning a field itself
+(`m.k = v`) are not supported; write `map_set(m, "k", v)` or
+`map_set_in(m, path, v)` for those.
+
+```olang
+let mut board = #{ "cells": ["", "", ""] }
+board.cells[1] = "x"
+println(board.cells)   // ["", "x", ""]
+```
+
 Multi-line list literals may end with a trailing comma:
 
 ```olang

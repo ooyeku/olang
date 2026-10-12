@@ -210,3 +210,121 @@ main()
 "#;
     assert_eq!(agree(src), Ok(Value::Integer(4)));
 }
+
+// ── `xs[i] = v` ─────────────────────────────────────────────────────────
+
+fn ints(xs: &[i64]) -> Value {
+    Value::List(std::sync::Arc::new(xs.iter().map(|n| Value::Integer(*n)).collect()))
+}
+
+#[test]
+fn an_element_of_a_mut_list_is_assigned() {
+    let src = r#"
+fn main() = {
+    let mut xs = [1, 2, 3, 4]
+    xs[1] = 9
+    xs[-1] = 7
+    for i in 0..2 {
+        xs[i] = xs[i] * 10
+    }
+    xs
+}
+main()
+"#;
+    assert_eq!(agree(src), Ok(ints(&[10, 90, 3, 7])));
+}
+
+#[test]
+fn another_binding_of_the_list_keeps_its_elements() {
+    let src = r#"
+fn main() = {
+    let mut a = [1, 2]
+    let b = a
+    a[0] = 5
+    (a, b)
+}
+main()
+"#;
+    assert_eq!(
+        agree(src),
+        Ok(Value::Tuple(std::sync::Arc::new(vec![ints(&[5, 2]), ints(&[1, 2])])))
+    );
+}
+
+#[test]
+fn a_list_in_a_map_or_an_object_is_written_one_level_in() {
+    let src = r#"
+fn main() = {
+    let mut m = #{ "rows": [1, 2, 3], "name": "t" }
+    m.rows[2] = 30
+    let mut o = { cells: ["a", "b"] }
+    o.cells[0] = "z"
+    (m.rows, m.name, o.cells[0], typeof(o))
+}
+main()
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(Value::Tuple(std::sync::Arc::new(vec![
+            ints(&[1, 2, 30]),
+            s("t"),
+            s("z"),
+            s("Object")
+        ])))
+    );
+}
+
+#[test]
+fn an_index_outside_the_list_raises_the_reads_error() {
+    let src = r#"
+fn main() = {
+    let mut xs = [1, 2, 3]
+    xs[3] = 0
+    xs
+}
+main()
+"#;
+    let err = agree(src).expect_err("out of bounds");
+    assert!(err.contains("Index 3 out of bounds for list of length 3"), "{err}");
+    let src = r#"
+fn main() = {
+    let mut m = #{ "a": 1 }
+    let mut xs = m
+    xs["a"] = 2
+    xs
+}
+main()
+"#;
+    let err = agree(src).expect_err("a map");
+    assert!(err.contains("a Map is not indexed with `[]`"), "{err}");
+}
+
+#[test]
+fn many_writes_to_one_list_stay_in_place() {
+    // 20,000 writes to a 20,000-element list: a copy per write would be
+    // 400 million element copies.
+    let src = r#"
+fn main() = {
+    let n = 20000
+    let mut xs = col.filled(n, 0)
+    for i in 0..n {
+        xs[i] = i
+    }
+    xs[n - 1] + xs[0]
+}
+main()
+"#;
+    let started = std::time::Instant::now();
+    assert_eq!(agree_tiered(src), Ok(Value::Integer(19999)));
+    assert!(started.elapsed().as_secs() < 20, "{:?}", started.elapsed());
+}
+
+#[test]
+fn an_element_assignment_is_an_assignment() {
+    // The binding must be `let mut`: the scope rules report it before
+    // the program runs.
+    let program = Parser::new().parse("let xs = [1]\nxs[0] = 2\n").expect("parses");
+    let mut interpreter = Interpreter::new();
+    let err = interpreter.eval_program(program).expect_err("immutable");
+    assert!(err.to_string().contains("not declared mutable"), "{err}");
+}

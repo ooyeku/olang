@@ -388,4 +388,8 @@ break_expr  = { break_kw ~ expr? }
 continue_expr = { continue_kw }
 return_expr = { return_kw ~ expr? }
 
-assignment_expr = { identifier ~ "=" ~ expr }
+// `xs[i] = v` and `m.k[i] = v` write one element (the parser builds
+// them as an assignment of the list with that element replaced; see
+// `Parser::build_assignment`).
+assignment_expr = { identifier ~ index_target? ~ "=" ~ expr }
+index_target = { ("." ~ identifier)? ~ "[" ~ expr ~ "]" }

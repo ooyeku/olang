@@ -68,7 +68,7 @@ impl BuiltinFunctions {
         Self::new()
             .functions
             .into_keys()
-            .filter(|name| name != crate::parser::SPREAD_BUILTIN)
+            .filter(|name| !crate::parser::is_hidden_builtin(name))
             .collect()
     }
 
@@ -491,7 +491,7 @@ impl BuiltinFunctions {
                 arity: 2,
             },
         );
-        for (name, arity) in [("map_get_in", 2), ("map_set_in", 3), ("map_update", 3), (crate::parser::SPREAD_BUILTIN, 0)] {
+        for (name, arity) in [("map_get_in", 2), ("map_set_in", 3), ("map_update", 3), (crate::parser::SPREAD_BUILTIN, 0), (crate::parser::INDEX_SET_BUILTIN, 3), (crate::parser::INDEX_SET_IN_BUILTIN, 4)] {
             functions.insert(
                 name.to_string(),
                 BuiltinFunction {
@@ -1293,6 +1293,8 @@ impl BuiltinFunctions {
             "map_set_in" => builtins.map_set_in(arguments),
             "map_update" => builtins.map_update(arguments, interpreter),
             crate::parser::SPREAD_BUILTIN => builtins.spread(arguments),
+            crate::parser::INDEX_SET_BUILTIN => Self::index_set(arguments),
+            crate::parser::INDEX_SET_IN_BUILTIN => Self::index_set_in(arguments),
             "map_set" => builtins.map_set(arguments),
             "map_has_key" => builtins.map_has_key(arguments),
             "map_keys" => builtins.map_keys(arguments),
@@ -3710,6 +3712,106 @@ impl BuiltinFunctions {
             }
         }
         Ok(target)
+    }
+
+    /// `xs[i] = v`'s list (the parser builds the assignment as
+    /// `xs = __index_set(xs, i, v)`): `xs` with element `i` replaced, a
+    /// negative `i` counting from the end as a read does. In place when
+    /// nothing else holds the list.
+    pub(crate) fn index_set(mut args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 3 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 3,
+                got: args.len(),
+            });
+        }
+        let value = args.pop().expect("three arguments");
+        let index = args.pop().expect("three arguments");
+        let mut target = args.pop().expect("three arguments");
+        let i = Self::subscript_index(&target, &index)?;
+        let Value::List(items) = &mut target else {
+            unreachable!("subscript_index answers for a list only")
+        };
+        let at = Self::subscript_position(i, items.len())?;
+        std::sync::Arc::make_mut(items)[at] = value;
+        Ok(target)
+    }
+
+    /// The index `xs[i] = v` writes at, or the error it raises: the same
+    /// words a read's `xs[i]` uses.
+    pub(crate) fn subscript_index(target: &Value, index: &Value) -> Result<i64, InterpreterError> {
+        match (target, index) {
+            (Value::List(_), Value::Integer(i)) => Ok(*i),
+            (Value::List(_), _) => Err(InterpreterError::TypeError {
+                message: "Index must be an integer".to_string(),
+            }),
+            (Value::Map(_), _) => Err(InterpreterError::TypeError {
+                message: "a Map is not indexed with `[]`; write a key with `map_set(m, key, value)`"
+                    .to_string(),
+            }),
+            (other, _) => Err(InterpreterError::TypeError {
+                message: format!(
+                    "`[i] =` writes an element of a list, not of a {}",
+                    other.type_name()
+                ),
+            }),
+        }
+    }
+
+    /// A subscript's position in a list of `len`, or the read's error.
+    pub(crate) fn subscript_position(i: i64, len: usize) -> Result<usize, InterpreterError> {
+        let at = if i < 0 { i + len as i64 } else { i };
+        if at < 0 || at as usize >= len {
+            return Err(InterpreterError::RuntimeError {
+                message: format!("Index {} out of bounds for list of length {}", i, len),
+            });
+        }
+        Ok(at as usize)
+    }
+
+    /// `m.k[i] = v`'s record (`m = __index_set_in(m, "k", i, v)`): `m`
+    /// with the list at `k` written as `xs[i] = v` writes. In place when
+    /// nothing else holds `m` or its list.
+    pub(crate) fn index_set_in(mut args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 4 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 4,
+                got: args.len(),
+            });
+        }
+        let value = args.pop().expect("four arguments");
+        let index = args.pop().expect("four arguments");
+        let key = match &args.pop().expect("four arguments") {
+            Value::String(k) => k.as_ref().clone(),
+            _ => unreachable!("the parser passes the key as a string"),
+        };
+        let mut target = args.pop().expect("four arguments");
+        let (Value::Map(fields) | Value::Struct { fields, .. }) = &mut target else {
+            return Err(InterpreterError::TypeError {
+                message: format!(
+                    "`.{key}[i] =` writes a list held in a map or object, not in a {}",
+                    target.type_name()
+                ),
+            });
+        };
+        let fields = std::sync::Arc::make_mut(fields);
+        let held = fields
+            .get_mut(&key)
+            .map(|slot| std::mem::replace(slot, Value::Unit))
+            .unwrap_or(Value::Unit);
+        let restore = held.clone();
+        match Self::index_set(vec![held, index, value]) {
+            Ok(list) => {
+                fields.insert(key, list);
+                Ok(target)
+            }
+            Err(e) => {
+                if let Some(slot) = fields.get_mut(&key) {
+                    *slot = restore;
+                }
+                Err(e)
+            }
+        }
     }
 
     fn map_set(&self, mut args: Vec<Value>) -> Result<Value, InterpreterError> {

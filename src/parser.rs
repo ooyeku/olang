@@ -150,6 +150,20 @@ fn humanize_rule(rule: Rule) -> &'static str {
 /// literal's kind) and lays each part's entries over it in order.
 pub const SPREAD_BUILTIN: &str = "__spread";
 
+/// The builtin `xs[i] = v` is built by: `xs = __index_set(xs, i, v)`,
+/// the list with element `i` replaced (in place when nothing else holds
+/// the list, as `col.set`'s assignment is). Never written.
+pub const INDEX_SET_BUILTIN: &str = "__index_set";
+
+/// The builtin `m.k[i] = v` is built by: `m = __index_set_in(m, "k", i,
+/// v)`, the record with its list at `k` written as `xs[i] = v` writes.
+pub const INDEX_SET_IN_BUILTIN: &str = "__index_set_in";
+
+/// The builtins the parser builds forms with, which no program names.
+pub fn is_hidden_builtin(name: &str) -> bool {
+    name == SPREAD_BUILTIN || name == INDEX_SET_BUILTIN || name == INDEX_SET_IN_BUILTIN
+}
+
 /// One item of a `#{ }` or `{ }` literal: a written entry, or `...e`.
 enum Spread<T> {
     Entry(T),
@@ -3843,13 +3857,55 @@ impl Parser {
         let identifier = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing identifier in assignment".to_string(),
         })?;
-        let value = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+        let mut value = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
             message: "Missing value in assignment".to_string(),
         })?;
-
+        let target = identifier.as_str().to_string();
+        if value.as_rule() != Rule::index_target {
+            return Ok(Expr::Assignment {
+                target,
+                value: Box::new(self.build_expr(value.into_inner())?),
+            });
+        }
+        // `xs[i] = v` / `m.k[i] = v`: the target rebound to itself with the
+        // element replaced, so every rule an assignment has (the binding
+        // must be `let mut`, not a capture) holds as written.
+        let path = value;
+        value = pairs.next().ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing value in assignment".to_string(),
+        })?;
+        let element = self.build_expr(value.into_inner())?;
+        let mut field = None;
+        let mut index = None;
+        for part in path.into_inner() {
+            match part.as_rule() {
+                Rule::identifier => field = Some(part.as_str().to_string()),
+                Rule::expr => index = Some(self.build_expr(part.into_inner())?),
+                _ => {}
+            }
+        }
+        let index = index.ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing index in assignment".to_string(),
+        })?;
+        let me = Argument::Positional(Expr::Identifier(target.clone()));
+        let call = match field {
+            None => Expr::Call {
+                callee: Box::new(Expr::Identifier(INDEX_SET_BUILTIN.to_string())),
+                arguments: vec![me, Argument::Positional(index), Argument::Positional(element)],
+            },
+            Some(key) => Expr::Call {
+                callee: Box::new(Expr::Identifier(INDEX_SET_IN_BUILTIN.to_string())),
+                arguments: vec![
+                    me,
+                    Argument::Positional(Expr::String(Arc::new(key))),
+                    Argument::Positional(index),
+                    Argument::Positional(element),
+                ],
+            },
+        };
         Ok(Expr::Assignment {
-            target: identifier.as_str().to_string(),
-            value: Box::new(self.build_expr(value.into_inner())?),
+            target,
+            value: Box::new(call),
         })
     }
 

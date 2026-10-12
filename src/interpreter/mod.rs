@@ -2825,15 +2825,21 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         let Expr::Call { callee, arguments } = value else {
             return None;
         };
-        let Expr::FieldAccess { object, field } = callee.as_ref() else {
-            return None;
-        };
-        if !matches!(object.as_ref(), Expr::Identifier(m) if m == "col")
-            || !matches!(field.as_str(), "set" | "swap")
-            || arguments.len() != 3
-        {
+        if arguments.len() != 3 {
             return None;
         }
+        // `xs[i] = v` is the parser's `xs = __index_set(xs, i, v)`: the
+        // same write as `col.set`'s, raising a subscript's errors.
+        let field: &str = match callee.as_ref() {
+            Expr::FieldAccess { object, field }
+                if matches!(object.as_ref(), Expr::Identifier(m) if m == "col")
+                    && matches!(field.as_str(), "set" | "swap") =>
+            {
+                field.as_str()
+            }
+            Expr::Identifier(name) if name == crate::parser::INDEX_SET_BUILTIN => "subscript",
+            _ => return None,
+        };
         let mut exprs = Vec::with_capacity(3);
         for argument in arguments {
             match argument {
@@ -2851,20 +2857,28 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         }
         // `col` must still be the builtin module, and the field its
         // builtin — a user's own `col` binding takes the normal path.
-        let is_builtin = matches!(
-            self.environment.get("col"),
-            Some(Value::Struct { ref type_name, ref fields })
-                if type_name == "Module"
-                    && matches!(
-                        fields.get(field.as_str()),
-                        Some(Value::Builtin(b)) if b.name == format!("col.{}", field)
-                    )
-        );
+        let is_builtin = if field == "subscript" {
+            matches!(
+                self.environment.get(crate::parser::INDEX_SET_BUILTIN),
+                Some(Value::Builtin(ref b)) if b.name == crate::parser::INDEX_SET_BUILTIN
+            )
+        } else {
+            matches!(
+                self.environment.get("col"),
+                Some(Value::Struct { ref type_name, ref fields })
+                    if type_name == "Module"
+                        && matches!(
+                            fields.get(field),
+                            Some(Value::Builtin(b)) if b.name == format!("col.{}", field)
+                        )
+            )
+        };
         if !is_builtin {
             return None;
         }
 
         let swap = field == "swap";
+        let subscript = field == "subscript";
         let a1 = match self.eval_expr(exprs[1]) {
             Ok(v) => v,
             Err(e) => return Some(Err(e)),
@@ -2881,7 +2895,15 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 let i = *i;
                 let v = a2.clone();
                 self.environment.try_list_update(target, |items| {
-                    let at = crate::stdlib::collections::resolve_index("set", i, items.len())?;
+                    let at = if subscript {
+                        crate::builtin::BuiltinFunctions::subscript_position(i, items.len())
+                            .map_err(|e| match e {
+                                InterpreterError::RuntimeError { message } => message,
+                                other => other.to_string(),
+                            })?
+                    } else {
+                        crate::stdlib::collections::resolve_index("set", i, items.len())?
+                    };
                     items[at] = v;
                     Ok(())
                 })
@@ -2916,11 +2938,15 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                         }));
                     }
                 };
-                let result = crate::stdlib::collections::call_collections_function(
-                    field,
-                    vec![current, a1, a2],
-                    self,
-                );
+                let result = if subscript {
+                    crate::builtin::BuiltinFunctions::index_set(vec![current, a1, a2])
+                } else {
+                    crate::stdlib::collections::call_collections_function(
+                        field,
+                        vec![current, a1, a2],
+                        self,
+                    )
+                };
                 match result {
                     Ok(val) => {
                         if let Err(e) = self.environment.set(target, val.clone()).or_else(|_| {
@@ -3063,7 +3089,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // (the fix for the quadratic hash-count loop the wordfreq
         // benchmark exposed). Other builtins keep the plain path.
         let is_movable_builtin = matches!(&callee_value, Value::Builtin(b)
-            if matches!(b.name.as_str(), "map_set" | "map_set_in" | "map_update" | "map_merge"));
+            if matches!(b.name.as_str(), "map_set" | "map_set_in" | "map_update" | "map_merge" | "__index_set_in"));
         if !matches!(callee_value, Value::Function(_)) && !is_movable_builtin {
             return None;
         }
