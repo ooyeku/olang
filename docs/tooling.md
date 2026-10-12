@@ -632,7 +632,9 @@ promote = ["exhaustiveness", "shape"]
 
 The classes are `exhaustiveness` (a `match` over an enum or a literal
 union that misses a case), `shape` (a literal key a declared record
-shape does not carry, read or written), `keys` (a `.key` read no map or
+shape does not carry, read or written — its read is `()` — and a field
+read off a value of a declared struct type that the declaration does
+not have, which raises), `keys` (a `.key` read no map or
 object built in the module has), `result` (a discarded `Result`),
 `shadow` (a `let` that takes a stdlib module's name — `let cell = …`
 turns every later `cell.get` in its scope into a run-time failure far

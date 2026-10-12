@@ -2095,7 +2095,9 @@ pub fn key_warnings(program: &Program, source: &str) -> Vec<CheckDiagnostic> {
 pub fn warning_class(message: &str) -> Option<&'static str> {
     if message.contains("is not exhaustive") || message.contains("covers none of the scrutinee") {
         Some("exhaustiveness")
-    } else if message.contains("is not a key of the declared shape") {
+    } else if message.contains("is not a key of the declared shape")
+        || message.contains("is not a field of the declared struct")
+    {
         Some("shape")
     } else if message.contains("is not a key any construction of") {
         // roadmap E4: a `.key` read no map or object built here has
@@ -2648,6 +2650,9 @@ struct Checker {
     /// builtin's.
     user_bound: std::collections::HashSet<String>,
     wildcard_use: bool,
+    /// Every trait method name the file declares or implements: a read of
+    /// one off a struct may be the method, not a field.
+    methods: std::collections::HashSet<String>,
     out: Vec<CheckDiagnostic>,
 }
 
@@ -2749,6 +2754,15 @@ impl Checker {
                         None => self.wildcard_use = true,
                     }
                 }
+            }
+            match stmt.unwrapped() {
+                Statement::ImplDecl(i) | Statement::ShareDecl(crate::ast::ShareDecl::Impl(i)) => {
+                    self.methods.extend(i.methods.iter().map(|m| m.name.clone()));
+                }
+                Statement::TraitDecl(t) | Statement::ShareDecl(crate::ast::ShareDecl::Trait(t)) => {
+                    self.methods.extend(t.methods.iter().map(|m| m.name.clone()));
+                }
+                _ => {}
             }
             let let_decl = match stmt.unwrapped() {
                 Statement::LetDecl(l) | Statement::ShareDecl(crate::ast::ShareDecl::Let(l)) => Some(l),
@@ -3197,13 +3211,52 @@ impl Checker {
             "map_get" => "map_get reads Unit for it at runtime".to_string(),
             "map_set" => "map_set adds a key no reader of the shape looks for".to_string(),
             "index" => "the index reads Unit for it at runtime".to_string(),
-            _ => "the field is missing at runtime".to_string(),
+            _ => "the read is () at run time".to_string(),
         };
         self.warn(
             span,
             format!(
                 "`{}` is not a key of the declared shape {}: {}{}",
                 key, shape, read, hint
+            ),
+        );
+    }
+
+    /// A field read off a value of a declared struct type (`type P =
+    /// struct { x: Int }`) that the declaration does not have: reading it
+    /// raises at run time. Only a value the checker knows the type of is
+    /// judged — an annotation, a struct literal, a declared return — and
+    /// a name some trait method has is left (it may be read as one).
+    fn check_struct_field(&mut self, object: &Expr, field: &str, span: (u32, u32)) {
+        let SType::Named(type_name) = self.infer(object) else {
+            return;
+        };
+        let Some(fields) = self.structs.get(&type_name) else {
+            return;
+        };
+        if fields.iter().any(|(n, _)| n == field) || self.methods.contains(field) {
+            return;
+        }
+        let names: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
+        let nearest = names
+            .iter()
+            .filter(|n| {
+                let d = edit_distance(n, field);
+                d <= (field.len() / 3).max(1) && d < field.len()
+            })
+            .min_by_key(|n| edit_distance(n, field));
+        let hint = match nearest {
+            Some(n) => format!(" — did you mean `{}`?", n),
+            None => String::new(),
+        };
+        self.warn(
+            span,
+            format!(
+                "`{}` is not a field of the declared struct {} ({}): reading it raises at run time{}",
+                field,
+                type_name,
+                names.join(", "),
+                hint
             ),
         );
     }
@@ -4008,7 +4061,15 @@ impl Checker {
     fn walk_children(&mut self, expr: &Expr, span: (u32, u32)) {
         match expr {
             Expr::Call { callee, arguments } => {
-                self.check_expr(callee, span);
+                // `value.name(…)` may call a trait method: the field rule
+                // is for reads, so the callee's object is walked without it.
+                match callee.as_ref() {
+                    Expr::FieldAccess { object, field } => {
+                        self.check_expr(object, span);
+                        self.check_shape_key(object, field, "field", span);
+                    }
+                    _ => self.check_expr(callee, span),
+                }
                 for a in arguments {
                     match a {
                         Argument::Positional(e) => self.check_expr(e, span),
@@ -4236,6 +4297,7 @@ impl Checker {
             Expr::FieldAccess { object, field } => {
                 self.check_expr(object, span);
                 self.check_shape_key(object, field, "field", span);
+                self.check_struct_field(object, field, span);
             }
             Expr::Index { object, index } => {
                 self.check_expr(object, span);
@@ -4529,6 +4591,25 @@ mod tests {
 
     fn check(src: &str) -> Vec<CheckDiagnostic> {
         check_program(&Parser::new().parse(src).expect("parses"))
+    }
+
+    #[test]
+    fn a_field_a_declared_struct_never_has_is_reported() {
+        let d = check(
+            "type Point = struct { x: Int, y: Int }\ntype Task = { title: String }\nfn a(p: Point) = p.z\nfn b(p: Point) = p.x + p.y\nfn c() = Point { x: 1, y: 2 }.k\nfn e(t: Task) = t.titel\nfn f(q) = q.anything\n",
+        );
+        let messages: Vec<&str> = d.iter().map(|d| d.message.as_str()).collect();
+        assert_eq!(messages.len(), 3, "{messages:?}");
+        assert!(messages[0].starts_with("`z` is not a field of the declared struct Point (x, y): reading it raises at run time"));
+        assert!(messages[1].starts_with("`k` is not a field of the declared struct Point"));
+        assert!(messages[2].starts_with("`titel` is not a key of the declared shape"));
+        assert!(messages[2].contains("the read is () at run time"));
+        assert!(d.iter().all(|d| d.warning && warning_class(&d.message) == Some("shape")));
+        // A trait method of the name, called or read, is not a field.
+        let d = check(
+            "type Point = struct { x: Int }\ntrait Norm { fn norm(self) }\nimpl Norm for Point { fn norm(self) = self.x }\nfn a(p: Point) = p.norm()\nfn b(p: Point) = p.norm\n",
+        );
+        assert!(d.is_empty(), "{d:?}");
     }
 
     #[test]

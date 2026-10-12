@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **A field a declared struct never has, reported.** `olang check` and
+  the language server warn (advisory class `shape`) on a field read off
+  a value whose declared struct type (`type Point = struct { x: Int, y:
+  Int }`) has no such field — `p.z` raises at run time — naming the
+  fields and the nearest; a value whose type the checker does not know
+  is never judged, nor a name a trait method has. With objects' missing
+  fields reading as `()` (settled for 1.0), this and the record-shape
+  check (whose message now says the read is `()`) are the safety net.
+  Over the workspace's corpus they report nothing.
+
 - **The `shadow` advisory covers parameters and pattern bindings.** A
   parameter, lambda parameter, loop variable or pattern binding that
   takes a stdlib module's name and whose scope then reads it as the
