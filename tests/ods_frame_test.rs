@@ -935,13 +935,15 @@ fn a_series_is_indexed_by_position() {
     let out = eval(
         r#"
 let s = ods.series([10, 20, 30])
-show([s[0], s[2], s[-1]])
+show([s[0], s[2], s[ods.len(s) - 1]])
 "#,
         None,
     )
     .expect("series index");
     assert_eq!(out.to_string(), "\"[10, 30, 30]\"".to_string());
     let err = eval("ods.series([1, 2])[5]", None).expect_err("out of bounds");
+    assert!(err.contains("out of bounds"), "{err}");
+    let err = eval("ods.series([1, 2])[-1]", None).expect_err("a negative index");
     assert!(err.contains("out of bounds"), "{err}");
 }
 
@@ -962,7 +964,7 @@ ods.to_list(sales[sales["a"] > 1]["b"])
 "#,
     )
     .expect("tier agreement");
-    assert_tier_transparent("ods.series([1, 2, 3])[-1]").expect("tier agreement");
+    assert_tier_transparent("ods.series([1, 2, 3])[2]").expect("tier agreement");
 }
 
 #[test]

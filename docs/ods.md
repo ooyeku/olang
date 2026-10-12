@@ -419,12 +419,12 @@ println(to_string(ods.to_list(ods.take(names, order))))
 ### Back to language values
 
 `ods.to_list(s)` converts a Series back to an ordinary list (nulls
-become `()`), `ods.get(s, i)` reads one element — a negative index
-counts from the end — and `ods.len(s)` is the length:
+become `()`), `ods.get(s, i)` reads one element — a negative index is
+out of range, as a list's is — and `ods.len(s)` is the length:
 
 ```olang
 let s = ods.series([10, 20, 30])
-println(`${ods.get(s, 0)} ${ods.get(s, -1)}`)
+println(`${ods.get(s, 0)} ${ods.get(s, ods.len(s) - 1)}`)
 println(to_string(ods.len(s)))
 ```
 
@@ -747,8 +747,9 @@ println(to_string(ods.to_list(full["revenue"])))
 ```
 
 `f["amount"]` is the column as a Series. A Series takes a position:
-`s[0]` is its first element and `s[-1]` its last, the same rule lists and
-strings follow, so a column reads like the list it stands in for.
+`s[0]` is its first element and a position outside it (a negative one
+included) raises, the same rule lists and strings follow, so a column
+reads like the list it stands in for.
 
 A Frame also takes a mask, which is how filtering reads:
 

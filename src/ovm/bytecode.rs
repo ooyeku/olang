@@ -1077,7 +1077,7 @@ pub enum Instruction {
         cache: FieldCache,
     },
     /// Subscript: `dst = object[index]`. Lists, tuples, and strings with an
-    /// integer index (negative counts from the end), matching the interpreter.
+    /// integer index (a negative one out of range), matching the interpreter.
     IndexGet {
         dst: Register,
         object: Register,
@@ -1453,6 +1453,8 @@ impl BytecodeVm {
             "len",
             // list access and construction
             "head",
+            "first",
+            "last",
             "tail",
             "cons",
             "concat",
@@ -9818,8 +9820,8 @@ impl BytecodeVm {
     }
 
     /// Subscript, matching `Interpreter`'s `Expr::Index`: lists, tuples, and
-    /// strings with an integer index; negatives count from the end; out of
-    /// bounds is a runtime error with the same shape of message.
+    /// strings with an integer index; out of bounds (a negative index
+    /// included) is a runtime error with the same shape of message.
     fn execute_index_get(object: &OvmValue, index: &OvmValue) -> Result<OvmValue, BytecodeError> {
         use crate::ovm::value::ValueData;
 
@@ -9863,11 +9865,11 @@ impl BytecodeVm {
                 ));
             }
         };
-        // Resolve a possibly-negative index against a length; None if OOB.
+        // An index within the length; None if out of range, a negative
+        // one included (it does not count from the end).
         let resolve = |len: usize| -> Option<usize> {
-            let pos = if idx < 0 { len as i64 + idx } else { idx };
-            if pos >= 0 && (pos as usize) < len {
-                Some(pos as usize)
+            if idx >= 0 && (idx as usize) < len {
+                Some(idx as usize)
             } else {
                 None
             }

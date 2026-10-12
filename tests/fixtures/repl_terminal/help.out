@@ -216,7 +216,7 @@ Usage: :search <query> [filters]
   • Use return type filters: 'returns:List filter'
   • Use fuzzy search: 'lst' will match 'list' functions
   • Search in descriptions: 'transform' finds map, filter, etc.
-[1m=== Search Results (3 found) ===[0m
+[1m=== Search Results (4 found) ===[0m
 
 [2m1. DESC[0m [34mdom.storage_get[0m [2m(dom)[0m
    [32mRead a localStorage value (missing keys read as "").[0m
@@ -232,6 +232,10 @@ Usage: :search <query> [filters]
    [32mWrite a localStorage value. Answers false when the browser refused it (a full quota, storage disabled) instead of raising.[0m
    [33mMatch:[0m Write a localStorage value. Answers false when the browser refused it (a full quota, storage disabled) instead of raising.
    [35mSyntax:[0m [36mdom.storage_set(k, v)[0m
+
+[2m4. FUZZY[0m [34mlast[0m [2m(List)[0m
+   [32mThe last element of a list, or () when it is empty (a negative index raises)[0m
+   [35mSyntax:[0m [36mlast(list)[0m
 
 [2mTIP: Use ':help <function>' for detailed documentation[0m
 

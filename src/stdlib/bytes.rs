@@ -85,7 +85,8 @@ impl NativeObject for BytesObject {
             }
         };
         let n = self.0.len() as i64;
-        let idx = if i < 0 { n + i } else { i };
+        // A negative position is out of range, as a list's is.
+        let idx = i;
         if idx < 0 || idx >= n {
             return Some(Err(format!(
                 "Index {i} out of bounds for Bytes of length {n}"
@@ -303,7 +304,8 @@ fn len(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     Ok(Value::Integer(b.len() as i64))
 }
 
-/// Half-open, clamped — the same shape as `str.substring`.
+/// Half-open, by the slices' one rule (`str.substring`): a negative
+/// position raises, one past the end stops at the end.
 fn slice(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 3 {
         return Err(format!("bytes.slice expects 3 arguments, got {}", args.len()).into());
@@ -313,9 +315,16 @@ fn slice(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         (Value::Integer(f), Value::Integer(t)) => (*f, *t),
         _ => return Err("bytes.slice: from and to must be integers".into()),
     };
+    if from < 0 || to < 0 {
+        return Err(format!(
+            "bytes.slice: position {} is negative: a position counts from 0",
+            if from < 0 { from } else { to }
+        )
+        .into());
+    }
     let n = b.len() as i64;
-    let from = from.clamp(0, n) as usize;
-    let to = to.clamp(0, n) as usize;
+    let from = from.min(n) as usize;
+    let to = to.min(n) as usize;
     Ok(to_value(if from < to {
         b[from..to].to_vec()
     } else {

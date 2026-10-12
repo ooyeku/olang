@@ -68,7 +68,7 @@ fn collection_helpers_have_one_spelling_under_col_and_drop_exists() {
          println(show(drop(xs, 2)) + \" \" + show(col.drop(xs, 2)) + \" \" + show(skip(xs, 2)))\n\
          println(show(col.take(xs, 2)) + \" \" + show(col.contains(xs, 30)) + \" \" + show(col.sum(xs)))\n\
          println(show(col.index_of(xs, 30)) + \" \" + show(col.index_of(xs, 99)))\n\
-         println(show(col.slice(xs, 1, 3)) + \" \" + show(col.slice(xs, -2, 99)) + \" \" + show(col.slice(xs, 4, 2)))\n\
+         println(show(col.slice(xs, 1, 3)) + \" \" + show(col.slice(xs, 3, 99)) + \" \" + show(col.slice(xs, 4, 2)))\n\
          println(show(col.map(xs, (x) => x / 10)) + \" \" + show(col.fold(xs, 0, (a, b) => a + b)))",
     );
     assert_eq!(rc, 0, "{out}");

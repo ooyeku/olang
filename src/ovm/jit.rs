@@ -536,9 +536,8 @@ extern "C" fn olang_jit_math(id: i64, a: f64, b: f64) -> f64 {
 
 const EXPECT_STRUCT: u64 = 3;
 
-/// Host helper for `list[i]`: negative indices count from the end
-/// (matching the VM), bounds violations and element-kind surprises
-/// deopt. Struct elements return a borrowed pointer into the Vec —
+/// Host helper for `list[i]`: a negative index, any other bounds
+/// violation and an element-kind surprise deopt (the VM raises). Struct elements return a borrowed pointer into the Vec —
 /// valid because the list is immutable for the duration of the
 /// synchronous native call.
 ///
@@ -554,11 +553,10 @@ unsafe extern "C" fn olang_jit_index(
     unsafe {
         let items = &*list;
         let len = items.len() as i64;
-        // Bit 8 of `expect`: negative indices wrap (subscripts do, `for`
-        // iteration does not — the VM errors there, so we deopt).
-        let wrap = expect & 0x100 != 0;
+        // A negative index is out of range (bit 8 of `expect`, once the
+        // subscripts' wrap, is ignored): the VM raises, so we deopt.
         let expect = expect & 0xFF;
-        let adjusted = if idx < 0 && wrap { len + idx } else { idx };
+        let adjusted = idx;
         if adjusted < 0 || adjusted >= len {
             return 1;
         }
@@ -1235,8 +1233,8 @@ impl ScratchCtx {
 /// into a region-born alloc; a pointer that resolves to an ALLOC is
 /// owned by this region alone and mutates in place. Returns the
 /// (possibly new) list pointer, or 0 to deopt (index out of bounds, or
-/// a pointer from neither family). Negative indices wrap, as the VM's
-/// col.set does.
+/// a pointer from neither family). A negative index is out of range, as
+/// the VM's col.set has it.
 ///
 /// # Safety
 /// Called only from JIT code with the call's own ctx.
@@ -1261,7 +1259,7 @@ unsafe extern "C" fn olang_jit_set_rawf(
             match Arc::get_mut(arc) {
                 Some(items) => {
                     let len = items.len() as i64;
-                    let at = if idx < 0 { len + idx } else { idx };
+                    let at = idx; // a negative index is out of range: deopt
                     if at < 0 || at >= len {
                         return 0;
                     }
@@ -1271,7 +1269,7 @@ unsafe extern "C" fn olang_jit_set_rawf(
                 None => {
                     let src = arc.clone();
                     let len = src.len() as i64;
-                    let at = if idx < 0 { len + idx } else { idx };
+                    let at = idx; // a negative index is out of range: deopt
                     if at < 0 || at >= len {
                         return 0;
                     }
@@ -1290,7 +1288,7 @@ unsafe extern "C" fn olang_jit_set_rawf(
             .find(|l| Arc::as_ptr(l) as i64 == list)
         {
             let len = src.len() as i64;
-            let at = if idx < 0 { len + idx } else { idx };
+            let at = idx; // a negative index is out of range: deopt
             if at < 0 || at >= len {
                 return 0;
             }
@@ -1327,7 +1325,7 @@ unsafe extern "C" fn olang_jit_set_rawi(
             match Arc::get_mut(arc) {
                 Some(items) => {
                     let len = items.len() as i64;
-                    let at = if idx < 0 { len + idx } else { idx };
+                    let at = idx; // a negative index is out of range: deopt
                     if at < 0 || at >= len {
                         return 0;
                     }
@@ -1342,7 +1340,7 @@ unsafe extern "C" fn olang_jit_set_rawi(
                 None => {
                     let src = arc.clone();
                     let len = src.len() as i64;
-                    let at = if idx < 0 { len + idx } else { idx };
+                    let at = idx; // a negative index is out of range: deopt
                     if at < 0 || at >= len {
                         return 0;
                     }
@@ -1362,7 +1360,7 @@ unsafe extern "C" fn olang_jit_set_rawi(
             .find(|l| Arc::as_ptr(l) as i64 == list)
         {
             let len = src.len() as i64;
-            let at = if idx < 0 { len + idx } else { idx };
+            let at = idx; // a negative index is out of range: deopt
             if at < 0 || at >= len {
                 return 0;
             }
@@ -1521,7 +1519,8 @@ unsafe extern "C" fn olang_jit_index_ll(outer: *const Vec<OvmValue>, idx: i64, w
     unsafe {
         let items = &*outer;
         let len = items.len() as i64;
-        let adjusted = if idx < 0 && wrap != 0 { len + idx } else { idx };
+        let _ = wrap; // a negative index is out of range: deopt
+        let adjusted = idx;
         if adjusted < 0 || adjusted >= len {
             return 0;
         }
@@ -1545,7 +1544,8 @@ unsafe extern "C" fn olang_jit_index_rawf(
     unsafe {
         let items = &*list;
         let len = items.len() as i64;
-        let adjusted = if idx < 0 && wrap != 0 { len + idx } else { idx };
+        let _ = wrap; // a negative index is out of range: deopt
+        let adjusted = idx;
         if adjusted < 0 || adjusted >= len {
             return 1;
         }
@@ -1565,7 +1565,8 @@ unsafe extern "C" fn olang_jit_index_rawi(
     unsafe {
         let items = &*list;
         let len = items.len() as i64;
-        let adjusted = if idx < 0 && wrap != 0 { len + idx } else { idx };
+        let _ = wrap; // a negative index is out of range: deopt
+        let adjusted = idx;
         if adjusted < 0 || adjusted >= len {
             return 1;
         }
@@ -4383,7 +4384,7 @@ fn scalar_replace(b: &mut CompiledBytecode) {
             continue 'rescan;
         }
         // The list twin: a MakeList read only by IndexGet with constant,
-        // in-bounds indices (negatives wrap, exactly like the runtime)
+        // in-bounds indices (a negative one raises, so is not folded)
         // never needs the Vec.
         for pc in 0..b.instructions.len() {
             let Instruction::MakeList { dst, elements } = &b.instructions[pc] else {
@@ -4433,7 +4434,7 @@ fn scalar_replace(b: &mut CompiledBytecode) {
                     break;
                 };
                 let len = elements.len() as i64;
-                let resolved = if raw < 0 { len + raw } else { raw };
+                let resolved = raw; // a negative index raises: not folded
                 if resolved < 0 || resolved >= len {
                     eligible = false; // out of bounds: leave the error path
                     break;

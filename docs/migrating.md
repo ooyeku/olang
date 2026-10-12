@@ -21,6 +21,7 @@ upgrading; it reports the cases it can find.
   - [A block ending in `let` or `;` is `()`](#a-block-ending-in-let-or--is-)
   - [Equality](#equality)
   - [Smaller rulings](#smaller-rulings)
+  - [A negative index raises](#a-negative-index-raises)
   - [A field of `()` reads `()`](#a-field-of--reads-)
 - [In 0.88](#in-088)
   - [A missing field of an object is `()`](#a-missing-field-of-an-object-is-)
@@ -145,6 +146,16 @@ true).
 where they raised. Guards written only to avoid that raise
 (`if x == () => () else => x.f`) still work and may be dropped. `r?.f` is
 a parse error; write `(r?).f`.
+
+### A negative index raises
+
+`xs[-1]` read the last element; it now raises, as `xs[len(xs)]` does,
+and so do `xs[-1] = v`, a string's, a tuple's, Bytes' and a Series'
+negative index, and `col.set`/`col.swap` with one. Read the ends with
+`last(xs)` and `first(xs)` (both `()` when empty), or write
+`xs[len(xs) - 1]`. `str.substring`, `col.slice`, `bytes.slice` and
+`str.char_at` raise on a negative position where they clamped or
+counted from the end.
 
 ## In 0.88
 

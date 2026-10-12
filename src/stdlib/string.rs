@@ -443,8 +443,8 @@ fn str_split(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 ///
 /// Unit, not `-1`: absence in olang is Unit (the same value a missing map
 /// key yields), and a `-1` sentinel was actively dangerous here because
-/// indexing counts negative positions from the end — `s[index_of(s, x)]`
-/// on a miss silently read the *last* character. Changed in 0.68 as part
+/// indexing counted negative positions from the end then — `s[index_of(s,
+/// x)]` on a miss silently read the *last* character. Changed in 0.68 as part
 /// of settling the absence convention; test with `idx != ()`.
 fn str_index_of(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let s = arg_str(&args, 0, "index_of")?;
@@ -491,11 +491,14 @@ fn str_count(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 fn str_char_at(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let s = arg_str(&args, 0, "char_at")?;
     let i = arg_int(&args, 1, "char_at")?;
-    let ch = if i < 0 {
-        None
-    } else {
-        s.chars().nth(i as usize)
-    };
+    if i < 0 {
+        return Err(format!(
+            "str.char_at: position {} is negative: a position counts from 0",
+            i
+        )
+        .into());
+    }
+    let ch = s.chars().nth(i as usize);
     // Out of range yields an empty string, so callers can probe without
     // guarding — total operation
     Ok(ok_string(ch.map(|c| c.to_string()).unwrap_or_default()))
@@ -648,8 +651,20 @@ fn str_fuzzy_score(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
 
 fn str_substring(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let s = arg_str(&args, 0, "substring")?;
-    let a = arg_int(&args, 1, "substring")?.max(0) as usize;
-    let b = arg_int(&args, 2, "substring")?.max(0) as usize;
+    // The slices' one rule: a negative position raises, one past the end
+    // stops at the end, an end at or before the start is empty.
+    let (a, b) = (
+        arg_int(&args, 1, "substring")?,
+        arg_int(&args, 2, "substring")?,
+    );
+    if a < 0 || b < 0 {
+        return Err(format!(
+            "str.substring: position {} is negative: a position counts from 0",
+            if a < 0 { a } else { b }
+        )
+        .into());
+    }
+    let (a, b) = (a as usize, b as usize);
     // Characters to bytes by walking only as far as `end` (an ASCII
     // prefix is a byte a character): a slice of a large text costs the
     // slice, not a copy of the text as characters.

@@ -511,7 +511,8 @@ impl Series {
 
     pub fn get(&self, index: i64) -> Result<Scalar> {
         let len = self.len();
-        let idx = if index < 0 { index + len as i64 } else { index };
+        // A negative position is out of range, as a list's is.
+        let idx = index;
         if idx < 0 || idx as usize >= len {
             return Err(OdsError::IndexOutOfBounds { index, length: len });
         }

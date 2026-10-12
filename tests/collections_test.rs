@@ -53,7 +53,10 @@ fn shows(source: &str) -> String {
 #[test]
 fn col_set_swap_filled_semantics() {
     assert_eq!(shows("col.set([1, 2, 3], 1, 9)"), "[1, 9, 3]");
-    assert_eq!(shows("col.set([1, 2, 3], -1, 9)"), "[1, 2, 9]");
+    assert_eq!(shows("col.set([1, 2, 3], 2, 9)"), "[1, 2, 9]");
+    // A negative index is out of range, as a subscript's is.
+    assert!(eval("col.set([1, 2, 3], -1, 9)", false).is_err());
+    assert!(eval("col.set([1, 2, 3], -1, 9)", true).is_err());
     assert_eq!(shows("col.swap([1, 2, 3], 0, 2)"), "[3, 2, 1]");
     assert_eq!(shows("col.filled(3, 7)"), "[7, 7, 7]");
     assert_eq!(shows("col.filled(0, 7)"), "[]");

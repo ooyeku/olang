@@ -31,8 +31,8 @@ fn bytes_construct_inspect_and_convert() {
     assert_eq!(run("typeof(bytes.from_list([1, 2]))").unwrap(), "Bytes");
     assert_eq!(run("show(len(bytes.from_list([1, 2, 3])))").unwrap(), "3");
     assert_eq!(run("show(bytes.from_list([10, 20])[0])").unwrap(), "10");
-    // Negative indices count from the end, like lists.
-    assert_eq!(run("show(bytes.from_list([10, 20])[-1])").unwrap(), "20");
+    // A negative index is out of range, as a list's is.
+    assert!(run("show(bytes.from_list([10, 20])[-1])").is_err());
     assert_eq!(
         run("unwrap(bytes.to_string(bytes.from_string(\"hi\")))").unwrap(),
         "hi"

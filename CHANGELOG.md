@@ -63,6 +63,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   non-struct value"); a field of another non-record (`5.k`) and a
   declared struct's missing field still raise. `r?.f` is now a parse
   error, reserved for optional chaining: write `(r?).f`.
+- **A negative index raises**, as any index outside the list does
+  (`xs[-1]` read the last element): reading a list, tuple, string,
+  Bytes or Series, `xs[i] = v`, `col.set` and `col.swap`. The slices
+  share one rule: `str.substring`, `col.slice`, `bytes.slice` and
+  `str.char_at` raise on a negative position, and a position past the
+  end stops at the end. `first(xs)` and `last(xs)` are new.
 
 ### Added
 
@@ -73,7 +79,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   private names are renamed to its own), where the bundle was one
   namespace and a module's private helper could replace another's.
 - **`re.replace_first(pattern, text, rep)`** replaces the first match.
-
+- **`first(xs)` and `last(xs)`**: the first or last element of a list
+  (or tuple, or character of a string), `()` when it is empty.
 
 ### Changed
 

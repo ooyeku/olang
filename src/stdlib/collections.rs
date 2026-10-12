@@ -170,17 +170,23 @@ fn index_of(args: Vec<Value>) -> Result<Value, InterpreterError> {
 }
 
 /// `col.slice(xs, from, to)` — the elements from index `from` (inclusive)
-/// to `to` (exclusive), clamped to the list like `str.substring`: a `to`
-/// past the end stops at the end, a `from` past `to` is empty, and
-/// negative indices count from the end.
+/// to `to` (exclusive), by the slices' one rule (`str.substring`,
+/// `bytes.slice`): a position past the end stops at the end, a `from` at
+/// or past `to` is empty, and a negative position raises.
 fn slice(args: Vec<Value>) -> Result<Value, InterpreterError> {
     let list = list_arg(&args, 0, "slice")?;
     let bound = |i: usize, what: &str| -> Result<usize, InterpreterError> {
         match args.get(i) {
             Some(Value::Integer(n)) => {
-                let len = list.len() as i64;
-                let idx = if *n < 0 { len + *n } else { *n };
-                Ok(idx.clamp(0, len) as usize)
+                if *n < 0 {
+                    return Err(InterpreterError::RuntimeError {
+                        message: format!(
+                            "col.slice: {} {} is negative: a position counts from 0",
+                            what, n
+                        ),
+                    });
+                }
+                Ok((*n).min(list.len() as i64) as usize)
             }
             Some(other) => Err(InterpreterError::TypeError {
                 message: format!(
@@ -242,10 +248,10 @@ fn list_arg<'a>(
 }
 
 /// Resolve an index against a length with the language's indexing rule:
-/// negatives count from the end. Out of bounds raises — a bad index is a
-/// caller's bug, not data (same as `xs[i]`).
+/// `0..len`. Out of bounds raises, a negative index included — a bad
+/// index is a caller's bug, not data (same as `xs[i]`).
 pub(crate) fn resolve_index(func: &str, i: i64, len: usize) -> Result<usize, String> {
-    let resolved = if i < 0 { i + len as i64 } else { i };
+    let resolved = i;
     if resolved < 0 || resolved as usize >= len {
         return Err(format!(
             "col.{}: index {} out of bounds for list of length {}",

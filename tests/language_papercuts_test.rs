@@ -231,7 +231,7 @@ fn an_element_of_a_mut_list_is_assigned() {
 fn main() = {
     let mut xs = [1, 2, 3, 4]
     xs[1] = 9
-    xs[-1] = 7
+    xs[len(xs) - 1] = 7
     for i in 0..2 {
         xs[i] = xs[i] * 10
     }

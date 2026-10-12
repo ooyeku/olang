@@ -1075,6 +1075,36 @@ impl HelpSystem {
         });
 
         self.add_function(FunctionDoc {
+            name: "first".to_string(),
+            description: "The first element of a list, or () when it is empty".to_string(),
+            syntax: "first(list)".to_string(),
+            parameters: vec!["list: List[T] (or a tuple, or a string)".to_string()],
+            return_type: "T | ()".to_string(),
+            examples: vec![
+                "first([1, 2, 3])  // 1".to_string(),
+                "first([]) ?? 0  // 0".to_string(),
+            ],
+            category: "List".to_string(),
+            see_also: vec!["last".to_string(), "head".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "last".to_string(),
+            description:
+                "The last element of a list, or () when it is empty (a negative index raises)"
+                    .to_string(),
+            syntax: "last(list)".to_string(),
+            parameters: vec!["list: List[T] (or a tuple, or a string)".to_string()],
+            return_type: "T | ()".to_string(),
+            examples: vec![
+                "last([1, 2, 3])  // 3".to_string(),
+                "last(\"abc\")  // \"c\"".to_string(),
+            ],
+            category: "List".to_string(),
+            see_also: vec!["first".to_string(), "col.last".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
             name: "head".to_string(),
             description: "Returns the first element of a non-empty list".to_string(),
             syntax: "head(list)".to_string(),

@@ -2268,13 +2268,10 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 let index_value = self.eval_expr(index)?;
 
                 match (object_value, index_value) {
+                    // A negative index is out of range, as one past the end
+                    // is (`last(xs)` reads the last element).
                     (Value::List(ref list), Value::Integer(idx)) => {
-                        let index = if idx < 0 {
-                            // Negative indexing from end
-                            (list.len() as i64 + idx) as usize
-                        } else {
-                            idx as usize
-                        };
+                        let index = if idx < 0 { usize::MAX } else { idx as usize };
 
                         if index < list.len() {
                             Ok(list[index].clone())
@@ -2289,12 +2286,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                         }
                     }
                     (Value::Tuple(ref tuple), Value::Integer(idx)) => {
-                        let index = if idx < 0 {
-                            // Negative indexing from end
-                            (tuple.len() as i64 + idx) as usize
-                        } else {
-                            idx as usize
-                        };
+                        let index = if idx < 0 { usize::MAX } else { idx as usize };
 
                         if index < tuple.len() {
                             Ok(tuple[index].clone())
@@ -2310,20 +2302,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     }
                     (Value::String(ref string), Value::Integer(idx)) => {
                         let string_len = string.chars().count();
-                        let index = if idx < 0 {
-                            // Negative indexing from end
-                            if (-idx) as usize > string_len {
-                                return Err(InterpreterError::RuntimeError {
-                                    message: format!(
-                                        "Index {} out of bounds for string of length {}",
-                                        idx, string_len
-                                    ),
-                                });
-                            }
-                            string_len - ((-idx) as usize)
-                        } else {
-                            idx as usize
-                        };
+                        let index = if idx < 0 { usize::MAX } else { idx as usize };
 
                         if let Some(ch) = string.chars().nth(index) {
                             // More efficient: create single-char string directly

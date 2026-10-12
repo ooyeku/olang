@@ -116,7 +116,8 @@ impl NativeObject for OdsSeries {
         Some(match key {
             Value::Integer(i) => {
                 let len = self.series().len() as i64;
-                let pos = if *i < 0 { len + *i } else { *i };
+                // A negative position is out of range, as a list's is.
+                let pos = *i;
                 if pos < 0 || pos >= len {
                     Err(format!(
                         "index {} out of bounds for a Series of length {}",

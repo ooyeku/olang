@@ -198,6 +198,7 @@ println(show(len([1, 2, 3])) + " " + show(len("abcd")))
 |---|---|
 | `range(n)` / `range(a, b)` / `range(a, b, step)` | list of integers from `a` (default 0) up to, excluding, `b`, by `step` (default 1) |
 | `head(xs)` / `tail(xs)` | first element / all but the first |
+| `first(xs)` / `last(xs)` | the first / last element, or `()` when the list is empty (also of a tuple, and the first / last character of a string) |
 | `take(xs, n)` / `skip(xs, n)` | first `n` / all but the first `n` (`drop` is `skip` under the name most languages pair with `take`) |
 | `reverse(xs)` / `sort(xs)` | reversed / ascending copy (numbers, strings, or tuples, which order lexicographically); the sort is stable: elements that compare equal keep their order |
 | `contains(xs, v)` | membership test |
@@ -223,8 +224,8 @@ spelling is the short form. The ones that exist only as globals are
 `range`, `chunk`, `cons`, `concat`, `enumerate`, `group_by`, `find`,
 `reduce`, `par_map`, `par_filter`, `map_filtered`, `average`, `clamp`,
 and `abs`. Two helpers exist only under `col.`: `col.index_of(xs, v)`
-(position, or Unit) and `col.slice(xs, from, to)` (a half-open, clamped
-sub-list, the shape of `str.substring`):
+(position, or Unit) and `col.slice(xs, from, to)` (a half-open sub-list,
+by the slices' one rule, `str.substring`'s):
 
 ```olang
 let xs = [10, 20, 30, 40]
@@ -431,14 +432,14 @@ every function returns a new string.
 | Function | Description |
 |---|---|
 | `str.length(s)` | character count |
-| `str.char_at(s, i)` | 1-char string, `""` out of bounds |
+| `str.char_at(s, i)` | 1-char string, `""` past the end; a negative `i` raises |
 | `str.char_code(s)` | the Unicode code point of the first character, `()` for `""` |
 | `str.from_char_code(n)` | the character of code point `n`, or the string of a list of them (`[27, 91, 72]` is ESC `[` `H`); a number that is no character raises |
 | `str.chars(s)` | list of characters (codepoints) |
 | `str.graphemes(s)` | list of visible characters (UAX #29 clusters) |
 | `str.width(s)` | display width in terminal cells (see below) |
 | `str.cell_width(g)` | the cells one grapheme occupies: 0, 1 or 2; more than one grapheme raises |
-| `str.substring(s, from, to)` | half-open slice, clamped |
+| `str.substring(s, from, to)` | half-open slice by the slices' one rule: a position past the end stops at the end, `to` at or before `from` is `""`, a negative position raises (`col.slice` and `bytes.slice` alike) |
 | `str.index_of(s, sub)` / `str.last_index_of` | position, or `()` when absent |
 | `str.contains(s, sub)` / `str.count(s, sub)` | search |
 | `str.fuzzy_score(query, text)` | a fuzzy finder's score (every query character in order; runs, word starts, the last path segment count more), or `()` |
@@ -515,10 +516,10 @@ standard library.
 | Function | Description |
 |---|---|
 | `col.all(xs, p)` / `col.any(xs, p)` | quantifiers (short-circuit) |
-| `col.index_of(xs, v)` / `col.slice(xs, from, to)` | position of a value (or Unit) / a half-open, clamped sub-list |
+| `col.index_of(xs, v)` / `col.slice(xs, from, to)` | position of a value (or Unit) / a half-open sub-list, by `str.substring`'s rule |
 | `col.splice(xs, at, n, items)` | the `n` elements from `at` replaced by `items`, in one copy |
 | `col.map` `col.filter` `col.fold` `col.sort` `col.contains` `col.reverse` `col.flatten` `col.zip` `col.take` `col.drop` `col.skip` `col.head` `col.tail` `col.sum` `col.min` `col.max` | the global list helpers of the same names, mirrored here: each behaves exactly as its global ([Lists](#lists), [Aggregates](#aggregates), [Higher-order functions](#higher-order-functions)) |
-| `col.set(xs, i, v)` / `col.swap(xs, i, j)` | the list with element `i` replaced / elements `i` and `j` exchanged; `xs = col.set(xs, i, v)` on a list nothing else holds writes in place |
+| `col.set(xs, i, v)` / `col.swap(xs, i, j)` | the list with element `i` replaced / elements `i` and `j` exchanged; `xs = col.set(xs, i, v)` on a list nothing else holds writes in place; an index outside the list, a negative one included, raises |
 | `col.filled(n, v)` | a list of `n` copies of `v`, the preallocation primitive |
 | `col.unique(xs)` | dedupe, first-seen order |
 | `col.partition(xs, p)` | `([matching], [rest])` |
@@ -1180,8 +1181,8 @@ let genuine = crypto.secure_compare(mac, received_mac)
 Strings are UTF-8 text; `Bytes` (new in 0.69) is the value for everything
 that isn't — an image, an archive, a hash's raw output, a non-UTF-8
 file. A `Bytes` value is immutable, `typeof` says `Bytes`, `len(b)` is
-the byte count, `b[i]` is the byte at `i` as an Int (negative counts
-from the end), equality is structural, and it displays as a capped hex
+the byte count, `b[i]` is the byte at `i` as an Int (a negative `i`
+raises, as a list's does), equality is structural, and it displays as a capped hex
 preview. `fs.read_bytes`/`fs.write_bytes` move it to and from disk;
 `base64` and the `crypto` hashes accept it.
 
@@ -1191,13 +1192,13 @@ preview. `fs.read_bytes`/`fs.write_bytes` move it to and from disk;
 | `bytes.from_string(s)` | a string's UTF-8 bytes |
 | `bytes.to_string(b)` | decode as UTF-8 — `Result`, since bytes may not be text |
 | `bytes.len(b)` | byte count (the global `len` works too) |
-| `bytes.slice(b, from, to)` | half-open, clamped — the shape of `str.substring` |
+| `bytes.slice(b, from, to)` | half-open, by `str.substring`'s rule: past the end stops at the end, a negative position raises |
 | `bytes.concat(a, b)` | concatenation |
 | `bytes.to_hex(b)` / `bytes.from_hex(s)` | lowercase hex, two digits a byte; `from_hex` reads either case and answers a `Result` (an odd count or a character that is not a digit is `Err`) |
 
 ```olang
 let b = bytes.from_list([104, 105, 33])
-println(`${len(b)} bytes, first ${b[0]}, last ${b[-1]}`)
+println(`${len(b)} bytes, first ${b[0]}, last ${last(bytes.to_list(b))}`)
 println(unwrap(bytes.to_string(b)))                    // hi!
 println(show(bytes.to_list(bytes.slice(b, 0, 2))))     // [104, 105]
 println(base64.encode(b))                              // aGkh
@@ -2852,7 +2853,7 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Distinct | `unique(s)` (first-seen order) · `n_unique(s)` · `value_counts(s)` → a value/count Frame, most frequent first |
 | Dates | `date_part(s, "year"\|"month"\|"day")` — the prefix of an ISO date or timestamp String Series, as a String Series: the derived key for a by-month `group_by` |
 | Convert type | `cast(s, "Float"\|"Int"\|"Bool"\|"String")` — what the target cannot hold becomes null, so `null_count` reports what was lost |
-| Order / select | `sort(s)` (nulls last) · `argsort(s)` (sorting indices) · `take(s, idx)` (gather) · `get(s, i)` (negative counts from end) |
+| Order / select | `sort(s)` (nulls last) · `argsort(s)` (sorting indices) · `take(s, idx)` (gather) · `get(s, i)` (a negative position raises, as a list's does) |
 | Convert | `to_list(s)` (nulls → `()`) · `len(s)` |
 
 ### Frame verbs
@@ -2866,7 +2867,7 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Inspect | `columns(f)` · `n_rows(f)` · `n_cols(f)` · `head(f, n)` · `tail(f, n)` · `describe(f)` · `schema(f)` · `to_records(f)` · `to_matrix(f, names)` — Float/Int columns as a list of Float lists, for `vec` |
 | Splits | `split(f, frac)` — a deterministic holdout under `random.seed`, `[kept, rest]` · `split_at(f, column, frac)` — the forward-in-time split: sorted by `column`, the first `frac` first |
 | Version | `ods.version()` — the engine's version, the same as `runtime.version()`, worth quoting in a bug report |
-| Subscript | `f["name"]` a column · `f[mask]` the rows a Bool Series keeps · `s[i]` an element (negatives from the end) · `column(f, name)` is the same as `f[name]`, for when a call reads better than a subscript |
+| Subscript | `f["name"]` a column · `f[mask]` the rows a Bool Series keeps · `s[i]` an element (a negative position raises) · `column(f, name)` is the same as `f[name]`, for when a call reads better than a subscript |
 | Shape | `select(f, names)` · `drop(f, names)` · `rename(f, mapping)` · `with_column(f, name, series)` · `filter(f, mask)` · `sort_by(f, name, descending)` |
 | Whole rows | `distinct(f, names = all)` · `drop_null(f, names = all)` — duplicates and missing data, first occurrence kept |
 | Reshape | `pivot(f, index, columns, values, agg)` long→wide · `unpivot(f, ids, value_columns = the rest)` wide→long, emitting `name`/`value` |

@@ -269,15 +269,19 @@ let h = 1
 Rule of thumb: functions can be referenced from anywhere in the file;
 `let` values must be bound before they are read.
 
-## Indexing: negative wraps, no slicing, maps use `.`
+## Indexing: a negative index raises, no slicing, maps use `.`
 
-`[i]` indexing works on lists, tuples, and strings — and a **negative
-index counts from the end** (`xs[-1]` is the last element, as in Python).
+`[i]` indexing works on lists, tuples, and strings, from 0, and an
+index outside them raises — a **negative index included**: it does not
+count from the end, as it does in Python, so `xs[i - 1]` at `i = 0`
+stops the program instead of reading the last element. `last(xs)` and
+`first(xs)` read the ends, answering `()` for an empty list.
 
 ```olang
 let xs = [10, 20, 30]
-println(show(xs[-1]))   // 30
-println(show(xs[-2]))   // 20
+println(show(last(xs)))           // 30
+println(show(xs[len(xs) - 2]))    // 20
+println(show(last([]) ?? 0))      // 0
 ```
 
 Three limits of `[]`:

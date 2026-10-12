@@ -179,6 +179,15 @@ impl BuiltinFunctions {
             },
         );
 
+        for name in ["first", "last"] {
+            functions.insert(
+                name.to_string(),
+                BuiltinFunction {
+                    name: name.to_string(),
+                    arity: 1,
+                },
+            );
+        }
         functions.insert(
             "head".to_string(),
             BuiltinFunction {
@@ -1277,6 +1286,8 @@ impl BuiltinFunctions {
             "fold" => builtins.fold(arguments, interpreter),
             "len" => builtins.len(arguments),
             "head" => builtins.head(arguments),
+            "first" => builtins.first_or_last(arguments, true),
+            "last" => builtins.first_or_last(arguments, false),
             "tail" => builtins.tail(arguments),
             "cons" => builtins.cons(arguments),
             "to_string" => builtins.to_string(arguments),
@@ -2254,6 +2265,41 @@ impl BuiltinFunctions {
             }
             _ => Err(InterpreterError::TypeError {
                 message: "len: argument must be a list, string, or tuple".to_string(),
+            }),
+        }
+    }
+
+    /// `first(xs)` / `last(xs)`: the first or last element of a list (or
+    /// a tuple, or the character of a string), or `()` when it is empty —
+    /// the read a negative index once made, with absence as `()`.
+    fn first_or_last(&self, args: Vec<Value>, first: bool) -> Result<Value, InterpreterError> {
+        let name = if first { "first" } else { "last" };
+        if args.len() != 1 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 1,
+                got: args.len(),
+            });
+        }
+        let pick = |items: &[Value]| {
+            if first { items.first() } else { items.last() }
+                .cloned()
+                .unwrap_or(Value::Unit)
+        };
+        match &args[0] {
+            Value::List(items) | Value::Tuple(items) => Ok(pick(items)),
+            Value::String(s) => Ok(if first {
+                s.chars().next()
+            } else {
+                s.chars().next_back()
+            }
+            .map(|c| Value::String(c.to_string().into()))
+            .unwrap_or(Value::Unit)),
+            other => Err(InterpreterError::TypeError {
+                message: format!(
+                    "{}: argument must be a list, tuple or string, got {}",
+                    name,
+                    other.type_name()
+                ),
             }),
         }
     }
@@ -3917,8 +3963,8 @@ impl BuiltinFunctions {
     }
 
     /// `xs[i] = v`'s list (the parser builds the assignment as
-    /// `xs = __index_set(xs, i, v)`): `xs` with element `i` replaced, a
-    /// negative `i` counting from the end as a read does. In place when
+    /// `xs = __index_set(xs, i, v)`): `xs` with element `i` replaced; a
+    /// negative `i` is out of range, as a read's is. In place when
     /// nothing else holds the list.
     pub(crate) fn index_set(mut args: Vec<Value>) -> Result<Value, InterpreterError> {
         if args.len() != 3 {
@@ -3963,7 +4009,8 @@ impl BuiltinFunctions {
 
     /// A subscript's position in a list of `len`, or the read's error.
     pub(crate) fn subscript_position(i: i64, len: usize) -> Result<usize, InterpreterError> {
-        let at = if i < 0 { i + len as i64 } else { i };
+        // A negative index is out of range, as a read's is.
+        let at = i;
         if at < 0 || at as usize >= len {
             return Err(InterpreterError::RuntimeError {
                 message: format!("Index {} out of bounds for list of length {}", i, len),

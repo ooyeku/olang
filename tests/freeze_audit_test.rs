@@ -598,3 +598,57 @@ main()
         Ok(Value::Integer(1))
     );
 }
+
+// ── A negative index raises ────────────────────────────────────────────
+
+#[test]
+fn a_negative_index_raises_and_first_and_last_read_the_ends() {
+    let src = r#"
+fn at(xs, i) = xs[i]
+fn main() = [at([1, 2, 3], 0), last([1, 2, 3]), first([1, 2, 3]), last([]), first(""), last("abc")]
+main()
+"#;
+    assert_eq!(
+        agree(src),
+        Ok(l(vec![
+            Value::Integer(1),
+            Value::Integer(3),
+            Value::Integer(1),
+            Value::Unit,
+            Value::Unit,
+            s("c"),
+        ]))
+    );
+    for src in [
+        "fn at(xs, i) = xs[i]\nfn main() = at([1, 2, 3], -1)\nmain()\n",
+        "fn at(xs, i) = xs[i]\nfn main() = at((1, 2), -1)\nmain()\n",
+        "fn at(xs, i) = xs[i]\nfn main() = at(\"abc\", -1)\nmain()\n",
+        "fn put(i) = {\n    let mut xs = [1, 2]\n    xs[i] = 9\n    xs\n}\nfn main() = put(-1)\nmain()\n",
+    ] {
+        let err = agree(src).expect_err(src);
+        assert!(err.contains("out of bounds"), "{src}: {err}");
+    }
+    for src in [
+        "str.substring(\"abc\", -1, 2)\n",
+        "str.char_at(\"abc\", -1)\n",
+        "col.slice([1, 2, 3], -1, 2)\n",
+        "bytes.slice(bytes.from_list([1, 2]), -1, 2)\n",
+        "col.set([1, 2], -1, 0)\n",
+    ] {
+        let err = agree_tiered(src).expect_err(src);
+        assert!(
+            err.contains("negative") || err.contains("out of bounds"),
+            "{src}: {err}"
+        );
+    }
+    assert_eq!(
+        agree_tiered(
+            "[str.substring(\"abc\", 1, 99), str.substring(\"abc\", 2, 1), str.char_at(\"abc\", 9)]\n"
+        ),
+        Ok(l(vec![s("bc"), s(""), s("")]))
+    );
+    assert_eq!(
+        agree_tiered("col.slice([1, 2, 3], 1, 99)\n"),
+        Ok(l(vec![Value::Integer(2), Value::Integer(3)]))
+    );
+}

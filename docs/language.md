@@ -866,9 +866,11 @@ println(to_string(str.index_of("abc", "z")))   // () when absent — test with !
 println(join(split("a,b,c", ","), " + "))
 ```
 
-The edges, stated: `str.substring(s, start, end)` clamps — a negative
-`start` reads as 0, an `end` past the length as the length, and an
-`end` at or before `start` gives `""` — and never raises.
+The edges, stated: `str.substring(s, start, end)` follows the slices'
+one rule (`col.slice` and `bytes.slice` too): a position past the
+length stops at the length, an `end` at or before `start` gives `""`,
+and a negative position raises. `str.char_at(s, i)` raises on a negative
+`i` and answers `""` past the end.
 `split(s, "")` splits around every character, with an empty string at
 each end (`split("abc", "")` is `["", "a", "b", "c", ""]`). Strings are
 compared and searched as their code points: olang does no Unicode
@@ -924,9 +926,9 @@ println(to_string(xs |> fold(0, (acc, x) => acc + x)))
 binding. A list is a value, so this is an assignment of `xs` — the list
 with element `i` replaced — and follows every rule an assignment has:
 the binding must be `mut`, and it cannot be a variable captured by a
-closure. Another binding of the same list keeps its old elements. A
-negative `i` counts from the end, as a read does, and an index outside
-the list is the error a read raises. When nothing else holds the list
+closure. Another binding of the same list keeps its old elements. An
+index outside the list, a negative one included, is the error a read
+raises. When nothing else holds the list
 the element is written in place, so a loop of element writes costs
 O(1) a write.
 
@@ -936,7 +938,7 @@ let before = grid
 for i in 0..len(grid) {
     grid[i] = i * i
 }
-grid[-1] = 99
+grid[len(grid) - 1] = 99
 println(grid)     // [0, 1, 4, 99]
 println(before)   // [0, 0, 0, 0]
 ```
