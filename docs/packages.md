@@ -137,6 +137,12 @@ the command that installs one (`otc toolchain install 0.88`) — never run
 for you. An editor runs the project's children with the pinned toolchain
 when it is installed (olang Studio does, and says the version it runs).
 
+A path dependency's own path dependencies are followed, at any depth,
+each resolved against the manifest that names it: an application that
+names `loom = { path = "../loom" }` gets the `heddle` Loom names in its
+own manifest without naming it too. A name the application (or a nearer
+package) already maps keeps that mapping.
+
 Git dependencies take one of `tag`, `rev`, `branch` — or none, meaning the
 default branch's head. Registry requirements accept the usual semver
 operator syntax (`^1.0`, `>=1.2, <2.0`, an exact `1.4.0`).
@@ -413,7 +419,7 @@ This works for the embedded `colx` collections module too (`:help colx`).
 
 `olang.lock` records, for every package in the dependency graph, exactly
 which source produced it: the path for a path dependency (relative to
-the manifest); the shelf name for a shelf dependency, so another
+the manifest, a dependency's own path dependency too); the shelf name for a shelf dependency, so another
 machine resolves it through its own shelf rather than a path that only
 existed here; the git URL, the resolved commit, and the ref the
 manifest asked for; the resolved version for a registry dependency —

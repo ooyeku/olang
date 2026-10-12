@@ -531,6 +531,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A path dependency's own path dependencies are followed** (by `otc`,
+  a run, the language server — everything that installs), at any depth,
+  each against the manifest that names it, and locked by their path from
+  the project. open-track desktop → Loom → Heddle, all by path, failed
+  with "Cannot find module 'heddle'" until the application named Heddle
+  too; a lock already holding such an entry replays as it is.
 - **A dropped `db` connection is closed.** Connections lived in the
   module's registry until `db.close`: 3,000 opened and dropped left 3,010
   descriptors open (heddle-sql). `db.open`'s `Connection` now carries a

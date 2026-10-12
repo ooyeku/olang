@@ -118,6 +118,51 @@ pub fn install(root: &Path, options: &InstallOptions) -> Result<DependencyMap, P
         lock.package.insert(name.clone(), locked);
     }
 
+    // A dependency's own path dependencies, at any depth: each resolves
+    // against the manifest that names it (open-track desktop → Loom →
+    // Heddle, all by path), and is locked by its path from this root. A
+    // name the project or a nearer package already maps keeps that
+    // mapping, as a direct dependency always wins.
+    let mut queue: Vec<PathBuf> = dep_map.values().cloned().collect();
+    let mut seen: std::collections::HashSet<PathBuf> = queue.iter().cloned().collect();
+    while let Some(dir) = queue.pop() {
+        let Ok(sub) = Manifest::load(&dir) else {
+            continue;
+        };
+        for (name, dep) in &sub.dependencies {
+            let Dependency::Path { path } = dep else {
+                continue;
+            };
+            if dep_map.contains_key(name) {
+                continue;
+            }
+            let target = normalize(&dir, path);
+            if !target.exists() {
+                return Err(PkgError::Resolve(format!(
+                    "dependency '{}' of {} points at path '{}' ({}), which does not exist",
+                    name,
+                    dir.display(),
+                    path,
+                    target.display()
+                )));
+            }
+            let recorded = relative_to(root, &target);
+            dep_map.insert(name.clone(), target.clone());
+            lock.package.insert(
+                name.clone(),
+                LockedPackage {
+                    version: None,
+                    source: LockedSource::Path { path: recorded },
+                    checksum: cache::checksum_dir(&target).ok(),
+                    dependencies: sub_dependency_names(&target),
+                },
+            );
+            if seen.insert(target.clone()) {
+                queue.push(target);
+            }
+        }
+    }
+
     // Registry deps selected transitively but not named directly: fetch and
     // lock them too, so the whole graph is available.
     for (name, version) in &resolution {
@@ -463,8 +508,10 @@ fn replay_lock(
         if manifest.dependencies.contains_key(name) {
             continue;
         }
+        // A path entry is a dependency's own path dependency (locked by
+        // `install`), legitimate on the same terms.
         match &locked.source {
-            LockedSource::Registry { .. } => {
+            LockedSource::Registry { .. } | LockedSource::Path { .. } => {
                 let needed = lock
                     .package
                     .values()
@@ -709,6 +756,28 @@ fn sub_dependency_names(dir: &Path) -> Vec<String> {
     Manifest::load(dir)
         .map(|m| m.dependencies.keys().cloned().collect())
         .unwrap_or_default()
+}
+
+/// `target` as a path from `root` (`../loom/../heddle` style, through
+/// their common ancestor), for a lock that stays valid wherever the
+/// workspace is checked out; absolute when they share nothing.
+fn relative_to(root: &Path, target: &Path) -> String {
+    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let (root, target) = (canon(root), canon(target));
+    let r: Vec<_> = root.components().collect();
+    let t: Vec<_> = target.components().collect();
+    let common = r.iter().zip(t.iter()).take_while(|(a, b)| a == b).count();
+    if common <= 1 {
+        return target.display().to_string();
+    }
+    let mut out = PathBuf::new();
+    for _ in common..r.len() {
+        out.push("..");
+    }
+    for c in &t[common..] {
+        out.push(c.as_os_str());
+    }
+    out.display().to_string()
 }
 
 /// Resolve a possibly-relative path against the project root.
