@@ -159,3 +159,124 @@ main()
         ]))
     );
 }
+
+// ── The four tier disagreements ────────────────────────────────────────
+
+#[test]
+fn an_integer_literal_pattern_does_not_match_a_float() {
+    let src = r#"
+fn kind(x) = match x { 5 => "int five", _ => "other" }
+fn pair(x) = match x { [1, 2] => "list", _ => "other" }
+fn tup(x) = match x { (1, y) => y, _ => "other" }
+fn main() = [kind(5.0), kind(5), pair([1.0, 2]), pair([1, 2]), tup((1.0, 9)), tup((1, 9))]
+main()
+"#;
+    assert_eq!(
+        agree(src),
+        Ok(l(vec![
+            s("other"),
+            s("int five"),
+            s("other"),
+            s("list"),
+            s("other"),
+            Value::Integer(9),
+        ]))
+    );
+}
+
+#[test]
+fn a_let_bound_lambda_calls_itself() {
+    let src = r#"
+fn main() = {
+    let fact = (k) => if k <= 1 => 1 else => k * fact(k - 1)
+    fact(5)
+}
+main()
+"#;
+    assert_eq!(agree(src), Ok(Value::Integer(120)));
+}
+
+#[test]
+fn a_let_bound_lambda_that_escapes_still_calls_itself() {
+    let src = r#"
+fn make() = {
+    let count = (k) => if k == 0 => "done" else => count(k - 1)
+    count
+}
+fn main() = make()(3)
+main()
+"#;
+    assert_eq!(agree_tiered(src), Ok(s("done")));
+}
+
+#[test]
+fn a_lambda_naming_an_earlier_binding_keeps_capturing_it() {
+    // Only a name nothing else binds is the lambda's own: an earlier
+    // binding of the name is captured, as every free name is.
+    let src = r#"
+fn main() = {
+    let f = (k) => k + 100
+    let f = (k) => if k == 0 => f(5) else => 0
+    f(0)
+}
+main()
+"#;
+    assert_eq!(agree(src), Ok(Value::Integer(105)));
+}
+
+#[test]
+fn a_float_range_is_refused_on_every_tier() {
+    let src = r#"
+fn count(a) = {
+    let mut t = 0
+    for i in a..3 { t = t + 1 }
+    t
+}
+fn main() = count(0.5)
+main()
+"#;
+    let err = agree(src).expect_err("a Float bound is refused");
+    assert!(err.contains("Range start must be an integer"), "{err}");
+    let src = r#"
+fn count(b) = {
+    let mut t = 0
+    for i in 0..b { t = t + 1 }
+    t
+}
+fn main() = [count(3), count(0)]
+main()
+"#;
+    assert_eq!(
+        agree(src),
+        Ok(l(vec![Value::Integer(3), Value::Integer(0)]))
+    );
+    let src = r#"
+fn count(b) = {
+    let mut t = 0
+    for i in 0..b { t = t + 1 }
+    t
+}
+fn main() = count(2.5)
+main()
+"#;
+    let err = agree(src).expect_err("a Float bound is refused");
+    assert!(err.contains("Range end must be an integer"), "{err}");
+}
+
+#[test]
+fn a_cell_inside_a_container_compares_by_identity() {
+    let src = r#"
+fn main() = {
+    let c = cell.new(1)
+    let d = cell.new(1)
+    [c == c, c == d, [c] == [c], [c] == [d], #{ "a": c } == #{ "a": c }, (c, 1) == (c, 1)]
+}
+main()
+"#;
+    let t = Value::Boolean(true);
+    let f = Value::Boolean(false);
+    assert_eq!(
+        agree_tiered(src),
+        Ok(l(vec![t.clone(), f.clone(), t.clone(), f, t.clone(), t]))
+    );
+}

@@ -890,6 +890,10 @@ impl OvmValue {
             (D::Closure(a), D::Closure(b)) => Arc::ptr_eq(a, b),
             (D::Builtin(a), D::Builtin(b)) => Arc::ptr_eq(a, b),
             (D::Error(a), D::Error(b)) => Arc::ptr_eq(a, b),
+            // A native value (a cell, a Series) is equal as its module
+            // says — a cell to itself only — inside a collection as at the
+            // top level and on the interpreter (`[c] == [c]`).
+            (D::Native(a), D::Native(b)) => a == b,
             (
                 D::Function(_)
                 | D::AstFunction(_)

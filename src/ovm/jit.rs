@@ -3422,6 +3422,7 @@ pub(crate) fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         | Instruction::Mod { .. }
         | Instruction::Neg { .. }
         | Instruction::Bitwise { .. }
+        | Instruction::CheckRangeInts { .. }
         | Instruction::Eq { .. }
         | Instruction::Ne { .. }
         | Instruction::Lt { .. }
@@ -3986,6 +3987,10 @@ pub(crate) fn for_each_reg(
         I::ListAppendAssign { target, value } => {
             f(target);
             f(value);
+        }
+        I::CheckRangeInts { start, end } => {
+            f(start);
+            f(end);
         }
         _ => return false,
     }
@@ -4893,6 +4898,10 @@ impl PlanFn {
                     narrow!(lhs.0, K_INT);
                     narrow!(rhs.0, K_INT);
                     grow!(self.writes[dst.0 as usize], K_INT);
+                }
+                Instruction::CheckRangeInts { start, end } => {
+                    narrow!(start.0, K_INT);
+                    narrow!(end.0, K_INT);
                 }
                 Instruction::Eq { dst, lhs, rhs } | Instruction::Ne { dst, lhs, rhs } => {
                     narrow!(lhs.0, K_NUM | K_BOOL | K_STR);
@@ -5907,6 +5916,7 @@ pub(crate) fn instruction_name(inst: &Instruction) -> &'static str {
         Instruction::Mod { .. } => "Mod",
         Instruction::Neg { .. } => "Neg",
         Instruction::Bitwise { .. } => "Bitwise",
+        Instruction::CheckRangeInts { .. } => "CheckRangeInts",
         Instruction::Eq { .. } => "Eq",
         Instruction::Ne { .. } => "Ne",
         Instruction::Lt { .. } => "Lt",
@@ -6411,6 +6421,13 @@ fn translate_body(
                     });
                 }
                 r#gen.write(builder, dst.0, acc?);
+            }
+            Instruction::CheckRangeInts { start, end } => {
+                // Proven Int by inference, or the function stays on the
+                // VM, which raises the range's error.
+                if r#gen.kind(start.0)? != Kind::Int || r#gen.kind(end.0)? != Kind::Int {
+                    return None;
+                }
             }
             Instruction::Bitwise { dst, lhs, rhs, op } => {
                 if r#gen.kind(lhs.0)? != Kind::Int || r#gen.kind(rhs.0)? != Kind::Int {

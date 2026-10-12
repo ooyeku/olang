@@ -50,6 +50,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `random.randstr_*`, `term.visible_len`, and a section for `ui`, `viz`
   and `dash`.
 
+- **The tiers agree on four programs they disagreed on** (stability.md's
+  commitment 4), each with a differential test:
+  - An integer literal pattern matches only an Int: on the bytecode
+    tier `match 5.0 { 5 => … }` matched, and `[1, 2]` matched
+    `[1.0, 2]`, though `[1] == [1.0]` is false; the interpreter's strict
+    kinds are now every tier's.
+  - A `let`-bound lambda calls itself by its binding's name when no
+    earlier binding of that name is in scope: `let fact = (k) => …
+    fact(k - 1)` inside a function answered 120 on the interpreter and
+    "Undefined variable: fact" on the bytecode tier, and on the
+    interpreter it failed once the lambda escaped its function. The
+    name is now the lambda's own, as a nested `fn`'s is.
+  - `for i in 0.5..3` is refused on every tier ("Range start must be
+    an integer"); the bytecode tier's counted loop iterated from 0.5.
+  - A cell inside a container compares by identity on every tier:
+    `[c] == [c]` was true on the interpreter and false on the bytecode
+    tier.
+
 ## [0.88.0] - 2026-10-12
 
 ### Upgrading

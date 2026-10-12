@@ -1540,6 +1540,36 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             }
         }
 
+        // `let name = (…) => … name(…) …`: a lambda that names its own
+        // binding, where nothing else of that name was in scope to
+        // capture, calls itself — the binding's name is the lambda's own,
+        // as a nested `fn`'s is. (It resolved through the enclosing frame
+        // while that frame lived, and failed once the lambda escaped; the
+        // bytecode tier binds it the same way, `compile_statement`.)
+        let self_named = match (&let_decl.pattern, let_decl.value.as_ref(), &value) {
+            (
+                crate::ast::Pattern::Identifier(name),
+                Some(Expr::Lambda {
+                    parameters, body, ..
+                }),
+                Value::Function(func),
+            ) if func.name.is_none()
+                && !func.closure.contains_key(name)
+                && !parameters.iter().any(|p| &p.name == name)
+                && self
+                    .lambda_shape(parameters, body)
+                    .mentioned
+                    .binary_search(name)
+                    .is_ok() =>
+            {
+                let mut named = (**func).clone();
+                named.name = Some(name.clone());
+                Some(Value::Function(Arc::new(named)))
+            }
+            _ => None,
+        };
+        let value = self_named.unwrap_or(value);
+
         // Use pattern matching to bind variables from the pattern
         let mut bindings = crate::ast::ValueMap::default();
         if !self.pattern_matches_bind(&let_decl.pattern, &value, &mut bindings)? {

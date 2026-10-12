@@ -1051,6 +1051,13 @@ pub enum Instruction {
         end: Register,
         inclusive: bool,
     },
+    /// The bounds of a counted `for i in a..b` are Ints, as a range's
+    /// are: raises the interpreter's error otherwise. The counted loop
+    /// builds no range, so this is the check `MakeRange` would make.
+    CheckRangeInts {
+        start: Register,
+        end: Register,
+    },
 
     // Tuple operations
     MakeTuple {
@@ -5826,6 +5833,26 @@ impl BytecodeVm {
                         .set_register(*dst, OvmValue::new_list(list_values))?;
                 }
 
+                Instruction::CheckRangeInts { start, end } => {
+                    use crate::ovm::value::ValueData;
+                    if !matches!(
+                        self.execution_state.register_ref(*start)?.data,
+                        ValueData::Integer(_)
+                    ) {
+                        return Err(BytecodeError::TypeError(
+                            "Range start must be an integer".to_string(),
+                        ));
+                    }
+                    if !matches!(
+                        self.execution_state.register_ref(*end)?.data,
+                        ValueData::Integer(_)
+                    ) {
+                        return Err(BytecodeError::TypeError(
+                            "Range end must be an integer".to_string(),
+                        ));
+                    }
+                }
+
                 Instruction::MakeRange {
                     dst,
                     start,
@@ -5839,8 +5866,8 @@ impl BytecodeVm {
                     let start_int = match &start_val.data {
                         crate::ovm::value::ValueData::Integer(i) => *i,
                         _ => {
-                            return Err(BytecodeError::RuntimeError(
-                                "Range start must be integer".to_string(),
+                            return Err(BytecodeError::TypeError(
+                                "Range start must be an integer".to_string(),
                             ));
                         }
                     };
@@ -5848,8 +5875,8 @@ impl BytecodeVm {
                     let end_int = match &end_val.data {
                         crate::ovm::value::ValueData::Integer(i) => *i,
                         _ => {
-                            return Err(BytecodeError::RuntimeError(
-                                "Range end must be integer".to_string(),
+                            return Err(BytecodeError::TypeError(
+                                "Range end must be an integer".to_string(),
                             ));
                         }
                     };
@@ -9455,17 +9482,16 @@ impl BytecodeVm {
         match (&a.data, &b.data) {
             (ValueData::Integer(x), ValueData::Integer(y)) => x == y,
             (ValueData::Float(x), ValueData::Float(y)) => x == y,
-            (ValueData::Integer(x), ValueData::Float(y)) => (*x as f64) == *y,
-            (ValueData::Float(x), ValueData::Integer(y)) => *x == (*y as f64),
+            // Strict kinds: an integer literal pattern does not match a
+            // Float (`match 5.0 { 5 => … }` falls through), as the
+            // interpreter's patterns and `[1] == [1.0]` say.
             (ValueData::Boolean(x), ValueData::Boolean(y)) => x == y,
             (ValueData::String(x), ValueData::String(y)) => x == y,
             (ValueData::Unit, ValueData::Unit) => true,
             // Enums, structs, and collections compare structurally, as the
             // interpreter's Value equality does (its arms use Value's derived
             // PartialEq); conversion is exact so comparing the AST forms is
-            // the same relation. Note this keeps the interpreter's asymmetry:
-            // 1 == 1.0 is true (scalar arms above), but [1] == [1.0] is false
-            // (Value's structural equality distinguishes element kinds).
+            // the same relation.
             (ValueData::Enum(_), ValueData::Enum(_))
             | (
                 ValueData::Struct(_) | ValueData::AstStruct(..),
@@ -11657,6 +11683,13 @@ impl BytecodeCompiler {
                     // move (the generic path shields its source the same
                     // way).
                     let end_reg = self.shield_operand(end_reg, !Self::assignment_free(body));
+                    // The bounds are Ints, as a range's are everywhere,
+                    // with the interpreter's error (`0.5..3` is refused,
+                    // never counted from 0.5).
+                    self.emitter.instructions.push(Instruction::CheckRangeInts {
+                        start: var_reg,
+                        end: end_reg,
+                    });
 
                     let loop_start = self.emitter.create_label();
                     let loop_step = self.emitter.create_label();
@@ -13429,7 +13462,33 @@ impl BytecodeCompiler {
                     .as_ref()
                     .map(|ann| crate::ast::resolve_type_aliases(ann, self.q_aliases(), 16))
                     .and_then(|ann| crate::ast::FieldTypeCheck::from_annotation(&ann, &[]));
+                // `let name = (…) => … name(…) …` with nothing else of
+                // that name in scope: the lambda's own name, bound as a
+                // nested fn's is (the interpreter's `eval_let_decl`).
+                let self_named = match (&let_decl.pattern, &let_decl.value) {
+                    (
+                        crate::ast::Pattern::Identifier(name),
+                        Some(Expr::Lambda {
+                            parameters, body, ..
+                        }),
+                    ) if !parameters.iter().any(|p| &p.name == name)
+                        && !self.local_variables.contains_key(name)
+                        && self.q_registry(name).is_none()
+                        && !self.q_free_present(name) =>
+                    {
+                        let bound: std::collections::HashSet<String> =
+                            parameters.iter().map(|p| p.name.clone()).collect();
+                        let mut free = std::collections::HashSet::new();
+                        (Self::collect_free_vars(body, &bound, &mut free) && free.contains(name))
+                            .then_some((name.as_str(), parameters, body))
+                    }
+                    _ => None,
+                };
                 let value_reg = match &let_decl.value {
+                    _ if self_named.is_some() => {
+                        let (name, parameters, body) = self_named.expect("checked");
+                        self.compile_lambda(parameters, body, Some(name))?
+                    }
                     Some(expr) => self.compile_expression(expr)?,
                     None => {
                         let const_idx = self.emitter.add_constant(OvmValue::from_ast(Value::Unit));
@@ -14374,6 +14433,10 @@ impl BytecodeOptimizer {
                 uses.push(start.0);
                 uses.push(end.0);
                 defs.push(dst.0);
+            }
+            I::CheckRangeInts { start, end } => {
+                uses.push(start.0);
+                uses.push(end.0);
             }
             I::MakeClosure { dst, captures, .. } => {
                 for c in captures {

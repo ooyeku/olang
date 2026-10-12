@@ -530,6 +530,10 @@ println(to_string(cell.get(a)))       // 5 — one location, two names
 println(to_string(cell(1) == cell(1)))  // false — different locations
 ```
 
+The same holds inside a collection: a list, tuple or map holding a cell
+equals another only when it holds the same cell (`[a] == [a]` is true,
+`[cell(1)] == [cell(1)]` false).
+
 **A cell belongs to the thread that created it.** Reading or writing
 one from another thread is an error, and sending one through a channel
 is refused at the send. This is what keeps the guarantee that made
@@ -786,7 +790,10 @@ println(to_string(acc))
 
 ### Ranges
 
-`a..b` is half-open, `a..=b` inclusive. Ranges are values and iterate:
+`a..b` is half-open, `a..=b` inclusive. Both bounds are Ints: a Float
+bound raises "Range start must be an integer" (or end), in a `for` loop
+as anywhere else, so `0.5..3` never counts from 0.5. Ranges are values
+and iterate:
 
 ```olang
 let mut sum = 0
@@ -1371,6 +1378,19 @@ let complex = (x) => {
     y + 1
 }
 println(`${inc(1)} ${make()} ${complex(3)}`)
+```
+
+A lambda bound by `let` may call itself by the binding's name, when no
+earlier binding of that name is in scope (one that is, the lambda
+captures, as it captures any name). The name is the lambda's own
+wherever it is later called, as a nested `fn`'s is:
+
+```olang
+fn countdown_from(n) = {
+    let go = (k) => if k == 0 => "liftoff" else => go(k - 1)
+    go
+}
+println(countdown_from(3)(3))   // liftoff
 ```
 
 Functions are first-class values: store them in variables, lists, maps, and
