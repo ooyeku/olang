@@ -448,3 +448,43 @@ main()
     let err = agree_tiered(src).expect_err("no order");
     assert!(err.contains("sort: cannot order ") && err.contains(" inside a tuple"), "{err}");
 }
+
+// ── `abs`, `all`, `any` ─────────────────────────────────────────────────
+
+#[test]
+fn abs_all_and_any_are_global() {
+    let src = r#"
+fn main() = [
+    abs(-3) == 3,
+    abs(2.5) == 2.5,
+    all([2, 4, 6], (n) => n % 2 == 0),
+    !all([2, 3], (n) => n % 2 == 0),
+    all([], (n) => false),
+    any([1, 4], (n) => n % 2 == 0),
+    !any([], (n) => true),
+    [-2, 3] |> map(abs) |> all((n) => n > 0)
+]
+main()
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(Value::List(std::sync::Arc::new(vec![Value::Boolean(true); 8])))
+    );
+}
+
+#[test]
+fn a_users_abs_all_or_any_wins() {
+    let src = r#"
+fn any(xs) = "mine"
+fn main() = {
+    let abs = (p) => "/" + p
+    let all = 3
+    (abs("x"), all + 1, any([1]))
+}
+main()
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(Value::Tuple(std::sync::Arc::new(vec![s("/x"), Value::Integer(4), s("mine")])))
+    );
+}

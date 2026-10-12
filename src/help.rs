@@ -1352,6 +1352,36 @@ impl HelpSystem {
             see_also: vec![],
         });
         self.add_function(FunctionDoc {
+            name: "abs".to_string(),
+            description: "The absolute value of a number: an Int for an Int, a Float for a Float. `math.abs` is the same function; abs of the smallest Int overflows and raises.".to_string(),
+            syntax: "abs(x)".to_string(),
+            parameters: vec!["x: Int|Float".to_string()],
+            return_type: "Same as x".to_string(),
+            examples: vec!["abs(-3)    // 3".to_string(), "abs(2.5)   // 2.5".to_string()],
+            category: "Math".to_string(),
+            see_also: vec!["min".to_string(), "max".to_string(), "clamp".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "all".to_string(),
+            description: "Whether f answers true for every element of xs, stopping at the first that does not; true for an empty list. `col.all` is the same function.".to_string(),
+            syntax: "all(xs, f)".to_string(),
+            parameters: vec!["xs: List".to_string(), "f: (x) => Bool".to_string()],
+            return_type: "Bool".to_string(),
+            examples: vec!["all([2, 4, 6], (n) => n % 2 == 0)   // true".to_string()],
+            category: "List".to_string(),
+            see_also: vec!["any".to_string(), "filter".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "any".to_string(),
+            description: "Whether f answers true for some element of xs, stopping at the first that does; false for an empty list. `col.any` is the same function.".to_string(),
+            syntax: "any(xs, f)".to_string(),
+            parameters: vec!["xs: List".to_string(), "f: (x) => Bool".to_string()],
+            return_type: "Bool".to_string(),
+            examples: vec!["any([1, 3, 4], (n) => n % 2 == 0)   // true".to_string()],
+            category: "List".to_string(),
+            see_also: vec!["all".to_string(), "find".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "flatten".to_string(),
             description: "Flattens one level of nested lists".to_string(),
             syntax: "flatten(list_of_lists)".to_string(),

@@ -333,6 +333,17 @@ impl BuiltinFunctions {
                 arity: 3,
             },
         );
+        // `abs`, `all` and `any` beside `min`, `max` and `clamp`: the
+        // same functions as `math.abs`, `col.all` and `col.any`.
+        for (name, arity) in [("abs", 1), ("all", 2), ("any", 2)] {
+            functions.insert(
+                name.to_string(),
+                BuiltinFunction {
+                    name: name.to_string(),
+                    arity,
+                },
+            );
+        }
         functions.insert(
             "flatten".to_string(),
             BuiltinFunction {
@@ -1277,6 +1288,11 @@ impl BuiltinFunctions {
             "min" => builtins.min_value(arguments),
             "max" => builtins.max_value(arguments),
             "clamp" => builtins.clamp(arguments),
+            "abs" => crate::stdlib::math::call_math_function("abs", arguments)
+                .map_err(|e| InterpreterError::runtime(e.to_string())),
+            "all" | "any" => {
+                crate::stdlib::collections::call_collections_function(name, arguments, interpreter)
+            }
             "flatten" => builtins.flatten(arguments),
             "chunk" => builtins.chunk(arguments),
             "enumerate" => builtins.enumerate_list(arguments),

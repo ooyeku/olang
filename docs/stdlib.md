@@ -227,11 +227,13 @@ println(`${col.index_of(xs, 30)} ${col.slice(xs, 1, 3)} ${drop(xs, 3)}`)
 | `sum(xs)` / `min(xs)` / `max(xs)` | numeric aggregates over a list — `min` and `max` also take two or more scalars (`max(0, n - 1)`, the clamp idiom) |
 | `average(xs)` | mean of a numeric list |
 | `clamp(v, lo, hi)` | bound a number to a range |
+| `abs(x)` | absolute value, an Int for an Int (`math.abs`) |
 
 ```olang
 let xs = [4, 1, 7]
 println(`${sum(xs)} ${min(xs)} ${max(xs)}`)
 println(to_string(clamp(15, 0, 10)))
+println(`${abs(-3)} ${abs(2.5)}`)   // 3 2.5
 ```
 
 ### Higher-order functions
@@ -245,6 +247,7 @@ println(to_string(clamp(15, 0, 10)))
 | `fold(xs, init, f)` | reduce left with an accumulator |
 | `reduce(xs, init, f)` | same shape as `fold` |
 | `find(xs, pred)` | `Ok(first match)` or `Err` |
+| `all(xs, pred)` / `any(xs, pred)` | does every / some element match? Stops at the first that settles it (`col.all` / `col.any`) |
 | `map_filtered(xs, pred, f)` | fused filter-then-map in one pass |
 
 All take the list first, so they chain with `|>`:
@@ -256,6 +259,7 @@ let total = [1, 2, 3, 4, 5]
     |> fold(0, (a, x) => a + x)
 println(to_string(total))                       // 1 + 9 + 25
 println(to_string(unwrap(find([3, 8, 2], (x) => x > 5))))
+println(`${all([2, 4], (x) => x % 2 == 0)} ${any([1, 3], (x) => x > 5)}`)   // true false
 ```
 
 `par_map` and `par_filter` are the parallel twins of `map` and `filter`:

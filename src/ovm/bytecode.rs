@@ -1573,6 +1573,9 @@ impl BytecodeVm {
             // and every caller of such a function was refused with it.
             "attempt",
             "raise",
+            "abs",
+            "all",
+            "any",
             // Builtins with no native arm run through the bridge — the
             // same implementation under the same name. Absent from this
             // list, one call to any of them kept its function, and every

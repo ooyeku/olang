@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`abs(x)`, `all(xs, f)` and `any(xs, f)` as globals**, beside `min`,
+  `max` and `clamp`: the same functions as `math.abs`, `col.all` and
+  `col.any`, on every tier (`all`/`any` stop at the first element that
+  settles them). A program's own `abs`, `all` or `any` still wins.
+  olang Studio's terminal wheel wrote `abs` as an `if`, and Loom's
+  terminal emulator `all` as `len(filter(…)) == 0`.
+
 - **Tuples order lexicographically** under `<`, `<=`, `>`, `>=` and
   `sort`, on every tier: the first unequal pair of elements decides, by
   `<`'s rule for that pair (numbers, strings, tuples again), a prefix is
