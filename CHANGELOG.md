@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`str.is_ascii(s)`**: whether every character is ASCII, one pass over
+  the bytes. Heddle's painter asked "printable ASCII?" of thousands of
+  spans a frame (8–16% of the frame) without it.
+
 - **`eprint(v)` and `eprintln(...)`**: `print` and `println` to standard
   error, so a diagnostic stays out of `prog > out.csv`; a stderr that has
   gone drops the text, and in the browser it joins the output. heddle-sql

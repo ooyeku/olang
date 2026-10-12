@@ -41,3 +41,11 @@ fn eprint_and_eprintln_write_to_stderr() {
         assert_eq!(stderr, "skipped 3 rows\nno newline\nskipped 4 rows\nno newline\n");
     }
 }
+
+#[test]
+fn str_is_ascii() {
+    let src = "fn plain(s) = str.is_ascii(s)\nprintln([plain(\"\"), plain(\"abc ~\\n\"), plain(\"café\"), plain(\"日本\")])\n";
+    for (stdout, _) in run("ascii.ol", src) {
+        assert_eq!(stdout, "[true, true, false, false]\n");
+    }
+}

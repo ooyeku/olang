@@ -5904,6 +5904,16 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             see_also: vec![],
         });
         self.add_function(FunctionDoc {
+            name: "str.is_ascii".to_string(),
+            description: "Whether every character of the string is ASCII (U+0000 to U+007F); true for an empty string. One pass over the bytes: the cheap test before a per-character path (width, graphemes) a text of plain ASCII does not need.".to_string(),
+            syntax: "str.is_ascii(s)".to_string(),
+            parameters: vec!["s: String".to_string()],
+            return_type: "Bool".to_string(),
+            examples: vec!["str.is_ascii(\"plain\")  // true".to_string(), "str.is_ascii(\"café\")  // false".to_string()],
+            category: "String".to_string(),
+            see_also: vec!["str.width".to_string()],
+        });
+        self.add_function(FunctionDoc {
             name: "str.length".to_string(),
             description: "Length in characters.".to_string(),
             syntax: "str.length(s)".to_string(),

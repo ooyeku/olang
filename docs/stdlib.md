@@ -421,6 +421,7 @@ every function returns a new string.
 | `str.to_upper` / `str.to_lower` / `str.capitalize` | case |
 | `str.reverse(s)` | reversed by visible character — clusters stay whole |
 | `str.is_empty(s)` | `""` test |
+| `str.is_ascii(s)` | every character ASCII? (true for `""`) — one pass over the bytes |
 | `str.parse_int(s)` / `str.parse_float(s)` | `Result` parses |
 | `str.fmt(template, ...)` | fill `{}` placeholders, display form; `{{`/`}}` escape |
 | `str.fixed(x, digits)` | exactly `digits` decimals, never exponent form, never `-0.00` — the column form `to_string` is not |
