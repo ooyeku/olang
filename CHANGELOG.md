@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`raise(message)`**: a runtime error whose message is `message`, word
+  for word — `attempt` answers it as `Err(message)`, and uncaught it is
+  reported as `Runtime error: message`, on every tier. A library that
+  must stop a caller who used it wrongly had `unwrap(Err(t))` (the
+  message prefixed and quoted) or `assert(false, t)` (reported as a
+  failed assertion); Heddle's and Loom's `refuse` was the workaround.
+  The error model is unchanged: nothing catches a runtime error but
+  `attempt` and the structural boundaries (language.md, "Where failure
+  stops").
+
 - **`xs[i] = v`**: one element of a `let mut` list replaced, as an
   assignment of the list (the binding must be `mut` and not a capture;
   another binding of the list keeps its elements; a negative index

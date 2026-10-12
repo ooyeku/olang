@@ -328,3 +328,40 @@ fn an_element_assignment_is_an_assignment() {
     let err = interpreter.eval_program(program).expect_err("immutable");
     assert!(err.to_string().contains("not declared mutable"), "{err}");
 }
+
+// ── `raise` ─────────────────────────────────────────────────────────────
+
+#[test]
+fn raise_stops_with_its_message_intact() {
+    let src = r#"
+fn widget(kind) = if kind == "button" => 1 else => raise("widget: no kind " + kind)
+fn main() = (
+    attempt(() => widget("dial")),
+    attempt(() => widget("button")),
+    attempt(() => raise(42)),
+    attempt(() => raise("Runtime error-free text: [1, 2]"))
+)
+main()
+"#;
+    let err = |t: &str| Value::Err(Box::new(s(t)));
+    assert_eq!(
+        agree_tiered(src),
+        Ok(Value::Tuple(std::sync::Arc::new(vec![
+            err("widget: no kind dial"),
+            Value::Ok(Box::new(Value::Integer(1))),
+            err("42"),
+            err("Runtime error-free text: [1, 2]"),
+        ])))
+    );
+}
+
+#[test]
+fn an_uncaught_raise_is_a_runtime_error() {
+    let src = r#"
+fn check(n) = if n > 0 => n else => raise("check: n must be positive, got " + show(n))
+fn main() = check(0)
+main()
+"#;
+    let err = agree(src).expect_err("raises");
+    assert_eq!(err, "Runtime error: check: n must be positive, got 0");
+}

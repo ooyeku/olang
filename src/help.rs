@@ -11108,6 +11108,20 @@ For function-specific syntax, use: {}:help <function_name>{}",
         });
 
         self.add_function(FunctionDoc {
+            name: "raise".to_string(),
+            description: "Stop with a runtime error whose message is `message`, word for word: `attempt` answers it as Err(message), and uncaught it is printed as any runtime error is. For the caller who used a library wrongly; a failure the caller could handle is a Result instead. A value other than a String is raised as `show` writes it.".to_string(),
+            syntax: "raise(message)".to_string(),
+            parameters: vec!["message: String - the error's text".to_string()],
+            return_type: "never returns".to_string(),
+            examples: vec![
+                "fn widget(kind) = if kind == \"button\" || kind == \"label\" => #{ \"kind\": kind } else => raise(\"widget: unknown kind \" + show(kind))".to_string(),
+                "attempt(() => raise(\"no\"))   // Err(\"no\")".to_string(),
+            ],
+            category: "Result".to_string(),
+            see_also: vec!["attempt".to_string(), "unwrap".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
             name: "unwrap_or".to_string(),
             description:
                 "Extract the value from a Result, returning a default value if it's an error"

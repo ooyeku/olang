@@ -580,6 +580,13 @@ impl BuiltinFunctions {
                 arity: 1,
             },
         );
+        functions.insert(
+            "raise".to_string(),
+            BuiltinFunction {
+                name: "raise".to_string(),
+                arity: 1,
+            },
+        );
 
         functions.insert(
             "unwrap_or".to_string(),
@@ -1220,6 +1227,7 @@ impl BuiltinFunctions {
                 Ok(Value::Unit)
             }
             "println" => builtins.println(arguments),
+            "raise" => Self::raise(arguments),
             "print" => builtins.print(arguments),
             "map" => builtins.map(arguments, interpreter),
             "filter" => builtins.filter(arguments, interpreter),
@@ -1314,6 +1322,24 @@ impl BuiltinFunctions {
                 message: format!("Unknown builtin function: {}", name),
             }),
         }
+    }
+
+    /// `raise(message)`: a runtime error with `message` as its text,
+    /// intact — what `attempt` answers as `Err(message)` and what an
+    /// uncaught one prints. A value other than a String is raised as
+    /// `show` writes it.
+    fn raise(args: Vec<Value>) -> Result<Value, InterpreterError> {
+        if args.len() != 1 {
+            return Err(InterpreterError::ArityMismatch {
+                expected: 1,
+                got: args.len(),
+            });
+        }
+        let message = match &args[0] {
+            Value::String(s) => s.as_str().to_string(),
+            other => format!("{}", other),
+        };
+        Err(InterpreterError::RuntimeError { message })
     }
 
     fn println(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {

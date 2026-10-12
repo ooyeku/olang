@@ -1744,6 +1744,20 @@ println(show(attempt(() => map_get(5, "k"))))   // Err("map_get: first argument 
 println(show(attempt(() => 41 + 1)))            // Ok(42)
 ```
 
+A library raises one of its own with `raise(message)`: a runtime error
+whose message is `message`, word for word. It is for the caller that
+used the library wrongly — an unknown option, a missing node in a test
+driver — which, by the rule above, is a bug and not a condition to
+handle; a failure the caller could handle is a `Result`. `attempt`
+answers it as `Err(message)`, and uncaught it is reported as any
+runtime error is (`Runtime error: message`).
+
+```olang
+fn widget(kind) = if kind == "button" || kind == "label" => #{ "kind": kind } else => raise("widget: no kind " + show(kind))
+println(show(widget("label")))                     // #{"kind": "label"}
+println(show(attempt(() => widget("dial"))))       // Err("widget: no kind dial")
+```
+
 What olang does have is **structural boundaries** — places where a
 failing unit is already isolated from the rest of the program, so the
 failure becomes a value on the far side without any construct at the

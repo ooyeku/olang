@@ -356,11 +356,13 @@ println("")
 | `result_map(r, f)` | transform the `Ok` value |
 | `result_map_err(r, f)` | transform the `Err` value |
 | `attempt(f)` | call `f()`: `Ok(value)`, or `Err(message)` when a runtime error ended it |
+| `raise(message)` | stop with a runtime error whose message is `message`, word for word (a value other than a String as `show` writes it) |
 
 ```olang
 let r = Ok(10)
 println(to_string(result_map(r, (v) => v * 2)))
 println(to_string(unwrap_or(Err("nope"), -1)))
+println(show(attempt(() => raise("widget: no kind \"dial\""))))   // Err("widget: no kind \"dial\"")
 ```
 
 ### Evaluation helpers
