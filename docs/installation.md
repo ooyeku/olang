@@ -6,9 +6,22 @@ anything.
 
 Part of [the olang book](README.md).
 
+## Table of contents
+
+- [The installer script](#the-installer-script)
+- [With Cargo](#with-cargo)
+- [Installing from source](#installing-from-source)
+  - [Checking the preview platforms (contributors)](#checking-the-preview-platforms-contributors)
+- [Updating](#updating)
+- [Running programs](#running-programs)
+- [The REPL](#the-repl)
+- [The browser playground](#the-browser-playground)
+- [Editor support](#editor-support)
+- [Next steps](#next-steps)
+
 ## The installer script
 
-The fastest path on macOS and Linux downloads a prebuilt binary from the
+The fastest path on macOS (and on the Linux preview) downloads a prebuilt binary from the
 latest release, verifies its checksum, and installs `olang` and `otc`
 into `~/.olang/bin`:
 
@@ -17,7 +30,7 @@ curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
 ```
 
 The script prints the `PATH` line to add if the directory is not already
-on the path. `OLANG_VERSION=v0.79.0` pins a specific release;
+on the path. `OLANG_VERSION=vX.Y.Z` (any release tag) pins a specific release;
 `OLANG_INSTALL_DIR` changes the destination. On a platform with no
 prebuilt tarball the script falls back to building from source, which
 requires a Rust toolchain.
@@ -55,18 +68,22 @@ olang --version
 To build without installing — for development on the compiler itself — use
 `cargo build --release`; the binary is then at `target/release/olang`.
 
-olang supports macOS and Linux, on both x86-64 and ARM. There is no
-native Windows build; on Windows, use WSL and follow the Linux path.
+olang supports macOS, with release builds for Apple silicon and Intel. Linux
+and Windows are unsupported previews: Linux binaries are released but carry
+no compatibility promise, and the Windows build compiles but has never been
+run. [Stability and compatibility](stability.md#platforms) states what 1.0
+promises.
 
-A source build on Linux with the default features (`gui` among them)
+A source build on the Linux preview with the default features (`gui` among them)
 needs `pkg-config libssl-dev libfontconfig1-dev libxkbcommon-dev
 libwayland-dev` (Debian and Ubuntu names). Linux windows are drawn
 under Wayland only; X11 has no `gui` (`gui.available()` is
 false there, and Loom programs take their terminal face).
 
-### Checking Linux and Windows from a Mac
+### Checking the preview platforms (contributors)
 
-Two scripts rerun the cross-platform pass locally, with no CI:
+For contributors, two scripts rerun the cross-platform pass from a Mac,
+locally, with no CI:
 
 ```bash
 tools/linux-check.sh                 # build olang in a Linux container (Docker or OrbStack), then
@@ -131,9 +148,9 @@ olang> x * 2
 olang> :help
 ```
 
-The line editor completes identifiers and REPL commands with Tab, and
-hints the closing brackets for whatever is still open — typing
-`(map [1, 2` shows `])` as ghost text at the end of the line, and the
+The line editor completes REPL commands, functions, identifiers, and file
+paths with Tab. It hints the closing brackets for whatever is still open:
+typing `(map [1, 2` shows `])` as ghost text at the end of the line, and the
 Right arrow accepts it. Unbalanced input continues onto the next line
 with a prompt that shows which delimiters are open. When the cursor
 sits on a bracket, its partner is underlined. History persists across
@@ -141,9 +158,8 @@ sessions in `~/.olang/state/history`.
 
 Commands beginning with a colon control the session; `:help` lists them,
 `:type <expr>` reports an expression's type, and `:time <expr>` wall-clocks
-one evaluation. `it` always holds the last printed result. TAB completes
-commands, functions, and file paths; a mistyped command suggests the
-nearest real one, and `:help <module>` opens any module — including
+one evaluation. `it` always holds the last printed result. A mistyped
+command suggests the nearest real one, and `:help <module>` opens any module — including
 `collections` and its submodules (`:help collections.heap.push`). Type
 `:quit` or press Control-D to exit.
 

@@ -1,4 +1,4 @@
-# A Tour of olang
+# A tour of olang
 
 This tour teaches olang by building one small program: a report over a
 field station's temperature log. Each stop introduces one idea — values,
@@ -11,8 +11,26 @@ Every code block runs exactly as shown: the test suite executes them all
 on every change, so the tour cannot drift from the language.
 
 Part of [the olang book](README.md) ·
-[Language](language.md) · [Standard Library](stdlib.md) ·
+[Language](language.md) · [Standard library](stdlib.md) ·
 [Packages](packages.md)
+
+## Table of contents
+
+- [Installing](#installing)
+- [Hello](#hello)
+- [Values and bindings](#values-and-bindings)
+- [Everything is an expression](#everything-is-an-expression)
+- [Functions and pipelines](#functions-and-pipelines)
+- [Pattern matching](#pattern-matching)
+- [Data with shape: structs and enums](#data-with-shape-structs-and-enums)
+- [Behavior with dispatch: traits](#behavior-with-dispatch-traits)
+- [Errors are values](#errors-are-values)
+- [Parallelism, without a GIL](#parallelism-without-a-gil)
+- [The data stack](#the-data-stack)
+- [Testing](#testing)
+- [The whole program](#the-whole-program)
+- [The playground](#the-playground)
+- [Where to next](#where-to-next)
 
 ## Installing
 
@@ -78,7 +96,7 @@ let scores = #{ "ada": 99 }          // map: arbitrary string keys
 let user = { name: "ada", age: 36 }  // object: fixed fields, dot access
 
 println(to_string(list[0] + pair[0] + pair[1]))
-println(`${user.name} scored ${map_get(scores, "ada")}`)
+println(`${user.name} scored ${scores.ada}`)
 ```
 
 ### Values never change
@@ -94,7 +112,7 @@ println(to_string(base))         // [1, 2] — untouched
 println(to_string(grown))        // [1, 2, 3]
 
 let m = #{ "a": 1 }
-let m2 = map_set(m, "b", 2)      // a new map
+let m2 = #{ ...m, "b": 2 }       // a new map
 println(`${map_len(m)} then ${map_len(m2)}`)
 ```
 
@@ -184,7 +202,7 @@ println(describe("north,2026-08-01,21.5"))
 println(describe("not a reading"))
 ```
 
-Guards, or-patterns, and ranges cover the classification side:
+Guards cover the classification side:
 
 ```olang
 fn band(t) = match t {
@@ -196,8 +214,9 @@ fn band(t) = match t {
 println(band(-4.0) + ", " + band(21.5) + ", " + band(31.0))
 ```
 
-`match` is checked: every value you send it must find an arm (the `_`
-wildcard catches the rest). The
+A value that matches no arm is a runtime error, so a `match` usually ends
+with the `_` wildcard. When the scrutinee's type is known, `olang check`
+warns about cases the arms do not cover. The
 [language reference](language.md#pattern-matching) lists every pattern
 kind — literals, tuples, lists with `...rest`, structs, enum variants,
 ranges, guards.
@@ -278,11 +297,11 @@ hierarchy, just types opting in to capabilities.
 
 ## Errors are values
 
-olang has no exceptions. A function that can fail returns a `Result`:
+olang has no exception handling for expected failures. A function that can fail returns a `Result`:
 `Ok(value)` on success, `Err(error)` on failure — and the caller
 decides, with ordinary code, what failure means. `str.parse_float` is
-such a function, which is why the earlier `unwrap` was a loaded gun:
-`unwrap` extracts an `Ok` and *aborts* on `Err`.
+such a function, which is why the earlier `unwrap` was unsafe: `unwrap`
+extracts an `Ok` and *aborts* on `Err`.
 
 The honest version of our parser returns a `Result` itself and uses
 `?` to propagate failure upward — `expr?` unwraps an `Ok` or returns
@@ -359,11 +378,10 @@ println(to_string(task.join(a) < task.join(b)))
 
 ### The snapshot rule
 
-Here is the one thing about olang concurrency you must internalize.
-Every parallel construct — `spawn`, `par_map`, `par for`, and ordinary
+This rule governs all olang concurrency. Every parallel construct — `spawn`, `par_map`, `par for`, and ordinary
 closures too — **captures its environment by value**: the worker sees a
 snapshot of the bindings as they were when it started, and writing to
-them inside the worker updates only the worker's own copy. Watch:
+them inside the worker updates only the worker's own copy:
 
 ```olang
 let factor = 10
@@ -379,18 +397,17 @@ runs, because the write could only reach the worker's own copy.
 ```text
 cannot assign to 'tally': it is captured from an enclosing scope, and
 functions capture by value — the outer 'tally' would not change. Return
-the new value, or hold the state in a cell
+the new value, or hold the state in a cell (`let tally = cell(...)`, then
+`cell.set(tally, ...)`)
 ```
 
 A `par for` body is refused on the same grounds and says so in its own
 words, pointing at `par_map` and `chan` instead of a cell — a cell
 belongs to the thread that made it, so it cannot cross to a worker.
 
-This is not a limitation to route around; it is the design that makes
-"fan it across the cores" a safe, one-word decision. No worker can see
-another's writes, so there are no data races, no locks, and no
-heisenbugs — the compiler-level guarantee is simply that there is
-nothing shared to corrupt. When you want values back, use the construct
+This rule is what makes parallelizing a computation a safe, one-word
+change. No worker can see another's writes, so there are no data races
+and no locks; there is nothing shared to corrupt. When you want values back, use the construct
 that returns them: `par_map` collects results in order, `spawn` hands
 you a task handle for `task.join`, and aggregation is a `fold` over what
 came back.
@@ -420,9 +437,8 @@ let warm = ods.filter(temps, temps > 20.0)
 println(to_string(ods.to_list(warm)))
 ```
 
-A **Frame** is a table of named Series — and `ods.read_csv` turns our
-log, unchanged, into one. Group, aggregate, and the report writes
-itself:
+A **Frame** is a table of named Series. `ods.read_csv` turns the log,
+unchanged, into one, which can then be grouped and aggregated:
 
 ```olang
 let log = [
@@ -439,7 +455,7 @@ let summary = f
     |> ods.sort_by("avg", true)
 
 for rec in ods.to_records(summary) {
-    println(`${map_get(rec, "station")}: ${map_get(rec, "avg")}`)
+    println(`${rec.station}: ${rec.avg}`)
 }
 ```
 
@@ -452,14 +468,14 @@ HTTP:
 let north = ods.series([21.5, 19.0, 23.5])
 let south = ods.series([24.0, 18.5, 22.0])
 let t = stats.t_test(north, south)
-println(`p = ${map_get(t, "p_value") < 1.0}`)
+println(`p = ${t.p_value < 1.0}`)
 
 let x = ods.series([1.0, 2.0, 3.0])
 let svg = plot.line(x, north, #{ "title": "north station" })
 println(to_string(str.contains(svg, "<svg")))
 ```
 
-[The Data Stack](ods.md) is the full chapter — every Series and Frame
+[The data stack](ods.md) is the full chapter — every Series and Frame
 verb, the complete `stats` and `plot` modules, and the performance
 story; [`examples/data-processing/statlab/`](../examples/data-processing/statlab/) is a complete
 statistical study built on this stack.
@@ -535,9 +551,8 @@ let summary = f |> ods.group_by("station", [["avg", "mean", "temp"], ["n", "coun
 
 println("=== station report ===")
 for rec in ods.to_records(summary) {
-    let avg = map_get(rec, "avg")
     println(str.fmt("{}: {} readings, avg {} ({})",
-        map_get(rec, "station"), map_get(rec, "n"), avg, band(avg)))
+        rec.station, rec.n, rec.avg, band(rec.avg)))
 }
 println(str.fmt("{} malformed lines rejected", rejected))
 ```
@@ -560,15 +575,15 @@ language: the `dom` module lets an olang program drive a real page —
 queries, events, fetch — which is how
 [`examples/web/app/`](../examples/web/app/) serves an issue tracker whose
 frontend is itself written in olang.
-[olang in the Browser](wasm.md) tells that story whole, architecture
+[olang in the browser](wasm.md) tells that story whole, architecture
 to application.
 
 ## Where to next
 
-- [The Language Reference](language.md) — every construct, precisely.
-- [The Standard Library](stdlib.md) — every builtin and module.
-- [The Data Stack](ods.md) — Series, Frames, inference, and charts, in depth.
-- [olang in the Browser](wasm.md) — the same language as a frontend language.
+- [The language reference](language.md) — every construct, precisely.
+- [The standard library](stdlib.md) — every builtin and module.
+- [The data stack](ods.md) — Series, Frames, inference, and charts, in depth.
+- [olang in the browser](wasm.md) — the same language as a frontend language.
 - [Packages](packages.md) — multi-file programs and dependencies.
 - [`examples/`](../examples/) — complete programs: a task CLI, a template
   engine, a regex engine, a parser combinator library, a Lisp interpreter

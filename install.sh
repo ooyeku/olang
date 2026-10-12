@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
 #
 # Detects the platform, downloads the matching tarball from the latest
-# GitHub release (or the release named in OLANG_VERSION, e.g. "v0.79.0"),
+# GitHub release (or the release named in OLANG_VERSION, e.g. "vX.Y.Z"),
 # verifies it against the release's SHA256SUMS, and installs `olang` and
 # `otc` into ~/.olang/bin (override with OLANG_INSTALL_DIR). When no
 # prebuilt tarball matches the platform, it falls back to building from

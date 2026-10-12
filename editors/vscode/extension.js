@@ -29,7 +29,7 @@ const os = require("os");
 const path = require("path");
 
 const WELL_KNOWN = [
-  path.join(os.homedir(), ".olang", "olang"),
+  path.join(os.homedir(), ".olang", "bin", "olang"),
   path.join(os.homedir(), ".cargo", "bin", "olang"),
   "/usr/local/bin/olang",
   "/opt/homebrew/bin/olang",

@@ -1,7 +1,4 @@
-# Macros: extending olang in olang
-
-Part of [the olang book](README.md) · [Language reference](language.md) ·
-[Standard library reference](stdlib.md) · [Openness](openness.md)
+# Macros
 
 **Status: stable.** The model described here — the five laws, the
 syntax forms, the source-text exchange contract, applicative argument
@@ -18,6 +15,9 @@ see the program. Macros are how olang grows without changing: the
 language's syntax is frozen, and that is precisely what makes the
 program-as-data format a stable contract a macro can rely on.
 
+Part of [the olang book](README.md) · [Language reference](language.md) ·
+[Standard library reference](stdlib.md) · [Openness](openness.md)
+
 ```olang
 meta fn unless(cond, body) = `if !(${cond}) => ${body} else => ()`
 
@@ -25,9 +25,26 @@ let x = 3
 @unless(x > 5, println("x is small"))
 ```
 
-Everything about the system follows from five rules.
+## Table of contents
+
+- [The five laws](#the-five-laws)
+- [Writing a meta fn](#writing-a-meta-fn)
+- [Decorators: deriving from declarations](#decorators-deriving-from-declarations)
+- [Hygiene](#hygiene)
+- [The expansion scope](#the-expansion-scope)
+- [What macros cannot do](#what-macros-cannot-do)
+- [Template escapes](#template-escapes)
+- [Macro libraries](#macro-libraries)
+- [Decorating functions and lets](#decorating-functions-and-lets)
+- [Argument order](#argument-order)
+- [Real libraries in the corpus](#real-libraries-in-the-corpus)
+- [In the editor](#in-the-editor)
+- [In the REPL](#in-the-repl)
+- [How this composes with the rest of olang](#how-this-composes-with-the-rest-of-olang)
 
 ## The five laws
+
+Everything about the system follows from five rules.
 
 **1. Every expansion site says `@`.** A macro is invoked as
 `@name(args)` in expression position, or as `@name` stacked above a
@@ -97,11 +114,10 @@ as any other data. To *compute* with an argument, evaluate it:
 `meta.eval` called from a meta fn runs source in the same pure sandbox
 the meta fn itself occupies, and the evaluated source may call what the
 meta fn may call: the expanding file's own functions and the shared
-functions of the modules it imports. Functions only — the meta fn's
-other bindings are its working state, not the evaluated program's.
-(Called at ordinary runtime, outside
-expansion, `meta.eval` is real evaluation — effects allowed, under the
-run's own capability grants.) And `meta.lit` renders a value back into
+functions of the modules it imports. Only functions are visible; the meta
+fn's other bindings are its working state, not the evaluated program's.
+(Called at ordinary runtime, outside expansion, `meta.eval` is real
+evaluation: effects are allowed, under the run's own capability grants.) And `meta.lit` renders a value back into
 source — scalars, lists, tuples, maps, results and anonymous objects
 (`{ a: 1 }`); a function or a handle has no source and is refused — together
 they are compile-time computation in userland:
@@ -149,7 +165,7 @@ pattern; the macro reads the type's own field list through `meta.parse`:
 ```olang
 meta fn getters(decl) = {
     let t = head(unwrap(meta.parse(decl)))
-    let fields = map_get(t, "fields") |> map((f) => map_get(f, "name"))
+    let fields = t.fields |> map((f) => f.name)
     let fns = fields |> map((f) => `fn get_${f}(v) = v.${f}`) |> join("\n")
     `${decl}
 ${fns}`
@@ -295,7 +311,7 @@ A top-level `use m` also brings `m`'s top-level meta fns into the
 importing file's expansion, which is what makes a macro *library*
 possible — [`examples/language/derives`](../examples/language/derives/) ships one. The
 module is resolved as `m.ol` or `m/index.ol` (dots as directories)
-relative to the working directory; a local meta fn of the same name
+relative to the importing file's directory; a local meta fn of the same name
 shadows an imported one, and an imported module's own imports are not
 walked. The module file's content is an expansion input exactly like
 the source itself. The module's `share fn`s come along too: a meta fn
@@ -313,9 +329,9 @@ original name:
 ```olang
 meta fn noisy(decl) = {
     let node = head(unwrap(meta.parse(decl)))
-    let name = map_get(node, "name")
+    let name = node.name
     let impl_name = meta.fresh(name)
-    let params = map_get(node, "params") |> join(", ")
+    let params = node.params |> join(", ")
     let renamed = str.replace(decl, `fn ${name}(`, `fn ${impl_name}(`)
     renamed + `
 fn ${name}(${params}) = ${impl_name}(${params}) * 10`
@@ -335,7 +351,7 @@ outermost: its tests land after every function they call.
 
 Arguments are expanded before the macro runs: by the time a meta fn
 receives its argument, the source is macro-free. `@bake(@twice(4))`
-hands `bake` the text `((4) * 2)`, never the text `@twice(4)` — the
+hands `bake` the text `(4) + (4)`, never the text `@twice(4)` — the
 applicative order function calls follow, to any nesting depth, under
 the same fuel that bounds whole-file expansion. The rule exists because
 a macro may *inspect* or *evaluate* its argument, not merely splice it;

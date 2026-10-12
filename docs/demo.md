@@ -1,9 +1,5 @@
 # Case study: building robust systems
 
-Part of [the olang book](README.md) ·
-[Architecture and internals](internals.md) ·
-[Language reference](language.md)
-
 `examples/concurrency/demo/` is Harborline, a harbor-operations simulator and the largest
 program in this repository intended to be run rather than only read. Vessels
 arrive on a seeded random stream, queue in the roads, receive berths from a
@@ -14,6 +10,10 @@ simulated day is rendered into a digest whose RSA-signed HMAC chain makes the
 history tamper-evident, and each day the simulation state is checked against
 the ledger using the `testing` module. A failed invariant terminates the
 process.
+
+Part of [the olang book](README.md) · [Tour](tour.md) ·
+[Language reference](language.md) · [Architecture and internals](internals.md) ·
+[Pitfalls](pitfalls.md)
 
 ```bash
 cd examples/concurrency/demo && olang main.ol
@@ -36,8 +36,17 @@ land there.
 This chapter reads the demo as a design study: the patterns that make an
 olang system robust, each pointing at the module that demonstrates it.
 
-Part of [the olang book](README.md) · [Tour](tour.md) ·
-[Language Reference](language.md) · [Pitfalls](pitfalls.md)
+## Table of contents
+
+- [The map](#the-map)
+- [Pattern 1: one world, threaded through](#pattern-1-one-world-threaded-through)
+- [Pattern 2: make illegal states unrepresentable](#pattern-2-make-illegal-states-unrepresentable)
+- [Pattern 3: Result discipline at every edge](#pattern-3-result-discipline-at-every-edge)
+- [Pattern 4: concurrency you can test](#pattern-4-concurrency-you-can-test)
+- [Pattern 5: the system audits itself](#pattern-5-the-system-audits-itself)
+- [Pattern 6: honest floats, stable tests](#pattern-6-honest-floats-stable-tests)
+- [Determinism as a feature](#determinism-as-a-feature)
+- [Where to go from here](#where-to-go-from-here)
 
 ## The map
 
@@ -78,7 +87,8 @@ layered applications do.
 
 There is no global mutable state anywhere in the demo. The entire
 simulation lives in one record, and the tick function maps world to
-world:
+world (simplified; the full version in `main.ol` also threads the tide
+cache, diverts overdue vessels, and advances the tick counter):
 
 ```olang no-run
 fn tick(w) = {
@@ -117,8 +127,8 @@ the cache actually grows.
 `lib/cargo.ol` applies algebraic data types. Cargo is a sum type —
 `Container(teu)`, `Bulk(tonnes)`, `Reefer(teu)`,
 `Hazmat(class, tonnes)` — so a cargo item that is somehow both bulk and
-containerized cannot exist, and `match` handles every kind or the
-checker complains. Policy lives in guards:
+containerized cannot exist, and `olang check` warns about an unhandled
+variant wherever the scrutinee's type is declared. Policy lives in guards:
 
 ```olang no-run
 share fn needs_sealed_berth(c) = match c {
@@ -155,13 +165,22 @@ fn load_config(path) = {
         Ok(p) => p,
         Err(e) => return Err(BadConfig("bad toml: " + e))
     }
-    let berths = map_get(map_get(parsed, "harbor"), "berths")
-    if berths < 2 => return Err(BadConfig("need at least 2 berths"))
-    Ok({ berths: berths })
+    let harbor = parsed.harbor
+    let rates = parsed.rates
+    let berths = harbor.berths
+    if berths < 2 => return Err(BadConfig("need at least 2 berths (one is sealed)"))
+    if harbor.arrival_chance <= 0.0 => return Err(BadConfig("arrival_chance must be positive"))
+    Ok({
+        berths: berths,
+        crews: harbor.crews,
+        arrival_chance: harbor.arrival_chance,
+        tick_ms: harbor.tick_ms,
+        rates: rates
+    })
 }
 ```
 
-`error` declarations ([Language Reference](language.md)) give the
+`error` declarations ([Language reference](language.md)) give the
 failure a name and a payload; the caller matches `Err(BadConfig(msg))`
 and exits with a message instead of a stack trace.
 
@@ -207,16 +226,14 @@ is detected rather than producing silently incorrect output:
   breaks. The signing module's tests *prove* the chain detects a cooked
   ledger.
 
-Long soaks are the reason the demo exists: it has already flushed out
-real interpreter and tooling bugs that no small example ever hit. Run
-it for hours; that is what it is for.
+The demo is designed for long soak runs. Such runs have found interpreter
+and tooling defects that smaller examples did not exercise.
 
 ## Pattern 6: honest floats, stable tests
 
-Two lessons the demo's own test suite learned the hard way, kept in the
-code as worked examples: compare floats within an epsilon (`1.1 * 100.0`
-is `110.00000000000001` in IEEE arithmetic, and a robust suite never
-pretends otherwise), and when asserting on *formatted* floats, build the
+The demo's test suite records two practices as worked examples. Compare
+floats within an epsilon: `1.1 * 100.0` is `110.00000000000001` in IEEE
+arithmetic. When asserting on *formatted* floats, build the
 expectation with the same interpolation the code uses, so the assertion
 is stable under any display convention.
 
@@ -231,7 +248,7 @@ nondeterminism, and Pattern 4 confines them.
 
 ## Where to go from here
 
-Read `main.ol` top to bottom — it is under 350 lines and every pattern
+Read `main.ol` top to bottom — it is about 360 lines and every pattern
 above appears in it. Then pick the module closest to what you are
 building: talking to SQLite, start at `lib/ledger.ol`; parsing text
 formats, `lib/manifest.ol`; pricing/rules engines, `lib/cargo.ol`;

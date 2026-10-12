@@ -66,9 +66,8 @@ machine, and a native-code JIT. The interpreter defines the language's
 semantics. The faster tiers are optimizations: each either reproduces the
 interpreter's result exactly or declines to run the function and falls back.
 A program therefore means the same thing regardless of which tier executes
-it, and performance requires no configuration. Where the result lands is
-measured, not asserted: the repository carries a cross-language benchmark
-suite ([`benchmarks/xlang/`](../benchmarks/xlang/)) whose current
+it, and performance requires no configuration. The repository carries a
+cross-language benchmark suite ([`benchmarks/xlang/`](../benchmarks/xlang/)) whose current
 standings are tabulated in
 [The execution model: OVM and JIT](ovm.md#performance), and a
 checksum-locked data-pipeline benchmark against pandas and Polars
@@ -106,13 +105,14 @@ documented behavior is locked by an executed example, and the execution
 tiers are verified against each other on every change.
 
 Two considerations apply before 1.0. The third-party package ecosystem is
-small, so programs rely chiefly on the standard library. And while the
-language surface is closed — the two deliberate breaking releases the
-[roadmap](roadmap.md) planned have both shipped, with migration guides in
-the CHANGELOG — the 1.0 compatibility contract has not yet formally
-frozen, so the guarantees are the ones the
-[Stability and compatibility](stability.md) chapter states today, which
-is the authoritative statement of what is stable.
+small, so programs rely chiefly on the standard library. The language surface
+is closed: the breaking releases (0.48, 0.61 through 0.65, 0.68, and 0.88)
+have shipped, and 0.88 is the last release before 1.0.
+[Migrating to 0.88](migrating.md) covers the final changes. The 1.0
+compatibility promise applies to macOS; Linux and Windows are unsupported
+previews. [Stability and compatibility](stability.md) is the authoritative
+statement of what is stable, including the [platforms](stability.md#platforms)
+1.0 covers.
 
 ## How to read this book
 

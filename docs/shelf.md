@@ -2,17 +2,20 @@
 
 The shelf is olang's local package registry: a per-user catalog of
 libraries, kept by name, importable from any project on the machine.
-It answers the question every growing codebase meets — "how do I use
-my own library from another project without remembering where it
-lives" — and it answers it without a server, an account, or a network:
-the shelf is one small TOML file, and the libraries are ordinary
-directories of olang source.
+It lets one project depend on a local library by name, without recording
+where the library lives. It needs no server, account, or network: the
+shelf is one small TOML file, and the libraries are ordinary directories
+of olang source.
+
+Part of [the olang book](README.md) · [Packages and dependencies](packages.md)
 
 A fresh shelf does not start empty. The first time it is touched it is
 seeded with a small curated set of **starter libraries** — pure olang,
 documented, tested — so a new installation can `otc add textkit` in
 its first minute. Starters are ordinary shelf citizens: remove one and
 it stays removed; restore it and it comes back.
+
+## Table of contents
 
 - [The model](#the-model)
 - [Commands](#commands)
@@ -81,8 +84,8 @@ after an upgrade.
 
 ## The starter libraries
 
-Three libraries ship with every shelf. Each is pure olang — no
-capabilities, no effects — each function carries a `///` doc comment,
+Three libraries ship with every shelf. Each is pure olang, with no
+capabilities and no effects. Each function carries a `///` doc comment,
 and each library carries its own `test` blocks, which run in the
 toolchain's test suite on every change: a starter without passing
 tests cannot ship. The sources are compiled into the binary, so
@@ -165,8 +168,8 @@ match check(#{"date": "2026-8-25", "amount": 0, "kind": "loan"}, rules) {
 // kind: must be one of ["expense", "income"]
 ```
 
-`kind` may also be `"date"` — an ISO day the value must parse as, with
-`min`/`max` as ISO days it must not precede or exceed — and any rule may
+`kind` may also be `"date"`: an ISO day the value must parse as, with
+`min`/`max` as ISO days it must not precede or exceed. Any rule may
 carry `"where": (v) => Result`, a predicate whose `Err` message becomes
 the field's problem, so a check that fits no kind still rides the one
 validation pass. Parsed JSON (`JsonObject`) is map-shaped and checks
@@ -247,7 +250,7 @@ shelf resolved and a checksum of its contents. From there:
   the lock carries the new `rev`, or drops it for an unpinned library.
   There is no need to delete `olang.lock` first. `otc install --frozen`
   still refuses the drift. (A library that follows its directory has no
-  directory in the lock — the lock is portable — so re-registering it at
+  directory in the lock, which keeps the lock portable, so re-registering it at
   another path needs no re-pin: every install and run resolves the name
   through the shelf as it stands.)
 
@@ -285,7 +288,8 @@ for any directory of documented olang code — your shelf included.
 | `~/.olang/shelf.toml` | the registry: name → directory |
 | `~/.olang/shelf/<name>/` | materialized starter libraries |
 | `OLANG_SHELF` | overrides the registry file's location (starters materialize into `shelf/` beside it); how tests isolate |
+| `OLANG_HOME` | moves the whole `~/.olang` root, the shelf included ([the home directory](packages.md#the-home-directory)) |
 
 Seeding happens exactly once, when the shelf file first comes into
 being. A shelf whose starters were deliberately removed stays exactly
-as its owner left it — nothing respawns behind your back.
+as its owner left it; removed starters are not reseeded.

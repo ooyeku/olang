@@ -54,8 +54,9 @@ statement of what is stable, evolving, and experimental.
 
 ## Installation
 
-One line on macOS or Linux (downloads a checksum-verified prebuilt
-binary; falls back to a source build where none exists):
+One line on macOS (downloads a checksum-verified prebuilt binary; falls back
+to a source build where none exists). The same command installs the Linux
+binaries, which are an unsupported preview:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ooyeku/olang/main/install.sh | sh
@@ -85,9 +86,9 @@ otc add my-lib             # ...then depend on it by name, from any project
 otc bench                  # run bench/ with scaling curves and baselines
 ```
 
-See [Packages and dependencies](docs/packages.md). `tools/linux-check.sh`
-and `tools/windows-check.sh` check the Linux and Windows builds from a
-Mac, locally ([Installation](docs/installation.md#checking-linux-and-windows-from-a-mac)).
+See [Packages and dependencies](docs/packages.md). Linux and Windows are
+unsupported previews; [Stability and compatibility](docs/stability.md#platforms)
+states what 1.0 promises.
 
 The language also runs in the browser: the website's playground compiles the
 interpreter, bytecode tier, and data stack to WebAssembly and runs them
@@ -108,10 +109,13 @@ No code leaves the browser.
   check`, together with the language server, reports provable violations —
   including element types — before the program runs. See
   [Types and gradual typing](docs/types.md).
-- **Immutability.** Values are never mutated in place. Closures capture their
-  environment by value.
+- **Immutability.** Values are never mutated in place; `xs[i] = v` rebinds
+  `xs` to an updated copy rather than changing the original value. Closures
+  capture their environment by value.
 - **Errors as values.** Fallible operations return `Result`; `?` propagates
-  errors and `try`/`catch` handles them.
+  errors, `match` and `unwrap_or` handle them, `attempt(f)` turns a runtime
+  error into an `Err` at a boundary the program chooses, and `raise(message)`
+  reports a misuse.
 - **Parallelism.** One model: threads. `spawn` runs a call on an
   operating-system thread and returns a task handle that `task.join`
   collects; `chan` streams values between tasks; `par_map`, `par_filter`,
@@ -125,14 +129,16 @@ No code leaves the browser.
 
 The standard library consists of native modules implemented in Rust, the data
 stack, and modules and packages written in olang and compiled into the
-binary. The native modules are `str`, `col`, `math`, `json`, `toml`, `csv`,
-`re`, `dates`, `time`, `random`, `crypto`, `base64`, `fs`, `os`, `http` (an
-HTTP client and a keep-alive server), `db` (SQLite), `chan` (channels),
-`proc` (subprocesses), `testing`, `meta` (the program-as-data interface), and
-`dom` (available in the WebAssembly build). The data stack adds `ods`,
-`stats`, and `plot`. The embedded olang modules are `colx` and `mathx`
-(extensions to `col` and `math`), which are differential-tested against their
-native counterparts, and the packages `cli`, `term`, `ui`, `viz`, and `dash`.
+binary. The native modules are `str`, `col`, `math`, `vec`, `bigint`,
+`json`, `toml`, `csv`, `re`, `dates`, `time`, `random`, `crypto`, `bytes`,
+`compress`, `base64`, `fs`, `os`, `proc` (subprocesses), `pty`, `vt`, `tty`,
+`http` (an HTTP client and a keep-alive server), `db` (SQLite), `task`,
+`cell`, `chan` (channels), `asset`, `runtime`, `caps`, `testing`, `meta` (the
+program-as-data interface), `gui`, and `dom` (available in the WebAssembly
+build). The data stack adds `ods`, `stats`, and `plot`. The embedded olang
+modules are `colx` and `mathx` (extensions to `col` and `math`), which are
+differential-tested against their native counterparts, and the packages
+`collections`, `cli`, `term`, `ui`, `viz`, and `dash`.
 
 The full reference is [The standard library](docs/stdlib.md). The browser
 build, including olang as a frontend language, has its own chapter,
@@ -156,7 +162,7 @@ println(to_string(ods.mean(taxed)))
 let x = ods.series([1.0, 2.0, 3.0, 4.0, 5.0])
 let y = ods.series([2.1, 3.9, 6.2, 8.1, 9.8])
 let fit = stats.lm(y, x)
-println(to_string(map_get(fit, "r2") > 0.99))
+println(to_string(fit.r2 > 0.99))
 ```
 
 Reductions on large columns run at parity with NumPy sequentially and roughly
@@ -205,8 +211,8 @@ and CI runs it on every change.
 
 ## Maturity
 
-olang's implementation is heavily tested: more than 950 tests across the
-workspace, every documentation example executed in CI, cross-tier and JIT
+olang's implementation is heavily tested: more than 2,000 tests across
+the workspace, every documentation example executed in CI, cross-tier and JIT
 agreement suites, differential tests of the standard library, and a flagship
 example built specifically to soak-test the runtime over long sessions. The
 language, standard library, and data stack support complete programs today —
@@ -215,8 +221,9 @@ all demonstrated in [`examples/`](examples/).
 
 What is young is not the engine but its surroundings. The third-party
 package ecosystem is small, so programs rely chiefly on the standard
-library, and the project is pre-1.0: the planned breaking releases have
-shipped, and what remains is in the [roadmap](docs/roadmap.md). The
+library, and the project is pre-1.0: 0.88 is the last release before 1.0, and every
+planned breaking change has shipped (see [Migrating to 0.88](docs/migrating.md)).
+What remains is in the [roadmap](docs/roadmap.md). The
 authoritative statement of what is stable today is
 [Stability and compatibility](docs/stability.md).
 

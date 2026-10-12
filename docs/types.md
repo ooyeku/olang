@@ -1,8 +1,5 @@
 # Types and gradual typing
 
-Part of [the olang book](README.md) · [Language reference](language.md) ·
-[Command-line tooling](tooling.md) · [Stability and compatibility](stability.md)
-
 olang is gradually typed. Code without annotations is fully dynamic and
 carries no runtime type checks. Every annotation that is written is enforced
 in two places: the runtime enforces it at its boundary on every execution
@@ -10,6 +7,9 @@ tier, and the static checker (`olang check`, and the language server in an
 editor) reports violations it can prove before the program runs. This chapter
 describes what annotations mean, where they are enforced, what the checker
 proves, and how to adopt types incrementally.
+
+Part of [the olang book](README.md) · [Language reference](language.md) ·
+[Command-line tooling](tooling.md) · [Stability and compatibility](stability.md)
 
 Every plain `olang` block in this chapter is executed by the test suite;
 blocks marked `no-run` show programs that fail deliberately.
@@ -60,7 +60,7 @@ annotation forms — `Int`, `Float`, `String`, `Bool`, `[T]`, `(A, B)`,
 
 ## The three rules
 
-Three rules make enforcement predictable enough to hold in your head:
+Three rules make enforcement predictable:
 
 1. **Unannotated code is fully dynamic.** No annotation, no check, no
    cost. A program that never mentions a type runs exactly as it did
@@ -166,7 +166,7 @@ Details worth knowing:
   ```olang no-run
   fn tag(x: Int | String) = show(x)
   tag(true)
-  // Type error: parameter 'x' of tag expects Int | String, got Bool
+  // Type error: parameter 'x' of tag expects Int | String, got true
   ```
 
 - **Generic type parameters are erased.** In `fn first<T>(xs: List<T>)
@@ -269,7 +269,12 @@ silent; a generic `List<T>` erases the element promise but keeps the
 base. When the checker speaks, the annotation is provably false — there
 is nothing to configure and nothing to suppress.
 
-### Match exhaustiveness over literal enums
+### Match exhaustiveness over enums and literal unions
+
+A declared `enum` names its variants, so a `match` whose scrutinee is known
+to be that enum (an annotated parameter or binding, or a value built from
+one of its constructors) gets the same advisory warning when a variant has
+no arm, for example ``match over `Sky` is not exhaustive: Rain has no arm``.
 
 A union of literals declares exactly which values are admissible — so
 when one is matched, the checker knows what "covering every case"

@@ -1,7 +1,5 @@
 # Editor support
 
-Part of [the olang book](README.md).
-
 olang includes a language server: `olang lsp` speaks the Language Server
 Protocol over stdio from the same binary that runs programs. Building the
 server into the compiler means there is no separate installation and no
@@ -9,6 +7,8 @@ version skew between what the editor reports and what the runtime does, and
 every diagnostic comes from the real parser rather than a reimplementation of
 it. This chapter covers what the server provides and how to configure the
 supported editors.
+
+Part of [the olang book](README.md).
 
 ## What the server provides
 
@@ -37,8 +37,8 @@ so navigation keeps working while you type.
 Positions come from the AST itself: `fn`, `let`, and `type` declarations
 carry the source span of the name they bind.
 
-The server re-parses whole files on every edit. olang files are small
-and the parser is fast; correctness stays trivial.
+The server re-parses whole files on every edit. olang files are small and
+the parser is fast, so the server keeps no incremental parse state.
 
 ## VS Code
 
@@ -53,7 +53,7 @@ error with a button to the setting, instead of silently doing nothing.
 To install from the repo:
 
 ```bash
-cd editors/vscode && npm install && npx vsce package && code --install-extension olang-0.1.0.vsix
+cd editors/vscode && npm install && npx vsce package && code --install-extension olang-*.vsix
 ```
 
 If `olang` is not on VS Code's PATH, set `olang.serverPath` in settings.
@@ -80,7 +80,7 @@ present locally or the ref pushed.
 ### If the server does not start
 
 The client resolves the `olang` binary in order: the `olang.serverPath`
-setting, then `PATH`, then the well-known install locations (`~/.olang`,
+setting, then `PATH`, then the well-known install locations (`~/.olang/bin`,
 `~/.cargo/bin`, `/usr/local/bin`, `/opt/homebrew/bin`) — a GUI-launched
 editor often carries a minimal `PATH` that contains none of them. When
 nothing resolves, the extension says so with a button to the setting

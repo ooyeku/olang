@@ -1,11 +1,11 @@
 # Openness
 
-Part of [the olang book](README.md).
-
 A distinguishing design goal of olang is that three aspects of a program are
 available to olang programs as inspectable data: its code, its compiled
 artifacts, and its execution. This chapter describes each and links to its
 reference.
+
+Part of [the olang book](README.md).
 
 - **Open code:** `meta.parse` returns a program's syntax tree as olang
   values.
@@ -15,8 +15,7 @@ reference.
   inputs, and `olang replay` reproduces the run from that log.
 
 Each capability follows from an existing design decision: a stable
-grammar, immutable values, and a small, explicit effect boundary. This
-page summarizes each capability and links to its reference.
+grammar, immutable values, and a small, explicit effect boundary.
 
 See also: [Packages and dependencies](packages.md),
 [Command-line tooling](tooling.md),
@@ -36,8 +35,8 @@ The following example lists a file's imports:
 ```olang
 // List a file's imports.
 let program = unwrap(meta.parse("use geometry { area }\nuse fmt\nfn f() = 1"))
-for node in program |> filter((n) => map_get(n, "kind") == "use") {
-    println(map_get(node, "path") + " " + show(map_get(node, "items")))
+for node in program |> filter((n) => n.kind == "use") {
+    println(node.path + " " + show(node.items))
 }
 // geometry ["area"]
 // fmt ["*"]
@@ -99,8 +98,8 @@ original run. The `.olt` trace embeds the program source, so replay works
 on a machine that does not have the program. A run that crashes is still
 recorded, so the failure reproduces. If a program's sequence of effects no
 longer matches the trace, replay stops at that point and reports the
-divergence. For the full model, see [The Open
-Timeline](tooling.md#olang-record-and-olang-replay--the-open-timeline).
+divergence. For the full model, see [The open
+timeline](tooling.md#olang-record-and-olang-replay--the-open-timeline).
 
 ## Design decisions
 
