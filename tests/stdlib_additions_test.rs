@@ -114,3 +114,14 @@ fn a_connection_writes_as_json_as_it_did() {
         assert!(stdout.starts_with("{\"db\":{\"id\":") && stdout.contains("\"path\":\":memory:\"}}"), "{stdout}");
     }
 }
+
+#[test]
+fn another_modules_function_of_a_builtins_name_does_not_shadow_it() {
+    // lib defines `split` with five parameters; main's functions call the
+    // builtin `split` — on every tier (a self-call rule once reached too far).
+    script("shadowlib.ol", "share fn split(key, ratio, on_resize, a, b) = [key, ratio, on_resize, a, b]\n");
+    let src = "use shadowlib { split as five }\nfn words(s) = split(s, \",\")\nfn many() = { let mut n = 0\n for i in 0..200 { n = n + len(words(\"a,b,c\")) }\n n }\nprintln(many())\nprintln(five(1, 2, 3, 4, 5))\n";
+    for (stdout, _) in run("shadowmain.ol", src) {
+        assert_eq!(stdout, "600\n[1, 2, 3, 4, 5]\n");
+    }
+}

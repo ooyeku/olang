@@ -365,6 +365,10 @@ pub struct BytecodeCompiler {
     /// Beside each of `loop_targets`: the register a `break value` writes
     /// the loop's value to, when the loop has one (`breaks_with_value`).
     loop_results: Vec<Option<Register>>,
+    /// The name of the function `compile_function` is compiling: a call
+    /// of that name from its own body is a self-call (see the builtin-
+    /// name rule in the call compiler).
+    compiling_name: Option<String>,
     /// Enclosing Located statements, innermost last, for span markers.
     span_stack: Vec<(u32, u32)>,
     /// The enclosing function's declaration-time closure. Lambdas whose free
@@ -10050,6 +10054,7 @@ impl BytecodeCompiler {
             builtin_names: rustc_hash::FxHashSet::default(),
             loop_targets: Vec::new(),
             loop_results: Vec::new(),
+            compiling_name: None,
             span_stack: Vec::new(),
             enclosing_closure: std::sync::Arc::new(im::HashMap::new()),
             enclosing_bound_names: std::collections::HashSet::new(),
@@ -10189,6 +10194,7 @@ impl BytecodeCompiler {
         func: &FunctionDecl,
     ) -> Result<CompiledBytecode, BytecodeError> {
         self.set_current_def_file();
+        self.compiling_name = Some(func.name.clone());
         // Reset state
         self.register_allocator.reset();
         self.emitter.reset();
@@ -10976,14 +10982,16 @@ impl BytecodeCompiler {
                         .known_function_values
                         .get(&function_name)
                         .is_none_or(|known| !std::sync::Arc::ptr_eq(&known.body, &f.body)),
-                    // The builtin of the same name in a closure taken
-                    // before the user's function of that name was bound
-                    // (a top-level `fn find` calling itself sees the
-                    // builtin `find` in its own declaration-time closure):
-                    // the user's function shadows it, as the interpreter's
-                    // lookup finds.
+                    // A function named as a builtin calling itself: its
+                    // declaration-time closure, taken before the function
+                    // was bound, holds the builtin (a top-level `fn find`
+                    // calling `find`); the call is the function's own, as
+                    // the interpreter's lookup finds. Only the self-call:
+                    // another module's function of the name does not
+                    // shadow the builtin this closure means.
                     Some(Value::Builtin(ref b))
                         if b.name == function_name
+                            && self.compiling_name.as_deref() == Some(function_name.as_str())
                             && self.known_function_values.contains_key(&function_name) =>
                     {
                         false
