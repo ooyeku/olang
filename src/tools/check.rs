@@ -5369,10 +5369,10 @@ mod tests {
         // case in the checker any more. A task handle has no type of its
         // own here, and no unwrapping rule to get wrong.
         assert!(check("fn go() = 1\nlet t = spawn go()\nlet v = task.join(t)\n").is_empty());
-        // And the freed words are just names.
-        assert!(
-            check("let async = 1\nlet await = 2\nlet try = 3\nasync + await + try\n").is_empty()
-        );
+        // `try` is just a name; `async` and `await` are reserved since
+        // the freeze pass, for a form the language may add.
+        assert!(check("let try = 3\ntry + 1\n").is_empty());
+        assert!(Parser::new().parse("let async = 1\n").is_err());
     }
 
     // ── stage 4: Result payloads ───────────────────────────────────────

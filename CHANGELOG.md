@@ -83,6 +83,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   top level still prints as its text. The float rule (plain in [1e-4,
   1e16), exponent form outside it, `-0.0`) is documented.
 
+- **Six words are reserved** for forms the language may add: `await`,
+  `yield`, `async`, `defer`, `const` and `pub` are refused as a name
+  with an error that says so (a member after `.`, `http.defer()`, and a
+  key are not names). The reserved list is fixed at 1.0 (stability.md).
+  `spawn`, `assert`, `assert_eq` and `assert_ne` are documented as the
+  statement-position keywords they are.
+
 
 ### Added
 

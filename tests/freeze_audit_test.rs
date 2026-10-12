@@ -679,11 +679,11 @@ main()
 #[test]
 fn printing_writes_the_source_form() {
     let src = r#"
-type P = struct { y: Int, x: Int }
+type PrintedPoint = struct { y: Int, x: Int }
 type Shape = enum { Dot, Circle(Float) }
 fn shown(v) = show(v)
 fn main() = [
-    shown([P { x: 1, y: 2 }, Circle(2.0), Dot]),
+    shown([PrintedPoint { x: 1, y: 2 }, Circle(2.0), Dot]),
     shown(#{ "k": ["a\"b\n"] }),
     shown({ b: 1, a: "x" }),
     shown(unwrap(json.parse("{\"a b\": 1}"))),
@@ -696,7 +696,7 @@ main()
     assert_eq!(
         agree_tiered(src),
         Ok(l(vec![
-            s("[P { y: 2, x: 1 }, Circle(2.0), Dot]"),
+            s("[PrintedPoint { y: 2, x: 1 }, Circle(2.0), Dot]"),
             s("#{\"k\": [\"a\\\"b\\n\"]}"),
             s("{ a: \"x\", b: 1 }"),
             s("#{\"a b\": 1}"),
@@ -704,5 +704,21 @@ main()
             s("[1, \"s\"]"),
             s("[-0.0, 1e20, 1e-5, 1500.0]"),
         ]))
+    );
+}
+
+// ── Reserved words ─────────────────────────────────────────────────────
+
+#[test]
+fn the_reserved_words_are_refused_as_names_and_allowed_as_members() {
+    for word in ["await", "yield", "async", "defer", "const", "pub"] {
+        for src in [format!("let {word} = 1\n"), format!("fn {word}(x) = x\n")] {
+            let err = parse_err(&src);
+            assert!(err.contains(&format!("`{word}` is a reserved word")), "{src}: {err}");
+        }
+    }
+    assert_eq!(
+        agree_tiered("let m = #{ \"const\": 2 }\n[typeof(http.defer), m.const]\n"),
+        Ok(l(vec![s("Builtin"), Value::Integer(2)]))
     );
 }

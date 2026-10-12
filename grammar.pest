@@ -16,7 +16,11 @@ COMMENT     = _{ "//" ~ (!NEWLINE ~ ANY)* }
 // = ...` still parses as a type declaration. They are common enough as
 // variable names — a share of a total, an error term, a test case — that
 // reserving them cost more than it bought.
-keyword = { "fn" | "let" | "if" | "else" | "match" | "for" | "while" | "loop" | "break" | "continue" | "return" | "true" | "false" | "struct" | "enum" }
+keyword = { "fn" | "let" | "if" | "else" | "match" | "for" | "while" | "loop" | "break" | "continue" | "return" | "true" | "false" | "struct" | "enum" | reserved_word }
+// Reserved at 1.0 for forms the language may add (`Parser::RESERVED_WORDS`
+// names them in the error): never a name, but a member after `.`
+// (`http.defer()`) and a key are not names, and may be one.
+reserved_word = { "await" | "yield" | "async" | "defer" | "const" | "pub" }
 
 // Keywords consume only at a word boundary (the mut_kw idiom, applied
 // to every reserved word a rule consumes): without the guard, `breaker`
@@ -272,7 +276,9 @@ pipe_op       = { "|>" }
 // comparisons, as Kotlin's `?:` — `a.n ?? 0 > 3` is `(a.n ?? 0) > 3`.
 coalesce_op   = { "??" }
 unary_expr    = { unary_op* ~ call_expr }
-call_expr   = { primary ~ ( function_call | ("." ~ identifier) | ("[" ~ expr ~ "]") | postfix_op )* }
+call_expr   = { primary ~ ( function_call | ("." ~ member_name) | ("[" ~ expr ~ "]") | postfix_op )* }
+// A member after `.`: any word, a keyword included (`http.defer`).
+member_name = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // Function call with parentheses (including empty calls)
 function_call = { "(" ~ arg_list? ~ ")" }

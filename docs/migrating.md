@@ -25,6 +25,7 @@ upgrading; it reports the cases it can find.
   - [A negative index raises](#a-negative-index-raises)
   - [A condition is a Bool](#a-condition-is-a-bool)
   - [Values print as source](#values-print-as-source)
+  - [Six reserved words](#six-reserved-words)
 - [In 0.88](#in-088)
   - [A missing field of an object is `()`](#a-missing-field-of-an-object-is-)
   - [A module's missing member reads as `()`](#a-modules-missing-member-reads-as-)
@@ -175,6 +176,12 @@ name. A program that compared printed text, or a snapshot of it,
 changes with it; a top-level String prints as its text, as before. Take
 a string out of a value before comparing it (`match r { Err(e) => e }`
 rather than `show(r)`).
+
+### Six reserved words
+
+`await`, `yield`, `async`, `defer`, `const` and `pub` cannot name a
+binding, a parameter or a function; the parser says which word. Rename
+it. A member after `.` and a map key are not names and are unaffected.
 
 ## In 0.88
 

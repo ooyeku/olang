@@ -157,10 +157,13 @@ which never did, despite looking like it — was removed. Recovery is
 *structural*, at the boundaries that already isolate a failing unit: a
 spawned task's failure becomes `Err(e)` from `task.join`, and an
 `http.serve` handler's becomes a logged 500 with the server still
-serving. `try` and `catch` are ordinary identifiers, as are `async`,
-`await`, and `Promise`. The reserved-word list is fifteen words and
-will not grow — that is the promise that keeps every identifier a
-program uses valid forever. The *contextual* declaration words (eight,
+serving. `try` and `catch` are ordinary identifiers, as is `Promise`.
+The reserved-word list is fixed at 1.0: twenty-one
+words, six of them (`await`, `yield`, `async`, `defer`, `const`, `pub`)
+reserved for forms the language may add. It will not grow after 1.0 —
+that is the promise that keeps every identifier a program uses valid
+forever; a new form uses one of the six, a contextual word, a builtin,
+or an `@` macro. The *contextual* declaration words (eight,
 after `meta` joined in 0.68) may gain members additively, since a
 contextual word never stops being an ordinary identifier.
 

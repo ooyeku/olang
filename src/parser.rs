@@ -374,6 +374,10 @@ fn open_map_literal_at(input: &str, line: usize, column: usize) -> Option<(usize
 /// hand-written sub-parsers produce: plain-English message, line/column,
 /// and a caret snippet — instead of leaking the parser crate's name and
 /// grammar-rule identifiers to the user.
+/// Words reserved at 1.0 for forms the language may add; refused as a
+/// name (a member after `.` and a key are not names).
+pub const RESERVED_WORDS: &[&str] = &["await", "yield", "async", "defer", "const", "pub"];
+
 fn humanize_pest_error(e: pest::error::Error<Rule>, input: &str) -> ParseError {
     use pest::error::{ErrorVariant, LineColLocation};
 
@@ -431,7 +435,19 @@ fn humanize_pest_error(e: pest::error::Error<Rule>, input: &str) -> ParseError {
         .skip(column.saturating_sub(1))
         .take(3)
         .collect();
-    let message = if at == "..." {
+    // A word reserved for a future form, where a name was written.
+    let word_at: String = raw_line
+        .chars()
+        .skip(column.saturating_sub(1))
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    let message = if RESERVED_WORDS.contains(&word_at.as_str()) {
+        format!(
+            "`{}` is a reserved word (kept for a future form of the language) and cannot \
+             be a name; choose another",
+            word_at
+        )
+    } else if at == "..." {
         "a spread `...` is not supported here: it spreads a map or an object into a \
          `#{ ... }` or `{ ... }` literal only — a list (`xs + ys`), a call's arguments and \
          a declared struct's literal (`map_merge(p, #{ ... })`) have none"
@@ -1797,7 +1813,7 @@ impl Parser {
                         arguments: args,
                     };
                 }
-                Rule::identifier => {
+                Rule::identifier | Rule::member_name => {
                     // Field access - create field access immediately
                     if !pending_args.is_empty() {
                         expr = Expr::Call {

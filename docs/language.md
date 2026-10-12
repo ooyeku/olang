@@ -236,15 +236,15 @@ escaped.
 | Map | `#{"k": 1}`, its keys sorted |
 | Object, parsed JSON object | `{ a: 1, b: 2 }`, its fields sorted (a JSON object with a key that is not a name prints as the map it reads as, `#{"a b": 1}`) |
 | Struct | `P { x: 1, y: 2 }`, its fields in the order the declaration writes them |
-| Enum value | its constructor: `North`, `Circle(2.0)` |
+| Enum value | its constructor: `North`, `Ring(2.0)` |
 | `Result` | `Ok(1)`, `Err("bad")` |
 | Unit | `()` |
 | Function, builtin, range, module | `<function: name>`, `<builtin: name>`, `1..5`, `<module: N members>` |
 
 ```olang
-type P = struct { y: Int, x: Int }
-type Shape = enum { Dot, Circle(Float) }
-println([P { x: 1, y: 2 }, Circle(2.0), Dot])   // [P { y: 2, x: 1 }, Circle(2.0), Dot]
+type Sample = struct { y: Int, x: Int }
+type Mark = enum { Dot, Ring(Float) }
+println([Sample { x: 1, y: 2 }, Ring(2.0), Dot])   // [Sample { y: 2, x: 1 }, Ring(2.0), Dot]
 println(#{ "k": ["a\"b"] })                     // #{"k": ["a\"b"]}
 println({ name: "ada" })                         // { name: "ada" }
 ```
@@ -2384,9 +2384,14 @@ Reserved keywords — not usable as identifiers:
 ```text
 fn let if else match for while loop break continue return
 true false struct enum
+await yield async defer const pub
 ```
 
-Fifteen words, and that is the whole list.
+Twenty-one words, and that is the whole list, fixed at 1.0. The last
+six mean nothing yet: they are reserved for forms the language may add
+(an `await`, a `defer`), and a program that names something with one is
+refused with an error that says so. A member after `.` and a key are
+not names, so `http.defer()` and `{ "const": 1 }` are untouched.
 
 **Eight more that introduce declarations are *contextual*, not
 reserved**: `share`, `error`, `test`, `type`, `trait`, `impl`, `use`,
@@ -2429,9 +2434,15 @@ Each keyword and contextual word, in one line:
 
 `mut` and `par` are *contextual* too: `mut` is special only right after
 `let`, and `par` only directly before `for` (`par for x in xs`). `Ok`,
-`Err`, `Result`, and `spawn` are ordinary names with built-in meaning
-rather than reserved words — as are `async`, `await`, `try`, `catch`,
-and `Promise`, which named constructs olang no longer has.
+`Err` and `Result` are ordinary names with built-in meaning rather than
+reserved words — as are `try`, `catch` and `Promise`, which named
+constructs olang no longer has.
+
+`spawn`, `assert`, `assert_eq` and `assert_ne` are **statement-position
+keywords**: at the start of an expression they are the language's own
+form (`spawn expr`, `assert(cond)`), whatever a program binds to the
+name — `fn spawn(x) = x` then `spawn(3)` starts a task. Elsewhere they
+are ordinary names. Avoid binding them.
 
 `@name(args)` invokes a [macro](macros.md) in expression position, and
 `@name` above a `type`, `fn`, or `let` declaration decorates it; both
