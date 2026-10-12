@@ -565,3 +565,36 @@ unwrap(meta.rename(src, #{ "helper": "h2" }))
         ))
     );
 }
+
+// ── A field of () reads () ─────────────────────────────────────────────
+
+#[test]
+fn a_field_of_unit_reads_unit() {
+    let src = r#"
+fn chain(s) = s.pp.cur
+fn main() = [chain(#{}), chain(#{ "pp": #{ "cur": 3 } }), ().k ?? 5, map_get((), "k"), map_get_or((), "k", 7)]
+main()
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(l(vec![
+            Value::Unit,
+            Value::Integer(3),
+            Value::Integer(5),
+            Value::Unit,
+            Value::Integer(7),
+        ]))
+    );
+    let err = agree_tiered("fn f(x) = x.k\nf(5)\n").expect_err("a field of an Int raises");
+    assert!(err.contains("Cannot access field"), "{err}");
+    let err = agree_tiered("type P = struct { x: Int }\nfn f(p) = p.y\nf(P { x: 1 })\n")
+        .expect_err("a struct's missing field raises");
+    assert!(err.contains("no field"), "{err}");
+    assert!(parse_err("let r = Ok(1)\nr?.name\n").contains("`?.` is reserved"));
+    assert_eq!(
+        agree_tiered(
+            "let r: Result<Map<String, Int>, String> = Ok(#{ \"a\": 1 })\nfn f(r) = (r?).a\nmatch f(r) { x => x }\n"
+        ),
+        Ok(Value::Integer(1))
+    );
+}

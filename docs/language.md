@@ -1118,6 +1118,21 @@ strings (a key that is not an identifier is read with `map_get`). A
 it does not have raises. A `{ ... }` with `identifier: value` pairs is
 an object; `#{ ... }` is always a map.
 
+A field of `()` is `()`: an absent record's fields are absent too, so a
+chain of reads answers `()` at the first missing link (`s.pp.cur` when
+`s.pp` is absent) and `?? default` finishes it. `map_get((), k)` is `()`
+as well. A field of anything else that is not a record raises (`5.k`),
+as does a declared struct's missing field.
+
+```olang
+let s = #{ "name": "ada" }
+println(to_string(s.pp.cur))          // (): s.pp is absent
+println(to_string(s.pp.cur ?? 0))     // 0
+```
+
+`r?.f` is reserved and refused by the parser (it would read as optional
+chaining); a field of what `?` unwraps is written `(r?).f`.
+
 ```olang
 let o = { name: "ada" }
 let j = unwrap(json.parse("{\"name\": \"ada\"}"))

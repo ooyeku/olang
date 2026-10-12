@@ -8512,6 +8512,10 @@ impl BytecodeVm {
                     )),
                 }
             })()),
+            // An absent record's key is absent, as on the interpreter.
+            "map_get" if args.len() == 2 && matches!(args[0].data, ValueData::Unit) => {
+                Some(Ok(OvmValue::new_unit()))
+            }
             "map_get" if args.len() == 2 => {
                 Some(Self::native_map_get(&args[0], &args[1], "map_get"))
             }
@@ -8597,6 +8601,9 @@ impl BytecodeVm {
                     )),
                 }
             })()),
+            "map_get_or" if args.len() == 3 && matches!(args[0].data, ValueData::Unit) => {
+                Some(Ok(args[2].clone()))
+            }
             "map_get_or" if args.len() == 3 => Some(
                 Self::native_map_get(&args[0], &args[1], "map_get_or").map(|v| match v.data {
                     ValueData::Unit => args[2].clone(),
@@ -9771,6 +9778,8 @@ impl BytecodeVm {
             // `m.key` on a map is `map_get(m, "key")`: the key's value, or
             // `()` when it is absent (the interpreter's eval_field_access).
             ValueData::Map(m) => Ok(m.get(field).cloned().unwrap_or_else(OvmValue::new_unit)),
+            // A field of `()` is `()`, as on the interpreter.
+            ValueData::Unit => Ok(OvmValue::new_unit()),
             ValueData::AstMap(m) => Ok(m
                 .get(field)
                 .map(|v| OvmValue::from_ast(v.clone()))

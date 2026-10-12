@@ -17,7 +17,7 @@ stdlib-convention and error-model changes across 0.61–0.65; operator
 precedence in 0.68; and, in 0.88, the last release before 1.0, the
 settling of records (a missing field of an object reads as `()`), of
 modules (a missing member reads as `()`), and of how a lambda stage in a
-pipeline ends ([Settled in 0.88](#settled-in-088); [Migrating to
+pipeline ends ([Settled before 1.0](#settled-before-10); [Migrating to
 0.88](migrating.md)). Earlier editions of this chapter called 0.61 and
 then 0.68 the final deliberate break; 0.88's changes were made because
 1.0 freezes what it ships, and each is small, found by `olang check`,
@@ -30,7 +30,7 @@ could ever change them and at what cost.
 
 - [The 1.0 commitment](#the-10-commitment)
 - [Platforms](#platforms)
-- [Settled in 0.88](#settled-in-088)
+- [Settled before 1.0](#settled-before-10)
 - [What each surface guarantees](#what-each-surface-guarantees)
 - [Versioning](#versioning)
 - [How this is enforced](#how-this-is-enforced)
@@ -67,10 +67,11 @@ platforms](roadmap.md#platforms-parked)). A difference between macOS and
 a preview platform is not a break of this contract. When a platform is
 supported, this section will say so, and that is an addition.
 
-## Settled in 0.88
+## Settled before 1.0
 
-These rules were decided in 0.88 so that 1.0 ships them; they are part
-of the commitment and will not be reversed:
+These rules were decided in 0.88 and in the pass that followed it, so
+that 1.0 ships them; they are part of the commitment and will not be
+reversed:
 
 - **A missing field of an object or a parsed JSON object reads as `()`**,
   as a map's missing key does (`o.k`, `map_get(o, "k")`). A declared
@@ -81,6 +82,10 @@ of the commitment and will not be reversed:
   never has, as the safety net.
 - **A module's missing member reads as `()`**; calling it raises naming
   the nearest member.
+- **A field of `()` reads as `()`** (`s.pp.cur` when `s.pp` is absent),
+  and `map_get((), k)` is `()`; a field of any other non-record value
+  (`5.k`) and a declared struct's missing field still raise. `r?.f` is
+  reserved: a parse error, so it stays free to mean optional chaining.
 - **An unparenthesized lambda stage in a pipeline ends at the next
   `|>`.**
 - **`??`'s level** is below the arithmetic, the pipeline and the ranges,

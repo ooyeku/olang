@@ -58,7 +58,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `xs[i] = v` an `index_assign` node (they read as calls of the hidden
   builtins `__spread` and `__index_set`); every node kind and field is
   listed in stdlib.md.
-
+- **A field of `()` reads as `()`**: `s.pp.cur` when `s.pp` is absent,
+  `().k ?? 5`, and `map_get((), k)` (it raised "Cannot access field on
+  non-struct value"); a field of another non-record (`5.k`) and a
+  declared struct's missing field still raise. `r?.f` is now a parse
+  error, reserved for optional chaining: write `(r?).f`.
 
 ### Added
 

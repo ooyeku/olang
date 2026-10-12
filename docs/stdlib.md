@@ -332,7 +332,7 @@ they write, not the map's size. An identifier key reads as `m.key`
 
 | Function | Description |
 |---|---|
-| `map_get(m, k)` | value, or `Unit` when absent |
+| `map_get(m, k)` | value, or `Unit` when absent (and `Unit` when `m` is `()`, as `().k` is) |
 | `map_get_or(m, k, default)` | value, or `default` when absent (or stored Unit) |
 | `map_get_in(m, [k1, k2, …])` | a nested read in one call — the value at the end of the key path, or Unit at the first missing hop; every hop reads like `map_get` (`map_path`, deprecated, is the same function) |
 | `map_set_in(m, [k1, k2, …], v)` | new value with the end of the key path set — each level a new value of its own kind, a missing level a new map |

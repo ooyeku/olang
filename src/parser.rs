@@ -1828,6 +1828,17 @@ impl Parser {
                     };
                 }
                 Rule::postfix_op => {
+                    // `r?.f` is reserved (it would read as optional
+                    // chaining); `?` then a field is `(r?).f`.
+                    let span = pair.as_span();
+                    if span.get_input()[span.end()..].starts_with('.') {
+                        return Err(ParseError::invalid_syntax_at(
+                            "`?.` is reserved: write `(r?).f` to read a field of what `?` \
+                             unwraps"
+                                .to_string(),
+                            PositionInfo::from_pair(&pair),
+                        ));
+                    }
                     // Postfix operator - create Try expression
                     if !pending_args.is_empty() {
                         expr = Expr::Call {

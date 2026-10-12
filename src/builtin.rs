@@ -3640,6 +3640,11 @@ impl BuiltinFunctions {
             });
         }
 
+        // An absent record's key is absent: `map_get((), k)` is `()`, as
+        // `().k` is.
+        if matches!(args[0], Value::Unit) {
+            return Ok(Value::Unit);
+        }
         let map = match Self::field_map(&args[0]) {
             Some(map) => map,
             None => {
@@ -3678,6 +3683,9 @@ impl BuiltinFunctions {
             });
         }
         let default = args.pop().expect("len checked");
+        if matches!(args[0], Value::Unit) {
+            return Ok(default);
+        }
 
         let map = match Self::field_map(&args[0]) {
             Some(map) => map,

@@ -21,6 +21,7 @@ upgrading; it reports the cases it can find.
   - [A block ending in `let` or `;` is `()`](#a-block-ending-in-let-or--is-)
   - [Equality](#equality)
   - [Smaller rulings](#smaller-rulings)
+  - [A field of `()` reads `()`](#a-field-of--reads-)
 - [In 0.88](#in-088)
   - [A missing field of an object is `()`](#a-missing-field-of-an-object-is-)
   - [A module's missing member reads as `()`](#a-modules-missing-member-reads-as-)
@@ -138,6 +139,13 @@ true).
 - `to_int` of a Float outside the Int range, and a `<<` that loses a
   bit, raise.
 
+### A field of `()` reads `()`
+
+`s.pp.cur` with `s.pp` absent, `().k`, and `map_get((), k)` answer `()`
+where they raised. Guards written only to avoid that raise
+(`if x == () => () else => x.f`) still work and may be dropped. `r?.f` is
+a parse error; write `(r?).f`.
+
 ## In 0.88
 
 What a program written for 0.87 may need to change for 0.88.
@@ -158,7 +166,7 @@ println(o.age == ())        // true: absent, not an error
 println(o.age ?? 36)        // 36
 ```
 
-This rule is settled for 1.0 ([Stability](stability.md#settled-in-088)).
+This rule is settled for 1.0 ([Stability](stability.md#settled-before-10)).
 
 ### A module's missing member reads as `()`
 

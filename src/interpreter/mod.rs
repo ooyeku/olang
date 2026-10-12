@@ -4653,6 +4653,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             // `m.key` on a map is `map_get(m, "key")`: the key's value,
             // or `()` when it is absent.
             Value::Map(ref map) => Ok(map.get(field).cloned().unwrap_or(Value::Unit)),
+            // A field of `()` is `()`: an absent record's field is absent
+            // too, so `s.pp.cur` reads `()` when `s.pp` is.
+            Value::Unit => Ok(Value::Unit),
             _ => Err(InterpreterError::TypeError {
                 message: format!("Cannot access field '{}' on non-struct value", field),
             }),
