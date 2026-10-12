@@ -10,14 +10,30 @@ correct.
 
 The language surface is **closed**. The syntax and behavior documented in
 [the language reference](language.md) and [the stdlib reference](stdlib.md)
-are a commitment, not a snapshot: the two deliberate breaking releases the
-[roadmap](roadmap.md) planned — gradual-typing enforcement in 0.48 and the
-scope, mutability, stdlib-convention, and error-model changes across
-0.61–0.65 — have both shipped, each with a migration guide in the
-CHANGELOG. What remains before the 1.0 tag is this contract and the release
-mechanics, not further changes to what already works. The guarantees below
-hold now and are what 1.0 commits to permanently; the [semver
-contract](#versioning) states what could ever change them and at what cost.
+are a commitment, not a snapshot. The deliberate breaking changes before
+1.0 have shipped, each recorded in the CHANGELOG with what to change:
+gradual-typing enforcement in 0.48; the scope, mutability,
+stdlib-convention and error-model changes across 0.61–0.65; operator
+precedence in 0.68; and, in 0.88, the last release before 1.0, the
+settling of records (a missing field of an object reads as `()`), of
+modules (a missing member reads as `()`), and of how a lambda stage in a
+pipeline ends ([Settled in 0.88](#settled-in-088); [Migrating to
+0.88](migrating.md)). Earlier editions of this chapter called 0.61 and
+then 0.68 the final deliberate break; 0.88's changes were made because
+1.0 freezes what it ships, and each is small, found by `olang check`,
+and listed in the migration guide. What remains before the 1.0 tag is
+the release itself. The guarantees below hold now and are what 1.0
+commits to permanently; the [semver contract](#versioning) states what
+could ever change them and at what cost.
+
+## Table of contents
+
+- [The 1.0 commitment](#the-10-commitment)
+- [Platforms](#platforms)
+- [Settled in 0.88](#settled-in-088)
+- [What each surface guarantees](#what-each-surface-guarantees)
+- [Versioning](#versioning)
+- [How this is enforced](#how-this-is-enforced)
 
 ## The 1.0 commitment
 
@@ -35,6 +51,40 @@ contract](#versioning) states what could ever change them and at what cost.
 4. **The execution tiers agree.** Any observable difference between
    `--no-ovm` and the default tiered execution — bytecode or JIT — is a
    bug. Optimization work must be invisible.
+
+## Platforms
+
+1.0 promises **macOS**: it is the platform every release is tested and
+verified on (Apple silicon; the Intel build is made from the same
+source), and every guarantee in this chapter is made for it. Linux and
+Windows are **unsupported previews**: Linux binaries are released and
+its headless tests pass, Windows compiles and has not been run, and a
+program is welcome to run on either, but no behaviour there is
+promised — the desktop engine's windows on Windows and Wayland, the
+terminal layer on Windows, and the capabilities `gui.platform()`
+reports false are untried or incomplete (the roadmap's [parked
+platforms](roadmap.md#platforms-parked)). A difference between macOS and
+a preview platform is not a break of this contract. When a platform is
+supported, this section will say so, and that is an addition.
+
+## Settled in 0.88
+
+These rules were decided in 0.88 so that 1.0 ships them; they are part
+of the commitment and will not be reversed:
+
+- **A missing field of an object or a parsed JSON object reads as `()`**,
+  as a map's missing key does (`o.k`, `map_get(o, "k")`). A declared
+  struct's missing field raises. Code written against this rule keeps
+  working under every 1.x release; it is not a breaking change after
+  1.0, because it is the 1.0 behaviour. `olang check` reports a read of a
+  key no construction of the value has, and of a field a declared struct
+  never has, as the safety net.
+- **A module's missing member reads as `()`**; calling it raises naming
+  the nearest member.
+- **An unparenthesized lambda stage in a pipeline ends at the next
+  `|>`.**
+- **`??`'s level** is below the arithmetic, the pipeline and the ranges,
+  above the comparisons.
 
 ## What each surface guarantees
 
@@ -65,9 +115,9 @@ modules `str`, `col`, `math`, `json`, `toml`, `csv`, `re`, `dates`,
 embedded olang modules (`colx`, `mathx`) and packages (`cli`, `term`, `ui`,
 `viz`, `dash`) follow the same append-mostly rule.
 
-**Scope and mutability settled in 0.61.0**, as the second and final
-deliberate breaking change before 1.0 (recorded in the CHANGELOG with a
-migration guide). Three rules that were advisory warnings in 0.50–0.60
+**Scope and mutability settled in 0.61.0**, as the second deliberate
+breaking change before 1.0 (recorded in the CHANGELOG with a migration
+guide; the later ones are listed at the top of this chapter). Three rules that were advisory warnings in 0.50–0.60
 became enforced errors, checked statically before a program runs and
 therefore identical on every tier:
 
@@ -290,11 +340,12 @@ release. Such changes are recorded in [CHANGELOG.md](../CHANGELOG.md)
 under Fixed, with the reasoning, so the distinction between "we fixed
 what was wrong" and "we changed what was right" is always on the record.
 
-**Before the 1.0 tag.** The surface is already frozen; the version number
-has not yet caught up. Until 1.0.0 is tagged, minor releases (`0.66 →
-0.67`) remain additive and fix-only in practice, and the contract above is
-the one they already honor. The 1.0 release changes the number and the
-promise's *formality*, not the code's behavior.
+**Before the 1.0 tag.** Until 1.0.0 is tagged, a minor release may still
+settle a rule, as 0.68 and 0.88 did — each such change listed in the
+CHANGELOG and found by `olang check` where it can be. 0.88 is the last
+release before 1.0: from 1.0 the contract above binds every release,
+and the 1.0 release changes the number and the promise's *formality*,
+not the code's behavior.
 
 ## How this is enforced
 

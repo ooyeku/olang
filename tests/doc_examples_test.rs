@@ -207,3 +207,9 @@ fn packages_chapter_examples_work() {
 fn tooling_chapter_examples_work() {
     run_doc_file("docs/tooling.md", include_str!("../docs/tooling.md"));
 }
+
+#[test]
+fn whats_new_and_migration_examples_work() {
+    run_doc_file("docs/whats-new.md", include_str!("../docs/whats-new.md"));
+    run_doc_file("docs/migrating.md", include_str!("../docs/migrating.md"));
+}
