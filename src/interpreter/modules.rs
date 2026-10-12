@@ -796,6 +796,14 @@ impl Interpreter {
             // module's private helpers).
             let mut reexported: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
+            // A function declared twice in the file is refused, as in a
+            // program file (`scoping::duplicate_functions`).
+            if let Some(dup) = crate::scoping::duplicate_functions(&program.statements).first() {
+                self.module_cache.remove(&file_path_str);
+                return Err(InterpreterError::RuntimeError {
+                    message: format!("{}:{}: {}", file_path_str, dup.line, dup.message),
+                });
+            }
             // Aliases are usable above their declaration in a module too.
             self.register_type_aliases(&program.statements);
             // A module's test blocks run after every declaration of the

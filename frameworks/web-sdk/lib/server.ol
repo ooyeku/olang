@@ -235,8 +235,9 @@ fn sdk_file(rel) = unwrap(fs.read_file(sdk_dir() + "/" + rel))
 // ── the client bundle ────────────────────────────────────────────────
 
 /// The SDK's browser-side modules, in dependency order. `share ` and
-/// intra-SDK `use lib.*` lines are stripped: the bundle is one flat
-/// program, so the names resolve by concatenation.
+/// intra-SDK `use lib.*` lines are stripped: the bundle is one program,
+/// so a shared name resolves by concatenation, and each module's private
+/// names are renamed to its own (`module_scoped`).
 fn browser_modules() = ["lib/html.ol", "lib/forms.ol", "lib/ui.ol",
                         "lib/state.ol", "lib/view.ol", "lib/api.ol",
                         "lib/store.ol"]
@@ -327,12 +328,12 @@ share fn leaked_names(paths, sources) = {
                 let upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
                 let names = filter(found, (n) => !str.contains(upper, str.substring(n, 0, 1)))
                 if len(names) > 0 => {
-                    out = out + [paths[i] + " uses " + join(map(names, (n) => "`" + n + "`"), ", ")
-                        + " without importing or defining " + (if len(names) == 1 => "it" else => "them")
-                        + ": the bundle is one namespace, so the browser resolves "
-                        + (if len(names) == 1 => "it" else => "them")
-                        + " from another module — import " + (if len(names) == 1 => "it" else => "them")
-                        + " where " + (if len(names) == 1 => "it is" else => "they are") + " used"]
+                    out = out + [paths[i] + " uses " + join(map(names, (n) => "`" + n + "`"), ", ") +
+                        " without importing or defining " + (if len(names) == 1 => "it" else => "them") +
+                        ": the bundle is one namespace, so the browser resolves " +
+                        (if len(names) == 1 => "it" else => "them") +
+                        " from another module — import " + (if len(names) == 1 => "it" else => "them") +
+                        " where " + (if len(names) == 1 => "it is" else => "they are") + " used"]
                 }
             },
             Err(e) => ()
@@ -353,6 +354,46 @@ test "a client module that uses a neighbor's name without importing it is named"
     assert_eq(leaked_names(["c.ol"], [typed]), [])
 }
 
+/// A module's private top-level names (its `fn`s and `let`s without
+/// `share`), each mapped to a name only the `n`th module of a bundle has:
+/// spliced into one program, a module keeps its own scope, so two
+/// modules' like-named helpers stay two, and a neighbor's private name
+/// is not reachable by accident.
+fn private_names(source, n) = match meta.parse(source) {
+    Err(e) => #{},
+    Ok(nodes) => fold(nodes, #{}, (acc, node) =>
+        if node.kind == "fn" && !node.shared => map_set(acc, node.name, private_name(n, node.name))
+        else if node.kind == "let" && !node.shared && node.pattern.form == "ident" =>
+            map_set(acc, node.name, private_name(n, node.name))
+        else => acc)
+}
+
+fn private_name(n, name) = "__m" + to_string(n) + "_" + name
+
+/// `source` with its private names made its own (`private_names`). A
+/// module that does not parse is left as it is; the bundle's own parse
+/// reports it.
+fn module_scoped(source, n) = {
+    let names = private_names(source, n)
+    if len(map_keys(names)) == 0 => source
+    else => match meta.rename(source, names) {
+        Ok(text) => text,
+        Err(e) => source
+    }
+}
+
+test "each module's private names stay its own in the bundle" {
+    let a = "fn helper() = \"a\"\nshare fn from_a() = helper()\n"
+    let b = "fn helper() = \"b\"\nshare fn from_b() = helper()\nlet label = { helper: 1 }.helper\n"
+    let scoped_a = module_scoped(a, 0)
+    let scoped_b = module_scoped(b, 1)
+    assert_eq(str.contains(scoped_a, "fn __m0_helper() = \"a\""), true)
+    assert_eq(str.contains(scoped_a, "share fn from_a() = __m0_helper()"), true)
+    assert_eq(str.contains(scoped_b, "{ helper: 1 }.helper"), true)
+    let program = strip_module_lines(scoped_a) + "\n" + strip_module_lines(scoped_b) + "\n[from_a(), from_b()]"
+    assert_eq(meta.eval(program), Ok(["a", "b"]))
+}
+
 /// The client program the browser actually loads: the SDK's browser
 /// modules spliced ahead of the app's client source, with its
 /// `use web { ... }` line removed (the bundle makes it true). The
@@ -369,11 +410,13 @@ share fn bundle_clients(client_sources) = bundle_clients_in(sdk_dir(), client_so
 /// `bundle_clients` with the SDK read from `dir` — what `serve` uses when
 /// its config names an `"sdk_dir"`.
 share fn bundle_clients_in(dir, client_sources) = {
-    let sdk = browser_modules()
-        |> map((m) => strip_module_lines(unwrap(fs.read_file(dir + "/" + m))))
+    let sdk_sources = map(browser_modules(), (m) => unwrap(fs.read_file(dir + "/" + m)))
+    let n_sdk = len(sdk_sources)
+    let sdk = range(0, n_sdk)
+        |> map((i) => strip_module_lines(module_scoped(sdk_sources[i], i)))
         |> join("\n\n")
-    let app_src = client_sources
-        |> map((src) => strip_module_lines(src))
+    let app_src = range(0, len(client_sources))
+        |> map((i) => strip_module_lines(module_scoped(client_sources[i], n_sdk + i)))
         |> join("\n\n// ── module ──\n")
     let bundled = sdk + "\n\n// ── application ──\n" + app_src
     // Expanded here, once, so the browser parses the bundle exactly once:
@@ -392,15 +435,19 @@ share fn bundle_clients_in(dir, client_sources) = {
 }
 
 /// The names of the functions the app's client files declare at their
-/// top level — the default hot list an image carries. A file that does
-/// not parse contributes nothing here; the bundler reports it.
+/// top level, as the bundle names them (a private one renamed to its
+/// module's own, `module_scoped`) — the default hot list an image
+/// carries. A file that does not parse contributes nothing here; the
+/// bundler reports it.
 share fn client_fn_names(client_sources) = {
     let mut names = []
-    for src in client_sources {
-        match meta.parse(src) {
+    for i in range(0, len(client_sources)) {
+        match meta.parse(client_sources[i]) {
             Ok(nodes) => {
                 for node in nodes {
-                    if node.kind == "fn" => { names = names + [node.name] }
+                    if node.kind == "fn" => {
+                        names = names + [bundle_name(client_sources, i, node.name, node.shared)]
+                    }
                 }
             },
             Err(e) => ()
@@ -409,10 +456,27 @@ share fn client_fn_names(client_sources) = {
     names
 }
 
-test "the hot list is the client files' own functions" {
-    let names = client_fn_names(["use web { mount }\nfn view(s) = \"x\"\nlet n = 1\nfn update(s, a) = s"])
-    assert_eq(names, ["view", "update"])
+/// What the bundle calls a name the `i`th client file declares.
+fn bundle_name(client_sources, i, name, shared) =
+    if shared => name else => private_name(len(browser_modules()) + i, name)
+
+/// A hot list as configured, by the names the client files declare,
+/// in the bundle's names.
+fn bundle_hot(client_sources, names) = map(names, (name) => {
+    let mut found = name
+    for i in range(0, len(client_sources)) {
+        let privates = private_names(client_sources[i], len(browser_modules()) + i)
+        if map_has_key(privates, name) => { found = map_get(privates, name) }
+    }
+    found
+})
+
+test "the hot list is the client files' own functions, by their bundle names" {
+    let src = "use web { mount }\nfn view(s) = \"x\"\nlet n = 1\nshare fn update(s, a) = s"
+    let names = client_fn_names([src])
+    assert_eq(names, [private_name(len(browser_modules()), "view"), "update"])
     assert_eq(client_fn_names(["fn ("]), [])
+    assert_eq(bundle_hot([src], ["view", "update"]), names)
 }
 
 test "the served bundle is pre-expanded: no meta fn, no @ sites" {
@@ -468,29 +532,29 @@ share fn static_response(req, body, ctype, tag) =
 /// browser's `mount` starts from exactly what the page shows.
 share fn shell(title, head, wasm_url, has_image, first_paint, state) = {
     let app = if first_paint == () => "<main id=\"app\"></main>"
-        else => "<main id=\"app\" data-olang-state=\"olang-state\">"
-            + render(first_paint) + "</main>"
-            + "<script type=\"application/json\" id=\"olang-state\">"
-            + state_json(state) + "</script>"
+        else => "<main id=\"app\" data-olang-state=\"olang-state\">" +
+            render(first_paint) + "</main>" +
+            "<script type=\"application/json\" id=\"olang-state\">" +
+            state_json(state) + "</script>"
     // The preload names the URL the shim will actually fetch — the same
     // credentials mode as fetch()'s default, so the browser reuses it
     // rather than downloading the runtime twice.
     page(title,
-        "<link rel=\"stylesheet\" href=\"/web.css\">"
-            + "<link rel=\"preload\" href=\"" + wasm_url
-            + "\" as=\"fetch\" type=\"application/wasm\" crossorigin>" + head,
-        raw(app
-            + "<script type=\"module\" src=\"/olang-dom.js\" data-src=\"/app.ol\""
-            + (if has_image => " data-bin=\"/app.olb\"" else => "")
-            + " data-wasm=\"" + wasm_url + "\"></script>"))
+        "<link rel=\"stylesheet\" href=\"/web.css\">" +
+            "<link rel=\"preload\" href=\"" + wasm_url +
+            "\" as=\"fetch\" type=\"application/wasm\" crossorigin>" + head,
+        raw(app +
+            "<script type=\"module\" src=\"/olang-dom.js\" data-src=\"/app.ol\"" +
+            (if has_image => " data-bin=\"/app.olb\"" else => "") +
+            " data-wasm=\"" + wasm_url + "\"></script>"))
 }
 
 /// The state as JSON that is safe inside a `<script>` element: `<` is
 /// escaped, so no string value can close the element early.
 fn state_json(state) = match json.stringify(state) {
     Ok(text) => str.replace(text, "<", "\\u003c"),
-    Err(e) => raise("first paint: the initial state must be JSON data "
-        + "(maps, lists, strings, numbers, booleans): " + show(e))
+    Err(e) => raise("first paint: the initial state must be JSON data " +
+        "(maps, lists, strings, numbers, booleans): " + show(e))
 }
 
 test "the shell carries the first paint and its state when given a view" {
@@ -598,7 +662,8 @@ share fn serve(config) = {
     for line in leaked_names(client_paths, client_sources) { println("WARNING: " + line) }
     let bundle = if len(client_paths) == 0 => ""
         else => bundle_clients_in(sdk, client_sources)
-    let hot = if hot_config == () => client_fn_names(client_sources) else => hot_config
+    let hot = if hot_config == () => client_fn_names(client_sources)
+        else => bundle_hot(client_sources, hot_config)
     // The program image: the bundle parsed here, once, and handed to the
     // browser as bytes its runtime loads without parsing (meta.encode,
     // src/olb.rs), carrying the hot list. The source stays at /app.ol —

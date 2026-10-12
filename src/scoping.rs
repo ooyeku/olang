@@ -63,6 +63,7 @@ pub fn validate_program(program: &Program, predefined: &mut Predefined) -> Vec<S
         line: 0,
         column: 0,
     };
+    v.errors.extend(duplicate_functions(&program.statements));
     v.hoist(&program.statements);
     for stmt in &program.statements {
         v.stmt(stmt);
@@ -70,6 +71,43 @@ pub fn validate_program(program: &Program, predefined: &mut Predefined) -> Vec<S
     // Hand the top-level scope back to the caller for the next program.
     *predefined = v.scopes.swap_remove(0);
     v.errors
+}
+
+/// A top-level `fn` declared twice in one file: the second declaration
+/// replaced the first silently, and in a browser bundle a module's
+/// private helper replaced another's. Each name is declared once per
+/// file; the REPL's redefinition, a later input declaring a name again,
+/// is a separate program and stays allowed.
+pub fn duplicate_functions(statements: &[Statement]) -> Vec<ScopeError> {
+    let mut seen: HashMap<&str, u32> = HashMap::new();
+    let mut errors = Vec::new();
+    for statement in statements {
+        let (line, column) = match statement {
+            Statement::Located { line, column, .. } => (*line, *column),
+            _ => (0, 0),
+        };
+        let name = match statement.unwrapped() {
+            Statement::FunctionDecl(f) | Statement::ShareDecl(ShareDecl::Function(f)) => {
+                f.name.as_str()
+            }
+            _ => continue,
+        };
+        match seen.get(name) {
+            Some(first) => errors.push(ScopeError {
+                message: format!(
+                    "function '{}' is already declared at line {}: a top-level function \
+                     is declared once per file (rename one, or remove the other)",
+                    name, first
+                ),
+                line,
+                column,
+            }),
+            None => {
+                seen.insert(name, line);
+            }
+        }
+    }
+    errors
 }
 
 struct Validator {

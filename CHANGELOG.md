@@ -18,9 +18,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`re.replace` replaces every match**, as `str.replace` does;
   `re.replace_first` replaces one. `re.replace_all` is deprecated and
   keeps working.
+- **A top-level function declared twice in one file is an error**, from
+  `olang check` and before the file runs (the second used to win
+  silently). The REPL still lets a later input redefine a name.
 
 ### Added
 
+- **`meta.rename(source, names)`**: the source with each named binding
+  renamed wherever it binds or refers to a value, and kept where the
+  name is a field, a key, a type or an import. The web SDK's bundler
+  uses it: each module keeps its own scope in the browser bundle (its
+  private names are renamed to its own), where the bundle was one
+  namespace and a module's private helper could replace another's.
 - **`re.replace_first(pattern, text, rep)`** replaces the first match.
 
 ### Changed

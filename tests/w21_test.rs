@@ -299,8 +299,8 @@ fn a_declared_function_costs_kilobytes_not_tens_of_them() {
 fn a_shared_closure_keeps_what_a_snapshot_per_declaration_meant() {
     // The three things the per-declaration snapshot guaranteed, in both
     // tiers, on the main thread, in a task, and through a lambda: an
-    // earlier sibling is the one that was declared THEN (a later
-    // redefinition does not reach back), a sibling shadows a builtin of
+    // earlier sibling is the one that was declared THEN (a file declares
+    // each function once now), a sibling shadows a builtin of
     // its name, and a binding between two declarations is seen by the
     // second only.
     let ws = workspace("runs");
@@ -317,8 +317,8 @@ fn a_shared_closure_keeps_what_a_snapshot_per_declaration_meant() {
          fn after_k() = k\n\
          let xs = [10, 20, 30]\n\
          let first = go(xs)\n\
-         fn helper(x) = x + 1000\n\
-         fn late(xs) = xs |> map(helper) |> sum\n\
+         fn helper_later(x) = x + 1000\n\
+         fn late(xs) = xs |> map(helper_later) |> sum\n\
          println(to_string(first) + \" \" + to_string(go(xs)) + \" \" + to_string(via_lambda(xs)))\n\
          println(to_string(late(xs)))\n\
          println(to_string(use_it(1)))\n\

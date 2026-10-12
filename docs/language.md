@@ -49,6 +49,10 @@ println(greeting + ", " + audience)
 
 Statements are one of: a declaration (`let`, `fn`, `type`, `trait`, `impl`,
 `error`, `test`), a module statement (`use`, `share`), or an expression.
+A top-level function is declared once per file: a second `fn` of the
+same name in the same file is an error, from `olang check` and before the
+file runs (the REPL, where each input is a program of its own, lets a
+later input redefine a name).
 Expressions evaluated at the top level are allowed and their value is
 discarded (the last one is the program's result in the REPL).
 

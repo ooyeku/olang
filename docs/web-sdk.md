@@ -436,13 +436,17 @@ server, never as a blank page. `"client"` may be a list of paths,
 bundled in order, so browser helpers live in tested lib modules that
 server code can import too.
 
-The bundle is one namespace, so a client module that uses a name it
-never imported still resolves it in the browser — from whichever module
-is spliced beside it — and fails the day it runs natively or the
-neighbor renames the function. `serve` checks each client module on its
-own before splicing (`meta.unresolved`) and prints one `WARNING:` line
-per module that has such names, naming them; `leaked_names(paths,
-sources)` answers the same lines for a build script or a test.
+Each module keeps its own scope in the bundle, as it has when it runs
+natively. Its private top-level names — the `fn`s and `let`s it does not
+`share` — are renamed to names only that module has (`meta.rename`), so
+two modules' like-named helpers stay two, and a module that uses a
+neighbor's private helper without importing it fails in the browser as
+it would natively. What a module shares is one name across the bundle,
+as an import makes it. `serve` checks each client module on its own
+before splicing (`meta.unresolved`) and prints one `WARNING:` line per
+module that uses a name it neither defines nor imports, naming them;
+`leaked_names(paths, sources)` answers the same lines for a build
+script or a test.
 Capitalized names are not reported: a variant constructor arrives with
 the import of its enum, which the module's text alone does not show.
 

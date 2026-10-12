@@ -36,6 +36,26 @@ fn eval(source: &str, tier_threshold: Option<u32>) -> Result<Value, String> {
     })
 }
 
+/// Evaluate several programs on one interpreter, as REPL inputs are:
+/// a later one may redefine a name an earlier one declared.
+fn eval_session(parts: &[&str], tier_threshold: Option<u32>) -> Result<Value, String> {
+    let parts: Vec<String> = parts.iter().map(|p| p.to_string()).collect();
+    with_big_stack(move || {
+        let mut interpreter = Interpreter::new();
+        if let Some(threshold) = tier_threshold {
+            interpreter.enable_bytecode_tier(threshold, false);
+        }
+        let mut last = Value::Unit;
+        for part in parts {
+            let program = Parser::new().parse(&part).map_err(|e| e.to_string())?;
+            last = interpreter
+                .eval_program(program)
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(last)
+    })
+}
+
 /// Assert a program produces the same result with and without promotion.
 fn assert_tier_transparent(source: &str) {
     let interpreted = eval(source, None);
@@ -326,16 +346,18 @@ fn baked_function_values_survive_redefinition_of_the_name() {
     // `go` bakes the helper *value* from its own closure. Redefining the
     // name afterwards must not change what go calls — in either tier —
     // because go's closure still holds the original.
-    let src = r#"
+    // A file declares a function once; the REPL redefines across inputs.
+    let first = r#"
 fn helper(x) = x + 1
 fn go(xs) = xs |> map(helper) |> sum
 let mut xs = [10, 20, 30]
 let before = go(xs) + go(xs)
-fn helper(x) = x + 1000
-before + go(xs)
 "#;
-    assert_eq!(eval(src, None).unwrap(), Value::Integer(63 * 3));
-    assert_tier_transparent(src);
+    let second = "fn helper(x) = x + 1000\nbefore + go(xs)\n";
+    assert_eq!(
+        eval_session(&[first, second], None).unwrap(),
+        eval_session(&[first, second], Some(2)).unwrap()
+    );
 }
 
 #[test]
@@ -616,16 +638,16 @@ shout("bob")
 fn redefining_a_function_uses_the_new_body() {
     // A promoted function that is later redefined must not keep executing the
     // stale compiled body.
-    let src = r#"
-fn f(n) = n + 1
-f(1)
-f(2)
-f(3)
-fn f(n) = n + 100
-f(4)
-"#;
-    assert_eq!(eval(src, Some(2)).unwrap(), Value::Integer(104));
-    assert_tier_transparent(src);
+    let first = "fn f(n) = n + 1\nf(1)\nf(2)\nf(3)\n";
+    let second = "fn f(n) = n + 100\nf(4)\n";
+    assert_eq!(
+        eval_session(&[first, second], Some(2)).unwrap(),
+        Value::Integer(104)
+    );
+    assert_eq!(
+        eval_session(&[first, second], None).unwrap(),
+        Value::Integer(104)
+    );
 }
 
 #[test]

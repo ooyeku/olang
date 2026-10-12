@@ -41,6 +41,7 @@ pub fn create_meta_module() -> Value {
     module.insert("fresh".to_string(), builtin("fresh", 1));
     module.insert("exports".to_string(), builtin("exports", 1));
     module.insert("unresolved".to_string(), builtin("unresolved", 1));
+    module.insert("rename".to_string(), builtin("rename", 2));
     Value::Struct {
         type_name: "Module".to_string(),
         fields: std::sync::Arc::new(module),
@@ -67,6 +68,7 @@ pub fn call_meta_function(
         "fresh" => meta_fresh(args),
         "exports" => meta_exports(args),
         "unresolved" => meta_unresolved(args),
+        "rename" => meta_rename(args),
         _ => Err(format!("Unknown meta function: {}", name).into()),
     }
 }
@@ -101,6 +103,64 @@ fn meta_unresolved(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
             Ok(Value::Ok(Box::new(Value::List(std::sync::Arc::new(names)))))
         }
     }
+}
+
+/// `meta.rename(source, names)` → Ok(text) | Err(message): `source`
+/// with each name that is a key of the map `names` renamed to its value
+/// wherever it binds or refers to a value (`Parser::rename_identifiers`
+/// says where it does not). What a splicer uses to keep a module's
+/// private names its own.
+fn meta_rename(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 2 {
+        return Err(super::misuse::arity("meta.rename", "2", args.len()));
+    }
+    let source = match &args[0] {
+        Value::String(s) => s.as_str().to_string(),
+        other => {
+            return Err(super::misuse::arg_type(
+                "meta.rename",
+                "source",
+                "a String",
+                other,
+            ));
+        }
+    };
+    let entries: Vec<(String, Value)> = match &args[1] {
+        Value::Map(m) => m.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+        Value::Struct { type_name, fields } if type_name != "Module" => {
+            fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        }
+        other => {
+            return Err(super::misuse::arg_type(
+                "meta.rename",
+                "names",
+                "a Map",
+                other,
+            ));
+        }
+    };
+    let mut renames = std::collections::HashMap::new();
+    for (from, to) in entries {
+        match to {
+            Value::String(ref t) => {
+                renames.insert(from, t.as_str().to_string());
+            }
+            other => {
+                return Err(super::misuse::arg_type(
+                    "meta.rename",
+                    "each new name",
+                    "a String",
+                    &other,
+                ));
+            }
+        }
+    }
+    Ok(
+        match crate::parser::Parser::rename_identifiers(&source, &renames) {
+            Ok(text) => Value::Ok(Box::new(Value::String(std::sync::Arc::new(text)))),
+            Err(e) => Value::Err(Box::new(Value::String(std::sync::Arc::new(e)))),
+        },
+    )
 }
 
 /// `meta.parse(source)` → Ok(list of statement node maps) | Err(message).

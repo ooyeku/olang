@@ -339,3 +339,26 @@ main()
         Ok(l(vec![s("aXbX"), s("aXb1"), s("aXbX")]))
     );
 }
+
+// ── A file declares a function once; a bundle keeps module scope ──────
+
+#[test]
+fn a_function_declared_twice_in_a_file_is_refused() {
+    let err =
+        agree_tiered("fn f() = 1\nfn f() = 2\nfn main() = f()\nmain()\n").expect_err("refused");
+    assert!(err.contains("'f' is already declared"), "{err}");
+}
+
+#[test]
+fn meta_rename_renames_values_and_keeps_fields() {
+    let src = r##"
+let src = "fn helper(x) = x + 1\nlet r = { helper: helper(1) }\nfn use_it(helper) = `${helper(2)}`\nprintln(r.helper)\n"
+unwrap(meta.rename(src, #{ "helper": "h2" }))
+"##;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(s(
+            "fn h2(x) = x + 1\nlet r = { helper: h2(1) }\nfn use_it(h2) = `${h2(2)}`\nprintln(r.helper)\n"
+        ))
+    );
+}
