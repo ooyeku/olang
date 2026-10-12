@@ -191,7 +191,9 @@ pub fn flag_address() -> usize {
 #[cold]
 #[inline(never)]
 pub fn interpreter_error() -> crate::interpreter::InterpreterError {
-    crate::interpreter::InterpreterError::RuntimeError { message: MESSAGE.to_string() }
+    crate::interpreter::InterpreterError::RuntimeError {
+        message: MESSAGE.to_string(),
+    }
 }
 
 /// The interrupt as the VM's error, built out of line.

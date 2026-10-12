@@ -12,7 +12,9 @@ fn eval(src: &str) -> Value {
 #[test]
 fn a_file_and_a_folder_go_to_the_trash_and_come_back() {
     if !cfg!(target_os = "macos") {
-        let v = eval(r#"match fs.trash("/nonexistent-olang-trash-test") { Ok(p) => "ok", Err(e) => e }"#);
+        let v = eval(
+            r#"match fs.trash("/nonexistent-olang-trash-test") { Ok(p) => "ok", Err(e) => e }"#,
+        );
         assert!(format!("{v}").contains("no such file"), "{v}");
         return;
     }
@@ -39,6 +41,9 @@ fn a_file_and_a_folder_go_to_the_trash_and_come_back() {
         g = folder.display()
     );
     let v = format!("{}", eval(&src));
-    assert!(v.starts_with(r#"[[false, false], [true, true], true, Ok("kept"), true, "#), "{v}");
+    assert!(
+        v.starts_with(r#"[[false, false], [true, true], true, Ok("kept"), true, "#),
+        "{v}"
+    );
     assert!(v.contains("no such file or folder"), "{v}");
 }

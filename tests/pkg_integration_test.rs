@@ -659,24 +659,36 @@ fn importing_a_library_package_by_name_still_works() {
 fn a_path_dependencys_own_path_dependencies_are_followed() {
     // app → mid → base, each by path relative to its own manifest.
     let ws = workspace("transitive");
-    write(&ws.join("libs/base/olang.toml"), "[package]\nname = \"base\"\nversion = \"1.0.0\"\n");
+    write(
+        &ws.join("libs/base/olang.toml"),
+        "[package]\nname = \"base\"\nversion = \"1.0.0\"\n",
+    );
     write(&ws.join("libs/base/index.ol"), "share fn seed() = 40\n");
     write(
         &ws.join("libs/mid/olang.toml"),
         "[package]\nname = \"mid\"\nversion = \"1.0.0\"\n\n[dependencies]\nbase = { path = \"../base\" }\n",
     );
-    write(&ws.join("libs/mid/index.ol"), "use base { seed }\nshare fn answer() = seed() + 2\n");
+    write(
+        &ws.join("libs/mid/index.ol"),
+        "use base { seed }\nshare fn answer() = seed() + 2\n",
+    );
     write(
         &ws.join("apps/app/olang.toml"),
         "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nmid = { path = \"../../libs/mid\" }\n",
     );
     let app = ws.join("apps/app");
-    assert_eq!(run_program(&app, "use mid { answer }\nanswer()\n"), olang::Value::Integer(42));
+    assert_eq!(
+        run_program(&app, "use mid { answer }\nanswer()\n"),
+        olang::Value::Integer(42)
+    );
     let lock = fs::read_to_string(app.join("olang.lock")).expect("lock");
     assert!(lock.contains("[package.base"), "{lock}");
     assert!(lock.contains("../../libs/base"), "{lock}");
     // The lock replays as it is: a second install leaves it byte for byte.
     install(&app, &InstallOptions::default()).expect("install again");
-    assert_eq!(fs::read_to_string(app.join("olang.lock")).expect("lock"), lock);
+    assert_eq!(
+        fs::read_to_string(app.join("olang.lock")).expect("lock"),
+        lock
+    );
     let _ = fs::remove_dir_all(&ws);
 }

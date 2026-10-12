@@ -426,14 +426,21 @@ fn humanize_pest_error(e: pest::error::Error<Rule>, input: &str) -> ParseError {
     // A spread where the grammar has none: name the form instead of what
     // the parser wanted next (which read as a missing `}`).
     let raw_line = input.lines().nth(line.saturating_sub(1)).unwrap_or("");
-    let at: String = raw_line.chars().skip(column.saturating_sub(1)).take(3).collect();
+    let at: String = raw_line
+        .chars()
+        .skip(column.saturating_sub(1))
+        .take(3)
+        .collect();
     let message = if at == "..." {
         "a spread `...` is not supported here: it spreads a map or an object into a \
          `#{ ... }` or `{ ... }` literal only — a list (`xs + ys`), a call's arguments and \
          a declared struct's literal (`map_merge(p, #{ ... })`) have none"
             .to_string()
     } else if message.starts_with("expected")
-        && raw_line.chars().take(column.saturating_sub(1)).all(char::is_whitespace)
+        && raw_line
+            .chars()
+            .take(column.saturating_sub(1))
+            .all(char::is_whitespace)
         && let Some((oline, ocol)) = open_map_literal_at(input, line, column)
     {
         // A statement starting inside a `#{` the line before did not
@@ -773,7 +780,8 @@ impl Parser {
         input: &str,
         base_dir: Option<&std::path::Path>,
     ) -> Result<Program, ParseError> {
-        self.parse_module(input, base_dir).map(|(program, _)| program)
+        self.parse_module(input, base_dir)
+            .map(|(program, _)| program)
     }
 
     /// `parse_with_dir`, saying whether the text held no macro construct
@@ -1333,7 +1341,10 @@ impl Parser {
         Self::finish_binary(operands, operators)
     }
 
-    fn finish_binary(operands: Vec<Expr>, operators: Vec<(Rule, String)>) -> Result<Expr, ParseError> {
+    fn finish_binary(
+        operands: Vec<Expr>,
+        operators: Vec<(Rule, String)>,
+    ) -> Result<Expr, ParseError> {
         if operands.len() != operators.len() + 1 {
             return Err(ParseError::InvalidSyntax {
                 message: "Missing operand in binary expression".to_string(),
@@ -1383,7 +1394,11 @@ impl Parser {
                     operands.push(match inner.as_rule() {
                         Rule::unit => Expr::Tuple(std::sync::Arc::new(Vec::new())),
                         Rule::cmp_group => self.build_paren_expr(
-                            inner.into_inner().next().expect("a parenthesized group").into_inner(),
+                            inner
+                                .into_inner()
+                                .next()
+                                .expect("a parenthesized group")
+                                .into_inner(),
                         )?,
                         _ => self.build_unary_expr(inner.into_inner())?,
                     });
@@ -1464,7 +1479,11 @@ impl Parser {
         &self,
         expr: Pair<Rule>,
     ) -> Result<(Expr, Vec<(Rule, String)>, Vec<Expr>), ParseError> {
-        let Some(binary) = expr.clone().into_inner().next().filter(|p| p.as_rule() == Rule::binary_expr)
+        let Some(binary) = expr
+            .clone()
+            .into_inner()
+            .next()
+            .filter(|p| p.as_rule() == Rule::binary_expr)
         else {
             return Ok((self.build_expr(expr.into_inner())?, Vec::new(), Vec::new()));
         };
@@ -1477,13 +1496,21 @@ impl Parser {
             let rest = children.split_off(at);
             self.collect_binary(children, &mut operands, &mut operators)?;
             self.collect_binary(rest, &mut spill_operands, &mut spill_ops)?;
-            return Ok((Self::finish_binary(operands, operators)?, spill_ops, spill_operands));
+            return Ok((
+                Self::finish_binary(operands, operators)?,
+                spill_ops,
+                spill_operands,
+            ));
         }
         let last = children.pop().expect("an operand");
         self.collect_binary(children, &mut operands, &mut operators)?;
         let tail = match last.as_rule() {
             Rule::unary_expr => Some(last.clone()),
-            Rule::cmp_rhs => last.clone().into_inner().next().filter(|p| p.as_rule() == Rule::unary_expr),
+            Rule::cmp_rhs => last
+                .clone()
+                .into_inner()
+                .next()
+                .filter(|p| p.as_rule() == Rule::unary_expr),
             _ => None,
         };
         let staged = match tail {
@@ -1506,7 +1533,11 @@ impl Parser {
             }
             None => self.collect_binary(vec![last], &mut operands, &mut operators)?,
         }
-        Ok((Self::finish_binary(operands, operators)?, spill_ops, spill_operands))
+        Ok((
+            Self::finish_binary(operands, operators)?,
+            spill_ops,
+            spill_operands,
+        ))
     }
 
     /// `build_if_expr` for an `if` ending a pipeline stage: its last
@@ -3706,7 +3737,9 @@ impl Parser {
                 _ => parts.push(Spread::Entry(self.build_field_value(inner)?)),
             }
         }
-        Ok(Self::spread_literal(parts, |fields| Expr::AnonymousObject { fields }))
+        Ok(Self::spread_literal(parts, |fields| {
+            Expr::AnonymousObject { fields }
+        }))
     }
 
     fn build_map_literal(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
@@ -3733,14 +3766,19 @@ impl Parser {
                 _ => parts.push(Spread::Entry(self.build_map_entry_from(inner)?)),
             }
         }
-        Ok(Self::spread_literal(parts, |entries| Expr::MapLiteral { entries }))
+        Ok(Self::spread_literal(parts, |entries| Expr::MapLiteral {
+            entries,
+        }))
     }
 
     /// `...e`'s expression.
     fn build_spread(&self, pair: pest::iterators::Pair<Rule>) -> Result<Expr, ParseError> {
-        let e = pair.into_inner().next().ok_or_else(|| ParseError::InvalidSyntax {
-            message: "a spread `...` needs a value to spread".to_string(),
-        })?;
+        let e = pair
+            .into_inner()
+            .next()
+            .ok_or_else(|| ParseError::InvalidSyntax {
+                message: "a spread `...` needs a value to spread".to_string(),
+            })?;
         self.build_expr(e.into_inner())
     }
 
@@ -3972,7 +4010,11 @@ impl Parser {
         let call = match field {
             None => Expr::Call {
                 callee: Box::new(Expr::Identifier(INDEX_SET_BUILTIN.to_string())),
-                arguments: vec![me, Argument::Positional(index), Argument::Positional(element)],
+                arguments: vec![
+                    me,
+                    Argument::Positional(index),
+                    Argument::Positional(element),
+                ],
             },
             Some(key) => Expr::Call {
                 callee: Box::new(Expr::Identifier(INDEX_SET_IN_BUILTIN.to_string())),

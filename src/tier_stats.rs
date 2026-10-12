@@ -176,7 +176,8 @@ pub fn reason_code(reason: &str) -> &'static str {
         "cell"
     } else if r.contains("captur") || r.contains("closure") || r.contains("dynamic function call") {
         "capture"
-    } else if r.contains("cannot convert") || r.contains("boundary") || r.contains("representable") {
+    } else if r.contains("cannot convert") || r.contains("boundary") || r.contains("representable")
+    {
         "boundary"
     } else if r.contains("dependency chain") {
         "depth"
@@ -374,11 +375,15 @@ pub fn report(reset: bool) -> J {
         }
         let fact = facts.get(&key).cloned().unwrap_or_default();
         let lambda = row.name.starts_with('<');
-        let ff = row.file.as_ref().filter(|f| !f.starts_with("__embedded__")).map(|f| {
-            files
-                .entry(f.clone())
-                .or_insert_with(|| FileFacts::read(Path::new(f)))
-        });
+        let ff = row
+            .file
+            .as_ref()
+            .filter(|f| !f.starts_with("__embedded__"))
+            .map(|f| {
+                files
+                    .entry(f.clone())
+                    .or_insert_with(|| FileFacts::read(Path::new(f)))
+            });
         let (line, col) = ff
             .as_ref()
             .and_then(|ff| ff.lines.get(&row.name).copied())
@@ -463,7 +468,8 @@ pub fn report(reset: bool) -> J {
             }
         });
         if let Some(v) = &violation {
-            violations.push(json!({ "name": row.name, "file": row.file, "line": line, "message": v }));
+            violations
+                .push(json!({ "name": row.name, "file": row.file, "line": line, "message": v }));
         }
         functions.push(json!({
             "name": row.name,
@@ -526,8 +532,14 @@ mod tests {
         assert!(glob("ly_*", "ly_cell"));
         assert!(!glob("ly_*", "rt_frame"));
         assert!(glob("rt_frame", "rt_frame"));
-        assert_eq!(spec_path("json:/tmp/x.json"), Some(PathBuf::from("/tmp/x.json")));
+        assert_eq!(
+            spec_path("json:/tmp/x.json"),
+            Some(PathBuf::from("/tmp/x.json"))
+        );
         assert_eq!(spec_path("text"), None);
-        assert_eq!(reason_code("calls 'ly_cell', which cannot compile"), "callee");
+        assert_eq!(
+            reason_code("calls 'ly_cell', which cannot compile"),
+            "callee"
+        );
     }
 }

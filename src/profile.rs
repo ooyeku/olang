@@ -156,7 +156,9 @@ fn release() {
     let r = registry();
     let before = r
         .users
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| Some(n.saturating_sub(1)))
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+            Some(n.saturating_sub(1))
+        })
         .unwrap_or(0);
     if before <= 1 {
         r.enabled.store(false, Ordering::Relaxed);
@@ -460,7 +462,11 @@ pub fn push_at(name: &str, file: Option<&str>, tier: Tier) -> bool {
         return false;
     }
     let anon = is_anonymous(name);
-    let file = if stats_on() || detail_on() { file } else { None };
+    let file = if stats_on() || detail_on() {
+        file
+    } else {
+        None
+    };
     LOCAL.with(|stack| {
         // Resolve the display name through the per-thread memo; the
         // global intern lock is touched once per new (name, parent)
@@ -734,7 +740,10 @@ fn sample_once(out: &mut Collected) {
     // lock new threads need to register — and thread creation and the
     // sampler livelock each other.
     if stats_on() {
-        for s in stacks.iter().filter(|s| std::sync::Arc::strong_count(s) <= 1) {
+        for s in stacks
+            .iter()
+            .filter(|s| std::sync::Arc::strong_count(s) <= 1)
+        {
             retire(s);
         }
     }
@@ -795,7 +804,11 @@ fn sample_once(out: &mut Collected) {
             for i in 0..depth {
                 let id = stack.frames[i].load(Ordering::Relaxed);
                 let bits = stack.tiers[i].load(Ordering::Relaxed);
-                let code = if bits & BUILTIN_BIT != 0 { 3 } else { Tier::from_u8(bits) as u32 };
+                let code = if bits & BUILTIN_BIT != 0 {
+                    3
+                } else {
+                    Tier::from_u8(bits) as u32
+                };
                 if id == last {
                     if let Some(top) = tiered.last_mut() {
                         *top = (id << 2) | code;
@@ -1199,7 +1212,11 @@ impl Session {
         let c = self.shared.lock().unwrap_or_else(|e| e.into_inner());
         let mut out = [0u64; 4];
         for ((_, bits), n) in &c.leaves {
-            let slot = if bits & BUILTIN_BIT != 0 { 3 } else { Tier::from_u8(*bits) as usize };
+            let slot = if bits & BUILTIN_BIT != 0 {
+                3
+            } else {
+                Tier::from_u8(*bits) as usize
+            };
             out[slot] += n;
         }
         (out, c.total)
@@ -1303,7 +1320,10 @@ fn json_of(
     let mut folded_text = String::new();
     let mut tiers = [0u64; 4];
     for (path, n) in &paths {
-        let ids: Vec<usize> = path.iter().map(|code| frame_of(code >> 2, &mut frames)).collect();
+        let ids: Vec<usize> = path
+            .iter()
+            .map(|code| frame_of(code >> 2, &mut frames))
+            .collect();
         let ts: Vec<u32> = path.iter().map(|code| code & 3).collect();
         if let (Some(leaf), Some(t)) = (ids.last(), ts.last()) {
             self_n.entry(*leaf).or_insert([0; 4])[*t as usize] += **n;
@@ -1320,8 +1340,12 @@ fn json_of(
                 .iter()
                 .map(|i| frames[*i]["name"].as_str().unwrap_or("?").replace(';', ","))
                 .collect();
-            folded_text.push_str(&format!("{} {}
-", names.join(";"), n));
+            folded_text.push_str(&format!(
+                "{} {}
+",
+                names.join(";"),
+                n
+            ));
         }
         stacks.push(json!({ "f": ids, "t": ts, "n": n }));
     }
@@ -1339,7 +1363,10 @@ fn json_of(
         .into_iter()
         .map(|(i, s, t)| {
             let own: u64 = s.iter().sum();
-            let tier = (0..4).max_by_key(|k| (s[*k], 3 - *k)).filter(|_| own > 0).map(|k| TIER_NAMES[k]);
+            let tier = (0..4)
+                .max_by_key(|k| (s[*k], 3 - *k))
+                .filter(|_| own > 0)
+                .map(|k| TIER_NAMES[k]);
             json!({
                 "frame": i,
                 "self": own,
@@ -1384,8 +1411,12 @@ pub fn thread_counts() -> (usize, usize) {
     let Ok(stacks) = registry().stacks.lock() else {
         return (0, 0);
     };
-    let alive: Vec<&Arc<ThreadStack>> = stacks.iter().filter(|s| Arc::strong_count(s) > 1).collect();
-    let parked = alive.iter().filter(|s| s.blocked.load(Ordering::Relaxed)).count();
+    let alive: Vec<&Arc<ThreadStack>> =
+        stacks.iter().filter(|s| Arc::strong_count(s) > 1).collect();
+    let parked = alive
+        .iter()
+        .filter(|s| s.blocked.load(Ordering::Relaxed))
+        .count();
     (alive.len(), parked)
 }
 
@@ -1580,7 +1611,11 @@ fn add_native_inner(totals: &mut [u64], reset: bool) {
     let guard = NATIVE_INNER.lock().unwrap_or_else(|e| e.into_inner());
     let Some(map) = guard.as_ref() else { return };
     for ((name, file), counter) in map.iter() {
-        let n = if reset { counter.swap(0, Ordering::Relaxed) } else { counter.load(Ordering::Relaxed) };
+        let n = if reset {
+            counter.swap(0, Ordering::Relaxed)
+        } else {
+            counter.load(Ordering::Relaxed)
+        };
         if n == 0 || is_anonymous(name) {
             continue;
         }

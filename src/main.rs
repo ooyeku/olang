@@ -576,7 +576,10 @@ fn run() -> i32 {
     // vital signs from the start, stacks while DIR/attach exists. Not for
     // `olang profile`, which runs its own.
     let profiling = matches!(cli.command, Some(Commands::Profile { .. }));
-    if let Some(dir) = cli.profile_live.clone().or_else(|| std::env::var_os("OLANG_PROFILE_LIVE").map(PathBuf::from))
+    if let Some(dir) = cli
+        .profile_live
+        .clone()
+        .or_else(|| std::env::var_os("OLANG_PROFILE_LIVE").map(PathBuf::from))
         && !serving
         && !profiling
     {
@@ -585,13 +588,28 @@ fn run() -> i32 {
         unsafe { std::env::set_var("OLANG_PROFILE_LIVE", &dir) };
         olang::profile_live::start(olang::profile_live::LiveSpec {
             dir: Some(dir),
-            every_ms: std::env::var("OLANG_PROFILE_LIVE_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(olang::profile_live::DEFAULT_EVERY_MS),
+            every_ms: std::env::var("OLANG_PROFILE_LIVE_EVERY")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(olang::profile_live::DEFAULT_EVERY_MS),
             from_start: false,
             interval_us: olang::profile_live::ATTACH_INTERVAL_US,
-            label: std::env::args().skip(1).filter(|a| a.ends_with(".ol")).last().map(|a| std::path::absolute(&a).map(|p| p.display().to_string()).unwrap_or(a)).unwrap_or_default(),
+            label: std::env::args()
+                .skip(1)
+                .filter(|a| a.ends_with(".ol"))
+                .last()
+                .map(|a| {
+                    std::path::absolute(&a)
+                        .map(|p| p.display().to_string())
+                        .unwrap_or(a)
+                })
+                .unwrap_or_default(),
         });
     }
-    if let Some(spec) = cli.ovm_stats.clone().or_else(|| std::env::var("OLANG_OVM_STATS").ok())
+    if let Some(spec) = cli
+        .ovm_stats
+        .clone()
+        .or_else(|| std::env::var("OLANG_OVM_STATS").ok())
         && !serving
     {
         match olang::tier_stats::spec_path(&spec) {
@@ -605,13 +623,18 @@ fn run() -> i32 {
                 if olang::tier_stats::is_dir_spec(&path) {
                     // SAFETY: single-threaded at this point — no interpreter
                     // or worker threads have started.
-                    unsafe { std::env::set_var("OLANG_OVM_STATS", format!("json:{}/", path.display())) };
+                    unsafe {
+                        std::env::set_var("OLANG_OVM_STATS", format!("json:{}/", path.display()))
+                    };
                 }
                 olang::tier_stats::begin_run(path);
             }
             None if spec == "text" => {}
             None => {
-                eprintln!("--ovm-stats: expected `json` or `json:PATH`, got `{}`", spec);
+                eprintln!(
+                    "--ovm-stats: expected `json` or `json:PATH`, got `{}`",
+                    spec
+                );
                 return 2;
             }
         }
@@ -779,7 +802,13 @@ fn run() -> i32 {
                 &targets,
                 coverage || coverage_lines,
                 coverage_lines,
-                &olang::tools::test_runner::Options { only, times, deps, json: format == "json", record_args },
+                &olang::tools::test_runner::Options {
+                    only,
+                    times,
+                    deps,
+                    json: format == "json",
+                    record_args,
+                },
             )
         }
 
@@ -794,7 +823,10 @@ fn run() -> i32 {
             ..
         }) if format == "json" => {
             let record = cli.record.clone();
-            let label = std::path::absolute(&file).unwrap_or(file.clone()).display().to_string();
+            let label = std::path::absolute(&file)
+                .unwrap_or(file.clone())
+                .display()
+                .to_string();
             olang::profile_live::start(olang::profile_live::LiveSpec {
                 dir: live.map(|d| std::path::absolute(&d).unwrap_or(d)),
                 every_ms: live_every,
@@ -831,7 +863,10 @@ fn run() -> i32 {
             code
         }
         Some(Commands::Profile { format, .. }) if format != "text" => {
-            eprintln!("olang profile: --format is `text` or `json`, not `{}`", format);
+            eprintln!(
+                "olang profile: --format is `text` or `json`, not `{}`",
+                format
+            );
             2
         }
         Some(Commands::Profile {
@@ -879,7 +914,10 @@ fn run() -> i32 {
                 paths.push(PathBuf::from("."));
             }
             if format != "text" && format != "json" {
-                eprintln!("olang check: --format is `text` or `json`, not `{}`", format);
+                eprintln!(
+                    "olang check: --format is `text` or `json`, not `{}`",
+                    format
+                );
                 return 2;
             }
             if tier {
@@ -923,7 +961,9 @@ fn run() -> i32 {
                     std::process::exit(olang::tools::fix::run_deprecated(&paths, check, &skip))
                 }
                 other => {
-                    eprintln!("olang fix: nothing called '{other}' to fix (there are: maps, deprecated)");
+                    eprintln!(
+                        "olang fix: nothing called '{other}' to fix (there are: maps, deprecated)"
+                    );
                     std::process::exit(2)
                 }
             }
@@ -1904,7 +1944,8 @@ fn embedded_program() -> Option<Bundle> {
     let exe = std::env::current_exe().ok()?;
     // to run: a section that says each file's sum is checked a file at a
     // time as the program reads them, not whole before it starts
-    let b = read_bundle_with(&exe, false).or_else(|| app_sidecar(&exe).and_then(|p| read_bundle_with(&p, false)));
+    let b = read_bundle_with(&exe, false)
+        .or_else(|| app_sidecar(&exe).and_then(|p| read_bundle_with(&p, false)));
     if b.is_some() {
         olang::boot_trace::mark("the application's program read and checked");
     }
@@ -2126,7 +2167,11 @@ fn run_embedded(bundle: Bundle, logger: &Logger) -> i32 {
             {
                 match olang::vfs::decode(bytes) {
                     Some((files, deps)) => {
-                        olang::vfs::install_checked(files, olang::vfs::sums_of(bytes).unwrap_or_default(), deps);
+                        olang::vfs::install_checked(
+                            files,
+                            olang::vfs::sums_of(bytes).unwrap_or_default(),
+                            deps,
+                        );
                         olang::boot_trace::mark("the application's files installed");
                         path = PathBuf::from(&m.entry);
                     }

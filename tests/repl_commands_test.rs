@@ -87,7 +87,12 @@ fn terminal(input: &str) -> String {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn olang repl");
-    child.stdin.as_mut().unwrap().write_all(input.as_bytes()).unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
     let out = child.wait_with_output().unwrap();
     let text = format!(
         "{}\n--- stderr ---\n{}",
@@ -160,11 +165,20 @@ impl Serve {
             .expect("spawn olang repl --serve");
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
-        let mut s = Serve { child, stdin, stdout, next: 1, events: Vec::new() };
+        let mut s = Serve {
+            child,
+            stdin,
+            stdout,
+            next: 1,
+            events: Vec::new(),
+        };
         let hello = s.recv();
         assert_eq!(hello["event"], json!("hello"));
         for op in ["command", "commands", "complete"] {
-            assert!(hello["ops"].as_array().unwrap().contains(&json!(op)), "hello lists {op}");
+            assert!(
+                hello["ops"].as_array().unwrap().contains(&json!(op)),
+                "hello lists {op}"
+            );
         }
         s
     }
@@ -229,12 +243,25 @@ fn every_command_answers_over_the_protocol() {
     let mut s = Serve::start(dir.path());
     // the registry, listed
     let list = s.ask(json!({ "op": "commands" }));
-    let names: Vec<String> = list["commands"].as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap().to_string()).collect();
+    let names: Vec<String> = list["commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap().to_string())
+        .collect();
     assert!(names.len() >= 39, "{names:?}");
-    for want in [":help", ":type", ":time", ":sh", ":ml", ":end", ":cancel", ":quit", ":history", ":clear", ":pkg", ":use", ":let", ":fn", ":!"] {
+    for want in [
+        ":help", ":type", ":time", ":sh", ":ml", ":end", ":cancel", ":quit", ":history", ":clear",
+        ":pkg", ":use", ":let", ":fn", ":!",
+    ] {
         assert!(names.contains(&want.to_string()), "{want} listed");
     }
-    let ml = list["commands"].as_array().unwrap().iter().find(|c| c["name"] == json!(":ml")).unwrap();
+    let ml = list["commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == json!(":ml"))
+        .unwrap();
     assert_eq!(ml["client"], json!(true));
 
     // a value in the prompt's scope, which the commands see
@@ -245,18 +272,40 @@ fn every_command_answers_over_the_protocol() {
     let r = s.cmd(":help");
     assert_eq!(r["ok"], json!(true), "{r}");
     assert_eq!(r["command"], json!(":help"));
-    assert!(!out(&r).is_empty() && !out(&r).contains('\x1b'), "plain text: {r}");
+    assert!(
+        !out(&r).is_empty() && !out(&r).contains('\x1b'),
+        "plain text: {r}"
+    );
     assert!(r["commands"].as_array().unwrap().len() >= 39);
-    assert!(r["lines"].as_array().unwrap().iter().any(|l| l.as_array().unwrap().iter().any(|run| run.get("c").is_some() || run.get("b").is_some())), "styled runs");
+    assert!(
+        r["lines"].as_array().unwrap().iter().any(|l| l
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|run| run.get("c").is_some() || run.get("b").is_some())),
+        "styled runs"
+    );
     assert!(out(&s.cmd(":help len")).contains("len"));
-    for c in [":help_advanced", ":contextual_help", ":search map limit:2", ":tutorial", ":help syntax"] {
+    for c in [
+        ":help_advanced",
+        ":contextual_help",
+        ":search map limit:2",
+        ":tutorial",
+        ":help syntax",
+    ] {
         let r = s.cmd(c);
         assert_eq!(r["ok"], json!(true), "{c}: {r}");
         assert!(!out(&r).trim().is_empty(), "{c} says something");
     }
     // a tutorial's steps, for an editor to take one by one
     let r = s.cmd(":tutorial_run basic_operations");
-    assert!(r["tutorial"]["steps"].as_array().map(|a| !a.is_empty()).unwrap_or(false), "{r}");
+    assert!(
+        r["tutorial"]["steps"]
+            .as_array()
+            .map(|a| !a.is_empty())
+            .unwrap_or(false),
+        "{r}"
+    );
 
     // values: the type, the value as structure, the time
     let r = s.cmd(":type total + 1");
@@ -277,30 +326,66 @@ fn every_command_answers_over_the_protocol() {
     let r = s.cmd(":fn twice(a) = a * 2");
     assert_eq!(r["ok"], json!(true), "{r}");
     let r = s.ask(json!({ "op": "eval", "code": "twice(doubled)" }));
-    assert_eq!(r["value"]["s"], json!("28"), "the prompt sees what a command bound: {r}");
+    assert_eq!(
+        r["value"]["s"],
+        json!("28"),
+        "the prompt sees what a command bound: {r}"
+    );
     let r = s.cmd(":use collections");
     assert_eq!(r["ok"], json!(true), "{r}");
     let r = s.cmd(":env");
     assert!(out(&r).contains("User Environment"), "{r}");
-    let env = r["values"].as_array().unwrap().iter().find(|v| v["label"] == json!("bindings")).expect("bindings as a table");
+    let env = r["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["label"] == json!("bindings"))
+        .expect("bindings as a table");
     assert!(env["value"]["table"].is_object(), "{env}");
 
     // timing and the tiers: results, and a place the editor has
     let r = s.cmd(":benchmark 1 + 1");
     assert_eq!(r["bench"].as_array().unwrap().len(), 5, "{r}");
-    for (c, place) in [(":stats", "tiers"), (":ovm", "tiers"), (":profile fold(range(0, 20000), 0, (a, x) => a + x)", "profiler")] {
+    for (c, place) in [
+        (":stats", "tiers"),
+        (":ovm", "tiers"),
+        (
+            ":profile fold(range(0, 20000), 0, (a, x) => a + x)",
+            "profiler",
+        ),
+    ] {
         let r = s.cmd(c);
         assert_eq!(r["open"], json!(place), "{c}: {r}");
         assert!(!out(&r).is_empty());
     }
-    for c in [":memory", ":parallel", ":parallel status", ":config", ":config show_types true", ":version", ":stack", ":debug", ":debug 1 + 2", ":trace twice", ":trace", ":watch total", ":watch"] {
+    for c in [
+        ":memory",
+        ":parallel",
+        ":parallel status",
+        ":config",
+        ":config show_types true",
+        ":version",
+        ":stack",
+        ":debug",
+        ":debug 1 + 2",
+        ":trace twice",
+        ":trace",
+        ":watch total",
+        ":watch",
+    ] {
         let r = s.cmd(c);
         assert_eq!(r["ok"], json!(true), "{c}: {r}");
         assert!(!out(&r).trim().is_empty(), "{c} says something");
     }
     // a watched variable changed at the prompt is said
     let r = s.ask(json!({ "op": "eval", "code": "let total = total + 1" }));
-    assert!(r["watched"].as_array().map(|w| !w.is_empty()).unwrap_or(false), "{r}");
+    assert!(
+        r["watched"]
+            .as_array()
+            .map(|w| !w.is_empty())
+            .unwrap_or(false),
+        "{r}"
+    );
 
     // the history is the prompt's inputs
     let r = s.cmd(":history");
@@ -309,18 +394,34 @@ fn every_command_answers_over_the_protocol() {
     assert!(out(&r).contains("twice(doubled)"));
 
     // files and the shell, from the working folder
-    assert!(out(&s.cmd(":pwd")).trim().ends_with(dir.path().file_name().unwrap().to_str().unwrap()));
+    assert!(
+        out(&s.cmd(":pwd"))
+            .trim()
+            .ends_with(dir.path().file_name().unwrap().to_str().unwrap())
+    );
     let r = s.cmd(":ls");
-    assert!(out(&r).contains("a.ol") && out(&r).contains("notes.txt"), "{r}");
+    assert!(
+        out(&r).contains("a.ol") && out(&r).contains("notes.txt"),
+        "{r}"
+    );
     s.events.clear();
     let r = s.cmd(":sh echo one; echo two");
     assert_eq!(out(&r), "one\ntwo\n", "{r}");
-    assert!(s.events.iter().any(|e| e["event"] == json!("out") && e["text"].as_str().unwrap().contains("one")), "streamed: {:?}", s.events);
+    assert!(
+        s.events
+            .iter()
+            .any(|e| e["event"] == json!("out") && e["text"].as_str().unwrap().contains("one")),
+        "streamed: {:?}",
+        s.events
+    );
     let r = s.cmd("!echo bang");
     assert_eq!(out(&r), "bang\n");
     assert!(out(&s.cmd(":sh false")).contains("exit code 1"));
     let r = s.cmd(":run a.ol");
-    assert!(out(&r).contains("ran a") && out(&r).contains("executed successfully"), "{r}");
+    assert!(
+        out(&r).contains("ran a") && out(&r).contains("executed successfully"),
+        "{r}"
+    );
     let r = s.cmd(":cd sub");
     assert!(r["cwd"].as_str().unwrap().ends_with("sub"), "{r}");
     s.cmd(":cd ..");
@@ -332,13 +433,19 @@ fn every_command_answers_over_the_protocol() {
     assert!(out(&s.cmd(":end")).contains("No multi-line input"));
     assert!(out(&s.cmd(":cancel")).contains("No multi-line input"));
     assert_eq!(s.cmd(":clear env")["ok"], json!(true));
-    assert!(s.ask(json!({ "op": "eval", "code": "total" }))["ok"] == json!(false), ":clear env forgot the bindings");
+    assert!(
+        s.ask(json!({ "op": "eval", "code": "total" }))["ok"] == json!(false),
+        ":clear env forgot the bindings"
+    );
     s.ask(json!({ "op": "eval", "code": "let w = 3" }));
     assert!(out(&s.cmd(":!1")).contains("Re-executing"));
     let r = s.cmd(":quit");
     assert_eq!(r["effects"], json!(["quit"]), "{r}");
     // … and the session is still there: the editor ends it
-    assert_eq!(s.ask(json!({ "op": "eval", "code": "1 + 1" }))["value"]["s"], json!("2"));
+    assert_eq!(
+        s.ask(json!({ "op": "eval", "code": "1 + 1" }))["value"]["s"],
+        json!("2")
+    );
 
     // an unknown command: the nearest one
     let r = s.cmd(":halp");
@@ -384,8 +491,14 @@ fn a_shell_command_is_interrupted() {
     }
     assert!(t.elapsed() < Duration::from_secs(10), "stopped promptly");
     assert_eq!(reply["interrupted"], json!(true), "{reply}");
-    assert!(out(&reply).contains("(interrupted)") && !out(&reply).contains("never"), "{reply}");
-    assert_eq!(s.ask(json!({ "op": "eval", "code": "2 * 21" }))["value"]["s"], json!("42"));
+    assert!(
+        out(&reply).contains("(interrupted)") && !out(&reply).contains("never"),
+        "{reply}"
+    );
+    assert_eq!(
+        s.ask(json!({ "op": "eval", "code": "2 * 21" }))["value"]["s"],
+        json!("42")
+    );
 }
 
 #[test]
@@ -394,15 +507,29 @@ fn command_lines_complete() {
     let mut s = Serve::start(dir.path());
     s.ask(json!({ "op": "eval", "code": "let total = 1" }));
     s.ask(json!({ "op": "eval", "code": "fn twice(a) = a * 2" }));
-    let labels = |r: &J| r["items"].as_array().unwrap().iter().map(|i| i["label"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    let labels = |r: &J| {
+        r["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["label"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
     let r = s.ask(json!({ "op": "complete", "line": ":ti", "pos": 3 }));
     assert!(labels(&r).contains(&":time".to_string()), "{r}");
     assert_eq!(r["start"], json!(0));
     let r = s.ask(json!({ "op": "complete", "line": ":cd ", "pos": 4 }));
     assert_eq!(labels(&r), vec!["home/", "sub/"], "{r}");
-    assert_eq!(r["command"]["usage"], json!(":cd [<folder>]"), "help as it is typed");
+    assert_eq!(
+        r["command"]["usage"],
+        json!(":cd [<folder>]"),
+        "help as it is typed"
+    );
     let r = s.ask(json!({ "op": "complete", "line": ":run ", "pos": 5 }));
-    assert!(labels(&r).contains(&"a.ol".to_string()) && !labels(&r).contains(&"notes.txt".to_string()), "{r}");
+    assert!(
+        labels(&r).contains(&"a.ol".to_string()) && !labels(&r).contains(&"notes.txt".to_string()),
+        "{r}"
+    );
     let r = s.ask(json!({ "op": "complete", "line": ":inspect to", "pos": 11 }));
     assert_eq!(labels(&r), vec!["total"]);
     assert_eq!(r["start"], json!(9));

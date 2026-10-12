@@ -162,7 +162,13 @@ pub fn run_json(paths: &[PathBuf]) -> i32 {
                 .tags
                 .iter()
                 .flatten()
-                .map(|t| if *t == T::UNNECESSARY { "unnecessary" } else { "deprecated" })
+                .map(|t| {
+                    if *t == T::UNNECESSARY {
+                        "unnecessary"
+                    } else {
+                        "deprecated"
+                    }
+                })
                 .collect();
             let (s, e) = (d.range.start, d.range.end);
             out.push(serde_json::json!({
@@ -222,7 +228,11 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
             .ok()
             .and_then(|m| m.lock_value_problem())
         {
-            eprintln!("{}: warning: {}", root.join("olang.toml").display(), problem);
+            eprintln!(
+                "{}: warning: {}",
+                root.join("olang.toml").display(),
+                problem
+            );
             warnings += 1;
         }
     }
@@ -1082,7 +1092,11 @@ impl BindingShadows {
 
     fn function(&mut self, f: &crate::ast::FunctionDecl) {
         for p in &f.parameters {
-            self.binder(&p.name, &[&f.body], &format!("parameter `{}` of `{}`", p.name, f.name));
+            self.binder(
+                &p.name,
+                &[&f.body],
+                &format!("parameter `{}` of `{}`", p.name, f.name),
+            );
         }
         self.expr(&f.body);
     }
@@ -1093,7 +1107,10 @@ impl BindingShadows {
         let Some(members) = self.modules.get(name) else {
             return;
         };
-        let Some(member) = scope.iter().find_map(|e| Self::module_read(e, name, members)) else {
+        let Some(member) = scope
+            .iter()
+            .find_map(|e| Self::module_read(e, name, members))
+        else {
             return;
         };
         self.out.push(CheckDiagnostic {
@@ -1129,16 +1146,35 @@ not the module — rename the binding",
 
     fn expr(&mut self, e: &Expr) {
         match e {
-            Expr::Lambda { parameters, body, .. } => {
+            Expr::Lambda {
+                parameters, body, ..
+            } => {
                 for p in parameters {
-                    self.binder(&p.name, &[body], &format!("the lambda parameter `{}`", p.name));
+                    self.binder(
+                        &p.name,
+                        &[body],
+                        &format!("the lambda parameter `{}`", p.name),
+                    );
                 }
                 self.expr(body);
                 return;
             }
-            Expr::ForLoop { variable, body, iterable } | Expr::ParForLoop { variable, body, iterable } => {
+            Expr::ForLoop {
+                variable,
+                body,
+                iterable,
+            }
+            | Expr::ParForLoop {
+                variable,
+                body,
+                iterable,
+            } => {
                 self.expr(iterable);
-                self.binder(variable, &[body], &format!("the loop variable `{}`", variable));
+                self.binder(
+                    variable,
+                    &[body],
+                    &format!("the loop variable `{}`", variable),
+                );
                 self.expr(body);
                 return;
             }
@@ -2668,22 +2704,76 @@ pub const DEPRECATED_GLOBALS: &[(&str, &str)] = &[("map_path", "map_get_in")];
 /// against the runtime and pinned by `builtin_arity_table_agrees_with_the_runtime`.
 /// The variadic output and assertion forms are left out.
 const GLOBAL_ARITY: &[(&str, usize, usize)] = &[
-    ("abs", 1, 1), ("all", 2, usize::MAX), ("any", 2, usize::MAX), ("attempt", 1, 1),
-    ("average", 1, 1), ("chunk", 2, 2), ("clamp", 3, 3), ("concat", 2, 2), ("cons", 2, 2),
-    ("contains", 2, 2), ("drop", 2, 2), ("ends_with", 2, 2), ("entries", 1, 1),
-    ("enumerate", 1, 1), ("eprint", 1, 1), ("filter", 2, 2), ("find", 2, 2), ("flatten", 1, 1), ("fold", 3, 3),
-    ("force", 1, 1), ("group_by", 2, 2), ("head", 1, 1), ("implements", 2, 2), ("is_err", 1, 1),
-    ("is_ok", 1, 1), ("join", 2, 2), ("lazy", 1, 1), ("len", 1, 1), ("map", 2, 2),
-    ("map_clear", 1, 1), ("map_filtered", 3, 3), ("map_get", 2, 2), ("map_get_in", 2, 2),
-    ("map_get_or", 3, 3), ("map_has_key", 2, 2), ("map_keys", 1, 1), ("map_len", 1, 1),
-    ("map_merge", 2, 2), ("map_path", 2, 2), ("map_remove", 2, 2), ("map_set", 3, 3),
-    ("map_set_in", 3, 3), ("map_update", 3, 3), ("map_values", 1, 1), ("max", 1, usize::MAX),
-    ("min", 1, usize::MAX), ("par_filter", 2, 2), ("par_map", 2, 2), ("raise", 1, 1),
-    ("range", 1, 3), ("reduce", 3, 3), ("result_map", 2, 2), ("result_map_err", 2, 2),
-    ("reverse", 1, 1), ("show", 1, 1), ("skip", 2, 2), ("sort", 1, 1), ("split", 2, 2),
-    ("starts_with", 2, 2), ("sum", 1, 1), ("tail", 1, 1), ("take", 2, 2), ("to_float", 1, 1),
-    ("to_int", 1, 1), ("to_string", 1, 1), ("typeof", 1, 1), ("unwrap", 1, 1),
-    ("unwrap_or", 2, 2), ("unwrap_or_else", 2, 2), ("zip", 2, 2),
+    ("abs", 1, 1),
+    ("all", 2, usize::MAX),
+    ("any", 2, usize::MAX),
+    ("attempt", 1, 1),
+    ("average", 1, 1),
+    ("chunk", 2, 2),
+    ("clamp", 3, 3),
+    ("concat", 2, 2),
+    ("cons", 2, 2),
+    ("contains", 2, 2),
+    ("drop", 2, 2),
+    ("ends_with", 2, 2),
+    ("entries", 1, 1),
+    ("enumerate", 1, 1),
+    ("eprint", 1, 1),
+    ("filter", 2, 2),
+    ("find", 2, 2),
+    ("flatten", 1, 1),
+    ("fold", 3, 3),
+    ("force", 1, 1),
+    ("group_by", 2, 2),
+    ("head", 1, 1),
+    ("implements", 2, 2),
+    ("is_err", 1, 1),
+    ("is_ok", 1, 1),
+    ("join", 2, 2),
+    ("lazy", 1, 1),
+    ("len", 1, 1),
+    ("map", 2, 2),
+    ("map_clear", 1, 1),
+    ("map_filtered", 3, 3),
+    ("map_get", 2, 2),
+    ("map_get_in", 2, 2),
+    ("map_get_or", 3, 3),
+    ("map_has_key", 2, 2),
+    ("map_keys", 1, 1),
+    ("map_len", 1, 1),
+    ("map_merge", 2, 2),
+    ("map_path", 2, 2),
+    ("map_remove", 2, 2),
+    ("map_set", 3, 3),
+    ("map_set_in", 3, 3),
+    ("map_update", 3, 3),
+    ("map_values", 1, 1),
+    ("max", 1, usize::MAX),
+    ("min", 1, usize::MAX),
+    ("par_filter", 2, 2),
+    ("par_map", 2, 2),
+    ("raise", 1, 1),
+    ("range", 1, 3),
+    ("reduce", 3, 3),
+    ("result_map", 2, 2),
+    ("result_map_err", 2, 2),
+    ("reverse", 1, 1),
+    ("show", 1, 1),
+    ("skip", 2, 2),
+    ("sort", 1, 1),
+    ("split", 2, 2),
+    ("starts_with", 2, 2),
+    ("sum", 1, 1),
+    ("tail", 1, 1),
+    ("take", 2, 2),
+    ("to_float", 1, 1),
+    ("to_int", 1, 1),
+    ("to_string", 1, 1),
+    ("typeof", 1, 1),
+    ("unwrap", 1, 1),
+    ("unwrap_or", 2, 2),
+    ("unwrap_or_else", 2, 2),
+    ("zip", 2, 2),
 ];
 
 /// The fewest arguments a stdlib module's function takes: the arity its
@@ -2746,7 +2836,9 @@ impl Checker {
         for stmt in &program.statements {
             self.collect_statement(stmt.unwrapped());
             let use_decl = match stmt.unwrapped() {
-                Statement::UseDecl(u) | Statement::ShareDecl(crate::ast::ShareDecl::Use(u)) => Some(u),
+                Statement::UseDecl(u) | Statement::ShareDecl(crate::ast::ShareDecl::Use(u)) => {
+                    Some(u)
+                }
                 _ => None,
             };
             if let Some(u) = use_decl {
@@ -2764,15 +2856,19 @@ impl Checker {
             }
             match stmt.unwrapped() {
                 Statement::ImplDecl(i) | Statement::ShareDecl(crate::ast::ShareDecl::Impl(i)) => {
-                    self.methods.extend(i.methods.iter().map(|m| m.name.clone()));
+                    self.methods
+                        .extend(i.methods.iter().map(|m| m.name.clone()));
                 }
                 Statement::TraitDecl(t) | Statement::ShareDecl(crate::ast::ShareDecl::Trait(t)) => {
-                    self.methods.extend(t.methods.iter().map(|m| m.name.clone()));
+                    self.methods
+                        .extend(t.methods.iter().map(|m| m.name.clone()));
                 }
                 _ => {}
             }
             let let_decl = match stmt.unwrapped() {
-                Statement::LetDecl(l) | Statement::ShareDecl(crate::ast::ShareDecl::Let(l)) => Some(l),
+                Statement::LetDecl(l) | Statement::ShareDecl(crate::ast::ShareDecl::Let(l)) => {
+                    Some(l)
+                }
                 _ => None,
             };
             if let Some(l) = let_decl {
@@ -2787,7 +2883,10 @@ impl Checker {
     /// argument count its implementation refuses. A name the file binds
     /// (a local, a `use`, a top-level `let` or `fn`) is not the builtin.
     fn check_builtin_arity(&mut self, callee: &Expr, arguments: &[Argument], span: (u32, u32)) {
-        if !arguments.iter().all(|a| matches!(a, Argument::Positional(_))) {
+        if !arguments
+            .iter()
+            .all(|a| matches!(a, Argument::Positional(_)))
+        {
             return;
         }
         let bound = |me: &Self, n: &str| {
@@ -2834,10 +2933,10 @@ impl Checker {
                 // arguments it takes; the data stack's and the engines'
                 // (`ods`, `gui`, `vt`, …) register a usual count instead.
                 const MIN_REGISTERED: &[&str] = &[
-                    "str", "col", "math", "json", "toml", "csv", "re", "dates", "time",
-                    "base64", "fs", "os", "db", "crypto", "chan", "task", "cell", "proc",
-                    "bytes", "compress", "bigint", "random", "caps", "runtime", "asset", "vec",
-                    "meta", "testing",
+                    "str", "col", "math", "json", "toml", "csv", "re", "dates", "time", "base64",
+                    "fs", "os", "db", "crypto", "chan", "task", "cell", "proc", "bytes",
+                    "compress", "bigint", "random", "caps", "runtime", "asset", "vec", "meta",
+                    "testing",
                 ];
                 if bound(self, module) || !MIN_REGISTERED.contains(&module.as_str()) {
                     return;
@@ -4428,8 +4527,8 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
                 Statement::Located { line, .. } => *line,
                 _ => 0,
             };
-            if let Statement::FunctionDecl(f) | Statement::ShareDecl(crate::ast::ShareDecl::Function(f)) =
-                statement.unwrapped()
+            if let Statement::FunctionDecl(f)
+            | Statement::ShareDecl(crate::ast::ShareDecl::Function(f)) = statement.unwrapped()
             {
                 let (l, c) = f.name_span.unwrap_or((line, 1));
                 let end = starts
@@ -4483,7 +4582,11 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
                 file_rows.push(serde_json::json!({
                     "file": absolute.to_string_lossy(), "error": e.to_string(), "functions": [] }));
             } else {
-                println!("{}\n  ⚠ not checked (its declarations did not load): {}", file.display(), e);
+                println!(
+                    "{}\n  ⚠ not checked (its declarations did not load): {}",
+                    file.display(),
+                    e
+                );
             }
             continue;
         }
@@ -4508,7 +4611,9 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
                 let (verdict, reason) = match refusal {
                     Some((_, r)) if names_skipped(r) => ("unchecked", Some(r.clone())),
                     Some((_, r)) => ("refused", Some(r.clone())),
-                    None if compiled.contains(name) || ambiguous.contains(name) => ("bytecode", None),
+                    None if compiled.contains(name) || ambiguous.contains(name) => {
+                        ("bytecode", None)
+                    }
                     None => ("unknown", None),
                 };
                 TierVerdict {
@@ -4565,7 +4670,11 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
                 .and_then(|v| v.pinned);
             println!(
                 "  {} `{}` {}stays on the tree-walker: {}",
-                if promoted || pinned.is_some() { "×" } else { "⚠" },
+                if promoted || pinned.is_some() {
+                    "×"
+                } else {
+                    "⚠"
+                },
                 name,
                 match pinned {
                     Some("comment") => "is pinned native (// studio: native) but ",
@@ -4635,11 +4744,16 @@ mod tests {
         );
         let messages: Vec<&str> = d.iter().map(|d| d.message.as_str()).collect();
         assert_eq!(messages.len(), 3, "{messages:?}");
-        assert!(messages[0].starts_with("`z` is not a field of the declared struct Point (x, y): reading it raises at run time"));
+        assert!(messages[0].starts_with(
+            "`z` is not a field of the declared struct Point (x, y): reading it raises at run time"
+        ));
         assert!(messages[1].starts_with("`k` is not a field of the declared struct Point"));
         assert!(messages[2].starts_with("`titel` is not a key of the declared shape"));
         assert!(messages[2].contains("the read is () at run time"));
-        assert!(d.iter().all(|d| d.warning && warning_class(&d.message) == Some("shape")));
+        assert!(
+            d.iter()
+                .all(|d| d.warning && warning_class(&d.message) == Some("shape"))
+        );
         // A trait method of the name, called or read, is not a field.
         let d = check(
             "type Point = struct { x: Int }\ntrait Norm { fn norm(self) }\nimpl Norm for Point { fn norm(self) = self.x }\nfn a(p: Point) = p.norm()\nfn b(p: Point) = p.norm\n",
@@ -4652,7 +4766,11 @@ mod tests {
         let d = check("println(str.thousands(1234))\n");
         assert_eq!(d.len(), 1, "{:?}", d);
         assert!(d[0].runtime && !d[0].warning);
-        assert!(d[0].message.contains("str.thousands: missing argument 2"), "{}", d[0].message);
+        assert!(
+            d[0].message.contains("str.thousands: missing argument 2"),
+            "{}",
+            d[0].message
+        );
         let d = check("let r = sort([1], 2)\nlet n = len()\nlet x = range(1, 2, 3, 4)\n");
         let messages: Vec<&str> = d.iter().map(|d| d.message.as_str()).collect();
         assert_eq!(
@@ -4667,7 +4785,11 @@ mod tests {
         // file binds itself are not judged.
         assert!(check("let a = min(1, 2, 3)\nlet b = str.fmt(\"{} {}\", 1, 2)\nlet c = [3, 1] |> sort\nlet d = [1] |> take(1)\nlet e = fs.join(\"a\", \"b\", \"c\")\n").is_empty());
         assert!(check("fn sort(a, b) = a\nlet r = sort(1, 2)\n").is_empty());
-        assert!(check("fn f(str) = str.thousands(1)\n").iter().all(|d| d.warning));
+        assert!(
+            check("fn f(str) = str.thousands(1)\n")
+                .iter()
+                .all(|d| d.warning)
+        );
         assert!(check("use colx { * }\nlet r = all([1])\n").is_empty());
     }
 
@@ -4678,7 +4800,10 @@ mod tests {
         // raise an arity error.
         let names = crate::builtin::BuiltinFunctions::global_names();
         for (name, min, max) in GLOBAL_ARITY {
-            assert!(names.iter().any(|n| n == name), "{name} is a global builtin");
+            assert!(
+                names.iter().any(|n| n == name),
+                "{name} is a global builtin"
+            );
             // (raised at all, raised over the count)
             let call = |k: usize| {
                 let args = vec!["()"; k].join(", ");
@@ -4689,8 +4814,12 @@ mod tests {
                     .eval_program(program)
                     .map(|v| v.to_string())
                     .unwrap_or_else(|e| e.to_string());
-                let count = v.contains("Arity mismatch") || v.contains("missing") || v.contains("expects");
-                (v.trim_start_matches('"').starts_with("Err(") || count, count)
+                let count =
+                    v.contains("Arity mismatch") || v.contains("missing") || v.contains("expects");
+                (
+                    v.trim_start_matches('"').starts_with("Err(") || count,
+                    count,
+                )
             };
             assert!(call(min - 1).0, "{name} with {} arguments", min - 1);
             assert!(!call(*min).1, "{name} with {min} arguments");
@@ -4715,7 +4844,10 @@ mod tests {
         assert!(messages[1].contains("`col.sort_by`"));
         assert!(messages[2].starts_with("the lambda parameter `json`"));
         assert!(messages[3].starts_with("the pattern binding `math`"));
-        assert!(d.iter().all(|d| d.warning && warning_class(&d.message) == Some("shadow")));
+        assert!(
+            d.iter()
+                .all(|d| d.warning && warning_class(&d.message) == Some("shadow"))
+        );
     }
 
     #[test]

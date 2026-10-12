@@ -105,7 +105,10 @@ pub fn sniff(b: &[u8]) -> Option<Format> {
     let head = head.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(head);
     let text = String::from_utf8_lossy(head);
     let t = text.trim_start();
-    if (t.starts_with("<svg") || t.starts_with("<?xml") || t.starts_with("<!--") || t.starts_with("<!DOCTYPE"))
+    if (t.starts_with("<svg")
+        || t.starts_with("<?xml")
+        || t.starts_with("<!--")
+        || t.starts_with("<!DOCTYPE"))
         && text.contains("<svg")
     {
         return Some(Format::Svg);
@@ -235,12 +238,20 @@ fn exif_orientation(t: &[u8]) -> Option<u8> {
     let le = &t[0..2] == b"II";
     let u16_at = |o: usize| -> Option<u16> {
         let s = t.get(o..o + 2)?;
-        Some(if le { u16::from_le_bytes([s[0], s[1]]) } else { u16::from_be_bytes([s[0], s[1]]) })
+        Some(if le {
+            u16::from_le_bytes([s[0], s[1]])
+        } else {
+            u16::from_be_bytes([s[0], s[1]])
+        })
     };
     let u32_at = |o: usize| -> Option<u32> {
         let s = t.get(o..o + 4)?;
         let a = [s[0], s[1], s[2], s[3]];
-        Some(if le { u32::from_le_bytes(a) } else { u32::from_be_bytes(a) })
+        Some(if le {
+            u32::from_le_bytes(a)
+        } else {
+            u32::from_be_bytes(a)
+        })
     };
     let ifd = u32_at(4)? as usize;
     let n = u16_at(ifd)? as usize;
@@ -287,12 +298,11 @@ pub fn info_of(b: &[u8]) -> Res<Info> {
             )
         }
         Format::Jpeg => {
-            let mut d = zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(b));
+            let mut d =
+                zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(b));
             d.decode_headers()
                 .map_err(|e| format!("image: not a JPEG this can read ({e:?})"))?;
-            let (w, h) = d
-                .dimensions()
-                .ok_or("image: a JPEG with no size")?;
+            let (w, h) = d.dimensions().ok_or("image: a JPEG with no size")?;
             if jpeg_orientation(b) >= 5 {
                 (h as u32, w as u32)
             } else {
@@ -318,7 +328,10 @@ pub fn info_of(b: &[u8]) -> Res<Info> {
         Format::Svg => {
             let t = svg_tree(b)?;
             let s = t.size();
-            (s.width().ceil().max(1.0) as u32, s.height().ceil().max(1.0) as u32)
+            (
+                s.width().ceil().max(1.0) as u32,
+                s.height().ceil().max(1.0) as u32,
+            )
         }
     };
     check_size(width, height)?;
@@ -396,7 +409,9 @@ fn orient(pm: Pixmap, o: u8) -> Pixmap {
 /// A raster picture's pixels at its own size.
 fn decode_raster(b: &[u8], info: Info) -> Res<Pixmap> {
     match info.format {
-        Format::Png => Pixmap::decode_png(b).map_err(|e| format!("image: not a PNG this can read ({e})")),
+        Format::Png => {
+            Pixmap::decode_png(b).map_err(|e| format!("image: not a PNG this can read ({e})"))
+        }
         Format::Jpeg => {
             use zune_jpeg::zune_core::{colorspace::ColorSpace, options::DecoderOptions};
             let opts = DecoderOptions::default()
@@ -447,7 +462,8 @@ fn decode_raster(b: &[u8], info: Info) -> Res<Pixmap> {
                 .map_err(|e| format!("image: not a GIF this can read ({e})"))?
             {
                 // the first frame, where it sits on the logical screen
-                let (fl, ft, fw, fh) = (f.left as u32, f.top as u32, f.width as u32, f.height as u32);
+                let (fl, ft, fw, fh) =
+                    (f.left as u32, f.top as u32, f.width as u32, f.height as u32);
                 for y in 0..fh {
                     for x in 0..fw {
                         let (cx, cy) = (fl + x, ft + y);
@@ -474,7 +490,11 @@ fn decode_raster(b: &[u8], info: Info) -> Res<Pixmap> {
 /// scaled the rest of the way.
 fn scaled(pm: Pixmap, w: u32, h: u32) -> Pixmap {
     let mut cur = pm;
-    while cur.width() / 2 >= w.max(1) && cur.height() / 2 >= h.max(1) && cur.width() > 1 && cur.height() > 1 {
+    while cur.width() / 2 >= w.max(1)
+        && cur.height() / 2 >= h.max(1)
+        && cur.width() > 1
+        && cur.height() > 1
+    {
         let (hw, hh) = (cur.width() / 2, cur.height() / 2);
         let Some(mut half) = Pixmap::new(hw, hh) else {
             break;
@@ -488,7 +508,10 @@ fn scaled(pm: Pixmap, w: u32, h: u32) -> Pixmap {
             0,
             cur.as_ref(),
             &paint,
-            Transform::from_scale(hw as f32 / cur.width() as f32, hh as f32 / cur.height() as f32),
+            Transform::from_scale(
+                hw as f32 / cur.width() as f32,
+                hh as f32 / cur.height() as f32,
+            ),
             None,
         );
         cur = half;
@@ -508,7 +531,10 @@ fn scaled(pm: Pixmap, w: u32, h: u32) -> Pixmap {
         0,
         cur.as_ref(),
         &paint,
-        Transform::from_scale(w as f32 / cur.width() as f32, h as f32 / cur.height() as f32),
+        Transform::from_scale(
+            w as f32 / cur.width() as f32,
+            h as f32 / cur.height() as f32,
+        ),
         None,
     );
     out
@@ -544,7 +570,11 @@ fn bucket(info: Info, want: Want) -> u32 {
 /// The size a picture of `info` is kept at for `bucket`.
 fn kept_size(info: Info, bucket: u32) -> (u32, u32) {
     let own = info.width.max(info.height) as f32;
-    let side = if bucket == 0 { own.min(MAX_SIDE as f32) } else { bucket as f32 };
+    let side = if bucket == 0 {
+        own.min(MAX_SIDE as f32)
+    } else {
+        bucket as f32
+    };
     let k = side / own;
     (
         ((info.width as f32 * k).round() as u32).max(1),
@@ -645,7 +675,11 @@ impl Frames {
         let mut rgba = canvas.to_vec();
         premultiply(&mut rgba);
         let pm = pixmap_of(self.full.0, self.full.1, rgba)?;
-        let pm = if pm.width() == self.w && pm.height() == self.h { pm } else { scaled(pm, self.w, self.h) };
+        let pm = if pm.width() == self.w && pm.height() == self.h {
+            pm
+        } else {
+            scaled(pm, self.w, self.h)
+        };
         self.bytes += each;
         self.frames.push(Arc::new(Picture {
             id: super::canvas::next_picture_id(),
@@ -662,7 +696,13 @@ impl Frames {
             return None;
         }
         let total = self.delays.iter().map(|d| *d as u64).sum();
-        Some(Anim { frames: self.frames, delays: self.delays, plays, total, bytes: self.bytes })
+        Some(Anim {
+            frames: self.frames,
+            delays: self.delays,
+            plays,
+            total,
+            bytes: self.bytes,
+        })
     }
 }
 
@@ -673,13 +713,22 @@ pub fn decode_anim(b: &[u8], info: Info, bucket: u32) -> Res<Option<Anim>> {
         return Ok(None);
     }
     let (w, h) = kept_size(info, bucket);
-    let mut fr = Frames { w, h, full: (info.width, info.height), frames: Vec::new(), delays: Vec::new(), bytes: 0 };
+    let mut fr = Frames {
+        w,
+        h,
+        full: (info.width, info.height),
+        frames: Vec::new(),
+        delays: Vec::new(),
+        bytes: 0,
+    };
     let bad = |e: &dyn std::fmt::Display| format!("image: an animation this cannot read ({e})");
     match info.format {
         Format::Gif => {
             let mut opts = gif::DecodeOptions::new();
             opts.set_color_output(gif::ColorOutput::RGBA);
-            let mut d = opts.read_info(std::io::Cursor::new(b)).map_err(|e| bad(&e))?;
+            let mut d = opts
+                .read_info(std::io::Cursor::new(b))
+                .map_err(|e| bad(&e))?;
             // no NETSCAPE loop block: once; a count of n: n more times
             let plays = match d.repeat() {
                 gif::Repeat::Infinite => 0,
@@ -688,13 +737,19 @@ pub fn decode_anim(b: &[u8], info: Info, bucket: u32) -> Res<Option<Anim>> {
             let (cw, ch) = (info.width as usize, info.height as usize);
             let mut canvas = vec![0u8; cw * ch * 4];
             while let Some(f) = d.read_next_frame().map_err(|e| bad(&e))? {
-                let (fl, ft, fw, fh) = (f.left as usize, f.top as usize, f.width as usize, f.height as usize);
+                let (fl, ft, fw, fh) = (
+                    f.left as usize,
+                    f.top as usize,
+                    f.width as usize,
+                    f.height as usize,
+                );
                 let before = (f.dispose == gif::DisposalMethod::Previous).then(|| canvas.clone());
                 for y in 0..fh {
                     for x in 0..fw {
                         let (cx, cy) = (fl + x, ft + y);
                         let si = (y * fw + x) * 4;
-                        if cx >= cw || cy >= ch || si + 4 > f.buffer.len() || f.buffer[si + 3] == 0 {
+                        if cx >= cw || cy >= ch || si + 4 > f.buffer.len() || f.buffer[si + 3] == 0
+                        {
                             continue;
                         }
                         let di = (cy * cw + cx) * 4;
@@ -726,7 +781,8 @@ pub fn decode_anim(b: &[u8], info: Info, bucket: u32) -> Res<Option<Anim>> {
             Ok(fr.done(plays))
         }
         Format::Webp => {
-            let mut d = image_webp::WebPDecoder::new(std::io::Cursor::new(b)).map_err(|e| bad(&e))?;
+            let mut d =
+                image_webp::WebPDecoder::new(std::io::Cursor::new(b)).map_err(|e| bad(&e))?;
             if !d.is_animated() {
                 return Ok(None);
             }
@@ -789,7 +845,13 @@ impl Cache {
     fn put(&mut self, key: (u64, u32), pic: Arc<Picture>) {
         self.clock += 1;
         self.bytes += pic.rgba.len();
-        if let Some(old) = self.pics.insert(key, Held { pic, used: self.clock }) {
+        if let Some(old) = self.pics.insert(
+            key,
+            Held {
+                pic,
+                used: self.clock,
+            },
+        ) {
             self.bytes -= old.pic.rgba.len();
         }
         self.evict(Some(key), None);
@@ -798,7 +860,13 @@ impl Cache {
     fn put_anim(&mut self, key: (u64, u32), anim: Option<Arc<Anim>>) {
         self.clock += 1;
         self.bytes += anim.as_ref().map(|a| a.bytes).unwrap_or(0);
-        if let Some(old) = self.anims.insert(key, HeldAnim { anim, used: self.clock }) {
+        if let Some(old) = self.anims.insert(
+            key,
+            HeldAnim {
+                anim,
+                used: self.clock,
+            },
+        ) {
             self.bytes -= old.anim.map(|a| a.bytes).unwrap_or(0);
         }
         self.evict(None, Some(key));
@@ -879,7 +947,12 @@ fn run_anim_job(job: Job) {
     });
     let mut waiting = HashSet::new();
     if let Ok(mut c) = cache().lock() {
-        let keys: Vec<_> = c.anim_pending.keys().filter(|k| k.0 == job.id).copied().collect();
+        let keys: Vec<_> = c
+            .anim_pending
+            .keys()
+            .filter(|k| k.0 == job.id)
+            .copied()
+            .collect();
         if let Ok((k, anim)) = r {
             c.put_anim((job.id, k), anim.map(Arc::new));
         } else {
@@ -905,7 +978,10 @@ fn run_job(job: Job) {
         return run_anim_job(job);
     }
     let r = job.src.read().and_then(|b| {
-        let known = cache().lock().ok().and_then(|c| c.infos.get(&job.id).cloned());
+        let known = cache()
+            .lock()
+            .ok()
+            .and_then(|c| c.infos.get(&job.id).cloned());
         let info = match known {
             Some(i) => i?,
             None => {
@@ -929,7 +1005,12 @@ fn run_job(job: Job) {
             }
         }
         // every request for this source that waited: they look again
-        let keys: Vec<_> = c.pending.keys().filter(|k| k.0 == job.id).copied().collect();
+        let keys: Vec<_> = c
+            .pending
+            .keys()
+            .filter(|k| k.0 == job.id)
+            .copied()
+            .collect();
         for k in keys {
             if let Some(ws) = c.pending.remove(&k) {
                 waiting.extend(ws);
@@ -982,7 +1063,12 @@ pub fn get(src: &Value, want: Want, window: Option<u64>) -> Res<Option<(Arc<Pict
                 c.pending.entry((id, k)).or_default().insert(w);
                 drop(c);
                 if first {
-                    let _ = queue().send(Job { id, src: sr.owned(), want, anim: false });
+                    let _ = queue().send(Job {
+                        id,
+                        src: sr.owned(),
+                        want,
+                        anim: false,
+                    });
                 }
                 return Ok(None);
             }
@@ -992,7 +1078,12 @@ pub fn get(src: &Value, want: Want, window: Option<u64>) -> Res<Option<(Arc<Pict
             c.pending.entry((id, u32::MAX)).or_default().insert(w);
             drop(c);
             if first {
-                let _ = queue().send(Job { id, src: sr.owned(), want, anim: false });
+                let _ = queue().send(Job {
+                    id,
+                    src: sr.owned(),
+                    want,
+                    anim: false,
+                });
             }
             return Ok(None);
         }
@@ -1044,7 +1135,12 @@ pub fn animation(src: &Value, info: Info, want: Want, window: Option<u64>) -> Op
             c.anim_pending.entry((id, k)).or_default().insert(w);
             drop(c);
             if first {
-                let _ = queue().send(Job { id, src: sr.owned(), want, anim: true });
+                let _ = queue().send(Job {
+                    id,
+                    src: sr.owned(),
+                    want,
+                    anim: true,
+                });
             }
             return None;
         }
@@ -1062,7 +1158,10 @@ pub fn animation(src: &Value, info: Info, want: Want, window: Option<u64>) -> Op
 
 /// What the cache holds: `(pictures, bytes)`, for a test.
 pub fn held() -> (usize, usize) {
-    cache().lock().map(|c| (c.pics.len(), c.bytes)).unwrap_or((0, 0))
+    cache()
+        .lock()
+        .map(|c| (c.pics.len(), c.bytes))
+        .unwrap_or((0, 0))
 }
 
 #[cfg(test)]
@@ -1081,22 +1180,41 @@ mod tests {
 
     #[test]
     fn a_thumbnail_is_kept_at_the_power_of_two_above_it() {
-        let photo = Info { width: 4000, height: 3000, format: Format::Jpeg, animated: false };
+        let photo = Info {
+            width: 4000,
+            height: 3000,
+            format: Format::Jpeg,
+            animated: false,
+        };
         assert_eq!(bucket(photo, Some((200.0, 150.0))), 256);
         assert_eq!(bucket(photo, Some((10.0, 10.0))), MIN_BUCKET);
         assert_eq!(bucket(photo, None), 0);
-        let icon = Info { width: 32, height: 32, format: Format::Png, animated: false };
+        let icon = Info {
+            width: 32,
+            height: 32,
+            format: Format::Png,
+            animated: false,
+        };
         assert_eq!(bucket(icon, Some((400.0, 400.0))), 0);
-        let svg = Info { width: 24, height: 24, format: Format::Svg, animated: false };
+        let svg = Info {
+            width: 24,
+            height: 24,
+            format: Format::Svg,
+            animated: false,
+        };
         assert_eq!(bucket(svg, Some((48.0, 48.0))), 64);
     }
 
     #[test]
     fn exif_orientation_is_read_from_both_byte_orders() {
         // II*\0, IFD at 8, one entry: 0x0112 SHORT 1 = 6
-        let le = [b'I', b'I', 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0];
+        let le = [
+            b'I', b'I', 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0,
+        ];
         assert_eq!(exif_orientation(&le), Some(6));
-        let be = [b'M', b'M', 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 3, 0, 0];
+        let be = [
+            b'M', b'M', 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 3, 0, 0,
+        ];
         assert_eq!(exif_orientation(&be), Some(3));
     }
 }

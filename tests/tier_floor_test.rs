@@ -393,7 +393,10 @@ fn a_callee_refused_at_its_first_call_runs_through_its_value() {
          println(count_odd([1, 3, 5, 6]))\n");
     assert_eq!(r.stdout.trim(), "50\n3");
     let rejected = r.aggregate["rejected"];
-    assert!(rejected >= 1, "odd_bit's refusal is counted, got rejected={rejected}");
+    assert!(
+        rejected >= 1,
+        "odd_bit's refusal is counted, got rejected={rejected}"
+    );
 }
 
 #[test]

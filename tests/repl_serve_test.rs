@@ -32,7 +32,12 @@ impl Repl {
             .expect("spawn olang repl --serve");
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
-        let mut r = Repl { child, stdin, stdout, next: 1 };
+        let mut r = Repl {
+            child,
+            stdin,
+            stdout,
+            next: 1,
+        };
         let hello = r.recv();
         (r, hello)
     }
@@ -83,7 +88,11 @@ impl Repl {
                 eval = r;
             }
         }
-        assert_eq!(ack["running"], json!(true), "the interrupt found nothing running: {ack}");
+        assert_eq!(
+            ack["running"],
+            json!(true),
+            "the interrupt found nothing running: {ack}"
+        );
         eval
     }
 }
@@ -98,7 +107,10 @@ impl Drop for Repl {
 fn project() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let w = |name: &str, text: &str| std::fs::write(dir.path().join(name), text).unwrap();
-    w("olang.toml", "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n");
+    w(
+        "olang.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+    );
     w("util.ol", "share fn twice(x) = x * 2\n");
     w(
         "calc.ol",
@@ -189,7 +201,10 @@ fn values_arrive_by_kind_with_their_type_time_and_tier() {
     // bytes that are a picture carry it
     let png = r.eval("bytes.from_list([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 4, 0, 0, 0, 3, 8, 6, 0, 0, 0])");
     assert_eq!(png["value"]["k"], json!("bytes"));
-    assert_eq!(png["value"]["img"], json!({ "format": "png", "w": 4, "h": 3 }));
+    assert_eq!(
+        png["value"]["img"],
+        json!({ "format": "png", "w": 4, "h": 3 })
+    );
 }
 
 #[test]
@@ -225,12 +240,20 @@ fn a_file_scope_has_its_declarations_and_names_what_is_not_bound() {
     let p = r.eval_at(&f, 7, "let y = x * RATE");
     assert_eq!(p["ok"], json!(false));
     assert_eq!(p["error"]["kind"], json!("unbound"));
-    assert_eq!(p["error"]["message"], json!("`x` is a parameter of `scaled` — not bound here"));
+    assert_eq!(
+        p["error"]["message"],
+        json!("`x` is a parameter of `scaled` — not bound here")
+    );
     assert_eq!(p["error"]["line"], json!(7));
     // a top-level let that calls something is left for its own line
     let o = r.eval_at(&f, 30, "OPENED");
     assert_eq!(o["error"]["kind"], json!("unbound"));
-    assert!(o["error"]["message"].as_str().unwrap().contains("evaluate its line (4) first"));
+    assert!(
+        o["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("evaluate its line (4) first")
+    );
     // the session's own scope does not see the file's
     let other = r.eval("scaled(5)");
     assert_eq!(other["ok"], json!(false));
@@ -272,13 +295,22 @@ fn a_functions_parameters_are_named_then_bound_for_one_evaluation() {
     assert_eq!(after["ok"], json!(false));
     // a binding the scope had is put back
     let _ = r.eval_at(&f, 30, "let k = 1");
-    let k = r.ask(json!({ "op": "eval", "code": "k * 10", "file": f, "line": 30, "bind": { "k": "5" } }));
+    let k = r.ask(
+        json!({ "op": "eval", "code": "k * 10", "file": f, "line": 30, "bind": { "k": "5" } }),
+    );
     assert_eq!(k["value"]["s"], json!("50"));
     assert_eq!(r.eval_at(&f, 30, "k")["value"]["s"], json!("1"));
     // a value that fails says which
-    let bad = r.ask(json!({ "op": "eval", "code": "x", "file": f, "line": 7, "bind": { "x": "1 / 0" } }));
+    let bad =
+        r.ask(json!({ "op": "eval", "code": "x", "file": f, "line": 7, "bind": { "x": "1 / 0" } }));
     assert_eq!(bad["ok"], json!(false));
-    assert!(bad["error"]["message"].as_str().unwrap().contains("the value given for `x` fails"), "{bad}");
+    assert!(
+        bad["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("the value given for `x` fails"),
+        "{bad}"
+    );
 }
 
 #[test]
@@ -286,7 +318,8 @@ fn a_pure_evaluation_runs_under_no_capability_and_says_which_it_wanted() {
     let dir = project();
     let (mut r, _) = Repl::start(dir.path());
     let f = calc(dir.path());
-    let ok = r.ask(json!({ "op": "eval", "code": "scaled(5)", "file": f, "line": 30, "pure": true }));
+    let ok =
+        r.ask(json!({ "op": "eval", "code": "scaled(5)", "file": f, "line": 30, "pure": true }));
     assert_eq!(ok["value"]["s"], json!("30"), "{ok}");
     let read = r.ask(json!({ "op": "eval", "code": "fs.read_file(\"calc.ol\")", "file": f, "line": 30, "pure": true }));
     assert_eq!(read["ok"], json!(false));
@@ -298,9 +331,14 @@ fn a_pure_evaluation_runs_under_no_capability_and_says_which_it_wanted() {
     let again = r.eval_at(&f, 30, "fs.exists(\"calc.ol\")");
     assert_eq!(again["value"]["s"], json!("true"), "{again}");
     // a function that reaches out deep inside, on a compiled tier too
-    let _ = r.eval_at(&f, 30, "fn peek(n) = if n == 0 => fs.exists(\"calc.ol\") else => peek(n - 1)");
+    let _ = r.eval_at(
+        &f,
+        30,
+        "fn peek(n) = if n == 0 => fs.exists(\"calc.ol\") else => peek(n - 1)",
+    );
     let _warm = r.eval_at(&f, 30, "peek(3)");
-    let deep = r.ask(json!({ "op": "eval", "code": "peek(3)", "file": f, "line": 30, "pure": true }));
+    let deep =
+        r.ask(json!({ "op": "eval", "code": "peek(3)", "file": f, "line": 30, "pure": true }));
     assert_eq!(deep["error"]["kind"], json!("impure"), "{deep}");
     // a plain error stays an error
     let e = r.ask(json!({ "op": "eval", "code": "boom(1)", "file": f, "line": 30, "pure": true }));
@@ -314,20 +352,32 @@ fn interrupt_stops_a_tight_loop_on_every_tier_and_the_session_lives() {
     let f = calc(dir.path());
     let wait = Duration::from_millis(400);
     // the tree-walker
-    let a = r.interrupted(json!({ "op": "eval", "code": "let mut k = 0\nwhile true { k = k + 1 }" }), wait);
+    let a = r.interrupted(
+        json!({ "op": "eval", "code": "let mut k = 0\nwhile true { k = k + 1 }" }),
+        wait,
+    );
     assert_eq!(a["error"]["kind"], json!("interrupted"), "{a}");
     // a function on the bytecode tier
-    let b = r.interrupted(json!({ "op": "eval", "code": "spin()", "file": f, "line": 40 }), wait);
+    let b = r.interrupted(
+        json!({ "op": "eval", "code": "spin()", "file": f, "line": 40 }),
+        wait,
+    );
     assert_eq!(b["error"]["kind"], json!("interrupted"), "{b}");
     // native code: compiled on a small call, then spun
     let warm = r.eval_at(&f, 40, "sum_to(10)");
     assert_eq!(warm["value"]["s"], json!("45"));
     let t0 = Instant::now();
-    let c = r.interrupted(json!({ "op": "eval", "code": "sum_to(100000000000)", "file": f, "line": 40 }), wait);
+    let c = r.interrupted(
+        json!({ "op": "eval", "code": "sum_to(100000000000)", "file": f, "line": 40 }),
+        wait,
+    );
     assert_eq!(c["error"]["kind"], json!("interrupted"), "{c}");
     assert!(t0.elapsed() < Duration::from_secs(5));
     // a recursion
-    let d = r.interrupted(json!({ "op": "eval", "code": "forever(0)", "file": f, "line": 40 }), wait);
+    let d = r.interrupted(
+        json!({ "op": "eval", "code": "forever(0)", "file": f, "line": 40 }),
+        wait,
+    );
     assert_eq!(d["error"]["kind"], json!("interrupted"), "{d}");
     // the session goes on, its state intact
     let after = r.eval_at(&f, 40, "sum_to(10) + RATE");
@@ -350,7 +400,10 @@ fn a_saved_module_reloads_keeping_state_and_a_broken_one_is_kept() {
     let ok = r.ask(json!({ "op": "reload", "path": util }));
     assert_eq!(ok["ok"], json!(true), "{ok}");
     // the new module, the scope's own binding kept (native code too)
-    assert_eq!(r.eval_at(&f, 30, "scaled(5) + kept")["value"]["s"], json!("145"));
+    assert_eq!(
+        r.eval_at(&f, 30, "scaled(5) + kept")["value"]["s"],
+        json!("145")
+    );
     std::fs::write(&util, "share fn twice(x) = x *\n").unwrap();
     let bad = r.ask(json!({ "op": "reload", "path": util }));
     assert_eq!(bad["ok"], json!(false));
@@ -361,9 +414,18 @@ fn a_saved_module_reloads_keeping_state_and_a_broken_one_is_kept() {
     let src = std::fs::read_to_string(&f).unwrap();
     std::fs::write(&util, "share fn twice(x) = x * 2\n").unwrap();
     std::fs::write(&f, src.replace("let RATE = 3", "let RATE = 10")).unwrap();
-    assert_eq!(r.ask(json!({ "op": "reload", "path": util }))["ok"], json!(true));
-    assert_eq!(r.ask(json!({ "op": "reload", "path": f }))["ok"], json!(true));
-    assert_eq!(r.eval_at(&f, 30, "scaled(5) + kept")["value"]["s"], json!("200"));
+    assert_eq!(
+        r.ask(json!({ "op": "reload", "path": util }))["ok"],
+        json!(true)
+    );
+    assert_eq!(
+        r.ask(json!({ "op": "reload", "path": f }))["ok"],
+        json!(true)
+    );
+    assert_eq!(
+        r.eval_at(&f, 30, "scaled(5) + kept")["value"]["s"],
+        json!("200")
+    );
 }
 
 #[test]
@@ -382,7 +444,9 @@ fn a_loom_view_renders_headless_to_a_picture() {
     let pic = r.ask(json!({ "op": "render", "h": h, "dark": true, "scale": 2.0, "loom": std::fs::canonicalize(&loom).unwrap() }));
     assert_eq!(pic["ok"], json!(true), "{pic}");
     use base64::Engine;
-    let png = base64::engine::general_purpose::STANDARD.decode(pic["png"].as_str().unwrap()).unwrap();
+    let png = base64::engine::general_purpose::STANDARD
+        .decode(pic["png"].as_str().unwrap())
+        .unwrap();
     assert!(png.starts_with(&[0x89, b'P', b'N', b'G']));
     let w = pic["width"].as_f64().unwrap();
     assert!(w > 20.0 && w < 200.0, "{w}");
@@ -402,7 +466,10 @@ fn shutdown_ends_the_child() {
             assert!(status.success());
             break;
         }
-        assert!(t0.elapsed() < Duration::from_secs(5), "the child is still running");
+        assert!(
+            t0.elapsed() < Duration::from_secs(5),
+            "the child is still running"
+        );
         std::thread::sleep(Duration::from_millis(20));
     }
 }

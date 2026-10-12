@@ -54,7 +54,10 @@ fn project_scope(
 
 /// A file as the JSON events name it: its canonical path.
 fn abs_name(file: &Path) -> String {
-    file.canonicalize().unwrap_or_else(|_| file.to_path_buf()).display().to_string()
+    file.canonicalize()
+        .unwrap_or_else(|_| file.to_path_buf())
+        .display()
+        .to_string()
 }
 
 pub fn run(path: &Path, coverage: bool, show_missing: bool) -> i32 {
@@ -67,7 +70,12 @@ pub fn run_with(path: &Path, coverage: bool, show_missing: bool, options: &Optio
 
 /// `olang test a.ol tests/a_test.ol`: several files (or directories) in
 /// one run — an editor's "this file and its tests" — each file once.
-pub fn run_paths(paths: &[std::path::PathBuf], coverage: bool, show_missing: bool, options: &Options) -> i32 {
+pub fn run_paths(
+    paths: &[std::path::PathBuf],
+    coverage: bool,
+    show_missing: bool,
+    options: &Options,
+) -> i32 {
     let started = std::time::Instant::now();
     let path: &Path = match paths.first() {
         Some(p) => p,
@@ -92,7 +100,10 @@ pub fn run_paths(paths: &[std::path::PathBuf], coverage: bool, show_missing: boo
     for more in paths.iter().skip(1) {
         for f in super::discover_ol_files(more) {
             let c = f.canonicalize().ok();
-            if !files.iter().any(|g| g == &f || (c.is_some() && g.canonicalize().ok() == c)) {
+            if !files
+                .iter()
+                .any(|g| g == &f || (c.is_some() && g.canonicalize().ok() == c))
+            {
                 files.push(f);
             }
         }
@@ -124,15 +135,20 @@ pub fn run_paths(paths: &[std::path::PathBuf], coverage: bool, show_missing: boo
     let parser = Parser::new();
     // `--format json` says up front which files hold blocks and how many:
     // the files are parsed once, here, and the walk below reuses them.
-    let mut parsed: HashMap<std::path::PathBuf, Result<crate::ast::Program, String>> = HashMap::new();
+    let mut parsed: HashMap<std::path::PathBuf, Result<crate::ast::Program, String>> =
+        HashMap::new();
     if json {
         super::test_events::enable();
         super::test_events::set_aliases(paths);
         let mut with_tests = Vec::new();
         let mut count = 0usize;
         for file in &files {
-            let Ok(source) = std::fs::read_to_string(file) else { continue };
-            let program = parser.parse_with_dir(&source, file.parent()).map_err(|e| e.to_string());
+            let Ok(source) = std::fs::read_to_string(file) else {
+                continue;
+            };
+            let program = parser
+                .parse_with_dir(&source, file.parent())
+                .map_err(|e| e.to_string());
             if let Ok(p) = &program {
                 let blocks = p
                     .statements
@@ -143,7 +159,10 @@ pub fn run_paths(paths: &[std::path::PathBuf], coverage: bool, show_missing: boo
                     })
                     .filter(|t| options.only.as_deref().is_none_or(|o| t.name.contains(o)))
                     .count();
-                let any = p.statements.iter().any(|s| matches!(s.unwrapped(), Statement::TestDecl(_)));
+                let any = p
+                    .statements
+                    .iter()
+                    .any(|s| matches!(s.unwrapped(), Statement::TestDecl(_)));
                 if any {
                     with_tests.push(abs_name(file));
                     count += blocks;
@@ -172,7 +191,9 @@ pub fn run_paths(paths: &[std::path::PathBuf], coverage: bool, show_missing: boo
             // The file's directory anchors its macro expansion: a nested
             // package's file resolves its own `use lib.x` against its package,
             // not the project the runner was started from.
-            parser.parse_with_dir(&source, file.parent()).map_err(|e| e.to_string())
+            parser
+                .parse_with_dir(&source, file.parent())
+                .map_err(|e| e.to_string())
         };
         let program = match program {
             Ok(p) => p,
@@ -181,7 +202,14 @@ pub fn run_paths(paths: &[std::path::PathBuf], coverage: bool, show_missing: boo
             Err(e) => {
                 parse_errors += 1;
                 if json {
-                    let fail = super::test_events::Failure { message: e, file: None, line: None, col: None, frames: Vec::new(), stmt: None };
+                    let fail = super::test_events::Failure {
+                        message: e,
+                        file: None,
+                        line: None,
+                        col: None,
+                        frames: Vec::new(),
+                        stmt: None,
+                    };
                     super::test_events::file_done(&abs_name(file), 0, 0, Some(fail), "parse");
                 } else {
                     println!("  {} {}", "✗".red().bold(), file.display());
@@ -330,7 +358,13 @@ pub fn run_paths(paths: &[std::path::PathBuf], coverage: bool, show_missing: boo
                 }
             });
             file_errors += usize::from(fail.is_some());
-            super::test_events::file_done(&absolute.display().to_string(), file_passed, file_failed, fail, "error");
+            super::test_events::file_done(
+                &absolute.display().to_string(),
+                file_passed,
+                file_failed,
+                fail,
+                "error",
+            );
         } else if let Some(e) = run_error {
             file_errors += 1;
             println!("  {} {}", "✗".red().bold(), "file error".bold());
@@ -362,7 +396,13 @@ pub fn run_paths(paths: &[std::path::PathBuf], coverage: bool, show_missing: boo
     if json {
         let failed = total_failed + file_errors + parse_errors > 0;
         let code = if failed { 1 } else { 0 };
-        super::test_events::finished(total_passed, total_failed + file_errors + parse_errors, test_files, elapsed, code);
+        super::test_events::finished(
+            total_passed,
+            total_failed + file_errors + parse_errors,
+            test_files,
+            elapsed,
+            code,
+        );
         return code;
     }
     println!("{}", "─".repeat(40));

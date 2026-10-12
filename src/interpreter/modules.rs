@@ -581,8 +581,7 @@ impl Interpreter {
             self.module_cache.remove(&k);
             self.module_scopes.remove(&k);
         }
-        self.module_name_index
-            .retain(|_, f| !f.starts_with(dir));
+        self.module_name_index.retain(|_, f| !f.starts_with(dir));
     }
 
     fn load_module_resolved(
@@ -717,13 +716,18 @@ impl Interpreter {
                     let (program, plain) = crate::parser::Parser::new()
                         .parse_module(&content, file_path.parent())
                         .map_err(|e| InterpreterError::RuntimeError {
-                            message: format!("Failed to parse module {}:\n{}", file_path.display(), e),
+                            message: format!(
+                                "Failed to parse module {}:\n{}",
+                                file_path.display(),
+                                e
+                            ),
                         })?;
                     drop(parse);
                     // kept only when no macro made it (an expansion reads
                     // other files): the tree is then the text's alone
                     if plain {
-                        let _store = crate::boot_trace::Span::start(crate::boot_trace::Counter::CacheStored);
+                        let _store =
+                            crate::boot_trace::Span::start(crate::boot_trace::Counter::CacheStored);
                         crate::parse_cache::store(&file_path, &content, &program);
                     }
                     program

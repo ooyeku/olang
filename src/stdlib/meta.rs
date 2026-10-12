@@ -1258,12 +1258,21 @@ fn render_literal(v: &Value) -> Result<String, Box<dyn std::error::Error>> {
             let parts: Result<Vec<_>, Box<dyn std::error::Error>> = keys
                 .iter()
                 .map(|k| {
-                    let ident = k.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
+                    let ident = k
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_alphabetic() || c == '_')
                         && k.chars().all(|c| c.is_alphanumeric() || c == '_');
                     if !ident {
-                        return Err(format!("meta.lit: an object's field {k:?} is not a name").into());
+                        return Err(
+                            format!("meta.lit: an object's field {k:?} is not a name").into()
+                        );
                     }
-                    Ok(format!("{}: {}", k, render_literal(fields.get(*k).expect("key exists"))?))
+                    Ok(format!(
+                        "{}: {}",
+                        k,
+                        render_literal(fields.get(*k).expect("key exists"))?
+                    ))
                 })
                 .collect();
             format!("{{ {} }}", parts?.join(", "))

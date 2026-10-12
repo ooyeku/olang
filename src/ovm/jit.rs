@@ -1808,7 +1808,11 @@ impl JitCache {
             self.table[idx] = Some(Slot::Pending);
             if boundary_unprofitable(bytecode) {
                 crate::tier_stats::note_native(
-                    bytecode.debug_info.function_name.as_deref().unwrap_or("<anonymous>"),
+                    bytecode
+                        .debug_info
+                        .function_name
+                        .as_deref()
+                        .unwrap_or("<anonymous>"),
                     bytecode.def_file.as_deref(),
                     "a trivial constructor: native code would cost more at the call boundary than it saves, so calls from outside native code run it as bytecode",
                 );
@@ -1843,7 +1847,11 @@ impl JitCache {
                 }
             }
             crate::tier_stats::note_native(
-                bytecode.debug_info.function_name.as_deref().unwrap_or("<anonymous>"),
+                bytecode
+                    .debug_info
+                    .function_name
+                    .as_deref()
+                    .unwrap_or("<anonymous>"),
                 bytecode.def_file.as_deref(),
                 "its body uses an operation native code does not have",
             );
@@ -2168,7 +2176,11 @@ impl JitCache {
                         eprintln!("[jit] fn#{} refused (inference or codegen)", idx);
                     }
                     crate::tier_stats::note_native(
-                        bytecode.debug_info.function_name.as_deref().unwrap_or("<anonymous>"),
+                        bytecode
+                            .debug_info
+                            .function_name
+                            .as_deref()
+                            .unwrap_or("<anonymous>"),
                         bytecode.def_file.as_deref(),
                         "the native compiler refused it (type inference or code generation, on the argument kinds of its first call)",
                     );
@@ -3097,7 +3109,10 @@ impl JitCache {
                         .or_else(|| lookup(FunctionId(*idx as u64)))?;
                     let name = bc.debug_info.function_name.as_deref()?;
                     let counter = crate::profile::native_call_counter(name, bc.def_file.as_deref());
-                    Some((*idx, counter as *const std::sync::atomic::AtomicU64 as usize))
+                    Some((
+                        *idx,
+                        counter as *const std::sync::atomic::AtomicU64 as usize,
+                    ))
                 })
                 .collect()
         } else {
@@ -5483,7 +5498,10 @@ impl PlanFn {
                     }
                     grow!(self.writes[dst.0 as usize], K_FLOAT);
                 }
-                Instruction::Jump { .. } | Instruction::MatchFail | Instruction::TryFail | Instruction::Nop => {}
+                Instruction::Jump { .. }
+                | Instruction::MatchFail
+                | Instruction::TryFail
+                | Instruction::Nop => {}
                 Instruction::JumpIfTrue { condition, .. }
                 | Instruction::JumpIfFalse { condition, .. } => {
                     narrow!(condition.0, K_BOOL);
@@ -6051,8 +6069,12 @@ fn translate_body(
     // raises the error. Any other run compiles no poll at all.
     let poll_interrupt = crate::interrupt::armed();
     let interrupt_poll = |builder: &mut FunctionBuilder, deopt: cranelift_codegen::ir::Block| {
-        let addr = builder.ins().iconst(ptr_ty, crate::interrupt::flag_address() as i64);
-        let flag = builder.ins().load(types::I8, MemFlagsData::trusted(), addr, 0);
+        let addr = builder
+            .ins()
+            .iconst(ptr_ty, crate::interrupt::flag_address() as i64);
+        let flag = builder
+            .ins()
+            .load(types::I8, MemFlagsData::trusted(), addr, 0);
         let cont = builder.create_block();
         builder.ins().brif(flag, deopt, &[], cont, &[]);
         builder.switch_to_block(cont);
@@ -6404,7 +6426,10 @@ fn translate_body(
                     B::Shl | B::Shr => {
                         // A count outside 0..64 raises: the VM reruns the
                         // call and reports it.
-                        let out = builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, b, 64);
+                        let out =
+                            builder
+                                .ins()
+                                .icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, b, 64);
                         let cont = builder.create_block();
                         builder.ins().brif(out, deopt_block, &[], cont, &[]);
                         builder.switch_to_block(cont);
@@ -7511,9 +7536,13 @@ fn translate_body(
                 let cont = builder.create_block();
                 builder.ins().brif(exhausted, deopt_block, &[], cont, &[]);
                 builder.switch_to_block(cont);
-                if let Some(addr) = CALL_COUNTERS.with(|c| c.borrow().get(&func_id.index()).copied()) {
+                if let Some(addr) =
+                    CALL_COUNTERS.with(|c| c.borrow().get(&func_id.index()).copied())
+                {
                     let at = builder.ins().iconst(types::I64, addr as i64);
-                    let n = builder.ins().load(types::I64, MemFlagsData::trusted(), at, 0);
+                    let n = builder
+                        .ins()
+                        .load(types::I64, MemFlagsData::trusted(), at, 0);
                     let n1 = builder.ins().iadd_imm_s(n, 1);
                     builder.ins().store(MemFlagsData::trusted(), n1, at, 0);
                 }

@@ -17,28 +17,27 @@ pub mod stdio;
 
 pub mod analyze;
 pub mod ast;
-pub mod builtin;
 pub mod boot_trace; // Where a program's start goes (`OLANG_BOOT_TRACE=1`)
+pub mod builtin;
 pub mod caps;
 pub mod clock;
-pub mod vfs;
+pub mod compile_cache; // Compiled bytecode kept between runs
 pub mod effects;
+pub mod errtrace; // Where a caught error went: its frames, file and line each
 pub mod expand;
 pub mod help;
 pub mod home;
 pub mod interpreter;
-pub mod errtrace; // Where a caught error went: its frames, file and line each
 pub mod interrupt; // Stopping a running evaluation (`olang repl --serve`)
 pub mod log;
 pub mod memory; // The accounting behind `runtime.memory()`
 pub mod native;
 pub mod ods;
 pub mod olb; // The program image: a parsed Program as bytes
-pub mod parse_cache; // Parsed modules kept between runs
-pub mod compile_cache; // Compiled bytecode kept between runs
 pub mod output;
 pub mod ovm; // Bytecode execution tier
 pub mod parallel;
+pub mod parse_cache; // Parsed modules kept between runs
 pub mod parser;
 pub mod pkg;
 #[cfg(not(feature = "native"))]
@@ -61,6 +60,7 @@ pub mod tier_stats; // Where each function ran: `--ovm-stats=json`, pins
 pub mod timeline;
 pub mod tools;
 pub mod version;
+pub mod vfs;
 
 // Re-export commonly used types
 pub use ast::{Expr, Program, Value};

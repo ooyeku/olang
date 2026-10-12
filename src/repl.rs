@@ -660,7 +660,12 @@ impl Repl {
     /// functions, documented functions.
     pub(crate) fn library_names(&self) -> Vec<String> {
         let mut names = self.help_system.get_function_names();
-        names.extend(crate::builtin::BuiltinFunctions::new().get_functions().keys().cloned());
+        names.extend(
+            crate::builtin::BuiltinFunctions::new()
+                .get_functions()
+                .keys()
+                .cloned(),
+        );
         for (module_name, module_value) in crate::stdlib::get_stdlib() {
             names.push(module_name.clone());
             if let Value::Struct { fields, .. } = &module_value {
@@ -759,7 +764,9 @@ impl Repl {
                 self.config.prompt.clone()
             };
 
-            let Some(editor) = self.editor.as_mut() else { break };
+            let Some(editor) = self.editor.as_mut() else {
+                break;
+            };
             let line = match editor.readline(&prompt) {
                 Ok(line) => line,
                 Err(ReadlineError::Interrupted) => {
@@ -1709,7 +1716,10 @@ impl Repl {
                                         Ok(value) => {
                                             let t = Self::deep_type_of(&value);
                                             self.note(crate::repl_commands::Note::Type(t.clone()));
-                                            self.note(crate::repl_commands::Note::Value { label: "value".into(), value: value.clone() });
+                                            self.note(crate::repl_commands::Note::Value {
+                                                label: "value".into(),
+                                                value: value.clone(),
+                                            });
                                             println!("{} : {}", expr, t);
                                         }
                                         Err(e) => {
@@ -1734,9 +1744,14 @@ impl Repl {
                     match self.eval_line(&expr) {
                         Ok(value) => {
                             let duration = start.elapsed();
-                            self.note(crate::repl_commands::Note::Time(duration.as_secs_f64() * 1000.0));
+                            self.note(crate::repl_commands::Note::Time(
+                                duration.as_secs_f64() * 1000.0,
+                            ));
                             if value != Value::Unit {
-                                self.note(crate::repl_commands::Note::Value { label: "value".into(), value: value.clone() });
+                                self.note(crate::repl_commands::Note::Value {
+                                    label: "value".into(),
+                                    value: value.clone(),
+                                });
                                 repl_print(&value);
                             }
                             println!("Execution time: {:.2}ms", duration.as_secs_f64() * 1000.0);
@@ -1878,7 +1893,10 @@ impl Repl {
                             match self.eval_line(&content) {
                                 Ok(value) => {
                                     if value != Value::Unit {
-                                        self.note(crate::repl_commands::Note::Value { label: "value".into(), value: value.clone() });
+                                        self.note(crate::repl_commands::Note::Value {
+                                            label: "value".into(),
+                                            value: value.clone(),
+                                        });
                                         repl_print(&value);
                                     }
                                     println!("File '{}' executed successfully", filename);
@@ -2077,7 +2095,9 @@ impl Repl {
                     }
 
                     if !times.is_empty() {
-                        self.note(crate::repl_commands::Note::Bench(times.iter().map(|t| t.as_secs_f64() * 1000.0).collect()));
+                        self.note(crate::repl_commands::Note::Bench(
+                            times.iter().map(|t| t.as_secs_f64() * 1000.0).collect(),
+                        ));
                         let total: std::time::Duration = times.iter().sum();
                         let avg = total / times.len() as u32;
 
@@ -2329,7 +2349,10 @@ impl Repl {
                         match self.eval_line(&command) {
                             Ok(value) => {
                                 if value != Value::Unit {
-                                    self.note(crate::repl_commands::Note::Value { label: "value".into(), value: value.clone() });
+                                    self.note(crate::repl_commands::Note::Value {
+                                        label: "value".into(),
+                                        value: value.clone(),
+                                    });
                                     repl_print(&value);
                                 }
                             }
@@ -2352,7 +2375,10 @@ impl Repl {
                 match self.eval_line(stripped) {
                     Ok(value) => {
                         if value != Value::Unit {
-                            self.note(crate::repl_commands::Note::Value { label: "value".into(), value: value.clone() });
+                            self.note(crate::repl_commands::Note::Value {
+                                label: "value".into(),
+                                value: value.clone(),
+                            });
                             repl_print(&value);
                         }
                     }
@@ -2549,20 +2575,33 @@ impl Repl {
                 .map(|n| {
                     let v = user_vars[*n];
                     let mut m = crate::ast::ValueMap::default();
-                    m.insert("name".into(), Value::String(std::sync::Arc::new((*n).clone())));
-                    m.insert("type".into(), Value::String(std::sync::Arc::new(Self::get_type_name(v).to_string())));
-                    m.insert("value".into(), Value::String(std::sync::Arc::new(Self::format_value_preview(v))));
+                    m.insert(
+                        "name".into(),
+                        Value::String(std::sync::Arc::new((*n).clone())),
+                    );
+                    m.insert(
+                        "type".into(),
+                        Value::String(std::sync::Arc::new(Self::get_type_name(v).to_string())),
+                    );
+                    m.insert(
+                        "value".into(),
+                        Value::String(std::sync::Arc::new(Self::format_value_preview(v))),
+                    );
                     Value::Map(std::sync::Arc::new(m))
                 })
                 .collect();
-            self.notes.push(crate::repl_commands::Note::Value { label: "bindings".into(), value: Value::List(std::sync::Arc::new(rows)) });
+            self.notes.push(crate::repl_commands::Note::Value {
+                label: "bindings".into(),
+                value: Value::List(std::sync::Arc::new(rows)),
+            });
         }
         if user_var_count == 0 {
             println!("  {}", "(none)".bright_black());
         } else {
             // Get user variables again (after releasing previous borrow)
             let user_vars = self.interpreter.get_user_variables();
-            let mut sorted: Vec<(&String, &Value)> = user_vars.iter().map(|(k, v)| (k, *v)).collect();
+            let mut sorted: Vec<(&String, &Value)> =
+                user_vars.iter().map(|(k, v)| (k, *v)).collect();
             sorted.sort_by(|a, b| a.0.cmp(b.0));
             for (name, value) in sorted {
                 let type_name = Self::get_type_name(value);
@@ -3220,7 +3259,10 @@ impl Repl {
                         let time_ms = duration.as_secs_f64() * 1000.0;
 
                         if value != Value::Unit {
-                            self.note(crate::repl_commands::Note::Value { label: "value".into(), value: value.clone() });
+                            self.note(crate::repl_commands::Note::Value {
+                                label: "value".into(),
+                                value: value.clone(),
+                            });
                             println!("  {}: {}", "Result".bright_green(), value);
                         }
                         println!("  {}: {:.2}ms", "Execution time".bright_blue(), time_ms);
@@ -3282,7 +3324,10 @@ impl Repl {
 
         if let Some(value) = user_vars.get(var_name) {
             if self.headless {
-                self.notes.push(crate::repl_commands::Note::Value { label: var_name.to_string(), value: (*value).clone() });
+                self.notes.push(crate::repl_commands::Note::Value {
+                    label: var_name.to_string(),
+                    value: (*value).clone(),
+                });
             }
             println!(
                 "\n{}",
@@ -3400,7 +3445,10 @@ impl Repl {
                 // Set the variable
                 self.interpreter
                     .define_variable(var_name.clone(), value.clone());
-                self.note(crate::repl_commands::Note::Value { label: var_name.clone(), value: value.clone() });
+                self.note(crate::repl_commands::Note::Value {
+                    label: var_name.clone(),
+                    value: value.clone(),
+                });
 
                 if existed {
                     println!(

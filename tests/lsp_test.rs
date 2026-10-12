@@ -40,7 +40,10 @@ impl Client {
         loop {
             let mut line = String::new();
             // An ended server is a failure, not a test waiting forever.
-            assert!(self.stdout.read_line(&mut line).unwrap() > 0, "the server ended");
+            assert!(
+                self.stdout.read_line(&mut line).unwrap() > 0,
+                "the server ended"
+            );
             if line == "\r\n" || line == "\n" {
                 break;
             }
@@ -936,8 +939,24 @@ fn semantic_tokens_and_incremental_edits() {
         .collect();
     assert_eq!(data.len() % 5, 0);
     // `fn` a keyword at 0:0, then `add` a function declared at 0:3
-    assert_eq!(&data[..4], &[0, 0, 2, types.iter().position(|t| *t == "keyword").unwrap() as u64]);
-    assert_eq!(data[5..9], [0, 3, 3, types.iter().position(|t| *t == "function").unwrap() as u64]);
+    assert_eq!(
+        &data[..4],
+        &[
+            0,
+            0,
+            2,
+            types.iter().position(|t| *t == "keyword").unwrap() as u64
+        ]
+    );
+    assert_eq!(
+        data[5..9],
+        [
+            0,
+            3,
+            3,
+            types.iter().position(|t| *t == "function").unwrap() as u64
+        ]
+    );
     assert_eq!(data[9] & 1, 1, "declaration modifier");
 
     // only line 2 by range: the first token's delta is from line 0
@@ -949,7 +968,11 @@ fn semantic_tokens_and_incremental_edits() {
     let ranged = c.recv_until(|m| m["id"] == 3);
     let rd = ranged["result"]["data"].as_array().unwrap();
     assert_eq!(rd[0], 2, "first token on line 2");
-    assert_eq!(rd.len(), 5 * 2, "println(x): a function and a variable (brackets are not tokens)");
+    assert_eq!(
+        rd.len(),
+        5 * 2,
+        "println(x): a function and a variable (brackets are not tokens)"
+    );
 
     // an incremental edit: `x` renamed `total` on line 1 and its use on
     // line 2, then an error typed at the end
@@ -964,7 +987,10 @@ fn semantic_tokens_and_incremental_edits() {
     }));
     let m = c.recv_until(|m| diagnostics_of(m).is_some());
     let ds = diagnostics_of(&m).unwrap();
-    assert!(ds.iter().any(|d| d["range"]["start"]["line"] == 3), "the error typed on line 3: {ds:?}");
+    assert!(
+        ds.iter().any(|d| d["range"]["start"]["line"] == 3),
+        "the error typed on line 3: {ds:?}"
+    );
     c.send(&serde_json::json!({
         "jsonrpc":"2.0","id":4,"method":"textDocument/hover","params":{
             "textDocument":{"uri":uri},"position":{"line":2,"character":10}}
@@ -977,7 +1003,12 @@ fn semantic_tokens_and_incremental_edits() {
             "range":{"start":{"line":1,"character":0},"end":{"line":1,"character":40}}}
     }));
     let r2 = c.recv_until(|m| m["id"] == 5);
-    let d2: Vec<u64> = r2["result"]["data"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap()).collect();
+    let d2: Vec<u64> = r2["result"]["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_u64().unwrap())
+        .collect();
     // `let` then `total` (5 long) declared
     assert_eq!(&d2[5..8], &[0, 4, 5]);
 
@@ -1003,12 +1034,19 @@ fn signature_help_reaches_an_imported_function_mid_edit() {
     c.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}));
     c.recv_until(|m| m["id"] == 1);
     c.send(&serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
-    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{
-        "textDocument":{"uri":uri,"languageId":"olang","version":1,"text":text}}}));
-    c.send(&serde_json::json!({"jsonrpc":"2.0","id":2,"method":"textDocument/signatureHelp","params":{
-        "textDocument":{"uri":uri},"position":{"line":1,"character":15}}}));
+    c.send(
+        &serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+        "textDocument":{"uri":uri,"languageId":"olang","version":1,"text":text}}}),
+    );
+    c.send(
+        &serde_json::json!({"jsonrpc":"2.0","id":2,"method":"textDocument/signatureHelp","params":{
+        "textDocument":{"uri":uri},"position":{"line":1,"character":15}}}),
+    );
     let r = c.recv_until(|m| m["id"] == 2);
-    assert_eq!(r["result"]["signatures"][0]["label"], "share fn double(n)", "{r}");
+    assert_eq!(
+        r["result"]["signatures"][0]["label"], "share fn double(n)",
+        "{r}"
+    );
     c.send(&serde_json::json!({"jsonrpc":"2.0","id":9,"method":"shutdown","params":null}));
     c.recv_until(|m| m["id"] == 9);
     c.send(&serde_json::json!({"jsonrpc":"2.0","method":"exit","params":null}));
@@ -1035,8 +1073,10 @@ fn the_server_outlives_wide_characters_an_empty_document_and_bad_params() {
     let r = c.recv_until(|m| m["id"] == 2);
     assert!(r["result"]["data"].is_array(), "{r}");
     let empty = "file:///empty.ol";
-    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{
-        "textDocument":{"uri":empty,"languageId":"olang","version":1,"text":""}}}));
+    c.send(
+        &serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+        "textDocument":{"uri":empty,"languageId":"olang","version":1,"text":""}}}),
+    );
     c.send(&serde_json::json!({"jsonrpc":"2.0","id":3,"method":"textDocument/codeAction","params":{
         "textDocument":{"uri":empty},
         "range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},
@@ -1046,8 +1086,10 @@ fn the_server_outlives_wide_characters_an_empty_document_and_bad_params() {
     assert!(r.get("error").is_none(), "{r}");
     // malformed: a notification without its document, a request whose position is not one
     c.send(&serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didChange","params":{"contentChanges":[]}}));
-    c.send(&serde_json::json!({"jsonrpc":"2.0","id":4,"method":"textDocument/completion","params":{
-        "textDocument":{"uri":wide},"position":{"line":0,"character":-1}}}));
+    c.send(
+        &serde_json::json!({"jsonrpc":"2.0","id":4,"method":"textDocument/completion","params":{
+        "textDocument":{"uri":wide},"position":{"line":0,"character":-1}}}),
+    );
     let r = c.recv_until(|m| m["id"] == 4);
     assert!(r["error"]["code"] == -32602, "{r}");
     // still there
@@ -1115,8 +1157,15 @@ fn a_renamed_file_moves_its_document_and_rechecks_its_importers() {
             diagnostics_of(&m).unwrap().clone(),
         );
     }
-    assert_eq!(seen.get(&old_uri), Some(&vec![]), "the old name's problems cleared: {seen:?}");
-    assert!(seen.contains_key(&new_uri), "the document re-checked under its new name: {seen:?}");
+    assert_eq!(
+        seen.get(&old_uri),
+        Some(&vec![]),
+        "the old name's problems cleared: {seen:?}"
+    );
+    assert!(
+        seen.contains_key(&new_uri),
+        "the document re-checked under its new name: {seen:?}"
+    );
     let main = seen.get(&main_uri).expect("the importer re-checked");
     assert!(
         main.iter().any(|d| d["severity"] == 1),
@@ -1138,7 +1187,13 @@ fn a_renamed_file_moves_its_document_and_rechecks_its_importers() {
             "files":[{"uri": new_uri}]}
     }));
     let m = c.recv_until(|m| diagnostics_of(m).is_some() && m["params"]["uri"] == main_uri);
-    assert!(!diagnostics_of(&m).unwrap().iter().any(|d| d["severity"] == 1), "{m}");
+    assert!(
+        !diagnostics_of(&m)
+            .unwrap()
+            .iter()
+            .any(|d| d["severity"] == 1),
+        "{m}"
+    );
     let _ = c.child.kill();
     let _ = std::fs::remove_dir_all(&dir);
 }

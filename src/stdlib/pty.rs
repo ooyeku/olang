@@ -97,7 +97,9 @@ pub fn call_pty_function(name: &str, args: Vec<Value>) -> Res {
         match name {
             "available" => Ok(Value::Boolean(false)),
             "shell" => Ok(Value::Unit),
-            _ => Ok(err(format!("pty.{name}: pseudo-terminals need macOS or Linux"))),
+            _ => Ok(err(format!(
+                "pty.{name}: pseudo-terminals need macOS or Linux"
+            ))),
         }
     }
 }
@@ -119,7 +121,10 @@ fn id_of(v: &Value) -> Result<i64, String> {
             Some(Value::Integer(i)) => Ok(*i),
             _ => Err("pty: a malformed Pty handle".into()),
         },
-        other => Err(format!("pty: expected a Pty handle, got {}", other.type_name())),
+        other => Err(format!(
+            "pty: expected a Pty handle, got {}",
+            other.type_name()
+        )),
     }
 }
 
@@ -214,7 +219,10 @@ mod imp {
             "kill" => kill(args),
             "wait" => wait(args),
             "pid" => {
-                let p = match pty_of(args.first().unwrap_or(&Value::Unit)) { Ok(p) => p, Err(e) => return Ok(err(e)) };
+                let p = match pty_of(args.first().unwrap_or(&Value::Unit)) {
+                    Ok(p) => p,
+                    Err(e) => return Ok(err(e)),
+                };
                 Ok(Value::Integer(p.pid as i64))
             }
             "foreground" => foreground(args),
@@ -253,7 +261,11 @@ mod imp {
 
     fn spawn(args: Vec<Value>) -> Res {
         if args.is_empty() || args.len() > 2 {
-            return Err(crate::stdlib::misuse::arity("pty.spawn", "1 or 2", args.len()));
+            return Err(crate::stdlib::misuse::arity(
+                "pty.spawn",
+                "1 or 2",
+                args.len(),
+            ));
         }
         let argv: Vec<String> = match &args[0] {
             Value::List(l) => l
@@ -264,7 +276,12 @@ mod imp {
                 })
                 .collect(),
             other => {
-                return Err(crate::stdlib::misuse::arg_type("pty.spawn", "argv", "a list of strings", other));
+                return Err(crate::stdlib::misuse::arg_type(
+                    "pty.spawn",
+                    "argv",
+                    "a list of strings",
+                    other,
+                ));
             }
         };
         if argv.is_empty() {
@@ -275,11 +292,21 @@ mod imp {
             None | Some(Value::Unit) => &empty,
             Some(Value::Map(m)) => m.as_ref(),
             Some(Value::Struct { fields, .. }) => fields.as_ref(),
-            Some(other) => return Err(crate::stdlib::misuse::arg_type("pty.spawn", "opts", "a map", other)),
+            Some(other) => {
+                return Err(crate::stdlib::misuse::arg_type(
+                    "pty.spawn",
+                    "opts",
+                    "a map",
+                    other,
+                ));
+            }
         };
         for k in o.keys() {
             if !matches!(k.as_str(), "cwd" | "env" | "rows" | "cols" | "clear_env") {
-                return Err(format!("pty.spawn: unknown option '{k}' (cwd, env, rows, cols, clear_env)").into());
+                return Err(format!(
+                    "pty.spawn: unknown option '{k}' (cwd, env, rows, cols, clear_env)"
+                )
+                .into());
             }
         }
         let rows = num_opt(o, "rows").unwrap_or(24);
@@ -297,9 +324,20 @@ mod imp {
         let mut ws = winsize(rows, cols);
         // SAFETY: openpty writes two descriptors; the name and termios
         // pointers may be null.
-        let r = unsafe { libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), &mut ws) };
+        let r = unsafe {
+            libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut ws,
+            )
+        };
         if r != 0 {
-            return Ok(err(format!("pty.spawn: openpty failed: {}", std::io::Error::last_os_error())));
+            return Ok(err(format!(
+                "pty.spawn: openpty failed: {}",
+                std::io::Error::last_os_error()
+            )));
         }
         // SAFETY: openpty answered two descriptors we now own.
         let master = unsafe { OwnedFd::from_raw_fd(master) };
@@ -371,7 +409,12 @@ mod imp {
         }
         let child = match cmd.spawn() {
             Ok(c) => c,
-            Err(e) => return Ok(err(format!("pty.spawn: failed to start '{}': {}", argv[0], e))),
+            Err(e) => {
+                return Ok(err(format!(
+                    "pty.spawn: failed to start '{}': {}",
+                    argv[0], e
+                )));
+            }
         };
         drop(slave);
         nonblocking(master.as_raw_fd());
@@ -420,13 +463,21 @@ mod imp {
             let e = std::io::Error::last_os_error();
             match e.raw_os_error() {
                 Some(libc::EAGAIN) | Some(libc::EINTR) => {
-                    let mut pfd = libc::pollfd { fd, events: libc::POLLOUT, revents: 0 };
+                    let mut pfd = libc::pollfd {
+                        fd,
+                        events: libc::POLLOUT,
+                        revents: 0,
+                    };
                     // SAFETY: one pollfd.
                     let r = unsafe { libc::poll(&mut pfd, 1, 1000) };
-                    if r < 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR) {
+                    if r < 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR)
+                    {
                         return false;
                     }
-                    if r > 0 && pfd.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 && pfd.revents & libc::POLLOUT == 0 {
+                    if r > 0
+                        && pfd.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0
+                        && pfd.revents & libc::POLLOUT == 0
+                    {
                         return false;
                     }
                 }
@@ -464,10 +515,18 @@ mod imp {
     }
 
     fn poll_in(fd: RawFd, ms: i64) -> i32 {
-        let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+        let mut pfd = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
         // SAFETY: one pollfd.
         let r = unsafe { libc::poll(&mut pfd, 1, ms.clamp(0, i32::MAX as i64) as i32) };
-        if r > 0 && pfd.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 { 1 } else { r.min(0) }
+        if r > 0 && pfd.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
+            1
+        } else {
+            r.min(0)
+        }
     }
 
     /// `pty.read(p, opts?)`: Ok(Bytes) with what arrived, Ok(()) when
@@ -476,7 +535,10 @@ mod imp {
     /// more comes within `settle_ms` (default 2), up to `max` bytes
     /// (default 1 MiB).
     fn read(args: Vec<Value>) -> Res {
-        let p = match pty_of(args.first().unwrap_or(&Value::Unit)) { Ok(p) => p, Err(e) => return Ok(err(e)) };
+        let p = match pty_of(args.first().unwrap_or(&Value::Unit)) {
+            Ok(p) => p,
+            Err(e) => return Ok(err(e)),
+        };
         let empty = crate::ast::ValueMap::default();
         let o = match args.get(1) {
             Some(Value::Map(m)) => m.as_ref(),
@@ -512,7 +574,11 @@ mod imp {
             }
         }
         if out.is_empty() {
-            return Ok(if p.eof.load(Ordering::SeqCst) { err("eof") } else { ok(Value::Unit) });
+            return Ok(if p.eof.load(Ordering::SeqCst) {
+                err("eof")
+            } else {
+                ok(Value::Unit)
+            });
         }
         Ok(ok(crate::stdlib::bytes::to_value(out)))
     }
@@ -521,12 +587,22 @@ mod imp {
         if args.len() != 2 {
             return Err(crate::stdlib::misuse::arity("pty.write", "2", args.len()));
         }
-        let p = match pty_of(&args[0]) { Ok(p) => p, Err(e) => return Ok(err(e)) };
+        let p = match pty_of(&args[0]) {
+            Ok(p) => p,
+            Err(e) => return Ok(err(e)),
+        };
         let data = match &args[1] {
             Value::String(t) => t.as_bytes().to_vec(),
             other => match crate::stdlib::bytes::bytes_of(other) {
                 Ok(b) => b.to_vec(),
-                Err(_) => return Err(crate::stdlib::misuse::arg_type("pty.write", "data", "a String or Bytes", other)),
+                Err(_) => {
+                    return Err(crate::stdlib::misuse::arg_type(
+                        "pty.write",
+                        "data",
+                        "a String or Bytes",
+                        other,
+                    ));
+                }
             },
         };
         let tx = p.tx.lock().unwrap();
@@ -540,7 +616,10 @@ mod imp {
         if args.len() != 3 {
             return Err(crate::stdlib::misuse::arity("pty.resize", "3", args.len()));
         }
-        let p = match pty_of(&args[0]) { Ok(p) => p, Err(e) => return Ok(err(e)) };
+        let p = match pty_of(&args[0]) {
+            Ok(p) => p,
+            Err(e) => return Ok(err(e)),
+        };
         let n = |v: &Value| match v {
             Value::Integer(i) => *i,
             Value::Float(f) => *f as i64,
@@ -551,7 +630,10 @@ mod imp {
         // to the terminal's foreground process group.
         let r = unsafe { libc::ioctl(p.master.as_raw_fd(), TIOCSWINSZ as _, &ws) };
         if r < 0 {
-            return Ok(err(format!("pty.resize: {}", std::io::Error::last_os_error())));
+            return Ok(err(format!(
+                "pty.resize: {}",
+                std::io::Error::last_os_error()
+            )));
         }
         Ok(ok(Value::Unit))
     }
@@ -559,18 +641,29 @@ mod imp {
     fn signal_of(v: Option<&Value>) -> Result<i32, String> {
         Ok(match v {
             None | Some(Value::Unit) => libc::SIGHUP,
-            Some(Value::String(t)) => match t.trim_start_matches("SIG").to_ascii_uppercase().as_str() {
-                "HUP" => libc::SIGHUP,
-                "INT" => libc::SIGINT,
-                "TERM" => libc::SIGTERM,
-                "KILL" => libc::SIGKILL,
-                "QUIT" => libc::SIGQUIT,
-                "CONT" => libc::SIGCONT,
-                "STOP" => libc::SIGSTOP,
-                other => return Err(format!("pty.kill: unknown signal '{other}' (HUP, INT, TERM, KILL, QUIT, CONT, STOP)")),
-            },
+            Some(Value::String(t)) => {
+                match t.trim_start_matches("SIG").to_ascii_uppercase().as_str() {
+                    "HUP" => libc::SIGHUP,
+                    "INT" => libc::SIGINT,
+                    "TERM" => libc::SIGTERM,
+                    "KILL" => libc::SIGKILL,
+                    "QUIT" => libc::SIGQUIT,
+                    "CONT" => libc::SIGCONT,
+                    "STOP" => libc::SIGSTOP,
+                    other => {
+                        return Err(format!(
+                            "pty.kill: unknown signal '{other}' (HUP, INT, TERM, KILL, QUIT, CONT, STOP)"
+                        ));
+                    }
+                }
+            }
             Some(Value::Integer(i)) => *i as i32,
-            Some(other) => return Err(format!("pty.kill: a signal is a name or a number, got {}", other.type_name())),
+            Some(other) => {
+                return Err(format!(
+                    "pty.kill: a signal is a name or a number, got {}",
+                    other.type_name()
+                ));
+            }
         })
     }
 
@@ -598,7 +691,10 @@ mod imp {
     /// `pty.kill(p, sig?)`: the signal (SIGHUP by default) to the shell's
     /// process group and the foreground job's.
     fn kill(args: Vec<Value>) -> Res {
-        let p = match pty_of(args.first().unwrap_or(&Value::Unit)) { Ok(p) => p, Err(e) => return Ok(err(e)) };
+        let p = match pty_of(args.first().unwrap_or(&Value::Unit)) {
+            Ok(p) => p,
+            Err(e) => return Ok(err(e)),
+        };
         let sig = signal_of(args.get(1))?;
         signal_groups(&p, sig);
         Ok(ok(Value::Unit))
@@ -621,16 +717,28 @@ mod imp {
     }
 
     fn exit_value(e: (Option<i32>, Option<i32>)) -> Value {
-        obj("Exit", vec![
-            ("code", e.0.map(|c| Value::Integer(c as i64)).unwrap_or(Value::Unit)),
-            ("signal", e.1.map(|c| Value::Integer(c as i64)).unwrap_or(Value::Unit)),
-        ])
+        obj(
+            "Exit",
+            vec![
+                (
+                    "code",
+                    e.0.map(|c| Value::Integer(c as i64)).unwrap_or(Value::Unit),
+                ),
+                (
+                    "signal",
+                    e.1.map(|c| Value::Integer(c as i64)).unwrap_or(Value::Unit),
+                ),
+            ],
+        )
     }
 
     /// `pty.wait(p, timeout_ms?)`: `#{ code, signal }` once the child
     /// ended (waiting up to `timeout_ms`, default 0), `()` while it runs.
     fn wait(args: Vec<Value>) -> Res {
-        let p = match pty_of(args.first().unwrap_or(&Value::Unit)) { Ok(p) => p, Err(e) => return Ok(err(e)) };
+        let p = match pty_of(args.first().unwrap_or(&Value::Unit)) {
+            Ok(p) => p,
+            Err(e) => return Ok(err(e)),
+        };
         let ms = match args.get(1) {
             Some(Value::Integer(i)) => *i,
             Some(Value::Float(f)) => *f as i64,
@@ -653,7 +761,9 @@ mod imp {
         {
             let mut buf = [0u8; 256];
             // SAFETY: proc_name fills at most `buf.len()` bytes.
-            let n = unsafe { libc::proc_name(pid, buf.as_mut_ptr() as *mut libc::c_void, buf.len() as u32) };
+            let n = unsafe {
+                libc::proc_name(pid, buf.as_mut_ptr() as *mut libc::c_void, buf.len() as u32)
+            };
             if n > 0 {
                 return Some(String::from_utf8_lossy(&buf[..n as usize]).into_owned());
             }
@@ -661,7 +771,9 @@ mod imp {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            std::fs::read_to_string(format!("/proc/{pid}/comm")).ok().map(|t| t.trim().to_string())
+            std::fs::read_to_string(format!("/proc/{pid}/comm"))
+                .ok()
+                .map(|t| t.trim().to_string())
         }
     }
 
@@ -672,18 +784,35 @@ mod imp {
             unsafe {
                 let mut vpi: libc::proc_vnodepathinfo = std::mem::zeroed();
                 let size = std::mem::size_of::<libc::proc_vnodepathinfo>() as libc::c_int;
-                let n = libc::proc_pidinfo(pid, libc::PROC_PIDVNODEPATHINFO, 0, &mut vpi as *mut _ as *mut libc::c_void, size);
+                let n = libc::proc_pidinfo(
+                    pid,
+                    libc::PROC_PIDVNODEPATHINFO,
+                    0,
+                    &mut vpi as *mut _ as *mut libc::c_void,
+                    size,
+                );
                 if n != size {
                     return None;
                 }
                 let raw = &vpi.pvi_cdir.vip_path;
-                let bytes: Vec<u8> = raw.iter().flat_map(|row| row.iter()).take_while(|c| **c != 0).map(|c| *c as u8).collect();
-                if bytes.is_empty() { None } else { Some(String::from_utf8_lossy(&bytes).into_owned()) }
+                let bytes: Vec<u8> = raw
+                    .iter()
+                    .flat_map(|row| row.iter())
+                    .take_while(|c| **c != 0)
+                    .map(|c| *c as u8)
+                    .collect();
+                if bytes.is_empty() {
+                    None
+                } else {
+                    Some(String::from_utf8_lossy(&bytes).into_owned())
+                }
             }
         }
         #[cfg(not(target_os = "macos"))]
         {
-            std::fs::read_link(format!("/proc/{pid}/cwd")).ok().map(|p| p.to_string_lossy().into_owned())
+            std::fs::read_link(format!("/proc/{pid}/cwd"))
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned())
         }
     }
 
@@ -691,28 +820,40 @@ mod imp {
     /// `#{ pid, name, shell }` (`shell` true when it is the shell itself,
     /// at its prompt) — or `()` once the child is gone.
     fn foreground(args: Vec<Value>) -> Res {
-        let p = match pty_of(args.first().unwrap_or(&Value::Unit)) { Ok(p) => p, Err(e) => return Ok(err(e)) };
+        let p = match pty_of(args.first().unwrap_or(&Value::Unit)) {
+            Ok(p) => p,
+            Err(e) => return Ok(err(e)),
+        };
         if status(&p).is_some() {
             return Ok(Value::Unit);
         }
         // SAFETY: tcgetpgrp on the master we hold.
         let fg = unsafe { libc::tcgetpgrp(p.master.as_raw_fd()) };
         let pid = if fg > 0 { fg } else { p.pid };
-        Ok(obj("Foreground", vec![
-            ("pid", Value::Integer(pid as i64)),
-            ("name", proc_name(pid).map(|n| s(&n)).unwrap_or(Value::Unit)),
-            ("shell", Value::Boolean(pid == p.pid)),
-        ]))
+        Ok(obj(
+            "Foreground",
+            vec![
+                ("pid", Value::Integer(pid as i64)),
+                ("name", proc_name(pid).map(|n| s(&n)).unwrap_or(Value::Unit)),
+                ("shell", Value::Boolean(pid == p.pid)),
+            ],
+        ))
     }
 
     /// `pty.cwd(p)`: the foreground job's working directory (the shell's
     /// at its prompt), or `()` when it cannot be read.
     fn cwd(args: Vec<Value>) -> Res {
-        let p = match pty_of(args.first().unwrap_or(&Value::Unit)) { Ok(p) => p, Err(e) => return Ok(err(e)) };
+        let p = match pty_of(args.first().unwrap_or(&Value::Unit)) {
+            Ok(p) => p,
+            Err(e) => return Ok(err(e)),
+        };
         // SAFETY: tcgetpgrp on the master we hold.
         let fg = unsafe { libc::tcgetpgrp(p.master.as_raw_fd()) };
         let pid = if fg > 0 { fg } else { p.pid };
-        Ok(proc_cwd(pid).or_else(|| proc_cwd(p.pid)).map(|c| s(&c)).unwrap_or(Value::Unit))
+        Ok(proc_cwd(pid)
+            .or_else(|| proc_cwd(p.pid))
+            .map(|c| s(&c))
+            .unwrap_or(Value::Unit))
     }
 
     /// `pty.close(p)`: hang up (SIGHUP to the shell's and the foreground
@@ -742,7 +883,10 @@ mod imp {
                     let mut buf = [0u8; 4096];
                     // SAFETY: read(2) into our buffer from the master we
                     // hold, non-blocking.
-                    while unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) } > 0 {}
+                    while unsafe {
+                        libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
+                    } > 0
+                    {}
                 };
                 let wait_for = |ms: u64| {
                     let until = Instant::now() + Duration::from_millis(ms);

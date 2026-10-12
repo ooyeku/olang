@@ -242,8 +242,9 @@ pub struct AnimShown {
 /// The play (or pause) button over a still animation, `side` device
 /// pixels square: a dark disc, a white glyph.
 fn badge_picture(side: u32, play: bool) -> Arc<super::canvas::Picture> {
-    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<(u32, bool), Arc<super::canvas::Picture>>>> =
-        std::sync::OnceLock::new();
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<HashMap<(u32, bool), Arc<super::canvas::Picture>>>,
+    > = std::sync::OnceLock::new();
     let cache = CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
     if let Ok(c) = cache.lock()
         && let Some(p) = c.get(&(side, play))
@@ -253,10 +254,19 @@ fn badge_picture(side: u32, play: bool) -> Arc<super::canvas::Picture> {
     let side = side.max(8);
     let mut pm = tiny_skia::Pixmap::new(side, side).expect("a small pixmap");
     let f = side as f32;
-    let mut paint = tiny_skia::Paint { anti_alias: true, ..Default::default() };
+    let mut paint = tiny_skia::Paint {
+        anti_alias: true,
+        ..Default::default()
+    };
     paint.set_color_rgba8(0, 0, 0, 150);
     if let Some(disc) = tiny_skia::PathBuilder::from_circle(f / 2.0, f / 2.0, f / 2.0) {
-        pm.fill_path(&disc, &paint, tiny_skia::FillRule::Winding, tiny_skia::Transform::identity(), None);
+        pm.fill_path(
+            &disc,
+            &paint,
+            tiny_skia::FillRule::Winding,
+            tiny_skia::Transform::identity(),
+            None,
+        );
     }
     paint.set_color_rgba8(255, 255, 255, 255);
     let mut pb = tiny_skia::PathBuilder::new();
@@ -266,11 +276,21 @@ fn badge_picture(side: u32, play: bool) -> Arc<super::canvas::Picture> {
         pb.line_to(f * 0.40, f * 0.70);
         pb.close();
     } else {
-        pb.push_rect(tiny_skia::Rect::from_xywh(f * 0.36, f * 0.31, f * 0.10, f * 0.38).expect("a bar"));
-        pb.push_rect(tiny_skia::Rect::from_xywh(f * 0.54, f * 0.31, f * 0.10, f * 0.38).expect("a bar"));
+        pb.push_rect(
+            tiny_skia::Rect::from_xywh(f * 0.36, f * 0.31, f * 0.10, f * 0.38).expect("a bar"),
+        );
+        pb.push_rect(
+            tiny_skia::Rect::from_xywh(f * 0.54, f * 0.31, f * 0.10, f * 0.38).expect("a bar"),
+        );
     }
     if let Some(path) = pb.finish() {
-        pm.fill_path(&path, &paint, tiny_skia::FillRule::Winding, tiny_skia::Transform::identity(), None);
+        pm.fill_path(
+            &path,
+            &paint,
+            tiny_skia::FillRule::Winding,
+            tiny_skia::Transform::identity(),
+            None,
+        );
     }
     let pic = Arc::new(super::canvas::Picture {
         id: super::canvas::next_picture_id(),
@@ -344,7 +364,10 @@ impl WinState {
     pub fn said_scrolled(&mut self, moved: Vec<(String, (f32, f32))>, out: &mut Vec<Value>) {
         for (k, (x, y)) in moved {
             self.a11y_dirty = true;
-            out.push(self.ev("scrolled", vec![("key", s(&k)), ("x", float(x)), ("y", float(y))]));
+            out.push(self.ev(
+                "scrolled",
+                vec![("key", s(&k)), ("x", float(x)), ("y", float(y))],
+            ));
         }
     }
 
@@ -559,7 +582,13 @@ impl WinState {
                         }
                         Field::Rich(Box::new(r))
                     } else {
-                        let mut e = Editor::new(&props.value, &style.font, style.color, props.multiline, props.secure);
+                        let mut e = Editor::new(
+                            &props.value,
+                            &style.font,
+                            style.color,
+                            props.multiline,
+                            props.secure,
+                        );
                         if let Some((a, f, seq)) = props.select {
                             e.select_seq = seq;
                             e.select_chars(a.max(0) as usize, f.max(0) as usize, &mut ts);
@@ -646,7 +675,10 @@ impl WinState {
                     ]),
                 ),
                 ("caret", rect_value(caret)),
-                ("top", top.map(|t| Value::Integer(t as i64)).unwrap_or(Value::Unit)),
+                (
+                    "top",
+                    top.map(|t| Value::Integer(t as i64)).unwrap_or(Value::Unit),
+                ),
             ],
         ))
     }
@@ -713,7 +745,10 @@ impl WinState {
                 ("selection", pair(sel.0, sel.1)),
                 ("rev", Value::Integer(rev)),
                 ("caret", rect_value(caret)),
-                ("top", top.map(|t| Value::Integer(t as i64)).unwrap_or(Value::Unit)),
+                (
+                    "top",
+                    top.map(|t| Value::Integer(t as i64)).unwrap_or(Value::Unit),
+                ),
                 ("click_mod", Value::Boolean(click_mod)),
                 ("clicks", Value::Integer(clicks as i64)),
             ],
@@ -959,7 +994,16 @@ impl WinState {
                 if let Some(f) = self.input_focus() {
                     out.push(self.ev(
                         "preedit",
-                        vec![("key", s(&f)), ("text", s(&t)), ("cursor", cursor.map(|c| Value::Integer(c.0 as i64)).unwrap_or(Value::Unit))],
+                        vec![
+                                ("key", s(&f)),
+                                ("text", s(&t)),
+                                (
+                                    "cursor",
+                                    cursor
+                                        .map(|c| Value::Integer(c.0 as i64))
+                                        .unwrap_or(Value::Unit),
+                                ),
+                            ],
                     ));
                 } else if let Some(f) = self.scene.focus.clone()
                     && let Some(ed) = self.editors.get_mut(&f)
@@ -1070,7 +1114,11 @@ impl WinState {
                 m.ctrl = false;
             }
             let base = Self::chord(&key, m);
-            if mods.command() { format!("mod+{base}") } else { base }
+            if mods.command() {
+                format!("mod+{base}")
+            } else {
+                base
+            }
         };
         let passed = !composing
             && self
@@ -1079,7 +1127,11 @@ impl WinState {
                 .as_ref()
                 .and_then(|f| self.scene.nodes.get(f))
                 .and_then(|n| n.edit.as_ref())
-                .is_some_and(|e| e.pass_keys.iter().any(|k| (plain && *k == spelled) || (!plain && *k == chorded)));
+                .is_some_and(|e| {
+                    e.pass_keys
+                        .iter()
+                        .any(|k| (plain && *k == spelled) || (!plain && *k == chorded))
+                });
         // a node that takes the keyboard as it is (a terminal) keeps Tab
         let raw_input = self
             .scene
@@ -1217,7 +1269,10 @@ impl WinState {
         // never an edit of the field's
         if mods.command()
             && mods.alt
-            && !matches!(key, "left" | "right" | "up" | "down" | "backspace" | "delete")
+            && !matches!(
+                key,
+                "left" | "right" | "up" | "down" | "backspace" | "delete"
+            )
         {
             return Some(Outcome::Pass);
         }
@@ -1322,7 +1377,12 @@ impl WinState {
             return;
         }
         // the pointer over a playing animation shows its pause button
-        if action == PointerAction::Move && self.shown_anims.iter().any(|a| a.badge.is_some() && !a.paused) {
+        if action == PointerAction::Move
+            && self
+                .shown_anims
+                .iter()
+                .any(|a| a.badge.is_some() && !a.paused)
+        {
             self.dirty = true;
         }
         match action {
@@ -1412,7 +1472,11 @@ impl WinState {
                     let dy = self.edit_text_dy(&f, h, &mut ts);
                     let ed = self.editors.get_mut(&f).expect("present");
                     let (sx, sy) = ed.scrolled();
-                    ed.context_press(x * self.scale - ox + sx, y * self.scale - oy - dy + sy, &mut ts);
+                    ed.context_press(
+                        x * self.scale - ox + sx,
+                        y * self.scale - oy - dy + sy,
+                        &mut ts,
+                    );
                     drop(ts);
                     self.set_focus(Some(f.clone()), out);
                     self.report_selection(&f, out);
@@ -1447,13 +1511,20 @@ impl WinState {
                         // "sticky" on that line, the caret left where it was
                         let pinned = ed.rich_mut().and_then(|r| {
                             let vy = ty - sy;
-                            r.sticky_drawn.iter().find(|(y0, y1, _)| vy >= *y0 && vy < *y1).map(|d| d.2)
+                            r.sticky_drawn
+                                .iter()
+                                .find(|(y0, y1, _)| vy >= *y0 && vy < *y1)
+                                .map(|d| d.2)
                         });
-                        let lens = if pinned.is_some() { None } else { ed.rich_mut().and_then(|r| {
-                            let (k, ly) = r.lens_at(ty, &mut ts)?;
-                            let l = r.lenses()[k].clone();
-                            Some((l, ly / self.scale))
-                        }) };
+                        let lens = if pinned.is_some() {
+                            None
+                        } else {
+                            ed.rich_mut().and_then(|r| {
+                                let (k, ly) = r.lens_at(ty, &mut ts)?;
+                                let l = r.lenses()[k].clone();
+                                Some((l, ly / self.scale))
+                            })
+                        };
                         if let Some(line) = pinned {
                             drop(ts);
                             let f = f.clone();
@@ -1581,7 +1652,10 @@ impl WinState {
             if r.said_top.map(|t| t / band) != Some(top / band) {
                 r.said_top = Some(top);
                 drop(ts);
-                out.push(self.ev("viewport", vec![("key", s(&k)), ("top", Value::Integer(top as i64))]));
+                out.push(self.ev(
+                    "viewport",
+                    vec![("key", s(&k)), ("top", Value::Integer(top as i64))],
+                ));
             }
             self.dirty = true;
             return;
@@ -1659,7 +1733,12 @@ impl WinState {
     pub fn ime_area(&mut self) -> Option<[f32; 4]> {
         if let Some(f) = self.input_focus() {
             let abs = self.scene.absolute(&f)?;
-            let a = self.scene.nodes.get(&f)?.ime_area.unwrap_or([0.0, 0.0, 1.0, abs[3].min(20.0)]);
+            let a = self
+                .scene
+                .nodes
+                .get(&f)?
+                .ime_area
+                .unwrap_or([0.0, 0.0, 1.0, abs[3].min(20.0)]);
             return Some([abs[0] + a[0], abs[1] + a[1], a[2].max(1.0), a[3].max(1.0)]);
         }
         let f = self.scene.focus.clone()?;
@@ -1704,7 +1783,11 @@ impl WinState {
         if self.editors.contains_key(f) {
             return None;
         }
-        self.scene.nodes.get(f).filter(|n| n.input).map(|_| f.clone())
+        self.scene
+            .nodes
+            .get(f)
+            .filter(|n| n.input)
+            .map(|_| f.clone())
     }
 
     // ── the display list ────────────────────────────────────────────
@@ -1860,9 +1943,19 @@ impl WinState {
                     let now = self.clock_ms();
                     let rm = self.settings.reduce_motion;
                     let first = anim.frames[0].id;
-                    let p = self.plays.entry(key.to_string()).or_insert(Play { id: first, start: now, paused: None, chosen: false });
+                    let p = self.plays.entry(key.to_string()).or_insert(Play {
+                        id: first,
+                        start: now,
+                        paused: None,
+                        chosen: false,
+                    });
                     if p.id != first {
-                        *p = Play { id: first, start: now, paused: None, chosen: false };
+                        *p = Play {
+                            id: first,
+                            start: now,
+                            paused: None,
+                            chosen: false,
+                        };
                     }
                     let p = *p;
                     let held = p.paused.or(if rm && !p.chosen { Some(0.0) } else { None });
@@ -1882,19 +1975,31 @@ impl WinState {
                     // a picture large enough to hold one
                     let side_l = (w.min(h) / s * 0.4).clamp(0.0, 44.0);
                     let brect = if (rm || p.chosen) && side_l >= 20.0 {
-                        let (bx, by) = (ox + rect[0] + rect[2] / 2.0 - side_l / 2.0, oy + rect[1] + rect[3] / 2.0 - side_l / 2.0);
+                        let (bx, by) = (
+                            ox + rect[0] + rect[2] / 2.0 - side_l / 2.0,
+                            oy + rect[1] + rect[3] / 2.0 - side_l / 2.0,
+                        );
                         Some([bx, by, side_l, side_l])
                     } else {
                         None
                     };
                     let (px, py) = self.pointer;
-                    let over = px >= ox + rect[0] && py >= oy + rect[1] && px < ox + rect[0] + rect[2] && py < oy + rect[1] + rect[3];
+                    let over = px >= ox + rect[0]
+                        && py >= oy + rect[1]
+                        && px < ox + rect[0] + rect[2]
+                        && py < oy + rect[1] + rect[3];
                     if let Some(r) = brect
                         && (held.is_some() || over)
                     {
                         badge = Some((r, held.is_some()));
                     }
-                    self.shown_anims.push(AnimShown { key: key.to_string(), frames: anim.frames.len(), frame: i, paused: held.is_some(), badge: brect });
+                    self.shown_anims.push(AnimShown {
+                        key: key.to_string(),
+                        frames: anim.frames.len(),
+                        frame: i,
+                        paused: held.is_some(),
+                        badge: brect,
+                    });
                 }
                 // Its own size: one image pixel to one display pixel (an
                 // SVG's units are logical pixels), from the top left, on
@@ -2215,31 +2320,53 @@ impl WinState {
     /// and box (window pixels), or line -1 when it leaves the text.
     fn hover_field(&mut self, hit: Option<&str>, x: f32, y: f32, out: &mut Vec<Value>) {
         let target = hit.and_then(|h| {
-            self.scene.target_up(h, |n| n.edit.as_ref().is_some_and(|e| e.rich && e.hover))
+            self.scene
+                .target_up(h, |n| n.edit.as_ref().is_some_and(|e| e.rich && e.hover))
         });
         // the field the pointer left: said once
         let left: Vec<String> = self
             .editors
             .iter()
-            .filter(|(k, e)| Some(k.as_str()) != target.as_deref() && e.rich().is_some_and(|r| r.said_hover.is_some()))
+            .filter(|(k, e)| {
+                Some(k.as_str()) != target.as_deref()
+                    && e.rich().is_some_and(|r| r.said_hover.is_some())
+            })
             .map(|(k, _)| k.clone())
             .collect();
         for k in left {
             if let Some(r) = self.editors.get_mut(&k).and_then(|e| e.rich_mut()) {
                 r.said_hover = None;
             }
-            out.push(self.ev("hover", vec![("key", s(&k)), ("line", Value::Integer(-1)), ("col", Value::Integer(-1))]));
+            out.push(self.ev(
+                "hover",
+                vec![
+                    ("key", s(&k)),
+                    ("line", Value::Integer(-1)),
+                    ("col", Value::Integer(-1)),
+                ],
+            ));
         }
         let Some(k) = target else { return };
         if self.scene.pressed.is_some() {
             return;
         }
-        let Some((ox, oy, _, h)) = self.edit_origin(&k) else { return };
-        let pad_left = self.scene.nodes.get(&k).map(|n| n.style.pad[3]).unwrap_or(0.0);
-        let Ok(mut ts) = text::system().lock() else { return };
+        let Some((ox, oy, _, h)) = self.edit_origin(&k) else {
+            return;
+        };
+        let pad_left = self
+            .scene
+            .nodes
+            .get(&k)
+            .map(|n| n.style.pad[3])
+            .unwrap_or(0.0);
+        let Ok(mut ts) = text::system().lock() else {
+            return;
+        };
         let dy = self.edit_text_dy(&k, h, &mut ts);
         let sc = self.scale;
-        let Some(ed) = self.editors.get_mut(&k) else { return };
+        let Some(ed) = self.editors.get_mut(&k) else {
+            return;
+        };
         let (sx, sy) = ed.scrolled();
         let Some(r) = ed.rich_mut() else { return };
         let (tx, ty) = (x * sc - ox + sx, y * sc - oy - dy + sy);
@@ -2270,7 +2397,12 @@ impl WinState {
                     float(((b.x1 - b.x0) as f32 / sc).max(1.0)),
                     float((b.y1 - b.y0) as f32 / sc),
                 ]));
-                vec![("key", s(&k)), ("line", Value::Integer(line as i64)), ("col", Value::Integer(-2)), ("rect", rect)]
+                vec![
+                    ("key", s(&k)),
+                    ("line", Value::Integer(line as i64)),
+                    ("col", Value::Integer(-2)),
+                    ("rect", rect),
+                ]
             }
             Some((line, col, b)) => {
                 let bx = (ox + b.x0 as f32 - sx) / sc;
@@ -2281,9 +2413,18 @@ impl WinState {
                     float(((b.x1 - b.x0) as f32 / sc).max(1.0)),
                     float((b.y1 - b.y0) as f32 / sc),
                 ]));
-                vec![("key", s(&k)), ("line", Value::Integer(line as i64)), ("col", Value::Integer(col as i64)), ("rect", rect)]
+                vec![
+                    ("key", s(&k)),
+                    ("line", Value::Integer(line as i64)),
+                    ("col", Value::Integer(col as i64)),
+                    ("rect", rect),
+                ]
             }
-            None => vec![("key", s(&k)), ("line", Value::Integer(-1)), ("col", Value::Integer(-1))],
+            None => vec![
+                ("key", s(&k)),
+                ("line", Value::Integer(-1)),
+                ("col", Value::Integer(-1)),
+            ],
         };
         out.push(self.ev("hover", ev));
     }
@@ -2357,7 +2498,10 @@ impl WinState {
         if !r.rulers.is_empty() {
             let mut rf = st.font.clone();
             rf.spans = None;
-            let cw = ts.shape("0000000000", &rf, st.color, None, Align::Start, s).width / 10.0;
+            let cw = ts
+                .shape("0000000000", &rf, st.color, None, Align::Start, s)
+                .width
+                / 10.0;
             let mut c = r.ruler_color.unwrap_or(st.placeholder);
             if r.ruler_color.is_none() {
                 c[3] = (c[3] as f32 * 0.35) as u8;
@@ -2365,7 +2509,8 @@ impl WinState {
             for col in r.rulers.clone() {
                 let x = (ox + cw * col as f32).round();
                 if x > content[0] && x < content[0] + content[2] {
-                    dl.prims.push(solid(x, content[1], s.max(1.0), content[3], fade(c), clip));
+                    dl.prims
+                        .push(solid(x, content[1], s.max(1.0), content[3], fade(c), clip));
                 }
             }
         }
@@ -2553,7 +2698,12 @@ impl WinState {
         // text after a line's end (a problem said at its line): quiet,
         // a little smaller, cut with an ellipsis to the room left
         if !r.eol.is_empty() {
-            let items: Vec<(usize, String, Option<Color>)> = r.eol.iter().filter(|e| shown.contains(&e.0)).cloned().collect();
+            let items: Vec<(usize, String, Option<Color>)> = r
+                .eol
+                .iter()
+                .filter(|e| shown.contains(&e.0))
+                .cloned()
+                .collect();
             let mut ef = st.font.clone();
             ef.spans = None;
             ef.size = st.font.size * 0.92;
@@ -2562,7 +2712,13 @@ impl WinState {
                 let (py, _, _) = r.para(i);
                 let len = r.para_text(i).len();
                 let boxes = r.range_boxes(i, 0, len);
-                let lh = st.font.size * s * if st.font.line_height > 0.0 { st.font.line_height } else { 1.2 };
+                let lh = st.font.size
+                    * s
+                    * if st.font.line_height > 0.0 {
+                        st.font.line_height
+                    } else {
+                        1.2
+                    };
                 let (ex, ey0, ey1) = match boxes.last() {
                     Some(b) if len > 0 => (b.x1 as f32, b.y0 as f32, b.y1 as f32),
                     _ => (0.0, 0.0, lh),
@@ -2598,7 +2754,13 @@ impl WinState {
                 continue;
             }
             if let Some((top, h)) = r.lens_band(k) {
-                lens_jobs.push((lens.ops.clone(), content[0], oy + top, content[2] + st.pad[1] * s, h));
+                lens_jobs.push((
+                    lens.ops.clone(),
+                    content[0],
+                    oy + top,
+                    content[2] + st.pad[1] * s,
+                    h,
+                ));
             }
         }
         // decorations under the text: a problem's underline
@@ -2628,7 +2790,12 @@ impl WinState {
         // (the caret's brighter) and the marks
         if let Some(g) = r.gutter.clone() {
             let gx0 = content[0] - st.pad[3] * s;
-            let gclip = outer_clip.intersect(Clip::rect(gx0, content[1], content[0], content[1] + content[3]));
+            let gclip = outer_clip.intersect(Clip::rect(
+                gx0,
+                content[1],
+                content[0],
+                content[1] + content[3],
+            ));
             let fi = r.focus_para();
             let mut font = st.font.clone();
             font.spans = None;
@@ -2636,7 +2803,11 @@ impl WinState {
             if g.numbers {
                 for i in shown.clone() {
                     let (py, _, _) = r.para(i);
-                    let color = if i == fi { g.current.unwrap_or(st.color) } else { base };
+                    let color = if i == fi {
+                        g.current.unwrap_or(st.color)
+                    } else {
+                        base
+                    };
                     let label = (i + 1).to_string();
                     let shaped = ts.shape(&label, &font, fade(color), None, Align::Start, s);
                     let x = content[0] - 14.0 * s - shaped.width;
@@ -2649,8 +2820,20 @@ impl WinState {
                 }
                 let (py, _, _) = r.para(*line);
                 let side = super::rich::MARK_BOX * s;
-                let lh = font.size * s * if font.line_height > 0.0 { font.line_height } else { 1.2 };
-                mark_jobs.push((ops.clone(), gx0 + 4.0 * s, (oy + py + ((lh - side) / 2.0).max(0.0)).round(), side, gclip));
+                let lh = font.size
+                    * s
+                    * if font.line_height > 0.0 {
+                        font.line_height
+                    } else {
+                        1.2
+                    };
+                mark_jobs.push((
+                    ops.clone(),
+                    gx0 + 4.0 * s,
+                    (oy + py + ((lh - side) / 2.0).max(0.0)).round(),
+                    side,
+                    gclip,
+                ));
             }
             for (line, glyph, color) in &g.marks {
                 if !shown.contains(line) {
@@ -2659,9 +2842,22 @@ impl WinState {
                 let (py, _, _) = r.para(*line);
                 let mut mf = font.clone();
                 mf.size = font.size * 0.8;
-                let shaped = ts.shape(glyph, &mf, fade(color.unwrap_or(base)), None, Align::Start, s);
+                let shaped = ts.shape(
+                    glyph,
+                    &mf,
+                    fade(color.unwrap_or(base)),
+                    None,
+                    Align::Start,
+                    s,
+                );
                 let lh = font.size * s * 1.2;
-                push_glyphs(&shaped, gx0 + 6.0 * s, oy + py + (lh - shaped.height).max(0.0) / 2.0, gclip, dl);
+                push_glyphs(
+                    &shaped,
+                    gx0 + 6.0 * s,
+                    oy + py + (lh - shaped.height).max(0.0) / 2.0,
+                    gclip,
+                    dl,
+                );
             }
         }
         // sticky scroll: the first line of each scope the view is inside,
@@ -2669,7 +2865,13 @@ impl WinState {
         // line arrives; numbered in the gutter; a hairline under them
         r.sticky_drawn.clear();
         let mut sticky_bottom = 0.0f32;
-        let lh = st.font.size * s * if st.font.line_height > 0.0 { st.font.line_height } else { 1.2 };
+        let lh = st.font.size
+            * s
+            * if st.font.line_height > 0.0 {
+                st.font.line_height
+            } else {
+                1.2
+            };
         let mut rows: Vec<(usize, f32)> = Vec::new();
         let stk_now = r.sticky.clone();
         if let Some(stk) = stk_now.clone()
@@ -2734,22 +2936,33 @@ impl WinState {
                     _ => false,
                 };
                 let c = match p {
-                    Prim::Rect { clip, .. } | Prim::Glyph { clip, .. } | Prim::Image { clip, .. } => clip,
+                    Prim::Rect { clip, .. }
+                    | Prim::Glyph { clip, .. }
+                    | Prim::Image { clip, .. } => clip,
                 };
-                *c = if hidden { c.intersect(Clip::rect(c.x0, c.y1, c.x1, c.y1)) } else { c.intersect(Clip::rect(c.x0, edge, c.x1, c.y1.max(edge))) };
+                *c = if hidden {
+                    c.intersect(Clip::rect(c.x0, c.y1, c.x1, c.y1))
+                } else {
+                    c.intersect(Clip::rect(c.x0, edge, c.x1, c.y1.max(edge)))
+                };
             }
         }
         if let Some(g) = r.gutter.clone()
             && g.numbers
         {
             let gx0 = content[0] - st.pad[3] * s;
-            let gclip = outer_clip.intersect(Clip::rect(gx0, edge, content[0], content[1] + content[3]));
+            let gclip =
+                outer_clip.intersect(Clip::rect(gx0, edge, content[0], content[1] + content[3]));
             let fi = r.focus_para();
             let mut font = st.font.clone();
             font.spans = None;
             let base = g.color.unwrap_or(st.placeholder);
             for &(i, a) in &carried {
-                let color = if i == fi { g.current.unwrap_or(st.color) } else { base };
+                let color = if i == fi {
+                    g.current.unwrap_or(st.color)
+                } else {
+                    base
+                };
                 let label = (i + 1).to_string();
                 let shaped = ts.shape(&label, &font, fade(color), None, Align::Start, s);
                 push_glyphs(&shaped, content[0] - 14.0 * s - shaped.width, a, gclip, dl);
@@ -2761,11 +2974,16 @@ impl WinState {
             {
                 let x0 = content[0] - st.pad[3] * s;
                 let x1 = content[0] + content[2] + st.pad[1] * s;
-                let field = outer_clip.intersect(Clip::rect(x0, content[1], x1, content[1] + content[3]));
+                let field =
+                    outer_clip.intersect(Clip::rect(x0, content[1], x1, content[1] + content[3]));
                 let bg = fade(stk.bg.or(st.bg).unwrap_or([255, 255, 255, 255]));
                 let mut gfont = st.font.clone();
                 gfont.spans = None;
-                let gcolor = r.gutter.as_ref().and_then(|g| g.color).unwrap_or(st.placeholder);
+                let gcolor = r
+                    .gutter
+                    .as_ref()
+                    .and_then(|g| g.color)
+                    .unwrap_or(st.placeholder);
                 for &(h, top_y) in rows.iter().rev() {
                     let y = content[1] + top_y;
                     let row_clip = field.intersect(Clip::rect(x0, y, x1, y + lh));
@@ -2773,7 +2991,12 @@ impl WinState {
                     r.ensure_line(h, ts);
                     let (_, layout, _) = r.para(h);
                     let shaped = text::shaped_of(layout, s);
-                    let text_clip = row_clip.intersect(Clip::rect(content[0] - 1.0, y, content[0] + content[2] + 1.0, y + lh));
+                    let text_clip = row_clip.intersect(Clip::rect(
+                        content[0] - 1.0,
+                        y,
+                        content[0] + content[2] + 1.0,
+                        y + lh,
+                    ));
                     push_glyphs(&shaped, ox, y, text_clip, dl);
                     if r.gutter.as_ref().is_some_and(|g| g.numbers) {
                         let label = (h + 1).to_string();
@@ -2785,7 +3008,14 @@ impl WinState {
                 let bottom = rows.iter().map(|r| r.1 + lh).fold(0.0f32, f32::max);
                 sticky_bottom = bottom;
                 if let Some(c) = stk.line {
-                    dl.prims.push(solid(x0, content[1] + bottom, x1 - x0, s.max(1.0), fade(c), field));
+                    dl.prims.push(solid(
+                        x0,
+                        content[1] + bottom,
+                        x1 - x0,
+                        s.max(1.0),
+                        fade(c),
+                        field,
+                    ));
                 }
             }
         }
@@ -2815,7 +3045,16 @@ impl WinState {
             });
         }
         // what lies under the pinned rows is hidden by them
-        let clip = if sticky_bottom > 0.0 { clip.intersect(Clip::rect(clip.x0, content[1] + sticky_bottom, clip.x1, clip.y1)) } else { clip };
+        let clip = if sticky_bottom > 0.0 {
+            clip.intersect(Clip::rect(
+                clip.x0,
+                content[1] + sticky_bottom,
+                clip.x1,
+                clip.y1,
+            ))
+        } else {
+            clip
+        };
         // the further carets (a program's further selections)
         let mut more_carets: Vec<(f32, f32, f32, f32)> = Vec::new();
         if focused && window_focused && r.show_cursor() && !r.carets.is_empty() {
@@ -2826,7 +3065,12 @@ impl WinState {
                 }
                 let (b, _) = r.para_char_bytes(line, col, col);
                 let c = r.caret_box_at(line, b, (1.5 * s).max(1.0), ts);
-                more_carets.push((ox + c.x0 as f32, oy + c.y0 as f32, (c.x1 - c.x0) as f32, (c.y1 - c.y0) as f32));
+                more_carets.push((
+                    ox + c.x0 as f32,
+                    oy + c.y0 as f32,
+                    (c.x1 - c.x0) as f32,
+                    (c.y1 - c.y0) as f32,
+                ));
             }
         }
         let caret = if focused && window_focused && r.show_cursor() {
@@ -2852,7 +3096,16 @@ impl WinState {
             }
         }
         for (ops, mx, my, side, mclip) in mark_jobs {
-            let mclip = if sticky_bottom > 0.0 { mclip.intersect(Clip::rect(mclip.x0, content[1] + sticky_bottom, mclip.x1, mclip.y1)) } else { mclip };
+            let mclip = if sticky_bottom > 0.0 {
+                mclip.intersect(Clip::rect(
+                    mclip.x0,
+                    content[1] + sticky_bottom,
+                    mclip.x1,
+                    mclip.y1,
+                ))
+            } else {
+                mclip
+            };
             if let Ok(drawing) = super::canvas::draw(&ops, side / s, side / s, s) {
                 self.paint_canvas(drawing, mx, my, side, side, mclip, st, opacity, ts, dl);
             }
@@ -3065,7 +3318,10 @@ pub fn eol_cut(label: &str, keep: usize) -> Option<String> {
         Some(b) if head[..b].chars().count() >= 12 => &head[..b],
         _ => head.as_str(),
     };
-    let trimmed = at_word.trim_end().trim_end_matches(|c: char| matches!(c, ':' | ',' | ';' | '-' | '—' | '(')).trim_end();
+    let trimmed = at_word
+        .trim_end()
+        .trim_end_matches(|c: char| matches!(c, ':' | ',' | ';' | '-' | '—' | '('))
+        .trim_end();
     if trimmed.chars().count() < 12 {
         return None;
     }
@@ -3081,7 +3337,8 @@ pub fn eol_cut(label: &str, keep: usize) -> Option<String> {
 fn push_glyphs(shaped: &Shaped, ox: f32, oy: f32, clip: Clip, dl: &mut DisplayList) {
     // a span's background behind its glyphs
     for d in shaped.decos.iter().filter(|d| !d.over) {
-        dl.prims.push(solid(ox + d.x, oy + d.y, d.w, d.h, d.color, clip));
+        dl.prims
+            .push(solid(ox + d.x, oy + d.y, d.w, d.h, d.color, clip));
     }
     for run in &shaped.runs {
         for (id, gx, gy) in &run.glyphs {
@@ -3107,7 +3364,8 @@ fn push_glyphs(shaped: &Shaped, ox: f32, oy: f32, clip: Clip, dl: &mut DisplayLi
     }
     // a strike or an underline over them
     for d in shaped.decos.iter().filter(|d| d.over) {
-        dl.prims.push(solid(ox + d.x, oy + d.y, d.w, d.h, d.color, clip));
+        dl.prims
+            .push(solid(ox + d.x, oy + d.y, d.w, d.h, d.color, clip));
     }
 }
 

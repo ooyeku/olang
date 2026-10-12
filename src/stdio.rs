@@ -116,8 +116,12 @@ pub fn capture_end() -> Captured {
 
 /// Keep `text` in the open capture (false when none is open).
 pub fn capture_push(err: bool, text: &str) -> bool {
-    let Ok(mut c) = CAPTURE.lock() else { return false };
-    let Some((segs, live)) = c.as_mut() else { return false };
+    let Ok(mut c) = CAPTURE.lock() else {
+        return false;
+    };
+    let Some((segs, live)) = c.as_mut() else {
+        return false;
+    };
     if let Some(f) = live {
         f(err, text);
     }

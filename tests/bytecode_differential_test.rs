@@ -682,7 +682,11 @@ fn a_wrapped_map_reads_and_writes_as_the_interpreter_does() {
 fn typeof_reads_every_layout_as_the_interpreter_does() {
     use std::sync::Arc;
     let store = store_value();
-    let long = Value::List(Arc::new((0..200).map(|i| Value::String(Arc::new(format!("line {i}")))).collect()));
+    let long = Value::List(Arc::new(
+        (0..200)
+            .map(|i| Value::String(Arc::new(format!("line {i}"))))
+            .collect(),
+    ));
     assert!(matches!(
         OvmValue::from_ast(long.clone()).data,
         olang::ovm::value::ValueData::AstList(_)
@@ -750,12 +754,27 @@ fn early_return_compiles_and_agrees() {
     // the path that does not return (the function's value at its end —
     // an early `return` must not suppress the final one).
     let cases = [
-        ("fn f(k) = { for x in [1, 5, 9] { if x > k => return x }; -1 }", vec![4, 20]),
-        ("fn f(k) = { for r in [[1, 2], [3, k]] { for v in r { if v == 0 => return v + 100 } }; 7 }", vec![0, 1]),
-        ("fn f(k) = match k { 0 => return 10, n => { if n < 0 => return -1; n * 2 } }", vec![0, -3, 4]),
-        ("fn f(k) = { let a = { if k > 5 => return 99; k + 1 }; a * 10 }", vec![9, 2]),
+        (
+            "fn f(k) = { for x in [1, 5, 9] { if x > k => return x }; -1 }",
+            vec![4, 20],
+        ),
+        (
+            "fn f(k) = { for r in [[1, 2], [3, k]] { for v in r { if v == 0 => return v + 100 } }; 7 }",
+            vec![0, 1],
+        ),
+        (
+            "fn f(k) = match k { 0 => return 10, n => { if n < 0 => return -1; n * 2 } }",
+            vec![0, -3, 4],
+        ),
+        (
+            "fn f(k) = { let a = { if k > 5 => return 99; k + 1 }; a * 10 }",
+            vec![9, 2],
+        ),
         ("fn f(k) = { if k == 0 => return; k * 2 }", vec![0, 4]),
-        ("fn f(k) = { let mut i = 0; while true { i = i + 1; if i >= k => return i }; 0 }", vec![1, 7]),
+        (
+            "fn f(k) = { let mut i = 0; while true { i = i + 1; if i >= k => return i }; 0 }",
+            vec![1, 7],
+        ),
         ("fn f(k) = { if k > 0 => return k; 0 - k }", vec![3, -3]),
     ];
     for (src, args) in cases {
@@ -785,7 +804,10 @@ fn try_operator_compiles_and_agrees() {
     // compiled, not refused: the bytecode tier accepts every case
     for body in cases {
         let src = format!("{defs}{body}");
-        assert!(bytecode_result(&src, "f", &ints(&[8])).is_ok() || body.contains("k?"), "refused: {body}");
+        assert!(
+            bytecode_result(&src, "f", &ints(&[8])).is_ok() || body.contains("k?"),
+            "refused: {body}"
+        );
     }
 }
 
@@ -974,17 +996,40 @@ fn a_builtin_passed_as_a_value_crosses_the_boundary() {
     // called there through the bridge, by name: the interpreter and the
     // VM agree on what it answers, on what it raises, and on handing it
     // back out (a function that returns it).
-    let b = |name: &str, arity: usize| Value::Builtin(olang::ast::BuiltinFunction { name: name.to_string(), arity });
+    let b = |name: &str, arity: usize| {
+        Value::Builtin(olang::ast::BuiltinFunction {
+            name: name.to_string(),
+            arity,
+        })
+    };
     let xs = Value::List(std::sync::Arc::new(ints(&[3, 1, 2])));
     for (src, args) in [
         ("fn f(g, x) = g(x)", vec![b("len", 1), xs.clone()]),
         ("fn f(g, x) = g(g(x))", vec![b("sort", 1), xs.clone()]),
-        ("fn f(g, x) = map(x, g)", vec![b("to_string", 1), xs.clone()]),
-        ("fn f(g, x) = [g(x), g(x) + 1]", vec![b("len", 1), Value::String(std::sync::Arc::new("abc".to_string()))]),
+        (
+            "fn f(g, x) = map(x, g)",
+            vec![b("to_string", 1), xs.clone()],
+        ),
+        (
+            "fn f(g, x) = [g(x), g(x) + 1]",
+            vec![
+                b("len", 1),
+                Value::String(std::sync::Arc::new("abc".to_string())),
+            ],
+        ),
         ("fn f(g, x) = g", vec![b("len", 1), xs.clone()]),
         ("fn f(g, x) = g(x, x)", vec![b("len", 1), xs.clone()]),
-        ("fn f(g, x) = if g == len => 1 else => 2", vec![b("len", 1), xs.clone()]),
-        ("fn f(g, x) = g(x)", vec![b("str.length", 1), Value::String(std::sync::Arc::new("hello".to_string()))]),
+        (
+            "fn f(g, x) = if g == len => 1 else => 2",
+            vec![b("len", 1), xs.clone()],
+        ),
+        (
+            "fn f(g, x) = g(x)",
+            vec![
+                b("str.length", 1),
+                Value::String(std::sync::Arc::new("hello".to_string())),
+            ],
+        ),
     ] {
         assert_same(src, "f", &args);
     }
@@ -1003,31 +1048,49 @@ fn vmap(pairs: &[(&str, Value)]) -> Value {
 
 #[test]
 fn ovm_values_compare_collections_by_contents() {
-    let small = || vmap(&[("a", Value::Integer(1)), ("b", Value::String(std::sync::Arc::new("x".into())))]);
+    let small = || {
+        vmap(&[
+            ("a", Value::Integer(1)),
+            ("b", Value::String(std::sync::Arc::new("x".into()))),
+        ])
+    };
     // two maps built apart (the native layout)
     let (a, b) = (OvmValue::from_ast(small()), OvmValue::from_ast(small()));
     assert!(a == b, "{a:?} != {b:?}");
     assert!(a == a.clone());
     // a large map crosses wrapped; against the same contents built natively
-    let big: Vec<(String, Value)> = (0..40).map(|i| (format!("k{i}"), Value::Integer(i))).collect();
+    let big: Vec<(String, Value)> = (0..40)
+        .map(|i| (format!("k{i}"), Value::Integer(i)))
+        .collect();
     let big_pairs: Vec<(&str, Value)> = big.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
     let wrapped = OvmValue::from_ast(vmap(&big_pairs));
     let wrapped2 = OvmValue::from_ast(vmap(&big_pairs));
     assert!(wrapped == wrapped2);
     // nested: a map in a list in a tuple
-    let nest = || Value::Tuple(std::sync::Arc::new(vec![Value::List(std::sync::Arc::new(vec![small(), small()])), Value::Integer(2)]));
+    let nest = || {
+        Value::Tuple(std::sync::Arc::new(vec![
+            Value::List(std::sync::Arc::new(vec![small(), small()])),
+            Value::Integer(2),
+        ]))
+    };
     assert!(OvmValue::from_ast(nest()) == OvmValue::from_ast(nest()));
     // a record (an anonymous object) and a parsed JSON object
     let obj = |t: &str| {
         let mut f = olang::ast::ValueMap::default();
         f.insert("a".into(), Value::Integer(1));
         f.insert("m".into(), small());
-        Value::Struct { type_name: t.to_string(), fields: f.into() }
+        Value::Struct {
+            type_name: t.to_string(),
+            fields: f.into(),
+        }
     };
     assert!(OvmValue::from_ast(obj("Object")) == OvmValue::from_ast(obj("Object")));
     assert!(OvmValue::from_ast(obj("JsonObject")) == OvmValue::from_ast(obj("JsonObject")));
     // contents differ: unequal
-    let other = OvmValue::from_ast(vmap(&[("a", Value::Integer(2)), ("b", Value::String(std::sync::Arc::new("x".into())))]));
+    let other = OvmValue::from_ast(vmap(&[
+        ("a", Value::Integer(2)),
+        ("b", Value::String(std::sync::Arc::new("x".into()))),
+    ]));
     assert!(a != other);
     // inside a collection an Int and a Float stay distinct, as `loose_eq`
     let i = OvmValue::from_ast(vmap(&[("a", Value::Integer(1))]));

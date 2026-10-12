@@ -523,7 +523,9 @@ fn str_from_char_code(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Err
             Value::Integer(n) => u32::try_from(*n)
                 .ok()
                 .and_then(char::from_u32)
-                .ok_or_else(|| format!("str.from_char_code: {n} is not a Unicode code point").into()),
+                .ok_or_else(|| {
+                    format!("str.from_char_code: {n} is not a Unicode code point").into()
+                }),
             other => Err(format!(
                 "str.from_char_code: argument must be an Int or a list of Int, got {}",
                 other.type_name()
@@ -604,12 +606,20 @@ fn char_to_byte(s: &str, from: usize, from_char: usize, n: usize) -> usize {
 fn str_fuzzy_score(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let q = arg_str(&args, 0, "fuzzy_score")?;
     let t = arg_str(&args, 1, "fuzzy_score")?;
-    let qc: Vec<char> = q.chars().filter(|c| !c.is_whitespace()).flat_map(|c| c.to_lowercase()).collect();
+    let qc: Vec<char> = q
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(|c| c.to_lowercase())
+        .collect();
     if qc.is_empty() {
         return Ok(Value::Integer(0));
     }
     let tc: Vec<char> = t.chars().flat_map(|c| c.to_lowercase()).collect();
-    let base = tc.iter().rposition(|c| *c == '/').map(|i| i + 1).unwrap_or(0);
+    let base = tc
+        .iter()
+        .rposition(|c| *c == '/')
+        .map(|i| i + 1)
+        .unwrap_or(0);
     let score_from = |from: usize| -> Option<i64> {
         let (mut qi, mut score, mut last) = (0usize, 0i64, usize::MAX - 1);
         let mut i = from;
@@ -648,7 +658,11 @@ fn str_substring(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         (a.min(end_probe), end_probe)
     } else {
         let start = char_to_byte(s, 0, 0, a);
-        let end = if b <= a { start } else { char_to_byte(s, start, a, b) };
+        let end = if b <= a {
+            start
+        } else {
+            char_to_byte(s, start, a, b)
+        };
         (start, end)
     };
     let slice = if start < end {

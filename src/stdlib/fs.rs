@@ -879,7 +879,9 @@ fn trash(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     };
     let err = |m: String| Ok(Value::Err(Box::new(Value::String(Arc::new(m)))));
     if std::fs::symlink_metadata(&path).is_err() {
-        return err(format!("Failed to move '{path}' to the Trash: no such file or folder"));
+        return err(format!(
+            "Failed to move '{path}' to the Trash: no such file or folder"
+        ));
     }
     match trash_item(&path) {
         Ok(to) => Ok(Value::Ok(Box::new(Value::String(Arc::new(to))))),
@@ -901,19 +903,32 @@ fn trash_item(path: &str) -> Result<String, String> {
         let fm: *mut AnyObject = msg_send![class!(NSFileManager), defaultManager];
         let mut out: *mut AnyObject = std::ptr::null_mut();
         let mut error: *mut AnyObject = std::ptr::null_mut();
-        let ok: bool = msg_send![fm, trashItemAtURL: url, resultingItemURL: &mut out, error: &mut error];
+        let ok: bool =
+            msg_send![fm, trashItemAtURL: url, resultingItemURL: &mut out, error: &mut error];
         let text = |o: *mut AnyObject| -> Option<String> {
             if o.is_null() {
                 return None;
             }
             let p: *const std::ffi::c_char = msg_send![o, UTF8String];
-            if p.is_null() { None } else { Some(std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()) }
+            if p.is_null() {
+                None
+            } else {
+                Some(std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned())
+            }
         };
         let r = if ok {
-            let at: *mut AnyObject = if out.is_null() { std::ptr::null_mut() } else { msg_send![out, path] };
+            let at: *mut AnyObject = if out.is_null() {
+                std::ptr::null_mut()
+            } else {
+                msg_send![out, path]
+            };
             Ok(text(at).unwrap_or_default())
         } else {
-            let d: *mut AnyObject = if error.is_null() { std::ptr::null_mut() } else { msg_send![error, localizedDescription] };
+            let d: *mut AnyObject = if error.is_null() {
+                std::ptr::null_mut()
+            } else {
+                msg_send![error, localizedDescription]
+            };
             Err(text(d).unwrap_or_else(|| "the Trash refused it".to_string()))
         };
         let _: () = msg_send![pool, drain];

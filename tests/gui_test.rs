@@ -373,10 +373,20 @@ fn a_code_font_without_ligatures_and_a_title_read_back() {
     assert_eq!(text(&v), r#"[Ok(()), "auth.ol — shuttle"]"#);
     // the font's features: ligatures and contextual alternates off
     use olang::stdlib::gui::text::Font;
-    let off = Font { family: "mono".into(), ligatures: false, ..Font::default() };
+    let off = Font {
+        family: "mono".into(),
+        ligatures: false,
+        ..Font::default()
+    };
     assert!(format!("{:?}", off.styles()).contains("liga"));
     assert!(!format!("{:?}", Font::default().styles()).contains("liga"));
-    assert_ne!(off, Font { family: "mono".into(), ..Font::default() });
+    assert_ne!(
+        off,
+        Font {
+            family: "mono".into(),
+            ..Font::default()
+        }
+    );
 }
 
 #[test]
@@ -483,13 +493,19 @@ fn a_drag_is_followed_across_windows_and_a_node_has_actions_of_its_own() {
     );
     // the platform's tree carries them as custom actions
     let mut st = reference_scene(1.0);
-    let n = st.scene.nodes.values_mut().find(|n| n.role == "button").expect("a button");
+    let n = st
+        .scene
+        .nodes
+        .values_mut()
+        .find(|n| n.role == "button")
+        .expect("a button");
     n.actions = vec!["Move right".into()];
     let tree = olang::stdlib::gui::a11y::tree(&st);
     assert!(
-        tree.nodes
+        tree.nodes.iter().any(|(_, n)| n
+            .custom_actions()
             .iter()
-            .any(|(_, n)| n.custom_actions().iter().any(|a| a.description == "Move right")),
+            .any(|a| a.description == "Move right")),
         "a custom action in the tree"
     );
 }
@@ -925,7 +941,14 @@ const QUADS: [[u8; 3]; 4] = [[220, 38, 38], [37, 99, 235], [22, 163, 74], [250, 
 /// A window of `size` at `scale` showing image `src` at (0, 0) in a box
 /// of `bw × bh` as `fit` says, drawn by the software renderer: its RGBA
 /// and its width in pixels.
-fn picture_pixels(src: Value, fit: &str, size: (f32, f32), bw: f32, bh: f32, scale: f32) -> (Vec<u8>, u32) {
+fn picture_pixels(
+    src: Value,
+    fit: &str,
+    size: (f32, f32),
+    bw: f32,
+    bh: f32,
+    scale: f32,
+) -> (Vec<u8>, u32) {
     let mut st = WinState::new(7, true, "pictures", size.0, size.1, scale);
     let patch = Value::List(Arc::new(vec![
         m(vec![
@@ -966,29 +989,63 @@ fn pictures_in_every_format_show_the_same_quadrants() {
         let tol = if f == "jpg" { 24 } else { 6 };
         for (i, (x, y)) in [(5, 4), (34, 4), (5, 25), (34, 25)].into_iter().enumerate() {
             let got = at(&px, w, x, y);
-            assert!(near(got, QUADS[i], tol), "{f}: quadrant {i} at ({x}, {y}) is {got:?}, not {:?}", QUADS[i]);
+            assert!(
+                near(got, QUADS[i], tol),
+                "{f}: quadrant {i} at ({x}, {y}) is {got:?}, not {:?}",
+                QUADS[i]
+            );
         }
         // its own size: nothing past 40 × 30
-        assert!(near(at(&px, w, 50, 35), [255, 255, 255], 2), "{f}: drawn past its size");
+        assert!(
+            near(at(&px, w, 50, 35), [255, 255, 255], 2),
+            "{f}: drawn past its size"
+        );
     }
 }
 
 #[test]
 fn its_own_size_is_one_pixel_to_one_display_pixel_and_an_svg_is_drawn_at_the_scale() {
     // a raster at 2×: 40 × 30 display pixels, unscaled
-    let (px, w) = picture_pixels(s("tests/fixtures/pictures/quads.png"), "none", (60.0, 40.0), 60.0, 40.0, 2.0);
+    let (px, w) = picture_pixels(
+        s("tests/fixtures/pictures/quads.png"),
+        "none",
+        (60.0, 40.0),
+        60.0,
+        40.0,
+        2.0,
+    );
     assert_eq!(at(&px, w, 39, 29), QUADS[3]);
     assert_eq!(at(&px, w, 0, 0), QUADS[0]);
-    assert!(near(at(&px, w, 45, 10), [255, 255, 255], 0), "a raster at its own size is not scaled up");
+    assert!(
+        near(at(&px, w, 45, 10), [255, 255, 255], 0),
+        "a raster at its own size is not scaled up"
+    );
     // an SVG's units are logical pixels: 80 × 60 display pixels, sharp
-    let (px, w) = picture_pixels(s("tests/fixtures/pictures/quads.svg"), "none", (60.0, 40.0), 60.0, 40.0, 2.0);
+    let (px, w) = picture_pixels(
+        s("tests/fixtures/pictures/quads.svg"),
+        "none",
+        (60.0, 40.0),
+        60.0,
+        40.0,
+        2.0,
+    );
     assert!(near(at(&px, w, 70, 50), QUADS[3], 2));
     assert!(near(at(&px, w, 41, 31), QUADS[3], 2));
     assert!(near(at(&px, w, 38, 28), QUADS[0], 2));
     // contained in a smaller box, the picture keeps its proportions
-    let (px, w) = picture_pixels(s("tests/fixtures/pictures/quads.png"), "contain", (60.0, 40.0), 20.0, 30.0, 1.0);
+    let (px, w) = picture_pixels(
+        s("tests/fixtures/pictures/quads.png"),
+        "contain",
+        (60.0, 40.0),
+        20.0,
+        30.0,
+        1.0,
+    );
     assert!(near(at(&px, w, 2, 9), QUADS[0], 30));
-    assert!(near(at(&px, w, 2, 2), [255, 255, 255], 2), "letterboxed above");
+    assert!(
+        near(at(&px, w, 2, 2), [255, 255, 255], 2),
+        "letterboxed above"
+    );
 }
 
 #[test]
@@ -999,10 +1056,14 @@ fn a_large_picture_is_kept_at_its_thumbnail_size_and_decoded_off_the_thread_that
     let src = olang::stdlib::bytes::to_value(pm.encode_png().expect("png"));
     // a window (one that is not real: nothing to redraw) asks: not yet
     let first = picture::get(&src, Some((120.0, 90.0)), Some(987_654)).expect("readable");
-    assert!(first.is_none(), "a window's picture comes from a decoding thread");
+    assert!(
+        first.is_none(),
+        "a window's picture comes from a decoding thread"
+    );
     let mut got = None;
     for _ in 0..400 {
-        if let Some(hit) = picture::get(&src, Some((120.0, 90.0)), Some(987_654)).expect("readable") {
+        if let Some(hit) = picture::get(&src, Some((120.0, 90.0)), Some(987_654)).expect("readable")
+        {
             got = Some(hit);
             break;
         }
@@ -1013,10 +1074,14 @@ fn a_large_picture_is_kept_at_its_thumbnail_size_and_decoded_off_the_thread_that
     // 120 across: kept at the power of two above it, not 2400
     assert_eq!((pic.width, pic.height), (128, 96));
     // asked again, the same picture: the cache answers
-    let again = picture::get(&src, Some((110.0, 80.0)), None).expect("readable").expect("held");
+    let again = picture::get(&src, Some((110.0, 80.0)), None)
+        .expect("readable")
+        .expect("held");
     assert_eq!(again.0.id, pic.id);
     // its own size is a picture of its own
-    let whole = picture::get(&src, None, None).expect("readable").expect("decoded");
+    let whole = picture::get(&src, None, None)
+        .expect("readable")
+        .expect("decoded");
     assert_eq!((whole.0.width, whole.0.height), (2400, 1800));
 }
 
@@ -1026,9 +1091,22 @@ fn a_large_picture_is_kept_at_its_thumbnail_size_and_decoded_off_the_thread_that
 fn anim_window(src: Value, bw: f64, bh: f64) -> WinState {
     let mut st = WinState::new(9, true, "animations", 160.0, 120.0, 1.0);
     let patch = Value::List(Arc::new(vec![
-        m(vec![("key", s("root")), ("box", tup(&[0.0, 0.0, 160.0, 120.0])), ("style", m(vec![("bg", s("#ffffff"))]))]),
-        m(vec![("key", s("sc")), ("parent", s("root")), ("role", s("region")), ("box", tup(&[0.0, 0.0, 160.0, 120.0]))]),
-        m(vec![("key", s("page")), ("parent", s("sc")), ("box", tup(&[0.0, 0.0, 160.0, 400.0]))]),
+        m(vec![
+            ("key", s("root")),
+            ("box", tup(&[0.0, 0.0, 160.0, 120.0])),
+            ("style", m(vec![("bg", s("#ffffff"))])),
+        ]),
+        m(vec![
+            ("key", s("sc")),
+            ("parent", s("root")),
+            ("role", s("region")),
+            ("box", tup(&[0.0, 0.0, 160.0, 120.0])),
+        ]),
+        m(vec![
+            ("key", s("page")),
+            ("parent", s("sc")),
+            ("box", tup(&[0.0, 0.0, 160.0, 400.0])),
+        ]),
         m(vec![
             ("key", s("pic")),
             ("parent", s("page")),
@@ -1056,8 +1134,21 @@ fn frame_at(st: &mut WinState, ms: f64) -> ([u8; 3], Option<f64>) {
 fn an_animation_shows_its_frames_by_their_delays_and_rests_after_its_plays() {
     use olang::stdlib::gui::canvas::Picture;
     use olang::stdlib::gui::picture::{Anim, delay_ms};
-    let pic = |i: u64| Arc::new(Picture { id: 900_000 + i, width: 1, height: 1, rgba: vec![0; 4] });
-    let a = Anim { frames: vec![pic(0), pic(1), pic(2)], delays: vec![100, 50, 200], plays: 2, total: 350, bytes: 12 };
+    let pic = |i: u64| {
+        Arc::new(Picture {
+            id: 900_000 + i,
+            width: 1,
+            height: 1,
+            rgba: vec![0; 4],
+        })
+    };
+    let a = Anim {
+        frames: vec![pic(0), pic(1), pic(2)],
+        delays: vec![100, 50, 200],
+        plays: 2,
+        total: 350,
+        bytes: 12,
+    };
     assert_eq!(a.at(0.0), (0, Some(100.0)));
     assert_eq!(a.at(120.0), (1, Some(150.0)));
     assert_eq!(a.at(349.0), (2, Some(350.0)));
@@ -1091,9 +1182,20 @@ fn an_animated_gif_or_webp_plays_by_the_windows_clock_and_rests_after_its_plays(
         assert_eq!((a.frames, a.paused, a.badge), (4, false, None));
         // scrolled out of view: nothing asks for its next frame
         let mut out = Vec::new();
-        st.apply(&Value::List(Arc::new(vec![m(vec![("op", s("scroll")), ("key", s("sc")), ("to", tup(&[0.0, 200.0]))])])), &mut out)
-            .expect("scrolls");
-        assert_eq!(frame_at(&mut st, 1_100.0).1, None, "{f}: out of view, no frames");
+        st.apply(
+            &Value::List(Arc::new(vec![m(vec![
+                ("op", s("scroll")),
+                ("key", s("sc")),
+                ("to", tup(&[0.0, 200.0])),
+            ])])),
+            &mut out,
+        )
+        .expect("scrolls");
+        assert_eq!(
+            frame_at(&mut st, 1_100.0).1,
+            None,
+            "{f}: out of view, no frames"
+        );
     }
     // a GIF with no loop block plays once and rests on its last frame
     let mut once = anim_window(s("tests/fixtures/pictures/once.gif"), 40.0, 30.0);
@@ -1109,7 +1211,10 @@ fn an_animated_gif_or_webp_plays_by_the_windows_clock_and_rests_after_its_plays(
 fn reduced_motion_shows_the_first_frame_with_a_button_that_plays_it() {
     use olang::stdlib::gui::context::Settings;
     let mut st = anim_window(s("tests/fixtures/pictures/spin.gif"), 120.0, 90.0);
-    st.set_settings(Settings { reduce_motion: true, ..Settings::default() });
+    st.set_settings(Settings {
+        reduce_motion: true,
+        ..Settings::default()
+    });
     let (c, next) = frame_at(&mut st, 250.0);
     assert!(near(c, QUADS[0], 6), "still on the first frame: {c:?}");
     assert_eq!(next, None, "a still picture asks for no frames");
@@ -1119,23 +1224,70 @@ fn reduced_motion_shows_the_first_frame_with_a_button_that_plays_it() {
     // the button is drawn over the middle: a dark disc
     let dl = st.display_list();
     let px = soft::rgba(&soft::render(&dl));
-    let mid = at(&px, dl.width, (bx + bw / 2.0 + 6.0) as u32, (by + bh / 2.0 - 6.0) as u32);
-    assert!(mid[0] < 200, "the button's disc darkens the picture: {mid:?}");
+    let mid = at(
+        &px,
+        dl.width,
+        (bx + bw / 2.0 + 6.0) as u32,
+        (by + bh / 2.0 - 6.0) as u32,
+    );
+    assert!(
+        mid[0] < 200,
+        "the button's disc darkens the picture: {mid:?}"
+    );
     // its accessible node says so and can be pressed
     let tree = text(&olang::stdlib::gui::a11y::as_value(&mut st));
-    assert!(tree.contains(r#""key": "pic""#) && tree.contains(r#""actions": ["click"]"#), "{tree}");
+    assert!(
+        tree.contains(r#""key": "pic""#) && tree.contains(r#""actions": ["click"]"#),
+        "{tree}"
+    );
     // a press on it plays; the program hears neither the press nor its release
     let (cx, cy) = (bx + bw / 2.0, by + bh / 2.0);
     let mut out = Vec::new();
     let mut clip = NoClip;
-    st.input(Input::Pointer { action: PointerAction::Down, x: cx, y: cy, button: "left".into(), clicks: 1 }, &mut clip, &mut out);
-    st.input(Input::Pointer { action: PointerAction::Up, x: cx, y: cy, button: "left".into(), clicks: 1 }, &mut clip, &mut out);
-    assert!(out.iter().all(|e| !text(e).contains(r#""action": "down""#)), "{out:?}");
+    st.input(
+        Input::Pointer {
+            action: PointerAction::Down,
+            x: cx,
+            y: cy,
+            button: "left".into(),
+            clicks: 1,
+        },
+        &mut clip,
+        &mut out,
+    );
+    st.input(
+        Input::Pointer {
+            action: PointerAction::Up,
+            x: cx,
+            y: cy,
+            button: "left".into(),
+            clicks: 1,
+        },
+        &mut clip,
+        &mut out,
+    );
+    assert!(
+        out.iter().all(|e| !text(e).contains(r#""action": "down""#)),
+        "{out:?}"
+    );
     let (c, next) = frame_at(&mut st, 400.0);
-    assert!(near(c, QUADS[1], 6), "playing from where it stood: 150 ms in, {c:?}");
+    assert!(
+        near(c, QUADS[1], 6),
+        "playing from where it stood: 150 ms in, {c:?}"
+    );
     assert_eq!(next, Some(450.0));
     // pressed again it pauses where it is
-    st.input(Input::Pointer { action: PointerAction::Down, x: cx, y: cy, button: "left".into(), clicks: 1 }, &mut clip, &mut out);
+    st.input(
+        Input::Pointer {
+            action: PointerAction::Down,
+            x: cx,
+            y: cy,
+            button: "left".into(),
+            clicks: 1,
+        },
+        &mut clip,
+        &mut out,
+    );
     assert!(near(frame_at(&mut st, 900.0).0, QUADS[1], 6));
     assert_eq!(st.next_frame, None);
     // the system's setting off again: the person's choice stands (paused)
@@ -1154,7 +1306,8 @@ fn an_animation_too_large_to_keep_shows_its_first_frame() {
         let mut e = gif::Encoder::new(&mut bytes, w, h, &palette).expect("encoder");
         e.set_repeat(gif::Repeat::Infinite).expect("repeat");
         for i in 0..2u8 {
-            let mut f = gif::Frame::from_indexed_pixels(w, h, vec![i; w as usize * h as usize], None);
+            let mut f =
+                gif::Frame::from_indexed_pixels(w, h, vec![i; w as usize * h as usize], None);
             f.delay = 10;
             e.write_frame(&f).expect("frame");
         }
@@ -1162,7 +1315,10 @@ fn an_animation_too_large_to_keep_shows_its_first_frame() {
     let src = olang::stdlib::bytes::to_value(bytes);
     let info = picture::info(&src).expect("readable");
     assert!(info.animated);
-    assert!(picture::animation(&src, info, None, None).is_none(), "at its own size: a still");
+    assert!(
+        picture::animation(&src, info, None, None).is_none(),
+        "at its own size: a still"
+    );
     // shown small it is kept small, and animates
     let small = picture::animation(&src, info, Some((150.0, 105.0)), None).expect("animates small");
     assert_eq!(small.frames.len(), 2);
@@ -1174,9 +1330,21 @@ fn an_animation_too_large_to_keep_shows_its_first_frame() {
 fn board_window() -> WinState {
     let mut st = WinState::new(11, true, "board", 300.0, 200.0, 1.0);
     let mut ops = vec![
-        m(vec![("key", s("root")), ("box", tup(&[0.0, 0.0, 300.0, 200.0]))]),
-        m(vec![("key", s("sc")), ("parent", s("root")), ("role", s("region")), ("box", tup(&[0.0, 0.0, 300.0, 200.0]))]),
-        m(vec![("key", s("row")), ("parent", s("sc")), ("box", tup(&[0.0, 0.0, 640.0, 200.0]))]),
+        m(vec![
+            ("key", s("root")),
+            ("box", tup(&[0.0, 0.0, 300.0, 200.0])),
+        ]),
+        m(vec![
+            ("key", s("sc")),
+            ("parent", s("root")),
+            ("role", s("region")),
+            ("box", tup(&[0.0, 0.0, 300.0, 200.0])),
+        ]),
+        m(vec![
+            ("key", s("row")),
+            ("parent", s("sc")),
+            ("box", tup(&[0.0, 0.0, 640.0, 200.0])),
+        ]),
     ];
     for (i, c) in ["a", "b", "c"].iter().enumerate() {
         ops.push(m(vec![
@@ -1190,7 +1358,8 @@ fn board_window() -> WinState {
         ]));
     }
     let mut out = Vec::new();
-    st.apply(&Value::List(Arc::new(ops)), &mut out).expect("applies");
+    st.apply(&Value::List(Arc::new(ops)), &mut out)
+        .expect("applies");
     st
 }
 
@@ -1204,9 +1373,30 @@ fn the_wheel_gives_each_axis_to_the_scroller_that_can_move_along_it() {
     let mut clip = NoClip;
     let mut out = Vec::new();
     let wheel = |st: &mut WinState, x: f32, dx: f32, dy: f32, shift: bool, out: &mut Vec<Value>| {
-        st.input(Input::Pointer { action: PointerAction::Move, x, y: 100.0, button: "left".into(), clicks: 0 }, &mut NoClip, out);
-        let mods = Mods { shift, ..Mods::default() };
-        st.input(Input::Wheel { dx, dy, mods: Some(mods) }, &mut NoClip, out);
+        st.input(
+            Input::Pointer {
+                action: PointerAction::Move,
+                x,
+                y: 100.0,
+                button: "left".into(),
+                clicks: 0,
+            },
+            &mut NoClip,
+            out,
+        );
+        let mods = Mods {
+            shift,
+            ..Mods::default()
+        };
+        st.input(
+            Input::Wheel {
+                dx,
+                dy,
+                mods: Some(mods),
+            },
+            &mut NoClip,
+            out,
+        );
     };
     // two fingers sideways over a list that scrolls only down: the board moves across
     wheel(&mut st, 50.0, -100.0, 0.0, false, &mut out);
@@ -1219,17 +1409,50 @@ fn the_wheel_gives_each_axis_to_the_scroller_that_can_move_along_it() {
     // shift with a mouse wheel: across
     wheel(&mut st, 150.0, 0.0, -60.0, true, &mut out);
     assert_eq!(offset_of(&st, "sc"), (200.0, 0.0));
-    let said: Vec<String> = out.iter().map(text).filter(|t| t.contains(r#""kind": "scrolled""#)).collect();
+    let said: Vec<String> = out
+        .iter()
+        .map(text)
+        .filter(|t| t.contains(r#""kind": "scrolled""#))
+        .collect();
     assert_eq!(said.len(), 4, "{said:?}");
     // the focus moving to a list out of view brings it in, and says so
-    st.input(Input::Pointer { action: PointerAction::Move, x: 10.0, y: 100.0, button: "left".into(), clicks: 0 }, &mut clip, &mut out);
-    st.input(Input::Wheel { dx: 300.0, dy: 0.0, mods: None }, &mut clip, &mut out);
+    st.input(
+        Input::Pointer {
+            action: PointerAction::Move,
+            x: 10.0,
+            y: 100.0,
+            button: "left".into(),
+            clicks: 0,
+        },
+        &mut clip,
+        &mut out,
+    );
+    st.input(
+        Input::Wheel {
+            dx: 300.0,
+            dy: 0.0,
+            mods: None,
+        },
+        &mut clip,
+        &mut out,
+    );
     assert_eq!(offset_of(&st, "sc"), (0.0, 0.0));
     let mut out2 = Vec::new();
-    st.apply(&Value::List(Arc::new(vec![m(vec![("op", s("focus")), ("key", s("l:c"))])])), &mut out2).expect("focuses");
+    st.apply(
+        &Value::List(Arc::new(vec![m(vec![
+            ("op", s("focus")),
+            ("key", s("l:c")),
+        ])])),
+        &mut out2,
+    )
+    .expect("focuses");
     assert_eq!(offset_of(&st, "sc"), (340.0, 0.0));
     assert!(
-        out2.iter().map(text).any(|t| t.contains(r#""kind": "scrolled""#) && t.contains(r#""key": "sc""#) && t.contains(r#""x": 340"#)),
+        out2.iter()
+            .map(text)
+            .any(|t| t.contains(r#""kind": "scrolled""#)
+                && t.contains(r#""key": "sc""#)
+                && t.contains(r#""x": 340"#)),
         "{out2:?}"
     );
 }
@@ -1246,8 +1469,14 @@ fn a_picture_that_is_not_one_says_so() {
          is_err(gui.image_info("tests/fixtures/pictures/none.png"))]
     "##);
     let t = text(&v);
-    assert!(t.contains(r#""format": "jpeg""#) && t.contains(r#""format": "svg""#), "{t}");
-    assert!(t.contains(r#""width": 40"#) && t.contains(r#""height": 30"#), "{t}");
+    assert!(
+        t.contains(r#""format": "jpeg""#) && t.contains(r#""format": "svg""#),
+        "{t}"
+    );
+    assert!(
+        t.contains(r#""width": 40"#) && t.contains(r#""height": 30"#),
+        "{t}"
+    );
     assert!(t.ends_with("true]"), "{t}");
 }
 
@@ -1312,22 +1541,89 @@ fn a_canvas_is_drawn_as_primitives_with_clips_transforms_and_hit_regions() {
     use olang::stdlib::gui::canvas::{self, Item};
     let n = |v: f64| Value::Float(v);
     let ops = Value::List(Arc::new(vec![
-        m(vec![("op", s("rect")), ("x", n(0.0)), ("y", n(0.0)), ("w", n(200.0)), ("h", n(100.0)), ("fill", s("#ffffff")), ("hit", s("ground"))]),
-        m(vec![("op", s("push")), ("clip", tup(&[20.0, 0.0, 180.0, 100.0])), ("translate", tup(&[20.0, 10.0])), ("scale", tup(&[4.0, 1.0]))]),
+        m(vec![
+            ("op", s("rect")),
+            ("x", n(0.0)),
+            ("y", n(0.0)),
+            ("w", n(200.0)),
+            ("h", n(100.0)),
+            ("fill", s("#ffffff")),
+            ("hit", s("ground")),
+        ]),
+        m(vec![
+            ("op", s("push")),
+            ("clip", tup(&[20.0, 0.0, 180.0, 100.0])),
+            ("translate", tup(&[20.0, 10.0])),
+            ("scale", tup(&[4.0, 1.0])),
+        ]),
         // days 2..5 at 4 px a day, from x 20: 28..48
-        m(vec![("op", s("rect")), ("x", n(2.0)), ("y", n(0.0)), ("w", n(5.0)), ("h", n(20.0)), ("radius", n(4.0)), ("fill", s("#2563eb")), ("hit", s("bar"))]),
+        m(vec![
+            ("op", s("rect")),
+            ("x", n(2.0)),
+            ("y", n(0.0)),
+            ("w", n(5.0)),
+            ("h", n(20.0)),
+            ("radius", n(4.0)),
+            ("fill", s("#2563eb")),
+            ("hit", s("bar")),
+        ]),
         // a line down the clip's left edge and one past it, cut
-        m(vec![("op", s("line")), ("x1", n(-10.0)), ("y1", n(0.0)), ("x2", n(-10.0)), ("y2", n(80.0)), ("color", s("#dc2626")), ("width", n(2.0))]),
-        m(vec![("op", s("text")), ("x", n(2.0)), ("y", n(30.0)), ("text", s("OT-1")), ("size", n(12.0)), ("max_w", n(40.0))]),
+        m(vec![
+            ("op", s("line")),
+            ("x1", n(-10.0)),
+            ("y1", n(0.0)),
+            ("x2", n(-10.0)),
+            ("y2", n(80.0)),
+            ("color", s("#dc2626")),
+            ("width", n(2.0)),
+        ]),
+        m(vec![
+            ("op", s("text")),
+            ("x", n(2.0)),
+            ("y", n(30.0)),
+            ("text", s("OT-1")),
+            ("size", n(12.0)),
+            ("max_w", n(40.0)),
+        ]),
         m(vec![("op", s("pop"))]),
-        m(vec![("op", s("path")), ("points", Value::List(Arc::new(vec![tup(&[0.0, 90.0]), tup(&[8.0, 94.0]), tup(&[0.0, 98.0])]))), ("close", Value::Boolean(true)), ("fill", s("#16a34a"))]),
-        m(vec![("op", s("rect")), ("x", n(100.0)), ("y", n(60.0)), ("w", n(80.0)), ("h", n(20.0)), ("gradient", Value::List(Arc::new(vec![s("#000000"), s("#ffffff")])))]),
+        m(vec![
+            ("op", s("path")),
+            (
+                "points",
+                Value::List(Arc::new(vec![
+                    tup(&[0.0, 90.0]),
+                    tup(&[8.0, 94.0]),
+                    tup(&[0.0, 98.0]),
+                ])),
+            ),
+            ("close", Value::Boolean(true)),
+            ("fill", s("#16a34a")),
+        ]),
+        m(vec![
+            ("op", s("rect")),
+            ("x", n(100.0)),
+            ("y", n(60.0)),
+            ("w", n(80.0)),
+            ("h", n(20.0)),
+            (
+                "gradient",
+                Value::List(Arc::new(vec![s("#000000"), s("#ffffff")])),
+            ),
+        ]),
     ]));
     let d = canvas::draw(&ops, 200.0, 100.0, 2.0).expect("draws");
     // the ground, the bar, the line, the text, the arrowhead, the gradient
     assert_eq!(d.items.len(), 6, "{:?}", d.items);
     match &d.items[1] {
-        Item::Rect { x, y, w, h, radii, clip, .. } => {
+        Item::Rect {
+            x,
+            y,
+            w,
+            h,
+            radii,
+            clip,
+            ..
+        } => {
             assert_eq!((*x, *y, *w, *h), (28.0, 10.0, 20.0, 20.0));
             assert_eq!(radii[0], 4.0, "a radius is not scaled");
             assert_eq!(*clip, [20.0, 0.0, 200.0, 100.0]);
@@ -1344,14 +1640,24 @@ fn a_canvas_is_drawn_as_primitives_with_clips_transforms_and_hit_regions() {
     }
     match &d.items[4] {
         Item::Pic { x, y, pic, .. } => {
-            assert!(*x <= 0.0 && *y <= 90.0 && pic.width <= 24 && pic.height <= 24, "a piece the size of the arrowhead");
+            assert!(
+                *x <= 0.0 && *y <= 90.0 && pic.width <= 24 && pic.height <= 24,
+                "a piece the size of the arrowhead"
+            );
         }
         other => panic!("a path is a raster piece: {other:?}"),
     }
     // the same shape a whole pixel along is the same picture
     let moved = Value::List(Arc::new(vec![m(vec![
         ("op", s("path")),
-        ("points", Value::List(Arc::new(vec![tup(&[30.0, 90.0]), tup(&[38.0, 94.0]), tup(&[30.0, 98.0])]))),
+        (
+            "points",
+            Value::List(Arc::new(vec![
+                tup(&[30.0, 90.0]),
+                tup(&[38.0, 94.0]),
+                tup(&[30.0, 98.0]),
+            ])),
+        ),
         ("close", Value::Boolean(true)),
         ("fill", s("#16a34a")),
     ])]));
@@ -1365,15 +1671,32 @@ fn a_canvas_is_drawn_as_primitives_with_clips_transforms_and_hit_regions() {
     }
     assert!(matches!(&d.items[5], Item::Pic { pic, .. } if pic.width == 256 && pic.height == 1));
     // hits: the bar over the ground; outside the clip the bar is not there
-    assert_eq!(text(&canvas::hit(&ops, 200.0, 100.0, 30.0, 20.0)), r#""bar""#);
-    assert_eq!(text(&canvas::hit(&ops, 200.0, 100.0, 60.0, 20.0)), r#""ground""#);
+    assert_eq!(
+        text(&canvas::hit(&ops, 200.0, 100.0, 30.0, 20.0)),
+        r#""bar""#
+    );
+    assert_eq!(
+        text(&canvas::hit(&ops, 200.0, 100.0, 60.0, 20.0)),
+        r#""ground""#
+    );
     assert_eq!(text(&canvas::hit(&ops, 200.0, 100.0, 250.0, 20.0)), "()");
 
     // drawn: the gradient dark at its left, light at its right; the bar blue
     let mut st = WinState::new(1, true, "canvas", 200.0, 100.0, 2.0);
     let scene = Value::List(Arc::new(vec![
-        m(vec![("key", s("root")), ("box", tup(&[0.0, 0.0, 200.0, 100.0])), ("style", m(vec![("bg", s("#ffffff"))]))]),
-        m(vec![("key", s("cv")), ("parent", s("root")), ("role", s("figure")), ("name", s("Timeline")), ("box", tup(&[0.0, 0.0, 200.0, 100.0])), ("draw", ops)]),
+        m(vec![
+            ("key", s("root")),
+            ("box", tup(&[0.0, 0.0, 200.0, 100.0])),
+            ("style", m(vec![("bg", s("#ffffff"))])),
+        ]),
+        m(vec![
+            ("key", s("cv")),
+            ("parent", s("root")),
+            ("role", s("figure")),
+            ("name", s("Timeline")),
+            ("box", tup(&[0.0, 0.0, 200.0, 100.0])),
+            ("draw", ops),
+        ]),
     ]));
     let mut out = Vec::new();
     st.apply(&scene, &mut out).expect("applies");
@@ -1383,15 +1706,30 @@ fn a_canvas_is_drawn_as_primitives_with_clips_transforms_and_hit_regions() {
         let i = (((y * 2.0) as u32 * dl.width + (x * 2.0) as u32) * 4) as usize;
         [px[i], px[i + 1], px[i + 2]]
     };
-    assert!(at(102.0, 70.0)[0] < 30, "the gradient starts dark: {:?}", at(102.0, 70.0));
-    assert!(at(178.0, 70.0)[0] > 225, "and ends light: {:?}", at(178.0, 70.0));
+    assert!(
+        at(102.0, 70.0)[0] < 30,
+        "the gradient starts dark: {:?}",
+        at(102.0, 70.0)
+    );
+    assert!(
+        at(178.0, 70.0)[0] > 225,
+        "and ends light: {:?}",
+        at(178.0, 70.0)
+    );
     assert_eq!(at(38.0, 20.0), [37, 99, 235], "the bar");
     assert_eq!(at(19.0, 40.0), [255, 255, 255], "the line is clipped away");
     assert_eq!(at(3.0, 94.0), [22, 163, 74], "the arrowhead");
     if let Ok(g) = gpu::gpu(None, None) {
         let gp = g.render_rgba(&dl);
-        let over = px.chunks(4).zip(gp.chunks(4)).filter(|(a, b)| (0..4).map(|i| a[i].abs_diff(b[i])).max().unwrap() > 48).count();
-        assert!(over * 200 <= px.len() / 4, "{over} pixels differ between the renderers");
+        let over = px
+            .chunks(4)
+            .zip(gp.chunks(4))
+            .filter(|(a, b)| (0..4).map(|i| a[i].abs_diff(b[i])).max().unwrap() > 48)
+            .count();
+        assert!(
+            over * 200 <= px.len() / 4,
+            "{over} pixels differ between the renderers"
+        );
     } else {
         eprintln!("skipped the GPU half: no GPU here");
     }
@@ -1431,7 +1769,10 @@ fn a_canvas_hears_the_wheel_the_pinch_and_says_what_is_under_the_pointer() {
         [map_get(moves[0], "hit"), len(wheels), map_get(wheels[0], "key"), map_get(wheels[0], "dx"), map_get(wheels[0], "mod"), map_get(wheels[1], "mod"),
          map_get(pinches[0], "delta"), map_get(pinches[0], "key"), len(scrolled), map_get(cv, "active")]
     "##);
-    assert_eq!(text(&v), r#"["bar:7", 2, "cv", -12.0, false, true, 0.25, "cv", 0, "follow"]"#);
+    assert_eq!(
+        text(&v),
+        r#"["bar:7", 2, "cv", -12.0, false, true, 0.25, "cv", 0, "follow"]"#
+    );
 }
 
 #[test]
@@ -1681,7 +2022,11 @@ fn a_context_menu_is_checked_and_headless_windows_leave_it_to_the_program() {
         [ok, map_get(gui.platform(), "context_menu"), no_id, bad_keys, bad_sub]
     "#);
     let t = text(&v);
-    let native = if cfg!(target_os = "macos") { "true" } else { "false" };
+    let native = if cfg!(target_os = "macos") {
+        "true"
+    } else {
+        "false"
+    };
     assert!(t.starts_with(&format!("[false, {native}, ")), "{t}");
     assert!(t.contains(r#""A" needs an "id""#), "{t}");
     assert!(t.contains(r#"keys "mod+zz+q""#), "{t}");
@@ -1699,14 +2044,42 @@ fn a_context_menu_opens_at_the_click_and_stays_on_the_screen() {
     use olang::stdlib::gui::platform::context_menu_origin;
     let vis = (0.0, 50.0, 1440.0, 825.0);
     let menu = (220.0, 300.0);
-    assert_eq!(context_menu_origin((400.0, 700.0), menu, vis), (400.0, 700.0), "room below and right: at the click");
-    assert_eq!(context_menu_origin((400.0, 200.0), menu, vis), (400.0, 500.0), "near the bottom: upward, its bottom at the click");
-    assert_eq!(context_menu_origin((1300.0, 700.0), menu, vis), (1080.0, 700.0), "near the right: leftward, its right edge at the click");
-    assert_eq!(context_menu_origin((1300.0, 100.0), menu, vis), (1080.0, 400.0), "the bottom right corner: up and left");
+    assert_eq!(
+        context_menu_origin((400.0, 700.0), menu, vis),
+        (400.0, 700.0),
+        "room below and right: at the click"
+    );
+    assert_eq!(
+        context_menu_origin((400.0, 200.0), menu, vis),
+        (400.0, 500.0),
+        "near the bottom: upward, its bottom at the click"
+    );
+    assert_eq!(
+        context_menu_origin((1300.0, 700.0), menu, vis),
+        (1080.0, 700.0),
+        "near the right: leftward, its right edge at the click"
+    );
+    assert_eq!(
+        context_menu_origin((1300.0, 100.0), menu, vis),
+        (1080.0, 400.0),
+        "the bottom right corner: up and left"
+    );
     let tall = (220.0, 800.0);
-    assert_eq!(context_menu_origin((400.0, 400.0), tall, vis), (400.0, 850.0), "too tall either way: its bottom at the screen's");
-    assert_eq!(context_menu_origin((400.0, 900.0), menu, vis), (400.0, 875.0), "a click above the visible part: held under its top");
-    assert_eq!(context_menu_origin((-30.0, 700.0), menu, vis), (0.0, 700.0), "left of the screen: held at its edge");
+    assert_eq!(
+        context_menu_origin((400.0, 400.0), tall, vis),
+        (400.0, 850.0),
+        "too tall either way: its bottom at the screen's"
+    );
+    assert_eq!(
+        context_menu_origin((400.0, 900.0), menu, vis),
+        (400.0, 875.0),
+        "a click above the visible part: held under its top"
+    );
+    assert_eq!(
+        context_menu_origin((-30.0, 700.0), menu, vis),
+        (0.0, 700.0),
+        "left of the screen: held at its edge"
+    );
 }
 
 /// Text after a line's end gives way gracefully at the field's edge: cut
@@ -1717,10 +2090,21 @@ fn a_problem_after_a_line_gives_way_at_the_edge() {
     use olang::stdlib::gui::window::eol_cut;
     let msg = "unused variable: pm_descendants";
     assert_eq!(eol_cut(msg, 40).as_deref(), Some(msg), "room for it all");
-    assert_eq!(eol_cut("expected an expression after the operator", 30).as_deref(), Some("expected an expression after…"));
-    assert_eq!(eol_cut(msg, 17), None, "\"unused variable:…\" says too little: it gives way whole");
+    assert_eq!(
+        eol_cut("expected an expression after the operator", 30).as_deref(),
+        Some("expected an expression after…")
+    );
+    assert_eq!(
+        eol_cut(msg, 17),
+        None,
+        "\"unused variable:…\" says too little: it gives way whole"
+    );
     assert_eq!(eol_cut(msg, 8), None);
-    assert_eq!(eol_cut("this name is never read, so it can go", 26).as_deref(), Some("this name is never read…"), "no comma left before the ellipsis");
+    assert_eq!(
+        eol_cut("this name is never read, so it can go", 26).as_deref(),
+        Some("this name is never read…"),
+        "no comma left before the ellipsis"
+    );
 }
 
 /// A decoration that is only a colour (no fill, no underline) recolours
@@ -1738,8 +2122,13 @@ fn a_colour_only_decoration_recolours_its_glyphs() {
         gui.read(w, "rgba")
     "##);
     let Value::Map(m) = &v else { panic!("{v}") };
-    let wpx = match m.get("width") { Some(Value::Integer(i)) => *i as usize, _ => panic!() };
-    let data = olang::stdlib::bytes::bytes_of(m.get("data").expect("data")).expect("bytes").to_vec();
+    let wpx = match m.get("width") {
+        Some(Value::Integer(i)) => *i as usize,
+        _ => panic!(),
+    };
+    let data = olang::stdlib::bytes::bytes_of(m.get("data").expect("data"))
+        .expect("bytes")
+        .to_vec();
     let (mut red_left, mut red_right, mut dark_right) = (0, 0, 0);
     for y in 0..30 {
         for x in 0..120 {
@@ -1747,14 +2136,23 @@ fn a_colour_only_decoration_recolours_its_glyphs() {
             let (r, g, b) = (data[i], data[i + 1], data[i + 2]);
             let red = r > 180 && g < 120 && b < 120;
             let dark = r < 100 && g < 100 && b < 100;
-            if x < 40 && red { red_left += 1; }
-            if x >= 44 && red { red_right += 1; }
-            if x >= 44 && dark { dark_right += 1; }
+            if x < 40 && red {
+                red_left += 1;
+            }
+            if x >= 44 && red {
+                red_right += 1;
+            }
+            if x >= 44 && dark {
+                dark_right += 1;
+            }
         }
     }
     assert!(red_right > 0, "the decorated word in its colour");
     assert_eq!(red_left, 0, "the word before it untouched");
-    assert_eq!(dark_right, 0, "no glyph of the decorated word left in the text's colour");
+    assert_eq!(
+        dark_right, 0,
+        "no glyph of the decorated word left in the text's colour"
+    );
 }
 
 /// A code field scrolled part of a row: the row its top edge half covers
@@ -1777,8 +2175,13 @@ fn a_wrapped_code_field_hides_a_half_row_at_its_top_and_keeps_the_lines_number()
         gui.read(w, "rgba")
     "##);
     let Value::Map(m) = &v else { panic!("{v}") };
-    let wpx = match m.get("width") { Some(Value::Integer(i)) => *i as usize, _ => panic!() };
-    let data = olang::stdlib::bytes::bytes_of(m.get("data").expect("data")).expect("bytes").to_vec();
+    let wpx = match m.get("width") {
+        Some(Value::Integer(i)) => *i as usize,
+        _ => panic!(),
+    };
+    let data = olang::stdlib::bytes::bytes_of(m.get("data").expect("data"))
+        .expect("bytes")
+        .to_vec();
     let ink = |x0: usize, x1: usize, y0: usize, y1: usize| -> usize {
         let mut n = 0;
         for y in y0..y1 {
@@ -1791,9 +2194,19 @@ fn a_wrapped_code_field_hides_a_half_row_at_its_top_and_keeps_the_lines_number()
         }
         n
     };
-    assert_eq!(ink(52, 290, 4, 8), 0, "no half-drawn row of text under the field's top edge");
-    assert!(ink(52, 290, 14, 26) > 0, "the wrapped line's next row is drawn");
-    assert!(ink(4, 44, 13, 27) > 0, "the wrapped line's number on its first row in view");
+    assert_eq!(
+        ink(52, 290, 4, 8),
+        0,
+        "no half-drawn row of text under the field's top edge"
+    );
+    assert!(
+        ink(52, 290, 14, 26) > 0,
+        "the wrapped line's next row is drawn"
+    );
+    assert!(
+        ink(4, 44, 13, 27) > 0,
+        "the wrapped line's number on its first row in view"
+    );
 }
 
 /// A code field's further carets, text after a line's end, rulers and
@@ -1846,7 +2259,10 @@ fn a_code_field_pins_scopes_says_problems_and_hands_over_chords() {
                       #{ "key": "grip", "parent": "row", "box": (40, 0, 8, 160) }])
         [drawn, map_get(lens, "id"), map_get(lens, "line"), key, kept, gui.read(g, "hit", (44, 50)), gui.read(g, "hit", (20, 50))]
     "##);
-    assert_eq!(text(&v), r#"[true, "sticky", 0, "alt+up", true, "grip", "under"]"#);
+    assert_eq!(
+        text(&v),
+        r#"[true, "sticky", 0, "alt+up", true, "grip", "under"]"#
+    );
 }
 
 #[test]

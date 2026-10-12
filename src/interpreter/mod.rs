@@ -4571,7 +4571,6 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     }
 
     fn field_of(&mut self, object_value: Value, field: &str) -> Result<Value, InterpreterError> {
-
         match object_value {
             Value::Struct {
                 ref fields,
@@ -5573,10 +5572,17 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         {
             // the file the run names says what it left out
             if crate::tools::test_events::enabled()
-                && self.current_module_path.as_deref().is_none_or(|m| self.entry_file.as_deref() == Some(m))
+                && self
+                    .current_module_path
+                    .as_deref()
+                    .is_none_or(|m| self.entry_file.as_deref() == Some(m))
             {
                 let line = self.stmt_span_stack.last().map(|s| s.0).unwrap_or(0);
-                crate::tools::test_events::test_skipped(&self.test_event_file(), &test_decl.name, line);
+                crate::tools::test_events::test_skipped(
+                    &self.test_event_file(),
+                    &test_decl.name,
+                    line,
+                );
             }
             return Ok(Value::Unit);
         }
@@ -5627,7 +5633,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // `let fs = …` once shadowed the `fs` module 400 lines down).
         self.environment = Environment::with_parent(self.environment.clone());
         let outer_test = if self.arg_record.is_some() {
-            self.current_test.replace(Arc::from(test_decl.name.as_str()))
+            self.current_test
+                .replace(Arc::from(test_decl.name.as_str()))
         } else {
             None
         };
@@ -5675,14 +5682,19 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         }
         let ms = started.elapsed().as_secs_f64() * 1000.0;
         if let Some((file, line)) = event_at {
-            let failure = error.as_ref().map(|message| crate::tools::test_events::Failure {
-                message: message.clone(),
-                file: located.as_ref().and_then(|l| l.file.clone()),
-                line: located.as_ref().map(|l| l.line),
-                col: located.as_ref().map(|l| l.column),
-                frames: located.as_ref().map(|l| l.call_stack.clone()).unwrap_or_default(),
-                stmt: stmt_line,
-            });
+            let failure = error
+                .as_ref()
+                .map(|message| crate::tools::test_events::Failure {
+                    message: message.clone(),
+                    file: located.as_ref().and_then(|l| l.file.clone()),
+                    line: located.as_ref().map(|l| l.line),
+                    col: located.as_ref().map(|l| l.column),
+                    frames: located
+                        .as_ref()
+                        .map(|l| l.call_stack.clone())
+                        .unwrap_or_default(),
+                    stmt: stmt_line,
+                });
             crate::tools::test_events::test_done(&file, &test_decl.name, line, ms, failure);
         }
         self.test_results.push(TestOutcome {
@@ -6265,7 +6277,11 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         crate::errtrace::note(
             fresh,
             (self as *const Self as usize, self.call_depth),
-            crate::errtrace::Frame { file, line, function },
+            crate::errtrace::Frame {
+                file,
+                line,
+                function,
+            },
         );
     }
 
@@ -6315,7 +6331,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             if file.starts_with("__") {
                 continue;
             }
-            let file = std::fs::canonicalize(&file).map(|p| p.display().to_string()).unwrap_or(file);
+            let file = std::fs::canonicalize(&file)
+                .map(|p| p.display().to_string())
+                .unwrap_or(file);
             last.retain(|t| !(t.file == file && t.name == name));
             last.push(TestCallArgs {
                 file,
@@ -6337,7 +6355,12 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             self.arg_seq += 1;
             rec.insert(
                 Arc::as_ptr(func) as usize,
-                RecordedCall { seq: self.arg_seq, func: func.clone(), args: arguments.to_vec(), test: test.clone() },
+                RecordedCall {
+                    seq: self.arg_seq,
+                    func: func.clone(),
+                    args: arguments.to_vec(),
+                    test: test.clone(),
+                },
             );
         }
     }

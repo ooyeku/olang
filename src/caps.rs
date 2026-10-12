@@ -379,13 +379,21 @@ pub fn module_for(path: &std::path::Path) -> Option<ModuleGrant> {
 
 /// The grant registered for `dir` exactly, if any.
 pub fn module_at(dir: &std::path::Path) -> Option<ModuleGrant> {
-    modules().read().unwrap().iter().find(|g| g.dir == dir).cloned()
+    modules()
+        .read()
+        .unwrap()
+        .iter()
+        .find(|g| g.dir == dir)
+        .cloned()
 }
 
 /// Register (or replace) a module's grant; the one it replaced back.
 pub fn register_module(grant: ModuleGrant) -> Option<ModuleGrant> {
     let mut ms = modules().write().unwrap();
-    let old = ms.iter().position(|g| g.dir == grant.dir).map(|i| ms.remove(i));
+    let old = ms
+        .iter()
+        .position(|g| g.dir == grant.dir)
+        .map(|i| ms.remove(i));
     ms.push(grant);
     // Longest first, so a module nested in another's folder answers to
     // its own grant.
@@ -546,7 +554,11 @@ pub fn scope_denial(
                     full_name,
                     prog,
                     grant.name,
-                    if allow.is_empty() { "nothing".to_string() } else { allow.join(", ") }
+                    if allow.is_empty() {
+                        "nothing".to_string()
+                    } else {
+                        allow.join(", ")
+                    }
                 )),
                 // A handle (proc.wait, proc.kill on a process it started)
                 // carries the authority its start was granted.
@@ -676,7 +688,9 @@ pub fn grant_value(g: &ModuleGrant) -> crate::ast::Value {
         match &g.fs_roots {
             None => Value::Unit,
             Some(rs) => Value::List(Arc::from(
-                rs.iter().map(|r| s(&r.to_string_lossy())).collect::<Vec<_>>(),
+                rs.iter()
+                    .map(|r| s(&r.to_string_lossy()))
+                    .collect::<Vec<_>>(),
             )),
         },
     );

@@ -138,18 +138,31 @@ impl Cell {
         Cell {
             ch: ' ',
             w: 1,
-            a: Attr { fg: a.fg, bg: a.bg, fl: 0, link: 0 },
+            a: Attr {
+                fg: a.fg,
+                bg: a.bg,
+                fl: 0,
+                link: 0,
+            },
         }
     }
     fn is_blank(&self) -> bool {
-        self.ch == ' ' && self.a.bg == 0 && self.a.fl & (INVERSE | UNDERLINE | STRIKE) == 0 && self.w == 1
+        self.ch == ' '
+            && self.a.bg == 0
+            && self.a.fl & (INVERSE | UNDERLINE | STRIKE) == 0
+            && self.w == 1
     }
 }
 
 const BLANK: Cell = Cell {
     ch: ' ',
     w: 1,
-    a: Attr { fg: 0, bg: 0, fl: 0, link: 0 },
+    a: Attr {
+        fg: 0,
+        bg: 0,
+        fl: 0,
+        link: 0,
+    },
 };
 
 #[derive(Clone, Debug, Default)]
@@ -185,7 +198,11 @@ impl Line {
         self.trimmed_len() == 0
     }
     fn extra_at(&self, col: usize) -> Option<&str> {
-        self.extra.as_ref()?.iter().find(|(c, _)| *c as usize == col).map(|(_, t)| t.as_str())
+        self.extra
+            .as_ref()?
+            .iter()
+            .find(|(c, _)| *c as usize == col)
+            .map(|(_, t)| t.as_str())
     }
     fn clear_extra_from(&mut self, from: usize, to: usize) {
         if let Some(e) = self.extra.as_mut() {
@@ -337,8 +354,16 @@ impl Term {
             g0: b'B',
             g1: b'B',
             gl: 0,
-            saved_main: Saved { g0: b'B', g1: b'B', ..Default::default() },
-            saved_alt: Saved { g0: b'B', g1: b'B', ..Default::default() },
+            saved_main: Saved {
+                g0: b'B',
+                g1: b'B',
+                ..Default::default()
+            },
+            saved_alt: Saved {
+                g0: b'B',
+                g1: b'B',
+                ..Default::default()
+            },
             title: String::new(),
             cwd: String::new(),
             bell: 0,
@@ -405,7 +430,11 @@ impl Term {
     fn line_by_id(&self, id: i64) -> Option<&Line> {
         if let Some(alt) = self.alt.as_ref() {
             let r = id - self.screen_id();
-            return if r >= 0 && (r as usize) < self.rows { Some(&alt[r as usize]) } else { None };
+            return if r >= 0 && (r as usize) < self.rows {
+                Some(&alt[r as usize])
+            } else {
+                None
+            };
         }
         let i = id - self.evicted;
         if i < 0 || i as usize >= self.lines.len() {
@@ -501,7 +530,8 @@ impl Term {
             return c;
         }
         const DEC: [char; 32] = [
-            ' ', '◆', '▒', '␉', '␌', '␍', '␊', '°', '±', '␤', '␋', '┘', '┐', '┌', '└', '┼', '⎺', '⎻', '─', '⎼', '⎽', '├', '┤', '┴', '┬', '│', '≤', '≥', 'π', '≠', '£', '·',
+            ' ', '◆', '▒', '␉', '␌', '␍', '␊', '°', '±', '␤', '␋', '┘', '┐', '┌', '└', '┼', '⎺',
+            '⎻', '─', '⎼', '⎽', '├', '┤', '┴', '┬', '│', '≤', '≥', 'π', '≠', '£', '·',
         ];
         DEC[(c as usize) - 0x5f]
     }
@@ -514,10 +544,18 @@ impl Term {
         };
         if w == 0 {
             // a combining mark (or a zero-width joiner): the cell before's
-            let col = if self.pending { self.col } else { self.col.saturating_sub(1) };
+            let col = if self.pending {
+                self.col
+            } else {
+                self.col.saturating_sub(1)
+            };
             let row = self.row;
             let l = self.line_mut(row);
-            let col = if col < l.cells.len() && l.cells[col].w == 0 && col > 0 { col - 1 } else { col };
+            let col = if col < l.cells.len() && l.cells[col].w == 0 && col > 0 {
+                col - 1
+            } else {
+                col
+            };
             let e = l.extra.get_or_insert_with(|| Box::new(Vec::new()));
             if let Some(x) = e.iter_mut().find(|(cc, _)| *cc as usize == col) {
                 x.1.push(c);
@@ -571,7 +609,11 @@ impl Term {
         if l.extra.is_some() {
             l.clear_extra_from(col, end);
         }
-        l.cells[col] = Cell { ch: c, w: w as u8, a };
+        l.cells[col] = Cell {
+            ch: c,
+            w: w as u8,
+            a,
+        };
         if w == 2 && col + 1 < cols {
             l.cells[col + 1] = Cell { ch: ' ', w: 0, a };
         }
@@ -593,8 +635,16 @@ impl Term {
         l.fit(cols);
         let to = to.min(l.cells.len());
         // a wide character cut in two: both halves go
-        let from = if from > 0 && from < l.cells.len() && l.cells[from].w == 0 { from - 1 } else { from };
-        let to = if to < l.cells.len() && l.cells[to].w == 0 { to + 1 } else { to };
+        let from = if from > 0 && from < l.cells.len() && l.cells[from].w == 0 {
+            from - 1
+        } else {
+            from
+        };
+        let to = if to < l.cells.len() && l.cells[to].w == 0 {
+            to + 1
+        } else {
+            to
+        };
         for c in from..to.min(l.cells.len()) {
             l.cells[c] = Cell::blank(a);
         }
@@ -718,8 +768,16 @@ impl Term {
     // ── the cursor ──
 
     fn goto(&mut self, row: i64, col: i64) {
-        let (lo, hi) = if self.origin { (self.top as i64, self.bottom as i64) } else { (0, self.rows as i64 - 1) };
-        let r = if self.origin { row + self.top as i64 } else { row };
+        let (lo, hi) = if self.origin {
+            (self.top as i64, self.bottom as i64)
+        } else {
+            (0, self.rows as i64 - 1)
+        };
+        let r = if self.origin {
+            row + self.top as i64
+        } else {
+            row
+        };
         self.row = r.clamp(lo, hi) as usize;
         self.col = col.clamp(0, self.cols as i64 - 1) as usize;
         self.pending = false;
@@ -744,7 +802,11 @@ impl Term {
     }
 
     fn restore_cursor(&mut self) {
-        let s = if self.alt.is_some() { self.saved_alt } else { self.saved_main };
+        let s = if self.alt.is_some() {
+            self.saved_alt
+        } else {
+            self.saved_main
+        };
         self.row = s.row.min(self.rows - 1);
         self.col = s.col.min(self.cols - 1);
         self.a = s.a;
@@ -757,7 +819,11 @@ impl Term {
 
     fn enter_alt(&mut self, clear: bool) {
         if self.alt.is_none() {
-            self.alt = Some((0..self.rows).map(|_| Line::new(self.cols, Attr::default())).collect());
+            self.alt = Some(
+                (0..self.rows)
+                    .map(|_| Line::new(self.cols, Attr::default()))
+                    .collect(),
+            );
         } else if clear {
             let cols = self.cols;
             for l in self.alt.as_mut().unwrap().iter_mut() {
@@ -789,7 +855,11 @@ impl Term {
 
     fn full_reset(&mut self) {
         let (rows, cols, sb) = (self.rows, self.cols, self.max_scrollback);
-        let (fg, bg, ev) = (self.fg_rgb, self.bg_rgb, self.evicted + self.lines.len() as i64);
+        let (fg, bg, ev) = (
+            self.fg_rgb,
+            self.bg_rgb,
+            self.evicted + self.lines.len() as i64,
+        );
         *self = Term::new(rows, cols, sb);
         self.fg_rgb = fg;
         self.bg_rgb = bg;
@@ -890,7 +960,10 @@ impl Term {
         let ps = std::mem::take(&mut self.params);
         let sub = std::mem::take(&mut self.sub);
         if ps.is_empty() {
-            self.a = Attr { link: self.a.link, ..Attr::default() };
+            self.a = Attr {
+                link: self.a.link,
+                ..Attr::default()
+            };
         }
         let mut i = 0;
         while i < ps.len() {
@@ -902,7 +975,12 @@ impl Term {
             }
             let subs = &ps[i + 1..j];
             match p {
-                0 => self.a = Attr { link: self.a.link, ..Attr::default() },
+                0 => {
+                    self.a = Attr {
+                        link: self.a.link,
+                        ..Attr::default()
+                    }
+                }
                 1 => self.a.fl |= BOLD,
                 2 => self.a.fl |= DIM,
                 3 => self.a.fl |= ITALIC,
@@ -939,7 +1017,14 @@ impl Term {
                         let rest = &ps[i + 1..];
                         match rest.first() {
                             Some(5) if rest.len() >= 2 => (Some(IDX | (rest[1] & 0xff)), 2),
-                            Some(2) if rest.len() >= 4 => (Some(RGB | ((rest[1] & 0xff) << 16) | ((rest[2] & 0xff) << 8) | (rest[3] & 0xff)), 4),
+                            Some(2) if rest.len() >= 4 => (
+                                Some(
+                                    RGB | ((rest[1] & 0xff) << 16)
+                                        | ((rest[2] & 0xff) << 8)
+                                        | (rest[3] & 0xff),
+                                ),
+                                4,
+                            ),
                             Some(_) => (None, rest.len().min(1)),
                             None => (None, 0),
                         }
@@ -970,7 +1055,13 @@ impl Term {
             Some(2) => {
                 // with a colour space id (38:2::r:g:b → 2,0,r,g,b or 2,r,g,b)
                 let v = &subs[1..];
-                let (r, g, b) = if v.len() >= 4 { (v[1], v[2], v[3]) } else if v.len() == 3 { (v[0], v[1], v[2]) } else { return None };
+                let (r, g, b) = if v.len() >= 4 {
+                    (v[1], v[2], v[3])
+                } else if v.len() == 3 {
+                    (v[0], v[1], v[2])
+                } else {
+                    return None;
+                };
                 Some(RGB | ((r & 0xff) << 16) | ((g & 0xff) << 8) | (b & 0xff))
             }
             _ => None,
@@ -1039,7 +1130,10 @@ impl Term {
                 self.utf8[self.utf8_len] = b;
                 self.utf8_len += 1;
                 if self.utf8_len == self.utf8_need {
-                    let c = std::str::from_utf8(&self.utf8[..self.utf8_len]).ok().and_then(|t| t.chars().next()).unwrap_or('\u{fffd}');
+                    let c = std::str::from_utf8(&self.utf8[..self.utf8_len])
+                        .ok()
+                        .and_then(|t| t.chars().next())
+                        .unwrap_or('\u{fffd}');
                     self.utf8_need = 0;
                     self.utf8_len = 0;
                     if self.st == St::Ground {
@@ -1213,7 +1307,11 @@ impl Term {
     fn csi(&mut self, b: u8) {
         match b {
             b'0'..=b'9' => {
-                self.cur = self.cur.saturating_mul(10).saturating_add((b - b'0') as u32).min(65535);
+                self.cur = self
+                    .cur
+                    .saturating_mul(10)
+                    .saturating_add((b - b'0') as u32)
+                    .min(65535);
                 self.has_cur = true;
             }
             b';' | b':' => {
@@ -1260,7 +1358,11 @@ impl Term {
                 self.pending = false;
             }
             (0, 0, b'B') | (0, 0, b'e') => {
-                let hi = if self.row <= self.bottom { self.bottom } else { self.rows - 1 };
+                let hi = if self.row <= self.bottom {
+                    self.bottom
+                } else {
+                    self.rows - 1
+                };
                 self.row = (self.row + p0).min(hi);
                 self.pending = false;
             }
@@ -1273,7 +1375,11 @@ impl Term {
                 self.pending = false;
             }
             (0, 0, b'E') => {
-                let hi = if self.row <= self.bottom { self.bottom } else { self.rows - 1 };
+                let hi = if self.row <= self.bottom {
+                    self.bottom
+                } else {
+                    self.rows - 1
+                };
                 self.row = (self.row + p0).min(hi);
                 self.col = 0;
                 self.pending = false;
@@ -1362,17 +1468,25 @@ impl Term {
             (0, 0, b'n') => match self.params.first().copied().unwrap_or(0) {
                 5 => self.reply.push_str("\x1b[0n"),
                 6 => {
-                    let r = if self.origin { self.row - self.top } else { self.row };
-                    self.reply.push_str(&format!("\x1b[{};{}R", r + 1, self.col + 1));
+                    let r = if self.origin {
+                        self.row - self.top
+                    } else {
+                        self.row
+                    };
+                    self.reply
+                        .push_str(&format!("\x1b[{};{}R", r + 1, self.col + 1));
                 }
                 _ => {}
             },
             (b'?', 0, b'n') => {
                 if self.params.first().copied() == Some(6) {
-                    self.reply.push_str(&format!("\x1b[?{};{}R", self.row + 1, self.col + 1));
+                    self.reply
+                        .push_str(&format!("\x1b[?{};{}R", self.row + 1, self.col + 1));
                 }
             }
-            (0, b' ', b'q') => self.cursor_style = self.params.first().copied().unwrap_or(0).min(6) as u8,
+            (0, b' ', b'q') => {
+                self.cursor_style = self.params.first().copied().unwrap_or(0).min(6) as u8
+            }
             (0, 0, b'r') => {
                 let t = self.param(0, 1) as usize;
                 let bt = self.param(1, self.rows as u32) as usize;
@@ -1386,7 +1500,8 @@ impl Term {
             (0, 0, b'u') => self.restore_cursor(),
             (0, 0, b't') => {
                 if self.params.first().copied() == Some(18) {
-                    self.reply.push_str(&format!("\x1b[8;{};{}t", self.rows, self.cols));
+                    self.reply
+                        .push_str(&format!("\x1b[8;{};{}t", self.rows, self.cols));
                 }
             }
             (0, b'!', b'p') => self.soft_reset(),
@@ -1443,8 +1558,14 @@ impl Term {
                 }
             }
             "10" | "11" if rest == "?" => {
-                let (r, g, b) = if code == "10" { self.fg_rgb } else { self.bg_rgb };
-                self.reply.push_str(&format!("\x1b]{code};rgb:{r:02x}{r:02x}/{g:02x}{g:02x}/{b:02x}{b:02x}\x1b\\"));
+                let (r, g, b) = if code == "10" {
+                    self.fg_rgb
+                } else {
+                    self.bg_rgb
+                };
+                self.reply.push_str(&format!(
+                    "\x1b]{code};rgb:{r:02x}{r:02x}/{g:02x}{g:02x}/{b:02x}{b:02x}\x1b\\"
+                ));
             }
             _ => {}
         }
@@ -1500,7 +1621,12 @@ impl Term {
 
     /// The main screen and its scrollback rewrapped at `cols`, the screen
     /// `rows` high; the cursor `cur` (row, col) where its text went.
-    fn reflow_main(&mut self, rows: usize, cols: usize, cur: Option<(usize, usize)>) -> (usize, usize) {
+    fn reflow_main(
+        &mut self,
+        rows: usize,
+        cols: usize,
+        cur: Option<(usize, usize)>,
+    ) -> (usize, usize) {
         let old_rows = self.rows;
         let base = self.lines.len() - old_rows;
         let cur_abs = cur.map(|(r, c)| (base + r, c));
@@ -1526,7 +1652,11 @@ impl Term {
             let mut cur_off: Option<usize> = None;
             loop {
                 let l = &self.lines[i];
-                let take = if l.wrapped && i + 1 < end { l.cells.len() } else { l.trimmed_len() };
+                let take = if l.wrapped && i + 1 < end {
+                    l.cells.len()
+                } else {
+                    l.trimmed_len()
+                };
                 if let Some((ci, cc)) = cur_abs
                     && ci == i
                 {
@@ -1555,7 +1685,9 @@ impl Term {
                     extra: None,
                 };
                 if !extra.is_empty() {
-                    l.extra = Some(Box::new(extra.into_iter().map(|(c, t)| (c as u16, t)).collect()));
+                    l.extra = Some(Box::new(
+                        extra.into_iter().map(|(c, t)| (c as u16, t)).collect(),
+                    ));
                 }
                 l.cells.resize(cols, BLANK);
                 out.push(l);
@@ -1586,7 +1718,11 @@ impl Term {
                     wrapped: k + 1 < n,
                     extra: None,
                 };
-                let ex: Vec<(u16, String)> = extra.iter().filter(|(c, _)| c >= a && c < b).map(|(c, t)| ((c - a) as u16, t.clone())).collect();
+                let ex: Vec<(u16, String)> = extra
+                    .iter()
+                    .filter(|(c, _)| c >= a && c < b)
+                    .map(|(c, t)| ((c - a) as u16, t.clone()))
+                    .collect();
                 if !ex.is_empty() {
                     l.extra = Some(Box::new(ex));
                 }
@@ -1631,7 +1767,10 @@ impl Term {
             out.push(Line::new(cols, Attr::default()));
         }
         // the screen ends `rows` below its start, the cursor on it
-        while out.len() > rows && out.len() - rows > cur_line && out.last().map(|l| l.is_blank()).unwrap_or(false) {
+        while out.len() > rows
+            && out.len() - rows > cur_line
+            && out.last().map(|l| l.is_blank()).unwrap_or(false)
+        {
             out.pop();
         }
         while out.len() - rows > cur_line {
@@ -1644,7 +1783,9 @@ impl Term {
             self.evicted += 1;
             cur_line = cur_line.saturating_sub(1);
         }
-        let r = cur_line.saturating_sub(self.lines.len() - rows).min(rows - 1);
+        let r = cur_line
+            .saturating_sub(self.lines.len() - rows)
+            .min(rows - 1);
         (r, cur_col.min(cols - 1))
     }
 }
@@ -1687,14 +1828,26 @@ fn handle(id: i64) -> Value {
 
 fn screen_of(v: Option<&Value>, who: &str) -> Result<Arc<Mutex<Term>>, String> {
     let id = match v {
-        Some(Value::Struct { type_name, fields }) if type_name == "Screen" => match fields.get("id") {
-            Some(Value::Integer(i)) => *i,
-            _ => return Err(format!("{who}: a malformed Screen handle")),
-        },
-        Some(other) => return Err(format!("{who}: expected a Screen, got {}", other.type_name())),
+        Some(Value::Struct { type_name, fields }) if type_name == "Screen" => {
+            match fields.get("id") {
+                Some(Value::Integer(i)) => *i,
+                _ => return Err(format!("{who}: a malformed Screen handle")),
+            }
+        }
+        Some(other) => {
+            return Err(format!(
+                "{who}: expected a Screen, got {}",
+                other.type_name()
+            ));
+        }
         None => return Err(format!("{who}: expected a Screen")),
     };
-    screens().lock().unwrap().get(&id).cloned().ok_or_else(|| format!("{who}: this Screen was freed"))
+    screens()
+        .lock()
+        .unwrap()
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| format!("{who}: this Screen was freed"))
 }
 
 fn num(v: Option<&Value>) -> Option<f64> {
@@ -1745,7 +1898,9 @@ pub fn call_vt_function(name: &str, args: Vec<Value>) -> Res {
         let rows = num(args.first()).unwrap_or(24.0) as usize;
         let cols = num(args.get(1)).unwrap_or(80.0) as usize;
         let o = fields(args.get(2));
-        let sb = opt_num(o, "scrollback").unwrap_or(10_000.0).clamp(0.0, 1_000_000.0) as usize;
+        let sb = opt_num(o, "scrollback")
+            .unwrap_or(10_000.0)
+            .clamp(0.0, 1_000_000.0) as usize;
         let mut t = Term::new(rows, cols, sb);
         if let Some(c) = rgb_of(o.and_then(|m| m.get("fg"))) {
             t.fg_rgb = c;
@@ -1754,7 +1909,10 @@ pub fn call_vt_function(name: &str, args: Vec<Value>) -> Res {
             t.bg_rgb = c;
         }
         let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-        screens().lock().unwrap().insert(id, Arc::new(Mutex::new(t)));
+        screens()
+            .lock()
+            .unwrap()
+            .insert(id, Arc::new(Mutex::new(t)));
         return Ok(handle(id));
     }
     if name == "free" {
@@ -1784,7 +1942,13 @@ pub fn call_vt_function(name: &str, args: Vec<Value>) -> Res {
                 Some(Value::String(x)) => t.feed(x.as_bytes()),
                 Some(other) => match crate::stdlib::bytes::bytes_of(other) {
                     Ok(b) => t.feed(b),
-                    Err(_) => return Err(format!("{who}: data is a String or Bytes, got {}", other.type_name()).into()),
+                    Err(_) => {
+                        return Err(format!(
+                            "{who}: data is a String or Bytes, got {}",
+                            other.type_name()
+                        )
+                        .into());
+                    }
                 },
                 None => return Err(crate::stdlib::misuse::arity("vt.feed", "2", args.len())),
             }
@@ -1817,37 +1981,48 @@ pub fn call_vt_function(name: &str, args: Vec<Value>) -> Res {
                 5 | 6 => "bar",
                 _ => "block",
             };
-            Ok(obj("TermInfo", vec![
-                ("rows", int(t.rows as i64)),
-                ("cols", int(t.cols as i64)),
-                ("title", s(&t.title)),
-                ("cwd", s(&t.cwd)),
-                ("alt", Value::Boolean(t.alt.is_some())),
-                ("cursor", tuple(vec![int(cur_id), int(t.col as i64)])),
-                ("cursor_row", int(t.row as i64)),
-                ("cursor_visible", Value::Boolean(t.cursor_visible)),
-                ("cursor_style", s(style)),
-                ("cursor_blink", Value::Boolean(t.cursor_style == 0 || t.cursor_style % 2 == 1)),
-                ("app_cursor", Value::Boolean(t.app_cursor)),
-                ("app_keypad", Value::Boolean(t.app_keypad)),
-                ("bracketed_paste", Value::Boolean(t.bracketed)),
-                ("mouse", s(mouse)),
-                ("mouse_sgr", Value::Boolean(t.mouse_sgr)),
-                ("focus_events", Value::Boolean(t.focus_events)),
-                ("reverse", Value::Boolean(t.reverse)),
-                ("bell", int(t.bell)),
-                ("rev", int(t.rev)),
-                ("first", int(t.first_id())),
-                ("screen", int(t.screen_id())),
-                ("last", int(t.last_id())),
-            ]))
+            Ok(obj(
+                "TermInfo",
+                vec![
+                    ("rows", int(t.rows as i64)),
+                    ("cols", int(t.cols as i64)),
+                    ("title", s(&t.title)),
+                    ("cwd", s(&t.cwd)),
+                    ("alt", Value::Boolean(t.alt.is_some())),
+                    ("cursor", tuple(vec![int(cur_id), int(t.col as i64)])),
+                    ("cursor_row", int(t.row as i64)),
+                    ("cursor_visible", Value::Boolean(t.cursor_visible)),
+                    ("cursor_style", s(style)),
+                    (
+                        "cursor_blink",
+                        Value::Boolean(t.cursor_style == 0 || t.cursor_style % 2 == 1),
+                    ),
+                    ("app_cursor", Value::Boolean(t.app_cursor)),
+                    ("app_keypad", Value::Boolean(t.app_keypad)),
+                    ("bracketed_paste", Value::Boolean(t.bracketed)),
+                    ("mouse", s(mouse)),
+                    ("mouse_sgr", Value::Boolean(t.mouse_sgr)),
+                    ("focus_events", Value::Boolean(t.focus_events)),
+                    ("reverse", Value::Boolean(t.reverse)),
+                    ("bell", int(t.bell)),
+                    ("rev", int(t.rev)),
+                    ("first", int(t.first_id())),
+                    ("screen", int(t.screen_id())),
+                    ("last", int(t.last_id())),
+                ],
+            ))
         }
         "render" => {
             let o = fields(args.get(1));
             Ok(Value::List(Arc::new(render(&t, o))))
         }
         "text" => {
-            let (l0, c0, l1, c1) = (line_col(args.get(1)), line_col(args.get(2)), line_col(args.get(3)), line_col(args.get(4)));
+            let (l0, c0, l1, c1) = (
+                line_col(args.get(1)),
+                line_col(args.get(2)),
+                line_col(args.get(3)),
+                line_col(args.get(4)),
+            );
             Ok(s(&text_of(&t, (l0, c0), (l1, c1))))
         }
         "line" => {
@@ -1873,11 +2048,14 @@ pub fn call_vt_function(name: &str, args: Vec<Value>) -> Res {
                             }
                         }
                     }
-                    Ok(obj("TermLine", vec![
-                        ("text", s(&text)),
-                        ("cols", Value::List(Arc::new(starts))),
-                        ("wrapped", Value::Boolean(l.wrapped)),
-                    ]))
+                    Ok(obj(
+                        "TermLine",
+                        vec![
+                            ("text", s(&text)),
+                            ("cols", Value::List(Arc::new(starts))),
+                            ("wrapped", Value::Boolean(l.wrapped)),
+                        ],
+                    ))
                 }
             }
         }
@@ -1887,7 +2065,9 @@ pub fn call_vt_function(name: &str, args: Vec<Value>) -> Res {
             match t.line_by_id(id) {
                 None => Ok(Value::Unit),
                 Some(l) => {
-                    let word = |c: &Cell| c.w == 0 || c.ch.is_alphanumeric() || "-_./~:@%+#?=&".contains(c.ch);
+                    let word = |c: &Cell| {
+                        c.w == 0 || c.ch.is_alphanumeric() || "-_./~:@%+#?=&".contains(c.ch)
+                    };
                     if col >= l.cells.len() || !word(&l.cells[col]) || l.cells[col].ch == ' ' {
                         return Ok(tuple(vec![int(col as i64), int(col as i64 + 1)]));
                     }
@@ -1896,7 +2076,10 @@ pub fn call_vt_function(name: &str, args: Vec<Value>) -> Res {
                         a -= 1;
                     }
                     let mut b = col + 1;
-                    while b < l.cells.len() && word(&l.cells[b]) && !(l.cells[b].ch == ' ' && l.cells[b].w != 0) {
+                    while b < l.cells.len()
+                        && word(&l.cells[b])
+                        && !(l.cells[b].ch == ' ' && l.cells[b].w != 0)
+                    {
                         b += 1;
                     }
                     Ok(tuple(vec![int(a as i64), int(b as i64)]))
@@ -1922,11 +2105,20 @@ pub fn call_vt_function(name: &str, args: Vec<Value>) -> Res {
             while b < l.cells.len() && l.cells[b].a.link == k {
                 b += 1;
             }
-            Ok(obj("TermLink", vec![
-                ("uri", s(t.links.get(k as usize - 1).map(|x| x.as_str()).unwrap_or(""))),
-                ("from", int(a as i64)),
-                ("to", int(b as i64)),
-            ]))
+            Ok(obj(
+                "TermLink",
+                vec![
+                    (
+                        "uri",
+                        s(t.links
+                            .get(k as usize - 1)
+                            .map(|x| x.as_str())
+                            .unwrap_or("")),
+                    ),
+                    ("from", int(a as i64)),
+                    ("to", int(b as i64)),
+                ],
+            ))
         }
         "find" => {
             let q = match args.get(1) {
@@ -1985,8 +2177,16 @@ fn text_of(t: &Term, a: (i64, i64), b: (i64, i64)) -> String {
     while id <= b.0 {
         if let Some(l) = t.line_by_id(id) {
             let from = if id == a.0 { a.1.max(0) as usize } else { 0 };
-            let to = if id == b.0 { (b.1.max(0) as usize).min(l.cells.len()) } else { l.cells.len() };
-            let to = if id == b.0 || !l.wrapped { to.min(l.trimmed_len().max(from)) } else { to };
+            let to = if id == b.0 {
+                (b.1.max(0) as usize).min(l.cells.len())
+            } else {
+                l.cells.len()
+            };
+            let to = if id == b.0 || !l.wrapped {
+                to.min(l.trimmed_len().max(from))
+            } else {
+                to
+            };
             if from < to {
                 out.push_str(&l.text(from, to));
             }
@@ -2003,9 +2203,23 @@ fn find(t: &Term, q: &str, case: bool) -> Vec<Value> {
     if q.is_empty() {
         return Vec::new();
     }
-    let needle: Vec<char> = if case { q.chars().collect() } else { q.to_lowercase().chars().collect() };
-    let low = |c: char| if case { c } else { c.to_lowercase().next().unwrap_or(c) };
-    let first = if t.alt.is_some() { t.screen_id() } else { t.first_id() };
+    let needle: Vec<char> = if case {
+        q.chars().collect()
+    } else {
+        q.to_lowercase().chars().collect()
+    };
+    let low = |c: char| {
+        if case {
+            c
+        } else {
+            c.to_lowercase().next().unwrap_or(c)
+        }
+    };
+    let first = if t.alt.is_some() {
+        t.screen_id()
+    } else {
+        t.first_id()
+    };
     // Logical lines (a line that wrapped joined to the next), from the
     // end back: a match may cross a wrap, and the newest 2000 are kept.
     let mut found: Vec<(i64, i64, i64)> = Vec::new();
@@ -2029,10 +2243,18 @@ fn find(t: &Term, q: &str, case: bool) -> Vec<Value> {
         let mut hits: Vec<(i64, i64, i64)> = Vec::new();
         let mut i = 0;
         while i + needle.len() <= chars.len() {
-            if chars[i..i + needle.len()].iter().zip(needle.iter()).all(|((c, _, _), n)| c == n) {
+            if chars[i..i + needle.len()]
+                .iter()
+                .zip(needle.iter())
+                .all(|((c, _, _), n)| c == n)
+            {
                 let (_, l0, c0) = chars[i];
                 let (_, l1, c1) = chars[i + needle.len() - 1];
-                let w1 = t.line_by_id(l1).and_then(|l| l.cells.get(c1)).map(|c| c.w.max(1) as i64).unwrap_or(1);
+                let w1 = t
+                    .line_by_id(l1)
+                    .and_then(|l| l.cells.get(c1))
+                    .map(|c| c.w.max(1) as i64)
+                    .unwrap_or(1);
                 // cells from the first to past the last, across the wraps
                 let cells = (l1 - l0) * t.cols as i64 + c1 as i64 + w1 - c0 as i64;
                 hits.push((l0, c0 as i64, cells));
@@ -2045,7 +2267,11 @@ fn find(t: &Term, q: &str, case: bool) -> Vec<Value> {
         end = start - 1;
     }
     found.truncate(2000);
-    found.into_iter().rev().map(|(l, c, w)| tuple(vec![int(l), int(c), int(w)])).collect()
+    found
+        .into_iter()
+        .rev()
+        .map(|(l, c, w)| tuple(vec![int(l), int(c), int(w)]))
+        .collect()
 }
 
 // ── drawing ──────────────────────────────────────────────────────────
@@ -2126,16 +2352,28 @@ fn resolve(look: &Look, c: u32, fg: bool) -> (u8, u8, u8) {
         return if fg { look.fg } else { look.bg };
     }
     if c & RGB != 0 {
-        return (((c >> 16) & 0xff) as u8, ((c >> 8) & 0xff) as u8, (c & 0xff) as u8);
+        return (
+            ((c >> 16) & 0xff) as u8,
+            ((c >> 8) & 0xff) as u8,
+            (c & 0xff) as u8,
+        );
     }
     let n = c & 0xff;
-    if n < 16 { look.pal[n as usize] } else { color256(n) }
+    if n < 16 {
+        look.pal[n as usize]
+    } else {
+        color256(n)
+    }
 }
 
 fn lum(c: (u8, u8, u8)) -> f32 {
     let f = |x: u8| {
         let v = x as f32 / 255.0;
-        if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+        if v <= 0.03928 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
     };
     0.2126 * f(c.0) + 0.7152 * f(c.1) + 0.0722 * f(c.2)
 }
@@ -2151,7 +2389,11 @@ fn legible_on(fg: (u8, u8, u8), bg: (u8, u8, u8), want: f32) -> (u8, u8, u8) {
     if contrast(fg, bg) >= want {
         return fg;
     }
-    let to = if lum(bg) > 0.18 { (0, 0, 0) } else { (255, 255, 255) };
+    let to = if lum(bg) > 0.18 {
+        (0, 0, 0)
+    } else {
+        (255, 255, 255)
+    };
     let mut k = 0.1;
     while k < 1.0 {
         let c = mix(fg, to, k);
@@ -2183,7 +2425,10 @@ fn render(t: &Term, o: Option<&crate::ast::ValueMap>) -> Vec<Value> {
     let px = opt_num(o, "pad_x").unwrap_or(0.0) as f32;
     let py = opt_num(o, "pad_y").unwrap_or(0.0) as f32;
     let text_dy = opt_num(o, "text_dy").unwrap_or(((ch - size * 1.3) / 2.0) as f64) as f32;
-    let show_rows = opt_num(o, "rows").map(|r| r as usize).unwrap_or(t.rows).max(1);
+    let show_rows = opt_num(o, "rows")
+        .map(|r| r as usize)
+        .unwrap_or(t.rows)
+        .max(1);
     let bold_w = opt_num(o, "bold").unwrap_or(700.0);
     let min_contrast = opt_num(o, "min_contrast").unwrap_or(0.0) as f32;
     let mut legible: HashMap<((u8, u8, u8), (u8, u8, u8), bool), (u8, u8, u8)> = HashMap::new();
@@ -2199,7 +2444,10 @@ fn render(t: &Term, o: Option<&crate::ast::ValueMap>) -> Vec<Value> {
     };
     let sel = match o.and_then(|m| m.get("selection")) {
         Some(Value::Tuple(xs)) | Some(Value::List(xs)) if xs.len() >= 4 => {
-            let v: Vec<i64> = xs.iter().map(|x| num(Some(x)).unwrap_or(0.0) as i64).collect();
+            let v: Vec<i64> = xs
+                .iter()
+                .map(|x| num(Some(x)).unwrap_or(0.0) as i64)
+                .collect();
             let (a, b) = ((v[0], v[1]), (v[2], v[3]));
             let (a, b) = if a <= b { (a, b) } else { (b, a) };
             Some((a, b))
@@ -2232,9 +2480,11 @@ fn render(t: &Term, o: Option<&crate::ast::ValueMap>) -> Vec<Value> {
         }
     }
     let hover = match o.and_then(|m| m.get("hover")) {
-        Some(Value::Tuple(xs)) | Some(Value::List(xs)) if xs.len() >= 3 => {
-            Some((num(xs.first()).unwrap_or(0.0) as i64, num(xs.get(1)).unwrap_or(0.0) as i64, num(xs.get(2)).unwrap_or(0.0) as i64))
-        }
+        Some(Value::Tuple(xs)) | Some(Value::List(xs)) if xs.len() >= 3 => Some((
+            num(xs.first()).unwrap_or(0.0) as i64,
+            num(xs.get(1)).unwrap_or(0.0) as i64,
+            num(xs.get(2)).unwrap_or(0.0) as i64,
+        )),
         _ => None,
     };
     let cursor_on = !matches!(o.and_then(|m| m.get("cursor")), Some(Value::Boolean(false)));
@@ -2250,7 +2500,14 @@ fn render(t: &Term, o: Option<&crate::ast::ValueMap>) -> Vec<Value> {
 
     let mut ops: Vec<Value> = Vec::with_capacity(show_rows * 6);
     let rect = |x: f32, y: f32, w: f32, h: f32, c: (u8, u8, u8)| {
-        vmap(vec![("op", s("rect")), ("x", fl(x)), ("y", fl(y)), ("w", fl(w)), ("h", fl(h)), ("fill", rgb_val(c))])
+        vmap(vec![
+            ("op", s("rect")),
+            ("x", fl(x)),
+            ("y", fl(y)),
+            ("w", fl(w)),
+            ("h", fl(h)),
+            ("fill", rgb_val(c)),
+        ])
     };
     let in_sel = |id: i64, c: i64| -> bool {
         match sel {
@@ -2263,7 +2520,9 @@ fn render(t: &Term, o: Option<&crate::ast::ValueMap>) -> Vec<Value> {
 
     for r in 0..show_rows {
         let id = top + r as i64;
-        let Some(line) = t.line_by_id(id) else { continue };
+        let Some(line) = t.line_by_id(id) else {
+            continue;
+        };
         let y = py + r as f32 * ch;
         let n = line.cells.len().min(t.cols);
         // each cell's colours, as drawn
@@ -2271,9 +2530,17 @@ fn render(t: &Term, o: Option<&crate::ast::ValueMap>) -> Vec<Value> {
         let mut bgs: Vec<Option<(u8, u8, u8)>> = Vec::with_capacity(n);
         for c in 0..n {
             let cell = &line.cells[c];
-            let a = if cell.w == 0 && c > 0 { line.cells[c - 1].a } else { cell.a };
+            let a = if cell.w == 0 && c > 0 {
+                line.cells[c - 1].a
+            } else {
+                cell.a
+            };
             let mut f = resolve(&look, a.fg, true);
-            let mut b = if a.bg == 0 { None } else { Some(resolve(&look, a.bg, false)) };
+            let mut b = if a.bg == 0 {
+                None
+            } else {
+                Some(resolve(&look, a.bg, false))
+            };
             if a.fl & BOLD != 0 && a.fg & IDX != 0 && (a.fg & 0xff) < 8 && a.fg & RGB == 0 {
                 // bold keeps its colour (no brighter one): the weight says it
             }
@@ -2305,9 +2572,15 @@ fn render(t: &Term, o: Option<&crate::ast::ValueMap>) -> Vec<Value> {
             for c in 0..n {
                 let b = bgs[c].unwrap_or(look.bg);
                 let a = line.cells[c].a;
-                let want = if a.fl & DIM != 0 { (min_contrast * 0.66).max(3.0) } else { min_contrast };
+                let want = if a.fl & DIM != 0 {
+                    (min_contrast * 0.66).max(3.0)
+                } else {
+                    min_contrast
+                };
                 let key = (fgs[c], b, a.fl & DIM != 0);
-                let f = *legible.entry(key).or_insert_with(|| legible_on(fgs[c], b, want));
+                let f = *legible
+                    .entry(key)
+                    .or_insert_with(|| legible_on(fgs[c], b, want));
                 fgs[c] = f;
             }
         }
@@ -2329,7 +2602,10 @@ fn render(t: &Term, o: Option<&crate::ast::ValueMap>) -> Vec<Value> {
         let mut c = 0;
         while c < n {
             let cell = &line.cells[c];
-            if cell.w == 0 || (cell.ch == ' ' && line.extra_at(c).is_none()) || cell.a.fl & HIDDEN != 0 {
+            if cell.w == 0
+                || (cell.ch == ' ' && line.extra_at(c).is_none())
+                || cell.a.fl & HIDDEN != 0
+            {
                 c += 1;
                 continue;
             }
@@ -2345,7 +2621,12 @@ fn render(t: &Term, o: Option<&crate::ast::ValueMap>) -> Vec<Value> {
             } else {
                 while c < n {
                     let k = &line.cells[c];
-                    if k.w != 1 || !groups(k.ch) || line.extra_at(c).is_some() || k.a.fl & HIDDEN != 0 || (fgs[c], k.a.fl & (BOLD | ITALIC)) != key {
+                    if k.w != 1
+                        || !groups(k.ch)
+                        || line.extra_at(c).is_some()
+                        || k.a.fl & HIDDEN != 0
+                        || (fgs[c], k.a.fl & (BOLD | ITALIC)) != key
+                    {
                         break;
                     }
                     txt.push(k.ch);
@@ -2378,7 +2659,9 @@ fn render(t: &Term, o: Option<&crate::ast::ValueMap>) -> Vec<Value> {
         let mut c = 0;
         while c < n {
             let a = line.cells[c].a;
-            let hov = hover.map(|(l, a0, a1)| l == id && (c as i64) >= a0 && (c as i64) < a1).unwrap_or(false);
+            let hov = hover
+                .map(|(l, a0, a1)| l == id && (c as i64) >= a0 && (c as i64) < a1)
+                .unwrap_or(false);
             let ul = a.fl & UNDERLINE != 0 || hov;
             let st = a.fl & STRIKE != 0;
             if !ul && !st {
@@ -2389,8 +2672,13 @@ fn render(t: &Term, o: Option<&crate::ast::ValueMap>) -> Vec<Value> {
             let f = fgs[c];
             while c < n {
                 let a2 = line.cells[c].a;
-                let hov2 = hover.map(|(l, a0, a1)| l == id && (c as i64) >= a0 && (c as i64) < a1).unwrap_or(false);
-                if (a2.fl & UNDERLINE != 0 || hov2) != ul || (a2.fl & STRIKE != 0) != st || fgs[c] != f {
+                let hov2 = hover
+                    .map(|(l, a0, a1)| l == id && (c as i64) >= a0 && (c as i64) < a1)
+                    .unwrap_or(false);
+                if (a2.fl & UNDERLINE != 0 || hov2) != ul
+                    || (a2.fl & STRIKE != 0) != st
+                    || fgs[c] != f
+                {
                     break;
                 }
                 c += 1;
@@ -2398,7 +2686,13 @@ fn render(t: &Term, o: Option<&crate::ast::ValueMap>) -> Vec<Value> {
             let x = px + s0 as f32 * cw;
             let w = (c - s0) as f32 * cw;
             if ul {
-                ops.push(rect(x, y + ch - 2.0, w, 1.0, if hov { look.link } else { f }));
+                ops.push(rect(
+                    x,
+                    y + ch - 2.0,
+                    w,
+                    1.0,
+                    if hov { look.link } else { f },
+                ));
             }
             if st {
                 ops.push(rect(x, y + (ch / 2.0).round(), w, 1.0, f));
@@ -2417,7 +2711,11 @@ fn render(t: &Term, o: Option<&crate::ast::ValueMap>) -> Vec<Value> {
             });
             if let Some(pe) = &preedit {
                 // the input method's text at the cursor, underlined
-                let pw = pe.chars().map(|c| c.width().unwrap_or(1).max(1)).sum::<usize>() as f32 * cw;
+                let pw = pe
+                    .chars()
+                    .map(|c| c.width().unwrap_or(1).max(1))
+                    .sum::<usize>() as f32
+                    * cw;
                 ops.push(rect(x, y, pw, ch, look.bg));
                 ops.push(vmap(vec![
                     ("op", s("text")),
@@ -2476,7 +2774,9 @@ mod tests {
     use super::*;
 
     fn screen(t: &Term) -> Vec<String> {
-        (0..t.rows).map(|r| t.line(r).text(0, t.cols).trim_end().to_string()).collect()
+        (0..t.rows)
+            .map(|r| t.line(r).text(0, t.cols).trim_end().to_string())
+            .collect()
     }
 
     fn run(rows: usize, cols: usize, input: &str) -> Term {
@@ -2502,7 +2802,11 @@ mod tests {
             ("abc\x1b[2D\x1b[K", vec!["a", "", ""], (0, 1)),
             ("abc\r\ndef\x1b[2J", vec!["", "", ""], (1, 3)),
             ("abcdef\x1b[1;3H\x1b[2@", vec!["ab  cdef", "", ""], (0, 2)),
-            ("abcdefghij\x1b[1;3H\x1b[2@", vec!["ab  cdefgh", "", ""], (0, 2)),
+            (
+                "abcdefghij\x1b[1;3H\x1b[2@",
+                vec!["ab  cdefgh", "", ""],
+                (0, 2),
+            ),
             ("abcdef\x1b[1;2H\x1b[2P", vec!["adef", "", ""], (0, 1)),
             ("abcdef\x1b[1;2H\x1b[3X", vec!["a   ef", "", ""], (0, 1)),
             ("1\r\n2\r\n3\x1b[1;1H\x1b[L", vec!["", "1", "2"], (0, 0)),
@@ -2522,7 +2826,11 @@ mod tests {
 
     #[test]
     fn sgr_colours_and_flags() {
-        let t = run(2, 20, "\x1b[1;3;4;31mA\x1b[0;38;5;200mB\x1b[38;2;1;2;3;48:2::9:8:7mC\x1b[7;9mD\x1b[22;23;24;27;29;39;49mE\x1b[92;104mF");
+        let t = run(
+            2,
+            20,
+            "\x1b[1;3;4;31mA\x1b[0;38;5;200mB\x1b[38;2;1;2;3;48:2::9:8:7mC\x1b[7;9mD\x1b[22;23;24;27;29;39;49mE\x1b[92;104mF",
+        );
         let l = t.line(0);
         assert_eq!(l.cells[0].a.fl, BOLD | ITALIC | UNDERLINE);
         assert_eq!(l.cells[0].a.fg, IDX | 1);
@@ -2575,15 +2883,26 @@ mod tests {
 
     #[test]
     fn answers_status_and_attributes() {
-        let mut t = run(5, 10, "\x1b[3;4H\x1b[6n\x1b[c\x1b[?2004h\x1b[?2004$p\x1b]11;?\x07");
+        let mut t = run(
+            5,
+            10,
+            "\x1b[3;4H\x1b[6n\x1b[c\x1b[?2004h\x1b[?2004$p\x1b]11;?\x07",
+        );
         let r = std::mem::take(&mut t.reply);
-        assert!(r.starts_with("\x1b[3;4R\x1b[?62;22c\x1b[?2004;1$y\x1b]11;rgb:"), "{r:?}");
+        assert!(
+            r.starts_with("\x1b[3;4R\x1b[?62;22c\x1b[?2004;1$y\x1b]11;rgb:"),
+            "{r:?}"
+        );
         assert!(t.bracketed);
     }
 
     #[test]
     fn titles_cwd_and_links() {
-        let t = run(2, 20, "\x1b]2;my title\x07\x1b]7;file://host/Users/me/a%20b\x1b\\\x1b]8;;https://x.y/\x1b\\link\x1b]8;;\x1b\\ no");
+        let t = run(
+            2,
+            20,
+            "\x1b]2;my title\x07\x1b]7;file://host/Users/me/a%20b\x1b\\\x1b]8;;https://x.y/\x1b\\link\x1b]8;;\x1b\\ no",
+        );
         assert_eq!(t.title, "my title");
         assert_eq!(t.cwd, "/Users/me/a b");
         assert_eq!(t.line(0).cells[0].a.link, 1);

@@ -97,7 +97,11 @@ fn main() {
 /// them did, and the commit is the one the sources were built at.
 fn build_info(manifest_dir: &std::path::Path) {
     let git = |args: &[&str]| -> Option<String> {
-        let out = std::process::Command::new("git").args(args).current_dir(manifest_dir).output().ok()?;
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(manifest_dir)
+            .output()
+            .ok()?;
         if !out.status.success() {
             return None;
         }
@@ -111,10 +115,19 @@ fn build_info(manifest_dir: &std::path::Path) {
         {
             println!("cargo:rerun-if-changed={}", git_dir.join(r).display());
         }
-        println!("cargo:rerun-if-changed={}", git_dir.join("packed-refs").display());
+        println!(
+            "cargo:rerun-if-changed={}",
+            git_dir.join("packed-refs").display()
+        );
     }
-    println!("cargo:rerun-if-changed={}", manifest_dir.join("src").display());
-    println!("cargo:rerun-if-changed={}", manifest_dir.join("Cargo.lock").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest_dir.join("src").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest_dir.join("Cargo.lock").display()
+    );
     println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
     let commit = git(&["rev-parse", "HEAD"]).unwrap_or_default();
     let branch = git(&["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
@@ -137,16 +150,42 @@ fn build_info(manifest_dir: &std::path::Path) {
         .unwrap_or_default();
     // name version[ vendored] for each crate named, in this order
     const CRATES: &[&str] = &[
-        "winit", "wgpu", "accesskit", "accesskit_winit", "accesskit_macos", "parley", "swash", "skrifa", "tiny-skia",
-        "resvg", "softbuffer", "muda", "rfd", "arboard", "objc2", "objc2-app-kit", "zune-jpeg", "image-webp", "gif",
-        "cranelift-codegen", "rusqlite", "reqwest", "regex", "rustyline", "rayon", "serde_json",
+        "winit",
+        "wgpu",
+        "accesskit",
+        "accesskit_winit",
+        "accesskit_macos",
+        "parley",
+        "swash",
+        "skrifa",
+        "tiny-skia",
+        "resvg",
+        "softbuffer",
+        "muda",
+        "rfd",
+        "arboard",
+        "objc2",
+        "objc2-app-kit",
+        "zune-jpeg",
+        "image-webp",
+        "gif",
+        "cranelift-codegen",
+        "rusqlite",
+        "reqwest",
+        "regex",
+        "rustyline",
+        "rayon",
+        "serde_json",
     ];
     let lock = fs::read_to_string(manifest_dir.join("Cargo.lock")).unwrap_or_default();
     let mut found: Vec<(String, String, bool)> = Vec::new();
     for block in lock.split("[[package]]") {
         let field = |k: &str| {
             block.lines().find_map(|l| {
-                l.trim().strip_prefix(k).and_then(|r| r.trim().strip_prefix('=')).map(|v| v.trim().trim_matches('"').to_string())
+                l.trim()
+                    .strip_prefix(k)
+                    .and_then(|r| r.trim().strip_prefix('='))
+                    .map(|v| v.trim().trim_matches('"').to_string())
             })
         };
         if let (Some(name), Some(version)) = (field("name "), field("version "))
@@ -161,7 +200,13 @@ fn build_info(manifest_dir: &std::path::Path) {
         let vs: Vec<String> = found
             .iter()
             .filter(|(n, _, _)| n == want)
-            .map(|(_, v, local)| if *local { format!("{v}+vendored") } else { v.clone() })
+            .map(|(_, v, local)| {
+                if *local {
+                    format!("{v}+vendored")
+                } else {
+                    v.clone()
+                }
+            })
             .collect();
         if !vs.is_empty() {
             crates.push(format!("{} {}", want, vs.join("/")));
@@ -178,8 +223,14 @@ fn build_info(manifest_dir: &std::path::Path) {
         }
     );
     println!("cargo:rustc-env=OLANG_BUILD_DATE={}", rfc3339(secs));
-    println!("cargo:rustc-env=OLANG_BUILD_PROFILE={}", env::var("PROFILE").unwrap_or_default());
-    println!("cargo:rustc-env=OLANG_BUILD_TARGET={}", env::var("TARGET").unwrap_or_default());
+    println!(
+        "cargo:rustc-env=OLANG_BUILD_PROFILE={}",
+        env::var("PROFILE").unwrap_or_default()
+    );
+    println!(
+        "cargo:rustc-env=OLANG_BUILD_TARGET={}",
+        env::var("TARGET").unwrap_or_default()
+    );
     println!("cargo:rustc-env=OLANG_BUILD_RUSTC={rustc_v}");
     println!("cargo:rustc-env=OLANG_BUILD_CRATES={}", crates.join(";"));
 }

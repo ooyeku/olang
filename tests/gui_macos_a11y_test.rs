@@ -24,9 +24,9 @@
 #[cfg(all(feature = "gui", target_os = "macos"))]
 mod mac {
     use block2::Block;
+    use objc2::msg_send;
     use objc2::rc::Retained;
     use objc2::runtime::{AnyClass, AnyObject, Bool};
-    use objc2::msg_send;
     use objc2_foundation::{NSArray, NSString};
     use olang::{Interpreter, Parser};
     use std::ffi::c_void;
@@ -204,8 +204,12 @@ mod mac {
     }
 
     fn perform(title: &'static str, name: &'static str) -> bool {
-        let Some(view) = content_view() else { return false };
-        let Some(card) = find(&view, title, 6) else { return false };
+        let Some(view) = content_view() else {
+            return false;
+        };
+        let Some(card) = find(&view, title, 6) else {
+            return false;
+        };
         let actions: Option<Retained<NSArray<AnyObject>>> =
             unsafe { msg_send![&*card, accessibilityCustomActions] };
         for a in actions.map(|a| a.to_vec()).unwrap_or_default() {
@@ -235,7 +239,13 @@ mod mac {
         fn AXUIElementPerformAction(e: *const c_void, action: *const c_void) -> i32;
         fn AXObserverCreateWithInfoCallback(
             pid: i32,
-            callback: extern "C" fn(*const c_void, *const c_void, *const c_void, *const c_void, *mut c_void),
+            callback: extern "C" fn(
+                *const c_void,
+                *const c_void,
+                *const c_void,
+                *const c_void,
+                *mut c_void,
+            ),
             out: *mut *const c_void,
         ) -> i32;
         fn AXObserverAddNotification(
@@ -272,7 +282,8 @@ mod mac {
             let mut performed = -1;
             for a in arr.to_vec() {
                 if a.to_string().starts_with(&format!("Name:{run}\n")) {
-                    performed = AXUIElementPerformAction(card, Retained::as_ptr(&a) as *const c_void);
+                    performed =
+                        AXUIElementPerformAction(card, Retained::as_ptr(&a) as *const c_void);
                 }
             }
             CFRelease(names);
@@ -335,12 +346,21 @@ mod mac {
             }
             let app = AXUIElementCreateApplication(std::process::id() as i32);
             let n = NSString::from_str("AXAnnouncementRequested");
-            let r = AXObserverAddNotification(o, app, Retained::as_ptr(&n) as *const c_void, std::ptr::null_mut());
+            let r = AXObserverAddNotification(
+                o,
+                app,
+                Retained::as_ptr(&n) as *const c_void,
+                std::ptr::null_mut(),
+            );
             CFRelease(app);
             if r != 0 {
                 return None;
             }
-            CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(o), kCFRunLoopDefaultMode);
+            CFRunLoopAddSource(
+                CFRunLoopGetCurrent(),
+                AXObserverGetRunLoopSource(o),
+                kCFRunLoopDefaultMode,
+            );
             Some(o)
         }
     }
@@ -432,10 +452,17 @@ mod mac {
                     let plain = on_main(|| look("Plain"));
                     let row = on_main(|| look("Row one"));
                     let other_row = on_main(|| look("Row zero"));
-                    let tabs = (on_main(|| chosen("Commands tab")), on_main(|| chosen("Editor tab")));
+                    let tabs = (
+                        on_main(|| chosen("Commands tab")),
+                        on_main(|| chosen("Editor tab")),
+                    );
                     let trusted = unsafe { AXIsProcessTrusted() };
                     let served = trusted && ax_served();
-                    let ax = if served { ax_client_actions("Move to To do") } else { None };
+                    let ax = if served {
+                        ax_client_actions("Move to To do")
+                    } else {
+                        None
+                    };
                     let observer = if trusted { listen() } else { None };
                     let ran = on_main(|| perform("Card", "Move to In progress"));
                     let ran_row = on_main(|| perform("Row one", "Move to Done"));
@@ -473,10 +500,14 @@ mod mac {
         println!("program: {result}");
         assert_eq!(code, 0);
         let has = |line: &str| assert!(seen.lines().any(|l| l == line), "no {line:?} in\n{seen}");
-        has(r#"card=Seen { names: ["Move to To do", "Move to In progress"], help: Some("Backlog, 1 of 3"), allowed: true }"#);
+        has(
+            r#"card=Seen { names: ["Move to To do", "Move to In progress"], help: Some("Backlog, 1 of 3"), allowed: true }"#,
+        );
         has(r#"plain=Some(Seen { names: [], help: None, allowed: false })"#);
         // the list's active row offers the list's actions; the other row none
-        has(r#"row=Some(Seen { names: ["Move to Backlog", "Move to Done"], help: None, allowed: true })"#);
+        has(
+            r#"row=Some(Seen { names: ["Move to Backlog", "Move to Done"], help: None, allowed: true })"#,
+        );
         has(r#"other_row=Some(Seen { names: [], help: None, allowed: false })"#);
         has("ran=true ran_row=true ran_last=true");
         // a tab says whether it is the one chosen
@@ -489,19 +520,28 @@ mod mac {
                 "the AX client did not see or run the custom actions: {seen}"
             );
         } else if seen.contains("trusted=true") {
-            println!("note: the AX client API answers this process's own elements with the application (this macOS build); the client half was skipped");
+            println!(
+                "note: the AX client API answers this process's own elements with the application (this macOS build); the client half was skipped"
+            );
         } else {
-            println!("note: this process is not trusted for Accessibility; the AX client half was skipped");
+            println!(
+                "note: this process is not trusted for Accessibility; the AX client half was skipped"
+            );
         }
         let expect = r#"["card", 1, "Move to In progress"], ["col", 1, "Move to Done"], ["card", 0, "Move to To do"], ["settings heard", true]]"#;
         if seen.contains("trusted=true") {
             assert!(
-                seen.lines().any(|l| l.starts_with("heard=Some(") && l.contains(r#""Row one moved to Done""#)),
+                seen.lines()
+                    .any(|l| l.starts_with("heard=Some(")
+                        && l.contains(r#""Row one moved to Done""#)),
                 "the announcement was not heard: {seen}"
             );
         }
         if seen.contains("served=true") {
-            assert_eq!(result, format!(r#"[["card", 0, "Move to To do"], {expect}"#));
+            assert_eq!(
+                result,
+                format!(r#"[["card", 0, "Move to To do"], {expect}"#)
+            );
         } else {
             assert_eq!(result, format!("[{expect}"));
         }

@@ -207,7 +207,11 @@ pub fn tree(st: &WinState) -> TreeUpdate {
             && a.badge.is_some()
         {
             node.add_action(Action::Click);
-            let said = if a.paused { "Animation, paused" } else { "Animation, playing" };
+            let said = if a.paused {
+                "Animation, paused"
+            } else {
+                "Animation, playing"
+            };
             node.set_description(match &n.description {
                 Some(d) => format!("{d}. {said}"),
                 None => said.to_string(),

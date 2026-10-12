@@ -55,7 +55,10 @@ fn a_module_loads_with_its_own_imports_and_reports_its_grant() {
         &ws.join("plug/hello/plugin.ol"),
         "use helper { twice }\nshare fn greet(who) = \"hello \" + who + \" \" + to_string(twice(21))\n",
     );
-    write(&ws.join("plug/hello/helper.ol"), "share fn twice(n) = n * 2\n");
+    write(
+        &ws.join("plug/hello/helper.ol"),
+        "share fn twice(n) = n * 2\n",
+    );
     let out = run(
         &ws,
         r#"let m = unwrap(runtime.load_module("plug/hello/plugin.ol", #{ "name": "hi", "fs": "read", "fs_roots": ["."], "proc": ["olang"] }))
@@ -94,10 +97,19 @@ println(show(a2.on(3, 4)))
 "#,
     );
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines[0], "7 12", "two modules' same-named functions stay their own");
-    assert_eq!(lines[1], "-1 7 12", "the reload runs the new body; the old value is unchanged");
+    assert_eq!(
+        lines[0], "7 12",
+        "two modules' same-named functions stay their own"
+    );
+    assert_eq!(
+        lines[1], "-1 7 12",
+        "the reload runs the new body; the old value is unchanged"
+    );
     assert_eq!(lines[2], "refused");
-    assert_eq!(lines[3], "false", "a failed reload keeps the grant before it");
+    assert_eq!(
+        lines[3], "false",
+        "a failed reload keeps the grant before it"
+    );
     assert_eq!(lines[4], "-1", "and the module before it still runs");
 }
 
@@ -143,22 +155,76 @@ println(show(is_ok(fs.read_file("outside.txt"))))
     );
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines[0], "ok");
-    assert!(lines[1].starts_with("capability 'fs' denied: fs.read_file reaches"), "{}", lines[1]);
-    assert!(lines[1].contains("outside what module 'p' is granted"), "{}", lines[1]);
-    assert!(lines[2].starts_with("capability 'fs' denied"), "a path's .. is resolved: {}", lines[2]);
-    assert!(lines[3].starts_with("capability 'fs' denied: fs.write_file requires it, and module 'p'"), "{}", lines[3]);
+    assert!(
+        lines[1].starts_with("capability 'fs' denied: fs.read_file reaches"),
+        "{}",
+        lines[1]
+    );
+    assert!(
+        lines[1].contains("outside what module 'p' is granted"),
+        "{}",
+        lines[1]
+    );
+    assert!(
+        lines[2].starts_with("capability 'fs' denied"),
+        "a path's .. is resolved: {}",
+        lines[2]
+    );
+    assert!(
+        lines[3].starts_with("capability 'fs' denied: fs.write_file requires it, and module 'p'"),
+        "{}",
+        lines[3]
+    );
     assert_eq!(lines[4], "ok");
-    assert!(lines[5].contains("os.exec runs ls, and module 'p' may only run echo"), "{}", lines[5]);
-    assert!(lines[6].starts_with("capability 'net' denied"), "{}", lines[6]);
-    assert!(lines[7].starts_with("capability 'host' denied: gui.available is the host's"), "{}", lines[7]);
-    assert!(lines[8].starts_with("capability 'host' denied: runtime.load_module"), "{}", lines[8]);
-    assert!(lines[9].starts_with("capability 'env' denied"), "{}", lines[9]);
-    assert!(lines[10].starts_with("capability 'proc' denied: os.exit ends the host"), "{}", lines[10]);
-    assert_eq!(lines[11], "false", "caps.granted() answers the module's grant");
+    assert!(
+        lines[5].contains("os.exec runs ls, and module 'p' may only run echo"),
+        "{}",
+        lines[5]
+    );
+    assert!(
+        lines[6].starts_with("capability 'net' denied"),
+        "{}",
+        lines[6]
+    );
+    assert!(
+        lines[7].starts_with("capability 'host' denied: gui.available is the host's"),
+        "{}",
+        lines[7]
+    );
+    assert!(
+        lines[8].starts_with("capability 'host' denied: runtime.load_module"),
+        "{}",
+        lines[8]
+    );
+    assert!(
+        lines[9].starts_with("capability 'env' denied"),
+        "{}",
+        lines[9]
+    );
+    assert!(
+        lines[10].starts_with("capability 'proc' denied: os.exit ends the host"),
+        "{}",
+        lines[10]
+    );
+    assert_eq!(
+        lines[11], "false",
+        "caps.granted() answers the module's grant"
+    );
     assert_eq!(lines[12], "Ok(())");
-    assert!(lines[13].starts_with("Err(\"capability 'proc' denied: proc.spawn runs olang"), "{}", lines[13]);
-    assert!(lines[14].starts_with("Err(\"capability 'net' denied"), "{}", lines[14]);
-    assert_eq!(lines[15], "true", "the host itself is not held to the module's grant");
+    assert!(
+        lines[13].starts_with("Err(\"capability 'proc' denied: proc.spawn runs olang"),
+        "{}",
+        lines[13]
+    );
+    assert!(
+        lines[14].starts_with("Err(\"capability 'net' denied"),
+        "{}",
+        lines[14]
+    );
+    assert_eq!(
+        lines[15], "true",
+        "the host itself is not held to the module's grant"
+    );
 }
 
 #[test]
@@ -168,7 +234,10 @@ fn a_module_within_a_manifest_gets_no_more_than_the_app() {
         &ws.join("olang.toml"),
         "[package]\nname = \"host\"\nversion = \"1.0.0\"\n\n[capabilities]\nnet = false\n",
     );
-    write(&ws.join("plug/p/plugin.ol"), "share fn net() = http.get(\"http://127.0.0.1:9/\")\n");
+    write(
+        &ws.join("plug/p/plugin.ol"),
+        "share fn net() = http.get(\"http://127.0.0.1:9/\")\n",
+    );
     let out = run(
         &ws,
         r#"let m = unwrap(runtime.load_module("plug/p/plugin.ol", #{ "net": true }))
@@ -176,7 +245,11 @@ let r = runtime.call_budget(m.net, [], 1000)
 println(map_get(r, "error"))
 "#,
     );
-    assert!(out.starts_with("capability 'net' denied: http.get requires it, and module 'p'"), "{}", out);
+    assert!(
+        out.starts_with("capability 'net' denied: http.get requires it, and module 'p'"),
+        "{}",
+        out
+    );
 }
 
 #[test]
@@ -207,11 +280,20 @@ println(show(count_to(1000)))
 "#,
     );
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines[0], "false true stopped: over its time budget of 40 ms");
+    assert_eq!(
+        lines[0],
+        "false true stopped: over its time budget of 40 ms"
+    );
     assert_eq!(lines[1], "true true");
-    assert_eq!(lines[2], "30000000", "a task on another thread ran on through the trip");
+    assert_eq!(
+        lines[2], "30000000",
+        "a task on another thread ran on through the trip"
+    );
     assert_eq!(lines[3], "true 2 false");
-    assert_eq!(lines[4], "true", "a call that catches the stop meets it again and still ends");
+    assert_eq!(
+        lines[4], "true",
+        "a call that catches the stop meets it again and still ends"
+    );
     assert_eq!(lines[5], "1000", "the host runs on after a trip");
 }
 
@@ -240,7 +322,10 @@ println(runtime.shape(#{ "n": 1, "items": ["a"], "s": Ok(#{ "k": 2.0 }) }))
 "#,
     );
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines[0], "plugin.ol:0 boom", "an expression body: named, no line");
+    assert_eq!(
+        lines[0], "plugin.ol:0 boom",
+        "an expression body: named, no line"
+    );
     assert_eq!(lines[1], "plugin.ol:3 deeper");
     assert_eq!(lines[2], "--");
     assert_eq!(lines[3], "str.trim: argument 1 must be a string, got Unit");

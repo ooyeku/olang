@@ -398,7 +398,10 @@ fn set_key(id: u64, on: bool, out: &mut Vec<Value>) {
 fn headless_key(id: u64, out: &mut Vec<Value>) {
     let old = {
         let mut m = key_model();
-        let app = *m.owner.entry(id).or_insert_with(|| std::thread::current().id());
+        let app = *m
+            .owner
+            .entry(id)
+            .or_insert_with(|| std::thread::current().id());
         let keys = m.apps.entry(app).or_default();
         let old = keys.key.filter(|k| *k != id);
         keys.order.retain(|k| *k != id);
@@ -698,7 +701,9 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
         // window's clock), or ()
         "next_frame" => {
             st.display_list();
-            st.next_frame.map(|t| float(t as f32)).unwrap_or(Value::Unit)
+            st.next_frame
+                .map(|t| float(t as f32))
+                .unwrap_or(Value::Unit)
         }
         // the system's settings as this window last heard them
         "settings" => {
@@ -707,8 +712,16 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
             f.extend([
                 ("contrast", Value::Boolean(set.contrast)),
                 ("reduce_motion", Value::Boolean(set.reduce_motion)),
-                ("reduce_transparency", Value::Boolean(set.reduce_transparency)),
-                ("accent", set.accent.map(|c| s(&context::hex(c))).unwrap_or(Value::Unit)),
+                (
+                    "reduce_transparency",
+                    Value::Boolean(set.reduce_transparency),
+                ),
+                (
+                    "accent",
+                    set.accent
+                        .map(|c| s(&context::hex(c)))
+                        .unwrap_or(Value::Unit),
+                ),
             ]);
             map(f)
         }
@@ -924,7 +937,9 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
                 reduce_transparency: b("reduce_transparency")?,
                 accent,
             };
-            w.lock().map_err(|_| "gui: window poisoned")?.set_settings(set);
+            w.lock()
+                .map_err(|_| "gui: window poisoned")?
+                .set_settings(set);
             emit(vec![context::event_of(id, set, None, "test")]);
             return Ok(Value::Unit);
         }
@@ -997,8 +1012,7 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
         // A headless window's clock for its animations, in ms: they move
         // only when a test moves it (a real window's is the time).
         Some("clock") => {
-            let ms = get_num(&args[1], "ms", what)?
-                .ok_or("gui.input: \"clock\" needs \"ms\"")?;
+            let ms = get_num(&args[1], "ms", what)?.ok_or("gui.input: \"clock\" needs \"ms\"")?;
             let mut st = w.lock().map_err(|_| "gui: window poisoned")?;
             if !st.headless {
                 return Err("gui.input: \"clock\" sets a headless window's clock; a real window's is the time".into());
@@ -1101,7 +1115,9 @@ fn gui_fonts(args: Vec<Value>) -> Res<Value> {
     let background = match args.get(1) {
         None | Some(Value::Unit) => false,
         Some(Value::Map(m)) => matches!(m.get("background"), Some(Value::Boolean(true))),
-        Some(_) => return Err("gui.fonts: the options are a map (#{ \"background\": true })".into()),
+        Some(_) => {
+            return Err("gui.fonts: the options are a map (#{ \"background\": true })".into());
+        }
     };
     if background {
         return fonts_in_background(items);
@@ -1164,7 +1180,10 @@ fn fonts_in_background(items: Vec<Value>) -> Res<Value> {
                     .collect();
                 let _ = text::system_now();
                 jobs.into_iter()
-                    .map(|j| j.join().unwrap_or_else(|_| Err("gui.fonts: a font's reader stopped".into())))
+                    .map(|j| {
+                        j.join()
+                            .unwrap_or_else(|_| Err("gui.fonts: a font's reader stopped".into()))
+                    })
                     .collect()
             });
             let Ok(mut ts) = text::system_now().lock() else {

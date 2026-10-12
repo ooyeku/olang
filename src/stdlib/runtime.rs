@@ -20,8 +20,14 @@ pub fn create_runtime_module() -> Value {
     module.insert("memory".to_string(), builtin("memory", 0));
     module.insert("profile_start".to_string(), builtin("profile_start", 0));
     module.insert("profile_stop".to_string(), builtin("profile_stop", 0));
-    module.insert("profile_live_start".to_string(), builtin("profile_live_start", 1));
-    module.insert("profile_live_stop".to_string(), builtin("profile_live_stop", 0));
+    module.insert(
+        "profile_live_start".to_string(),
+        builtin("profile_live_start", 1),
+    );
+    module.insert(
+        "profile_live_stop".to_string(),
+        builtin("profile_live_stop", 0),
+    );
     module.insert("build".to_string(), builtin("build", 0));
     // A host loading code it did not write (olang Studio's plugins):
     // see `call_host`.
@@ -160,17 +166,23 @@ fn runtime_profile_live_start(args: Vec<Value>) -> Result<Value, Box<dyn std::er
         match opts.as_ref().and_then(|o| o.get(k)) {
             None | Some(Value::Unit) => Ok(default),
             Some(Value::Integer(n)) if *n >= least as i64 => Ok(*n as u64),
-            Some(_) => Err(format!("runtime.profile_live_start: \"{k}\" is a whole number, {least} or more")),
+            Some(_) => Err(format!(
+                "runtime.profile_live_start: \"{k}\" is a whole number, {least} or more"
+            )),
         }
     };
     let every_ms = int_opt("every_ms", crate::profile_live::DEFAULT_EVERY_MS, 50)?;
     let interval_us = int_opt("interval_us", crate::profile_live::ATTACH_INTERVAL_US, 50)?;
     let label = match opts.as_ref().and_then(|o| o.get("label")) {
         Some(Value::String(s)) => s.to_string(),
-        _ => std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default(),
+        _ => std::env::current_exe()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default(),
     };
     if crate::profile::busy() {
-        return Ok(err_value("a profile is already running in this process".to_string()));
+        return Ok(err_value(
+            "a profile is already running in this process".to_string(),
+        ));
     }
     let dir = std::path::PathBuf::from(dir);
     let dir = std::path::absolute(&dir).unwrap_or(dir);
@@ -195,7 +207,11 @@ fn runtime_profile_live_start(args: Vec<Value>) -> Result<Value, Box<dyn std::er
 /// program's (`olang profile`'s, an armed run's: theirs to end).
 fn runtime_profile_live_stop(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if !args.is_empty() {
-        return Err(format!("runtime.profile_live_stop expects 0 arguments, got {}", args.len()).into());
+        return Err(format!(
+            "runtime.profile_live_stop expects 0 arguments, got {}",
+            args.len()
+        )
+        .into());
     }
     Ok(if crate::profile_live::finish_by_program().is_some() {
         Value::Ok(Box::new(Value::Unit))
@@ -234,7 +250,9 @@ fn runtime_build(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     out.insert("rustc".to_string(), s(crate::version::BUILD_RUSTC));
     out.insert(
         "features".to_string(),
-        Value::List(Arc::new(crate::version::features().into_iter().map(s).collect())),
+        Value::List(Arc::new(
+            crate::version::features().into_iter().map(s).collect(),
+        )),
     );
     let crates: Vec<Value> = crate::version::BUILD_CRATES
         .split(';')
@@ -252,7 +270,9 @@ fn runtime_build(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     out.insert("crates".to_string(), Value::List(Arc::new(crates)));
     out.insert(
         "exe".to_string(),
-        std::env::current_exe().map(|p| s(&p.display().to_string())).unwrap_or(Value::Unit),
+        std::env::current_exe()
+            .map(|p| s(&p.display().to_string()))
+            .unwrap_or(Value::Unit),
     );
     Ok(Value::Map(Arc::new(out)))
 }
@@ -357,14 +377,20 @@ fn host_err(message: impl Into<String>) -> crate::interpreter::InterpreterError 
     }
 }
 
-fn str_arg<'a>(args: &'a [Value], i: usize, f: &str) -> Result<&'a str, crate::interpreter::InterpreterError> {
+fn str_arg<'a>(
+    args: &'a [Value],
+    i: usize,
+    f: &str,
+) -> Result<&'a str, crate::interpreter::InterpreterError> {
     match args.get(i) {
         Some(Value::String(s)) => Ok(s.as_str()),
         other => Err(host_err(format!(
             "runtime.{}: argument {} must be a String, got {}",
             f,
             i + 1,
-            other.map(|v| v.type_name()).unwrap_or_else(|| "nothing".into())
+            other
+                .map(|v| v.type_name())
+                .unwrap_or_else(|| "nothing".into())
         ))),
     }
 }
@@ -442,14 +468,21 @@ fn host_load_module(
     let path = str_arg(args, 0, "load_module")?;
     let file = crate::caps::gate_path(path);
     if !file.is_file() {
-        return Ok(err_value(format!("runtime.load_module: {} is not a file", file.display())));
+        return Ok(err_value(format!(
+            "runtime.load_module: {} is not a file",
+            file.display()
+        )));
     }
     let dir = file.parent().map(|d| d.to_path_buf()).unwrap_or_default();
     let default_name = dir
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "module".to_string());
-    let grant = match crate::caps::grant_from_value(dir.clone(), &default_name, args.get(1).unwrap_or(&Value::Unit)) {
+    let grant = match crate::caps::grant_from_value(
+        dir.clone(),
+        &default_name,
+        args.get(1).unwrap_or(&Value::Unit),
+    ) {
         Ok(g) => g,
         Err(e) => return Ok(err_value(e)),
     };
@@ -499,7 +532,8 @@ fn host_module_permits(args: &[Value]) -> Result<Value, crate::interpreter::Inte
             grant.caps.summary()
         )));
     }
-    if let Some(message) = crate::interpreter::Interpreter::scope_check(&grant, builtin, &call_args) {
+    if let Some(message) = crate::interpreter::Interpreter::scope_check(&grant, builtin, &call_args)
+    {
         return Ok(err_value(message));
     }
     Ok(Value::Ok(Box::new(Value::Unit)))
@@ -519,7 +553,9 @@ fn host_call_budget(
         other => {
             return Err(host_err(format!(
                 "runtime.call_budget: argument 1 must be a function, got {}",
-                other.map(|v| v.type_name()).unwrap_or_else(|| "nothing".into())
+                other
+                    .map(|v| v.type_name())
+                    .unwrap_or_else(|| "nothing".into())
             )));
         }
     };
@@ -539,7 +575,9 @@ fn host_call_budget(
         other => {
             return Err(host_err(format!(
                 "runtime.call_budget: argument 3 must be a positive number of milliseconds, got {}",
-                other.map(|v| v.to_string()).unwrap_or_else(|| "nothing".into())
+                other
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "nothing".into())
             )));
         }
     };

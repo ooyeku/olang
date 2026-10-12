@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 fn project(name: &str, main: &str, toml_extra: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("olang-tier-stats-{}-{}", name, std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("olang-tier-stats-{}-{}", name, std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
@@ -74,7 +75,11 @@ fn row<'a>(fns: &'a J, name: &str) -> &'a J {
 #[test]
 fn check_tier_json_lists_every_function_with_its_verdict_and_pin() {
     let dir = project("check", MAIN, "[check]\nnative = [\"fib\"]\n");
-    let (code, out, err) = olang(&dir, &["check", "--tier", "--format", "json", "main.ol"], &[]);
+    let (code, out, err) = olang(
+        &dir,
+        &["check", "--tier", "--format", "json", "main.ol"],
+        &[],
+    );
     assert_eq!(code, 0, "{err}");
     let j: J = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
     assert_eq!(j["kind"], json!("tier-check"));
@@ -96,11 +101,21 @@ fn a_pinned_function_the_tier_refuses_fails_the_check() {
     let dir = project("pinned", MAIN, "[check]\nnative = [\"doubled_*\"]\n");
     let (code, out, _) = olang(&dir, &["check", "--tier", "main.ol"], &[]);
     assert_eq!(code, 1, "{out}");
-    assert!(out.contains("is pinned native ([check] native) but stays on the tree-walker"), "{out}");
-    let (code, out, _) = olang(&dir, &["check", "--tier", "--format", "json", "main.ol"], &[]);
+    assert!(
+        out.contains("is pinned native ([check] native) but stays on the tree-walker"),
+        "{out}"
+    );
+    let (code, out, _) = olang(
+        &dir,
+        &["check", "--tier", "--format", "json", "main.ol"],
+        &[],
+    );
     assert_eq!(code, 1);
     let j: J = serde_json::from_str(&out).unwrap();
-    assert_eq!(row(&j["files"][0]["functions"], "doubled_later")["error"], json!(true));
+    assert_eq!(
+        row(&j["files"][0]["functions"], "doubled_later")["error"],
+        json!(true)
+    );
 }
 
 #[test]
@@ -132,15 +147,28 @@ fn ovm_stats_json_says_where_each_function_ran_and_why() {
     let width = row(fns, "width");
     assert_eq!(width["tier"], json!("interpreter"), "{width}");
     assert_eq!(width["fallbacks"]["count"], json!(300));
-    assert!(width["fallbacks"]["reason"].as_str().unwrap().contains("cannot convert"));
+    assert!(
+        width["fallbacks"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("cannot convert")
+    );
     // a channel argument: bytecode, each native attempt declined
     let tally = row(fns, "tally");
     assert_eq!(tally["tier"], json!("bytecode"), "{tally}");
     assert_eq!(tally["deopts"], json!(300));
     assert_eq!(tally["pinned"], json!("comment"));
-    assert!(tally["violation"].as_str().unwrap().contains("stayed on bytecode"));
+    assert!(
+        tally["violation"]
+            .as_str()
+            .unwrap()
+            .contains("stayed on bytecode")
+    );
     assert_eq!(j["violations"].as_array().unwrap().len(), 1);
-    assert!(err.contains("tier guard:") && err.contains("`tally`"), "{err}");
+    assert!(
+        err.contains("tier guard:") && err.contains("`tally`"),
+        "{err}"
+    );
     // refused at compile time, with its code
     assert_eq!(row(fns, "doubled_later")["refused"]["code"], json!("task"));
 }
@@ -152,12 +180,19 @@ fn the_guard_fails_a_run_whose_pinned_function_fell_back() {
     let (code, _, _) = olang(
         &dir,
         &["main.ol"],
-        &[("OLANG_OVM_STATS", &format!("json:{}", stats.display())), ("OLANG_TIER_GUARD", "1")],
+        &[
+            ("OLANG_OVM_STATS", &format!("json:{}", stats.display())),
+            ("OLANG_TIER_GUARD", "1"),
+        ],
     );
     assert_eq!(code, 3);
     assert!(stats.exists());
     // without the guard the run succeeds
-    let (code, _, _) = olang(&dir, &["main.ol"], &[("OLANG_OVM_STATS", &format!("json:{}", stats.display()))]);
+    let (code, _, _) = olang(
+        &dir,
+        &["main.ol"],
+        &[("OLANG_OVM_STATS", &format!("json:{}", stats.display()))],
+    );
     assert_eq!(code, 0);
 }
 
@@ -197,7 +232,14 @@ fn the_repl_answers_its_evaluations_statistics() {
     writeln!(stdin, "{}", json!({"op": "stats", "id": 3})).unwrap();
     stdin.flush().unwrap();
     let s2 = recv();
-    assert!(s2["stats"]["functions"].as_array().unwrap().iter().all(|f| f["calls"]["native"] == json!(0)), "{s2}");
+    assert!(
+        s2["stats"]["functions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|f| f["calls"]["native"] == json!(0)),
+        "{s2}"
+    );
     let _ = writeln!(stdin, "{}", json!({"op": "shutdown", "id": 4}));
     let _ = child.wait();
 }
@@ -212,14 +254,21 @@ fn a_directory_keeps_each_process_its_own_file() {
     let arg = format!("--ovm-stats=json:{}/", out.display());
     let (code, _, err) = olang(&dir, &[&arg, "bench", "--runs", "1", "main.ol"], &[]);
     assert_eq!(code, 0, "{err}");
-    let files: Vec<PathBuf> = std::fs::read_dir(&out).unwrap().map(|e| e.unwrap().path()).collect();
+    let files: Vec<PathBuf> = std::fs::read_dir(&out)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
     // the bench itself, its warm-up and its one timed run
     assert!(files.len() >= 3, "{files:?}");
     let with_fib = files
         .iter()
         .filter(|f| {
             let j: J = serde_json::from_str(&std::fs::read_to_string(f).unwrap()).unwrap();
-            j["functions"].as_array().unwrap().iter().any(|r| r["name"] == json!("fib"))
+            j["functions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["name"] == json!("fib"))
         })
         .count();
     assert!(with_fib >= 2, "each child's run kept: {files:?}");

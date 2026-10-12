@@ -80,8 +80,16 @@ fn a_map_built_on_both_tiers_is_compared_as_a_value() {
          println(show(acc))",
     )
     .expect("write");
-    let out = Command::new(env!("CARGO_BIN_EXE_olang")).args(["--verify-tiers", "1", "run"]).arg(&path).output().expect("run");
-    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(env!("CARGO_BIN_EXE_olang"))
+        .args(["--verify-tiers", "1", "run"])
+        .arg(&path)
+        .output()
+        .expect("run");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(out.status.code(), Some(0), "verified run diverged:\n{text}");
     assert!(text.contains("600.0"), "result missing:\n{text}");
 }

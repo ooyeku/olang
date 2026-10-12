@@ -512,7 +512,14 @@ impl BuiltinFunctions {
                 arity: 2,
             },
         );
-        for (name, arity) in [("map_get_in", 2), ("map_set_in", 3), ("map_update", 3), (crate::parser::SPREAD_BUILTIN, 0), (crate::parser::INDEX_SET_BUILTIN, 3), (crate::parser::INDEX_SET_IN_BUILTIN, 4)] {
+        for (name, arity) in [
+            ("map_get_in", 2),
+            ("map_set_in", 3),
+            ("map_update", 3),
+            (crate::parser::SPREAD_BUILTIN, 0),
+            (crate::parser::INDEX_SET_BUILTIN, 3),
+            (crate::parser::INDEX_SET_IN_BUILTIN, 4),
+        ] {
             functions.insert(
                 name.to_string(),
                 BuiltinFunction {
@@ -1093,7 +1100,9 @@ impl BuiltinFunctions {
                     let message = strip_error_prefixes(&e.to_string());
                     // Where it went, for `runtime.last_error()`.
                     crate::errtrace::caught(&message);
-                    Ok(Value::Err(Box::new(Value::String(std::sync::Arc::new(message)))))
+                    Ok(Value::Err(Box::new(Value::String(std::sync::Arc::new(
+                        message,
+                    )))))
                 }
             };
         }
@@ -3697,7 +3706,11 @@ impl BuiltinFunctions {
     fn path_keys(who: &str, path: &Value) -> Result<Vec<String>, InterpreterError> {
         let Value::List(keys) = path else {
             return Err(InterpreterError::TypeError {
-                message: format!("{}: the path must be a list of keys, got {}", who, path.type_name()),
+                message: format!(
+                    "{}: the path must be a list of keys, got {}",
+                    who,
+                    path.type_name()
+                ),
             });
         };
         keys.iter().map(|k| Self::key_text(who, k)).collect()
@@ -3741,7 +3754,8 @@ impl BuiltinFunctions {
                 message: "map_set_in: the path is empty — it names no key to set".to_string(),
             });
         }
-        set_in(&mut target, &keys, value).map_err(|message| InterpreterError::TypeError { message })?;
+        set_in(&mut target, &keys, value)
+            .map_err(|message| InterpreterError::TypeError { message })?;
         Ok(target)
     }
 
@@ -3765,7 +3779,10 @@ impl BuiltinFunctions {
         let old = match &mut target {
             Value::Map(fields) | Value::Struct { fields, .. } => {
                 match std::sync::Arc::get_mut(fields) {
-                    Some(owned) => owned.get_mut(&key).map(|v| std::mem::replace(v, Value::Unit)).unwrap_or(Value::Unit),
+                    Some(owned) => owned
+                        .get_mut(&key)
+                        .map(|v| std::mem::replace(v, Value::Unit))
+                        .unwrap_or(Value::Unit),
                     None => fields.get(&key).cloned().unwrap_or(Value::Unit),
                 }
             }
@@ -3792,7 +3809,10 @@ impl BuiltinFunctions {
     fn spread(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
         let mut args = args.into_iter();
         let Some(mut target) = args.next() else {
-            return Err(InterpreterError::ArityMismatch { expected: 1, got: 0 });
+            return Err(InterpreterError::ArityMismatch {
+                expected: 1,
+                got: 0,
+            });
         };
         for part in args {
             let Some(entries) = Self::field_map(&part) else {
@@ -3852,8 +3872,9 @@ impl BuiltinFunctions {
                 message: "Index must be an integer".to_string(),
             }),
             (Value::Map(_), _) => Err(InterpreterError::TypeError {
-                message: "a Map is not indexed with `[]`; write a key with `map_set(m, key, value)`"
-                    .to_string(),
+                message:
+                    "a Map is not indexed with `[]`; write a key with `map_set(m, key, value)`"
+                        .to_string(),
             }),
             (other, _) => Err(InterpreterError::TypeError {
                 message: format!(

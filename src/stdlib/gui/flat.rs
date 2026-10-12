@@ -545,7 +545,13 @@ fn leaf_size(
         // a text's `pad` widens its box as the recursive layout's does
         // (lib/layout.ol `ly_extra`): the words drawn inside it, not cut
         let (pt, pr, pb, pl) = pad4(mget(p, "pad"));
-        let (w, h) = measure(spec, ts, &text_of(mget(p, "text")), &fs, (avail - pl - pr).max(0.0))?;
+        let (w, h) = measure(
+            spec,
+            ts,
+            &text_of(mget(p, "text")),
+            &fs,
+            (avail - pl - pr).max(0.0),
+        )?;
         return Ok((w + pl + pr, h + pt + pb));
     }
     if let Value::String(field) = mget(r, "label") {
@@ -681,7 +687,12 @@ fn lifts_any(spec: &Spec, role: &str, all: &[Value]) -> bool {
 
 /// A node's laid-out children and the ones it lifts to a layer, each
 /// lifted one as `(child, "<path>.L<i>")`.
-fn split_kids<'v>(spec: &Spec, role: &str, all: &'v [Value], path: &dyn Fn() -> String) -> (Vec<&'v Value>, Value) {
+fn split_kids<'v>(
+    spec: &Spec,
+    role: &str,
+    all: &'v [Value],
+    path: &dyn Fn() -> String,
+) -> (Vec<&'v Value>, Value) {
     let mut kids: Vec<&Value> = Vec::new();
     let mut lifted: Vec<Value> = Vec::new();
     if role == "group" {
@@ -766,7 +777,9 @@ fn node_entry(
     };
     // a region that scrolls across too (`axis: "both"`): its child is as
     // wide as it is wide, not as the region (lib/flex.ol)
-    let dir = if kind == 1 && matches!(mget(p, "axis"), Value::String(a) if a.as_str() == "both" || a.as_str() == "x") {
+    let dir = if kind == 1
+        && matches!(mget(p, "axis"), Value::String(a) if a.as_str() == "both" || a.as_str() == "x")
+    {
         3
     } else {
         dir
@@ -833,7 +846,12 @@ fn node_entry(
 /// parent. Answers the patch (see `gui_flatten`), or `None` when the
 /// shape changed (or a `memo` node appears) and the arrays must be built
 /// afresh.
-fn flatten_aligned(root: &Value, spec: &Spec, ts: &mut TextSystem, pv: &Prev) -> Res<Option<Value>> {
+fn flatten_aligned(
+    root: &Value,
+    spec: &Spec,
+    ts: &mut TextSystem,
+    pv: &Prev,
+) -> Res<Option<Value>> {
     let last = &pv.st;
     let mut nodes: Vec<Value> = Vec::with_capacity(last.n);
     let mut patch_idx: Vec<i64> = Vec::new();
@@ -877,7 +895,10 @@ fn flatten_aligned(root: &Value, spec: &Spec, ts: &mut TextSystem, pv: &Prev) ->
             None if lays_out => all.len(),
             None => 0,
         } as i64;
-        if last.int(i, I_KIND) != kind || last.int(i, I_COUNT) != cnt || last.int(i, I_PARENT) != parent {
+        if last.int(i, I_KIND) != kind
+            || last.int(i, I_COUNT) != cnt
+            || last.int(i, I_PARENT) != parent
+        {
             return Ok(None);
         }
         let lifted_same = if lifts {
@@ -886,7 +907,17 @@ fn flatten_aligned(root: &Value, spec: &Spec, ts: &mut TextSystem, pv: &Prev) ->
             matches!(&pv.glifts[i], Value::List(l) if l.is_empty())
         };
         if !(lifted_same && own_eq(node, &pv.nodes[i])) {
-            let (ints, floats) = node_entry(spec, ts, node, p, role, kind, cnt, last.int(i, I_FIRST), parent)?;
+            let (ints, floats) = node_entry(
+                spec,
+                ts,
+                node,
+                p,
+                role,
+                kind,
+                cnt,
+                last.int(i, I_FIRST),
+                parent,
+            )?;
             patch_idx.push(i as i64);
             patch_i.extend_from_slice(&ints);
             patch_f.extend_from_slice(&floats);
@@ -970,7 +1001,13 @@ fn flatten_aligned(root: &Value, spec: &Spec, ts: &mut TextSystem, pv: &Prev) ->
 /// The arrays built afresh: each node read (props parsed, leaves
 /// measured) unless last frame's answer holds it unchanged at the same
 /// place in a tree of the same shape so far.
-fn flatten_full(root: &Value, spec: &Spec, ts: &mut TextSystem, prev: Option<&Prev>, base: &str) -> Res<Value> {
+fn flatten_full(
+    root: &Value,
+    spec: &Spec,
+    ts: &mut TextSystem,
+    prev: Option<&Prev>,
+    base: &str,
+) -> Res<Value> {
     let mut ints: Vec<i64> = Vec::new();
     let mut floats: Vec<f64> = Vec::new();
     let mut ks: Vec<i64> = Vec::new();
@@ -1159,7 +1196,11 @@ fn state_of(answer: &crate::ast::ValueMap) -> Option<Arc<FlatState>> {
 
 fn state_by_id(id: i64) -> Option<Arc<FlatState>> {
     let k = kept().lock().ok()?;
-    k.states.iter().rev().find(|(i, _)| *i == id).map(|(_, s)| s.clone())
+    k.states
+        .iter()
+        .rev()
+        .find(|(i, _)| *i == id)
+        .map(|(_, s)| s.clone())
 }
 
 fn geo_of(st: &FlatState) -> Option<Arc<Vec<f64>>> {
@@ -1233,9 +1274,15 @@ pub fn flat_vm_native(
     match name {
         "gui.flat_arrays" => Some(Ok(match state_by_id(id) {
             Some(st) => OvmValue::new_tuple(vec![
-                OvmValue { data: ValueData::IntList(st.ints.clone()) },
-                OvmValue { data: ValueData::FloatList(st.floats.clone()) },
-                OvmValue { data: ValueData::IntList(st.kids.clone()) },
+                OvmValue {
+                    data: ValueData::IntList(st.ints.clone()),
+                },
+                OvmValue {
+                    data: ValueData::FloatList(st.floats.clone()),
+                },
+                OvmValue {
+                    data: ValueData::IntList(st.kids.clone()),
+                },
             ]),
             None => OvmValue::new_unit(),
         })),
@@ -1247,7 +1294,9 @@ pub fn flat_vm_native(
             _ => None,
         },
         "gui.flat_geo" => Some(Ok(match state_by_id(id).and_then(|st| geo_of(&st)) {
-            Some(g) => OvmValue { data: ValueData::FloatList(g) },
+            Some(g) => OvmValue {
+                data: ValueData::FloatList(g),
+            },
             None => OvmValue::new_unit(),
         })),
         _ => None,
@@ -1444,7 +1493,12 @@ fn rec(
 /// engine does not know would make `gui.apply` refuse the whole patch, so
 /// the frame drew nothing new and nothing said why: here it is the
 /// default instead, with a problem that names the node.
-fn checked_role(p: Option<&crate::ast::ValueMap>, default: &str, gk: &str, pr: &mut Vec<Value>) -> Value {
+fn checked_role(
+    p: Option<&crate::ast::ValueMap>,
+    default: &str,
+    gk: &str,
+    pr: &mut Vec<Value>,
+) -> Value {
     match mget(p, "a11y_role") {
         Value::Unit => st(default),
         Value::String(r) if super::scene::ROLES.contains(&r.as_str()) => Value::String(r.clone()),
@@ -1538,12 +1592,16 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
     };
     // the arrays and boxes the engine keeps for this answer (the boxes
     // given here when Loom hands them over, else those `gui.flat_keep` kept)
-    let held = state_of(flat).ok_or("gui.flat_emit: the engine no longer holds this answer's arrays; lay the view out again")?;
+    let held = state_of(flat).ok_or(
+        "gui.flat_emit: the engine no longer holds this answer's arrays; lay the view out again",
+    )?;
     let geo_read: Vec<f64>;
     let geo_kept = geo_of(&held);
     let geo: &[f64] = match (&args[1], &geo_kept) {
         (Value::Unit, Some(g)) => g,
-        (Value::Unit, None) => return Err("gui.flat_emit: no boxes given or kept for this answer".into()),
+        (Value::Unit, None) => {
+            return Err("gui.flat_emit: no boxes given or kept for this answer".into());
+        }
         (v, _) => {
             geo_read = nums_of(v, "the boxes")?;
             &geo_read

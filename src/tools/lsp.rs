@@ -262,7 +262,11 @@ fn main_loop(
                 let method = req.method.clone();
                 if let Err(e) = handle_request(connection, &docs, req, root.as_deref()) {
                     eprintln!("olang lsp: {method}: {e}");
-                    let resp = Response::new_err(id, lsp_server::ErrorCode::InvalidParams as i32, e.to_string());
+                    let resp = Response::new_err(
+                        id,
+                        lsp_server::ErrorCode::InvalidParams as i32,
+                        e.to_string(),
+                    );
                     if connection.sender.send(Message::Response(resp)).is_err() {
                         return Ok(());
                     }
@@ -537,7 +541,11 @@ fn handle_request(
                 .map(String::as_str)
                 .unwrap_or("");
             let dir = doc_dir(&pos.text_document.uri);
-            respond(connection, id, &signature_help(text, pos.position, dir.as_deref()))?;
+            respond(
+                connection,
+                id,
+                &signature_help(text, pos.position, dir.as_deref()),
+            )?;
         }
         lsp_types::request::HoverRequest::METHOD => {
             let (id, params): (RequestId, lsp_types::HoverParams) =
@@ -1274,7 +1282,10 @@ fn built_key_completions(text: &str, pos: Position) -> Option<Vec<CompletionItem
         return None;
     }
     // the line without the `.partial` being typed
-    let fixed_line: String = chars[..i - 1].iter().chain(chars[cursor.min(chars.len())..].iter()).collect();
+    let fixed_line: String = chars[..i - 1]
+        .iter()
+        .chain(chars[cursor.min(chars.len())..].iter())
+        .collect();
     let fixed: String = text
         .lines()
         .enumerate()

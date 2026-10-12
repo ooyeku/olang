@@ -71,7 +71,10 @@ fn on_vm(source: &str) -> Result<Value, String> {
 fn agree_tiered(source: &str) -> Result<Value, String> {
     let interpreted = eval(source, None);
     let tiered = eval(source, Some(1));
-    assert_eq!(tiered, interpreted, "tiered diverged from the interpreter\n{source}");
+    assert_eq!(
+        tiered, interpreted,
+        "tiered diverged from the interpreter\n{source}"
+    );
     interpreted
 }
 
@@ -109,7 +112,10 @@ main()
 "#;
     let five = Value::List(std::sync::Arc::new(vec![Value::Integer(5)]));
     let zero = Value::List(std::sync::Arc::new(vec![Value::Integer(0)]));
-    assert_eq!(agree(src), Ok(Value::Tuple(std::sync::Arc::new(vec![five, zero]))));
+    assert_eq!(
+        agree(src),
+        Ok(Value::Tuple(std::sync::Arc::new(vec![five, zero])))
+    );
 }
 
 #[test]
@@ -214,7 +220,9 @@ main()
 // ── `xs[i] = v` ─────────────────────────────────────────────────────────
 
 fn ints(xs: &[i64]) -> Value {
-    Value::List(std::sync::Arc::new(xs.iter().map(|n| Value::Integer(*n)).collect()))
+    Value::List(std::sync::Arc::new(
+        xs.iter().map(|n| Value::Integer(*n)).collect(),
+    ))
 }
 
 #[test]
@@ -247,7 +255,10 @@ main()
 "#;
     assert_eq!(
         agree(src),
-        Ok(Value::Tuple(std::sync::Arc::new(vec![ints(&[5, 2]), ints(&[1, 2])])))
+        Ok(Value::Tuple(std::sync::Arc::new(vec![
+            ints(&[5, 2]),
+            ints(&[1, 2])
+        ])))
     );
 }
 
@@ -285,7 +296,10 @@ fn main() = {
 main()
 "#;
     let err = agree(src).expect_err("out of bounds");
-    assert!(err.contains("Index 3 out of bounds for list of length 3"), "{err}");
+    assert!(
+        err.contains("Index 3 out of bounds for list of length 3"),
+        "{err}"
+    );
     let src = r#"
 fn main() = {
     let mut m = #{ "a": 1 }
@@ -323,7 +337,9 @@ main()
 fn an_element_assignment_is_an_assignment() {
     // The binding must be `let mut`: the scope rules report it before
     // the program runs.
-    let program = Parser::new().parse("let xs = [1]\nxs[0] = 2\n").expect("parses");
+    let program = Parser::new()
+        .parse("let xs = [1]\nxs[0] = 2\n")
+        .expect("parses");
     let mut interpreter = Interpreter::new();
     let err = interpreter.eval_program(program).expect_err("immutable");
     assert!(err.to_string().contains("not declared mutable"), "{err}");
@@ -380,7 +396,10 @@ fn sort(xs, n) = if n == 0 => xs else => sort(xs + [n], n - 1)
 "#;
     assert_eq!(
         agree_tiered(src),
-        Ok(Value::Tuple(std::sync::Arc::new(vec![Value::Integer(3), ints(&[2, 1])])))
+        Ok(Value::Tuple(std::sync::Arc::new(vec![
+            Value::Integer(3),
+            ints(&[2, 1])
+        ])))
     );
 }
 
@@ -402,7 +421,10 @@ main()
 "#;
     assert_eq!(
         agree(src),
-        Ok(Value::List(std::sync::Arc::new(vec![Value::Boolean(true); 7])))
+        Ok(Value::List(std::sync::Arc::new(vec![
+            Value::Boolean(true);
+            7
+        ])))
     );
 }
 
@@ -440,13 +462,19 @@ fn main() = (1, "a") < ("b", 2)
 main()
 "#;
     let err = agree(src).expect_err("no order");
-    assert!(err.contains("cannot order Int and String inside a tuple"), "{err}");
+    assert!(
+        err.contains("cannot order Int and String inside a tuple"),
+        "{err}"
+    );
     let src = r#"
 fn main() = sort([(1, "a"), (1, 2)])
 main()
 "#;
     let err = agree_tiered(src).expect_err("no order");
-    assert!(err.contains("sort: cannot order ") && err.contains(" inside a tuple"), "{err}");
+    assert!(
+        err.contains("sort: cannot order ") && err.contains(" inside a tuple"),
+        "{err}"
+    );
 }
 
 // ── `abs`, `all`, `any` ─────────────────────────────────────────────────
@@ -468,7 +496,10 @@ main()
 "#;
     assert_eq!(
         agree_tiered(src),
-        Ok(Value::List(std::sync::Arc::new(vec![Value::Boolean(true); 8])))
+        Ok(Value::List(std::sync::Arc::new(vec![
+            Value::Boolean(true);
+            8
+        ])))
     );
 }
 
@@ -485,7 +516,11 @@ main()
 "#;
     assert_eq!(
         agree_tiered(src),
-        Ok(Value::Tuple(std::sync::Arc::new(vec![s("/x"), Value::Integer(4), s("mine")])))
+        Ok(Value::Tuple(std::sync::Arc::new(vec![
+            s("/x"),
+            Value::Integer(4),
+            s("mine")
+        ])))
     );
 }
 
@@ -575,7 +610,10 @@ fn a_refusal_names_the_construct() {
         if let Statement::FunctionDecl(func) = statement.unwrapped() {
             let id = FunctionId::new();
             vm.register_function(func.name.clone(), id);
-            let err = vm.compile_function(id, func).expect_err("refused").to_string();
+            let err = vm
+                .compile_function(id, func)
+                .expect_err("refused")
+                .to_string();
             assert!(err.contains("a `par for` loop"), "{err}");
             assert!(!err.contains("Discriminant"), "{err}");
         }
@@ -588,12 +626,26 @@ fn a_refusal_names_the_construct() {
 fn a_statement_inside_an_open_map_literal_names_the_literal() {
     for (src, at) in [
         ("let m = #{ \"a\": 1\nprintln(m)\n", "line 1, column 9"),
-        ("fn f() = {\n    let m = #{ \"a\": 1, \"b\": 2\n    println(m)\n}\n", "line 2, column 13"),
+        (
+            "fn f() = {\n    let m = #{ \"a\": 1, \"b\": 2\n    println(m)\n}\n",
+            "line 2, column 13",
+        ),
     ] {
-        let err = Parser::new().parse(src).expect_err("a missing brace").to_string();
-        assert!(err.contains(&format!("the map literal `#{{` opened at {at} is still open")), "{err}");
+        let err = Parser::new()
+            .parse(src)
+            .expect_err("a missing brace")
+            .to_string();
+        assert!(
+            err.contains(&format!(
+                "the map literal `#{{` opened at {at} is still open"
+            )),
+            "{err}"
+        );
     }
     // A closed literal's own error is not blamed on it.
-    let err = Parser::new().parse("let m = #{ \"a\": 1 }\nlet = 3\n").expect_err("bad let").to_string();
+    let err = Parser::new()
+        .parse("let m = #{ \"a\": 1 }\nlet = 3\n")
+        .expect_err("bad let")
+        .to_string();
     assert!(!err.contains("map literal"), "{err}");
 }

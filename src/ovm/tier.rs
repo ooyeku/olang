@@ -1021,7 +1021,10 @@ impl BytecodeTier {
                     self.compiled.entry(name.clone()).or_insert((id, body));
                     self.stats.promoted += 1;
                     if self.verbose {
-                        eprintln!("[ovm] promoted '{}' to the bytecode tier (at its first call)", name);
+                        eprintln!(
+                            "[ovm] promoted '{}' to the bytecode tier (at its first call)",
+                            name
+                        );
                     }
                 }
                 crate::ovm::bytecode::LazyEvent::Refused {

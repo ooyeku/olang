@@ -97,15 +97,24 @@ pub fn fix_maps(src: &str) -> Result<(String, Report), String> {
         return Ok((src.to_string(), report));
     }
     // The safety gate: the same program, read back.
-    let after = parser
-        .parse_raw(&out)
-        .map_err(|e| format!("the rewrite does not parse ({}); left as it was", first_line(&e.to_string())))?;
+    let after = parser.parse_raw(&out).map_err(|e| {
+        format!(
+            "the rewrite does not parse ({}); left as it was",
+            first_line(&e.to_string())
+        )
+    })?;
     let (b, a) = (normalized(&before), normalized(&after));
     if b != a {
         if let Some(dir) = std::env::var_os("OLANG_FIX_DEBUG") {
             let dir = std::path::PathBuf::from(dir);
-            let _ = std::fs::write(dir.join("before.json"), serde_json::to_string_pretty(&b).unwrap_or_default());
-            let _ = std::fs::write(dir.join("after.json"), serde_json::to_string_pretty(&a).unwrap_or_default());
+            let _ = std::fs::write(
+                dir.join("before.json"),
+                serde_json::to_string_pretty(&b).unwrap_or_default(),
+            );
+            let _ = std::fs::write(
+                dir.join("after.json"),
+                serde_json::to_string_pretty(&a).unwrap_or_default(),
+            );
             let _ = std::fs::write(dir.join("after.ol"), &out);
         }
         return Err("the rewrite would change the program; left as it was".to_string());
@@ -127,14 +136,16 @@ fn first_line(s: &str) -> String {
 /// `map_get_or` of its own, which evaluates its default eagerly).
 fn shadows(src: &str, name: &str) -> bool {
     let word = |rest: &str| {
-        rest.trim_start()
-            .strip_prefix(name)
-            .is_some_and(|after| !after.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_'))
+        rest.trim_start().strip_prefix(name).is_some_and(|after| {
+            !after.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+        })
     };
     src.lines().any(|line| {
         let t = line.trim_start();
         let t = t.strip_prefix("share ").unwrap_or(t).trim_start();
-        let decl = ["fn ", "let mut ", "let "].iter().find_map(|kw| t.strip_prefix(kw));
+        let decl = ["fn ", "let mut ", "let "]
+            .iter()
+            .find_map(|kw| t.strip_prefix(kw));
         decl.is_some_and(word)
             || (t.starts_with("use ")
                 && t.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
@@ -176,7 +187,11 @@ fn normalize(v: &mut serde_json::Value) {
     if o.len() != 1 {
         return;
     }
-    let (tag, inner) = o.iter().next().map(|(k, v)| (k.clone(), v.clone())).unwrap();
+    let (tag, inner) = o
+        .iter()
+        .next()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .unwrap();
     let replacement = match tag.as_str() {
         "Located" => inner.get("stmt").cloned(),
         "FieldAccess" => {
@@ -192,9 +207,7 @@ fn normalize(v: &mut serde_json::Value) {
             let right = inner.get("right").cloned().unwrap_or(J::Null);
             // a normalized `x.k` on the left: map_get_or(x, "k", d)
             match left.get("Call") {
-                Some(call)
-                    if call.get("callee") == Some(&json!({ "Identifier": "map_get" })) =>
-                {
+                Some(call) if call.get("callee") == Some(&json!({ "Identifier": "map_get" })) => {
                     let mut args = call
                         .get("arguments")
                         .and_then(|a| a.as_array())
@@ -272,7 +285,10 @@ impl<'a> Fixer<'a> {
         match pair.as_rule() {
             Rule::binary_expr => self.render_binary(pair, ctx),
             Rule::unary_expr => {
-                let has_op = pair.clone().into_inner().any(|p| p.as_rule() == Rule::unary_op);
+                let has_op = pair
+                    .clone()
+                    .into_inner()
+                    .any(|p| p.as_rule() == Rule::unary_op);
                 let inner_ctx = Ctx {
                     tight: ctx.tight || has_op,
                     piped: ctx.piped && !has_op,
@@ -290,7 +306,10 @@ impl<'a> Fixer<'a> {
                     pos = cs.end();
                 }
                 out.push_str(&self.src[pos..span.end()]);
-                Rendered { text: out, coalesce }
+                Rendered {
+                    text: out,
+                    coalesce,
+                }
             }
             Rule::call_expr => self.render_call(pair, ctx),
             Rule::template_string => Rendered {
@@ -346,7 +365,11 @@ impl<'a> Fixer<'a> {
         for (i, child) in children.iter().enumerate() {
             let cs = child.as_span();
             out.push_str(&self.src[pos..cs.start()]);
-            let left_op = if i > 0 { level(children[i - 1].as_rule()) } else { None };
+            let left_op = if i > 0 {
+                level(children[i - 1].as_rule())
+            } else {
+                None
+            };
             let right_op = children.get(i + 1).and_then(|c| level(c.as_rule()));
             let child_ctx = if single {
                 ctx
@@ -371,7 +394,10 @@ impl<'a> Fixer<'a> {
             let loosest = children.iter().filter_map(|c| level(c.as_rule())).min();
             coalesce = loosest == Some(4);
         }
-        Rendered { text: out, coalesce }
+        Rendered {
+            text: out,
+            coalesce,
+        }
     }
 
     /// A template's interpolations, each fixed as the expression the
@@ -484,7 +510,10 @@ impl<'a> Fixer<'a> {
         };
         let is_get = name == "map_get";
         let is_get_or = name == "map_get_or";
-        if !(is_get || is_get_or) || children.len() < 2 || children[1].as_rule() != Rule::function_call {
+        if !(is_get || is_get_or)
+            || children.len() < 2
+            || children[1].as_rule() != Rule::function_call
+        {
             return plain(self, pair);
         }
         if (is_get && self.shadowed[0]) || (is_get_or && self.shadowed[1]) {
@@ -508,16 +537,23 @@ impl<'a> Fixer<'a> {
             return plain(self, pair);
         }
         if ctx.piped {
-            self.report.left.push((line, "a pipeline passes the first argument"));
+            self.report
+                .left
+                .push((line, "a pipeline passes the first argument"));
             return plain(self, pair);
         }
         // `map_get(m, "f")(x)` would read as the method call `m.f(x)`.
-        if children.get(2).is_some_and(|p| p.as_rule() == Rule::function_call) {
+        if children
+            .get(2)
+            .is_some_and(|p| p.as_rule() == Rule::function_call)
+        {
             self.report.left.push((line, "its value is called"));
             return plain(self, pair);
         }
         let Some(key) = identifier_key(&positional[1]) else {
-            self.report.left.push((line, "the key is not an identifier literal"));
+            self.report
+                .left
+                .push((line, "the key is not an identifier literal"));
             return plain(self, pair);
         };
         // Everything dropped must be code: a comment there would be lost.
@@ -526,8 +562,11 @@ impl<'a> Fixer<'a> {
         let dropped = [
             &self.src[call_span.start()..recv_span.start()],
             &self.src[recv_span.end()..positional[1].as_span().start()],
-            &self.src[positional[1].as_span().end()
-                ..if is_get_or { positional[2].as_span().start() } else { call_span.end() }],
+            &self.src[positional[1].as_span().end()..if is_get_or {
+                positional[2].as_span().start()
+            } else {
+                call_span.end()
+            }],
             if is_get_or {
                 &self.src[positional[2].as_span().end()..call_span.end()]
             } else {
@@ -542,13 +581,21 @@ impl<'a> Fixer<'a> {
             return plain(self, pair);
         };
         let Some(atomic) = receiver_is_atomic(&receiver_expr) else {
-            self.report.left.push((line, "the receiver is not an expression `.` can follow"));
+            self.report
+                .left
+                .push((line, "the receiver is not an expression `.` can follow"));
             return plain(self, pair);
         };
         if is_get_or {
             let default_text = positional[2].as_str();
             if !default_is_pure(default_text) {
-                let call = pair.as_str().lines().next().unwrap_or("").trim().to_string();
+                let call = pair
+                    .as_str()
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
                 self.report.flagged.push((line, call));
                 return plain(self, pair);
             }
@@ -625,12 +672,11 @@ fn identifier_key(arg: &Pair<'_, Rule>) -> Option<String> {
     }
     let mut chars = key.chars();
     let first = chars.next()?;
-    let valid = (first.is_ascii_alphabetic()
-        || (first == '_' && key.len() > 1))
+    let valid = (first.is_ascii_alphabetic() || (first == '_' && key.len() > 1))
         && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
     const RESERVED: [&str; 15] = [
-        "fn", "let", "if", "else", "match", "for", "while", "loop", "break", "continue",
-        "return", "true", "false", "struct", "enum",
+        "fn", "let", "if", "else", "match", "for", "while", "loop", "break", "continue", "return",
+        "true", "false", "struct", "enum",
     ];
     if !valid || RESERVED.contains(&key) {
         return None;
@@ -712,7 +758,11 @@ fn default_needs_parens(expr: &Pair<'_, Rule>) -> bool {
                 .is_some_and(|what| {
                     matches!(
                         what.as_rule(),
-                        Rule::if_expr | Rule::match_expr | Rule::lambda | Rule::spawn_expr | Rule::block
+                        Rule::if_expr
+                            | Rule::match_expr
+                            | Rule::lambda
+                            | Rule::spawn_expr
+                            | Rule::block
                     )
                 })
         })
@@ -815,7 +865,11 @@ pub fn run_maps(paths: &[PathBuf], check: bool, skip: &[PathBuf]) -> i32 {
             )
         }
     );
-    if failed > 0 || (check && files_changed > 0) { 1 } else { 0 }
+    if failed > 0 || (check && files_changed > 0) {
+        1
+    } else {
+        0
+    }
 }
 
 fn display(p: &Path) -> String {
@@ -844,11 +898,26 @@ mod tests {
 
     #[test]
     fn parenthesizes_where_precedence_needs_it() {
-        assert_eq!(fixed("let x = map_get(a + b, \"k\")\n"), "let x = (a + b).k\n");
-        assert_eq!(fixed("let x = map_get_or(m, \"k\", a == b)\n"), "let x = m.k ?? (a == b)\n");
-        assert_eq!(fixed("let x = map_get_or(m, \"k\", 1) > 3\n"), "let x = m.k ?? 1 > 3\n");
-        assert_eq!(fixed("let x = !map_get_or(m, \"on\", false)\n"), "let x = !(m.on ?? false)\n");
-        assert_eq!(fixed("let x = map_get_or(m, \"k\", #{}).j\n"), "let x = (m.k ?? #{}).j\n");
+        assert_eq!(
+            fixed("let x = map_get(a + b, \"k\")\n"),
+            "let x = (a + b).k\n"
+        );
+        assert_eq!(
+            fixed("let x = map_get_or(m, \"k\", a == b)\n"),
+            "let x = m.k ?? (a == b)\n"
+        );
+        assert_eq!(
+            fixed("let x = map_get_or(m, \"k\", 1) > 3\n"),
+            "let x = m.k ?? 1 > 3\n"
+        );
+        assert_eq!(
+            fixed("let x = !map_get_or(m, \"on\", false)\n"),
+            "let x = !(m.on ?? false)\n"
+        );
+        assert_eq!(
+            fixed("let x = map_get_or(m, \"k\", #{}).j\n"),
+            "let x = (m.k ?? #{}).j\n"
+        );
         assert_eq!(
             fixed("let x = map_get(map_get_or(m, \"k\", #{}), \"j\")\n"),
             "let x = (m.k ?? #{}).j\n"
@@ -892,7 +961,6 @@ mod tests {
     }
 }
 
-
 /// `olang fix deprecated`: every call of a deprecated builtin
 /// (`check::DEPRECATED_GLOBALS`) renamed to the name it is now, in the
 /// source text — strings, templates and comments untouched, a name the
@@ -919,7 +987,12 @@ pub fn run_deprecated(paths: &[PathBuf], check: bool, skip: &[PathBuf]) -> i32 {
             }
             changed_files += 1;
             renamed += n;
-            println!("{}: {} call{} renamed", file.display(), n, if n == 1 { "" } else { "s" });
+            println!(
+                "{}: {} call{} renamed",
+                file.display(),
+                n,
+                if n == 1 { "" } else { "s" }
+            );
             if !check {
                 let _ = std::fs::write(&file, fixed);
             }
@@ -931,7 +1004,11 @@ pub fn run_deprecated(paths: &[PathBuf], check: bool, skip: &[PathBuf]) -> i32 {
         if renamed == 1 { "" } else { "s" },
         changed_files,
         if changed_files == 1 { "" } else { "s" },
-        if check && renamed > 0 { " would change" } else { "" }
+        if check && renamed > 0 {
+            " would change"
+        } else {
+            ""
+        }
     );
     if check && renamed > 0 { 1 } else { 0 }
 }
@@ -984,7 +1061,10 @@ pub fn rename_deprecated(source: &str) -> (String, usize) {
             let word: String = chars[start..i].iter().collect();
             let after_dot = start > 0 && chars[start - 1] == '.';
             let called = chars[i..].iter().find(|c| !c.is_whitespace()) == Some(&'(');
-            match crate::tools::check::DEPRECATED_GLOBALS.iter().find(|(old, _)| *old == word) {
+            match crate::tools::check::DEPRECATED_GLOBALS
+                .iter()
+                .find(|(old, _)| *old == word)
+            {
                 Some((old, now)) if !after_dot && called && !bound.contains(old) => {
                     out.push_str(now);
                     n += 1;
@@ -1010,9 +1090,10 @@ fn binds(source: &str, name: &str) -> bool {
         || source.contains(&format!("let mut {name}"))
         || program.statements.iter().any(|s| match s.unwrapped() {
             crate::ast::Statement::UseDecl(u)
-            | crate::ast::Statement::ShareDecl(crate::ast::ShareDecl::Use(u)) => {
-                u.items.iter().any(|i| i.bound_name() == Some(name) || i.bound_name().is_none())
-            }
+            | crate::ast::Statement::ShareDecl(crate::ast::ShareDecl::Use(u)) => u
+                .items
+                .iter()
+                .any(|i| i.bound_name() == Some(name) || i.bound_name().is_none()),
             _ => false,
         })
         || source.contains(&format!("({name},"))

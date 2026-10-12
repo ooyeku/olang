@@ -6,7 +6,10 @@ use std::process::Command;
 fn olang() -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_olang"));
     // Never the user's own state.
-    c.env("OLANG_HOME", std::env::temp_dir().join("olang-stdlib-additions-home"));
+    c.env(
+        "OLANG_HOME",
+        std::env::temp_dir().join("olang-stdlib-additions-home"),
+    );
     c
 }
 
@@ -24,7 +27,11 @@ fn run(name: &str, source: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for flags in [&["--no-ovm"][..], &["--ovm-tier=1"][..]] {
         let o = olang().args(flags).arg(&path).output().expect("runs");
-        assert!(o.status.success(), "{flags:?}: {}", String::from_utf8_lossy(&o.stderr));
+        assert!(
+            o.status.success(),
+            "{flags:?}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
         out.push((
             String::from_utf8_lossy(&o.stdout).into_owned(),
             String::from_utf8_lossy(&o.stderr).into_owned(),
@@ -38,7 +45,10 @@ fn eprint_and_eprintln_write_to_stderr() {
     let src = "fn report(n) = {\n    eprintln(\"skipped\", n, \"rows\")\n    eprint(\"no newline\")\n    eprintln()\n    println(\"data\")\n}\nreport(3)\nreport(4)\n";
     for (stdout, stderr) in run("eprint.ol", src) {
         assert_eq!(stdout, "data\ndata\n");
-        assert_eq!(stderr, "skipped 3 rows\nno newline\nskipped 4 rows\nno newline\n");
+        assert_eq!(
+            stderr,
+            "skipped 3 rows\nno newline\nskipped 4 rows\nno newline\n"
+        );
     }
 }
 
@@ -81,17 +91,28 @@ fn a_string_snapshot_is_its_text_and_the_caller_may_refresh_it() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("__snapshots__")).expect("dir");
     let test = |body: &str, envs: &[(&str, &str)]| {
-        std::fs::write(dir.join("snap_test.ol"), format!("test \"s\" {{\n{body}\n}}\n")).expect("write");
+        std::fs::write(
+            dir.join("snap_test.ol"),
+            format!("test \"s\" {{\n{body}\n}}\n"),
+        )
+        .expect("write");
         let mut c = olang();
-        c.arg("test").arg(dir.join("snap_test.ol")).env_remove("OLANG_UPDATE_SNAPSHOTS").env_remove("UPDATE_SNAPSHOTS");
+        c.arg("test")
+            .arg(dir.join("snap_test.ol"))
+            .env_remove("OLANG_UPDATE_SNAPSHOTS")
+            .env_remove("UPDATE_SNAPSHOTS");
         for (k, v) in envs {
             c.env(k, v);
         }
         c.output().expect("runs").status.success()
     };
-    let snap = |name: &str| std::fs::read_to_string(dir.join("__snapshots__").join(name)).expect("snap");
+    let snap =
+        |name: &str| std::fs::read_to_string(dir.join("__snapshots__").join(name)).expect("snap");
     // Written bare on the first run; a list keeps its display form.
-    assert!(test("testing.snapshot(\"text\", \"<p>hi</p>\")\ntesting.snapshot(\"list\", [\"a\"])", &[]));
+    assert!(test(
+        "testing.snapshot(\"text\", \"<p>hi</p>\")\ntesting.snapshot(\"list\", [\"a\"])",
+        &[]
+    ));
     assert_eq!(snap("text.snap"), "<p>hi</p>");
     assert_eq!(snap("list.snap"), "[\"a\"]");
     // An old, quoted snapshot of a String still matches.
@@ -99,19 +120,32 @@ fn a_string_snapshot_is_its_text_and_the_caller_may_refresh_it() {
     assert!(test("testing.snapshot(\"old\", \"kept\")", &[]));
     // A change fails, unless the caller, or either variable, accepts it.
     assert!(!test("testing.snapshot(\"text\", \"<p>new</p>\")", &[]));
-    assert!(test("testing.snapshot(\"text\", \"<p>new</p>\", #{ \"update\": true })", &[]));
+    assert!(test(
+        "testing.snapshot(\"text\", \"<p>new</p>\", #{ \"update\": true })",
+        &[]
+    ));
     assert_eq!(snap("text.snap"), "<p>new</p>");
-    assert!(test("testing.snapshot(\"text\", \"<p>3</p>\")", &[("UPDATE_SNAPSHOTS", "1")]));
+    assert!(test(
+        "testing.snapshot(\"text\", \"<p>3</p>\")",
+        &[("UPDATE_SNAPSHOTS", "1")]
+    ));
     assert_eq!(snap("text.snap"), "<p>3</p>");
-    assert!(test("testing.snapshot(\"old\", \"kept\")", &[("OLANG_UPDATE_SNAPSHOTS", "1")]));
+    assert!(test(
+        "testing.snapshot(\"old\", \"kept\")",
+        &[("OLANG_UPDATE_SNAPSHOTS", "1")]
+    ));
     assert_eq!(snap("old.snap"), "kept");
 }
 
 #[test]
 fn a_connection_writes_as_json_as_it_did() {
-    let src = "let c = unwrap(db.open(\":memory:\"))\nprintln(unwrap(json.stringify(#{ \"db\": c })))\n";
+    let src =
+        "let c = unwrap(db.open(\":memory:\"))\nprintln(unwrap(json.stringify(#{ \"db\": c })))\n";
     for (stdout, _) in run("dbjson.ol", src) {
-        assert!(stdout.starts_with("{\"db\":{\"id\":") && stdout.contains("\"path\":\":memory:\"}}"), "{stdout}");
+        assert!(
+            stdout.starts_with("{\"db\":{\"id\":") && stdout.contains("\"path\":\":memory:\"}}"),
+            "{stdout}"
+        );
     }
 }
 
@@ -119,7 +153,10 @@ fn a_connection_writes_as_json_as_it_did() {
 fn another_modules_function_of_a_builtins_name_does_not_shadow_it() {
     // lib defines `split` with five parameters; main's functions call the
     // builtin `split` — on every tier (a self-call rule once reached too far).
-    script("shadowlib.ol", "share fn split(key, ratio, on_resize, a, b) = [key, ratio, on_resize, a, b]\n");
+    script(
+        "shadowlib.ol",
+        "share fn split(key, ratio, on_resize, a, b) = [key, ratio, on_resize, a, b]\n",
+    );
     let src = "use shadowlib { split as five }\nfn words(s) = split(s, \",\")\nfn many() = { let mut n = 0\n for i in 0..200 { n = n + len(words(\"a,b,c\")) }\n n }\nprintln(many())\nprintln(five(1, 2, 3, 4, 5))\n";
     for (stdout, _) in run("shadowmain.ol", src) {
         assert_eq!(stdout, "600\n[1, 2, 3, 4, 5]\n");

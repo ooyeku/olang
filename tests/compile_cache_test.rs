@@ -106,7 +106,12 @@ fn run_in(project: &Path, home: &Path, main: &str, cache: bool) -> Run {
             .lines()
             .find_map(|l| {
                 let at = l.find(label)? + label.len();
-                l[at..].trim_start().split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()
+                l[at..]
+                    .trim_start()
+                    .split(|c: char| !c.is_ascii_digit())
+                    .next()?
+                    .parse()
+                    .ok()
             })
             .unwrap_or(0)
     };
@@ -225,7 +230,11 @@ fn cold_warm_and_off_agree() {
         let warm = s.run("main.ol", true);
         assert!(warm.ok, "{}", warm.stderr);
         assert_eq!(warm.stdout, off.stdout, "a warm cache changes nothing");
-        assert!(warm.hits >= 10, "a warm run takes its compiles from the cache: {}", warm.stderr);
+        assert!(
+            warm.hits >= 10,
+            "a warm run takes its compiles from the cache: {}",
+            warm.stderr
+        );
         assert!(
             warm.compiles < cold.compiles,
             "fewer compiles warm ({}) than cold ({})",
@@ -248,7 +257,10 @@ fn changes_agree(name: &str, change: impl Fn(&Scratch)) {
     let off = s.run("main.ol", false);
     let on = s.run("main.ol", true);
     assert_eq!(on.ok, off.ok, "{}\n---\n{}", on.stderr, off.stderr);
-    assert_eq!(on.stdout, off.stdout, "after the change, the cache's answers are the new source's");
+    assert_eq!(
+        on.stdout, off.stdout,
+        "after the change, the cache's answers are the new source's"
+    );
     if !off.ok {
         // the same error, the same words
         let err = |r: &Run| {
@@ -268,7 +280,10 @@ fn changes_agree(name: &str, change: impl Fn(&Scratch)) {
 #[test]
 fn a_changed_function_body_is_compiled_again() {
     changes_agree("body", |s| {
-        s.write("lib/util.ol", &LIB.replace("share fn helper(x) = x + 1", "share fn helper(x) = x * 10"));
+        s.write(
+            "lib/util.ol",
+            &LIB.replace("share fn helper(x) = x + 1", "share fn helper(x) = x * 10"),
+        );
     });
 }
 
@@ -277,14 +292,20 @@ fn a_changed_boolean_the_compile_folded_is_seen() {
     // `mode` folds `if DEBUG` at compile time: its entry must not survive
     // DEBUG becoming true
     changes_agree("fold", |s| {
-        s.write("lib/util.ol", &LIB.replace("share let DEBUG = false", "share let DEBUG = true"));
+        s.write(
+            "lib/util.ol",
+            &LIB.replace("share let DEBUG = false", "share let DEBUG = true"),
+        );
     });
 }
 
 #[test]
 fn a_changed_value_a_lambda_closes_over_is_seen() {
     changes_agree("captured", |s| {
-        s.write("lib/util.ol", &LIB.replace("share let RATE = 3", "share let RATE = 7"));
+        s.write(
+            "lib/util.ol",
+            &LIB.replace("share let RATE = 3", "share let RATE = 7"),
+        );
     });
 }
 
@@ -295,13 +316,19 @@ fn a_callee_whose_arity_changed_is_called_as_it_is_now() {
     changes_agree("arity_default", |s| {
         s.write(
             "lib/util.ol",
-            &LIB.replace("share fn padded(x, width = 8) = x * width", "share fn padded(x, width = 2) = x * width"),
+            &LIB.replace(
+                "share fn padded(x, width = 8) = x * width",
+                "share fn padded(x, width = 2) = x * width",
+            ),
         );
     });
     changes_agree("arity_more", |s| {
         s.write(
             "lib/util.ol",
-            &LIB.replace("share fn padded(x, width = 8) = x * width", "share fn padded(x, width = 8, add = 5) = x * width + add"),
+            &LIB.replace(
+                "share fn padded(x, width = 8) = x * width",
+                "share fn padded(x, width = 8, add = 5) = x * width + add",
+            ),
         );
     });
     changes_agree("arity_fewer", |s| {
@@ -317,7 +344,10 @@ fn a_renamed_module_is_read_as_it_is_now() {
     changes_agree("rename", |s| {
         let lib = s.project().join("lib/util.ol");
         std::fs::rename(&lib, s.project().join("lib/tools.ol")).unwrap();
-        s.write("main.ol", &MAIN.replace("use lib.util {", "use lib.tools {"));
+        s.write(
+            "main.ol",
+            &MAIN.replace("use lib.util {", "use lib.tools {"),
+        );
     });
 }
 
@@ -325,7 +355,10 @@ fn a_renamed_module_is_read_as_it_is_now() {
 fn a_name_made_ambiguous_is_resolved_as_it_is_now() {
     // a second module defines `helper` too, used by the main file
     changes_agree("ambiguous", |s| {
-        s.write("lib/other.ol", "share fn helper(x) = x - 100\nshare fn other_total(xs) = map(xs, helper)\n");
+        s.write(
+            "lib/other.ol",
+            "share fn helper(x) = x - 100\nshare fn other_total(xs) = map(xs, helper)\n",
+        );
         s.write(
             "main.ol",
             &format!(
@@ -355,10 +388,19 @@ fn a_pack_from_another_build_is_ignored() {
     let run = s.run("main.ol", true);
     assert!(run.ok, "{}", run.stderr);
     assert_eq!(run.stdout, off.stdout);
-    assert_eq!(bytecode_hits(&run.stderr), 0, "nothing from another build is used: {}", run.stderr);
+    assert_eq!(
+        bytecode_hits(&run.stderr),
+        0,
+        "nothing from another build is used: {}",
+        run.stderr
+    );
     let again = s.run("main.ol", true);
     assert_eq!(again.stdout, off.stdout);
-    assert!(bytecode_hits(&again.stderr) > 0, "the packs are written again: {}", again.stderr);
+    assert!(
+        bytecode_hits(&again.stderr) > 0,
+        "the packs are written again: {}",
+        again.stderr
+    );
 }
 
 /// A truncated or garbled pack is ignored and written again, never
@@ -392,7 +434,11 @@ fn a_damaged_cache_is_ignored_and_rebuilt() {
     assert_eq!(run.stdout, off.stdout, "a damaged cache changes nothing");
     let again = s.run("main.ol", true);
     assert_eq!(again.stdout, off.stdout);
-    assert!(bytecode_hits(&again.stderr) > 0, "the damaged packs were written again: {}", again.stderr);
+    assert!(
+        bytecode_hits(&again.stderr) > 0,
+        "the damaged packs were written again: {}",
+        again.stderr
+    );
     // garbage among the cache's files is left alone and ignored
     std::fs::write(s.cache_dir().join("stray.olcp.tmp.1.1"), b"half a pack").unwrap();
     let stray = s.run("main.ol", true);
@@ -424,7 +470,11 @@ fn processes_compiling_at_once_agree() {
             .collect();
         for c in children {
             let out = c.wait_with_output().unwrap();
-            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
             assert_eq!(String::from_utf8_lossy(&out.stdout), off.stdout);
         }
         let warm = s.run("main.ol", true);
@@ -456,7 +506,12 @@ fn an_over_full_cache_is_trimmed() {
     for i in 0..6 {
         let p = s.cache_dir().join(format!("old{i:02}.olcp"));
         std::fs::write(&p, vec![0u8; 512 * 1024]).unwrap();
-        std::fs::File::options().write(true).open(&p).unwrap().set_modified(old).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&p)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
     }
     let out = Command::new(olang())
         .arg("main.ol")
@@ -474,7 +529,9 @@ fn an_over_full_cache_is_trimmed() {
         .sum();
     assert!(total <= 1024 * 1024, "held under 1 MB: {total}");
     assert!(
-        s.packs().iter().any(|p| !p.file_name().unwrap().to_string_lossy().starts_with("old")),
+        s.packs()
+            .iter()
+            .any(|p| !p.file_name().unwrap().to_string_lossy().starts_with("old")),
         "this run's packs are kept"
     );
 }

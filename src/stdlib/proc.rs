@@ -368,9 +368,7 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     // `framed` first: the pipe is taken only by the branch that drains it
     // (taking it in the test of the first branch left a plain child's
     // stdout undrained — no lines, no EOF until it exited).
-    if framed
-        && let Some(out) = child.stdout.take()
-    {
+    if framed && let Some(out) = child.stdout.take() {
         std::thread::spawn(move || {
             let mut r = BufReader::new(out);
             while let Some(body) = read_frame(&mut r) {
@@ -462,7 +460,10 @@ fn proc_write_frame(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
         )));
     };
     let framed = format!("Content-Length: {}\r\n\r\n{}", body.len(), body);
-    proc_write(vec![args[0].clone(), Value::String(Arc::new(framed))], false)
+    proc_write(
+        vec![args[0].clone(), Value::String(Arc::new(framed))],
+        false,
+    )
 }
 
 /// `proc.write(p, s)` / `proc.write_line(p, s)` — feed the child's stdin.

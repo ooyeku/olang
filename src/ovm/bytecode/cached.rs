@@ -323,9 +323,7 @@ impl BytecodeCompiler {
             // a Boolean's (a constant condition folds, and its dead
             // branch is swept).
             Some(Value::Boolean(b)) => cc::answer(&(2u8, *b)),
-            Some(v) if BytecodeVm::round_trips(v) => {
-                cc::answer(&(3u8, std::mem::discriminant(v)))
-            }
+            Some(v) if BytecodeVm::round_trips(v) => cc::answer(&(3u8, std::mem::discriminant(v))),
             Some(_) => cc::answer(&4u8),
         }
     }
@@ -340,7 +338,8 @@ impl BytecodeCompiler {
     }
 
     fn aliases_class(&self) -> u64 {
-        let mut rows: Vec<(&String, &crate::ast::TypeAnnotation)> = self.type_aliases.iter().collect();
+        let mut rows: Vec<(&String, &crate::ast::TypeAnnotation)> =
+            self.type_aliases.iter().collect();
         rows.sort_by(|a, b| a.0.cmp(b.0));
         cc::answer(&postcard::to_stdvec(&rows).unwrap_or_default())
     }
@@ -472,9 +471,17 @@ impl BytecodeVm {
         }
         let order: Vec<Arc<CompiledBytecode>> = std::iter::once(main).chain(group).collect();
         // the segments name the same members, in the same order
-        let segs: Vec<u64> = rec.log.iter().filter(|r| r.tag == T_SEG).map(|r| r.h).collect();
+        let segs: Vec<u64> = rec
+            .log
+            .iter()
+            .filter(|r| r.tag == T_SEG)
+            .map(|r| r.h)
+            .collect();
         if segs.len() != order.len()
-            || segs.iter().zip(&order).any(|(s, m)| *s != m.function_id.raw())
+            || segs
+                .iter()
+                .zip(&order)
+                .any(|(s, m)| *s != m.function_id.raw())
         {
             return None;
         }

@@ -66,7 +66,11 @@ pub fn read() -> Settings {
             .colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())
             .map(|c| {
                 let ch = |v: f64| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-                [ch(c.redComponent()), ch(c.greenComponent()), ch(c.blueComponent())]
+                [
+                    ch(c.redComponent()),
+                    ch(c.greenComponent()),
+                    ch(c.blueComponent()),
+                ]
             });
         Settings {
             dark: Some(dark),
@@ -91,7 +95,9 @@ fn effective_dark() -> Option<bool> {
     let mtm = MainThreadMarker::new()?;
     let app = NSApplication::sharedApplication(mtm);
     let names = unsafe { NSArray::from_slice(&[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]) };
-    let best = app.effectiveAppearance().bestMatchFromAppearancesWithNames(&names)?;
+    let best = app
+        .effectiveAppearance()
+        .bestMatchFromAppearancesWithNames(&names)?;
     Some(&*best == unsafe { NSAppearanceNameDarkAqua })
 }
 
@@ -113,7 +119,10 @@ fn fields(st: Settings, window_dark: Option<bool>) -> Vec<(&'static str, Value)>
         ),
         ("contrast", Value::Boolean(st.contrast)),
         ("reduce_motion", Value::Boolean(st.reduce_motion)),
-        ("reduce_transparency", Value::Boolean(st.reduce_transparency)),
+        (
+            "reduce_transparency",
+            Value::Boolean(st.reduce_transparency),
+        ),
         (
             "accent",
             match st.accent {

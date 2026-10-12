@@ -300,7 +300,10 @@ impl Sticky {
         scopes.sort_by(|x, y| x.0.cmp(&y.0).then(y.1.cmp(&x.1)));
         Some(Sticky {
             scopes,
-            max: get(v, "max").and_then(num).map(|n| n.max(0.0) as usize).unwrap_or(3),
+            max: get(v, "max")
+                .and_then(num)
+                .map(|n| n.max(0.0) as usize)
+                .unwrap_or(3),
             bg: get(v, "bg").and_then(parse_color),
             line: get(v, "line").and_then(parse_color),
         })
@@ -334,8 +337,16 @@ pub fn parse_eol(v: Option<&Value>) -> Vec<(usize, String, Option<Color>)> {
         .filter_map(|x| {
             let Value::Tuple(t) = x else { return None };
             let line = t.first().and_then(num)?;
-            let Some(Value::String(text)) = t.get(1) else { return None };
-            (line >= 0.0 && !text.is_empty()).then(|| (line as usize, text.to_string(), t.get(2).and_then(parse_color)))
+            let Some(Value::String(text)) = t.get(1) else {
+                return None;
+            };
+            (line >= 0.0 && !text.is_empty()).then(|| {
+                (
+                    line as usize,
+                    text.to_string(),
+                    t.get(2).and_then(parse_color),
+                )
+            })
         })
         .collect();
     out.sort_by_key(|e| e.0);
@@ -346,9 +357,16 @@ pub fn parse_eol(v: Option<&Value>) -> Vec<(usize, String, Option<Color>)> {
 /// The rulers of a patch: `#{ cols, color }`.
 pub fn parse_rulers(v: Option<&Value>) -> (Vec<usize>, Option<Color>) {
     use super::values::{get, num, parse_color};
-    let Some(v) = v else { return (Vec::new(), None) };
+    let Some(v) = v else {
+        return (Vec::new(), None);
+    };
     let cols = match get(v, "cols") {
-        Some(Value::List(l)) => l.iter().filter_map(num).filter(|n| *n > 0.0).map(|n| n as usize).collect(),
+        Some(Value::List(l)) => l
+            .iter()
+            .filter_map(num)
+            .filter(|n| *n > 0.0)
+            .map(|n| n as usize)
+            .collect(),
         _ => Vec::new(),
     };
     (cols, get(v, "color").and_then(parse_color))
@@ -384,7 +402,9 @@ pub fn parse_lenses(v: Option<&Value>) -> Vec<Lens> {
             Some(Lens {
                 line: line as usize,
                 height,
-                ops: get(x, "ops").cloned().unwrap_or(Value::List(Arc::new(Vec::new()))),
+                ops: get(x, "ops")
+                    .cloned()
+                    .unwrap_or(Value::List(Arc::new(Vec::new()))),
                 id: get(x, "id").cloned().unwrap_or(Value::Unit),
             })
         })
@@ -473,7 +493,12 @@ pub fn parse_decorations(v: Option<&Value>) -> Vec<(usize, usize, usize, u32)> {
     l.iter()
         .filter_map(|d| {
             let Value::Tuple(t) = d else { return None };
-            Some((n(t.first())?, n(t.get(1))?, n(t.get(2))?, n(t.get(3))? as u32))
+            Some((
+                n(t.first())?,
+                n(t.get(1))?,
+                n(t.get(2))?,
+                n(t.get(3))? as u32,
+            ))
         })
         .collect()
 }
@@ -481,7 +506,6 @@ pub fn parse_decorations(v: Option<&Value>) -> Vec<(usize, usize, usize, u32)> {
 /// A paragraph's layouts kept at most: past it, those far from the view
 /// and the caret are let go (their measured heights stay).
 const KEEP_LAYOUTS: usize = 3000;
-
 
 fn char_at(s: &str, chars: usize) -> usize {
     // an ASCII prefix: a character is a byte (a code file, mostly)
@@ -619,7 +643,10 @@ impl RichEditor {
     /// narrower or wider while typing: the place typed at stays shown).
     pub fn set_geometry_keeping(&mut self, width: f32, scale: f32, ts: &mut TextSystem) {
         let w = (width * scale).max(1.0);
-        let moves = self.placed && self.view_h > 0.0 && ((self.width - w).abs() > 0.01 || self.scale != scale) && !self.nowrap;
+        let moves = self.placed
+            && self.view_h > 0.0
+            && ((self.width - w).abs() > 0.01 || self.scale != scale)
+            && !self.nowrap;
         let was_in = moves && {
             let c = self.caret_box(1.0, ts);
             (c.y1 as f32) > self.scroll_y && (c.y0 as f32) < self.scroll_y + self.view_h
@@ -789,9 +816,10 @@ impl RichEditor {
         }
         if let Some(r) = rev
             && r < self.rev
-            && self.sent.iter().any(|(sr, sv)| {
-                *sr == r && sv.upgrade().is_some_and(|v| Arc::ptr_eq(&v, value))
-            })
+            && self
+                .sent
+                .iter()
+                .any(|(sr, sv)| *sr == r && sv.upgrade().is_some_and(|v| Arc::ptr_eq(&v, value)))
         {
             return false;
         }
@@ -955,13 +983,21 @@ impl RichEditor {
         if p.measured {
             return p.h;
         }
-        let line_h = if self.line_seen > 0.0 { self.line_seen } else { self.font.size * self.scale * 1.2 };
+        let line_h = if self.line_seen > 0.0 {
+            self.line_seen
+        } else {
+            self.font.size * self.scale * 1.2
+        };
         let cw = if self.char_w.1 > 0.0 {
             self.char_w.0 / self.char_w.1
         } else {
             self.font.size * self.scale * 0.55
         };
-        let lines = if self.nowrap { 1.0 } else { ((p.len as f32 * cw) / self.width.max(1.0)).ceil().max(1.0) };
+        let lines = if self.nowrap {
+            1.0
+        } else {
+            ((p.len as f32 * cw) / self.width.max(1.0)).ceil().max(1.0)
+        };
         line_h * lines
     }
 
@@ -1026,7 +1062,10 @@ impl RichEditor {
     }
 
     fn layout_of(&self, i: usize) -> &Layout<Color> {
-        self.paras[i].layout.as_ref().expect("a paragraph used is laid out (ensure)")
+        self.paras[i]
+            .layout
+            .as_ref()
+            .expect("a paragraph used is laid out (ensure)")
     }
 
     fn cursor(&self, i: usize, local: usize, aff: Affinity) -> Cursor {
@@ -1131,7 +1170,10 @@ impl RichEditor {
         {
             *c = ((c.start as isize + growth) as usize)..((c.end as isize + growth) as usize);
         }
-        let dropped = self.paras[pa..=pb].iter().filter(|p| p.layout.is_some()).count();
+        let dropped = self.paras[pa..=pb]
+            .iter()
+            .filter(|p| p.layout.is_some())
+            .count();
         self.built -= dropped;
         self.paras.splice(pa..=pb, fresh);
         self.edits += 1;
@@ -1313,11 +1355,18 @@ impl RichEditor {
     /// and bottom, device pixels from the paragraph's top.
     pub fn row_bands(&self, i: usize) -> Vec<(f32, f32)> {
         let layout = self.layout_of(i);
-        let bands: Vec<(f32, f32)> = layout.lines().map(|line| {
-            let m = line.metrics();
-            (m.block_min_coord, m.block_max_coord)
-        }).collect();
-        if bands.is_empty() { vec![(0.0, self.paras[i].h)] } else { bands }
+        let bands: Vec<(f32, f32)> = layout
+            .lines()
+            .map(|line| {
+                let m = line.metrics();
+                (m.block_min_coord, m.block_max_coord)
+            })
+            .collect();
+        if bands.is_empty() {
+            vec![(0.0, self.paras[i].h)]
+        } else {
+            bands
+        }
     }
 
     fn line_mid(&self, i: usize, k: usize) -> f32 {
@@ -1708,10 +1757,18 @@ impl RichEditor {
 
     /// A caret's box at byte `local` of paragraph `i` (laid out), device
     /// pixels from the text's top-left (no scroll).
-    pub fn caret_box_at(&mut self, i: usize, local: usize, width: f32, ts: &mut TextSystem) -> BoundingBox {
+    pub fn caret_box_at(
+        &mut self,
+        i: usize,
+        local: usize,
+        width: f32,
+        ts: &mut TextSystem,
+    ) -> BoundingBox {
         self.ensure(i, ts);
         self.refresh(ts);
-        let g = self.cursor(i, local, Affinity::Downstream).geometry(self.layout_of(i), width);
+        let g = self
+            .cursor(i, local, Affinity::Downstream)
+            .geometry(self.layout_of(i), width);
         let y = self.ys[i] as f64;
         BoundingBox::new(g.x0, g.y0 + y, g.x1, g.y1 + y)
     }
@@ -1775,7 +1832,8 @@ impl RichEditor {
         // that was in view in view
         if self.placed && self.view_h > 0.0 && h + 0.01 < self.view_h && !self.follow {
             let c = self.caret_box(1.0, ts);
-            let was_in = (c.y1 as f32) > self.scroll_y && (c.y0 as f32) < self.scroll_y + self.view_h;
+            let was_in =
+                (c.y1 as f32) > self.scroll_y && (c.y0 as f32) < self.scroll_y + self.view_h;
             let now_out = (c.y1 as f32) > self.scroll_y + h;
             if was_in && now_out {
                 self.follow = true;
@@ -1871,7 +1929,11 @@ impl RichEditor {
         self.refresh(ts);
         let total = *self.ys.last().unwrap_or(&0.0);
         let max = (total - self.view_h).max(0.0);
-        self.scroll_y = if self.view_h > 0.0 { self.ys[i].min(max) } else { self.ys[i] };
+        self.scroll_y = if self.view_h > 0.0 {
+            self.ys[i].min(max)
+        } else {
+            self.ys[i]
+        };
         self.follow = false;
     }
 
@@ -1994,7 +2056,12 @@ impl RichEditor {
     /// The character under a point (device pixels from the text's top,
     /// scroll included): its line, its column, and its box — or none
     /// past a line's end, below the text, or over a lens.
-    pub fn hover_at(&mut self, x: f32, y: f32, ts: &mut TextSystem) -> Option<(usize, usize, BoundingBox)> {
+    pub fn hover_at(
+        &mut self,
+        x: f32,
+        y: f32,
+        ts: &mut TextSystem,
+    ) -> Option<(usize, usize, BoundingBox)> {
         if x < 0.0 || y < 0.0 || self.lens_at(y, ts).is_some() {
             return None;
         }
@@ -2015,7 +2082,11 @@ impl RichEditor {
         let col = self.buffer[p.start..p.start + l].chars().count();
         let w = (self.font.size * self.scale * 0.6) as f64;
         let top = self.ys[i] as f64;
-        Some((i, col, BoundingBox::new(g.x0, g.y0 + top, g.x0 + w, g.y1 + top)))
+        Some((
+            i,
+            col,
+            BoundingBox::new(g.x0, g.y0 + top, g.x0 + w, g.y1 + top),
+        ))
     }
 
     /// The line whose first row is at `y` (the text's own pixels), and the
@@ -2033,12 +2104,20 @@ impl RichEditor {
         let (at, _) = self.point_to_byte(0.0, y, ts);
         let (i, _) = self.locate(at);
         self.ensure(i, ts);
-        let lh = if self.font.line_height > 0.0 { self.font.line_height } else { 1.2 };
+        let lh = if self.font.line_height > 0.0 {
+            self.font.line_height
+        } else {
+            1.2
+        };
         let row = self.font.size * self.scale * lh;
         let side = MARK_BOX * self.scale;
         let top = self.ys[i] + ((row - side) / 2.0).max(0.0);
-        (y - self.ys[i] <= self.paras[i].h)
-            .then(|| (i, BoundingBox::new(0.0, top as f64, side as f64, (top + side) as f64)))
+        (y - self.ys[i] <= self.paras[i].h).then(|| {
+            (
+                i,
+                BoundingBox::new(0.0, top as f64, side as f64, (top + side) as f64),
+            )
+        })
     }
 
     // ── lenses ──────────────────────────────────────────────────────
@@ -2047,7 +2126,10 @@ impl RichEditor {
     /// height did.
     pub fn set_lenses(&mut self, lenses: Vec<Lens>) {
         let same_room = lenses.len() == self.lenses.len()
-            && lenses.iter().zip(&self.lenses).all(|(a, b)| a.line == b.line && a.height == b.height);
+            && lenses
+                .iter()
+                .zip(&self.lenses)
+                .all(|(a, b)| a.line == b.line && a.height == b.height);
         if !same_room {
             self.ys_ok = false;
         }
@@ -2065,7 +2147,10 @@ impl RichEditor {
         if !self.ys_ok || l.line >= self.paras.len() {
             return None;
         }
-        Some((self.ys[l.line] + self.height_of(l.line), l.height * self.scale))
+        Some((
+            self.ys[l.line] + self.height_of(l.line),
+            l.height * self.scale,
+        ))
     }
 
     /// The lens under `y` (device pixels from the text's top, scroll

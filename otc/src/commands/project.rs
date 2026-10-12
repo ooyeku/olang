@@ -326,7 +326,8 @@ pub fn do_install(frozen: bool, update: bool, verbose: bool) -> anyhow::Result<(
     let map = install(&root, &opts).map_err(|e| anyhow::anyhow!("{}", e))?;
     // a pin nothing installed satisfies: said, with the command (never run)
     if let Some(pin) = olang::pkg::toolchain::manifest_pin(&root)
-        && olang::pkg::toolchain::lock_pin(&root).is_none_or(|v| !olang::pkg::toolchain::satisfies(&pin, &v))
+        && olang::pkg::toolchain::lock_pin(&root)
+            .is_none_or(|v| !olang::pkg::toolchain::satisfies(&pin, &v))
     {
         println!(
             "olang.toml pins olang {}, and no installed olang satisfies it — `{}` installs one",

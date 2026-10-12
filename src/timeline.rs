@@ -420,7 +420,10 @@ fn portable(v: &Value) -> Value {
     match v {
         Value::Native(h) => {
             let kind = h.0.type_name();
-            if matches!(kind, "Channel" | "Task" | "Cursor" | "Bytes" | "ConnectionHandle") {
+            if matches!(
+                kind,
+                "Channel" | "Task" | "Cursor" | "Bytes" | "ConnectionHandle"
+            ) {
                 let mut fields = crate::ast::ValueMap::default();
                 fields.insert(
                     "kind".to_string(),

@@ -125,7 +125,10 @@ pub fn toolchain(cmd: ToolchainCommand) -> Result<()> {
             match for_project(&root) {
                 Resolved::Installed { bin, .. } => println!("{}", bin.display()),
                 Resolved::Running { .. } | Resolved::Unpinned => {
-                    println!("{}", std::env::current_exe()?.with_file_name("olang").display())
+                    println!(
+                        "{}",
+                        std::env::current_exe()?.with_file_name("olang").display()
+                    )
                 }
                 Resolved::Missing { pin } => bail!(
                     "olang.toml pins olang {}, and no installed olang satisfies it ({} installs one)",
@@ -138,8 +141,14 @@ pub fn toolchain(cmd: ToolchainCommand) -> Result<()> {
         ToolchainCommand::Link { version, path } => {
             let v = normalize(&version);
             let given = PathBuf::from(&path);
-            let bin = if given.is_dir() { given.join("target").join("release").join("olang") } else { given };
-            let bin = bin.canonicalize().with_context(|| format!("no olang at {}", bin.display()))?;
+            let bin = if given.is_dir() {
+                given.join("target").join("release").join("olang")
+            } else {
+                given
+            };
+            let bin = bin
+                .canonicalize()
+                .with_context(|| format!("no olang at {}", bin.display()))?;
             if !bin.is_file() {
                 bail!("{} is not an olang binary", bin.display());
             }
@@ -147,7 +156,8 @@ pub fn toolchain(cmd: ToolchainCommand) -> Result<()> {
             std::fs::create_dir_all(&dir)?;
             let link = dir.join("olang");
             let _ = std::fs::remove_file(&link);
-            std::os::unix::fs::symlink(&bin, &link).with_context(|| format!("linking {}", link.display()))?;
+            std::os::unix::fs::symlink(&bin, &link)
+                .with_context(|| format!("linking {}", link.display()))?;
             println!("toolchain {} is {}.", v, bin.display());
             Ok(())
         }

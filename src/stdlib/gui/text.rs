@@ -226,7 +226,13 @@ pub struct Deco {
 }
 
 /// The decorations of `text`'s spans (character offsets) in `layout`.
-fn span_decos(layout: &Layout<Color>, text: &str, spans: &[(usize, usize, super::rich::SpanStyle)], fg: Color, scale: f32) -> Vec<Deco> {
+fn span_decos(
+    layout: &Layout<Color>,
+    text: &str,
+    spans: &[(usize, usize, super::rich::SpanStyle)],
+    fg: Color,
+    scale: f32,
+) -> Vec<Deco> {
     let mut at: Vec<usize> = text.char_indices().map(|(b, _)| b).collect();
     at.push(text.len());
     let mut out = Vec::new();
@@ -247,15 +253,41 @@ fn span_decos(layout: &Layout<Color>, text: &str, spans: &[(usize, usize, super:
         let c = st.color.unwrap_or(fg);
         let thin = scale.max(1.0);
         for bb in boxes {
-            let (x, y, w, h) = (bb.x0 as f32, bb.y0 as f32, (bb.x1 - bb.x0) as f32, (bb.y1 - bb.y0) as f32);
+            let (x, y, w, h) = (
+                bb.x0 as f32,
+                bb.y0 as f32,
+                (bb.x1 - bb.x0) as f32,
+                (bb.y1 - bb.y0) as f32,
+            );
             if let Some(bg) = st.bg {
-                out.push(Deco { x, y, w, h, color: bg, over: false });
+                out.push(Deco {
+                    x,
+                    y,
+                    w,
+                    h,
+                    color: bg,
+                    over: false,
+                });
             }
             if st.strike {
-                out.push(Deco { x, y: (y + h * 0.55).round(), w, h: thin, color: c, over: true });
+                out.push(Deco {
+                    x,
+                    y: (y + h * 0.55).round(),
+                    w,
+                    h: thin,
+                    color: c,
+                    over: true,
+                });
             }
             if st.underline {
-                out.push(Deco { x, y: (y + h - 2.0 * scale).round(), w, h: thin, color: c, over: true });
+                out.push(Deco {
+                    x,
+                    y: (y + h - 2.0 * scale).round(),
+                    w,
+                    h: thin,
+                    color: c,
+                    over: true,
+                });
             }
         }
     }

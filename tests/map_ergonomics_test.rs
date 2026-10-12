@@ -72,7 +72,10 @@ fn on_vm(source: &str) -> Result<Value, String> {
 fn agree_tiered(source: &str) -> Result<Value, String> {
     let interpreted = eval(source, None);
     let tiered = eval(source, Some(1));
-    assert_eq!(tiered, interpreted, "tiered diverged from the interpreter\n{source}");
+    assert_eq!(
+        tiered, interpreted,
+        "tiered diverged from the interpreter\n{source}"
+    );
     interpreted
 }
 
@@ -162,7 +165,10 @@ main()
         Ok(Value::List(std::sync::Arc::new(vec![
             Value::Integer(1),
             Value::Unit,
-            Value::List(std::sync::Arc::new(vec![Value::Integer(1), Value::Integer(2)])),
+            Value::List(std::sync::Arc::new(vec![
+                Value::Integer(1),
+                Value::Integer(2)
+            ])),
             Value::Unit,
             Value::Unit,
         ])))
@@ -476,7 +482,10 @@ main()
     assert_eq!(rows.len(), 4);
     for row in rows.iter() {
         let Value::List(cells) = row else { panic!() };
-        assert!(matches!(cells[7], Value::Integer(_)), "map_len answered: {row:?}");
+        assert!(
+            matches!(cells[7], Value::Integer(_)),
+            "map_len answered: {row:?}"
+        );
         assert_eq!(cells[0], Value::Integer(1));
         assert_eq!(cells[17], s("absent"));
     }
@@ -526,7 +535,12 @@ main()
 
 #[test]
 fn the_builtins_still_refuse_what_is_not_a_record() {
-    for call in ["map_len(5)", "map_merge(5, #{})", "map_merge(#{}, [1])", "map_clear(\"x\")"] {
+    for call in [
+        "map_len(5)",
+        "map_merge(5, #{})",
+        "map_merge(#{}, [1])",
+        "map_clear(\"x\")",
+    ] {
         let src = format!("fn main() = {call}\nmain()\n");
         let err = agree(&src).unwrap_err();
         assert!(err.contains("must be a map or object"), "{call}: {err}");
@@ -589,10 +603,16 @@ main()
 "#;
     assert_eq!(
         agree_tiered(src),
-        Ok(list(vec![list(vec![s("a"), s("m"), s("c")]), Value::Integer(2)]))
+        Ok(list(vec![
+            list(vec![s("a"), s("m"), s("c")]),
+            Value::Integer(2)
+        ]))
     );
     let err = agree("fn main() = #{ ...5 }\nmain()\n").unwrap_err();
-    assert!(err.contains("a spread `...` takes a map or an object, got Int"), "{err}");
+    assert!(
+        err.contains("a spread `...` takes a map or an object, got Int"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -632,16 +652,25 @@ main()
                 o.insert("k".into(), Value::Integer(1));
                 m.insert(
                     "o".into(),
-                    Value::Struct { type_name: "Object".into(), fields: std::sync::Arc::new(o) },
+                    Value::Struct {
+                        type_name: "Object".into(),
+                        fields: std::sync::Arc::new(o),
+                    },
                 );
                 m
             })),
         ]))
     );
     for (call, says) in [
-        ("map_set_in(#{ \"a\": 1 }, [\"a\", \"b\"], 2)", "cannot set key 'b' in Int"),
+        (
+            "map_set_in(#{ \"a\": 1 }, [\"a\", \"b\"], 2)",
+            "cannot set key 'b' in Int",
+        ),
         ("map_set_in(#{}, [], 2)", "the path is empty"),
-        ("map_update(5, \"k\", (v) => v)", "first argument must be a map or object"),
+        (
+            "map_update(5, \"k\", (v) => v)",
+            "first argument must be a map or object",
+        ),
     ] {
         let err = agree(&format!("fn main() = {call}\nmain()\n")).unwrap_err();
         assert!(err.contains(says), "{call}: {err}");
@@ -662,7 +691,11 @@ main()
 "#;
     assert_eq!(
         agree(src),
-        Ok(list(vec![Value::Integer(30), Value::Boolean(true), Value::Integer(30)]))
+        Ok(list(vec![
+            Value::Integer(30),
+            Value::Boolean(true),
+            Value::Integer(30)
+        ]))
     );
 }
 
@@ -679,14 +712,23 @@ fn main() = {
 }
 main()
 "#;
-    assert_eq!(agree_tiered(src), Ok(list(vec![Value::Integer(30), Value::Integer(30)])));
+    assert_eq!(
+        agree_tiered(src),
+        Ok(list(vec![Value::Integer(30), Value::Integer(30)]))
+    );
 }
 
 #[test]
 fn the_parser_names_an_unsupported_spread() {
     for (src, says) in [
-        ("let xs = [1]\nlet ys = [...xs]\n", "a spread `...` is not supported here"),
-        ("fn f(a) = a\nlet xs = [1]\nf(...xs)\n", "a spread `...` is not supported here"),
+        (
+            "let xs = [1]\nlet ys = [...xs]\n",
+            "a spread `...` is not supported here",
+        ),
+        (
+            "fn f(a) = a\nlet xs = [1]\nf(...xs)\n",
+            "a spread `...` is not supported here",
+        ),
         (
             "type P = struct { x: Int }\nlet p = P { x: 1 }\nlet q = P { ...p, x: 2 }\n",
             "not supported in a declared struct's literal",
@@ -708,9 +750,17 @@ main()
 "#;
     assert_eq!(
         agree_tiered(src),
-        Ok(list(vec![Value::Boolean(true), Value::Boolean(false), Value::Boolean(true)]))
+        Ok(list(vec![
+            Value::Boolean(true),
+            Value::Boolean(false),
+            Value::Boolean(true)
+        ]))
     );
-    for call in ["str.trimm(\" x\")", "\" x\" |> str.trimm", "\" x\" |> str.trimm()"] {
+    for call in [
+        "str.trimm(\" x\")",
+        "\" x\" |> str.trimm",
+        "\" x\" |> str.trimm()",
+    ] {
         let err = agree_tiered(&format!("fn main() = {call}\nmain()\n")).unwrap_err();
         assert!(err.contains("did you mean 'trim'"), "{call}: {err}");
     }

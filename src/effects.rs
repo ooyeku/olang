@@ -104,7 +104,10 @@ fn cap_of(full_name: &str) -> Option<CapUse> {
     // but could still terminate the host, which is a larger power than
     // the one it was refused. `proc` means "may affect processes",
     // including this one.
-    if full_name.starts_with("proc.") || full_name.starts_with("pty.") || matches!(full_name, "os.exec" | "os.exit") {
+    if full_name.starts_with("proc.")
+        || full_name.starts_with("pty.")
+        || matches!(full_name, "os.exec" | "os.exit")
+    {
         return Some(CapUse::Proc);
     }
     if let Some(f) = full_name.strip_prefix("os.") {
@@ -227,7 +230,8 @@ fn recorded_of(op: &str) -> bool {
 /// from expansion rather than "mostly absent, check the list".
 pub fn expansion_blocked(full_name: &str) -> bool {
     const BLOCKED_MODULE_PREFIXES: &[&str] = &[
-        "fs.", "http.", "db.", "proc.", "os.", "time.", "random.", "task.", "chan.", "tty.", "gui.", "pty.", "vt.",
+        "fs.", "http.", "db.", "proc.", "os.", "time.", "random.", "task.", "chan.", "tty.",
+        "gui.", "pty.", "vt.",
     ];
     const BLOCKED_NAMES: &[&str] = &["par_map", "par_filter"];
     if BLOCKED_MODULE_PREFIXES

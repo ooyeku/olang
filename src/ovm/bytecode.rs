@@ -1082,11 +1082,15 @@ pub enum Instruction {
 }
 
 /// Register identifier
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 pub struct Register(pub u32);
 
 /// Label identifier for jumps
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 pub struct Label(pub u32);
 
 /// Debug information for bytecode
@@ -2189,7 +2193,15 @@ impl BytecodeVm {
                     self.record_start();
                 }
                 let def_file_kept = def_file.clone();
-                let r = self.compile_function_with_closure_lent(func_id, func, closure, param_checks, return_check, def_file, run);
+                let r = self.compile_function_with_closure_lent(
+                    func_id,
+                    func,
+                    closure,
+                    param_checks,
+                    return_check,
+                    def_file,
+                    run,
+                );
                 if let Some(key) = key {
                     let rec = self.record_stop();
                     if r.is_ok()
@@ -2397,7 +2409,8 @@ impl BytecodeVm {
                         let callable = callee != name
                             && (self.known_function_values.contains_key(&callee)
                                 || matches!(func.closure.get(&callee), Some(Value::Function(_)))
-                                || self.module_scope_has_function(func.def_file.as_deref(), &callee));
+                                || self
+                                    .module_scope_has_function(func.def_file.as_deref(), &callee));
                         if callable && bridged_here.insert(callee.clone()) {
                             self.bridged_callees.insert(callee);
                             continue;
@@ -2472,14 +2485,29 @@ impl BytecodeVm {
     /// The registries moved into the compiler (`return_registries` moves
     /// them back; nothing reads the VM's copies while a compile runs).
     fn lend_registries(&mut self) {
-        std::mem::swap(&mut self.compiler.function_registry, &mut self.function_registry);
+        std::mem::swap(
+            &mut self.compiler.function_registry,
+            &mut self.function_registry,
+        );
         std::mem::swap(&mut self.compiler.builtin_names, &mut self.builtin_names);
         std::mem::swap(&mut self.compiler.struct_defs, &mut self.struct_defs);
-        std::mem::swap(&mut self.compiler.struct_field_checks, &mut self.struct_field_checks);
-        std::mem::swap(&mut self.compiler.known_function_values, &mut self.known_function_values);
-        std::mem::swap(&mut self.compiler.unit_variant_names, &mut self.unit_variant_names);
+        std::mem::swap(
+            &mut self.compiler.struct_field_checks,
+            &mut self.struct_field_checks,
+        );
+        std::mem::swap(
+            &mut self.compiler.known_function_values,
+            &mut self.known_function_values,
+        );
+        std::mem::swap(
+            &mut self.compiler.unit_variant_names,
+            &mut self.unit_variant_names,
+        );
         std::mem::swap(&mut self.compiler.type_aliases, &mut self.type_aliases);
-        std::mem::swap(&mut self.compiler.bridged_callees, &mut self.bridged_callees);
+        std::mem::swap(
+            &mut self.compiler.bridged_callees,
+            &mut self.bridged_callees,
+        );
         std::mem::swap(&mut self.compiler.refused_names, &mut self.refused_names);
     }
 
@@ -2863,7 +2891,10 @@ impl BytecodeVm {
             }
             if let Some(result) = native {
                 if Self::verify_sample() {
-                    let what = format!("fn {} (native call)", bytecode.debug_info.function_name.as_deref().unwrap_or("?"));
+                    let what = format!(
+                        "fn {} (native call)",
+                        bytecode.debug_info.function_name.as_deref().unwrap_or("?")
+                    );
                     self.verify_native_values(&what, &bytecode, args, &result);
                 }
                 return Ok(result);
@@ -3091,7 +3122,10 @@ impl BytecodeVm {
             }
             if let Some(result) = native {
                 if Self::verify_sample() {
-                    let what = format!("fn {} (native call)", bytecode.debug_info.function_name.as_deref().unwrap_or("?"));
+                    let what = format!(
+                        "fn {} (native call)",
+                        bytecode.debug_info.function_name.as_deref().unwrap_or("?")
+                    );
                     self.verify_native_values(&what, &bytecode, args, &result);
                 }
                 return Ok(Err(result));
@@ -3190,13 +3224,21 @@ impl BytecodeVm {
     /// `verify_native_result` for a native call entered with argument
     /// values (the tree-walker calling a compiled function, a value
     /// called): the same re-run on the VM and the same report.
-    fn verify_native_values(&mut self, what: &str, bytecode: &CompiledBytecode, args: &[OvmValue], native: &OvmValue) {
+    fn verify_native_values(
+        &mut self,
+        what: &str,
+        bytecode: &CompiledBytecode,
+        args: &[OvmValue],
+        native: &OvmValue,
+    ) {
         if self.call_depth >= self.max_call_depth {
             return;
         }
         let _guard = Self::verify_enter();
         self.call_depth += 1;
-        let saved = self.execution_state.push_frame(bytecode.register_count as usize, args);
+        let saved = self
+            .execution_state
+            .push_frame(bytecode.register_count as usize, args);
         let outcome = self.execute_bytecode(bytecode);
         self.execution_state.pop_frame(saved);
         self.call_depth -= 1;
@@ -3205,7 +3247,12 @@ impl BytecodeVm {
 
     /// The VM's re-run against the native result: agreement counted, a
     /// divergence reported and the process ended.
-    fn verify_report(&mut self, what: &str, outcome: Result<OvmValue, BytecodeError>, native: &OvmValue) {
+    fn verify_report(
+        &mut self,
+        what: &str,
+        outcome: Result<OvmValue, BytecodeError>,
+        native: &OvmValue,
+    ) {
         self.stats.verified_calls += 1;
         let selftest = std::env::var_os("OLANG_VERIFY_SELFTEST").is_some();
         // Two maps (or records) built by the two tiers are two
@@ -4060,7 +4107,10 @@ impl BytecodeVm {
             // only a program's failure has a trace: an unresolved callee
             // (compiled and retried) or a stack overflow the VM recovers
             // from is not one, and noting it would cost every first call
-            let failure = matches!(e, BytecodeError::RuntimeError(_) | BytecodeError::TypeError(_));
+            let failure = matches!(
+                e,
+                BytecodeError::RuntimeError(_) | BytecodeError::TypeError(_)
+            );
             self.note_error_frame(bytecode, err_pc, failure);
         }
         result
@@ -5505,8 +5555,11 @@ impl BytecodeVm {
                             Some(type_name) => BytecodeError::TypeError(
                                 crate::ast::no_key_or_method(type_name, method),
                             ),
-                            None if matches!(&receiver.data, ValueData::Struct(st) if st.type_name() == "Module") => {
-                                let ValueData::Struct(st) = &receiver.data else { unreachable!() };
+                            None if matches!(&receiver.data, ValueData::Struct(st) if st.type_name() == "Module") =>
+                            {
+                                let ValueData::Struct(st) = &receiver.data else {
+                                    unreachable!()
+                                };
                                 BytecodeError::TypeError(crate::interpreter::module_member_miss(
                                     method,
                                     st.iter().map(|(name, _)| name.as_str()),
@@ -6284,8 +6337,12 @@ impl BytecodeVm {
         ) && matches!(left.data, ValueData::Tuple(_))
             && matches!(right.data, ValueData::Tuple(_))
         {
-            let (Ok(Value::Tuple(ref a)), Ok(Value::Tuple(ref b))) = (left.to_ast(), right.to_ast()) else {
-                return Err(BytecodeError::TypeError("cannot order these tuples".to_string()));
+            let (Ok(Value::Tuple(ref a)), Ok(Value::Tuple(ref b))) =
+                (left.to_ast(), right.to_ast())
+            else {
+                return Err(BytecodeError::TypeError(
+                    "cannot order these tuples".to_string(),
+                ));
             };
             let ord = crate::interpreter::ops::tuple_ordering(a, b).map_err(|e| match e {
                 crate::interpreter::InterpreterError::TypeError { message } => {
@@ -8394,7 +8451,10 @@ impl BytecodeVm {
                     }
                     if !matches!(
                         at.data,
-                        ValueData::Map(_) | ValueData::AstMap(_) | ValueData::AstStruct(..) | ValueData::Struct(_)
+                        ValueData::Map(_)
+                            | ValueData::AstMap(_)
+                            | ValueData::AstStruct(..)
+                            | ValueData::Struct(_)
                     ) || Self::key_text_of(key).is_none()
                     {
                         // the bridge raises the interpreter's error
@@ -9149,7 +9209,10 @@ impl BytecodeVm {
         if !args[1..].iter().all(|a| {
             matches!(
                 a.data,
-                ValueData::Map(_) | ValueData::AstMap(_) | ValueData::AstStruct(..) | ValueData::Struct(_)
+                ValueData::Map(_)
+                    | ValueData::AstMap(_)
+                    | ValueData::AstStruct(..)
+                    | ValueData::Struct(_)
             )
         }) {
             return None;
@@ -10121,7 +10184,11 @@ impl BytecodeCompiler {
     /// function (unless the name is ambiguous).
     fn callee_in_scope(&self, name: &str) -> Option<Value> {
         self.lexical(name)
-            .or_else(|| self.module_scope.as_ref().and_then(|m| m.get(name).cloned()))
+            .or_else(|| {
+                self.module_scope
+                    .as_ref()
+                    .and_then(|m| m.get(name).cloned())
+            })
             .or_else(|| {
                 (!self.ambiguous_names.contains(name))
                     .then(|| self.known_function_values.get(name))
@@ -10182,7 +10249,9 @@ impl BytecodeCompiler {
             Some(f) => Some(
                 self.canonical_files
                     .entry(f.clone())
-                    .or_insert_with(|| std::fs::canonicalize(&*f).unwrap_or_else(|_| std::path::PathBuf::from(&*f)))
+                    .or_insert_with(|| {
+                        std::fs::canonicalize(&*f).unwrap_or_else(|_| std::path::PathBuf::from(&*f))
+                    })
                     .clone(),
             ),
         };
@@ -10222,7 +10291,10 @@ impl BytecodeCompiler {
         // the last instruction already returns. A `return` elsewhere in the
         // body ends only its own path (checking for any Return let the
         // other paths fall off the end with Unit).
-        if !matches!(self.emitter.instructions.last(), Some(Instruction::Return { .. })) {
+        if !matches!(
+            self.emitter.instructions.last(),
+            Some(Instruction::Return { .. })
+        ) {
             self.emitter.emit_return(Some(result_reg));
         }
 
@@ -10484,10 +10556,11 @@ impl BytecodeCompiler {
                             Ok(dst_reg)
                         }
                         Some(value) if BytecodeVm::round_trips(value) => {
-                            let const_idx = self.emitter.add_constant_from(
-                                OvmValue::from_ast(value.clone()),
-                                || crate::compile_cache::ConstSrc::Ident(name.clone()),
-                            );
+                            let const_idx = self
+                                .emitter
+                                .add_constant_from(OvmValue::from_ast(value.clone()), || {
+                                    crate::compile_cache::ConstSrc::Ident(name.clone())
+                                });
                             let dst_reg = self.register_allocator.allocate_register();
                             self.emitter.emit_load_const(dst_reg, const_idx);
                             Ok(dst_reg)
@@ -11007,12 +11080,11 @@ impl BytecodeCompiler {
                 if !closure_disagrees && self.lazy_callee(&function_name) {
                     let func_id = FunctionId::new();
                     self.note_lazy(&function_name, func_id);
-                    self.function_registry.insert(function_name.clone(), func_id);
+                    self.function_registry
+                        .insert(function_name.clone(), func_id);
                     self.lazy_new.push((function_name.clone(), func_id));
                 }
-                if !closure_disagrees
-                    && let Some(func_id) = self.q_registry(&function_name)
-                {
+                if !closure_disagrees && let Some(func_id) = self.q_registry(&function_name) {
                     // A short call to a defaulted function completes its
                     // argument list here when every missing default is a
                     // literal (loaded as constants — scope-free by
@@ -11091,7 +11163,8 @@ impl BytecodeCompiler {
                 // An enum tuple-variant constructor from the closure —
                 // `Circle(2.0)`. An argument-count mismatch refuses, and the
                 // interpreter raises its arity error.
-                if let Some(Value::EnumConstructor(ref constructor)) = self.q_lexical(&function_name)
+                if let Some(Value::EnumConstructor(ref constructor)) =
+                    self.q_lexical(&function_name)
                 {
                     if constructor.arity != arguments.len() {
                         return Err(BytecodeError::UnresolvedCallee(function_name));
@@ -11139,10 +11212,11 @@ impl BytecodeCompiler {
                         if !self.unresolved.contains(&function_name) {
                             self.unresolved.push(function_name.clone());
                         }
-                        let const_idx = self.emitter.add_constant_from(
-                            OvmValue::new_ast_function(f.clone()),
-                            || crate::compile_cache::ConstSrc::Callee(function_name.clone()),
-                        );
+                        let const_idx = self
+                            .emitter
+                            .add_constant_from(OvmValue::new_ast_function(f.clone()), || {
+                                crate::compile_cache::ConstSrc::Callee(function_name.clone())
+                            });
                         let baked = self.register_allocator.allocate_register();
                         self.emitter.emit_load_const(baked, const_idx);
                         self.emitter.instructions.push(Instruction::CallValue {
@@ -11153,10 +11227,11 @@ impl BytecodeCompiler {
                         Ok(dst_reg)
                     }
                     Some(Value::Function(f)) => {
-                        let const_idx = self.emitter.add_constant_from(
-                            OvmValue::new_ast_function(f.clone()),
-                            || crate::compile_cache::ConstSrc::Callee(function_name.clone()),
-                        );
+                        let const_idx = self
+                            .emitter
+                            .add_constant_from(OvmValue::new_ast_function(f.clone()), || {
+                                crate::compile_cache::ConstSrc::Callee(function_name.clone())
+                            });
                         let baked = self.register_allocator.allocate_register();
                         self.emitter.emit_load_const(baked, const_idx);
                         self.emitter.note_callee(&function_name);
@@ -11503,11 +11578,13 @@ impl BytecodeCompiler {
                 let not_result = self.emitter.create_label();
                 let done = self.emitter.create_label();
                 let is_ok = self.register_allocator.allocate_register();
-                self.emitter.instructions.push(Instruction::PatternTestResult {
-                    dst: is_ok,
-                    value: value_reg,
-                    want_ok: true,
-                });
+                self.emitter
+                    .instructions
+                    .push(Instruction::PatternTestResult {
+                        dst: is_ok,
+                        value: value_reg,
+                        want_ok: true,
+                    });
                 self.emitter.emit_branch_if_false(is_ok, not_ok);
                 self.emitter.instructions.push(Instruction::ExtractResult {
                     dst,
@@ -11517,11 +11594,13 @@ impl BytecodeCompiler {
                 self.emitter.emit_jump(done);
                 self.emitter.place_label(not_ok);
                 let is_err = self.register_allocator.allocate_register();
-                self.emitter.instructions.push(Instruction::PatternTestResult {
-                    dst: is_err,
-                    value: value_reg,
-                    want_ok: false,
-                });
+                self.emitter
+                    .instructions
+                    .push(Instruction::PatternTestResult {
+                        dst: is_err,
+                        value: value_reg,
+                        want_ok: false,
+                    });
                 self.emitter.emit_branch_if_false(is_err, not_result);
                 self.emitter.emit_return(Some(value_reg));
                 self.emitter.place_label(not_result);
@@ -11700,24 +11779,26 @@ impl BytecodeCompiler {
                 // `xs[i] = v` is the parser's `xs = __index_set(xs, i, v)`:
                 // the same write, raising a subscript's errors.
                 let fused = match value.as_ref() {
-                    Expr::Call { callee, arguments } if arguments.len() == 3 => match callee.as_ref() {
-                        Expr::FieldAccess { object, field }
-                            if matches!(object.as_ref(), Expr::Identifier(m)
+                    Expr::Call { callee, arguments } if arguments.len() == 3 => {
+                        match callee.as_ref() {
+                            Expr::FieldAccess { object, field }
+                                if matches!(object.as_ref(), Expr::Identifier(m)
                                 if m == "col" && !self.local_variables.contains_key(m))
-                                && matches!(field.as_str(), "set" | "swap")
-                                && self.q_builtin(&format!("col.{}", field)) =>
-                        {
-                            Some((field.as_str(), arguments))
+                                    && matches!(field.as_str(), "set" | "swap")
+                                    && self.q_builtin(&format!("col.{}", field)) =>
+                            {
+                                Some((field.as_str(), arguments))
+                            }
+                            Expr::Identifier(name)
+                                if name == crate::parser::INDEX_SET_BUILTIN
+                                    && !self.local_variables.contains_key(name)
+                                    && self.q_builtin(name) =>
+                            {
+                                Some(("subscript", arguments))
+                            }
+                            _ => None,
                         }
-                        Expr::Identifier(name)
-                            if name == crate::parser::INDEX_SET_BUILTIN
-                                && !self.local_variables.contains_key(name)
-                                && self.q_builtin(name) =>
-                        {
-                            Some(("subscript", arguments))
-                        }
-                        _ => None,
-                    },
+                    }
                     _ => None,
                 };
                 if let Some((field, arguments)) = fused {
@@ -11981,7 +12062,10 @@ impl BytecodeCompiler {
                     Expr::AssertEq { .. } | Expr::AssertNe { .. } => {
                         "an assertion expression".to_string()
                     }
-                    _ => format!("{} (the compiler has no form for it)", Self::construct_name(other)),
+                    _ => format!(
+                        "{} (the compiler has no form for it)",
+                        Self::construct_name(other)
+                    ),
                 };
                 Err(BytecodeError::CompilationFailed(format!(
                     "it contains {what}"
@@ -12180,14 +12264,15 @@ impl BytecodeCompiler {
             func_id: lambda_id,
             ast_closure: Default::default(),
         };
-        let template_const = self.emitter.add_constant_from(
-            OvmValue::new_closure(Arc::new(template)),
-            || crate::compile_cache::ConstSrc::Closure {
-                src: lambda_src.expect("recording"),
-                capture_names: capture_names_kept,
-                func_id: lambda_id.raw(),
-            },
-        );
+        let template_const =
+            self.emitter
+                .add_constant_from(OvmValue::new_closure(Arc::new(template)), || {
+                    crate::compile_cache::ConstSrc::Closure {
+                        src: lambda_src.expect("recording"),
+                        capture_names: capture_names_kept,
+                        func_id: lambda_id.raw(),
+                    }
+                });
         let dst_reg = self.register_allocator.allocate_register();
         self.emitter.instructions.push(Instruction::MakeClosure {
             dst: dst_reg,
@@ -12217,9 +12302,7 @@ impl BytecodeCompiler {
                 // variant declared after this function (absent from the
                 // closure, resolvable only through the caller's runtime
                 // scope) refuses, because no snapshot can answer it.
-                if !self.local_variables.contains_key(name)
-                    && self.q_unit_variant(name)
-                {
+                if !self.local_variables.contains_key(name) && self.q_unit_variant(name) {
                     match self.q_lexical(name) {
                         Some(variant @ Value::Enum(_))
                             if matches!(
@@ -12228,10 +12311,11 @@ impl BytecodeCompiler {
                                     if e.variant_data == crate::ast::EnumVariantData::Unit
                             ) =>
                         {
-                            let const_idx = self.emitter.add_constant_from(
-                                OvmValue::from_ast(variant.clone()),
-                                || crate::compile_cache::ConstSrc::Lexical(name.clone()),
-                            );
+                            let const_idx = self
+                                .emitter
+                                .add_constant_from(OvmValue::from_ast(variant.clone()), || {
+                                    crate::compile_cache::ConstSrc::Lexical(name.clone())
+                                });
                             let const_reg = self.register_allocator.allocate_register();
                             self.emitter.emit_load_const(const_reg, const_idx);
                             let test_reg = self.register_allocator.allocate_register();
@@ -12961,7 +13045,9 @@ impl BytecodeCompiler {
             Expr::Loop { .. } => false,
             Expr::Block(statements) => statements.iter().any(|s| match s.unwrapped() {
                 crate::ast::Statement::Expression(x) => Self::breaks_with_value(x),
-                crate::ast::Statement::LetDecl(l) => l.value.as_ref().is_some_and(Self::breaks_with_value),
+                crate::ast::Statement::LetDecl(l) => {
+                    l.value.as_ref().is_some_and(Self::breaks_with_value)
+                }
                 _ => false,
             }),
             other => crate::tools::keys::children(other)
@@ -14893,7 +14979,6 @@ mod tests {
         );
     }
 }
-
 
 // Debug switches read once a process: a compile asked the environment
 // for each (once a function, and once each `Move` the liveness pass

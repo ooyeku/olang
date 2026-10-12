@@ -27,7 +27,14 @@ struct Walk {
 
 impl Default for Walk {
     fn default() -> Self {
-        Walk { skip: Vec::new(), exts: Vec::new(), hidden: false, gitignore: true, limit: 100_000, max_depth: None }
+        Walk {
+            skip: Vec::new(),
+            exts: Vec::new(),
+            hidden: false,
+            gitignore: true,
+            limit: 100_000,
+            max_depth: None,
+        }
     }
 }
 
@@ -50,25 +57,45 @@ fn strings(v: &Value, who: &str, key: &str) -> Result<Vec<String>, Value> {
             .iter()
             .map(|x| match x {
                 Value::String(s) => Ok(s.as_ref().clone()),
-                other => Err(err(format!("{}: {} must be a list of strings, got a {}", who, key, other.type_name()))),
+                other => Err(err(format!(
+                    "{}: {} must be a list of strings, got a {}",
+                    who,
+                    key,
+                    other.type_name()
+                ))),
             })
             .collect(),
         Value::Unit => Ok(Vec::new()),
-        other => Err(err(format!("{}: {} must be a list of strings, got {}", who, key, other.type_name()))),
+        other => Err(err(format!(
+            "{}: {} must be a list of strings, got {}",
+            who,
+            key,
+            other.type_name()
+        ))),
     }
 }
 
 fn count(v: &Value, who: &str, key: &str) -> Result<usize, Value> {
     match v {
         Value::Integer(n) if *n >= 0 => Ok(*n as usize),
-        other => Err(err(format!("{}: {} must be a count, got {}", who, key, other.type_name()))),
+        other => Err(err(format!(
+            "{}: {} must be a count, got {}",
+            who,
+            key,
+            other.type_name()
+        ))),
     }
 }
 
 fn flag(v: &Value, who: &str, key: &str) -> Result<bool, Value> {
     match v {
         Value::Boolean(b) => Ok(*b),
-        other => Err(err(format!("{}: {} must be true or false, got {}", who, key, other.type_name()))),
+        other => Err(err(format!(
+            "{}: {} must be true or false, got {}",
+            who,
+            key,
+            other.type_name()
+        ))),
     }
 }
 
@@ -78,7 +105,12 @@ fn walk_opts(opts: &ValueMap, who: &str, extra: &[&str]) -> Result<Walk, Value> 
     for (k, v) in opts {
         match k.as_str() {
             "skip" => w.skip = strings(v, who, "skip")?,
-            "exts" => w.exts = strings(v, who, "exts")?.into_iter().map(|e| e.trim_start_matches('.').to_lowercase()).collect(),
+            "exts" => {
+                w.exts = strings(v, who, "exts")?
+                    .into_iter()
+                    .map(|e| e.trim_start_matches('.').to_lowercase())
+                    .collect()
+            }
             "hidden" => w.hidden = flag(v, who, "hidden")?,
             "gitignore" => w.gitignore = flag(v, who, "gitignore")?,
             "limit" if !extra.contains(&"limit") => w.limit = count(v, who, "limit")?,
@@ -90,10 +122,14 @@ fn walk_opts(opts: &ValueMap, who: &str, extra: &[&str]) -> Result<Walk, Value> 
                     "{}: unknown option '{}' (supported: skip, exts, hidden, gitignore, {}max_depth{}{})",
                     who,
                     other,
-                    if extra.contains(&"limit") { "files_limit, " } else { "limit, " },
+                    if extra.contains(&"limit") {
+                        "files_limit, "
+                    } else {
+                        "limit, "
+                    },
                     if extra.is_empty() { "" } else { ", " },
                     extra.join(", ")
-                )))
+                )));
             }
         }
     }
@@ -117,7 +153,12 @@ fn walk_files(root: &Path, w: &Walk) -> Vec<String> {
     let skip = Arc::new(w.skip.clone());
     b.filter_entry(move |e| {
         let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        !(is_dir && e.depth() > 0 && e.file_name().to_str().map(|n| skip.iter().any(|s| s == n)).unwrap_or(false))
+        !(is_dir
+            && e.depth() > 0
+            && e.file_name()
+                .to_str()
+                .map(|n| skip.iter().any(|s| s == n))
+                .unwrap_or(false))
     });
     let found: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let exts = Arc::new(w.exts.clone());
@@ -137,7 +178,11 @@ fn walk_files(root: &Path, w: &Walk) -> Vec<String> {
             }
             let path = e.path();
             if !exts.is_empty() {
-                let ext = path.extension().and_then(|x| x.to_str()).map(|x| x.to_lowercase()).unwrap_or_default();
+                let ext = path
+                    .extension()
+                    .and_then(|x| x.to_str())
+                    .map(|x| x.to_lowercase())
+                    .unwrap_or_default();
                 if !exts.iter().any(|x| *x == ext) {
                     return ignore::WalkState::Continue;
                 }
@@ -158,7 +203,9 @@ fn walk_files(root: &Path, w: &Walk) -> Vec<String> {
             ignore::WalkState::Continue
         })
     });
-    let mut out = Arc::try_unwrap(found).map(|m| m.into_inner().unwrap()).unwrap_or_else(|a| a.lock().unwrap().clone());
+    let mut out = Arc::try_unwrap(found)
+        .map(|m| m.into_inner().unwrap())
+        .unwrap_or_else(|a| a.lock().unwrap().clone());
     out.sort();
     out.truncate(limit);
     out
@@ -174,7 +221,11 @@ fn root_arg(args: &[Value], who: &str) -> Result<PathBuf, Value> {
                 Err(err(format!("{}: '{}' is not a folder", who, s)))
             }
         }
-        Some(other) => Err(err(format!("{}: the root must be a string path, got {}", who, other.type_name()))),
+        Some(other) => Err(err(format!(
+            "{}: the root must be a string path, got {}",
+            who,
+            other.type_name()
+        ))),
         None => Err(err(format!("{}: a root folder is required", who))),
     }
 }
@@ -203,7 +254,10 @@ pub fn scan(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Err(e) => return Ok(e),
     };
     let files = walk_files(&root, &w);
-    let list: Vec<Value> = files.into_iter().map(|p| Value::String(Arc::new(p))).collect();
+    let list: Vec<Value> = files
+        .into_iter()
+        .map(|p| Value::String(Arc::new(p)))
+        .collect();
     Ok(Value::Ok(Box::new(Value::List(list.into()))))
 }
 
@@ -230,7 +284,13 @@ fn line_matches(line: &str, needle: &Needle, word: bool) -> Vec<(usize, usize)> 
             // a case-blind search over the lower-cased line keeps byte
             // offsets only where lower-casing keeps lengths (ASCII); other
             // lines are searched character by character
-            let hay: std::borrow::Cow<str> = if *case { line.into() } else if line.is_ascii() { line.to_ascii_lowercase().into() } else { line.into() };
+            let hay: std::borrow::Cow<str> = if *case {
+                line.into()
+            } else if line.is_ascii() {
+                line.to_ascii_lowercase().into()
+            } else {
+                line.into()
+            };
             if !*case && !line.is_ascii() {
                 let lc: Vec<(usize, char)> = line.char_indices().collect();
                 let nc: Vec<char> = text.chars().collect();
@@ -238,7 +298,11 @@ fn line_matches(line: &str, needle: &Needle, word: bool) -> Vec<(usize, usize)> 
                 while i + nc.len() <= lc.len() {
                     if (0..nc.len()).all(|k| lc[i + k].1.to_lowercase().eq(nc[k].to_lowercase())) {
                         let a = lc[i].0;
-                        let b = if i + nc.len() < lc.len() { lc[i + nc.len()].0 } else { line.len() };
+                        let b = if i + nc.len() < lc.len() {
+                            lc[i + nc.len()].0
+                        } else {
+                            line.len()
+                        };
                         out.push((a, b));
                         i += nc.len().max(1);
                     } else {
@@ -297,7 +361,13 @@ fn replaced_with(line: &str, at: usize, needle: &Needle, template: &str) -> Stri
 /// One file's matches: `(line, start, end, text, with)` with columns in
 /// characters, at most `cap`; `with` what the match becomes when
 /// `replace` is given.
-fn search_file(path: &Path, needle: &Needle, word: bool, cap: usize, replace: Option<&str>) -> Vec<(usize, usize, usize, String, Option<String>)> {
+fn search_file(
+    path: &Path,
+    needle: &Needle,
+    word: bool,
+    cap: usize,
+    replace: Option<&str>,
+) -> Vec<(usize, usize, usize, String, Option<String>)> {
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
         Err(_) => return Vec::new(),
@@ -311,7 +381,11 @@ fn search_file(path: &Path, needle: &Needle, word: bool, cap: usize, replace: Op
         Err(_) => return Vec::new(),
     };
     // a quick test of the whole file first: most files hold no match
-    if let Needle::Literal { text: t, case: true } = needle {
+    if let Needle::Literal {
+        text: t,
+        case: true,
+    } = needle
+    {
         if !text.contains(t.as_str()) {
             return Vec::new();
         }
@@ -329,7 +403,11 @@ fn search_file(path: &Path, needle: &Needle, word: bool, cap: usize, replace: Op
             let ca = line[..a].chars().count();
             let cb = ca + line[a..b].chars().count();
             // the line as it is shown: at most 400 characters
-            let shown: String = if line.len() > 400 { line.chars().take(400).collect() } else { line.to_string() };
+            let shown: String = if line.len() > 400 {
+                line.chars().take(400).collect()
+            } else {
+                line.to_string()
+            };
             let with = replace.map(|tpl| replaced_with(line, a, needle, tpl));
             out.push((i, ca, cb, shown, with));
             if out.len() >= cap {
@@ -360,14 +438,21 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     };
     let query = match &args[1] {
         Value::String(s) => s.as_ref().clone(),
-        other => return Ok(err(format!("fs.search: the query must be a string, got {}", other.type_name()))),
+        other => {
+            return Ok(err(format!(
+                "fs.search: the query must be a string, got {}",
+                other.type_name()
+            )));
+        }
     };
     let opts = match args.get(2).map(fields_of) {
         None => ValueMap::default(),
         Some(Some(m)) => m,
         Some(None) => return Ok(err("fs.search: options must be a map".to_string())),
     };
-    let extra = ["regex", "case", "word", "limit", "per_file", "files", "replace"];
+    let extra = [
+        "regex", "case", "word", "limit", "per_file", "files", "replace",
+    ];
     // (the walk's own `limit` is `files_limit` here: `limit` counts matches)
     let w = match walk_opts(&opts, "fs.search", &extra) {
         Ok(w) => w,
@@ -402,7 +487,12 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let replace: Option<String> = match get("replace") {
         None | Some(Value::Unit) => None,
         Some(Value::String(s)) => Some(s.as_ref().clone()),
-        Some(other) => return Ok(err(format!("fs.search: \"replace\" is a string, got {}", other.type_name()))),
+        Some(other) => {
+            return Ok(err(format!(
+                "fs.search: \"replace\" is a string, got {}",
+                other.type_name()
+            )));
+        }
     };
     if query.is_empty() {
         return Ok(Value::Ok(Box::new(Value::List(Vec::new().into()))));
@@ -410,17 +500,30 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let needle = if regex_on {
         #[cfg(feature = "regex-module")]
         {
-            match regex::RegexBuilder::new(&query).case_insensitive(!case).multi_line(true).build() {
+            match regex::RegexBuilder::new(&query)
+                .case_insensitive(!case)
+                .multi_line(true)
+                .build()
+            {
                 Ok(rx) => Needle::Regex(rx),
                 Err(e) => return Ok(err(format!("fs.search: bad regular expression: {}", e))),
             }
         }
         #[cfg(not(feature = "regex-module"))]
         {
-            return Ok(err("fs.search: regular expressions are not in this build".to_string()));
+            return Ok(err(
+                "fs.search: regular expressions are not in this build".to_string()
+            ));
         }
     } else {
-        Needle::Literal { text: if case { query.clone() } else { query.to_lowercase() }, case }
+        Needle::Literal {
+            text: if case {
+                query.clone()
+            } else {
+                query.to_lowercase()
+            },
+            case,
+        }
     };
     let files: Vec<String> = match get("files") {
         Some(v) => match strings(v, "fs.search", "files") {
@@ -433,7 +536,12 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let per: Vec<(usize, Vec<(usize, usize, usize, String, Option<String>)>)> = files
         .par_iter()
         .enumerate()
-        .map(|(i, rel)| (i, search_file(&root.join(rel), &needle, word, per_file, replace.as_deref())))
+        .map(|(i, rel)| {
+            (
+                i,
+                search_file(&root.join(rel), &needle, word, per_file, replace.as_deref()),
+            )
+        })
         .filter(|(_, ms)| !ms.is_empty())
         .collect();
     let mut out: Vec<Value> = Vec::new();

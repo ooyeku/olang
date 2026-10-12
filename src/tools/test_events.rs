@@ -66,7 +66,11 @@ pub fn set_aliases(paths: &[std::path::PathBuf]) {
     let mut out: Vec<(String, String)> = Vec::new();
     for p in paths {
         let given = std::path::absolute(p).unwrap_or_else(|_| p.clone());
-        let mut dirs = vec![if given.is_dir() { given.clone() } else { given.parent().map(|d| d.to_path_buf()).unwrap_or_default() }];
+        let mut dirs = vec![if given.is_dir() {
+            given.clone()
+        } else {
+            given.parent().map(|d| d.to_path_buf()).unwrap_or_default()
+        }];
         let mut up = dirs[0].clone();
         while let Some(parent) = up.parent().map(|d| d.to_path_buf()) {
             if up.join("olang.toml").exists() {
@@ -117,7 +121,9 @@ fn rewrite(v: &mut J, aliases: &[(String, String)]) {
                         }
                     }
                     ("at" | "snapshot" | "error", _) => rewrite(x, aliases),
-                    ("frames" | "snapshots", J::Array(items)) => items.iter_mut().for_each(|it| rewrite(it, aliases)),
+                    ("frames" | "snapshots", J::Array(items)) => {
+                        items.iter_mut().for_each(|it| rewrite(it, aliases))
+                    }
                     _ => {}
                 }
             }
@@ -180,8 +186,10 @@ pub fn run_started(files: &[String], count: usize, only: Option<&str>) {
             ..RunState::default()
         }
     });
-    emit(json!({ "event": "run", "format": FORMAT, "files": files, "count": count, "only": only,
-                 "verify_tiers": std::env::var("OLANG_VERIFY_TIERS").ok().and_then(|v| v.parse::<f64>().ok()) }));
+    emit(
+        json!({ "event": "run", "format": FORMAT, "files": files, "count": count, "only": only,
+                 "verify_tiers": std::env::var("OLANG_VERIFY_TIERS").ok().and_then(|v| v.parse::<f64>().ok()) }),
+    );
 }
 
 /// A block starts.
@@ -218,7 +226,9 @@ pub fn test_done(file: &str, name: &str, line: u32, ms: f64, failure: Option<Fai
     });
     let ms = (ms * 1000.0).round() / 1000.0;
     match failure {
-        None => emit(json!({ "event": "passed", "file": file, "name": name, "line": line, "ms": ms })),
+        None => {
+            emit(json!({ "event": "passed", "file": file, "name": name, "line": line, "ms": ms }))
+        }
         Some(f) => {
             let mut ev = json!({ "event": "failed", "file": file, "name": name, "line": line, "ms": ms,
                                  "message": f.message,
@@ -259,14 +269,18 @@ pub fn file_done(file: &str, passed: usize, failed: usize, error: Option<Failure
         json!({ "kind": kind, "message": f.message, "line": f.line, "col": f.col,
                 "file": f.file.unwrap_or_else(|| file.to_string()), "frames": frames_json(&f.frames, file) })
     });
-    emit(json!({ "event": "file", "file": file, "passed": passed, "failed": failed, "error": err }));
+    emit(
+        json!({ "event": "file", "file": file, "passed": passed, "failed": failed, "error": err }),
+    );
 }
 
 /// The run is over.
 pub fn finished(passed: usize, failed: usize, files: usize, ms: u128, code: i32) {
     let skipped = with_state(|s| s.skipped);
-    emit(json!({ "event": "finished", "passed": passed, "failed": failed, "skipped": skipped, "files": files,
-                 "ms": ms as u64, "code": code }));
+    emit(
+        json!({ "event": "finished", "passed": passed, "failed": failed, "skipped": skipped, "files": files,
+                 "ms": ms as u64, "code": code }),
+    );
 }
 
 /// `--verify-tiers` found native code and the VM disagreeing: said as an
@@ -279,17 +293,23 @@ pub fn divergence(what: &str, native: &str, vm: &str) {
             s.passed,
             s.failed,
             s.files,
-            s.started.map(|t| t.elapsed().as_millis() as u64).unwrap_or(0),
+            s.started
+                .map(|t| t.elapsed().as_millis() as u64)
+                .unwrap_or(0),
         )
     });
     let (file, name, line) = match test {
         Some((f, n, l)) => (Some(f), Some(n), Some(l)),
         None => (None, None, None),
     };
-    emit(json!({ "event": "divergence", "function": what, "native": native, "vm": vm,
-                 "file": file, "name": name, "line": line }));
-    emit(json!({ "event": "finished", "passed": passed, "failed": failed + 1, "skipped": 0, "files": files,
-                 "ms": ms, "code": 102, "aborted": "divergence" }));
+    emit(
+        json!({ "event": "divergence", "function": what, "native": native, "vm": vm,
+                 "file": file, "name": name, "line": line }),
+    );
+    emit(
+        json!({ "event": "finished", "passed": passed, "failed": failed + 1, "skipped": 0, "files": files,
+                 "ms": ms, "code": 102, "aborted": "divergence" }),
+    );
 }
 
 /// A failing `assert_eq` (`kind` `assert_eq`; `assert_ne`; a text
@@ -353,13 +373,18 @@ fn frames_json(frames: &[String], entry: &str) -> J {
             .rev()
             .map(|frame| {
                 let (name, file) = match frame.rfind(" (") {
-                    Some(i) if frame.ends_with(')') => (frame[..i].to_string(), frame[i + 2..frame.len() - 1].to_string()),
+                    Some(i) if frame.ends_with(')') => (
+                        frame[..i].to_string(),
+                        frame[i + 2..frame.len() - 1].to_string(),
+                    ),
                     _ => (frame.clone(), entry.to_string()),
                 };
                 let bare = name.rsplit('.').next().unwrap_or(&name).to_string();
-                let line = std::fs::read_to_string(&file)
-                    .ok()
-                    .and_then(|text| crate::tier_stats::fn_lines(&text).get(&bare).map(|(l, _)| *l));
+                let line = std::fs::read_to_string(&file).ok().and_then(|text| {
+                    crate::tier_stats::fn_lines(&text)
+                        .get(&bare)
+                        .map(|(l, _)| *l)
+                });
                 json!({ "name": name, "file": file, "line": line })
             })
             .collect(),
@@ -372,14 +397,23 @@ fn clip(s: String) -> (String, bool) {
     if s.len() <= CLIP {
         return (s, false);
     }
-    let cut = (0..=CLIP).rev().find(|i| s.is_char_boundary(*i)).unwrap_or(0);
+    let cut = (0..=CLIP)
+        .rev()
+        .find(|i| s.is_char_boundary(*i))
+        .unwrap_or(0);
     (s[..cut].to_string(), true)
 }
 
 /// The last call a test made to a function (`--record-args`).
 pub fn args(call: &crate::interpreter::TestCallArgs) {
-    let args: Vec<J> = call.args.iter().map(|a| literal(a).map(J::String).unwrap_or(J::Null)).collect();
-    emit(json!({ "event": "args", "file": call.file, "fn": call.name, "params": call.params, "args": args, "test": call.test }));
+    let args: Vec<J> = call
+        .args
+        .iter()
+        .map(|a| literal(a).map(J::String).unwrap_or(J::Null))
+        .collect();
+    emit(
+        json!({ "event": "args", "file": call.file, "fn": call.name, "params": call.params, "args": args, "test": call.test }),
+    );
 }
 
 /// The longest literal `args` says; a longer value is left for a person
@@ -391,7 +425,11 @@ const LITERAL_MAX: usize = 4000;
 /// Result, a float that is not finite, a value too long to read).
 pub fn literal(v: &Value) -> Option<String> {
     let mut out = String::new();
-    if write_literal(v, &mut out, 0) && out.len() <= LITERAL_MAX { Some(out) } else { None }
+    if write_literal(v, &mut out, 0) && out.len() <= LITERAL_MAX {
+        Some(out)
+    } else {
+        None
+    }
 }
 
 fn write_literal(v: &Value, out: &mut String, depth: usize) -> bool {
@@ -452,7 +490,11 @@ fn write_literal(v: &Value, out: &mut String, depth: usize) -> bool {
                 if i > 0 {
                     out.push_str(", ");
                 }
-                if !write_literal(&Value::String(std::sync::Arc::new(k.clone())), out, depth + 1) {
+                if !write_literal(
+                    &Value::String(std::sync::Arc::new(k.clone())),
+                    out,
+                    depth + 1,
+                ) {
                     return false;
                 }
                 out.push_str(": ");
@@ -473,7 +515,8 @@ fn write_literal(v: &Value, out: &mut String, depth: usize) -> bool {
 pub fn value_json(v: &Value) -> J {
     let (show, cut) = clip(v.to_string());
     let (pretty, _) = clip(pretty(v, 0));
-    let mut o = json!({ "type": v.type_name(), "show": show, "pretty": pretty, "value": plain_json(v, 0) });
+    let mut o =
+        json!({ "type": v.type_name(), "show": show, "pretty": pretty, "value": plain_json(v, 0) });
     if cut {
         o["clipped"] = J::Bool(true);
     }
@@ -495,7 +538,13 @@ fn plain_json(v: &Value, depth: usize) -> J {
         Value::String(s) => J::String(s.to_string()),
         Value::Boolean(b) => J::Bool(*b),
         Value::Unit => J::Null,
-        Value::List(items) | Value::Tuple(items) => J::Array(items.iter().take(2000).map(|x| plain_json(x, depth + 1)).collect()),
+        Value::List(items) | Value::Tuple(items) => J::Array(
+            items
+                .iter()
+                .take(2000)
+                .map(|x| plain_json(x, depth + 1))
+                .collect(),
+        ),
         Value::Map(m) => {
             let mut o = serde_json::Map::new();
             let mut keys: Vec<&String> = m.keys().collect();
@@ -531,22 +580,45 @@ pub fn pretty(v: &Value, indent: usize) -> String {
         if items.is_empty() {
             return format!("{}{}", open, close);
         }
-        format!("{}\n{}{}\n{}{}", open, pad, items.join(&format!(",\n{}", pad)), end, close)
+        format!(
+            "{}\n{}{}\n{}{}",
+            open,
+            pad,
+            items.join(&format!(",\n{}", pad)),
+            end,
+            close
+        )
     };
     match v {
-        Value::List(items) => join("[", items.iter().map(|x| pretty(x, indent + 1)).collect(), "]"),
-        Value::Tuple(items) => join("(", items.iter().map(|x| pretty(x, indent + 1)).collect(), ")"),
+        Value::List(items) => join(
+            "[",
+            items.iter().map(|x| pretty(x, indent + 1)).collect(),
+            "]",
+        ),
+        Value::Tuple(items) => join(
+            "(",
+            items.iter().map(|x| pretty(x, indent + 1)).collect(),
+            ")",
+        ),
         Value::Map(m) => {
             let mut keys: Vec<&String> = m.keys().collect();
             keys.sort();
-            join("#{", keys.iter().map(|k| format!("\"{}\": {}", k, pretty(&m[*k], indent + 1))).collect(), "}")
+            join(
+                "#{",
+                keys.iter()
+                    .map(|k| format!("\"{}\": {}", k, pretty(&m[*k], indent + 1)))
+                    .collect(),
+                "}",
+            )
         }
         Value::Struct { type_name, fields } => {
             let mut keys: Vec<&String> = fields.keys().collect();
             keys.sort();
             join(
                 &format!("<struct: {}>{{", type_name),
-                keys.iter().map(|k| format!("{}: {}", k, pretty(&fields[*k], indent + 1))).collect(),
+                keys.iter()
+                    .map(|k| format!("{}: {}", k, pretty(&fields[*k], indent + 1)))
+                    .collect(),
                 "}",
             )
         }

@@ -323,10 +323,19 @@ fn http_network_failure_is_still_a_value() {
 
 #[test]
 fn bytes_to_and_from_hex() {
-    assert_eq!(run("bytes.to_hex(bytes.from_list([0, 171, 255, 16]))").unwrap(), "00abff10");
+    assert_eq!(
+        run("bytes.to_hex(bytes.from_list([0, 171, 255, 16]))").unwrap(),
+        "00abff10"
+    );
     assert_eq!(run("bytes.to_hex(bytes.from_list([]))").unwrap(), "");
-    assert_eq!(run("show(bytes.to_list(unwrap(bytes.from_hex(\"00ABff10\"))))").unwrap(), "[0, 171, 255, 16]");
-    assert_eq!(run("show(is_err(bytes.from_hex(\"abc\")))").unwrap(), "true");
+    assert_eq!(
+        run("show(bytes.to_list(unwrap(bytes.from_hex(\"00ABff10\"))))").unwrap(),
+        "[0, 171, 255, 16]"
+    );
+    assert_eq!(
+        run("show(is_err(bytes.from_hex(\"abc\")))").unwrap(),
+        "true"
+    );
     assert_eq!(run("show(is_err(bytes.from_hex(\"zz\")))").unwrap(), "true");
     assert_eq!(
         run("let b = bytes.from_list(map(range(0, 256), (i) => i))\nshow(bytes.to_list(unwrap(bytes.from_hex(bytes.to_hex(b)))) == bytes.to_list(b))").unwrap(),

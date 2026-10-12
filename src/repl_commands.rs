@@ -21,7 +21,10 @@ pub enum Note {
     /// panel), `clear_history`, `quit` (the session ends), `multiline`.
     Effect(&'static str),
     /// A value, with what it is (`value`, a variable's name, `bindings`).
-    Value { label: String, value: crate::ast::Value },
+    Value {
+        label: String,
+        value: crate::ast::Value,
+    },
     /// A type, as `:type` says it.
     Type(String),
     /// How long an evaluation took, ms.
@@ -110,51 +113,411 @@ const fn c(
     client: bool,
     tab: bool,
 ) -> CommandSpec {
-    CommandSpec { name, aliases, usage, summary, arg, group, client, tab }
+    CommandSpec {
+        name,
+        aliases,
+        usage,
+        summary,
+        arg,
+        group,
+        client,
+        tab,
+    }
 }
 
 /// Every command, in the order the terminal's completion lists them
 /// (those with `tab`), the others after.
 pub const COMMANDS: &[CommandSpec] = &[
-    c(":help", &[], ":help [topic]", "Help: the overview, a function, a module, a category; list, examples, syntax, tutorials, search <query>, contextual", Arg::Topic, "Help", false, true),
-    c(":quit", &["quit"], ":quit", "End the session", Arg::None, "Session", true, true),
-    c(":env", &[], ":env [--full]", "The core functions and the session's bindings", Arg::Words(&["--full"]), "Values", false, true),
-    c(":clear", &[], ":clear [env|history]", "Clear the screen; env: forget the session's bindings; history: forget the history", Arg::Words(&["env", "history"]), "Session", true, true),
-    c(":ovm", &[], ":ovm [status|<function>]", "The bytecode tier: what was compiled, what ran where, why a function was refused", Arg::Fn, "Performance", false, true),
-    c(":version", &[], ":version", "The olang version", Arg::None, "Session", false, true),
-    c(":history", &[], ":history [<count>|search <pattern>]", "The inputs of the session, the last <count>, or those containing <pattern>", Arg::Words(&["search"]), "Session", true, true),
-    c(":type", &[], ":type <expression>", "The type of a value, deeply (List<Int>)", Arg::Code, "Values", false, true),
-    c(":time", &[], ":time <expression>", "Evaluate and say how long it took", Arg::Code, "Performance", false, true),
-    c(":memory", &[], ":memory", "How memory is managed and the session's bindings", Arg::None, "Performance", false, true),
-    c(":stats", &[], ":stats", "The bytecode tier's counts: promoted, rejected, calls", Arg::None, "Performance", false, true),
-    c(":parallel", &[], ":parallel [status|enable|disable|threshold <n>]", "Automatic parallelism: its state, on or off, the list size it starts at", Arg::Words(&["status", "enable", "disable", "threshold"]), "Performance", false, true),
-    c(":run", &[], ":run <file>", "Run an olang file in the session", Arg::File, "Files and shell", false, true),
-    c(":debug", &[], ":debug [on|off|<expression>]", "Debug mode, or step through an expression (its time, the watched variables it changed)", Arg::Code, "Debugging", false, true),
-    c(":watch", &[], ":watch [<variable>]", "Watch a variable (again: stop); with none, those watched", Arg::Var, "Debugging", false, true),
-    c(":inspect", &[], ":inspect <variable>", "A variable in detail: type, value, length, fields, parameters", Arg::Var, "Debugging", false, true),
-    c(":trace", &[], ":trace [<function>]", "Trace a function (again: stop); with none, those traced", Arg::Fn, "Debugging", false, true),
-    c(":set", &[], ":set <variable> <value>", "Bind a variable to a value's result", Arg::Var, "Debugging", false, true),
-    c(":stack", &[], ":stack", "The debugger's call stack", Arg::None, "Debugging", false, true),
-    c(":profile", &[], ":profile <code>", "Run code under the sampling profiler: time by tier, functions, hottest paths", Arg::Code, "Performance", false, true),
-    c(":config", &[], ":config [<setting> <value>]", "The REPL's settings: prompt, show_types, debug_mode, time_commands", Arg::Words(&["prompt", "show_types", "debug_mode", "time_commands"]), "Session", false, true),
-    c(":benchmark", &[], ":benchmark <expression>", "Evaluate five times: each run, the average, least and most", Arg::Code, "Performance", false, true),
-    c(":search", &[], ":search <query> [category:<c>] [returns:<t>] [limit:<n>]", "Search the documentation, with filters", Arg::Topic, "Help", false, true),
-    c(":tutorial", &[], ":tutorial [<name>]", "The tutorials, or one", Arg::Tutorial, "Help", false, true),
-    c(":tutorial_run", &[], ":tutorial_run <name>", "A tutorial step by step: run each step's code, or your own", Arg::Tutorial, "Help", false, true),
-    c(":contextual_help", &[], ":contextual_help", "Suggestions from what you did recently", Arg::None, "Help", false, true),
-    c(":help_advanced", &[], ":help_advanced", "Search, tutorials and contextual help explained", Arg::None, "Help", false, true),
-    c(":sh", &["!"], ":sh <command>", "Run a command through your shell (also !<command>)", Arg::Shell, "Files and shell", false, true),
-    c(":cd", &[], ":cd [<folder>]", "Change the working folder (home with none); its package loads", Arg::Dir, "Files and shell", false, true),
-    c(":pwd", &[], ":pwd", "The working folder", Arg::None, "Files and shell", false, true),
-    c(":ls", &[], ":ls [<args>]", "List files (ls)", Arg::Path, "Files and shell", false, true),
-    c(":pkg", &[], ":pkg [load <path>]", "Load the working folder's package again, or a package at a path, for `use`", Arg::Words(&["load"]), "Packages", false, false),
-    c(":use", &[], ":use <module>", "The statement `use <module>` (the colon is forgiven)", Arg::Code, "Values", false, false),
-    c(":let", &[], ":let <name> = <value>", "The statement `let …` (the colon is forgiven)", Arg::Code, "Values", false, false),
-    c(":fn", &[], ":fn <name>(<params>) = <body>", "The statement `fn …` (the colon is forgiven)", Arg::Code, "Values", false, false),
-    c(":!", &[], ":!<n>", "Evaluate input <n> of the history again", Arg::None, "Session", true, false),
-    c(":ml", &[], ":ml", "Multi-line input: lines collect until :end evaluates them, :cancel abandons", Arg::None, "Input", true, false),
-    c(":end", &[], ":end", "Evaluate the multi-line input", Arg::None, "Input", true, false),
-    c(":cancel", &[], ":cancel", "Abandon the multi-line input", Arg::None, "Input", true, false),
+    c(
+        ":help",
+        &[],
+        ":help [topic]",
+        "Help: the overview, a function, a module, a category; list, examples, syntax, tutorials, search <query>, contextual",
+        Arg::Topic,
+        "Help",
+        false,
+        true,
+    ),
+    c(
+        ":quit",
+        &["quit"],
+        ":quit",
+        "End the session",
+        Arg::None,
+        "Session",
+        true,
+        true,
+    ),
+    c(
+        ":env",
+        &[],
+        ":env [--full]",
+        "The core functions and the session's bindings",
+        Arg::Words(&["--full"]),
+        "Values",
+        false,
+        true,
+    ),
+    c(
+        ":clear",
+        &[],
+        ":clear [env|history]",
+        "Clear the screen; env: forget the session's bindings; history: forget the history",
+        Arg::Words(&["env", "history"]),
+        "Session",
+        true,
+        true,
+    ),
+    c(
+        ":ovm",
+        &[],
+        ":ovm [status|<function>]",
+        "The bytecode tier: what was compiled, what ran where, why a function was refused",
+        Arg::Fn,
+        "Performance",
+        false,
+        true,
+    ),
+    c(
+        ":version",
+        &[],
+        ":version",
+        "The olang version",
+        Arg::None,
+        "Session",
+        false,
+        true,
+    ),
+    c(
+        ":history",
+        &[],
+        ":history [<count>|search <pattern>]",
+        "The inputs of the session, the last <count>, or those containing <pattern>",
+        Arg::Words(&["search"]),
+        "Session",
+        true,
+        true,
+    ),
+    c(
+        ":type",
+        &[],
+        ":type <expression>",
+        "The type of a value, deeply (List<Int>)",
+        Arg::Code,
+        "Values",
+        false,
+        true,
+    ),
+    c(
+        ":time",
+        &[],
+        ":time <expression>",
+        "Evaluate and say how long it took",
+        Arg::Code,
+        "Performance",
+        false,
+        true,
+    ),
+    c(
+        ":memory",
+        &[],
+        ":memory",
+        "How memory is managed and the session's bindings",
+        Arg::None,
+        "Performance",
+        false,
+        true,
+    ),
+    c(
+        ":stats",
+        &[],
+        ":stats",
+        "The bytecode tier's counts: promoted, rejected, calls",
+        Arg::None,
+        "Performance",
+        false,
+        true,
+    ),
+    c(
+        ":parallel",
+        &[],
+        ":parallel [status|enable|disable|threshold <n>]",
+        "Automatic parallelism: its state, on or off, the list size it starts at",
+        Arg::Words(&["status", "enable", "disable", "threshold"]),
+        "Performance",
+        false,
+        true,
+    ),
+    c(
+        ":run",
+        &[],
+        ":run <file>",
+        "Run an olang file in the session",
+        Arg::File,
+        "Files and shell",
+        false,
+        true,
+    ),
+    c(
+        ":debug",
+        &[],
+        ":debug [on|off|<expression>]",
+        "Debug mode, or step through an expression (its time, the watched variables it changed)",
+        Arg::Code,
+        "Debugging",
+        false,
+        true,
+    ),
+    c(
+        ":watch",
+        &[],
+        ":watch [<variable>]",
+        "Watch a variable (again: stop); with none, those watched",
+        Arg::Var,
+        "Debugging",
+        false,
+        true,
+    ),
+    c(
+        ":inspect",
+        &[],
+        ":inspect <variable>",
+        "A variable in detail: type, value, length, fields, parameters",
+        Arg::Var,
+        "Debugging",
+        false,
+        true,
+    ),
+    c(
+        ":trace",
+        &[],
+        ":trace [<function>]",
+        "Trace a function (again: stop); with none, those traced",
+        Arg::Fn,
+        "Debugging",
+        false,
+        true,
+    ),
+    c(
+        ":set",
+        &[],
+        ":set <variable> <value>",
+        "Bind a variable to a value's result",
+        Arg::Var,
+        "Debugging",
+        false,
+        true,
+    ),
+    c(
+        ":stack",
+        &[],
+        ":stack",
+        "The debugger's call stack",
+        Arg::None,
+        "Debugging",
+        false,
+        true,
+    ),
+    c(
+        ":profile",
+        &[],
+        ":profile <code>",
+        "Run code under the sampling profiler: time by tier, functions, hottest paths",
+        Arg::Code,
+        "Performance",
+        false,
+        true,
+    ),
+    c(
+        ":config",
+        &[],
+        ":config [<setting> <value>]",
+        "The REPL's settings: prompt, show_types, debug_mode, time_commands",
+        Arg::Words(&["prompt", "show_types", "debug_mode", "time_commands"]),
+        "Session",
+        false,
+        true,
+    ),
+    c(
+        ":benchmark",
+        &[],
+        ":benchmark <expression>",
+        "Evaluate five times: each run, the average, least and most",
+        Arg::Code,
+        "Performance",
+        false,
+        true,
+    ),
+    c(
+        ":search",
+        &[],
+        ":search <query> [category:<c>] [returns:<t>] [limit:<n>]",
+        "Search the documentation, with filters",
+        Arg::Topic,
+        "Help",
+        false,
+        true,
+    ),
+    c(
+        ":tutorial",
+        &[],
+        ":tutorial [<name>]",
+        "The tutorials, or one",
+        Arg::Tutorial,
+        "Help",
+        false,
+        true,
+    ),
+    c(
+        ":tutorial_run",
+        &[],
+        ":tutorial_run <name>",
+        "A tutorial step by step: run each step's code, or your own",
+        Arg::Tutorial,
+        "Help",
+        false,
+        true,
+    ),
+    c(
+        ":contextual_help",
+        &[],
+        ":contextual_help",
+        "Suggestions from what you did recently",
+        Arg::None,
+        "Help",
+        false,
+        true,
+    ),
+    c(
+        ":help_advanced",
+        &[],
+        ":help_advanced",
+        "Search, tutorials and contextual help explained",
+        Arg::None,
+        "Help",
+        false,
+        true,
+    ),
+    c(
+        ":sh",
+        &["!"],
+        ":sh <command>",
+        "Run a command through your shell (also !<command>)",
+        Arg::Shell,
+        "Files and shell",
+        false,
+        true,
+    ),
+    c(
+        ":cd",
+        &[],
+        ":cd [<folder>]",
+        "Change the working folder (home with none); its package loads",
+        Arg::Dir,
+        "Files and shell",
+        false,
+        true,
+    ),
+    c(
+        ":pwd",
+        &[],
+        ":pwd",
+        "The working folder",
+        Arg::None,
+        "Files and shell",
+        false,
+        true,
+    ),
+    c(
+        ":ls",
+        &[],
+        ":ls [<args>]",
+        "List files (ls)",
+        Arg::Path,
+        "Files and shell",
+        false,
+        true,
+    ),
+    c(
+        ":pkg",
+        &[],
+        ":pkg [load <path>]",
+        "Load the working folder's package again, or a package at a path, for `use`",
+        Arg::Words(&["load"]),
+        "Packages",
+        false,
+        false,
+    ),
+    c(
+        ":use",
+        &[],
+        ":use <module>",
+        "The statement `use <module>` (the colon is forgiven)",
+        Arg::Code,
+        "Values",
+        false,
+        false,
+    ),
+    c(
+        ":let",
+        &[],
+        ":let <name> = <value>",
+        "The statement `let …` (the colon is forgiven)",
+        Arg::Code,
+        "Values",
+        false,
+        false,
+    ),
+    c(
+        ":fn",
+        &[],
+        ":fn <name>(<params>) = <body>",
+        "The statement `fn …` (the colon is forgiven)",
+        Arg::Code,
+        "Values",
+        false,
+        false,
+    ),
+    c(
+        ":!",
+        &[],
+        ":!<n>",
+        "Evaluate input <n> of the history again",
+        Arg::None,
+        "Session",
+        true,
+        false,
+    ),
+    c(
+        ":ml",
+        &[],
+        ":ml",
+        "Multi-line input: lines collect until :end evaluates them, :cancel abandons",
+        Arg::None,
+        "Input",
+        true,
+        false,
+    ),
+    c(
+        ":end",
+        &[],
+        ":end",
+        "Evaluate the multi-line input",
+        Arg::None,
+        "Input",
+        true,
+        false,
+    ),
+    c(
+        ":cancel",
+        &[],
+        ":cancel",
+        "Abandon the multi-line input",
+        Arg::None,
+        "Input",
+        true,
+        false,
+    ),
 ];
 
 /// The terminal REPL's TAB-completed commands, in its order.
@@ -171,7 +534,9 @@ pub fn find(word: &str) -> Option<&'static CommandSpec> {
     if word.starts_with('!') {
         return COMMANDS.iter().find(|c| c.name == ":sh");
     }
-    COMMANDS.iter().find(|c| c.name == word || c.aliases.contains(&word))
+    COMMANDS
+        .iter()
+        .find(|c| c.name == word || c.aliases.contains(&word))
 }
 
 /// The nearest of `candidates` to a mistyped `word`, as the terminal
@@ -180,7 +545,12 @@ pub fn nearest<'a>(word: &str, candidates: &[&'a str]) -> Option<&'a str> {
     let max_distance = (word.chars().count() / 3).clamp(1, 3);
     candidates
         .iter()
-        .map(|c| (crate::interpreter::IntuitiveErrorFormatter::levenshtein_distance(word, c), *c))
+        .map(|c| {
+            (
+                crate::interpreter::IntuitiveErrorFormatter::levenshtein_distance(word, c),
+                *c,
+            )
+        })
         .filter(|(d, _)| *d <= max_distance)
         .min()
         .map(|(_, c)| c)
@@ -188,7 +558,11 @@ pub fn nearest<'a>(word: &str, candidates: &[&'a str]) -> Option<&'a str> {
 
 /// The nearest of every command (and its aliases) to `word`.
 pub fn suggest(word: &str) -> Option<&'static str> {
-    let names: Vec<&'static str> = COMMANDS.iter().filter(|c| c.name != ":!").map(|c| c.name).collect();
+    let names: Vec<&'static str> = COMMANDS
+        .iter()
+        .filter(|c| c.name != ":!")
+        .map(|c| c.name)
+        .collect();
     nearest(word, &names)
 }
 
@@ -214,7 +588,10 @@ pub fn styled_lines(text: &str) -> Vec<Vec<Run>> {
     let flush = |lines: &mut Vec<Vec<Run>>, cur: &mut Run| {
         if !cur.text.is_empty() {
             let t = std::mem::take(&mut cur.text);
-            lines.last_mut().unwrap().push(Run { text: t, ..cur.clone() });
+            lines.last_mut().unwrap().push(Run {
+                text: t,
+                ..cur.clone()
+            });
         }
     };
     while let Some(ch) = chars.next() {
@@ -232,7 +609,11 @@ pub fn styled_lines(text: &str) -> Vec<Vec<Run>> {
                 }
                 if fin == 'm' {
                     flush(&mut lines, &mut cur);
-                    let codes: Vec<u32> = if params.is_empty() { vec![0] } else { params.split(';').filter_map(|p| p.parse().ok()).collect() };
+                    let codes: Vec<u32> = if params.is_empty() {
+                        vec![0]
+                    } else {
+                        params.split(';').filter_map(|p| p.parse().ok()).collect()
+                    };
                     let mut i = 0;
                     while i < codes.len() {
                         match codes[i] {
@@ -353,7 +734,13 @@ pub fn in_string(before: &str) -> bool {
 fn word_start(before: &str, extra: &[char]) -> usize {
     before
         .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.' || extra.contains(&c)))
-        .map(|i| i + before[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1))
+        .map(|i| {
+            i + before[i..]
+                .chars()
+                .next()
+                .map(|c| c.len_utf8())
+                .unwrap_or(1)
+        })
         .unwrap_or(0)
 }
 
@@ -369,22 +756,36 @@ pub fn complete(line: &str, pos: usize, names: &Names) -> (usize, Vec<Item>) {
         let items = COMMANDS
             .iter()
             .filter(|c| c.name != ":!" && c.name.starts_with(trimmed))
-            .map(|c| Item { label: c.name.to_string(), kind: "command", detail: c.summary.to_string() })
+            .map(|c| Item {
+                label: c.name.to_string(),
+                kind: "command",
+                detail: c.summary.to_string(),
+            })
             .collect();
         return (lead, items);
     }
     if let Some(rest) = trimmed.strip_prefix('!') {
-        return complete_path(before, lead + 1 + (rest.len() - rest.trim_start().len()), names, PathKind::Any);
+        return complete_path(
+            before,
+            lead + 1 + (rest.len() - rest.trim_start().len()),
+            names,
+            PathKind::Any,
+        );
     }
     if trimmed.starts_with(':') {
         let first_end = trimmed.find(char::is_whitespace).unwrap_or(trimmed.len());
         let word = &trimmed[..first_end];
         let args = &trimmed[first_end..];
-        let Some(cmd) = find(word) else { return (pos, Vec::new()) };
-        let arg_index = args.split_whitespace().count() - usize::from(!args.ends_with(char::is_whitespace) && !args.trim().is_empty());
+        let Some(cmd) = find(word) else {
+            return (pos, Vec::new());
+        };
+        let arg_index = args.split_whitespace().count()
+            - usize::from(!args.ends_with(char::is_whitespace) && !args.trim().is_empty());
         return match cmd.arg {
             Arg::None => (pos, Vec::new()),
-            Arg::Path | Arg::Shell => complete_path(before, path_start(before), names, PathKind::Any),
+            Arg::Path | Arg::Shell => {
+                complete_path(before, path_start(before), names, PathKind::Any)
+            }
             Arg::Dir => complete_path(before, path_start(before), names, PathKind::Dir),
             Arg::File => complete_path(before, path_start(before), names, PathKind::Olang),
             Arg::Words(ws) => {
@@ -413,7 +814,11 @@ pub fn complete(line: &str, pos: usize, names: &Names) -> (usize, Vec<Item>) {
                     .vars
                     .iter()
                     .filter(|(n, _)| n.starts_with(w) && n != w)
-                    .map(|(n, t)| Item { label: n.clone(), kind: "variable", detail: t.clone() })
+                    .map(|(n, t)| Item {
+                        label: n.clone(),
+                        kind: "variable",
+                        detail: t.clone(),
+                    })
                     .collect();
                 (start, items)
             }
@@ -422,11 +827,23 @@ pub fn complete(line: &str, pos: usize, names: &Names) -> (usize, Vec<Item>) {
                 let w = &before[start..];
                 let mut items: Vec<Item> = Vec::new();
                 if cmd.name == ":ovm" && "status".starts_with(w) && w != "status" {
-                    items.push(Item { label: "status".into(), kind: "option", detail: String::new() });
+                    items.push(Item {
+                        label: "status".into(),
+                        kind: "option",
+                        detail: String::new(),
+                    });
                 }
-                let mut fns: Vec<&String> = names.fns.iter().filter(|n| n.starts_with(w) && *n != w).collect();
+                let mut fns: Vec<&String> = names
+                    .fns
+                    .iter()
+                    .filter(|n| n.starts_with(w) && *n != w)
+                    .collect();
                 fns.sort();
-                items.extend(fns.into_iter().map(|n| Item { label: n.clone(), kind: "function", detail: String::new() }));
+                items.extend(fns.into_iter().map(|n| Item {
+                    label: n.clone(),
+                    kind: "function",
+                    detail: String::new(),
+                }));
                 (start, items)
             }
             Arg::Topic => {
@@ -434,16 +851,38 @@ pub fn complete(line: &str, pos: usize, names: &Names) -> (usize, Vec<Item>) {
                 let w = &before[start..];
                 let mut items: Vec<Item> = Vec::new();
                 if arg_index == 0 && cmd.name == ":help" {
-                    for t in ["list", "examples", "syntax", "tutorials", "tutorial", "search", "contextual"] {
+                    for t in [
+                        "list",
+                        "examples",
+                        "syntax",
+                        "tutorials",
+                        "tutorial",
+                        "search",
+                        "contextual",
+                    ] {
                         if t.starts_with(w) && t != w {
-                            items.push(Item { label: t.into(), kind: "option", detail: String::new() });
+                            items.push(Item {
+                                label: t.into(),
+                                kind: "option",
+                                detail: String::new(),
+                            });
                         }
                     }
                 }
-                let mut lib: Vec<&String> = names.library.iter().chain(names.topics.iter()).chain(names.fns.iter()).filter(|n| !w.is_empty() && n.starts_with(w) && *n != w).collect();
+                let mut lib: Vec<&String> = names
+                    .library
+                    .iter()
+                    .chain(names.topics.iter())
+                    .chain(names.fns.iter())
+                    .filter(|n| !w.is_empty() && n.starts_with(w) && *n != w)
+                    .collect();
                 lib.sort();
                 lib.dedup();
-                items.extend(lib.into_iter().take(200).map(|n| Item { label: n.clone(), kind: if n.contains('.') { "function" } else { "topic" }, detail: String::new() }));
+                items.extend(lib.into_iter().take(200).map(|n| Item {
+                    label: n.clone(),
+                    kind: if n.contains('.') { "function" } else { "topic" },
+                    detail: String::new(),
+                }));
                 (start, items)
             }
             Arg::Code => {
@@ -463,7 +902,17 @@ pub fn complete(line: &str, pos: usize, names: &Names) -> (usize, Vec<Item>) {
 fn words(before: &str, ws: &[&str], kind: &'static str) -> (usize, Vec<Item>) {
     let start = word_start(before, &['-']);
     let w = &before[start..];
-    (start, ws.iter().filter(|x| x.starts_with(w) && **x != w).map(|x| Item { label: x.to_string(), kind, detail: String::new() }).collect())
+    (
+        start,
+        ws.iter()
+            .filter(|x| x.starts_with(w) && **x != w)
+            .map(|x| Item {
+                label: x.to_string(),
+                kind,
+                detail: String::new(),
+            })
+            .collect(),
+    )
 }
 
 /// Code: paths inside a string, else the names the session knows.
@@ -483,9 +932,21 @@ pub fn complete_code(line: &str, pos: usize, names: &Names) -> (usize, Vec<Item>
         .vars
         .iter()
         .filter(|(n, _)| n.starts_with(w) && n != w)
-        .map(|(n, t)| Item { label: n.clone(), kind: if t.starts_with("fn") || t == "Function" { "function" } else { "variable" }, detail: t.clone() })
+        .map(|(n, t)| Item {
+            label: n.clone(),
+            kind: if t.starts_with("fn") || t == "Function" {
+                "function"
+            } else {
+                "variable"
+            },
+            detail: t.clone(),
+        })
         .collect();
-    let mut lib: Vec<&String> = names.library.iter().filter(|n| n.starts_with(w) && *n != w).collect();
+    let mut lib: Vec<&String> = names
+        .library
+        .iter()
+        .filter(|n| n.starts_with(w) && *n != w)
+        .collect();
     lib.sort();
     lib.dedup();
     // after `module.` only the module's members; else no dotted names
@@ -494,7 +955,11 @@ pub fn complete_code(line: &str, pos: usize, names: &Names) -> (usize, Vec<Item>
         lib.into_iter()
             .filter(|n| dotted || !n.contains('.'))
             .take(200)
-            .map(|n| Item { label: n.clone(), kind: "function", detail: String::new() }),
+            .map(|n| Item {
+                label: n.clone(),
+                kind: "function",
+                detail: String::new(),
+            }),
     );
     (start, items)
 }
@@ -536,7 +1001,9 @@ fn complete_path(before: &str, start: usize, names: &Names, kind: PathKind) -> (
     } else {
         names.cwd.join(dir_part)
     };
-    let Ok(rd) = std::fs::read_dir(&base) else { return (start, Vec::new()) };
+    let Ok(rd) = std::fs::read_dir(&base) else {
+        return (start, Vec::new());
+    };
     let mut items: Vec<Item> = Vec::new();
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
@@ -555,9 +1022,16 @@ fn complete_path(before: &str, start: usize, names: &Names, kind: PathKind) -> (
             continue;
         }
         let label = format!("{}{}{}", dir_part, name, if is_dir { "/" } else { "" });
-        items.push(Item { label, kind: if is_dir { "folder" } else { "file" }, detail: String::new() });
+        items.push(Item {
+            label,
+            kind: if is_dir { "folder" } else { "file" },
+            detail: String::new(),
+        });
     }
-    items.sort_by(|a, b| (a.kind != "folder", a.label.to_lowercase()).cmp(&(b.kind != "folder", b.label.to_lowercase())));
+    items.sort_by(|a, b| {
+        (a.kind != "folder", a.label.to_lowercase())
+            .cmp(&(b.kind != "folder", b.label.to_lowercase()))
+    });
     items.truncate(200);
     (start, items)
 }
@@ -590,7 +1064,15 @@ mod tests {
     fn ansi_into_runs() {
         let l = styled_lines("\x1b[1;36mHi\x1b[0m there\nnext\n");
         assert_eq!(l.len(), 2);
-        assert_eq!(l[0][0], Run { text: "Hi".into(), color: Some("cyan"), bold: true, dim: false });
+        assert_eq!(
+            l[0][0],
+            Run {
+                text: "Hi".into(),
+                color: Some("cyan"),
+                bold: true,
+                dim: false
+            }
+        );
         assert_eq!(l[0][1].text, " there");
         assert_eq!(strip_ansi("\x1b[2J\x1b[1;1Ha\x1b[31mb"), "ab");
     }
@@ -612,12 +1094,18 @@ mod tests {
         let labels = |r: (usize, Vec<Item>)| r.1.into_iter().map(|i| i.label).collect::<Vec<_>>();
         assert!(labels(complete(":ti", 3, &names)).contains(&":time".to_string()));
         assert_eq!(labels(complete(":cd ", 4, &names)), vec!["src/"]);
-        assert_eq!(labels(complete(":run ", 5, &names)), vec!["src/", "main.ol"]);
+        assert_eq!(
+            labels(complete(":run ", 5, &names)),
+            vec!["src/", "main.ol"]
+        );
         assert_eq!(complete(":run ma", 7, &names).0, 5);
         assert_eq!(labels(complete(":inspect to", 11, &names)), vec!["total"]);
         assert_eq!(labels(complete(":trace tw", 9, &names)), vec!["twice"]);
         assert_eq!(labels(complete(":tutorial b", 11, &names)), vec!["basics"]);
-        assert_eq!(labels(complete(":parallel th", 12, &names)), vec!["threshold"]);
+        assert_eq!(
+            labels(complete(":parallel th", 12, &names)),
+            vec!["threshold"]
+        );
         assert_eq!(labels(complete("str.t", 5, &names)), vec!["str.trim"]);
         assert_eq!(labels(complete(":type tot", 9, &names)), vec!["total"]);
         let _ = std::fs::remove_dir_all(&dir);

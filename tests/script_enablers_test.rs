@@ -211,10 +211,17 @@ fn real_path_resolves_links_and_a_path_not_there_yet() {
     std::fs::create_dir_all(base.join("real")).unwrap();
     std::os::unix::fs::symlink(base.join("real"), base.join("link")).unwrap();
     let real = base.join("real").canonicalize().unwrap();
-    let ask = |p: std::path::PathBuf| eval(&format!("unwrap(fs.real_path({:?}))", p.to_string_lossy()));
+    let ask =
+        |p: std::path::PathBuf| eval(&format!("unwrap(fs.real_path({:?}))", p.to_string_lossy()));
     // through the link, and through `..`
-    assert_eq!(ask(base.join("link")), Value::String(real.to_string_lossy().into_owned().into()));
-    assert_eq!(ask(base.join("link/../link")), Value::String(real.to_string_lossy().into_owned().into()));
+    assert_eq!(
+        ask(base.join("link")),
+        Value::String(real.to_string_lossy().into_owned().into())
+    );
+    assert_eq!(
+        ask(base.join("link/../link")),
+        Value::String(real.to_string_lossy().into_owned().into())
+    );
     // a file not there yet: its folder made real, its name kept
     assert_eq!(
         ask(base.join("link/new.txt")),

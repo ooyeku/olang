@@ -257,7 +257,11 @@ fn from_hex(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let s = match one_arg(&args, "from_hex")? {
         Value::String(s) => s.clone(),
         other => {
-            return Err(format!("bytes.from_hex: argument must be a string, got {}", other.type_name()).into());
+            return Err(format!(
+                "bytes.from_hex: argument must be a string, got {}",
+                other.type_name()
+            )
+            .into());
         }
     };
     let digit = |c: u8| -> Option<u8> {
@@ -282,7 +286,11 @@ fn from_hex(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             _ => {
                 return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
                     "bytes.from_hex: not a hex digit at {}",
-                    if digit(pair[0]).is_none() { i * 2 } else { i * 2 + 1 }
+                    if digit(pair[0]).is_none() {
+                        i * 2
+                    } else {
+                        i * 2 + 1
+                    }
                 ))))));
             }
         }

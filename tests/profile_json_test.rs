@@ -425,7 +425,10 @@ fn a_program_profiles_itself_live_in_the_snapshot_format_and_stops() {
     assert_eq!(code, 0, "{out}\n{err}");
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines[0], "Ok(())");
-    assert!(lines[1].starts_with("Err("), "a second start while one runs is refused: {out}");
+    assert!(
+        lines[1].starts_with("Err("),
+        "a second start while one runs is refused: {out}"
+    );
     assert_eq!(lines[2], "mid true true");
     assert_eq!(lines[3], "Ok(())");
     assert!(lines[4].starts_with("Err("), "stopping twice: {out}");
@@ -449,13 +452,22 @@ fn a_program_profiles_itself_live_in_the_snapshot_format_and_stops() {
     assert!(!doc["series"].as_array().unwrap().is_empty());
     let (_, fib) = frame_named(&doc, "fib").expect("fib sampled");
     assert!(fib["file"].as_str().unwrap().ends_with("main.ol"));
-    assert!(doc["stacks"].as_array().unwrap().iter().all(|s| s["t"].is_array()));
+    assert!(
+        doc["stacks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["t"].is_array())
+    );
     assert!(dir.join("self2").is_dir());
 }
 
 #[test]
 fn a_live_profile_of_its_own_is_refused_in_an_armed_run() {
-    let dir = project("self-armed", "println(show(runtime.profile_live_start(fs.join(unwrap(os.cwd()), \"x\"))))\nprintln(show(runtime.profile_live_stop()))\n");
+    let dir = project(
+        "self-armed",
+        "println(show(runtime.profile_live_start(fs.join(unwrap(os.cwd()), \"x\"))))\nprintln(show(runtime.profile_live_stop()))\n",
+    );
     let (code, out, _) = olang(&dir, &["--profile-live", "armed", "main.ol"]);
     assert_eq!(code, 0);
     let lines: Vec<&str> = out.lines().collect();
@@ -463,7 +475,10 @@ fn a_live_profile_of_its_own_is_refused_in_an_armed_run() {
     // nor may it end the armed run's: that is the run's to end
     assert!(lines[1].starts_with("Err("), "{out}");
     // inside `olang profile`, the program's stop leaves the profile whole
-    let (code2, _, err2) = olang(&dir, &["profile", "main.ol", "--format", "json", "--out", "p.json"]);
+    let (code2, _, err2) = olang(
+        &dir,
+        &["profile", "main.ol", "--format", "json", "--out", "p.json"],
+    );
     assert_eq!(code2, 0, "{err2}");
     assert_eq!(read(&dir.join("p.json"))["kind"], "profile");
 }
@@ -516,13 +531,20 @@ os.exit(0)
 #[test]
 fn a_gui_program_ending_with_os_exit_is_profiled_to_its_end() {
     let dir = project("gui-exit", GUI_EXIT);
-    let (code, out, err) = olang(&dir, &["profile", "main.ol", "--format", "json", "--out", "p.json"]);
+    let (code, out, err) = olang(
+        &dir,
+        &["profile", "main.ol", "--format", "json", "--out", "p.json"],
+    );
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("true"), "{out}");
     let doc = read(&dir.join("p.json"));
     assert_eq!(doc["done"], true);
     assert_eq!(doc["exit"], 0);
-    assert!(doc["elapsed_ms"].as_f64().unwrap() >= 1400.0, "{}", doc["elapsed_ms"]);
+    assert!(
+        doc["elapsed_ms"].as_f64().unwrap() >= 1400.0,
+        "{}",
+        doc["elapsed_ms"]
+    );
     assert!(frame_named(&doc, "fib").is_some(), "fib sampled");
     // a point of the series every half second, each with samples: the
     // sampler ran from the first to the last
@@ -533,7 +555,12 @@ fn a_gui_program_ending_with_os_exit_is_profiled_to_its_end() {
         .collect();
     assert!(busy.len() >= 3, "{series:?}");
     for p in &busy[..busy.len() - 1] {
-        let n: u64 = p["samples"].as_object().unwrap().values().map(|v| v.as_u64().unwrap()).sum();
+        let n: u64 = p["samples"]
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|v| v.as_u64().unwrap())
+            .sum();
         assert!(n > 0, "a point with no samples: {p} in {series:?}");
     }
     let last = busy[busy.len() - 2]["t_ms"].as_f64().unwrap();

@@ -29,7 +29,11 @@ fn otc(dir: &Path, home: &Path, args: &[&str]) -> (bool, String) {
         .expect("spawn otc");
     (
         out.status.success(),
-        format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
     )
 }
 
@@ -43,10 +47,16 @@ fn toolchain(home: &Path, v: &str) -> PathBuf {
 }
 
 fn project(dir: &Path, pin: Option<&str>) {
-    let pin = pin.map(|p| format!("olang = \"{}\"\n", p)).unwrap_or_default();
+    let pin = pin
+        .map(|p| format!("olang = \"{}\"\n", p))
+        .unwrap_or_default();
     std::fs::write(dir.join("olang.toml"), format!("[package]\nname = \"app\"\nversion = \"0.1.0\"\n{}\n[dependencies]\nlib = {{ path = \"lib\" }}\n", pin)).unwrap();
     std::fs::create_dir_all(dir.join("lib")).unwrap();
-    std::fs::write(dir.join("lib/olang.toml"), "[package]\nname = \"lib\"\nversion = \"0.1.0\"\n").unwrap();
+    std::fs::write(
+        dir.join("lib/olang.toml"),
+        "[package]\nname = \"lib\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
     std::fs::write(dir.join("lib/index.ol"), "share fn one() = 1\n").unwrap();
 }
 
@@ -98,20 +108,32 @@ fn a_locks_olang_survives_an_install_when_the_manifest_names_none() {
     assert!(lock(&dir).contains("olang = \"0.86.0\""), "{}", lock(&dir));
     // a dependency added: the lock is rewritten, its olang kept
     std::fs::create_dir_all(dir.join("more")).unwrap();
-    std::fs::write(dir.join("more/olang.toml"), "[package]\nname = \"more\"\nversion = \"0.1.0\"\n").unwrap();
+    std::fs::write(
+        dir.join("more/olang.toml"),
+        "[package]\nname = \"more\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
     std::fs::write(dir.join("more/index.ol"), "share fn two() = 2\n").unwrap();
-    let m = std::fs::read_to_string(dir.join("olang.toml")).unwrap() + "more = { path = \"more\" }\n";
+    let m =
+        std::fs::read_to_string(dir.join("olang.toml")).unwrap() + "more = { path = \"more\" }\n";
     std::fs::write(dir.join("olang.toml"), m).unwrap();
     let (ok, out) = otc(&dir, &home, &["install"]);
     assert!(ok, "{out}");
     let l = lock(&dir);
-    assert!(l.contains("olang = \"0.86.0\"") && l.contains("[package.more]"), "{l}");
+    assert!(
+        l.contains("olang = \"0.86.0\"") && l.contains("[package.more]"),
+        "{l}"
+    );
     // `otc add` rewrites the manifest: a pin in it is kept
     project(&dir, Some("0.86"));
     toolchain(&home, "0.86.0");
     let (ok, out) = otc(&dir, &home, &["add", "more", "--path", "more"]);
     assert!(ok, "{out}");
-    assert!(std::fs::read_to_string(dir.join("olang.toml")).unwrap().contains("olang = \"0.86\""));
+    assert!(
+        std::fs::read_to_string(dir.join("olang.toml"))
+            .unwrap()
+            .contains("olang = \"0.86\"")
+    );
 }
 
 #[test]
@@ -122,10 +144,17 @@ fn a_pin_nothing_installed_satisfies_is_said_never_installed() {
     project(&dir, Some("9.9"));
     let (ok, out) = otc(&dir, &home, &["install"]);
     assert!(ok, "{out}");
-    assert!(out.contains("pins olang 9.9") && out.contains("otc toolchain install 9.9"), "{out}");
+    assert!(
+        out.contains("pins olang 9.9") && out.contains("otc toolchain install 9.9"),
+        "{out}"
+    );
     assert!(!lock(&dir).contains("olang ="), "{}", lock(&dir));
     // nothing was fetched into the toolchains
-    let names: Vec<String> = std::fs::read_dir(home.join("toolchains")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    let names: Vec<String> = std::fs::read_dir(home.join("toolchains"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
     assert_eq!(names, vec!["0.80.0"]);
     let (ok, out) = otc(&dir, &home, &["toolchain", "which"]);
     assert!(!ok);
@@ -140,7 +169,11 @@ fn a_local_build_is_linked_as_a_toolchain() {
     let bin = build.join("target/release");
     std::fs::create_dir_all(&bin).unwrap();
     std::fs::write(bin.join("olang"), "#!/bin/sh\n").unwrap();
-    let (ok, out) = otc(&dir, &home, &["toolchain", "link", "9.9.0", build.to_str().unwrap()]);
+    let (ok, out) = otc(
+        &dir,
+        &home,
+        &["toolchain", "link", "9.9.0", build.to_str().unwrap()],
+    );
     assert!(ok, "{out}");
     project(&dir, Some("9.9"));
     let (ok, out) = otc(&dir, &home, &["install"]);
@@ -148,7 +181,10 @@ fn a_local_build_is_linked_as_a_toolchain() {
     assert!(lock(&dir).contains("olang = \"9.9.0\""), "{}", lock(&dir));
     let (ok, out) = otc(&dir, &home, &["toolchain", "which"]);
     assert!(ok, "{out}");
-    assert_eq!(std::fs::canonicalize(out.trim()).unwrap(), std::fs::canonicalize(bin.join("olang")).unwrap());
+    assert_eq!(
+        std::fs::canonicalize(out.trim()).unwrap(),
+        std::fs::canonicalize(bin.join("olang")).unwrap()
+    );
 }
 
 #[test]
@@ -160,14 +196,24 @@ fn otc_install_writes_a_lock_never_lock_and_says_so() {
     let dir = scratch("never");
     project(&dir, None);
     let toml = std::fs::read_to_string(dir.join("olang.toml")).unwrap();
-    std::fs::write(dir.join("olang.toml"), toml.replace("version = \"0.1.0\"\n", "version = \"0.1.0\"\nlock = \"never\"\n")).unwrap();
+    std::fs::write(
+        dir.join("olang.toml"),
+        toml.replace(
+            "version = \"0.1.0\"\n",
+            "version = \"0.1.0\"\nlock = \"never\"\n",
+        ),
+    )
+    .unwrap();
     let (ok, out) = otc(&dir, &home, &["install"]);
     assert!(ok, "{out}");
     assert!(lock(&dir).contains("[package.lib]"), "{out}");
     assert!(out.contains("lock = \"never\""), "{out}");
     // a second install that changes nothing says nothing extra
     let (ok, out) = otc(&dir, &home, &["install"]);
-    assert!(ok && out.contains("olang.lock unchanged") && !out.contains("lock = \"never\""), "{out}");
+    assert!(
+        ok && out.contains("olang.lock unchanged") && !out.contains("lock = \"never\""),
+        "{out}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&home);
 }

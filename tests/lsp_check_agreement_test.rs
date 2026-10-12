@@ -406,7 +406,11 @@ fn check_json(file: &Path) -> (i32, serde_json::Value) {
         .output()
         .expect("run olang check --format json");
     let doc = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
-        panic!("{e}: {}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))
+        panic!(
+            "{e}: {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
     });
     (out.status.code().unwrap_or(-1), doc)
 }
@@ -445,7 +449,10 @@ fn check_as_json_is_what_the_server_publishes() {
         assert_eq!(d["range"], s["range"]);
         assert_eq!(d["code"], s["code"]);
         assert_eq!(d["severity"], sev(&s["severity"]));
-        assert_eq!(d["line"].as_u64().unwrap(), s["range"]["start"]["line"].as_u64().unwrap() + 1);
+        assert_eq!(
+            d["line"].as_u64().unwrap(),
+            s["range"]["start"]["line"].as_u64().unwrap() + 1
+        );
     }
     let by_code = |c: &str| ds.iter().filter(|d| d["code"] == c).count();
     assert_eq!(by_code("runtime"), 1, "{ds:#?}");
@@ -456,8 +463,15 @@ fn check_as_json_is_what_the_server_publishes() {
     assert_eq!(unused["tags"], serde_json::json!(["unnecessary"]));
     // a column counts characters (the server's range counts UTF-16 units)
     let typed = ds.iter().find(|d| d["code"] == "runtime").unwrap();
-    assert_eq!((typed["line"].as_u64(), typed["column"].as_u64()), (Some(4), Some(14)), "{typed}");
-    assert_eq!(typed["range"]["start"]["character"], 14, "after a character of two UTF-16 units: {typed}");
+    assert_eq!(
+        (typed["line"].as_u64(), typed["column"].as_u64()),
+        (Some(4), Some(14)),
+        "{typed}"
+    );
+    assert_eq!(
+        typed["range"]["start"]["character"], 14,
+        "after a character of two UTF-16 units: {typed}"
+    );
     assert_eq!(doc["errors"], 1);
     assert_eq!(doc["warnings"], 1);
 
@@ -466,10 +480,22 @@ fn check_as_json_is_what_the_server_publishes() {
     assert_eq!(code, 1);
     let files = doc["files"].as_array().unwrap();
     assert_eq!(files.len(), 3, "{doc}");
-    let bad = files.iter().find(|f| f["file"].as_str().unwrap().ends_with("bad.ol")).unwrap();
+    let bad = files
+        .iter()
+        .find(|f| f["file"].as_str().unwrap().ends_with("bad.ol"))
+        .unwrap();
     assert_eq!(bad["diagnostics"][0]["code"], "syntax");
-    let util = files.iter().find(|f| f["file"].as_str().unwrap().ends_with("util.ol")).unwrap();
-    assert!(util["diagnostics"].as_array().unwrap().iter().all(|d| d["severity"] != "error"));
+    let util = files
+        .iter()
+        .find(|f| f["file"].as_str().unwrap().ends_with("util.ol"))
+        .unwrap();
+    assert!(
+        util["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|d| d["severity"] != "error")
+    );
 }
 
 #[test]
@@ -494,5 +520,8 @@ fn a_unit_binding_is_not_a_tuple() {
         .collect();
     // a real tuple against a String is still said
     assert_eq!(warnings.len(), 1, "{warnings:?}");
-    assert!(warnings[0].contains("between Tuple and String"), "{warnings:?}");
+    assert!(
+        warnings[0].contains("between Tuple and String"),
+        "{warnings:?}"
+    );
 }

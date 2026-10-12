@@ -28,7 +28,11 @@ pub fn install(files: HashMap<PathBuf, Arc<[u8]>>, dependencies: HashMap<String,
 
 /// Install the application's files with each one's sha256: a file is
 /// checked against it the first time it is read.
-pub fn install_checked(files: HashMap<PathBuf, Arc<[u8]>>, sums: HashMap<PathBuf, String>, dependencies: HashMap<String, PathBuf>) {
+pub fn install_checked(
+    files: HashMap<PathBuf, Arc<[u8]>>,
+    sums: HashMap<PathBuf, String>,
+    dependencies: HashMap<String, PathBuf>,
+) {
     let mut dirs = HashSet::new();
     for path in files.keys() {
         let mut at = path.parent();
@@ -196,7 +200,9 @@ pub fn encode(files: &[(PathBuf, Vec<u8>)], dependencies: &HashMap<String, PathB
         ));
         data.extend_from_slice(bytes);
         use sha2::Digest;
-        index.sums.push(format!("{:x}", sha2::Sha256::digest(bytes)));
+        index
+            .sums
+            .push(format!("{:x}", sha2::Sha256::digest(bytes)));
     }
     index.dependencies = dependencies
         .iter()
@@ -226,7 +232,14 @@ pub fn sums_of(section: &[u8]) -> Option<HashMap<PathBuf, String>> {
     if index.sums.len() != index.files.len() {
         return Some(HashMap::new());
     }
-    Some(index.files.iter().zip(index.sums).map(|((p, _, _), s)| (PathBuf::from(p), s)).collect())
+    Some(
+        index
+            .files
+            .iter()
+            .zip(index.sums)
+            .map(|((p, _, _), s)| (PathBuf::from(p), s))
+            .collect(),
+    )
 }
 
 pub fn decode(section: &[u8]) -> Option<Decoded> {

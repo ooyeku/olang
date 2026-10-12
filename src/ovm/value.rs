@@ -933,7 +933,8 @@ impl OvmValue {
             (D::Map(x), D::Map(y)) => {
                 Arc::ptr_eq(x, y)
                     || x.len() == y.len()
-                        && x.iter().all(|(k, v)| y.get(k).is_some_and(|w| v.structural_eq(w)))
+                        && x.iter()
+                            .all(|(k, v)| y.get(k).is_some_and(|w| v.structural_eq(w)))
             }
             (D::Struct(x), D::Struct(y)) if Arc::ptr_eq(x, y) => true,
             (D::Enum(x), D::Enum(y)) if Arc::ptr_eq(x, y) => true,
@@ -960,11 +961,15 @@ impl OvmValue {
             }
             (D::FloatList(a), D::AstList(b)) | (D::AstList(b), D::FloatList(a)) => {
                 a.len() == b.len()
-                    && a.iter().zip(b.iter()).all(|(x, y)| matches!(y, Value::Float(f) if f == x))
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|(x, y)| matches!(y, Value::Float(f) if f == x))
             }
             (D::IntList(a), D::AstList(b)) | (D::AstList(b), D::IntList(a)) => {
                 a.len() == b.len()
-                    && a.iter().zip(b.iter()).all(|(x, y)| matches!(y, Value::Integer(n) if n == x))
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|(x, y)| matches!(y, Value::Integer(n) if n == x))
             }
             (D::List(a), D::AstList(b)) | (D::AstList(b), D::List(a)) => {
                 a.len() == b.len()

@@ -85,7 +85,9 @@ pub fn run(args: &[String]) -> i32 {
             // One more run of each file, untimed, under `olang profile
             // --format json`, its profile left in DIR/<name>.json.
             "--profile" => match it.next() {
-                Some(p) => profile_dir = Some(std::path::absolute(p).unwrap_or_else(|_| PathBuf::from(p))),
+                Some(p) => {
+                    profile_dir = Some(std::path::absolute(p).unwrap_or_else(|_| PathBuf::from(p)))
+                }
                 None => {
                     eprintln!("bench: --profile expects a directory");
                     return 2;
@@ -131,27 +133,31 @@ pub fn run(args: &[String]) -> i32 {
 
     let event = |v: serde_json::Value| println!("{}", v);
     if json {
-        event(serde_json::json!({ "event": "start", "olang": env!("CARGO_PKG_VERSION"), "runs": runs, "in_task": in_task,
+        event(
+            serde_json::json!({ "event": "start", "olang": env!("CARGO_PKG_VERSION"), "runs": runs, "in_task": in_task,
             "files": files.iter().map(|f| f.display().to_string()).collect::<Vec<_>>(),
-            "against": against.as_ref().map(|p| p.display().to_string()) }));
+            "against": against.as_ref().map(|p| p.display().to_string()) }),
+        );
     }
     if let Some(d) = &profile_dir {
         let _ = std::fs::create_dir_all(d);
     }
-    if !json { println!(
-        "{}",
-        format!(
-            "olang bench — {} file(s), 1 warmup + up to {} runs each{}",
-            files.len(),
-            runs,
-            if in_task {
-                ", each on a spawned task"
-            } else {
-                ""
-            }
-        )
-        .bold()
-    ); }
+    if !json {
+        println!(
+            "{}",
+            format!(
+                "olang bench — {} file(s), 1 warmup + up to {} runs each{}",
+                files.len(),
+                runs,
+                if in_task {
+                    ", each on a spawned task"
+                } else {
+                    ""
+                }
+            )
+            .bold()
+        );
+    }
 
     let mut results: BTreeMap<String, f64> = BTreeMap::new();
     let mut regressed = false;
@@ -161,7 +167,9 @@ pub fn run(args: &[String]) -> i32 {
             Ok(m) => m,
             Err(msg) => {
                 if json {
-                    event(serde_json::json!({ "event": "error", "name": name, "file": file.display().to_string(), "message": msg }));
+                    event(
+                        serde_json::json!({ "event": "error", "name": name, "file": file.display().to_string(), "message": msg }),
+                    );
                 } else {
                     eprintln!("  {} {}", name.red(), msg);
                 }
@@ -254,7 +262,9 @@ pub fn run(args: &[String]) -> i32 {
 
     if let Some(p) = &save {
         match save_baseline(p, &results) {
-            Ok(()) if !json => println!("{}", format!("baseline saved to {}", p.display()).dimmed()),
+            Ok(()) if !json => {
+                println!("{}", format!("baseline saved to {}", p.display()).dimmed())
+            }
             Ok(()) => {}
             Err(msg) => {
                 eprintln!("bench: {msg}");
@@ -263,8 +273,10 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
     if json {
-        event(serde_json::json!({ "event": "finished", "regressed": regressed, "files": results.len(),
-            "saved": save.as_ref().map(|p| p.display().to_string()) }));
+        event(
+            serde_json::json!({ "event": "finished", "regressed": regressed, "files": results.len(),
+            "saved": save.as_ref().map(|p| p.display().to_string()) }),
+        );
     }
 
     if regressed && fail_on_regress { 1 } else { 0 }

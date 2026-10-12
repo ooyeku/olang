@@ -82,7 +82,10 @@ fn references(text: &str) -> BTreeSet<String> {
                 let name: String = bytes[start..j].iter().collect();
                 // Skip glob prose (`str.parse_*`) and file extensions.
                 let is_glob = name.ends_with('_');
-                let is_file = matches!(name.as_str(), "md" | "js" | "json" | "ol" | "rs" | "toml" | "lock");
+                let is_file = matches!(
+                    name.as_str(),
+                    "md" | "js" | "json" | "ol" | "rs" | "toml" | "lock"
+                );
                 if prev_ok && !name.is_empty() && !is_glob && !is_file {
                     found.insert(format!("{}.{}", module, name));
                 }

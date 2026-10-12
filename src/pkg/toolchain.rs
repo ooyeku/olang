@@ -75,7 +75,9 @@ pub fn installed_in(dir: &Path) -> Vec<(String, PathBuf)> {
 
 /// A toolchain directory's olang: `bin/olang`, else `olang`.
 fn binary_in(dir: &Path) -> Option<PathBuf> {
-    [dir.join("bin").join("olang"), dir.join("olang")].into_iter().find(|p| p.is_file())
+    [dir.join("bin").join("olang"), dir.join("olang")]
+        .into_iter()
+        .find(|p| p.is_file())
 }
 
 // Versions in order (by semver where both parse, else by text).
@@ -97,7 +99,11 @@ pub enum Resolved {
     /// The project pins nothing.
     Unpinned,
     /// An installed toolchain answers the pin: its version and binary.
-    Installed { pin: String, version: String, bin: PathBuf },
+    Installed {
+        pin: String,
+        version: String,
+        bin: PathBuf,
+    },
     /// The olang running now answers it (no toolchain of its own).
     Running { pin: String },
     /// Nothing installed satisfies it.
@@ -115,16 +121,28 @@ pub fn for_project(root: &Path) -> Resolved {
         (None, Some(l)) => format!("={}", l.trim_start_matches('v')),
         (None, None) => return Resolved::Unpinned,
     };
-    let shown = req.clone().unwrap_or_else(|| lock.clone().unwrap_or_default());
+    let shown = req
+        .clone()
+        .unwrap_or_else(|| lock.clone().unwrap_or_default());
     // the lock's exact version first, while the manifest still allows it
     if let Some(l) = &lock
         && req.as_deref().is_none_or(|r| satisfies(r, l))
-        && let Some((v, bin)) = installed().into_iter().find(|(v, _)| v == l.trim_start_matches('v'))
+        && let Some((v, bin)) = installed()
+            .into_iter()
+            .find(|(v, _)| v == l.trim_start_matches('v'))
     {
-        return Resolved::Installed { pin: shown, version: v, bin };
+        return Resolved::Installed {
+            pin: shown,
+            version: v,
+            bin,
+        };
     }
     if let Some((version, bin)) = resolve(&pin) {
-        return Resolved::Installed { pin: shown, version, bin };
+        return Resolved::Installed {
+            pin: shown,
+            version,
+            bin,
+        };
     }
     if satisfies(&pin, crate::VERSION) {
         return Resolved::Running { pin: shown };
@@ -183,7 +201,10 @@ mod tests {
         }
         // a directory without an olang is not a toolchain
         std::fs::create_dir_all(dir.path().join("0.99.0")).unwrap();
-        let found: Vec<String> = installed_in(dir.path()).into_iter().map(|(v, _)| v).collect();
+        let found: Vec<String> = installed_in(dir.path())
+            .into_iter()
+            .map(|(v, _)| v)
+            .collect();
         assert_eq!(found, vec!["0.88.1", "0.88.0", "0.87.0"]);
     }
 }

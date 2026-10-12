@@ -321,7 +321,12 @@ impl Editor {
     /// name before its extension), clamped to the value.
     pub fn select_chars(&mut self, a: usize, f: usize, ts: &mut TextSystem) {
         let text = self.ed.raw_text().to_string();
-        let byte = |c: usize| text.char_indices().nth(c).map(|(i, _)| i).unwrap_or(text.len());
+        let byte = |c: usize| {
+            text.char_indices()
+                .nth(c)
+                .map(|(i, _)| i)
+                .unwrap_or(text.len())
+        };
         let (ba, bf) = (byte(a), byte(f));
         let mut d = self.ed.driver(&mut ts.font_cx, &mut ts.layout_cx);
         d.select_byte_range(ba, bf);
@@ -503,7 +508,12 @@ impl Field {
         }
     }
 
-    pub fn offer(&mut self, value: &std::sync::Arc<String>, rev: Option<i64>, ts: &mut TextSystem) -> bool {
+    pub fn offer(
+        &mut self,
+        value: &std::sync::Arc<String>,
+        rev: Option<i64>,
+        ts: &mut TextSystem,
+    ) -> bool {
         match self {
             Field::Plain(e) => e.offer(value, rev, ts),
             Field::Rich(r) => r.offer(value, rev, ts),

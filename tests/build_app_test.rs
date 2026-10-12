@@ -70,7 +70,10 @@ fn an_application_runs_after_its_sources_are_gone() {
     // checked as it is read, not the whole before), but the changed one is
     // not there; inspect --verify, which checks the whole, refuses it
     let mut bytes = fs::read(&exe).unwrap();
-    let at = bytes.windows(19).position(|w| w == b"hello from an asset").expect("the asset in the binary");
+    let at = bytes
+        .windows(19)
+        .position(|w| w == b"hello from an asset")
+        .expect("the asset in the binary");
     bytes[at] = b'j';
     let bad = ws.join("tampered-app");
     fs::write(&bad, &bytes).unwrap();
@@ -79,8 +82,12 @@ fn an_application_runs_after_its_sources_are_gone() {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&bad, fs::Permissions::from_mode(0o755)).unwrap();
     }
-    let run2 = Command::new(&bad).current_dir(&ws).output().expect("run the changed app");
-    let out2 = String::from_utf8_lossy(&run2.stdout).to_string() + &String::from_utf8_lossy(&run2.stderr);
+    let run2 = Command::new(&bad)
+        .current_dir(&ws)
+        .output()
+        .expect("run the changed app");
+    let out2 =
+        String::from_utf8_lossy(&run2.stdout).to_string() + &String::from_utf8_lossy(&run2.stderr);
     assert!(out2.contains("HI YOU!"), "{out2}");
     assert!(!out2.contains("JELLO"), "{out2}");
     assert!(!run2.status.success(), "{out2}");

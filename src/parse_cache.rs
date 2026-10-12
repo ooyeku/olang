@@ -141,7 +141,9 @@ mod tests {
                 .unwrap_or(false)
         };
         assert!(plain("fn f() = 1"));
-        assert!(plain("let tag = \"lsp@p1\"\n// meta: a comment\nfn f() = tag"));
+        assert!(plain(
+            "let tag = \"lsp@p1\"\n// meta: a comment\nfn f() = tag"
+        ));
         assert!(!plain("meta fn m(x) = x"));
     }
 }

@@ -27,7 +27,11 @@ fn eval(source: &str) -> Result<Value, String> {
 
 fn assert_all_true(source: &str, n: usize) {
     let result = eval(source).unwrap();
-    assert_eq!(result, Value::List(vec![Value::Boolean(true); n].into()), "{source}");
+    assert_eq!(
+        result,
+        Value::List(vec![Value::Boolean(true); n].into()),
+        "{source}"
+    );
 }
 
 // Every helper reads until `want` shows up in what the pty said (or 3 s).
@@ -139,7 +143,9 @@ pid
 "#,
     )
     .unwrap();
-    let Value::Integer(pid) = out else { panic!("{out:?}") };
+    let Value::Integer(pid) = out else {
+        panic!("{out:?}")
+    };
     let mut alive = true;
     for _ in 0..100 {
         // SAFETY: signal 0 only asks whether the pid exists.
@@ -173,9 +179,13 @@ pty.close(p)
 "#,
     )
     .unwrap();
-    let Value::List(ref ids) = out else { panic!("{out:?}") };
+    let Value::List(ref ids) = out else {
+        panic!("{out:?}")
+    };
     for v in ids.iter() {
-        let Value::Integer(pid) = v else { panic!("{v:?}") };
+        let Value::Integer(pid) = v else {
+            panic!("{v:?}")
+        };
         let mut alive = true;
         for _ in 0..100 {
             // SAFETY: signal 0 only asks whether the pid exists (a zombie does).

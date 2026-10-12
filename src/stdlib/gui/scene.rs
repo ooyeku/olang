@@ -624,7 +624,10 @@ impl Scene {
                 rulers: get(e, "rulers").cloned(),
                 wrap: get_bool(e, "wrap", what)?.unwrap_or(true),
                 readonly: get_bool(e, "readonly", what)?.unwrap_or(false),
-                band: get(e, "band").and_then(|v| match v { Value::Integer(i) if *i > 0 => Some(*i as usize), _ => None }),
+                band: get(e, "band").and_then(|v| match v {
+                    Value::Integer(i) if *i > 0 => Some(*i as usize),
+                    _ => None,
+                }),
                 scroll_to: match get(e, "scroll_to") {
                     Some(v) => nums(v)
                         .filter(|n| n.len() >= 2)

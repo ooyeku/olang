@@ -929,7 +929,9 @@ impl HelpSystem {
         });
         self.add_function(FunctionDoc {
             name: "eprint".to_string(),
-            description: "Prints a value to standard error without a trailing newline, as print renders it.".to_string(),
+            description:
+                "Prints a value to standard error without a trailing newline, as print renders it."
+                    .to_string(),
             syntax: "eprint(value)".to_string(),
             parameters: vec!["value: Any - The value to print".to_string()],
             return_type: "Unit".to_string(),
@@ -11624,10 +11626,14 @@ For function-specific syntax, use: {}:help <function_name>{}",
 
         // Sort all suggestions by score (highest first)
         function_suggestions.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.0.cmp(&b.0))
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
         });
         category_suggestions.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.0.cmp(&b.0))
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
         });
 
         // Add function suggestions

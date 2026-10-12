@@ -294,7 +294,9 @@ pub mod imm_serde {
     pub fn serialize<S: Serializer>(v: &OvmValue, s: S) -> Result<S::Ok, S::Error> {
         match super::plain_of(v) {
             Some(p) => p.serialize(s),
-            None => Err(serde::ser::Error::custom("an immediate that is not a literal")),
+            None => Err(serde::ser::Error::custom(
+                "an immediate that is not a literal",
+            )),
         }
     }
 
@@ -422,8 +424,11 @@ impl Pack {
             *at = end;
             Some(r)
         };
-        let u64_at = |r: std::ops::Range<usize>| u64::from_le_bytes(bytes[r].try_into().unwrap_or([0; 8]));
-        if bytes[take(&mut at, 4)?] != PACK_MAGIC[..] || bytes[take(&mut at, 2)?] != FORMAT.to_le_bytes() {
+        let u64_at =
+            |r: std::ops::Range<usize>| u64::from_le_bytes(bytes[r].try_into().unwrap_or([0; 8]));
+        if bytes[take(&mut at, 4)?] != PACK_MAGIC[..]
+            || bytes[take(&mut at, 2)?] != FORMAT.to_le_bytes()
+        {
             return None;
         }
         let n = u16::from_le_bytes(bytes[take(&mut at, 2)?].try_into().ok()?) as usize;
@@ -445,7 +450,12 @@ impl Pack {
             if off.checked_add(len)? > span {
                 return None;
             }
-            rows.entry(key).or_default().push(Row { time, off, len, sum });
+            rows.entry(key).or_default().push(Row {
+                time,
+                off,
+                len,
+                sum,
+            });
         }
         Some(Pack { bytes, body, rows })
     }
@@ -536,16 +546,21 @@ fn memo() -> &'static Mutex<Memo> {
 /// (not yet checked against the scope): those this process stored, then
 /// the pack's, each read and decoded as it is asked for.
 pub fn load(def_file: Option<&str>, key: &Key) -> impl Iterator<Item = Arc<Entry>> {
-    let (stored, ahead, pack, path) = pack_of(def_file, key).unwrap_or((Vec::new(), None, None, None));
-    let rows = pack.as_ref().and_then(|p| p.rows.get(key)).map_or(0, Vec::len);
+    let (stored, ahead, pack, path) =
+        pack_of(def_file, key).unwrap_or((Vec::new(), None, None, None));
+    let rows = pack
+        .as_ref()
+        .and_then(|p| p.rows.get(key))
+        .map_or(0, Vec::len);
     // the newest, when read ahead, is decoded already
     let first = if ahead.is_some() { 1 } else { 0 };
     // Used: an entry not written or used for a day is marked used, so
     // the pack keeps it when it is next written.
     if let (Some(path), Some(p)) = (path, pack.as_ref())
-        && p.rows
-            .get(key)
-            .is_some_and(|rows| rows.iter().any(|r| now_secs().saturating_sub(r.time) > 86_400))
+        && p.rows.get(key).is_some_and(|rows| {
+            rows.iter()
+                .any(|r| now_secs().saturating_sub(r.time) > 86_400)
+        })
     {
         send(Job::Used(path, *key));
     }
@@ -564,7 +579,12 @@ pub fn load(def_file: Option<&str>, key: &Key) -> impl Iterator<Item = Arc<Entry
 fn pack_of(
     def_file: Option<&str>,
     key: &Key,
-) -> Option<(Vec<Arc<Entry>>, Option<Entry>, Option<Arc<Pack>>, Option<PathBuf>)> {
+) -> Option<(
+    Vec<Arc<Entry>>,
+    Option<Entry>,
+    Option<Arc<Pack>>,
+    Option<PathBuf>,
+)> {
     let path = pack_path(def_file)?;
     {
         let mut m = memo().lock().ok()?;
@@ -807,7 +827,6 @@ fn writer(rx: std::sync::mpsc::Receiver<Job>) {
     }
 }
 
-
 /// Write each pack with its changes: read it again first (another
 /// process may have written it since), add what is new, refresh what was
 /// used, drop what no run has wanted for two weeks, write beside and
@@ -964,7 +983,8 @@ mod tests {
         // it cuts into does
         for cut in 0..bytes.len() {
             if let Some(p) = Pack::parse(bytes[..cut].to_vec()) {
-                let whole = !p.bodies_of(&[1u8; 16]).is_empty() && !p.bodies_of(&[2u8; 16]).is_empty();
+                let whole =
+                    !p.bodies_of(&[1u8; 16]).is_empty() && !p.bodies_of(&[2u8; 16]).is_empty();
                 assert!(!whole, "cut at {cut} read as whole");
             }
         }

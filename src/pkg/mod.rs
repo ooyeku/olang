@@ -9,12 +9,12 @@
 
 pub mod cache;
 pub mod lock;
-pub mod toolchain;
 pub mod manifest;
 pub mod registry;
 pub mod resolver;
 pub mod shelf;
 pub mod starter;
+pub mod toolchain;
 
 use lock::{LockedPackage, LockedSource, Lockfile};
 use manifest::{Dependency, Manifest};
@@ -220,7 +220,9 @@ pub fn install(root: &Path, options: &InstallOptions) -> Result<DependencyMap, P
 
 /// Whether this process may not write `olang.lock` (`OLANG_LOCK_READONLY=1`).
 pub fn lock_readonly() -> bool {
-    std::env::var("OLANG_LOCK_READONLY").map(|v| v == "1" || v == "true").unwrap_or(false)
+    std::env::var("OLANG_LOCK_READONLY")
+        .map(|v| v == "1" || v == "true")
+        .unwrap_or(false)
 }
 
 /// `install`, but a dependency that cannot be resolved does not take the
@@ -436,7 +438,10 @@ fn replay_lock(
     // A pin the lock's olang no longer satisfies (or one it never
     // recorded) re-resolves, so the lock says what answers it now.
     if let Some(req) = manifest.package.olang.as_deref()
-        && !lock.olang.as_deref().is_some_and(|v| toolchain::satisfies(req, v))
+        && !lock
+            .olang
+            .as_deref()
+            .is_some_and(|v| toolchain::satisfies(req, v))
         && toolchain::lock_entry(Some(req), None).is_some()
     {
         return Ok(None);

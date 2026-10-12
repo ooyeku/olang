@@ -53,7 +53,12 @@ pub enum Cmd {
     MenuEvent(String),
     /// A context menu over window `id` at `(x, y)` (its content's
     /// logical pixels), read and checked on the program's thread.
-    ContextMenu { id: u64, items: Vec<ContextItem>, x: f64, y: f64 },
+    ContextMenu {
+        id: u64,
+        items: Vec<ContextItem>,
+        x: f64,
+        y: f64,
+    },
     /// The system's settings may have changed (an AppKit notice, or a
     /// test posting one): read them again; `why` goes on the event.
     Settings(&'static str),
@@ -614,7 +619,11 @@ impl App {
         // tabbing would put it in a bar of its kind), then free to join one
         // (Merge All Windows) as any window is
         #[cfg(target_os = "macos")]
-        let alone = if opts.tabbing.is_some() && opts.tab_of.is_none() { ns_window(&win) } else { None };
+        let alone = if opts.tabbing.is_some() && opts.tab_of.is_none() {
+            ns_window(&win)
+        } else {
+            None
+        };
         #[cfg(target_os = "macos")]
         if let Some(w) = &alone {
             // SAFETY: a live NSWindow; NSWindowTabbingModeDisallowed is 2.
@@ -1006,7 +1015,11 @@ unsafe fn ns_text(s: *mut objc2::runtime::AnyObject) -> Option<String> {
     if p.is_null() {
         return None;
     }
-    Some(unsafe { std::ffi::CStr::from_ptr(p) }.to_string_lossy().into_owned())
+    Some(
+        unsafe { std::ffi::CStr::from_ptr(p) }
+            .to_string_lossy()
+            .into_owned(),
+    )
 }
 
 /// `application:openURLs:` — the files and folders the application is
@@ -1042,7 +1055,10 @@ unsafe extern "C-unwind" fn app_open_urls(
         }
     }
     if !paths.is_empty() {
-        emit(vec![event("open", vec![("paths", Value::List(Arc::new(paths)))])]);
+        emit(vec![event(
+            "open",
+            vec![("paths", Value::List(Arc::new(paths)))],
+        )]);
     }
 }
 
@@ -1077,7 +1093,8 @@ fn observe_documents() {
         if cls.is_null() {
             return;
         }
-        let open: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject) = app_open_urls;
+        let open: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject) =
+            app_open_urls;
         let tab: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject) = app_new_tab;
         objc2::ffi::class_addMethod(
             cls,
@@ -1108,7 +1125,9 @@ impl App {
         let mine: Vec<(usize, u64)> = self
             .windows
             .iter()
-            .filter_map(|(i, p)| ns_window(&p.win).map(|nw| (objc2::rc::Retained::as_ptr(&nw) as usize, *i)))
+            .filter_map(|(i, p)| {
+                ns_window(&p.win).map(|nw| (objc2::rc::Retained::as_ptr(&nw) as usize, *i))
+            })
             .collect();
         let mut ids = Vec::new();
         // SAFETY: a live NSWindow; tabbedWindows is an NSArray or nil.
@@ -1119,7 +1138,8 @@ impl App {
             } else {
                 let n: usize = objc2::msg_send![&*tabs, count];
                 for k in 0..n {
-                    let o: *mut objc2::runtime::AnyObject = objc2::msg_send![&*tabs, objectAtIndex: k];
+                    let o: *mut objc2::runtime::AnyObject =
+                        objc2::msg_send![&*tabs, objectAtIndex: k];
                     if let Some((_, i)) = mine.iter().find(|(p, _)| *p == o as usize) {
                         ids.push(*i);
                     }
@@ -1130,7 +1150,12 @@ impl App {
             "tabs",
             vec![
                 ("window", Value::Integer(id as i64)),
-                ("tabs", Value::List(Arc::new(ids.into_iter().map(|i| Value::Integer(i as i64)).collect()))),
+                (
+                    "tabs",
+                    Value::List(Arc::new(
+                        ids.into_iter().map(|i| Value::Integer(i as i64)).collect(),
+                    )),
+                ),
             ],
         )]);
     }
@@ -1272,11 +1297,21 @@ impl ApplicationHandler<Cmd> for App {
                         // SAFETY: a live NSWindow and its standard actions.
                         unsafe {
                             match op {
-                                "next" => { let _: () = objc2::msg_send![&*w, selectNextTab: none]; }
-                                "previous" => { let _: () = objc2::msg_send![&*w, selectPreviousTab: none]; }
-                                "merge" => { let _: () = objc2::msg_send![&*w, mergeAllWindows: none]; }
-                                "detach" => { let _: () = objc2::msg_send![&*w, moveTabToNewWindow: none]; }
-                                "bar" => { let _: () = objc2::msg_send![&*w, toggleTabBar: none]; }
+                                "next" => {
+                                    let _: () = objc2::msg_send![&*w, selectNextTab: none];
+                                }
+                                "previous" => {
+                                    let _: () = objc2::msg_send![&*w, selectPreviousTab: none];
+                                }
+                                "merge" => {
+                                    let _: () = objc2::msg_send![&*w, mergeAllWindows: none];
+                                }
+                                "detach" => {
+                                    let _: () = objc2::msg_send![&*w, moveTabToNewWindow: none];
+                                }
+                                "bar" => {
+                                    let _: () = objc2::msg_send![&*w, toggleTabBar: none];
+                                }
                                 _ => {}
                             }
                         }
@@ -1573,7 +1608,10 @@ impl ApplicationHandler<Cmd> for App {
             // The system's appearance changed (Auto at dusk, or by hand):
             // a window that follows it says so first.
             WindowEvent::ThemeChanged(theme) => {
-                let follows = self.windows.get(&id).is_some_and(|pw| pw.forced_theme.is_none());
+                let follows = self
+                    .windows
+                    .get(&id)
+                    .is_some_and(|pw| pw.forced_theme.is_none());
                 self.settings_changed(
                     "theme",
                     follows.then_some(theme == winit::window::Theme::Dark),
@@ -1665,8 +1703,10 @@ pub fn clipboard_image() -> Result<Vec<u8>, String> {
                 .ok_or("the clipboard's image could not be read")?;
             let props = objc2_foundation::NSDictionary::new();
             // SAFETY: an empty properties dictionary of the declared type.
-            let png = unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &props) }
-                .ok_or("the clipboard's image could not be turned into a PNG")?;
+            let png = unsafe {
+                rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &props)
+            }
+            .ok_or("the clipboard's image could not be turned into a PNG")?;
             return Ok(png.to_vec());
         }
         Err("the clipboard holds no image".into())
@@ -1927,7 +1967,12 @@ impl App {
     fn show_context(&mut self, id: u64, _items: Vec<ContextItem>, _x: f64, _y: f64) {
         emit(vec![event(
             "context",
-            vec![("window", Value::Integer(id as i64)), ("id", Value::Unit), ("items", Value::List(Arc::new(vec![]))), ("picked", Value::Boolean(false))],
+            vec![
+                ("window", Value::Integer(id as i64)),
+                ("id", Value::Unit),
+                ("items", Value::List(Arc::new(vec![]))),
+                ("picked", Value::Boolean(false)),
+            ],
         )]);
     }
 
@@ -1977,7 +2022,8 @@ impl App {
             let count: isize = objc2::msg_send![&*ns_menu, numberOfItems];
             (0..count)
                 .filter_map(|i| {
-                    let it: *mut objc2::runtime::AnyObject = objc2::msg_send![&*ns_menu, itemAtIndex: i];
+                    let it: *mut objc2::runtime::AnyObject =
+                        objc2::msg_send![&*ns_menu, itemAtIndex: i];
                     if it.is_null() {
                         return None;
                     }
@@ -2015,7 +2061,9 @@ impl App {
         };
         // the menu's own window, read on the main thread while it tracks
         let seen = std::sync::Arc::new(Mutex::new(None::<(f64, f64, f64, f64)>));
-        let timer = pick.is_some().then(|| unsafe { menu_frame_timer(seen.clone()) });
+        let timer = pick
+            .is_some()
+            .then(|| unsafe { menu_frame_timer(seen.clone()) });
         let chosen = unsafe { context_popup(ns_menu, view, x, y) };
         if let Some(tm) = &timer {
             unsafe {
@@ -2042,8 +2090,19 @@ impl App {
             // as AppKit placed it; `size` the menu's
             if let (Some((fx, fy, fw, fh)), Some((cx, cy))) = (frame, content) {
                 fields.push(("at", map_of(vec![place(cx + x, "x"), place(cy + y, "y")])));
-                fields.push(("frame", map_of(vec![place(fx, "x"), place(fy, "y"), place(fw, "w"), place(fh, "h")])));
-                fields.push(("size", map_of(vec![place(menu_size.0, "w"), place(menu_size.1, "h")])));
+                fields.push((
+                    "frame",
+                    map_of(vec![
+                        place(fx, "x"),
+                        place(fy, "y"),
+                        place(fw, "w"),
+                        place(fh, "h"),
+                    ]),
+                ));
+                fields.push((
+                    "size",
+                    map_of(vec![place(menu_size.0, "w"), place(menu_size.1, "h")]),
+                ));
             }
             return emit(vec![event("context", fields)]);
         }
@@ -2070,7 +2129,11 @@ fn map_of(fields: Vec<(String, Value)>) -> Value {
 /// inside when neither fits. `click` and the result are points, `menu`
 /// its size, `visible` the screen's visible frame `(x, y, w, h)` (y its
 /// bottom).
-pub fn context_menu_origin(click: (f64, f64), menu: (f64, f64), visible: (f64, f64, f64, f64)) -> (f64, f64) {
+pub fn context_menu_origin(
+    click: (f64, f64),
+    menu: (f64, f64),
+    visible: (f64, f64, f64, f64),
+) -> (f64, f64) {
     let (cx, cy) = click;
     let (mw, mh) = menu;
     let (vx, vy, vw, vh) = visible;
@@ -2100,7 +2163,12 @@ pub fn context_menu_origin(click: (f64, f64), menu: (f64, f64), visible: (f64, f
 /// though every view were unflipped, so a menu opened mirrored about the
 /// window's middle (a click near the top opened it near the bottom).
 #[cfg(target_os = "macos")]
-unsafe fn context_popup(menu: *mut objc2::runtime::AnyObject, view: *const std::ffi::c_void, x: f64, y: f64) -> bool {
+unsafe fn context_popup(
+    menu: *mut objc2::runtime::AnyObject,
+    view: *const std::ffi::c_void,
+    x: f64,
+    y: f64,
+) -> bool {
     unsafe {
         use objc2::msg_send;
         use objc2::runtime::AnyObject;
@@ -2124,7 +2192,8 @@ unsafe fn context_popup(menu: *mut objc2::runtime::AnyObject, view: *const std::
                     (size.width, size.height),
                     (vis.origin.x, vis.origin.y, vis.size.width, vis.size.height),
                 );
-                let back: NSPoint = msg_send![&*window, convertPointFromScreen: NSPoint::new(ox, oy)];
+                let back: NSPoint =
+                    msg_send![&*window, convertPointFromScreen: NSPoint::new(ox, oy)];
                 at = msg_send![&*view, convertPoint: back, fromView: none];
             }
         }
@@ -2168,7 +2237,9 @@ unsafe fn content_on_screen(view: *const std::ffi::c_void) -> Option<(f64, f64)>
 /// `out`, in the screen's global points with y down from the top of the
 /// main display. A script's pick reads it: where the menu really opened.
 #[cfg(target_os = "macos")]
-unsafe fn menu_frame_timer(out: std::sync::Arc<Mutex<Option<(f64, f64, f64, f64)>>>) -> objc2::rc::Retained<objc2::runtime::AnyObject> {
+unsafe fn menu_frame_timer(
+    out: std::sync::Arc<Mutex<Option<(f64, f64, f64, f64)>>>,
+) -> objc2::rc::Retained<objc2::runtime::AnyObject> {
     use objc2::msg_send;
     use objc2::runtime::AnyObject;
     use objc2_foundation::NSRect;
@@ -2191,7 +2262,12 @@ unsafe fn menu_frame_timer(out: std::sync::Arc<Mutex<Option<(f64, f64, f64, f64)
                 if vis && cls.contains("PopupMenuWindow") {
                     let f: NSRect = msg_send![&*w, frame];
                     if let Ok(mut o) = out.lock() {
-                        *o = Some((f.origin.x, mf.size.height - (f.origin.y + f.size.height), f.size.width, f.size.height));
+                        *o = Some((
+                            f.origin.x,
+                            mf.size.height - (f.origin.y + f.size.height),
+                            f.size.width,
+                            f.size.height,
+                        ));
                     }
                 }
             }
@@ -2223,7 +2299,14 @@ fn context_fill(
     for it in items {
         match it {
             ContextItem::Separator => menu.add(&PredefinedMenuItem::separator())?,
-            ContextItem::Item { id, label, enabled, keys, checked, submenu } => {
+            ContextItem::Item {
+                id,
+                label,
+                enabled,
+                keys,
+                checked,
+                submenu,
+            } => {
                 if let Some(subs) = submenu {
                     let sub = Submenu::new(label, *enabled);
                     context_fill(&sub, subs, ids, by_label, n)?;
@@ -2234,7 +2317,13 @@ fn context_fill(
                 let mid = format!("{CTX_PREFIX}{n}");
                 let accel: Option<Accelerator> = keys.as_ref().and_then(|k| k.parse().ok());
                 match checked {
-                    Some(c) => menu.add(&CheckMenuItem::with_id(mid.clone(), label, *enabled, *c, accel))?,
+                    Some(c) => menu.add(&CheckMenuItem::with_id(
+                        mid.clone(),
+                        label,
+                        *enabled,
+                        *c,
+                        accel,
+                    ))?,
                     None => menu.add(&MenuItem::with_id(mid.clone(), label, *enabled, accel))?,
                 }
                 ids.insert(mid, id.clone());
@@ -2317,7 +2406,10 @@ pub fn context_items(v: &Value, depth: usize) -> Result<Vec<ContextItem>, String
             .ok_or_else(|| format!("{what}: an item needs a \"label\""))?
             .to_string();
         let submenu = match get(it, "submenu") {
-            Some(Value::List(_)) => Some(context_items(get(it, "submenu").expect("present"), depth + 1)?),
+            Some(Value::List(_)) => Some(context_items(
+                get(it, "submenu").expect("present"),
+                depth + 1,
+            )?),
             Some(Value::Unit) | None => None,
             Some(_) => return Err(format!("{what}: \"{label}\": a submenu is a list of items")),
         };

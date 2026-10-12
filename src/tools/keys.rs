@@ -406,7 +406,11 @@ impl<'p> Analysis<'p> {
             let mut new_params: HashMap<String, Vec<Shape>> = HashMap::new();
             let mut new_rets: HashMap<String, Shape> = HashMap::new();
             for i in 0..self.bodies.len() {
-                let outer = if i == top { Env::new() } else { self.module.clone() };
+                let outer = if i == top {
+                    Env::new()
+                } else {
+                    self.module.clone()
+                };
                 let env = self.body_env(i, &outer);
                 // call sites
                 let mut calls = Vec::new();
@@ -480,7 +484,8 @@ impl<'p> Analysis<'p> {
                     for (e, _) in &self.bodies[i].exprs {
                         ret = ret.join(&self.result_shape(e, &env));
                         for r in returns(e) {
-                            ret = ret.join(&r.map(|r| self.shape(r, &env)).unwrap_or(Shape::Bottom));
+                            ret =
+                                ret.join(&r.map(|r| self.shape(r, &env)).unwrap_or(Shape::Bottom));
                         }
                     }
                     new_rets.insert(name.clone(), ret);
@@ -625,7 +630,12 @@ impl<'p> Analysis<'p> {
         bind: &mut impl FnMut(&str, Shape, &mut Env),
     ) {
         match e {
-            Expr::Assignment { target, value } | Expr::LocalAssign { name: target, value, .. } => {
+            Expr::Assignment { target, value }
+            | Expr::LocalAssign {
+                name: target,
+                value,
+                ..
+            } => {
                 bind(target, self.shape(value, env), next);
             }
             Expr::Lambda { parameters, .. } => {
@@ -703,9 +713,9 @@ impl<'p> Analysis<'p> {
                     None => t,
                 }
             }
-            Expr::Match { arms, .. } => arms
-                .iter()
-                .fold(Shape::Bottom, |acc, arm| acc.join(&self.shape(&arm.expression, env))),
+            Expr::Match { arms, .. } => arms.iter().fold(Shape::Bottom, |acc, arm| {
+                acc.join(&self.shape(&arm.expression, env))
+            }),
             Expr::Block(stmts) => match stmts.last().map(|s| s.unwrapped()) {
                 Some(Statement::Expression(e)) => self.shape(e, env),
                 _ => Shape::Bottom,
@@ -754,7 +764,13 @@ impl<'p> Analysis<'p> {
         }
     }
 
-    fn call_shape(&self, callee: &Expr, lits: &[Option<String>], args: Vec<Shape>, env: &Env) -> Shape {
+    fn call_shape(
+        &self,
+        callee: &Expr,
+        lits: &[Option<String>],
+        args: Vec<Shape>,
+        env: &Env,
+    ) -> Shape {
         let Expr::Identifier(name) = callee else {
             return Shape::Open;
         };
@@ -802,7 +818,13 @@ impl<'p> Analysis<'p> {
         }
     }
 
-    fn report_stmt(&self, stmt: &Statement, span: (u32, u32), env: &Env, out: &mut Vec<KeyFinding>) {
+    fn report_stmt(
+        &self,
+        stmt: &Statement,
+        span: (u32, u32),
+        env: &Env,
+        out: &mut Vec<KeyFinding>,
+    ) {
         let span = located(stmt, span);
         match stmt.unwrapped() {
             Statement::Expression(e) => self.report_expr(e, span, env, out, false),
@@ -817,7 +839,14 @@ impl<'p> Analysis<'p> {
     }
 
     /// `presence`: the value is compared with `()` or defaulted by `??`.
-    fn report_expr(&self, e: &Expr, span: (u32, u32), env: &Env, out: &mut Vec<KeyFinding>, presence: bool) {
+    fn report_expr(
+        &self,
+        e: &Expr,
+        span: (u32, u32),
+        env: &Env,
+        out: &mut Vec<KeyFinding>,
+        presence: bool,
+    ) {
         match e {
             Expr::FieldAccess { object, field } => {
                 if !presence
@@ -838,7 +867,9 @@ impl<'p> Analysis<'p> {
             // `x.f(...)`: a key or a method; the receiver is still read
             Expr::Call { callee, arguments } => {
                 match callee.as_ref() {
-                    Expr::FieldAccess { object, .. } => self.report_expr(object, span, env, out, false),
+                    Expr::FieldAccess { object, .. } => {
+                        self.report_expr(object, span, env, out, false)
+                    }
                     other => self.report_expr(other, span, env, out, false),
                 }
                 for a in arguments {
@@ -1085,7 +1116,12 @@ fn scan(e: &Expr, escaped: &mut HashSet<String>, assigned: &mut HashSet<String>,
             escaped.insert(n.clone());
             return;
         }
-        Expr::Assignment { target, value } | Expr::LocalAssign { name: target, value, .. } => {
+        Expr::Assignment { target, value }
+        | Expr::LocalAssign {
+            name: target,
+            value,
+            ..
+        } => {
             if in_fn {
                 assigned.insert(target.clone());
             }
@@ -1148,7 +1184,9 @@ pub(crate) fn children(e: &Expr) -> Vec<&Expr> {
                 v.push(x);
             }
         }
-        Expr::Lambda { parameters, body, .. } => {
+        Expr::Lambda {
+            parameters, body, ..
+        } => {
             for p in parameters {
                 if let Some(d) = &p.default_value {
                     v.push(d);
@@ -1235,12 +1273,19 @@ pub(crate) fn children(e: &Expr) -> Vec<&Expr> {
                 }
             }
         }
-        Expr::AssertEq { actual, expected, .. } | Expr::AssertNe { actual, expected, .. } => {
+        Expr::AssertEq {
+            actual, expected, ..
+        }
+        | Expr::AssertNe {
+            actual, expected, ..
+        } => {
             v.push(actual);
             v.push(expected);
         }
         Expr::Assert { condition, .. } => v.push(condition),
-        Expr::AssertTrue { expression, .. } | Expr::AssertFalse { expression, .. } => v.push(expression),
+        Expr::AssertTrue { expression, .. } | Expr::AssertFalse { expression, .. } => {
+            v.push(expression)
+        }
         _ => {}
     }
     v
@@ -1310,6 +1355,9 @@ fn main() = {
         let p = crate::Parser::new()
             .parse_raw("fn main() = {\n let opts = #{ \"pad\": 1, \"width\": 2 }\n opts\n}\n")
             .unwrap();
-        assert_eq!(keys_of_name(&p, "opts"), Some(vec!["pad".to_string(), "width".to_string()]));
+        assert_eq!(
+            keys_of_name(&p, "opts"),
+            Some(vec!["pad".to_string(), "width".to_string()])
+        );
     }
 }

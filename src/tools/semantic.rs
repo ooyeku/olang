@@ -27,7 +27,8 @@ pub const TOKEN_TYPES: &[&str] = &[
 ];
 
 /// The token modifiers, in the legend's order (bit `1 << i`).
-pub const TOKEN_MODIFIERS: &[&str] = &["declaration", "defaultLibrary", "documentation", "readonly"];
+pub const TOKEN_MODIFIERS: &[&str] =
+    &["declaration", "defaultLibrary", "documentation", "readonly"];
 
 pub const T_NAMESPACE: u32 = 0;
 pub const T_TYPE: u32 = 1;
@@ -115,7 +116,14 @@ fn lex(text: &str) -> Vec<Lexeme> {
                 let at = $a + off;
                 if ch == '\n' {
                     if at > pa {
-                        out.push(Lexeme { kind: Lx::Str, a: pa, b: at, line: pl, col: pc, len16: units });
+                        out.push(Lexeme {
+                            kind: Lx::Str,
+                            a: pa,
+                            b: at,
+                            line: pl,
+                            col: pc,
+                            len16: units,
+                        });
                     }
                     pl += 1;
                     pc = 0;
@@ -126,7 +134,14 @@ fn lex(text: &str) -> Vec<Lexeme> {
                 }
             }
             if $b > pa {
-                out.push(Lexeme { kind: Lx::Str, a: pa, b: $b, line: pl, col: pc, len16: units });
+                out.push(Lexeme {
+                    kind: Lx::Str,
+                    a: pa,
+                    b: $b,
+                    line: pl,
+                    col: pc,
+                    len16: units,
+                });
             }
             (pl, pc + units)
         }};
@@ -141,7 +156,11 @@ fn lex(text: &str) -> Vec<Lexeme> {
             while j < n {
                 let c = bytes[j];
                 if c == b'\\' && j + 1 < n {
-                    j += 1 + text[j + 1..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+                    j += 1 + text[j + 1..]
+                        .chars()
+                        .next()
+                        .map(|c| c.len_utf8())
+                        .unwrap_or(1);
                     continue;
                 }
                 if c == b'`' {
@@ -161,7 +180,14 @@ fn lex(text: &str) -> Vec<Lexeme> {
             i = j;
             in_template = false;
             if opened {
-                out.push(Lexeme { kind: Lx::Punct, a: i, b: i + 2, line, col, len16: 2 });
+                out.push(Lexeme {
+                    kind: Lx::Punct,
+                    a: i,
+                    b: i + 2,
+                    line,
+                    col,
+                    len16: 2,
+                });
                 i += 2;
                 col += 2;
                 interp.push(0);
@@ -187,7 +213,14 @@ fn lex(text: &str) -> Vec<Lexeme> {
             let end = text[i..].find('\n').map(|k| i + k).unwrap_or(n);
             let doc = text[i..].starts_with("///") || text[i..].starts_with("//!");
             let units: u32 = text[i..end].chars().map(|c| c.len_utf16() as u32).sum();
-            out.push(Lexeme { kind: Lx::Comment(doc), a: i, b: end, line, col, len16: units });
+            out.push(Lexeme {
+                kind: Lx::Comment(doc),
+                a: i,
+                b: end,
+                line,
+                col,
+                len16: units,
+            });
             col += units;
             i = end;
             continue;
@@ -200,7 +233,11 @@ fn lex(text: &str) -> Vec<Lexeme> {
             while j < n {
                 let b = bytes[j];
                 if b == b'\\' && !raw && j + 1 < n {
-                    j += 1 + text[j + 1..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+                    j += 1 + text[j + 1..]
+                        .chars()
+                        .next()
+                        .map(|c| c.len_utf8())
+                        .unwrap_or(1);
                     continue;
                 }
                 if b == b'\\' && raw && j + 1 < n && bytes[j + 1] == b'"' {
@@ -231,7 +268,11 @@ fn lex(text: &str) -> Vec<Lexeme> {
             while j < n {
                 let b = bytes[j];
                 if b == b'\\' && j + 1 < n {
-                    j += 1 + text[j + 1..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+                    j += 1 + text[j + 1..]
+                        .chars()
+                        .next()
+                        .map(|c| c.len_utf8())
+                        .unwrap_or(1);
                     continue;
                 }
                 if b == b'`' {
@@ -250,7 +291,14 @@ fn lex(text: &str) -> Vec<Lexeme> {
             col = c2;
             i = j;
             if opened {
-                out.push(Lexeme { kind: Lx::Punct, a: i, b: i + 2, line, col, len16: 2 });
+                out.push(Lexeme {
+                    kind: Lx::Punct,
+                    a: i,
+                    b: i + 2,
+                    line,
+                    col,
+                    len16: 2,
+                });
                 i += 2;
                 col += 2;
                 interp.push(0);
@@ -274,7 +322,14 @@ fn lex(text: &str) -> Vec<Lexeme> {
                 }
                 j += 1;
             }
-            out.push(Lexeme { kind: Lx::Number, a: i, b: j, line, col, len16: (j - i) as u32 });
+            out.push(Lexeme {
+                kind: Lx::Number,
+                a: i,
+                b: j,
+                line,
+                col,
+                len16: (j - i) as u32,
+            });
             col += (j - i) as u32;
             i = j;
             continue;
@@ -290,7 +345,14 @@ fn lex(text: &str) -> Vec<Lexeme> {
                 units += d.len_utf16() as u32;
                 j += d.len_utf8();
             }
-            out.push(Lexeme { kind: Lx::Word, a: i, b: j, line, col, len16: units });
+            out.push(Lexeme {
+                kind: Lx::Word,
+                a: i,
+                b: j,
+                line,
+                col,
+                len16: units,
+            });
             col += units;
             i = j;
             continue;
@@ -299,7 +361,10 @@ fn lex(text: &str) -> Vec<Lexeme> {
         // (the operators are ASCII: a character wider than a byte here is
         // no operator, and `i + 2` may fall inside it)
         let two = text.get(i..(i + 2).min(n)).unwrap_or("");
-        let w = if matches!(two, "|>" | "=>" | "==" | "!=" | "<=" | ">=" | "&&" | "||" | "??" | "->" | "..") {
+        let w = if matches!(
+            two,
+            "|>" | "=>" | "==" | "!=" | "<=" | ">=" | "&&" | "||" | "??" | "->" | ".."
+        ) {
             2
         } else {
             cl
@@ -311,7 +376,14 @@ fn lex(text: &str) -> Vec<Lexeme> {
                 let d = interp.last_mut().unwrap();
                 if *d == 0 {
                     interp.pop();
-                    out.push(Lexeme { kind: Lx::Punct, a: i, b: i + 1, line, col, len16: 1 });
+                    out.push(Lexeme {
+                        kind: Lx::Punct,
+                        a: i,
+                        b: i + 1,
+                        line,
+                        col,
+                        len16: 1,
+                    });
                     i += 1;
                     col += 1;
                     in_template = true;
@@ -320,7 +392,14 @@ fn lex(text: &str) -> Vec<Lexeme> {
                 *d -= 1;
             }
         }
-        out.push(Lexeme { kind: Lx::Punct, a: i, b: i + w, line, col, len16: c.len_utf16() as u32 * if w == 2 { 2 } else { 1 } });
+        out.push(Lexeme {
+            kind: Lx::Punct,
+            a: i,
+            b: i + w,
+            line,
+            col,
+            len16: c.len_utf16() as u32 * if w == 2 { 2 } else { 1 },
+        });
         col += if w == 2 { 2 } else { c.len_utf16() as u32 };
         i += w;
     }
@@ -330,8 +409,28 @@ fn lex(text: &str) -> Vec<Lexeme> {
 fn is_operator(p: &str) -> bool {
     matches!(
         p,
-        "|>" | "=>" | "==" | "!=" | "<=" | ">=" | "&&" | "||" | "??" | "->" | ".." | "+" | "-" | "*" | "/"
-            | "%" | "=" | "<" | ">" | "!" | "?" | "|" | "&"
+        "|>" | "=>"
+            | "=="
+            | "!="
+            | "<="
+            | ">="
+            | "&&"
+            | "||"
+            | "??"
+            | "->"
+            | ".."
+            | "+"
+            | "-"
+            | "*"
+            | "/"
+            | "%"
+            | "="
+            | "<"
+            | ">"
+            | "!"
+            | "?"
+            | "|"
+            | "&"
     )
 }
 
@@ -368,9 +467,14 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
                 }
             }
         }
-        if l.kind == Lx::Word && word(l) == "use" && (k == 0 || lx[k - 1].line != l.line || word(&lx[k - 1]) == "share") {
+        if l.kind == Lx::Word
+            && word(l) == "use"
+            && (k == 0 || lx[k - 1].line != l.line || word(&lx[k - 1]) == "share")
+        {
             let mut j = k + 1;
-            while j < lx.len() && lx[j].line == l.line && lx[j].kind == Lx::Word || (j < lx.len() && word(&lx[j]) == ".") {
+            while j < lx.len() && lx[j].line == l.line && lx[j].kind == Lx::Word
+                || (j < lx.len() && word(&lx[j]) == ".")
+            {
                 if lx[j].kind == Lx::Word {
                     imported.insert(word(&lx[j]).to_string());
                 }
@@ -401,7 +505,9 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
             let p = &lx[k - 1];
             if p.kind == Lx::Punct && word(p) == ")" && matching[k - 1] != usize::MAX {
                 let o = matching[k - 1];
-                let named = o > 0 && lx[o - 1].kind == Lx::Word && !HARD_KEYWORDS.contains(&word(&lx[o - 1]));
+                let named = o > 0
+                    && lx[o - 1].kind == Lx::Word
+                    && !HARD_KEYWORDS.contains(&word(&lx[o - 1]));
                 if !named {
                     for q in o + 1..k - 1 {
                         if lx[q].kind == Lx::Word {
@@ -441,7 +547,13 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
         let nw = next.map(|p| word(p)).unwrap_or("");
         let after_error_kw = pw == "error" && prev.is_some_and(|p| out_was_keyword(&out, p));
         let mut push = |kind: u32, mods: u32| {
-            out.push(Token { line: l.line, start: l.col, len: l.len16, kind, mods })
+            out.push(Token {
+                line: l.line,
+                start: l.col,
+                len: l.len16,
+                kind,
+                mods,
+            })
         };
         match l.kind {
             Lx::Comment(doc) => push(T_COMMENT, if doc { M_DOCUMENTATION } else { 0 }),
@@ -473,12 +585,23 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
                 }
                 if p == "=>" && k > 0 {
                     // a lambda's parameters are in scope in its body
-                    let names: Vec<String> = (0..k).rev().take_while(|q| lambda_param[*q] || lx[*q].kind == Lx::Punct && matches!(word(&lx[*q]), "(" | ")" | ","))
+                    let names: Vec<String> = (0..k)
+                        .rev()
+                        .take_while(|q| {
+                            lambda_param[*q]
+                                || lx[*q].kind == Lx::Punct
+                                    && matches!(word(&lx[*q]), "(" | ")" | ",")
+                        })
                         .filter(|q| lambda_param[*q])
                         .map(|q| word(&lx[q]).to_string())
                         .collect();
                     if !names.is_empty() {
-                        scopes.push(Scope { names, depth, top: false, begun: true });
+                        scopes.push(Scope {
+                            names,
+                            depth,
+                            top: false,
+                            begun: true,
+                        });
                     }
                 }
             }
@@ -492,7 +615,12 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
                     }
                     if w == "fn" {
                         let top = depth == 0;
-                        scopes.push(Scope { names: Vec::new(), depth: depth + 1, top, begun: false });
+                        scopes.push(Scope {
+                            names: Vec::new(),
+                            depth: depth + 1,
+                            top,
+                            begun: false,
+                        });
                     }
                     continue;
                 }
@@ -546,8 +674,17 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
                     continue;
                 }
                 // a module path after `use`
-                if lx[..k].iter().rev().take_while(|p| p.line == l.line).any(|p| word(p) == "use") {
-                    let in_braces = lx[..k].iter().rev().take_while(|p| p.line == l.line).any(|p| word(p) == "{");
+                if lx[..k]
+                    .iter()
+                    .rev()
+                    .take_while(|p| p.line == l.line)
+                    .any(|p| word(p) == "use")
+                {
+                    let in_braces = lx[..k]
+                        .iter()
+                        .rev()
+                        .take_while(|p| p.line == l.line)
+                        .any(|p| word(p) == "{");
                     if !in_braces {
                         let std = modules.contains(&w);
                         push(T_NAMESPACE, if std { M_DEFAULT_LIBRARY } else { 0 });
@@ -561,14 +698,27 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
                 if pw == "." {
                     let module_call = k >= 2 && modules.contains(&word(&lx[k - 2]));
                     if nw == "(" {
-                        push(if module_call { T_FUNCTION } else { T_METHOD }, if module_call { M_DEFAULT_LIBRARY } else { 0 });
+                        push(
+                            if module_call { T_FUNCTION } else { T_METHOD },
+                            if module_call { M_DEFAULT_LIBRARY } else { 0 },
+                        );
                     } else {
                         push(T_PROPERTY, 0);
                     }
                     continue;
                 }
-                if nw == "." && (modules.contains(&w) || imported.contains(w)) && !scopes.iter().any(|s| s.names.iter().any(|n| n == w)) {
-                    push(T_NAMESPACE, if modules.contains(&w) { M_DEFAULT_LIBRARY } else { 0 });
+                if nw == "."
+                    && (modules.contains(&w) || imported.contains(w))
+                    && !scopes.iter().any(|s| s.names.iter().any(|n| n == w))
+                {
+                    push(
+                        T_NAMESPACE,
+                        if modules.contains(&w) {
+                            M_DEFAULT_LIBRARY
+                        } else {
+                            0
+                        },
+                    );
                     continue;
                 }
                 if let Some(b) = binding {
@@ -607,7 +757,8 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
 }
 
 fn out_was_keyword(out: &[Token], p: &Lexeme) -> bool {
-    out.last().is_some_and(|t| t.line == p.line && t.start == p.col && t.kind == T_KEYWORD)
+    out.last()
+        .is_some_and(|t| t.line == p.line && t.start == p.col && t.kind == T_KEYWORD)
 }
 
 /// The tokens encoded as the protocol's relative integers, those on
@@ -638,7 +789,11 @@ mod tests {
         toks.iter()
             .map(|t| {
                 let l = lines[t.line as usize];
-                let s: String = l.chars().skip(t.start as usize).take(t.len as usize).collect();
+                let s: String = l
+                    .chars()
+                    .skip(t.start as usize)
+                    .take(t.len as usize)
+                    .collect();
                 (s, TOKEN_TYPES[t.kind as usize], t.mods)
             })
             .collect()
@@ -646,7 +801,8 @@ mod tests {
 
     #[test]
     fn a_function_its_parameters_and_calls() {
-        let k = kinds("/// doc\nfn add(a, b) = a + b\nlet x = add(1, 2.5)\nprintln(str.upper(\"hi\"))");
+        let k =
+            kinds("/// doc\nfn add(a, b) = a + b\nlet x = add(1, 2.5)\nprintln(str.upper(\"hi\"))");
         assert_eq!(k[0], ("/// doc".into(), "comment", M_DOCUMENTATION));
         assert_eq!(k[1], ("fn".into(), "keyword", 0));
         assert_eq!(k[2], ("add".into(), "function", M_DECLARATION));
@@ -663,17 +819,23 @@ mod tests {
 
     #[test]
     fn templates_lambdas_and_multiline_strings() {
-        let k = kinds("let f = (n) => `v ${n + 1}!`\nlet s = \"a\nb\"\nshare let MAX = 3\nstruct Point { x: Int }");
+        let k = kinds(
+            "let f = (n) => `v ${n + 1}!`\nlet s = \"a\nb\"\nshare let MAX = 3\nstruct Point { x: Int }",
+        );
         assert!(k.contains(&("n".into(), "parameter", M_DECLARATION)));
         assert!(k.contains(&("n".into(), "parameter", 0)));
         assert!(k.contains(&("`v ".into(), "string", 0)));
-        assert!(k.contains(&("}!`".into(), "string", 0)) || k.contains(&("!`".into(), "string", 0)));
+        assert!(
+            k.contains(&("}!`".into(), "string", 0)) || k.contains(&("!`".into(), "string", 0))
+        );
         assert!(k.contains(&("\"a".into(), "string", 0)));
         assert!(k.contains(&("b\"".into(), "string", 0)));
         assert!(k.contains(&("share".into(), "keyword", 0)));
         assert!(k.contains(&("MAX".into(), "variable", M_DECLARATION)));
         assert!(k.contains(&("Point".into(), "type", M_DECLARATION)));
-        assert!(k.contains(&("x".into(), "property", 0)) || k.contains(&("x".into(), "variable", 0)));
+        assert!(
+            k.contains(&("x".into(), "property", 0)) || k.contains(&("x".into(), "variable", 0))
+        );
     }
 
     #[test]

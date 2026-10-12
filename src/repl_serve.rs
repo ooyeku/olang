@@ -161,7 +161,11 @@ pub fn serve(no_ovm: bool) -> i32 {
     let mut session = Session::new(no_ovm, Some(out.clone()));
     out.send(&session.hello(None));
     for msg in rx {
-        let op = msg.get("op").and_then(|o| o.as_str()).unwrap_or("").to_string();
+        let op = msg
+            .get("op")
+            .and_then(|o| o.as_str())
+            .unwrap_or("")
+            .to_string();
         let reply = session.handle(&op, &msg, &running);
         out.send(&reply);
         if op == "shutdown" {
@@ -274,7 +278,11 @@ impl Session {
             "hello" => return self.hello(Some(&id)),
             "eval" => {
                 // a `:` command (or `!shell`, or `quit`) typed where code goes
-                let code = msg.get("code").and_then(|c| c.as_str()).unwrap_or("").trim();
+                let code = msg
+                    .get("code")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .trim();
                 if msg.get("file").is_none() && is_command_line(code) {
                     let code = code.to_string();
                     self.command(&code, &id, running)
@@ -283,7 +291,12 @@ impl Session {
                 }
             }
             "command" => {
-                let line = msg.get("line").and_then(|c| c.as_str()).unwrap_or("").trim().to_string();
+                let line = msg
+                    .get("line")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
                 self.command(&line, &id, running)
             }
             "commands" => self.commands(msg),
@@ -311,7 +324,9 @@ impl Session {
                 let reset = msg.get("reset").and_then(|r| r.as_bool()).unwrap_or(false);
                 json!({ "ok": true, "stats": crate::tier_stats::report(reset) })
             }
-            other => json!({ "ok": false, "error": { "kind": "protocol", "message": format!("unknown op \"{}\"", other) } }),
+            other => {
+                json!({ "ok": false, "error": { "kind": "protocol", "message": format!("unknown op \"{}\"", other) } })
+            }
         };
         reply["id"] = id;
         reply
@@ -320,7 +335,9 @@ impl Session {
     // ── scopes ──────────────────────────────────────────────────────
 
     fn take_scope(&mut self, file: Option<&Path>) -> (String, Scope, Vec<String>) {
-        let key = file.map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+        let key = file
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_default();
         if let Some(s) = self.scopes.remove(&key) {
             return (key, s, Vec::new());
         }
@@ -372,7 +389,10 @@ impl Session {
                 _ => false,
             };
             if take {
-                if matches!(inner, Statement::UseDecl(_) | Statement::ShareDecl(ShareDecl::Use(_))) {
+                if matches!(
+                    inner,
+                    Statement::UseDecl(_) | Statement::ShareDecl(ShareDecl::Use(_))
+                ) {
                     scope.uses.push(stmt_text(&lines, &starts, i));
                 }
                 keep.push(st.clone());
@@ -382,9 +402,16 @@ impl Session {
         self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
         for st in keep {
             let line = stmt_line(&st);
-            let one = crate::ast::Program { statements: vec![st] };
+            let one = crate::ast::Program {
+                statements: vec![st],
+            };
             if let Err(e) = self.cmd.interpreter.eval_program(one) {
-                notes.push(format!("{}:{}: {}", short(&self.root, file), line, plain_message(&e)));
+                notes.push(format!(
+                    "{}:{}: {}",
+                    short(&self.root, file),
+                    line,
+                    plain_message(&e)
+                ));
                 let _ = self.cmd.interpreter.take_error_location();
             }
         }
@@ -398,7 +425,10 @@ impl Session {
         let mut fns = Vec::new();
         let mut skipped = Vec::new();
         for (i, st) in statements.iter().enumerate() {
-            let end = starts.get(i + 1).map(|n| n.saturating_sub(1)).unwrap_or(total);
+            let end = starts
+                .get(i + 1)
+                .map(|n| n.saturating_sub(1))
+                .unwrap_or(total);
             match st.unwrapped() {
                 Statement::FunctionDecl(f) | Statement::ShareDecl(ShareDecl::Function(f)) => {
                     let params = f.parameters.iter().map(|p| p.name.clone()).collect();
@@ -412,12 +442,23 @@ impl Session {
                 _ => {}
             }
         }
-        self.files.insert(file.to_path_buf(), FileIndex { stamp: file_stamp(file), fns, skipped });
+        self.files.insert(
+            file.to_path_buf(),
+            FileIndex {
+                stamp: file_stamp(file),
+                fns,
+                skipped,
+            },
+        );
     }
 
     /// The index of `file` (read again when it changed on disk).
     fn file_index(&mut self, file: &Path) -> Option<&FileIndex> {
-        let fresh = self.files.get(file).map(|f| f.stamp == file_stamp(file)).unwrap_or(false);
+        let fresh = self
+            .files
+            .get(file)
+            .map(|f| f.stamp == file_stamp(file))
+            .unwrap_or(false);
         if !fresh {
             let src = std::fs::read_to_string(file).ok()?;
             let program = self.parser.parse(&src).ok()?;
@@ -429,20 +470,35 @@ impl Session {
     // ── eval ────────────────────────────────────────────────────────
 
     fn eval(&mut self, msg: &J, running: &AtomicBool) -> J {
-        let code = msg.get("code").and_then(|c| c.as_str()).unwrap_or("").to_string();
+        let code = msg
+            .get("code")
+            .and_then(|c| c.as_str())
+            .unwrap_or("")
+            .to_string();
         // values for a function's parameters, for this evaluation only
         let binds: Vec<(String, String)> = msg
             .get("bind")
             .and_then(|b| b.as_object())
-            .map(|o| o.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect())
+            .map(|o| {
+                o.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect()
+            })
             .unwrap_or_default();
         let pure = msg.get("pure").and_then(|p| p.as_bool()).unwrap_or(false);
-        let file = msg.get("file").and_then(|f| f.as_str()).map(|f| self.resolve(f));
+        let file = msg
+            .get("file")
+            .and_then(|f| f.as_str())
+            .map(|f| self.resolve(f));
         let line = msg.get("line").and_then(|l| l.as_u64()).unwrap_or(1).max(1) as usize;
         let t0 = Instant::now();
         let (key, mut scope, notes) = self.take_scope(file.as_deref());
         // the snippet parsed where it stands in its file
-        let padded = if file.is_some() && line > 1 { format!("{}{}", "\n".repeat(line - 1), code) } else { code.clone() };
+        let padded = if file.is_some() && line > 1 {
+            format!("{}{}", "\n".repeat(line - 1), code)
+        } else {
+            code.clone()
+        };
         let program = match self.parser.parse(&padded) {
             Ok(p) => p,
             Err(e) => {
@@ -454,11 +510,12 @@ impl Session {
             }
         };
         let last = program.statements.last().map(|s| s.unwrapped().clone());
-        let uses: Vec<String> = if program
-            .statements
-            .iter()
-            .any(|s| matches!(s.unwrapped(), Statement::UseDecl(_) | Statement::ShareDecl(ShareDecl::Use(_))))
-        {
+        let uses: Vec<String> = if program.statements.iter().any(|s| {
+            matches!(
+                s.unwrapped(),
+                Statement::UseDecl(_) | Statement::ShareDecl(ShareDecl::Use(_))
+            )
+        }) {
             vec![padded.clone()]
         } else {
             Vec::new()
@@ -476,25 +533,33 @@ impl Session {
         let _ = crate::output::take_collected();
         running.store(true, Ordering::SeqCst);
         // under no capability: a pure evaluation, or a refusal
-        let kept_caps = if pure {
-            Some(self.cmd.interpreter.replace_capabilities(Some(Arc::new(crate::caps::CapTable {
-                app: crate::caps::Caps::none(),
-                deps: Vec::new(),
-            }))))
-        } else {
-            None
-        };
+        let kept_caps =
+            if pure {
+                Some(self.cmd.interpreter.replace_capabilities(Some(Arc::new(
+                    crate::caps::CapTable {
+                        app: crate::caps::Caps::none(),
+                        deps: Vec::new(),
+                    },
+                ))))
+            } else {
+                None
+            };
         // the parameters given, each evaluated where the snippet stands
         let mut restore: Vec<(String, Option<Value>)> = Vec::new();
         let mut bind_failed: Option<(String, InterpreterError)> = None;
         for (name, src) in &binds {
             let value = match self.parser.parse(src) {
                 Ok(p) => self.cmd.interpreter.eval_program(p),
-                Err(e) => Err(InterpreterError::RuntimeError { message: parse_message(&e) }),
+                Err(e) => Err(InterpreterError::RuntimeError {
+                    message: parse_message(&e),
+                }),
             };
             match value {
                 Ok(v) => {
-                    restore.push((name.clone(), self.cmd.interpreter.get_environment().get(name)));
+                    restore.push((
+                        name.clone(),
+                        self.cmd.interpreter.get_environment().get(name),
+                    ));
                     self.cmd.interpreter.define_variable(name.clone(), v);
                 }
                 Err(e) => {
@@ -508,7 +573,11 @@ impl Session {
         crate::profile::stats_sample_begin(crate::tier_stats::INTERVAL_US);
         let outcome = match bind_failed.take() {
             Some((name, e)) => Err(InterpreterError::RuntimeError {
-                message: format!("the value given for `{}` fails: {}", name, plain_message(&e)),
+                message: format!(
+                    "the value given for `{}` fails: {}",
+                    name,
+                    plain_message(&e)
+                ),
             }),
             None => self.cmd.interpreter.eval_program(program),
         };
@@ -517,16 +586,23 @@ impl Session {
         running.store(false, Ordering::SeqCst);
         let interrupted = crate::interrupt::pending();
         crate::interrupt::clear();
-        let location = if outcome.is_err() { self.cmd.interpreter.take_error_location() } else { None };
+        let location = if outcome.is_err() {
+            self.cmd.interpreter.take_error_location()
+        } else {
+            None
+        };
         // a `let`'s value is its binding's
         let bound = match (&outcome, &last) {
-            (Ok(_), Some(Statement::LetDecl(l))) | (Ok(_), Some(Statement::ShareDecl(ShareDecl::Let(l)))) => match &l.pattern {
+            (Ok(_), Some(Statement::LetDecl(l)))
+            | (Ok(_), Some(Statement::ShareDecl(ShareDecl::Let(l)))) => match &l.pattern {
                 crate::ast::Pattern::Identifier(n) => Some(n.clone()),
                 _ => None,
             },
             _ => None,
         };
-        let bound_value = bound.as_ref().and_then(|n| self.cmd.interpreter.get_environment().get(n));
+        let bound_value = bound
+            .as_ref()
+            .and_then(|n| self.cmd.interpreter.get_environment().get(n));
         // the parameters taken back, the session's grant put back
         for (name, was) in restore.into_iter().rev() {
             match was {
@@ -537,7 +613,11 @@ impl Session {
         if let Some(caps) = kept_caps {
             self.cmd.interpreter.replace_capabilities(caps);
         }
-        let watched = if watching && outcome.is_ok() { self.cmd.watch_after() } else { Vec::new() };
+        let watched = if watching && outcome.is_ok() {
+            self.cmd.watch_after()
+        } else {
+            Vec::new()
+        };
         self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
         if outcome.is_ok() {
             scope.uses.extend(uses);
@@ -551,7 +631,13 @@ impl Session {
             ),
             _ => (0, 0),
         };
-        let tier = if nat > 0 { "native" } else if bc > 0 { "bytecode" } else { "interpreter" };
+        let tier = if nat > 0 {
+            "native"
+        } else if bc > 0 {
+            "bytecode"
+        } else {
+            "interpreter"
+        };
         let mut reply = match outcome {
             Ok(value) => {
                 self.eval_seq += 1;
@@ -559,11 +645,14 @@ impl Session {
                 let mut held = Vec::new();
                 let shown = match (&last, bound_value) {
                     (_, Some(v)) => self.encode(&v, 0, &mut held),
-                    (Some(Statement::FunctionDecl(f)), _) | (Some(Statement::ShareDecl(ShareDecl::Function(f))), _) => json!({
+                    (Some(Statement::FunctionDecl(f)), _)
+                    | (Some(Statement::ShareDecl(ShareDecl::Function(f))), _) => json!({
                         "k": "decl", "t": "Function",
                         "s": format!("fn {}({})", f.name, f.parameters.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")) }),
                     (Some(Statement::Expression(_)), _) => self.encode(&value, 0, &mut held),
-                    (Some(Statement::UseDecl(_)), _) => json!({ "k": "decl", "t": "Use", "s": "use" }),
+                    (Some(Statement::UseDecl(_)), _) => {
+                        json!({ "k": "decl", "t": "Use", "s": "use" })
+                    }
                     _ => json!({ "k": "unit", "t": "Unit", "s": "()" }),
                 };
                 self.evals.push_back((seq, held));
@@ -659,7 +748,9 @@ impl Session {
         self.scopes.insert(key, scope);
         // `:run` leaves the module context on its file
         if word == ":run" {
-            self.cmd.interpreter.set_current_file(&self.root.join("olang.toml"));
+            self.cmd
+                .interpreter
+                .set_current_file(&self.root.join("olang.toml"));
         }
         let mut text = String::new();
         for (_, t) in &said {
@@ -725,7 +816,9 @@ impl Session {
                 }
                 Note::Type(t) => reply["type"] = J::String(t),
                 Note::Time(t) => reply["time_ms"] = json!(round3(t)),
-                Note::Bench(runs) => reply["bench"] = json!(runs.iter().map(|r| round3(*r)).collect::<Vec<_>>()),
+                Note::Bench(runs) => {
+                    reply["bench"] = json!(runs.iter().map(|r| round3(*r)).collect::<Vec<_>>())
+                }
                 Note::Open(place) => reply["open"] = J::String(place.to_string()),
                 Note::Commands => reply["commands"] = self.command_list(""),
                 Note::Cwd(d) => reply["cwd"] = J::String(d),
@@ -792,8 +885,16 @@ impl Session {
     /// the library's names, paths inside a string).
     fn complete(&mut self, msg: &J) -> J {
         let line = msg.get("line").and_then(|l| l.as_str()).unwrap_or("");
-        let chars = msg.get("pos").and_then(|p| p.as_u64()).map(|p| p as usize).unwrap_or(line.chars().count());
-        let pos = line.char_indices().nth(chars).map(|(i, _)| i).unwrap_or(line.len());
+        let chars = msg
+            .get("pos")
+            .and_then(|p| p.as_u64())
+            .map(|p| p as usize)
+            .unwrap_or(line.chars().count());
+        let pos = line
+            .char_indices()
+            .nth(chars)
+            .map(|(i, _)| i)
+            .unwrap_or(line.len());
         let (key, mut scope, _) = self.take_scope(None);
         self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
         let user = self.cmd.interpreter.get_user_variables();
@@ -802,7 +903,11 @@ impl Session {
             .filter(|(_, v)| !matches!(v, Value::Struct { type_name, .. } if type_name.as_str() == "Module"))
             .map(|(n, v)| (n.clone(), crate::repl::Repl::type_name_of(v).to_string()))
             .collect();
-        let fns: Vec<String> = user.iter().filter(|(_, v)| matches!(v, Value::Function(_))).map(|(n, _)| n.clone()).collect();
+        let fns: Vec<String> = user
+            .iter()
+            .filter(|(_, v)| matches!(v, Value::Function(_)))
+            .map(|(n, _)| n.clone())
+            .collect();
         drop(user);
         self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
         self.scopes.insert(key, scope);
@@ -815,7 +920,13 @@ impl Session {
             fns,
             library: self.library.clone().unwrap_or_default(),
             topics: self.cmd.help().get_categories(),
-            tutorials: self.cmd.help().get_tutorials().iter().map(|t| t.name.clone()).collect(),
+            tutorials: self
+                .cmd
+                .help()
+                .get_tutorials()
+                .iter()
+                .map(|t| t.name.clone())
+                .collect(),
             cwd: std::env::current_dir().unwrap_or_else(|_| self.root.clone()),
         };
         let (start, items) = crate::repl_commands::complete(line, pos, &names);
@@ -840,16 +951,30 @@ impl Session {
         interrupted: bool,
     ) -> J {
         let mut message = plain_message(e);
-        let mut kind = if interrupted || crate::interrupt::is_interrupt(&message) { "interrupted" } else { "runtime" };
+        let mut kind = if interrupted || crate::interrupt::is_interrupt(&message) {
+            "interrupted"
+        } else {
+            "runtime"
+        };
         if kind == "interrupted" {
             message = "interrupted".to_string();
         }
         let (line, col, efile, stack, hint) = match &loc {
             Some(l) => {
-                let f = l.file.as_ref().map(|f| self.resolve(f)).or_else(|| file.map(|f| f.to_path_buf()));
+                let f = l
+                    .file
+                    .as_ref()
+                    .map(|f| self.resolve(f))
+                    .or_else(|| file.map(|f| f.to_path_buf()));
                 (l.line, l.column, f, l.call_stack.clone(), l.hint.clone())
             }
-            None => (at_line as u32, 1, file.map(|f| f.to_path_buf()), Vec::new(), None),
+            None => (
+                at_line as u32,
+                1,
+                file.map(|f| f.to_path_buf()),
+                Vec::new(),
+                None,
+            ),
         };
         // a parameter of the function the snippet stands in, not bound
         // here: the REPL evaluates code as written (SPEC §18.1 is open)
@@ -857,16 +982,17 @@ impl Session {
         if let (InterpreterError::UndefinedVariable { name }, Some(f)) = (e, file)
             && let Some(ix) = self.file_index(f)
         {
-            if let Some((fname, a, _, ps)) = ix
-                .fns
-                .iter()
-                .find(|(_, a, b, ps)| (*a as usize) < at_line && at_line <= *b as usize && ps.contains(name))
-            {
+            if let Some((fname, a, _, ps)) = ix.fns.iter().find(|(_, a, b, ps)| {
+                (*a as usize) < at_line && at_line <= *b as usize && ps.contains(name)
+            }) {
                 message = format!("`{}` is a parameter of `{}` — not bound here", name, fname);
                 kind = "unbound";
                 within = Some((fname.clone(), *a, ps.clone()));
             } else if let Some((_, l)) = ix.skipped.iter().find(|(n, _)| n == name) {
-                message = format!("`{}` is a top-level binding that runs code — evaluate its line ({}) first", name, l);
+                message = format!(
+                    "`{}` is a top-level binding that runs code — evaluate its line ({}) first",
+                    name, l
+                );
                 kind = "unbound";
             }
         }
@@ -911,25 +1037,40 @@ impl Session {
                 _ => None,
             })?;
         let path = self.resolve(&def);
-        let l = self.file_index(&path)?.fns.iter().find(|(n, ..)| *n == bare)?.1;
+        let l = self
+            .file_index(&path)?
+            .fns
+            .iter()
+            .find(|(n, ..)| *n == bare)?
+            .1;
         Some((path, l))
     }
 
     fn resolve(&self, f: &str) -> PathBuf {
         let p = Path::new(f);
-        if p.is_absolute() { p.to_path_buf() } else { self.root.join(p) }
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            self.root.join(p)
+        }
     }
 
     // ── reload ──────────────────────────────────────────────────────
 
     fn reload(&mut self, msg: &J, running: &AtomicBool) -> J {
         let t0 = Instant::now();
-        let Some(path) = msg.get("path").and_then(|p| p.as_str()).map(|p| self.resolve(p)) else {
+        let Some(path) = msg
+            .get("path")
+            .and_then(|p| p.as_str())
+            .map(|p| self.resolve(p))
+        else {
             return json!({ "ok": false, "error": { "kind": "protocol", "message": "reload needs a path" } });
         };
         let src = match std::fs::read_to_string(&path) {
             Ok(s) => s,
-            Err(e) => return json!({ "ok": false, "error": { "kind": "io", "message": e.to_string(), "file": path.to_string_lossy() } }),
+            Err(e) => {
+                return json!({ "ok": false, "error": { "kind": "io", "message": e.to_string(), "file": path.to_string_lossy() } });
+            }
         };
         // a file that no longer parses changes nothing
         if let Err(e) = self.parser.parse(&src) {
@@ -972,9 +1113,18 @@ impl Session {
                     let only: Vec<Statement> = p
                         .statements
                         .into_iter()
-                        .filter(|s| matches!(s.unwrapped(), Statement::UseDecl(_) | Statement::ShareDecl(ShareDecl::Use(_))))
+                        .filter(|s| {
+                            matches!(
+                                s.unwrapped(),
+                                Statement::UseDecl(_) | Statement::ShareDecl(ShareDecl::Use(_))
+                            )
+                        })
                         .collect();
-                    if let Err(e) = self.cmd.interpreter.eval_program(crate::ast::Program { statements: only }) {
+                    if let Err(e) = self
+                        .cmd
+                        .interpreter
+                        .eval_program(crate::ast::Program { statements: only })
+                    {
                         problems.push(plain_message(&e));
                         let _ = self.cmd.interpreter.take_error_location();
                     }
@@ -1046,11 +1196,19 @@ impl Session {
                 json!({ "k": "result", "t": t, "ok": ok, "v": self.encode(inner, depth, held) })
             }
             Value::List(items) | Value::Tuple(items) => {
-                let kind = if matches!(v, Value::List(_)) { "list" } else { "tuple" };
+                let kind = if matches!(v, Value::List(_)) {
+                    "list"
+                } else {
+                    "tuple"
+                };
                 let h = self.hold(v, held);
                 let mut r = json!({ "k": kind, "t": t, "n": items.len(), "h": h, "s": preview(v) });
                 if depth < 2 {
-                    let first: Vec<J> = items.iter().take(FIRST_ITEMS).map(|x| self.encode(x, depth + 1, held)).collect();
+                    let first: Vec<J> = items
+                        .iter()
+                        .take(FIRST_ITEMS)
+                        .map(|x| self.encode(x, depth + 1, held))
+                        .collect();
                     r["items"] = J::Array(first);
                 }
                 if let Some(cols) = table_columns(items) {
@@ -1060,8 +1218,17 @@ impl Session {
                 }
                 r
             }
-            Value::Range { start, end, inclusive } => {
-                let n = (if *inclusive { end - start + 1 } else { end - start }).max(0);
+            Value::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                let n = (if *inclusive {
+                    end - start + 1
+                } else {
+                    end - start
+                })
+                .max(0);
                 json!({ "k": "range", "t": t, "n": n, "s": v.to_string() })
             }
             Value::Map(m) => {
@@ -1085,7 +1252,8 @@ impl Session {
             }
             Value::Struct { fields, .. } => {
                 let h = self.hold(v, held);
-                let mut r = json!({ "k": "record", "t": t, "n": fields.len(), "h": h, "s": preview(v) });
+                let mut r =
+                    json!({ "k": "record", "t": t, "n": fields.len(), "h": h, "s": preview(v) });
                 if depth < 2 {
                     let mut keys: Vec<&String> = fields.keys().collect();
                     keys.sort();
@@ -1104,7 +1272,9 @@ impl Session {
                 json!({ "k": "fn", "t": t, "s": format!("fn {}({})", f.name.as_deref().unwrap_or(""), ps.join(", ")) })
             }
             Value::Builtin(b) => json!({ "k": "fn", "t": t, "s": format!("builtin {}", b.name) }),
-            Value::EnumConstructor(_) | Value::TypeInfo(_) => json!({ "k": "fn", "t": t, "s": preview(v) }),
+            Value::EnumConstructor(_) | Value::TypeInfo(_) => {
+                json!({ "k": "fn", "t": t, "s": preview(v) })
+            }
             Value::Native(_) => match crate::stdlib::bytes::bytes_of(v) {
                 Ok(b) => {
                     let h = self.hold(v, held);
@@ -1112,7 +1282,8 @@ impl Session {
                     if let Some((fmt, w, ht)) = image_kind(b) {
                         r["img"] = json!({ "format": fmt, "w": w, "h": ht });
                         if b.len() <= 16 * 1024 * 1024 {
-                            r["png"] = J::String(base64::engine::general_purpose::STANDARD.encode(b));
+                            r["png"] =
+                                J::String(base64::engine::general_purpose::STANDARD.encode(b));
                         }
                     }
                     r
@@ -1128,7 +1299,9 @@ impl Session {
             return None;
         }
         let lower = s.to_ascii_lowercase();
-        let pic = [".png", ".jpg", ".jpeg", ".gif", ".webp"].iter().any(|e| lower.ends_with(e));
+        let pic = [".png", ".jpg", ".jpeg", ".gif", ".webp"]
+            .iter()
+            .any(|e| lower.ends_with(e));
         if !pic {
             return None;
         }
@@ -1144,7 +1317,8 @@ impl Session {
             return json!({ "ok": false, "error": { "kind": "gone", "message": "that value is no longer held (released, or the REPL restarted)" } });
         };
         let start = msg.get("start").and_then(|s| s.as_u64()).unwrap_or(0) as usize;
-        let count = (msg.get("count").and_then(|s| s.as_u64()).unwrap_or(100) as usize).min(EXPAND_MAX);
+        let count =
+            (msg.get("count").and_then(|s| s.as_u64()).unwrap_or(100) as usize).min(EXPAND_MAX);
         let mut held = Vec::new();
         let reply = match &v {
             Value::String(s) => {
@@ -1154,9 +1328,16 @@ impl Session {
             Value::List(items) | Value::Tuple(items) => {
                 if msg.get("table").and_then(|t| t.as_bool()) == Some(true) {
                     let cols = table_columns(items).unwrap_or_default();
-                    let order = match msg.get("sort").and_then(|s| s.get("col")).and_then(|c| c.as_u64()) {
+                    let order = match msg
+                        .get("sort")
+                        .and_then(|s| s.get("col"))
+                        .and_then(|c| c.as_u64())
+                    {
                         Some(c) => {
-                            let desc = msg["sort"].get("desc").and_then(|d| d.as_bool()).unwrap_or(false);
+                            let desc = msg["sort"]
+                                .get("desc")
+                                .and_then(|d| d.as_bool())
+                                .unwrap_or(false);
                             Some(self.sorted(h, items, &cols, c as usize, desc))
                         }
                         None => None,
@@ -1165,7 +1346,10 @@ impl Session {
                     let rows: Vec<J> = (start..(start + count).min(n))
                         .map(|i| {
                             let at = order.as_ref().map(|o| o[i]).unwrap_or(i);
-                            let cells: Vec<J> = cols.iter().map(|c| J::String(cell_text(&items[at], c))).collect();
+                            let cells: Vec<J> = cols
+                                .iter()
+                                .map(|c| J::String(cell_text(&items[at], c)))
+                                .collect();
                             json!({ "i": at, "c": cells })
                         })
                         .collect();
@@ -1203,10 +1387,16 @@ impl Session {
                 json!({ "ok": true, "n": n, "entries": out })
             }
             Value::Native(_) => match crate::stdlib::bytes::bytes_of(&v) {
-                Ok(b) => json!({ "ok": true, "n": b.len(), "b64": base64::engine::general_purpose::STANDARD.encode(b) }),
-                Err(_) => json!({ "ok": false, "error": { "kind": "protocol", "message": "nothing to expand" } }),
+                Ok(b) => {
+                    json!({ "ok": true, "n": b.len(), "b64": base64::engine::general_purpose::STANDARD.encode(b) })
+                }
+                Err(_) => {
+                    json!({ "ok": false, "error": { "kind": "protocol", "message": "nothing to expand" } })
+                }
             },
-            _ => json!({ "ok": false, "error": { "kind": "protocol", "message": "nothing to expand" } }),
+            _ => {
+                json!({ "ok": false, "error": { "kind": "protocol", "message": "nothing to expand" } })
+            }
         };
         // what an expansion holds lives as long as the evaluation it came from
         if !held.is_empty() {
@@ -1222,12 +1412,22 @@ impl Session {
     }
 
     /// A table's rows ordered by column `c` (cached by handle).
-    fn sorted(&mut self, h: u64, items: &[Value], cols: &[String], c: usize, desc: bool) -> Arc<Vec<usize>> {
+    fn sorted(
+        &mut self,
+        h: u64,
+        items: &[Value],
+        cols: &[String],
+        c: usize,
+        desc: bool,
+    ) -> Arc<Vec<usize>> {
         if let Some(o) = self.sorts.get(&(h, c, desc)) {
             return o.clone();
         }
         let col = cols.get(c).cloned().unwrap_or_default();
-        let keys: Vec<Value> = items.iter().map(|r| field_of(r, &col).unwrap_or(Value::Unit)).collect();
+        let keys: Vec<Value> = items
+            .iter()
+            .map(|r| field_of(r, &col).unwrap_or(Value::Unit))
+            .collect();
         let mut order: Vec<usize> = (0..items.len()).collect();
         order.sort_by(|a, b| {
             let o = compare_cells(&keys[*a], &keys[*b]);
@@ -1274,7 +1474,9 @@ impl Session {
         let (key, mut scope, _) = self.take_scope(None);
         self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
         self.cmd.interpreter.define_global("__studio_view", view);
-        self.cmd.interpreter.define_global("__studio_opts", json_to_value(&opts));
+        self.cmd
+            .interpreter
+            .define_global("__studio_opts", json_to_value(&opts));
         crate::interrupt::clear();
         running.store(true, Ordering::SeqCst);
         let program = self
@@ -1282,7 +1484,9 @@ impl Session {
             .parse("use loom.lib.test { render_view as __studio_render_view }\n__studio_render_view(__studio_view, __studio_opts)");
         let outcome = match program {
             Ok(p) => self.cmd.interpreter.eval_program(p),
-            Err(e) => Err(InterpreterError::RuntimeError { message: parse_message(&e) }),
+            Err(e) => Err(InterpreterError::RuntimeError {
+                message: parse_message(&e),
+            }),
         };
         running.store(false, Ordering::SeqCst);
         let _ = self.cmd.interpreter.take_error_location();
@@ -1292,23 +1496,36 @@ impl Session {
         let ms = round3(t0.elapsed().as_secs_f64() * 1000.0);
         match outcome {
             Ok(Value::Map(ref m)) => {
-                let png = m.get("png").and_then(|p| crate::stdlib::bytes::bytes_of(p).ok().map(|b| b.to_vec()));
+                let png = m
+                    .get("png")
+                    .and_then(|p| crate::stdlib::bytes::bytes_of(p).ok().map(|b| b.to_vec()));
                 let num = |k: &str| match m.get(k) {
                     Some(Value::Integer(i)) => *i as f64,
                     Some(Value::Float(f)) => *f,
                     _ => 0.0,
                 };
                 match png {
-                    Some(b) => json!({ "ok": true, "png": base64::engine::general_purpose::STANDARD.encode(&b),
-                                       "width": num("width"), "height": num("height"), "scale": opts["scale"], "ms": ms }),
-                    None => json!({ "ok": false, "ms": ms, "error": { "kind": "render", "message": "render_view answered no picture" } }),
+                    Some(b) => {
+                        json!({ "ok": true, "png": base64::engine::general_purpose::STANDARD.encode(&b),
+                                       "width": num("width"), "height": num("height"), "scale": opts["scale"], "ms": ms })
+                    }
+                    None => {
+                        json!({ "ok": false, "ms": ms, "error": { "kind": "render", "message": "render_view answered no picture" } })
+                    }
                 }
             }
-            Ok(other) => json!({ "ok": false, "ms": ms, "error": { "kind": "render", "message": format!("render_view answered {}", other.type_name()) } }),
+            Ok(other) => {
+                json!({ "ok": false, "ms": ms, "error": { "kind": "render", "message": format!("render_view answered {}", other.type_name()) } })
+            }
             Err(e) => {
                 let mut message = plain_message(&e);
-                if message.contains("loom") && (message.contains("not found") || message.contains("Module")) {
-                    message = format!("{} — the project has no `loom` dependency; pass its path as `loom`", message);
+                if message.contains("loom")
+                    && (message.contains("not found") || message.contains("Module"))
+                {
+                    message = format!(
+                        "{} — the project has no `loom` dependency; pass its path as `loom`",
+                        message
+                    );
                 }
                 json!({ "ok": false, "ms": ms, "error": { "kind": "render", "message": message } })
             }
@@ -1320,7 +1537,11 @@ impl Session {
 
 /// Whether prompt input is a REPL command: `:word`, `!shell`, `quit`.
 fn is_command_line(code: &str) -> bool {
-    (code.starts_with(':') && code.chars().nth(1).is_some_and(|c| c.is_alphabetic() || c == '!'))
+    (code.starts_with(':')
+        && code
+            .chars()
+            .nth(1)
+            .is_some_and(|c| c.is_alphabetic() || c == '!'))
         || (code.starts_with('!') && code.len() > 1 && !code.starts_with("!="))
         || code == "quit"
 }
@@ -1331,7 +1552,9 @@ fn denied_capability(message: &str) -> Option<String> {
     let at = message.find("capability '")? + "capability '".len();
     let rest = &message[at..];
     let end = rest.find('\'')?;
-    rest[end..].starts_with("' denied").then(|| rest[..end].to_string())
+    rest[end..]
+        .starts_with("' denied")
+        .then(|| rest[..end].to_string())
 }
 
 fn round3(x: f64) -> f64 {
@@ -1339,7 +1562,10 @@ fn round3(x: f64) -> f64 {
 }
 
 fn short(root: &Path, f: &Path) -> String {
-    f.strip_prefix(root).unwrap_or(f).to_string_lossy().into_owned()
+    f.strip_prefix(root)
+        .unwrap_or(f)
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn file_stamp(f: &Path) -> (u64, Option<std::time::SystemTime>) {
@@ -1352,7 +1578,11 @@ fn file_stamp(f: &Path) -> (u64, Option<std::time::SystemTime>) {
 /// The source lines of top-level statement `i` (to the next one's).
 fn stmt_text(lines: &[&str], starts: &[u32], i: usize) -> String {
     let a = (starts[i].max(1) as usize - 1).min(lines.len());
-    let b = starts.get(i + 1).map(|n| (*n as usize).saturating_sub(1)).unwrap_or(lines.len()).clamp(a, lines.len());
+    let b = starts
+        .get(i + 1)
+        .map(|n| (*n as usize).saturating_sub(1))
+        .unwrap_or(lines.len())
+        .clamp(a, lines.len());
     lines[a..b.max(a + 1).min(lines.len())].join("\n")
 }
 
@@ -1424,7 +1654,9 @@ fn calls_something(text: &str) -> bool {
                     }
                 }
             }
-            '(' if prev.is_alphanumeric() || prev == '_' || prev == ')' || prev == ']' => return true,
+            '(' if prev.is_alphanumeric() || prev == '_' || prev == ')' || prev == ']' => {
+                return true;
+            }
             '>' if prev == '|' => return true,
             _ => {}
         }
@@ -1447,14 +1679,47 @@ fn preview(v: &Value) -> String {
 }
 
 const LOOM_ROLES: &[&str] = &[
-    "window", "group", "separator", "text", "heading", "button", "input", "textarea", "checkbox", "list", "table",
-    "dialog", "popover", "menu", "select", "toast", "tabs", "segmented", "tab_bar", "split", "log", "tree", "canvas",
-    "image", "region", "memo", "slider", "progress", "icon", "link", "toggle", "radio",
+    "window",
+    "group",
+    "separator",
+    "text",
+    "heading",
+    "button",
+    "input",
+    "textarea",
+    "checkbox",
+    "list",
+    "table",
+    "dialog",
+    "popover",
+    "menu",
+    "select",
+    "toast",
+    "tabs",
+    "segmented",
+    "tab_bar",
+    "split",
+    "log",
+    "tree",
+    "canvas",
+    "image",
+    "region",
+    "memo",
+    "slider",
+    "progress",
+    "icon",
+    "link",
+    "toggle",
+    "radio",
 ];
 
 /// A Loom view node (`#{ role, key, props, children }`): its role.
 fn loom_view_role(m: &crate::ast::ValueMap) -> Option<String> {
-    if m.len() != 4 || !m.contains_key("props") || !m.contains_key("children") || !m.contains_key("key") {
+    if m.len() != 4
+        || !m.contains_key("props")
+        || !m.contains_key("children")
+        || !m.contains_key("key")
+    {
         return None;
     }
     match m.get("role") {
@@ -1509,7 +1774,9 @@ fn compare_cells(a: &Value, b: &Value) -> std::cmp::Ordering {
         (Value::Unit, Value::Unit) => Ordering::Equal,
         (Value::Unit, _) => Ordering::Greater,
         (_, Value::Unit) => Ordering::Less,
-        _ => a.compare_for_sort(b).unwrap_or_else(|| a.to_string().cmp(&b.to_string())),
+        _ => a
+            .compare_for_sort(b)
+            .unwrap_or_else(|| a.to_string().cmp(&b.to_string())),
     }
 }
 
@@ -1620,6 +1887,9 @@ mod tests {
         m.insert("b".into(), Value::Integer(1));
         m.insert("a".into(), Value::Integer(2));
         let rows = vec![Value::Map(Arc::new(m))];
-        assert_eq!(table_columns(&rows), Some(vec!["a".to_string(), "b".to_string()]));
+        assert_eq!(
+            table_columns(&rows),
+            Some(vec!["a".to_string(), "b".to_string()])
+        );
     }
 }
