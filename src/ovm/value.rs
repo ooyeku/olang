@@ -788,21 +788,43 @@ impl OvmValue {
     }
 
     /// Frees this value's children in place, each through its own drop.
+    ///
+    /// A collection held only here may still be watched by the
+    /// conversion cache's `Weak` (`TO_AST_CACHE`), and `Arc::get_mut`
+    /// refuses while one exists: its contents are taken out whole
+    /// instead (`Arc::into_inner` needs only the one strong handle), or
+    /// the drop glue would free them by recursion after all.
     fn clear_children(&mut self) {
+        fn sole<T>(arc: &mut Arc<T>, empty: impl FnOnce(&T) -> T) -> Option<T> {
+            if Arc::strong_count(arc) != 1 {
+                return None;
+            }
+            let placeholder = Arc::new(empty(arc));
+            Arc::into_inner(std::mem::replace(arc, placeholder))
+        }
         match &mut self.data {
             ValueData::List(items) | ValueData::Tuple(items) => {
                 if let Some(items) = Arc::get_mut(items) {
                     items.clear();
+                } else {
+                    drop(sole(items, |_| Vec::new()));
                 }
             }
             ValueData::Map(map) => {
                 if let Some(map) = Arc::get_mut(map) {
                     map.clear();
+                } else {
+                    drop(sole(map, |_| OvmMap::default()));
                 }
             }
             ValueData::Struct(s) => {
                 if let Some(s) = Arc::get_mut(s) {
                     s.values.clear();
+                } else {
+                    drop(sole(s, |st| StructObject {
+                        shape: st.shape.clone(),
+                        values: Vec::new(),
+                    }));
                 }
             }
             ValueData::Enum(e) => {

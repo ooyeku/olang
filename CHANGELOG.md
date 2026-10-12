@@ -428,6 +428,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A deep VM value the conversion cache had seen freed by recursion.**
+  The cache keeps a `Weak` handle on each large collection it converted,
+  and `Arc::get_mut` refuses while one exists, so freeing such a list,
+  tuple, map or record fell back to the drop glue's recursion: a
+  million-deep chain that crossed the tier boundary overflowed the stack
+  (tests/deep_drop_test.rs's boundary case aborted). Its contents are
+  now taken out whole when this is the one strong handle.
 - **`olang profile` reports a program that ends with `os.exit`** — every
   Loom application, from its loop or a quit — in text and as JSON
   (`--out`); before, such a run printed nothing at all, so a windowed
