@@ -636,7 +636,9 @@ shape does not carry, read or written), `keys` (a `.key` read no map or
 object built in the module has), `result` (a discarded `Result`),
 `shadow` (a `let` that takes a stdlib module's name — `let cell = …`
 turns every later `cell.get` in its scope into a run-time failure far
-from the `let`), `copy` (a loop that copies the collection it is
+from the `let` — and a parameter, lambda parameter, loop variable or
+pattern binding of a module's name that its scope then reads as the
+module: `fn table_sort(rows, col) = col.sort_by(…)`), `copy` (a loop that copies the collection it is
 building on every pass: a temporary read again after the rebind, or a
 prepend — see [the rebind forms](performance.md#the-rebind-forms)),
 `tier` (a function `olang check --tier` finds the

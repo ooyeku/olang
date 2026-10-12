@@ -52,6 +52,7 @@ pub fn file_diagnostics(
     diagnostics.extend(unimported_names(program, source, &modules, dir, unresolved));
     diagnostics.extend(template_escape_warnings(source));
     diagnostics.extend(shadow_warnings_in(program, source));
+    diagnostics.extend(binding_shadow_warnings(program));
     diagnostics.extend(key_warnings(program, source));
     // The project's `[check] promote`: the advisory classes it names
     // are errors here, so an exhaustiveness or shape finding gates
@@ -1012,6 +1013,190 @@ fn callable_names(nodes: &[Value]) -> std::collections::HashSet<String> {
         }
     }
     callable
+}
+
+/// Parameters and pattern bindings that take a stdlib module's name and
+/// are then read as that module: `fn table_sort(rows, col) = … col.sort_by
+/// (…)` reaches the parameter, and fails at run time. A binding of the
+/// name that is never read as the module is not reported — `col` and
+/// `time` are ordinary parameter names. (`let` has its own rule above.)
+pub fn binding_shadow_warnings(program: &Program) -> Vec<CheckDiagnostic> {
+    let mut modules: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
+    for (name, module) in crate::stdlib::get_stdlib().iter() {
+        if let Value::Struct { fields, .. } = module {
+            modules.insert(name.clone(), fields.keys().cloned().collect());
+        }
+    }
+    let mut walker = BindingShadows {
+        modules,
+        at: (0, 0),
+        out: Vec::new(),
+    };
+    for statement in &program.statements {
+        walker.statement(statement);
+    }
+    walker.out
+}
+
+struct BindingShadows {
+    modules: HashMap<String, std::collections::HashSet<String>>,
+    at: (u32, u32),
+    out: Vec<CheckDiagnostic>,
+}
+
+impl BindingShadows {
+    fn statement(&mut self, statement: &Statement) {
+        match statement {
+            Statement::Located { line, column, stmt } => {
+                let saved = self.at;
+                self.at = (*line, *column);
+                self.statement(stmt);
+                self.at = saved;
+            }
+            Statement::Expression(e) => self.expr(e),
+            Statement::LetDecl(l) => {
+                if let Some(v) = &l.value {
+                    self.expr(v);
+                }
+            }
+            Statement::FunctionDecl(f) => self.function(f),
+            Statement::ShareDecl(crate::ast::ShareDecl::Function(f)) => self.function(f),
+            Statement::ShareDecl(crate::ast::ShareDecl::Let(l)) => {
+                if let Some(v) = &l.value {
+                    self.expr(v);
+                }
+            }
+            Statement::ImplDecl(i) => {
+                for m in &i.methods {
+                    self.function(m);
+                }
+            }
+            Statement::TestDecl(t) => {
+                for s in &t.body {
+                    self.statement(s);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn function(&mut self, f: &crate::ast::FunctionDecl) {
+        for p in &f.parameters {
+            self.binder(&p.name, &[&f.body], &format!("parameter `{}` of `{}`", p.name, f.name));
+        }
+        self.expr(&f.body);
+    }
+
+    /// `name` bound over `scope`: reported when the scope reads it as the
+    /// stdlib module of that name.
+    fn binder(&mut self, name: &str, scope: &[&Expr], what: &str) {
+        let Some(members) = self.modules.get(name) else {
+            return;
+        };
+        let Some(member) = scope.iter().find_map(|e| Self::module_read(e, name, members)) else {
+            return;
+        };
+        self.out.push(CheckDiagnostic {
+            line: self.at.0,
+            column: self.at.1,
+            message: format!(
+                "{} shadows the stdlib module `{}`: `{}.{}` in its scope reaches the binding, \
+not the module — rename the binding",
+                what, name, name, member
+            ),
+            runtime: false,
+            warning: true,
+            scope: false,
+        });
+    }
+
+    /// The first `name.member` in `e` whose member the module has.
+    fn module_read(
+        e: &Expr,
+        name: &str,
+        members: &std::collections::HashSet<String>,
+    ) -> Option<String> {
+        if let Expr::FieldAccess { object, field } = e
+            && matches!(object.as_ref(), Expr::Identifier(n) | Expr::LocalRef { name: n, .. } if n == name)
+            && members.contains(field)
+        {
+            return Some(field.clone());
+        }
+        crate::tools::keys::children(e)
+            .into_iter()
+            .find_map(|c| Self::module_read(c, name, members))
+    }
+
+    fn expr(&mut self, e: &Expr) {
+        match e {
+            Expr::Lambda { parameters, body, .. } => {
+                for p in parameters {
+                    self.binder(&p.name, &[body], &format!("the lambda parameter `{}`", p.name));
+                }
+                self.expr(body);
+                return;
+            }
+            Expr::ForLoop { variable, body, iterable } | Expr::ParForLoop { variable, body, iterable } => {
+                self.expr(iterable);
+                self.binder(variable, &[body], &format!("the loop variable `{}`", variable));
+                self.expr(body);
+                return;
+            }
+            Expr::Match { value, arms } => {
+                self.expr(value);
+                for arm in arms {
+                    let mut names = std::collections::HashSet::new();
+                    crate::resolve::pattern_names_of(&arm.pattern, &mut names);
+                    let mut scope: Vec<&Expr> = vec![&arm.expression];
+                    if let Some(g) = &arm.guard {
+                        scope.push(g);
+                    }
+                    let mut names: Vec<String> = names.into_iter().collect();
+                    names.sort();
+                    for n in names {
+                        self.binder(&n, &scope, &format!("the pattern binding `{}`", n));
+                    }
+                    if let Some(g) = &arm.guard {
+                        self.expr(g);
+                    }
+                    self.expr(&arm.expression);
+                }
+                return;
+            }
+            Expr::Block(statements) => {
+                for (i, s) in statements.iter().enumerate() {
+                    if let Statement::LetDecl(l) = s.unwrapped()
+                        && !matches!(l.pattern, crate::ast::Pattern::Identifier(_))
+                    {
+                        let mut names = std::collections::HashSet::new();
+                        crate::resolve::pattern_names_of(&l.pattern, &mut names);
+                        let rest: Vec<&Expr> = statements[i + 1..]
+                            .iter()
+                            .filter_map(|r| match r.unwrapped() {
+                                Statement::Expression(x) => Some(x),
+                                Statement::LetDecl(l) => l.value.as_ref(),
+                                _ => None,
+                            })
+                            .collect();
+                        let mut names: Vec<String> = names.into_iter().collect();
+                        names.sort();
+                        if let Statement::Located { line, column, .. } = s {
+                            self.at = (*line, *column);
+                        }
+                        for n in names {
+                            self.binder(&n, &rest, &format!("the pattern binding `{}`", n));
+                        }
+                    }
+                    self.statement(s);
+                }
+                return;
+            }
+            _ => {}
+        }
+        for c in crate::tools::keys::children(e) {
+            self.expr(c);
+        }
+    }
 }
 
 /// The findings of `shadow_warnings` over `nodes`, given the callables.
@@ -4400,6 +4585,22 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_parameter_or_pattern_shadowing_a_stdlib_module_is_reported() {
+        let program = Parser::new()
+            .parse(
+                "fn f(str) = str.length(\"a\")\nfn table_sort(rows, col) = col.sort_by(rows, (r) => r)\nfn ok(col, time) = col + time\nlet h = (json) => json.parse(\"1\")\nfn g(p) = match p { (math, _) => math.sqrt(4.0), _ => 0 }\n",
+            )
+            .expect("parses");
+        let d = binding_shadow_warnings(&program);
+        let messages: Vec<&str> = d.iter().map(|d| d.message.as_str()).collect();
+        assert_eq!(d.len(), 4, "{messages:?}");
+        assert!(messages[0].starts_with("parameter `str` of `f` shadows the stdlib module `str`"));
+        assert!(messages[1].contains("`col.sort_by`"));
+        assert!(messages[2].starts_with("the lambda parameter `json`"));
+        assert!(messages[3].starts_with("the pattern binding `math`"));
+        assert!(d.iter().all(|d| d.warning && warning_class(&d.message) == Some("shadow")));
+    }
 
     #[test]
     fn an_unrebound_collection_write_warns() {

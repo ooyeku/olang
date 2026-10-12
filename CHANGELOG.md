@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The `shadow` advisory covers parameters and pattern bindings.** A
+  parameter, lambda parameter, loop variable or pattern binding that
+  takes a stdlib module's name and whose scope then reads it as the
+  module (`fn table_sort(rows, col) = col.sort_by(…)`, `fn f(str) =
+  str.length(s)`) is reported at the binding; one that is never read as
+  the module is not, `col` and `time` being ordinary names. Heddle's
+  `table_sort` checked clean and failed on `col.sort_by`. Over the
+  workspace's corpus it reports nothing.
+
 - **`olang check` reports a wrong argument count to a builtin.** A call
   of a global builtin outside the counts its implementation takes is an
   error in the runtime's words (`sort([1], 2)`: `Arity mismatch: expected

@@ -57,7 +57,6 @@ since 2026-10-07); those rows are kept together under
 
 | Item | Evidence | Done when |
 |---|---|---|
-| `[tooling]` The checker misses a parameter that shadows a stdlib module | `fn table_sort(rows, col, …)` checked clean and failed on `col.sort_by`; `fn f(str) = str.length("a")` is clean on 0.87.0. The `let` form already warns (Heddle) | the "shadows the stdlib module" advisory covers parameters and pattern bindings |
 | `[tooling]` A large file's problems arrive 630 ms after an edit | in a 50,000-line file a typed problem shows ~0.63 s later: every edit re-parses and re-analyses the whole file (Studio, tools/live_lsp.ol). `olang check .` over open-track takes 12 s, all of it the parse | the server checks by top-level item: an edit re-parses its item and the items naming what it declares |
 | `[tooling]` Native code calling native code has no time of its own | callees in a caller's native group have counted calls (7d76560) but their time is the caller's (tooling.md), so Studio's tier map shows none for them | time attributed per callee (group entries counted in the JIT call stub, or members reported with their root) |
 | `[tooling]` REPL command output is not deterministic | `:env` lists modules in hash order; `:help tutorials`, `:tutorial` and `:search` ties vary — three piped runs, three outputs. Studio's pinned transcripts leave them out | sorted (name, then score), and the full transcripts pinned in tests/repl_commands_test.rs |
