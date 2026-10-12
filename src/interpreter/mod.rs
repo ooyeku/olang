@@ -1820,7 +1820,10 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 // `self`. Struct fields take precedence, preserving field
                 // access that happens to hold a callable.
                 if let Expr::FieldAccess { object, field } = callee.as_ref() {
-                    let receiver = self.eval_expr(object)?;
+                    // A receiver that is a module's member the module
+                    // lacks (`collections.headp.new()`) raises naming the
+                    // nearest, as a call of it does.
+                    let receiver = self.callee_value(object)?;
                     // A map's key, as a struct's field, wins over a
                     // trait method of the same name.
                     let is_struct_field = match &receiver {
@@ -4515,7 +4518,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// naming the nearest (`fs.reed_file(p)`), where a read is `()`.
     fn callee_value(&mut self, callee: &crate::ast::Expr) -> Result<Value, InterpreterError> {
         if let crate::ast::Expr::FieldAccess { object, field } = callee {
-            let receiver = self.eval_expr(object)?;
+            let receiver = self.callee_value(object)?;
             if let Value::Struct { type_name, fields } = &receiver
                 && type_name == "Module"
                 && !fields.contains_key(field.as_str())
@@ -4534,7 +4537,10 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         object: &crate::ast::Expr,
         field: &str,
     ) -> Result<Value, InterpreterError> {
-        let object_value = self.eval_expr(object)?;
+        // A field read of a module's member the module lacks
+        // (`m.missing.x`) raises naming the nearest member; `m.missing`
+        // alone is `()`.
+        let object_value = self.callee_value(object)?;
         self.field_of(object_value, field)
     }
 

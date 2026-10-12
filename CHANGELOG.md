@@ -428,6 +428,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A module's missing member used as a receiver names the nearest
+  member again.** Since a missing member reads as `()`,
+  `collections.headp.new()` raised "Cannot access field 'new' on
+  non-struct value"; a missing member whose field is read or whose
+  method is called raises as calling it does, naming the nearest
+  ("did you mean 'heap'"). `m.missing` alone is still `()`.
 - **A deep VM value the conversion cache had seen freed by recursion.**
   The cache keeps a `Weak` handle on each large collection it converted,
   and `Arc::get_mut` refuses while one exists, so freeing such a list,
