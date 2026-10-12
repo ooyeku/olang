@@ -304,7 +304,12 @@ fn serialize_nested<S: serde::Serializer>(value: &Value, serializer: S) -> Resul
         }
         // Structs, anonymous objects, and maps are all JSON objects.
         Value::Struct { fields, .. } | Value::Map(fields) => {
-            let mut keys: Vec<&String> = fields.keys().collect();
+            // A `db` connection's handle is its owner, not its data: the
+            // connection writes as the id and path it always did.
+            let mut keys: Vec<&String> = fields
+                .keys()
+                .filter(|k| !matches!(&fields[*k], Value::Native(h) if h.0.type_name() == "ConnectionHandle"))
+                .collect();
             keys.sort();
             let mut map = serializer.serialize_map(Some(keys.len()))?;
             for key in keys {

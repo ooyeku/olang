@@ -106,3 +106,11 @@ fn a_string_snapshot_is_its_text_and_the_caller_may_refresh_it() {
     assert!(test("testing.snapshot(\"old\", \"kept\")", &[("OLANG_UPDATE_SNAPSHOTS", "1")]));
     assert_eq!(snap("old.snap"), "kept");
 }
+
+#[test]
+fn a_connection_writes_as_json_as_it_did() {
+    let src = "let c = unwrap(db.open(\":memory:\"))\nprintln(unwrap(json.stringify(#{ \"db\": c })))\n";
+    for (stdout, _) in run("dbjson.ol", src) {
+        assert!(stdout.starts_with("{\"db\":{\"id\":") && stdout.contains("\"path\":\":memory:\"}}"), "{stdout}");
+    }
+}
