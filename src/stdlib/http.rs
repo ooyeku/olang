@@ -1560,10 +1560,11 @@ fn http_response(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     );
     response_map.insert(
         "headers".to_string(),
-        Value::Struct {
-            type_name: "Headers".to_string(),
-            fields: std::sync::Arc::new(crate::ast::ValueMap::default()),
-        },
+        Value::Map(Arc::new(crate::ast::ValueMap::default())),
+    );
+    response_map.insert(
+        "success".to_string(),
+        Value::Boolean((200..300).contains(&status)),
     );
 
     Ok(Value::Struct {
@@ -1607,12 +1608,10 @@ fn http_response_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::er
         "body".to_string(),
         Value::String(Arc::new(body.to_string())),
     );
+    response_map.insert("headers".to_string(), Value::Map(Arc::new(headers)));
     response_map.insert(
-        "headers".to_string(),
-        Value::Struct {
-            type_name: "Headers".to_string(),
-            fields: std::sync::Arc::new(headers),
-        },
+        "success".to_string(),
+        Value::Boolean((200..300).contains(&status)),
     );
 
     Ok(Value::Struct {
@@ -1648,7 +1647,9 @@ fn parse_url(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             );
             url_map.insert(
                 "port".to_string(),
-                Value::Integer(url.port().unwrap_or(0) as i64),
+                url.port()
+                    .map(|p| Value::Integer(p as i64))
+                    .unwrap_or(Value::Unit),
             );
             url_map.insert(
                 "path".to_string(),
@@ -1656,15 +1657,19 @@ fn parse_url(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             );
             url_map.insert(
                 "query".to_string(),
-                Value::String(Arc::new(url.query().unwrap_or("").to_string())),
+                url.query()
+                    .map(|q| Value::String(Arc::new(q.to_string())))
+                    .unwrap_or(Value::Unit),
             );
             url_map.insert(
                 "fragment".to_string(),
-                Value::String(Arc::new(url.fragment().unwrap_or("").to_string())),
+                url.fragment()
+                    .map(|f| Value::String(Arc::new(f.to_string())))
+                    .unwrap_or(Value::Unit),
             );
 
             Ok(Value::Ok(Box::new(Value::Struct {
-                type_name: "UrlInfo".to_string(),
+                type_name: "Object".to_string(),
                 fields: std::sync::Arc::new(url_map),
             })))
         }
@@ -1746,10 +1751,8 @@ fn decode_query(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
     }
 
-    Ok(Value::Struct {
-        type_name: "QueryParams".to_string(),
-        fields: std::sync::Arc::new(params),
-    })
+    // Data keyed by what the query says: a Map.
+    Ok(Value::Map(Arc::new(params)))
 }
 
 #[cfg(test)]
@@ -1873,7 +1876,8 @@ mod tests {
             assert_eq!(type_name, "HttpResponse");
             assert_eq!(fields["status"], int_val(200));
             assert_eq!(fields["body"], string_val("Hello World"));
-            assert!(matches!(fields["headers"], Value::Struct { .. }));
+            assert!(matches!(fields["headers"], Value::Map(_)));
+            assert_eq!(fields["success"], Value::Boolean(true));
         } else {
             panic!("Expected HttpResponse struct, got: {:?}", result);
         }
@@ -1895,11 +1899,7 @@ mod tests {
             assert_eq!(fields["status"], int_val(201));
             assert_eq!(fields["body"], string_val("Created"));
 
-            if let Value::Struct {
-                fields: header_fields,
-                ..
-            } = &fields["headers"]
-            {
+            if let Value::Map(header_fields) = &fields["headers"] {
                 assert_eq!(
                     header_fields["Content-Type"],
                     string_val("application/json")
@@ -1929,11 +1929,11 @@ mod tests {
             ),
             (
                 "http://localhost/api",
-                ("http", "localhost", 0, "/api", "", ""),
+                ("http", "localhost", -1, "/api", "", ""),
             ),
             (
                 "https://api.github.com/repos/owner/repo",
-                ("https", "api.github.com", 0, "/repos/owner/repo", "", ""),
+                ("https", "api.github.com", -1, "/repos/owner/repo", "", ""),
             ),
         ];
 
@@ -1944,10 +1944,13 @@ mod tests {
             if let Value::Struct { fields, .. } = parsed {
                 assert_eq!(fields["scheme"], string_val(expected.0));
                 assert_eq!(fields["host"], string_val(expected.1));
-                assert_eq!(fields["port"], int_val(expected.2));
+                // a part the URL does not name is ()
+                let or_unit = |s: &str| if s.is_empty() { Value::Unit } else { string_val(s) };
+                let port = if expected.2 < 0 { Value::Unit } else { int_val(expected.2) };
+                assert_eq!(fields["port"], port);
                 assert_eq!(fields["path"], string_val(expected.3));
-                assert_eq!(fields["query"], string_val(expected.4));
-                assert_eq!(fields["fragment"], string_val(expected.5));
+                assert_eq!(fields["query"], or_unit(expected.4));
+                assert_eq!(fields["fragment"], or_unit(expected.5));
             } else {
                 panic!(
                     "Expected UrlInfo struct for URL: {}, got: {:?}",
@@ -2004,7 +2007,7 @@ mod tests {
         let result = decode_query(vec![string_val(query_string)]).unwrap();
         let decoded = assert_ok(&result);
 
-        if let Value::Struct { fields, .. } = decoded {
+        if let Value::Map(fields) = decoded {
             assert_eq!(fields["name"], string_val("John Doe"));
             assert_eq!(fields["age"], string_val("30"));
             assert_eq!(fields["city"], string_val("New York"));
@@ -2022,7 +2025,7 @@ mod tests {
         let result = decode_query(vec![string_val("")]).unwrap();
         let decoded = assert_ok(&result);
 
-        if let Value::Struct { fields, .. } = decoded {
+        if let Value::Map(fields) = decoded {
             assert!(fields.is_empty());
         } else {
             panic!("Expected empty QueryParams struct, got: {:?}", result);
@@ -2295,7 +2298,7 @@ mod tests {
         let result = decode_query(vec![string_val(query_string)]).unwrap();
         let decoded = assert_ok(&result);
 
-        if let Value::Struct { fields, .. } = decoded {
+        if let Value::Map(fields) = decoded {
             assert_eq!(fields["name"], string_val("John & Jane"));
             assert_eq!(fields["email"], string_val("test@example.com"));
             assert_eq!(fields["path"], string_val("/path/with spaces"));
@@ -2324,7 +2327,7 @@ mod tests {
         let decoded_result = decode_query(vec![encoded.clone()]).unwrap();
         let decoded = assert_ok(&decoded_result);
 
-        if let Value::Struct { fields, .. } = decoded {
+        if let Value::Map(fields) = decoded {
             assert_eq!(fields["name"], string_val("Test User"));
             assert_eq!(fields["age"], string_val("25")); // Numbers become strings in decode
             assert_eq!(fields["active"], string_val("true")); // Booleans become strings in decode

@@ -555,8 +555,30 @@ fn proc_stderr(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     Ok(ok(Value::String(Arc::new(s))))
 }
 
-/// `proc.wait(p)` — block until the child exits, returning `#{ code }`
-/// (the exit code, or -1 if it was killed by a signal). Safe to call
+/// An exit status as `(code, signal)`: the exit code and `()`, or `()` and
+/// the signal that ended the process.
+pub(crate) fn exit_parts(status: &std::process::ExitStatus) -> (Value, Value) {
+    #[cfg(unix)]
+    let signal = {
+        use std::os::unix::process::ExitStatusExt;
+        status.signal()
+    };
+    #[cfg(not(unix))]
+    let signal: Option<i32> = None;
+    (
+        status
+            .code()
+            .map(|c| Value::Integer(c as i64))
+            .unwrap_or(Value::Unit),
+        signal
+            .map(|s| Value::Integer(s as i64))
+            .unwrap_or(Value::Unit),
+    )
+}
+
+/// `proc.wait(p)` — block until the child exits, returning `{ code,
+/// signal }` (the exit code and `()`, or `()` and the signal that ended
+/// it). Safe to call
 /// without draining stdout first: the drainer threads keep the pipes
 /// empty, so the child can always make progress to exit.
 fn proc_wait(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
@@ -570,11 +592,12 @@ fn proc_wait(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let mut child = p.child.lock().unwrap();
     match child.wait() {
         Ok(status) => {
-            let code = status.code().unwrap_or(-1) as i64;
+            let (code, signal) = exit_parts(&status);
             let mut fields = crate::ast::ValueMap::default();
-            fields.insert("code".to_string(), Value::Integer(code));
+            fields.insert("code".to_string(), code);
+            fields.insert("signal".to_string(), signal);
             Ok(ok(Value::Struct {
-                type_name: "Exit".to_string(),
+                type_name: "Object".to_string(),
                 fields: std::sync::Arc::new(fields),
             }))
         }
@@ -776,7 +799,12 @@ fn proc_pipeline(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     // Collect exit codes in order.
     let mut codes = Vec::with_capacity(n);
     for child in &mut children {
-        let code = child.wait().ok().and_then(|s| s.code()).unwrap_or(-1) as i64;
+        // a stage ended by a signal (or not waited for) has no code: ()
+        let code = child
+            .wait()
+            .ok()
+            .map(|s| exit_parts(&s).0)
+            .unwrap_or(Value::Unit);
         codes.push(code);
     }
     if let Some(f) = feeder {
@@ -789,23 +817,17 @@ fn proc_pipeline(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         }
     }
 
-    let final_code = *codes.last().unwrap_or(&-1);
+    let final_code = codes.last().cloned().unwrap_or(Value::Unit);
     let mut fields = crate::ast::ValueMap::default();
-    fields.insert("code".to_string(), Value::Integer(final_code));
+    fields.insert("code".to_string(), final_code);
     fields.insert("stdout".to_string(), Value::String(Arc::new(final_out)));
     fields.insert("stderr".to_string(), Value::String(Arc::new(stderr_all)));
     fields.insert(
         "codes".to_string(),
-        Value::List(
-            codes
-                .into_iter()
-                .map(Value::Integer)
-                .collect::<Vec<_>>()
-                .into(),
-        ),
+        Value::List(codes.into()),
     );
     Ok(ok(Value::Struct {
-        type_name: "Pipeline".to_string(),
+        type_name: "Object".to_string(),
         fields: std::sync::Arc::new(fields),
     }))
 }

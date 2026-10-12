@@ -2557,7 +2557,7 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
             "Result",
             "proc",
             "block until the child exits, returning Ok(#{ code })",
-            &[r##"unwrap(proc.wait(p))  // #{ code: 0 }"##],
+            &[r##"unwrap(proc.wait(p))  // { code: 0, signal: () }"##],
         );
         self.doc_ex(
             "proc.kill",
@@ -4645,8 +4645,8 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             "one line from stdin as Ok(line), or Err(\"eof\") at end-of-input",
             &[r##"match os.read_line() { Ok(line) => process(line), Err(e) => () }"##],
         );
-        self.doc_ex("os.exec", "os.exec(program, args, opts?)", "Result", "os", "run a program to completion, returning Ok(#{ code, stdout, stderr, timed_out }); opts sets cwd/stdin/env/timeout_ms (past it the program's process group is killed and timed_out is true)",
-            &[r##"unwrap(os.exec("git", ["status", "--short"]))  // #{ code, stdout, stderr }"##],
+        self.doc_ex("os.exec", "os.exec(program, args, opts?)", "Result", "os", "run a program to completion, returning Ok({ code, signal, stdout, stderr, timed_out }) (code () when it did not exit by itself); opts sets cwd/stdin/env/timeout_ms (past it the program's process group is killed and timed_out is true)",
+            &[r##"unwrap(os.exec("git", ["status", "--short"]))  // { code, signal, stdout, stderr, timed_out }"##],
         );
         self.doc_ex(
             "os.is_tty",
@@ -6783,9 +6783,9 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
             description: "A file's or directory's metadata, without reading it: size, is_file, is_dir, readonly, and modified_ms — when it last changed, in epoch milliseconds (the clock time.now_ms() reads)".to_string(),
             syntax: "fs.file_info(path)".to_string(),
             parameters: vec!["path: String - The path to get information about".to_string()],
-            return_type: "Result<FileInfo, Error>".to_string(),
+            return_type: "Result<Object, Error>".to_string(),
             examples: vec![
-                "fs.file_info(\"script.py\")  // Ok(FileInfo { size: 1024, is_file: true, is_dir: false, readonly: false, modified_ms: 1790000000000 })".to_string(),
+                "fs.file_info(\"script.py\")  // Ok({ size: 1024, is_file: true, is_dir: false, readonly: false, modified_ms: 1790000000000 })".to_string(),
                 "match fs.file_info(\".\") { Ok(info) => println(\"Directory size: \" + to_string(info.size)), Err(e) => println(\"Error: \" + e) }".to_string(),
             ],
             category: "Filesystem".to_string(),
@@ -6979,7 +6979,7 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
             description: "Parse a URL string into its component parts".to_string(),
             syntax: "http.parse_url(url)".to_string(),
             parameters: vec!["url: String - The URL to parse".to_string()],
-            return_type: "Result<UrlInfo, Error>".to_string(),
+            return_type: "Result<Object, Error>".to_string(),
             examples: vec![
                 "http.parse_url(\"https://example.com:8080/path?query=value#fragment\")".to_string(),
                 "match http.parse_url(url) { Ok(info) => println(\"Host: \" + info.host), Err(e) => println(\"Invalid URL\") }".to_string(),
@@ -10362,7 +10362,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
             parameters: vec![],
             return_type: "Map".to_string(),
             examples: vec![
-                "os.list_env()  // Ok({ PATH: \"/usr/bin\", HOME: \"/home/user\", ... })"
+                "os.list_env()  // #{ \"PATH\": \"/usr/bin\", \"HOME\": \"/home/user\", ... }"
                     .to_string(),
                 "match os.list_env() { Ok(env) => println(env.HOME), Err(e) => println(e) }"
                     .to_string(),

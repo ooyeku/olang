@@ -304,10 +304,7 @@ fn os_list_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         env_vars.insert(key, Value::String(Arc::new(value)));
     }
 
-    Ok(Value::Struct {
-        type_name: "EnvironmentVariables".to_string(),
-        fields: std::sync::Arc::new(env_vars),
-    })
+    Ok(Value::Map(Arc::new(env_vars)))
 }
 
 /// Check if an environment variable exists
@@ -634,20 +631,20 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
     match outcome {
         Ok((output, timed_out)) => {
-            let code = if timed_out {
-                -1
-            } else {
-                output.status.code().unwrap_or(-1) as i64
-            };
+            // `code` is the exit code, or () when the child did not exit
+            // by itself: a timeout, or a signal (`signal` names it).
+            let (code, signal) = crate::stdlib::proc::exit_parts(&output.status);
+            let code = if timed_out { Value::Unit } else { code };
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             let mut fields = crate::ast::ValueMap::default();
-            fields.insert("code".to_string(), Value::Integer(code));
+            fields.insert("code".to_string(), code);
+            fields.insert("signal".to_string(), signal);
             fields.insert("stdout".to_string(), Value::String(Arc::new(stdout)));
             fields.insert("stderr".to_string(), Value::String(Arc::new(stderr)));
             fields.insert("timed_out".to_string(), Value::Boolean(timed_out));
             Ok(Value::Ok(Box::new(Value::Struct {
-                type_name: "ExecResult".to_string(),
+                type_name: "Object".to_string(),
                 fields: std::sync::Arc::new(fields),
             })))
         }
@@ -1203,6 +1200,7 @@ mod tests {
     fn extract_struct_fields(value: &Value) -> &crate::ast::ValueMap {
         match value {
             Value::Struct { fields, .. } => fields,
+            Value::Map(fields) => fields,
             _ => {
                 panic!("Expected struct value, got: {:?}", value)
             }

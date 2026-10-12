@@ -109,7 +109,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and Float, so `math.round(x * 100.0) / 100.0` is unchanged; what
   changes is a rounded value printed alone (`3` where it was `3.0`).
   `to_int(math.round(x))` keeps working.
-
+- **Stdlib records are Maps or plain objects.** What is keyed by data
+  is a Map: `http.decode_query`, `os.list_env()`, the rows of
+  `csv.parse_with_headers`, and an `HttpResponse`'s `headers` (so
+  `.missing ?? d` answers `d` where it raised). What reports a result
+  is a plain object with one field set: `os.exec`'s `{ code, signal,
+  stdout, stderr, timed_out }`, `proc.wait`'s and `pty.wait`'s `{ code,
+  signal }`, `proc.pipeline`'s, `fs.file_info`'s and `http.parse_url`'s.
+  `typeof` says `Map` or `Object` where it said `QueryParams`,
+  `EnvironmentVariables`, `CsvRow`, `Headers`, `ExecResult`, `Exit`,
+  `Pipeline`, `FileInfo` or `UrlInfo`. `code` is `()` when a process did
+  not exit by itself (a timeout, or a signal, which `signal` names); it
+  was -1 for both. `http.parse_url` answers `()` for a port, query or
+  fragment the URL does not name (it answered 0 and `""`), and
+  `http.response` has the client response's `success`.
 
 ### Added
 

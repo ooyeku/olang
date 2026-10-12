@@ -815,3 +815,43 @@ fn vec_sum_of_ints_is_an_int() {
         ]))
     );
 }
+
+// ── stdlib records: data-keyed are Maps, results plain objects ─────────
+
+#[test]
+fn stdlib_records_are_maps_or_plain_objects() {
+    let src = r#"
+let x = unwrap(os.exec("sh", ["-c", "exit 3"]))
+let w = unwrap(proc.wait(unwrap(proc.spawn("sh", ["-c", "kill -9 $$"]))))
+let u = unwrap(http.parse_url("http://a.example/x"))
+let r = http.response(404, "no")
+[typeof(http.decode_query("a=1")), http.decode_query("a=1").b ?? "d", typeof(os.list_env()),
+ typeof(unwrap(csv.parse_with_headers("a\n1\n"))[0]), typeof(x), x.code, x.signal, x.timed_out,
+ typeof(w), w.code, w.signal, typeof(u), u.port, u.query, typeof(r), typeof(r.headers), r.success,
+ typeof(unwrap(fs.file_info("."))), typeof(unwrap(proc.pipeline([["echo", "a"]])))]
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(l(vec![
+            s("Map"),
+            s("d"),
+            s("Map"),
+            s("Map"),
+            s("Object"),
+            Value::Integer(3),
+            Value::Unit,
+            Value::Boolean(false),
+            s("Object"),
+            Value::Unit,
+            Value::Integer(9),
+            s("Object"),
+            Value::Unit,
+            Value::Unit,
+            s("HttpResponse"),
+            s("Map"),
+            Value::Boolean(false),
+            s("Object"),
+            s("Object"),
+        ]))
+    );
+}

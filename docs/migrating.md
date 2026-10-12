@@ -28,6 +28,7 @@ upgrading; it reports the cases it can find.
   - [Six reserved words](#six-reserved-words)
   - [`task.join` answers a Result](#taskjoin-answers-a-result)
   - [Rounding answers an Int](#rounding-answers-an-int)
+  - [Stdlib records](#stdlib-records)
 - [In 0.88](#in-088)
   - [A missing field of an object is `()`](#a-missing-field-of-an-object-is-)
   - [A module's missing member reads as `()`](#a-modules-missing-member-reads-as-)
@@ -205,6 +206,18 @@ changes (`3`, not `3.0`). A Float too large for an Int (`1e300`) raises
 where it answered itself, and `math.pow(2, -1)` raises: write
 `math.pow(2.0, -1)`. A `to_int(…)` around a rounding is now redundant
 and harmless.
+
+### Stdlib records
+
+A record keyed by data is a Map (`http.decode_query`, `os.list_env()`,
+`csv.parse_with_headers`'s rows, a response's `headers`), and a result
+is a plain object (`os.exec`, `proc.wait`, `pty.wait`, `proc.pipeline`,
+`fs.file_info`, `http.parse_url`): a `typeof` test against the old
+names (`"ExecResult"`, `"QueryParams"`, …) fails; test the fields
+instead. Reading fields with `.` is unchanged. A process that did not
+exit by itself has `code: ()` and its `signal` (it was -1): `code == 0`
+still tells success. `http.parse_url`'s missing `port`, `query` and
+`fragment` are `()` (were 0 and `""`).
 
 ## In 0.88
 

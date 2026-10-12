@@ -821,13 +821,14 @@ println(to_string(toml.validate("not [ valid")))
 ## `csv` — CSV
 
 Quoted fields, embedded commas, and header-aware parsing.
-`parse_with_headers` yields rows whose cells are dot-accessible by column
-name (all cells are strings — convert explicitly).
+`parse_with_headers` yields rows as maps keyed by the header (`#{ "name":
+"Ada" }`, read `row.name` or `map_get(row, "first name")`; all cells
+are strings — convert explicitly).
 
 | Function | Description |
 |---|---|
 | `csv.parse(s)` | rows as lists of strings |
-| `csv.parse_with_headers(s)` | rows as named records |
+| `csv.parse_with_headers(s)` | rows as maps keyed by the header |
 | `csv.stringify(rows)` / `csv.stringify_with_headers` | write CSV text |
 | `csv.get_headers(s)` / `csv.set_headers` | header row |
 | `csv.row_count(rows)` / `csv.column_count(rows)` | dimensions |
@@ -1292,8 +1293,8 @@ Move to Trash does (macOS's NSFileManager) — never a permanent delete —
 and answers `Ok(path in the Trash)`; moving it back from there with
 `fs.move_file` puts it back. Elsewhere it is an `Err` that says so.
 
-`fs.file_size(path)` answers a file's bytes and `fs.file_info(path)` a
-record — `size`, `is_file`, `is_dir`, `readonly`, and `modified_ms`
+`fs.file_size(path)` answers a file's bytes and `fs.file_info(path)` an
+object — `{ size, is_file, is_dir, readonly, modified_ms }`: `size`, `is_file`, `is_dir`, `readonly`, and `modified_ms`
 (when the file last changed, in epoch milliseconds, the clock
 `time.now_ms()` reads) — both from the file's metadata, without reading
 it: what a cache or a change check asks.
@@ -1694,7 +1695,7 @@ deadlocks against a caller reading only one stream. Native-only.
 | Spawn | `spawn(program, args)` / `spawn(program, args, #{ cwd, env, group, framing })` → `Ok(Process)`; a `cwd` that names no directory is an `Err` saying so |
 | Input | `write(p, s)` · `write_line(p, s)` · `write_frame(p, s)` (one `Content-Length`-framed message) · `close_stdin(p)` (signals EOF) |
 | Output | `read_line(p)` → `Ok(line)` \| `Err("eof")`; `read_all(p)` → the rest of stdout; `stderr(p)` → all stderr (complete after exit) |
-| Lifecycle | `wait(p)` → `Ok(#{ code })` · `kill(p)` / `kill(p, #{ tree: true })` · `pid(p)` |
+| Lifecycle | `wait(p)` → `Ok({ code, signal })` (the exit code and `()`, or `()` and the signal that ended it) · `kill(p)` / `kill(p, #{ tree: true })` · `pid(p)` |
 | Pipeline | `pipeline(stages)` / `pipeline(stages, #{ cwd, env, stdin })` |
 
 ```olang no-run
@@ -1734,9 +1735,9 @@ unwrap(proc.kill(p, #{ "tree": true }))   // make, and everything it ran
 
 `proc.pipeline` chains commands the way the shell's `a | b | c` does —
 each stage is a list `[program, ...args]`, and each one's stdout is wired
-to the next one's stdin. It returns `Ok(#{ code, stdout, stderr, codes })`:
+to the next one's stdin. It returns `Ok({ code, stdout, stderr, codes })`:
 the last stage's stdout, all stderr concatenated, the final exit code, and
-the per-stage codes list. `opts.stdin` feeds the first stage.
+the per-stage codes list (a stage ended by a signal has `()`). `opts.stdin` feeds the first stage.
 
 ```olang no-run
 let r = unwrap(proc.pipeline([
@@ -2342,7 +2343,8 @@ than inventing its own idioms: requests are fallible so they return
 `Result`, a response is an ordinary struct-like value, and a server
 handler is just a function from request to response. (`no-run`: network.)
 
-A client response carries `status` (Int), `body` (String), `headers`
+A client response (an `HttpResponse`, the shape `http.response` builds)
+carries `status` (Int), `body` (String), `headers`
 (a map of lowercased header name to first value), and `success` (Bool,
 true for 2xx):
 
@@ -2350,10 +2352,10 @@ true for 2xx):
 |---|---|
 | `http.get(url[, opts])` / `http.post(url, body[, opts])` / `http.put` / `http.delete` | requests |
 | `http.request(method, url, body[, opts])` | any method |
-| `http.parse_url(url)` | split a URL into parts |
-| `http.encode_query(map)` / `http.decode_query(s)` | query strings — `encode_query` takes a `#{}` map or a `{ }` record, keys in sorted order |
+| `http.parse_url(url)` | split a URL into parts: `Ok({ scheme, host, port, path, query, fragment })`, `port`, `query` and `fragment` `()` when the URL names none |
+| `http.encode_query(map)` / `http.decode_query(s)` | query strings — `encode_query` takes a `#{}` map or a `{ }` record, keys in sorted order; `decode_query` answers a map |
 | `http.serve(port, handler[, options])` | serve `handler(request)` on a bounded worker pool; blocks the calling program |
-| `http.response(status, body)` / `http.response_with_headers(status, body, headers)` | build responses |
+| `http.response(status, body)` / `http.response_with_headers(status, body, headers)` | build responses: an `HttpResponse` of the client's shape, `{ status, body, headers, success }`, `headers` a map |
 | `http.shutdown()` | ask every running `http.serve` to drain: no new connections, in-flight requests finish (up to `drain_ms`), and `serve` returns `Ok` — what an [`os.on_shutdown`](#os--operating-system) handler calls |
 | `http.defer()` / `http.respond(ticket, response)` | park the connection a handler is answering and complete it later, from any thread |
 | `http.hold(topic)` / `http.notify(topic, response)` / `http.notify_all(response)` / `http.held(topic)` | park the current request under a topic; answer every connection held under it (the count answered); count what is parked |

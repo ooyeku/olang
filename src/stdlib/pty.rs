@@ -715,7 +715,7 @@ mod imp {
 
     fn exit_value(e: (Option<i32>, Option<i32>)) -> Value {
         obj(
-            "Exit",
+            "Object",
             vec![
                 (
                     "code",

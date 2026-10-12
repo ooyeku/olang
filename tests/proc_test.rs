@@ -157,7 +157,7 @@ let p = unwrap(proc.spawn("sh", ["-c", "sleep 7 & echo $!; sleep 7"], #{ "group"
 let grandchild = str.trim(unwrap(proc.read_line(p)))
 let k = proc.kill(p, #{ "tree": true })
 let w = unwrap(proc.wait(p))
-[ is_ok(k), w.code == -1, gone(grandchild) ]
+[ is_ok(k), w.code == () && w.signal == 9, gone(grandchild) ]
 "#
         ),
         3,
@@ -203,7 +203,7 @@ fn exec_with_a_timeout_kills_the_tree_and_says_so() {
 let t0 = time.monotonic_ms()
 let r = unwrap(os.exec("sh", ["-c", "sleep 7 & echo $!; sleep 7"], #{ "timeout_ms": 300 }))
 let took = time.monotonic_ms() - t0
-[ r.timed_out, r.code == -1, took >= 290, took < 3000, gone(str.trim(r.stdout)) ]
+[ r.timed_out, r.code == (), took >= 290, took < 3000, gone(str.trim(r.stdout)) ]
 "#
         ),
         5,

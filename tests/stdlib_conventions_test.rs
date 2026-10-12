@@ -53,7 +53,7 @@ fn host_introspection_returns_values_not_results() {
     // list_env returns a struct-like record, not a bare Map.
     assert_eq!(
         run("typeof(os.list_env())").unwrap(),
-        "EnvironmentVariables"
+        "Map"
     );
     assert_eq!(run("typeof(os.interrupted())").unwrap(), "Bool");
 }

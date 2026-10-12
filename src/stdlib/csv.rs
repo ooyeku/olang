@@ -234,10 +234,8 @@ fn csv_parse_with_headers(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
                         );
                     }
                 }
-                objects.push(Value::Struct {
-                    type_name: "CsvRow".to_string(),
-                    fields: std::sync::Arc::new(obj),
-                });
+                // A row is keyed by the file's own header: a Map.
+                objects.push(Value::Map(std::sync::Arc::new(obj)));
             }
             Err(e) => {
                 return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
@@ -1374,9 +1372,8 @@ mod tests {
 
         assert_eq!(rows.len(), 2); // Should exclude header row
 
-        // Check first data row (should be a struct)
-        if let Value::Struct { type_name, fields } = &rows[0] {
-            assert_eq!(type_name, "CsvRow");
+        // Check first data row (a Map keyed by the header)
+        if let Value::Map(fields) = &rows[0] {
             assert_eq!(extract_string(fields.get("name").unwrap()), "Alice");
             assert_eq!(extract_string(fields.get("age").unwrap()), "30");
         } else {

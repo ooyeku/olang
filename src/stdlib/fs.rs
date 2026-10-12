@@ -1000,7 +1000,7 @@ fn file_info(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             info.insert("modified_ms".to_string(), modified);
 
             Ok(Value::Ok(Box::new(Value::Struct {
-                type_name: "FileInfo".to_string(),
+                type_name: "Object".to_string(),
                 fields: std::sync::Arc::new(info),
             })))
         }
@@ -1464,7 +1464,7 @@ mod tests {
         let info_value = assert_ok(&info_result);
 
         if let Value::Struct { type_name, fields } = info_value {
-            assert_eq!(type_name, "FileInfo");
+            assert_eq!(type_name, "Object");
 
             // Check required fields
             assert!(fields.contains_key("size"));
