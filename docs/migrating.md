@@ -15,6 +15,12 @@ upgrading; it reports the cases it can find.
   - [`find` answers the element or `()`](#find-answers-the-element-or-)
   - [`reduce` starts from the first element](#reduce-starts-from-the-first-element)
   - [`re.replace` replaces every match](#rereplace-replaces-every-match)
+  - [A line starting with `-` or `+` starts a statement](#a-line-starting-with---or--starts-a-statement)
+  - [A function declared twice in a file](#a-function-declared-twice-in-a-file)
+  - [The bitwise operators' order](#the-bitwise-operators-order)
+  - [A block ending in `let` or `;` is `()`](#a-block-ending-in-let-or--is-)
+  - [Equality](#equality)
+  - [Smaller rulings](#smaller-rulings)
 - [In 0.88](#in-088)
   - [A missing field of an object is `()`](#a-missing-field-of-an-object-is-)
   - [A module's missing member reads as `()`](#a-modules-missing-member-reads-as-)
@@ -67,6 +73,70 @@ println(fold([3, 9, 4], 0, (a, b) => a + b))                    // 16
 `re.replace_first` replaces one. `re.replace_all`, the old name for
 every match, is deprecated and keeps working. A program that relied on
 `re.replace` changing only the first match calls `re.replace_first`.
+
+### A line starting with `-` or `+` starts a statement
+
+A line that begins with `-` or `+` used to continue the expression on
+the line above; it now starts a new statement (`-1` on its own line is
+the number −1, and a line starting with `+` is a parse error). Move the
+operator to the end of the line above:
+
+```olang
+let base = 10
+let total = base +
+    5
+println(total)   // 15
+```
+
+`olang check` reports each line that no longer parses. A line starting
+with `|>`, `&&`, `||`, `??`, `*`, `/`, a comparison or a bitwise operator
+still continues the one above.
+
+### A function declared twice in a file
+
+A second top-level `fn` of the same name in one file is an error, from
+`olang check` and when the file loads; the second declaration used to
+replace the first. Rename one. The REPL still lets a later input
+redefine a name.
+
+### The bitwise operators' order
+
+`<<` and `>>` bind below `+` and `-`, and `&`, `^`, `|` below the shifts
+and above the comparisons, as in Rust: `1 + 2 << 3` is 24 (it was 17).
+Code that parenthesized mixed bitwise and arithmetic operators is
+unaffected.
+
+### A block ending in `let` or `;` is `()`
+
+`{ let a = 1 }` and `{ 1; }` were 1; their value is now `()`, and a
+function whose body is `{}` answers `()` rather than an empty object. A
+function that returned its last `let` names the value on a line of its
+own.
+
+### Equality
+
+`Ok(1) == Ok(1)` is `true` (it raised). Comparing a list, map or record
+that holds a function, a builtin or a range raises, as comparing the
+function itself does (it compared by identity); compare the data. An
+Int and a Float are equal only when they are the same number
+(`9007199254740993 == 9007199254740992.0` is false), and `contains` and
+`col.index_of` find an element by `==` (`contains([1, 2], 1.0)` is
+true).
+
+### Smaller rulings
+
+- `a == b == c` and `a < b < c` are parse errors; write `a < b && b <
+  c`.
+- A named argument to a builtin is an error; pass it by position.
+- A pattern that binds a name twice, or an or-pattern whose alternatives
+  bind different names, is an error before the program runs.
+- `'a'..='z'` matches a one-character String only.
+- An enum variant with named fields (`C { n: Int }`) is a parse error;
+  declare `C(Int)`.
+- `()` annotations, a lambda's return annotation and a tuple
+  annotation's length are enforced.
+- `to_int` of a Float outside the Int range, and a `<<` that loses a
+  bit, raise.
 
 ## In 0.88
 
