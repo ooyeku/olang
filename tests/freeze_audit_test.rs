@@ -714,7 +714,10 @@ fn the_reserved_words_are_refused_as_names_and_allowed_as_members() {
     for word in ["await", "yield", "async", "defer", "const", "pub"] {
         for src in [format!("let {word} = 1\n"), format!("fn {word}(x) = x\n")] {
             let err = parse_err(&src);
-            assert!(err.contains(&format!("`{word}` is a reserved word")), "{src}: {err}");
+            assert!(
+                err.contains(&format!("`{word}` is a reserved word")),
+                "{src}: {err}"
+            );
         }
     }
     assert_eq!(
@@ -743,6 +746,72 @@ let timed = task.join_timeout(spawn { time.sleep(300); 1 }, 10)
             Value::Boolean(true),
             ok(ok(Value::Integer(7))),
             Value::Err(Box::new(s("timed out"))),
+        ]))
+    );
+}
+
+// ── math: rounding answers an Int ──────────────────────────────────────
+
+#[test]
+fn rounding_answers_an_int_on_every_tier() {
+    // A hot loop compiles the rounding natively; the last call's Float is
+    // outside the Int range, so native code must hand it back to raise.
+    let src = r#"
+fn whole(x) = math.floor(x) + math.ceil(x) + math.round(x) + math.trunc(x)
+fn main() = {
+    let mut acc = 0
+    for i in range(0, 2000) { acc = acc + whole(to_float(i) / 4.0 - 100.0) + whole(i) }
+    [acc, math.round(2.5), math.round(-2.5), math.floor(9007199254740993), math.pow(2, 10),
+     math.pow(2.0, 10), math.sign(-2.5), math.min(1, 2.5), math.max([3, 9, 4]), math.min(2.0, 2),
+     ]
+}
+main()
+"#;
+    assert_eq!(
+        agree(src),
+        Ok(l(vec![
+            Value::Integer(9_194_700),
+            Value::Integer(3),
+            Value::Integer(-3),
+            Value::Integer(9_007_199_254_740_993),
+            Value::Integer(1024),
+            Value::Float(1024.0),
+            Value::Integer(-1),
+            Value::Integer(1),
+            Value::Integer(9),
+            Value::Float(2.0),
+        ]))
+    );
+    // Warmed, then handed a Float outside the Int range: native code
+    // hands it back, and the module raises.
+    let raising = r#"
+fn whole(x) = math.floor(x) + math.ceil(x) + math.round(x) + math.trunc(x)
+let mut acc = 0
+for i in range(0, 2000) { acc = acc + whole(to_float(i) / 4.0) }
+[match attempt(() => whole(1e300)) { Err(e) => e, Ok(v) => "no" },
+ match attempt(() => math.pow(2, 64)) { Err(e) => e, Ok(v) => "no" }]
+"#;
+    assert_eq!(
+        agree_tiered(raising),
+        Ok(l(vec![
+            s("math.floor: 1e300 is outside the Int range"),
+            s("math.pow: integer overflow"),
+        ]))
+    );
+}
+
+#[test]
+fn vec_sum_of_ints_is_an_int() {
+    assert_eq!(
+        agree_tiered(
+            "[vec.sum([1, 2, 3]), vec.sum([]), vec.sum([1, 2.5]), vec.mean([2, 4]), str.fixed(2.5, 0)]\n"
+        ),
+        Ok(l(vec![
+            Value::Integer(6),
+            Value::Integer(0),
+            Value::Float(3.5),
+            Value::Float(3.0),
+            s("2")
         ]))
     );
 }

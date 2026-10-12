@@ -98,6 +98,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   or `Err("timed out")`. Unwrap a join (`unwrap(task.join(t))`), and
   match `Ok(v)` where a bare `v` arm took the value.
 
+- **`math.floor`, `ceil`, `round` and `trunc` answer an Int** (they
+  answered a Float: `math.round(2.6)` was `3.0`, now 3); a Float outside
+  the Int range raises. `math.pow` of two Ints is an Int (an overflow or
+  a negative exponent raises), `math.min`/`math.max` behave as the
+  global `min`/`max` for numbers (one list, or two or more numbers; an
+  Int stays an Int: `math.min(1, 2.5)` is 1, was 1.0), and `vec.sum` of
+  Ints is an Int as `sum` is. `math.round` rounds a half away from zero
+  and `str.fixed` a half to even, now documented. Arithmetic mixes Int
+  and Float, so `math.round(x * 100.0) / 100.0` is unchanged; what
+  changes is a rounded value printed alone (`3` where it was `3.0`).
+  `to_int(math.round(x))` keeps working.
+
 
 ### Added
 

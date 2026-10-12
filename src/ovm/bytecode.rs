@@ -5392,7 +5392,36 @@ impl BytecodeVm {
                     // domain, fall through to execute_builtin_call — the exact
                     // code the interpreter runs — so the error is byte-identical
                     // across tiers rather than a silent NaN.
-                    let result = if all_numeric && !Self::float_math_out_of_domain(id, nums[0]) {
+                    // The rounding functions answer an Int (an Int argument is
+                    // already whole, a Float rounds and must fit); pow of two
+                    // Ints is integer arithmetic. Those take the module's
+                    // path, so the answer and the error are the interpreter's.
+                    let whole = if all_numeric && Self::float_math_whole(id) {
+                        match &self.execution_state.register_ref(args[0])?.data {
+                            crate::ovm::value::ValueData::Float(_) => {
+                                crate::stdlib::math::whole_of(Self::eval_float_math(
+                                    id, nums[0], 0.0,
+                                ))
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    let int_pow = id == Self::FLOAT_MATH_POW
+                        && args.iter().all(|a| {
+                            matches!(
+                                self.execution_state.register_ref(*a).map(|v| &v.data),
+                                Ok(crate::ovm::value::ValueData::Integer(_))
+                            )
+                        });
+                    let result = if let Some(n) = whole {
+                        OvmValue::new_integer(n)
+                    } else if all_numeric
+                        && !Self::float_math_whole(id)
+                        && !int_pow
+                        && !Self::float_math_out_of_domain(id, nums[0])
+                    {
                         OvmValue::new_float(Self::eval_float_math(id, nums[0], nums[1]))
                     } else {
                         let mut arg_values = Vec::with_capacity(args.len());
@@ -8772,7 +8801,9 @@ impl BytecodeVm {
     }
 
     /// The float-math fast path: `math` builtins that accept numbers and
-    /// always return Float in the interpreter (see stdlib/math.rs). A
+    /// return Float in the interpreter (see stdlib/math.rs) — but for the
+    /// rounding functions, which answer an Int (`float_math_whole`), and
+    /// pow of two Ints (`FLOAT_MATH_POW`). A
     /// CallBuiltin's builtin_id indexes this table; entries record arity.
     /// Excluded on purpose: abs/min/max (integer-preserving), log (optional
     /// base), and the integer functions (factorial, gcd, lcm, ...).
@@ -8803,6 +8834,14 @@ impl BytecodeVm {
         ("math.pow", 2),
         ("math.atan2", 2),
     ];
+
+    /// floor, ceil, round, trunc: FLOAT_MATH ids whose answer is an Int.
+    pub(crate) fn float_math_whole(id: usize) -> bool {
+        (2..=5).contains(&id)
+    }
+
+    /// math.pow's FLOAT_MATH id: two Int arguments answer an Int.
+    pub(crate) const FLOAT_MATH_POW: usize = 23;
 
     fn float_math_id(name: &str, arity: usize) -> Option<u32> {
         Self::FLOAT_MATH

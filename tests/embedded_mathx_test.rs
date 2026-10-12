@@ -61,6 +61,9 @@ fn sign_and_magnitude_agree() {
     assert_exact("min(3, 7)", "math.min(3, 7)");
     assert_exact("max(3, 7)", "math.max(3, 7)");
     assert_exact("min(9, 2)", "math.min(9, 2)");
+    // the first of equal values wins, an Int staying an Int
+    assert_exact("min(2.0, 2)", "math.min(2.0, 2)");
+    assert_exact("max(2, 2.0)", "math.max(2, 2.0)");
 }
 
 #[test]
@@ -85,6 +88,8 @@ fn rounding_agrees_including_negatives() {
         "0.0 - 2.5",
         "3.0",
         "0.0",
+        "7",
+        "0 - 7",
     ];
     for x in xs {
         assert_exact(&format!("floor({x})"), &format!("math.floor({x})"));

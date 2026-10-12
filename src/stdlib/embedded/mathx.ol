@@ -17,8 +17,9 @@ share fn abs(x) = if x < 0 => 0 - x else => x
 
 share fn sign(x) = if x > 0 => 1 else => if x < 0 => 0 - 1 else => 0
 
-share fn min(a, b) = if a < b => a else => b
-share fn max(a, b) = if a > b => a else => b
+// the first of equal values wins, as math.min and math.max keep it
+share fn min(a, b) = if b < a => b else => a
+share fn max(a, b) = if b > a => b else => a
 
 // ── Number theory (integers) ────────────────────────────────────────
 fn gcd_pos(a, b) = if b == 0 => a else => gcd_pos(b, a % b)
@@ -36,25 +37,26 @@ share fn factorial(n) = {
     acc
 }
 
-// ── Float rounding (built on truncation toward zero) ────────────────
+// ── Rounding (built on truncation toward zero) ──────────────────────
+// Each answers an Int, as math's do; to_int raises outside the Int range.
 // trunc drops the fractional part toward zero.
-share fn trunc(x) = to_float(to_int(x))
+share fn trunc(x) = to_int(x)
 
 // floor rounds toward negative infinity; ceil toward positive infinity.
 share fn floor(x) = {
     let t = trunc(x)
-    if t == x => x else => if x > 0 => t else => t - 1.0
+    if t == x => t else => if x > 0 => t else => t - 1
 }
 share fn ceil(x) = {
     let t = trunc(x)
-    if t == x => x else => if x > 0 => t + 1.0 else => t
+    if t == x => t else => if x > 0 => t + 1 else => t
 }
 
 // round: half away from zero, matching Rust's f64::round.
 share fn round(x) = if x >= 0 => floor(x + 0.5) else => ceil(x - 0.5)
 
 // fractional part, keeping the sign of x.
-share fn fract(x) = x - trunc(x)
+share fn fract(x) = to_float(x) - to_float(trunc(x))
 
 // ── Angle conversion ────────────────────────────────────────────────
 share fn radians(deg) = deg * PI / 180.0

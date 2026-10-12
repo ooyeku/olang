@@ -5507,11 +5507,33 @@ impl PlanFn {
                         }
                     }
                 }
-                Instruction::CallBuiltin { dst, args, .. } => {
+                Instruction::CallBuiltin {
+                    dst,
+                    args,
+                    builtin_id,
+                } => {
                     for a in args.iter() {
                         narrow!(a.0, K_NUM);
                     }
-                    grow!(self.writes[dst.0 as usize], K_FLOAT);
+                    let id = *builtin_id as usize;
+                    if crate::ovm::bytecode::BytecodeVm::float_math_whole(id) {
+                        // floor, ceil, round, trunc answer an Int.
+                        grow!(self.writes[dst.0 as usize], K_INT);
+                    } else if id == crate::ovm::bytecode::BytecodeVm::FLOAT_MATH_POW {
+                        // pow of two Ints is an Int (translation refuses
+                        // it: the checked power is the VM's); any Float
+                        // makes it a Float.
+                        let l = self.writes[args[0].0 as usize];
+                        let r = self.writes[args[1].0 as usize];
+                        if (l | r) & K_FLOAT != 0 {
+                            grow!(self.writes[dst.0 as usize], K_FLOAT);
+                        }
+                        if l & K_INT != 0 && r & K_INT != 0 {
+                            grow!(self.writes[dst.0 as usize], K_INT);
+                        }
+                    } else {
+                        grow!(self.writes[dst.0 as usize], K_FLOAT);
+                    }
                 }
                 Instruction::Jump { .. }
                 | Instruction::MatchFail
@@ -6612,6 +6634,51 @@ fn translate_body(
                 builtin_id,
                 args,
             } => {
+                let id = *builtin_id as usize;
+                if crate::ovm::bytecode::BytecodeVm::float_math_whole(id) {
+                    // floor, ceil, round, trunc answer an Int: an Int
+                    // argument is already whole; a Float is rounded, and
+                    // one outside the Int range (or NaN) deopts so the VM
+                    // raises the module's error.
+                    let src = args.first()?;
+                    let k = r#gen.kind(src.0)?;
+                    let v = builder.use_var(Variable::from_u32(src.0));
+                    let val = if k == Kind::Float {
+                        let rounded = match id {
+                            2 => builder.ins().floor(v),
+                            3 => builder.ins().ceil(v),
+                            5 => builder.ins().trunc(v),
+                            _ => {
+                                let id_v = builder.ins().iconst(types::I64, id as i64);
+                                let zero = builder.ins().f64const(0.0);
+                                let helper_ref =
+                                    module.declare_func_in_func(math_helper, builder.func);
+                                let call = builder.ins().call(helper_ref, &[id_v, v, zero]);
+                                builder.inst_results(call)[0]
+                            }
+                        };
+                        let lo = builder.ins().f64const(-9_223_372_036_854_775_808.0);
+                        let hi = builder.ins().f64const(9_223_372_036_854_775_808.0);
+                        let in_lo = builder.ins().fcmp(FloatCC::GreaterThanOrEqual, rounded, lo);
+                        let in_hi = builder.ins().fcmp(FloatCC::LessThan, rounded, hi);
+                        let fits = builder.ins().band(in_lo, in_hi);
+                        let ok_block = builder.create_block();
+                        builder.ins().brif(fits, ok_block, &[], deopt_block, &[]);
+                        builder.switch_to_block(ok_block);
+                        builder.ins().fcvt_to_sint(types::I64, rounded)
+                    } else {
+                        v
+                    };
+                    r#gen.write(builder, dst.0, val);
+                    continue;
+                }
+                if id == crate::ovm::bytecode::BytecodeVm::FLOAT_MATH_POW
+                    && args
+                        .iter()
+                        .all(|a| matches!(r#gen.kind(a.0), Some(Kind::Int)))
+                {
+                    return None;
+                }
                 let mut fargs = [None, None];
                 for (i, a) in args.iter().enumerate().take(2) {
                     let k = r#gen.kind(a.0)?;
@@ -6647,17 +6714,14 @@ fn translate_body(
                     builder.ins().brif(bad, deopt_block, &[], ok_block, &[]);
                     builder.switch_to_block(ok_block);
                 }
-                // sqrt/floor/ceil/trunc are bit-exact IEEE operations with
-                // native instructions; everything else goes through the
+                // sqrt is a bit-exact IEEE operation with a
+                // native instruction; everything else goes through the
                 // imported helper, which IS the VM's eval_float_math.
                 let name = crate::ovm::bytecode::BytecodeVm::FLOAT_MATH
                     .get(*builtin_id as usize)?
                     .0;
                 let val = match name {
                     "math.sqrt" => builder.ins().sqrt(a),
-                    "math.floor" => builder.ins().floor(a),
-                    "math.ceil" => builder.ins().ceil(a),
-                    "math.trunc" => builder.ins().trunc(a),
                     _ => {
                         let id_v = builder.ins().iconst(types::I64, *builtin_id as i64);
                         let helper_ref = module.declare_func_in_func(math_helper, builder.func);

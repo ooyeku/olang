@@ -33,8 +33,8 @@ pub fn create_math_module() -> Value {
 
     // Basic mathematical functions
     module.insert("abs".to_string(), create_builtin_function("abs", 1));
-    module.insert("min".to_string(), create_builtin_function("min", 2));
-    module.insert("max".to_string(), create_builtin_function("max", 2));
+    module.insert("min".to_string(), create_builtin_function("min", 1));
+    module.insert("max".to_string(), create_builtin_function("max", 1));
     module.insert("pow".to_string(), create_builtin_function("pow", 2));
     module.insert("sqrt".to_string(), create_builtin_function("sqrt", 1));
     module.insert("cbrt".to_string(), create_builtin_function("cbrt", 1));
@@ -178,36 +178,54 @@ fn math_abs(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     }
 }
 
-/// Minimum of two numbers
-/// Usage: math.min(3, 7) -> 3
-fn math_min(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if args.len() != 2 {
-        return Err(format!("min expects 2 arguments, got {}", args.len()).into());
+/// The numbers `math.min`/`math.max` compare: one list, or two or more
+/// numbers — the forms the global `min`/`max` take.
+fn extreme(
+    name: &str,
+    args: &[Value],
+    keep: std::cmp::Ordering,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let items: &[Value] = match args {
+        [Value::List(items)] => items,
+        [_, _, ..] if !args.iter().any(|a| matches!(a, Value::List(_))) => args,
+        [_] => {
+            return Err(format!(
+                "math.{name}: pass a list (math.{name}([a, b])) or two or more numbers (math.{name}(a, b))"
+            )
+            .into());
+        }
+        [] => return Err(format!("math.{name} expects a list or two or more numbers").into()),
+        _ => return Err(format!("math.{name}: pass one list, or numbers — not a mix").into()),
+    };
+    if items.is_empty() {
+        return Err(format!("math.{name}: the list is empty").into());
     }
-
-    if let (Value::Integer(a), Value::Integer(b)) = (&args[0], &args[1]) {
-        return Ok(Value::Integer(*a.min(b)));
+    if let Some(bad) = items
+        .iter()
+        .find(|v| !matches!(v, Value::Integer(_) | Value::Float(_)))
+    {
+        return Err(format!("math.{name}: takes numbers, got a {}", bad.type_name()).into());
     }
-
-    let a = get_numeric(&args[0])?;
-    let b = get_numeric(&args[1])?;
-    Ok(Value::Float(a.min(b)))
+    // The first of equal values wins, as the global min and max keep it;
+    // an Int stays an Int.
+    let mut best = &items[0];
+    for item in &items[1..] {
+        if item.compare_for_sort(best) == Some(keep) {
+            best = item;
+        }
+    }
+    Ok(best.clone())
 }
 
-/// Maximum of two numbers
-/// Usage: math.max(3, 7) -> 7
+/// Minimum: `math.min(3, 7)` -> 3, `math.min([3, 7])` -> 3 (the global
+/// `min` restricted to numbers).
+fn math_min(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    extreme("min", &args, std::cmp::Ordering::Less)
+}
+
+/// Maximum: `math.max(3, 7)` -> 7, `math.max([3, 7])` -> 7.
 fn math_max(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if args.len() != 2 {
-        return Err(format!("max expects 2 arguments, got {}", args.len()).into());
-    }
-
-    if let (Value::Integer(a), Value::Integer(b)) = (&args[0], &args[1]) {
-        return Ok(Value::Integer(*a.max(b)));
-    }
-
-    let a = get_numeric(&args[0])?;
-    let b = get_numeric(&args[1])?;
-    Ok(Value::Float(a.max(b)))
+    extreme("max", &args, std::cmp::Ordering::Greater)
 }
 
 /// Power function
@@ -217,6 +235,30 @@ fn math_pow(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Err(format!("pow expects 2 arguments, got {}", args.len()).into());
     }
 
+    // Two Ints answer an Int (an overflow raises, as `*` does); anything
+    // with a Float answers a Float.
+    if let (Value::Integer(base), Value::Integer(exponent)) = (&args[0], &args[1]) {
+        if *exponent < 0 {
+            return Err(format!(
+                "math.pow: an Int to a negative power is not an Int; pass a Float (math.pow({}.0, {}))",
+                base, exponent
+            )
+            .into());
+        }
+        let answer = u32::try_from(*exponent)
+            .ok()
+            .and_then(|e| base.checked_pow(e))
+            .or(match base {
+                0 => Some(0),
+                1 => Some(1),
+                -1 => Some(if exponent % 2 == 0 { 1 } else { -1 }),
+                _ => None,
+            });
+        return match answer {
+            Some(v) => Ok(Value::Integer(v)),
+            None => Err("math.pow: integer overflow".into()),
+        };
+    }
     let base = get_numeric(&args[0])?;
     let exponent = get_numeric(&args[1])?;
 
@@ -249,48 +291,69 @@ fn math_cbrt(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     Ok(Value::Float(n.cbrt()))
 }
 
+/// A rounding function's answer: the Int it rounds to. An Int is already
+/// whole; a Float outside the Int range (or NaN) raises.
+pub(crate) fn to_whole(
+    name: &str,
+    value: &Value,
+    round: fn(f64) -> f64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    match value {
+        Value::Integer(n) => Ok(Value::Integer(*n)),
+        Value::Float(f) => match whole_of(round(*f)) {
+            Some(n) => Ok(Value::Integer(n)),
+            None => {
+                Err(format!("math.{name}: {} is outside the Int range", Value::Float(*f)).into())
+            }
+        },
+        _ => Err("Expected numeric value".into()),
+    }
+}
+
+/// A whole Float as an Int, when it is one in range.
+pub(crate) fn whole_of(f: f64) -> Option<i64> {
+    // 2^63 is exact as an f64; NaN fails both comparisons.
+    if (-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&f) {
+        Some(f as i64)
+    } else {
+        None
+    }
+}
+
 /// Floor function
-/// Usage: math.floor(3.7) -> 3.0
+/// Usage: math.floor(3.7) -> 3
 fn math_floor(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
         return Err(format!("floor expects 1 argument, got {}", args.len()).into());
     }
-
-    let n = get_numeric(&args[0])?;
-    Ok(Value::Float(n.floor()))
+    to_whole("floor", &args[0], f64::floor)
 }
 
 /// Ceiling function
-/// Usage: math.ceil(3.2) -> 4.0
+/// Usage: math.ceil(3.2) -> 4
 fn math_ceil(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
         return Err(format!("ceil expects 1 argument, got {}", args.len()).into());
     }
-
-    let n = get_numeric(&args[0])?;
-    Ok(Value::Float(n.ceil()))
+    to_whole("ceil", &args[0], f64::ceil)
 }
 
 /// Round to nearest integer
-/// Usage: math.round(3.6) -> 4.0
+/// Usage: math.round(3.6) -> 4 (a half rounds away from zero: 2.5 -> 3)
 fn math_round(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
         return Err(format!("round expects 1 argument, got {}", args.len()).into());
     }
-
-    let n = get_numeric(&args[0])?;
-    Ok(Value::Float(n.round()))
+    to_whole("round", &args[0], f64::round)
 }
 
 /// Truncate to integer part
-/// Usage: math.trunc(3.7) -> 3.0
+/// Usage: math.trunc(3.7) -> 3
 fn math_trunc(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
         return Err(format!("trunc expects 1 argument, got {}", args.len()).into());
     }
-
-    let n = get_numeric(&args[0])?;
-    Ok(Value::Float(n.trunc()))
+    to_whole("trunc", &args[0], f64::trunc)
 }
 
 /// Fractional part
@@ -768,12 +831,20 @@ mod tests {
         let result = math_max(vec![float_val(3.5), float_val(2.1)]).unwrap();
         assert_float_eq(&result, 3.5, 1e-15);
 
-        // Test mixed types (should promote to float)
+        // Mixed kinds: the value picked, as it is
         let result = math_min(vec![int_val(3), float_val(2.5)]).unwrap();
         assert_float_eq(&result, 2.5, 1e-15);
 
         let result = math_max(vec![int_val(3), float_val(2.5)]).unwrap();
-        assert_float_eq(&result, 3.0, 1e-15);
+        assert_int_eq(&result, 3);
+
+        // A list, as the global min and max take
+        let result = math_min(vec![Value::List(std::sync::Arc::new(vec![
+            int_val(4),
+            int_val(1),
+        ]))])
+        .unwrap();
+        assert_int_eq(&result, 1);
 
         // Test edge cases
         let result = math_min(vec![float_val(f64::INFINITY), float_val(1.0)]).unwrap();
@@ -784,21 +855,28 @@ mod tests {
 
         // Test errors
         assert!(math_min(vec![int_val(1)]).is_err());
-        assert!(math_max(vec![int_val(1), int_val(2), int_val(3)]).is_err());
+        assert!(math_min(vec![Value::List(std::sync::Arc::new(vec![]))]).is_err());
+        assert_int_eq(
+            &math_max(vec![int_val(1), int_val(2), int_val(3)]).unwrap(),
+            3,
+        );
     }
 
     #[test]
     fn test_pow() {
         // Basic tests
         let result = math_pow(vec![int_val(2), int_val(3)]).unwrap();
-        assert_float_eq(&result, 8.0, 1e-15);
+        assert_int_eq(&result, 8);
+        assert!(math_pow(vec![int_val(2), int_val(64)]).is_err());
+        assert!(math_pow(vec![int_val(2), int_val(-1)]).is_err());
+        assert_int_eq(&math_pow(vec![int_val(-1), int_val(i64::MAX)]).unwrap(), -1);
 
         let result = math_pow(vec![float_val(2.0), float_val(0.5)]).unwrap();
         assert_float_eq(&result, 2_f64.sqrt(), 1e-15);
 
         // Edge cases
         let result = math_pow(vec![int_val(0), int_val(0)]).unwrap();
-        assert_float_eq(&result, 1.0, 1e-15); // 0^0 = 1 by convention
+        assert_int_eq(&result, 1); // 0^0 = 1 by convention
 
         let result = math_pow(vec![int_val(1), float_val(f64::INFINITY)]).unwrap();
         assert_float_eq(&result, 1.0, 1e-15);
@@ -847,34 +925,40 @@ mod tests {
     fn test_rounding_functions() {
         // Test floor
         let result = math_floor(vec![float_val(3.7)]).unwrap();
-        assert_float_eq(&result, 3.0, 1e-15);
+        assert_int_eq(&result, 3);
 
         let result = math_floor(vec![float_val(-3.7)]).unwrap();
-        assert_float_eq(&result, -4.0, 1e-15);
+        assert_int_eq(&result, -4);
 
         // Test ceil
         let result = math_ceil(vec![float_val(3.2)]).unwrap();
-        assert_float_eq(&result, 4.0, 1e-15);
+        assert_int_eq(&result, 4);
 
         let result = math_ceil(vec![float_val(-3.2)]).unwrap();
-        assert_float_eq(&result, -3.0, 1e-15);
+        assert_int_eq(&result, -3);
 
         // Test round
         let result = math_round(vec![float_val(3.6)]).unwrap();
-        assert_float_eq(&result, 4.0, 1e-15);
+        assert_int_eq(&result, 4);
 
         let result = math_round(vec![float_val(3.4)]).unwrap();
-        assert_float_eq(&result, 3.0, 1e-15);
+        assert_int_eq(&result, 3);
 
         let result = math_round(vec![float_val(-3.6)]).unwrap();
-        assert_float_eq(&result, -4.0, 1e-15);
+        assert_int_eq(&result, -4);
 
         // Test trunc
         let result = math_trunc(vec![float_val(3.9)]).unwrap();
-        assert_float_eq(&result, 3.0, 1e-15);
+        assert_int_eq(&result, 3);
 
         let result = math_trunc(vec![float_val(-3.9)]).unwrap();
-        assert_float_eq(&result, -3.0, 1e-15);
+        assert_int_eq(&result, -3);
+
+        assert_int_eq(&math_round(vec![float_val(2.5)]).unwrap(), 3);
+        assert_int_eq(&math_round(vec![float_val(-2.5)]).unwrap(), -3);
+        assert_int_eq(&math_floor(vec![int_val(i64::MAX)]).unwrap(), i64::MAX);
+        assert!(math_floor(vec![float_val(1e300)]).is_err());
+        assert!(math_round(vec![float_val(f64::NAN)]).is_err());
 
         // Test fract
         let result = math_fract(vec![float_val(3.7)]).unwrap();
@@ -1225,9 +1309,9 @@ mod tests {
         let result = math_max(vec![int_val(3), int_val(7)]).unwrap();
         assert!(matches!(result, Value::Integer(_)));
 
-        // But should promote to float if either input is float
+        // and answer the argument picked, whatever its kind
         let result = math_min(vec![int_val(3), float_val(7.0)]).unwrap();
-        assert!(matches!(result, Value::Float(_)));
+        assert!(matches!(result, Value::Integer(_)));
 
         // abs should preserve type
         let result = math_abs(vec![int_val(-5)]).unwrap();

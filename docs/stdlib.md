@@ -581,8 +581,21 @@ println(`${math.round(2.6)} ${math.fract(2.75)}`)
 println(to_string((math.PI > 3.14159) && (math.TAU > 6.28)))
 ```
 
+What a function answers:
+
+| Function | Answers |
+|---|---|
+| `floor` `ceil` `round` `trunc` | an Int: an Int argument is itself, a Float is rounded (a Float outside the Int range, or NaN, raises) |
+| `round` | a half away from zero: `math.round(2.5)` is 3, `math.round(-2.5)` is -3. `str.fixed` rounds a half to even (`str.fixed(2.5, 0)` is `"2"`), the way printed decimals usually are |
+| `pow` | an Int for two Ints (an overflow raises, as `*` does; a negative exponent raises — pass a Float), else a Float |
+| `sign` | an Int, -1, 0 or 1, for an Int or a Float |
+| `abs` | the kind it is given |
+| `min` `max` | as the global `min` and `max`, for numbers: two or more numbers or one list, the first of equal values (`math.min(1, 2.5)` is 1) |
+| `fract` and the rest | a Float |
+
 `mathx` (`use mathx`) is an olang-source module covering the integer and
-rounding core: `abs`, `sign`, `min`, `max`, `sqrt`, `floor`, `ceil`,
+rounding core (its rounding answers an Int, and its `min` and `max`
+take two numbers): `abs`, `sign`, `min`, `max`, `sqrt`, `floor`, `ceil`,
 `round`, `trunc`, `fract`, `gcd`, `lcm`, `factorial`, `radians`,
 `degrees`, and the constants `PI`, `E`, and `TAU`. It is smaller in
 scope than `math`, and differential-tested against it.
@@ -592,7 +605,8 @@ scope than `math`, and differential-tested against it.
 The kernels numeric code otherwise spells as index loops, over lists of
 Int or Float: `vec.dot(a, b)`, `vec.add(a, b)`, `vec.sub(a, b)`,
 `vec.scale(a, k)`, `vec.sum(a)`, `vec.norm(a)`, `vec.mean(a)`. Results
-are Float (or Float lists); lengths must agree; a non-finite result
+are Float (or Float lists), but `vec.sum` of a list of Ints is an Int
+(0 for an empty list), as the global `sum` is; lengths must agree; a non-finite result
 raises like any float overflow. `ods.to_matrix(frame, names)` hands a
 frame's columns to them as a list of Float lists.
 

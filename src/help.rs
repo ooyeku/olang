@@ -4824,10 +4824,10 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
         self.doc_ex(
             "math.trunc",
             "math.trunc(x)",
-            "Float",
+            "Int",
             "math",
-            "x with its fractional part removed (rounded toward zero)",
-            &[r##"math.trunc(-2.7)  // -2.0 — toward zero, unlike floor"##],
+            "x with its fractional part removed (rounded toward zero), as an Int; raises outside the Int range",
+            &[r##"math.trunc(-2.7)  // -2 — toward zero, unlike floor"##],
         );
         self.doc_ex(
             "math.fract",
@@ -7913,8 +7913,8 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
 
         self.add_function(FunctionDoc {
             name: "math.min".to_string(),
-            description: "Return the smaller of two numbers".to_string(),
-            syntax: "math.min(a, b)".to_string(),
+            description: "Return the smaller of two or more numbers, or of a list of numbers, as the global `min` does (the first of equal values; an Int stays an Int)".to_string(),
+            syntax: "math.min(a, b) or math.min(list)".to_string(),
             parameters: vec![
                 "a: Int|Float - First number".to_string(),
                 "b: Int|Float - Second number".to_string(),
@@ -7924,6 +7924,7 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
                 "math.min(5, 3)  // Returns 3".to_string(),
                 "math.min(-1, 2)  // Returns -1".to_string(),
                 "math.min(3.14, 2.71)  // Returns 2.71".to_string(),
+                "math.min([4, 1, 3])  // Returns 1".to_string(),
             ],
             category: "Math".to_string(),
             see_also: vec!["math.max".to_string(), "math.clamp".to_string()],
@@ -7931,8 +7932,8 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
 
         self.add_function(FunctionDoc {
             name: "math.max".to_string(),
-            description: "Return the larger of two numbers".to_string(),
-            syntax: "math.max(a, b)".to_string(),
+            description: "Return the larger of two or more numbers, or of a list of numbers, as the global `max` does (the first of equal values; an Int stays an Int)".to_string(),
+            syntax: "math.max(a, b) or math.max(list)".to_string(),
             parameters: vec![
                 "a: Int|Float - First number".to_string(),
                 "b: Int|Float - Second number".to_string(),
@@ -7942,6 +7943,7 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
                 "math.max(5, 3)  // Returns 5".to_string(),
                 "math.max(-1, 2)  // Returns 2".to_string(),
                 "math.max(3.14, 2.71)  // Returns 3.14".to_string(),
+                "math.max([4, 1, 3])  // Returns 4".to_string(),
             ],
             category: "Math".to_string(),
             see_also: vec!["math.min".to_string(), "math.clamp".to_string()],
@@ -7949,17 +7951,17 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
 
         self.add_function(FunctionDoc {
             name: "math.pow".to_string(),
-            description: "Raise a number to a power".to_string(),
+            description: "Raise a number to a power: two Ints answer an Int (an overflow or a negative exponent raises), anything with a Float a Float".to_string(),
             syntax: "math.pow(base, exponent)".to_string(),
             parameters: vec![
                 "base: Int|Float - The base number".to_string(),
                 "exponent: Int|Float - The exponent".to_string(),
             ],
-            return_type: "Float".to_string(),
+            return_type: "Int|Float".to_string(),
             examples: vec![
-                "math.pow(2, 3)  // Returns 8.0".to_string(),
+                "math.pow(2, 3)  // Returns 8".to_string(),
                 "math.pow(4, 0.5)  // Returns 2.0 (square root)".to_string(),
-                "math.pow(math.E, 1)  // Returns math.E".to_string(),
+                "math.pow(2.0, -1)  // Returns 0.5".to_string(),
             ],
             category: "Math".to_string(),
             see_also: vec!["math.sqrt".to_string(), "math.exp".to_string()],
@@ -8022,14 +8024,14 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
         // Rounding functions
         self.add_function(FunctionDoc {
             name: "math.floor".to_string(),
-            description: "Round down to the nearest integer".to_string(),
+            description: "Round down to the nearest integer, as an Int; an Int is itself, and a Float outside the Int range raises".to_string(),
             syntax: "math.floor(number)".to_string(),
             parameters: vec!["number: Int|Float - The number to round down".to_string()],
-            return_type: "Float".to_string(),
+            return_type: "Int".to_string(),
             examples: vec![
-                "math.floor(3.7)  // Returns 3.0".to_string(),
-                "math.floor(-2.3)  // Returns -3.0".to_string(),
-                "math.floor(5.0)  // Returns 5.0".to_string(),
+                "math.floor(3.7)  // Returns 3".to_string(),
+                "math.floor(-2.3)  // Returns -3".to_string(),
+                "math.floor(5.0)  // Returns 5".to_string(),
             ],
             category: "Math".to_string(),
             see_also: vec![
@@ -8041,14 +8043,14 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
 
         self.add_function(FunctionDoc {
             name: "math.ceil".to_string(),
-            description: "Round up to the nearest integer".to_string(),
+            description: "Round up to the nearest integer, as an Int; an Int is itself, and a Float outside the Int range raises".to_string(),
             syntax: "math.ceil(number)".to_string(),
             parameters: vec!["number: Int|Float - The number to round up".to_string()],
-            return_type: "Float".to_string(),
+            return_type: "Int".to_string(),
             examples: vec![
-                "math.ceil(3.2)  // Returns 4.0".to_string(),
-                "math.ceil(-2.7)  // Returns -2.0".to_string(),
-                "math.ceil(5.0)  // Returns 5.0".to_string(),
+                "math.ceil(3.2)  // Returns 4".to_string(),
+                "math.ceil(-2.7)  // Returns -2".to_string(),
+                "math.ceil(5.0)  // Returns 5".to_string(),
             ],
             category: "Math".to_string(),
             see_also: vec![
@@ -8060,14 +8062,14 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
 
         self.add_function(FunctionDoc {
             name: "math.round".to_string(),
-            description: "Round to the nearest integer".to_string(),
+            description: "Round to the nearest integer, as an Int, a half away from zero (2.5 is 3; str.fixed rounds a half to even); an Int is itself, and a Float outside the Int range raises".to_string(),
             syntax: "math.round(number)".to_string(),
             parameters: vec!["number: Int|Float - The number to round".to_string()],
-            return_type: "Float".to_string(),
+            return_type: "Int".to_string(),
             examples: vec![
-                "math.round(3.6)  // Returns 4.0".to_string(),
-                "math.round(3.4)  // Returns 3.0".to_string(),
-                "math.round(-2.5)  // Returns -3.0".to_string(),
+                "math.round(3.6)  // Returns 4".to_string(),
+                "math.round(3.4)  // Returns 3".to_string(),
+                "math.round(-2.5)  // Returns -3".to_string(),
             ],
             category: "Math".to_string(),
             see_also: vec!["math.floor".to_string(), "math.ceil".to_string()],

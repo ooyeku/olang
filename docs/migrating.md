@@ -27,6 +27,7 @@ upgrading; it reports the cases it can find.
   - [Values print as source](#values-print-as-source)
   - [Six reserved words](#six-reserved-words)
   - [`task.join` answers a Result](#taskjoin-answers-a-result)
+  - [Rounding answers an Int](#rounding-answers-an-int)
 - [In 0.88](#in-088)
   - [A missing field of an object is `()`](#a-missing-field-of-an-object-is-)
   - [A module's missing member reads as `()`](#a-modules-missing-member-reads-as-)
@@ -192,6 +193,18 @@ when it raised; it answered the value bare, and a raise and a returned
 `Err("timed out")`. Wrap a join whose value is used in `unwrap(…)`
 (`map(task.join)` becomes `map((t) => unwrap(task.join(t)))`), and give
 a match's catch-all arm `Ok(v) =>`. Search for `task.join`.
+
+### Rounding answers an Int
+
+`math.floor`, `math.ceil`, `math.round` and `math.trunc` answer an Int,
+`math.pow` of two Ints an Int, `math.min`/`math.max` the argument they
+pick (an Int stays an Int), and `vec.sum` of Ints an Int. Arithmetic
+with a Float still answers a Float, so `math.round(x * 100.0) / 100.0`
+is as it was; a rounded value printed or compared by its text alone
+changes (`3`, not `3.0`). A Float too large for an Int (`1e300`) raises
+where it answered itself, and `math.pow(2, -1)` raises: write
+`math.pow(2.0, -1)`. A `to_int(…)` around a rounding is now redundant
+and harmless.
 
 ## In 0.88
 

@@ -125,7 +125,23 @@ pub fn call_vec_function(
             }
             Ok(list(out))
         }
-        "sum" => finite(floats(&args, 0, name)?.iter().sum(), name),
+        "sum" => {
+            let a = floats(&args, 0, name)?;
+            // A list of Ints sums to an Int, as the global `sum` does (an
+            // overflow raises); any Float makes it a Float.
+            if let Some(Value::List(items)) = args.first()
+                && items.iter().all(|v| matches!(v, Value::Integer(_)))
+            {
+                let mut total: i64 = 0;
+                for v in items.iter() {
+                    if let Value::Integer(n) = v {
+                        total = total.checked_add(*n).ok_or("vec.sum: integer overflow")?;
+                    }
+                }
+                return Ok(Value::Integer(total));
+            }
+            finite(a.iter().sum(), name)
+        }
         "norm" => finite(
             floats(&args, 0, name)?
                 .iter()
