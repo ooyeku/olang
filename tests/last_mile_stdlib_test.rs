@@ -222,7 +222,7 @@ fn day_numbers_and_the_calendars_edges() {
 fn timestamp_keeps_the_offset_and_takes_a_day() {
     assert_eq!(
         run("show(unwrap(dates.timestamp(\"1970-01-02T00:00:00+00:00\")))").unwrap(),
-        "86400"
+        "86400000"
     );
     assert_eq!(
         run("show(unwrap(dates.timestamp(\"2026-10-04T20:18:08.507558+00:00\")) == unwrap(dates.timestamp(\"2026-10-04T15:18:08.507505-05:00\")))").unwrap(),
@@ -230,26 +230,31 @@ fn timestamp_keeps_the_offset_and_takes_a_day() {
     );
     assert_eq!(
         run("show(unwrap(dates.timestamp(\"2024-06-15T14:30:00Z\")))").unwrap(),
-        "1718461800"
+        "1718461800000"
     );
     // without an offset, UTC (as before)
     assert_eq!(
         run("show(unwrap(dates.timestamp(\"2024-06-15T14:30:00\")))").unwrap(),
-        "1718461800"
+        "1718461800000"
     );
     // a bare day, as text or a Date, is its midnight UTC
     assert_eq!(
         run("show(unwrap(dates.timestamp(\"1970-01-03\")))").unwrap(),
-        "172800"
+        "172800000"
     );
     assert_eq!(
         run("show(unwrap(dates.timestamp(unwrap(dates.date(1970, 1, 3)))))").unwrap(),
-        "172800"
+        "172800000"
     );
     // now, in any zone, is now
     assert_eq!(
-        run("show(math.abs(unwrap(dates.timestamp(dates.now())) - unwrap(dates.timestamp(dates.utc_now()))) < 5)").unwrap(),
+        run("show(math.abs(unwrap(dates.timestamp(dates.now())) - unwrap(dates.timestamp(dates.utc_now()))) < 5000)").unwrap(),
         "true"
+    );
+    // timestamp_s in seconds
+    assert_eq!(
+        run("show(unwrap(dates.timestamp_s(\"2024-06-15T14:30:00Z\")))").unwrap(),
+        "1718461800"
     );
 }
 

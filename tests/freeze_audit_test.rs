@@ -883,3 +883,39 @@ chan.close(c)
         ]))
     );
 }
+
+// ── dates: RFC 3339 out, read back, milliseconds ───────────────────────
+
+#[test]
+fn dates_write_rfc3339_and_read_their_own_output() {
+    let src = r#"
+let dt = unwrap(dates.datetime(2026, 1, 2, 3, 4, 5))
+[dt, unwrap(dates.parse_datetime(dt)), unwrap(dates.parse_datetime("2026-01-02 03:04:05")),
+ unwrap(dates.parse_datetime("2026-01-02T03:04:05+02:00")), unwrap(dates.from_timestamp(1700000000123)),
+ unwrap(dates.from_timestamp_s(1700000000)), unwrap(dates.timestamp("1970-01-02")),
+ unwrap(dates.timestamp_s("1970-01-02T00:00:00+00:00")), is_ok(dates.parse_datetime(dates.now())),
+ is_ok(dates.parse_datetime(dates.utc_now())), is_ok(dates.parse_datetime(dates.stamp())),
+ typeof(dates.today()), typeof(unwrap(dates.parse(dt))), unwrap(dates.weekday("2026-10-11")),
+ unwrap(dates.diff_days("2026-01-05", "2026-01-02"))]
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(l(vec![
+            s("2026-01-02T03:04:05+00:00"),
+            s("2026-01-02T03:04:05+00:00"),
+            s("2026-01-02T03:04:05+00:00"),
+            s("2026-01-02T03:04:05+02:00"),
+            s("2023-11-14T22:13:20.123+00:00"),
+            s("2023-11-14T22:13:20+00:00"),
+            Value::Integer(86_400_000),
+            Value::Integer(86_400),
+            Value::Boolean(true),
+            Value::Boolean(true),
+            Value::Boolean(true),
+            s("String"),
+            s("Date"),
+            Value::Integer(0),
+            Value::Integer(3),
+        ]))
+    );
+}

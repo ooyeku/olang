@@ -267,8 +267,16 @@ pub fn create_dates_module() -> Value {
         create_builtin_function("timestamp", 1),
     );
     module.insert(
+        "timestamp_s".to_string(),
+        create_builtin_function("timestamp_s", 1),
+    );
+    module.insert(
         "from_timestamp".to_string(),
         create_builtin_function("from_timestamp", 1),
+    );
+    module.insert(
+        "from_timestamp_s".to_string(),
+        create_builtin_function("from_timestamp_s", 1),
     );
 
     // Day numbers and the calendar's edges
@@ -374,8 +382,10 @@ fn dispatch_dates(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::er
         "weekday" => dates_weekday(args),
         "is_leap_year" => dates_is_leap_year(args),
         "days_in_month" => dates_days_in_month(args),
-        "timestamp" => dates_timestamp(args),
-        "from_timestamp" => dates_from_timestamp(args),
+        "timestamp" => dates_timestamp(args, 1000),
+        "timestamp_s" => dates_timestamp(args, 1),
+        "from_timestamp" => dates_from_timestamp(args, "from_timestamp", 1),
+        "from_timestamp_s" => dates_from_timestamp(args, "from_timestamp_s", 1000),
         "epoch_day" => dates_epoch_day(args),
         "from_epoch_day" => dates_from_epoch_day(args),
         "start_of_week" => dates_start_of_week(args),
@@ -412,6 +422,29 @@ fn parse_date_flexible(s: &str) -> Result<NaiveDate, Box<dyn std::error::Error>>
         .map_err(|_| format!("Cannot parse date: '{}'. Expected format: YYYY-MM-DD", s).into())
 }
 
+/// A moment as the module writes one: RFC 3339 with its offset
+/// (`2026-01-02T03:04:05+00:00`), fractional seconds only when the moment
+/// has them.
+fn rfc3339<Tz: chrono::TimeZone>(dt: &DateTime<Tz>) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    dt.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, false)
+}
+
+/// A moment read from text: RFC 3339 keeps its offset; a stamp without
+/// one (`T` or a space between day and time, fractional seconds or not)
+/// is UTC.
+fn moment_of(s: &str) -> Result<DateTime<chrono::FixedOffset>, Box<dyn std::error::Error>> {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Ok(dt);
+    }
+    if let Ok(dt) = DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f%:z") {
+        return Ok(dt);
+    }
+    parse_datetime_flexible(s).map(|naive| naive.and_utc().fixed_offset())
+}
+
 /// Current local date and time
 /// Usage: dates.now() -> "2024-06-15T14:30:00+00:00"
 fn dates_now(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
@@ -423,7 +456,7 @@ fn dates_now(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     }
 
     let now = crate::clock::local_now_fixed();
-    Ok(Value::String(now.to_rfc3339().into()))
+    Ok(Value::String(rfc3339(&now).into()))
 }
 
 /// Current UTC date and time
@@ -437,7 +470,7 @@ fn dates_utc_now(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     }
 
     let now = crate::clock::utc_now();
-    Ok(Value::String(now.to_rfc3339().into()))
+    Ok(Value::String(rfc3339(&now).into()))
 }
 
 /// The storage timestamp: UTC, second precision, `Z` suffix —
@@ -544,7 +577,7 @@ fn dates_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 }
 
 /// Create a datetime from year, month, day, hour, minute, second
-/// Usage: dates.datetime(2024, 6, 15, 14, 30, 0) -> "2024-06-15T14:30:00"
+/// Usage: dates.datetime(2024, 6, 15, 14, 30, 0) -> "2024-06-15T14:30:00+00:00" (UTC)
 fn dates_datetime(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 6 {
         return Err(misuse(format!(
@@ -596,7 +629,7 @@ fn dates_datetime(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
     };
 
     let datetime = NaiveDateTime::new(date, time);
-    Ok(Value::String(datetime.to_string().into()))
+    Ok(Value::String(rfc3339(&datetime.and_utc()).into()))
 }
 
 /// Create a time from hour, minute, second
@@ -655,8 +688,11 @@ fn dates_parse_date(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
     }
 }
 
-/// Parse a datetime string in ISO format
-/// Usage: dates.parse_datetime("2024-06-15T14:30:00") -> "2024-06-15T14:30:00"
+/// Read a moment from text and write it as the module writes one: RFC
+/// 3339 with its offset (an offset given is kept; a stamp without one is
+/// UTC). Accepts what `now`, `utc_now`, `datetime`, `from_timestamp` and
+/// `stamp` answer, and `2024-06-15 14:30:00`.
+/// Usage: dates.parse_datetime("2024-06-15T14:30:00") -> "2024-06-15T14:30:00+00:00"
 fn dates_parse_datetime(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
         return Err(misuse(format!(
@@ -670,20 +706,7 @@ fn dates_parse_datetime(args: Vec<Value>) -> Result<Value, Box<dyn std::error::E
         _ => return Err(misuse("parse_datetime: argument must be a string")),
     };
 
-    match NaiveDateTime::parse_from_str(datetime_str, "%Y-%m-%dT%H:%M:%S") {
-        Ok(datetime) => Ok(Value::String(datetime.to_string().into())),
-        Err(_) => {
-            // Try with RFC3339 format
-            match DateTime::parse_from_rfc3339(datetime_str) {
-                Ok(datetime) => Ok(Value::String(datetime.naive_local().to_string().into())),
-                Err(_) => Err(format!(
-                    "Cannot parse datetime: '{}'. Expected format: YYYY-MM-DDTHH:MM:SS or RFC3339",
-                    datetime_str
-                )
-                .into()),
-            }
-        }
-    }
+    moment_of(datetime_str).map(|dt| Value::String(rfc3339(&dt).into()))
 }
 
 /// Parse a time string
@@ -1138,62 +1161,80 @@ fn dates_days_in_month(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Er
     Ok(Value::Integer(days))
 }
 
-/// Convert a stamp to Unix seconds. An offset is honoured
-/// (`…T14:30:00+02:00` is 12:30 UTC), a stamp without one is read as UTC,
-/// and a bare day (a string or a `Date`) is its midnight UTC.
-/// Usage: dates.timestamp("2024-06-15T14:30:00") -> 1718461800
-fn dates_timestamp(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+/// A stamp as Unix time: `timestamp` in milliseconds (the unit of every
+/// other clock: `time.now_ms`, `fs.file_info`'s `modified_ms`),
+/// `timestamp_s` in seconds. An offset is honoured (`…T14:30:00+02:00` is
+/// 12:30 UTC), a stamp without one is read as UTC, and a bare day (a
+/// string or a `Date`) is its midnight UTC.
+/// Usage: dates.timestamp("2024-06-15T14:30:00Z") -> 1718461800000
+fn dates_timestamp(args: Vec<Value>, per_second: i64) -> Result<Value, Box<dyn std::error::Error>> {
+    let name = if per_second == 1 {
+        "timestamp_s"
+    } else {
+        "timestamp"
+    };
     if args.len() != 1 {
         return Err(misuse(format!(
-            "timestamp expects 1 argument, got {}",
+            "{} expects 1 argument, got {}",
+            name,
             args.len()
         )));
     }
+    let in_unit = |dt: DateTime<chrono::Utc>| {
+        Value::Integer(if per_second == 1 {
+            dt.timestamp()
+        } else {
+            dt.timestamp_millis()
+        })
+    };
 
     let datetime_str = match &args[0] {
         Value::String(s) => s.as_ref(),
         v @ Value::Native(_) => {
-            let (d, _) = date_arg(v, "timestamp: argument")?;
-            return Ok(Value::Integer(
-                d.and_time(NaiveTime::MIN).and_utc().timestamp(),
-            ));
+            let (d, _) = date_arg(v, &format!("{name}: argument"))?;
+            return Ok(in_unit(d.and_time(NaiveTime::MIN).and_utc()));
         }
-        _ => return Err(misuse("timestamp: argument must be a string or a Date")),
+        _ => {
+            return Err(misuse(format!(
+                "{name}: argument must be a string or a Date"
+            )));
+        }
     };
 
+    if let Ok(d) = NaiveDate::parse_from_str(datetime_str, "%Y-%m-%d") {
+        return Ok(in_unit(d.and_time(NaiveTime::MIN).and_utc()));
+    }
     // an offset said is an offset kept: until 0.87 it was dropped, so
     // `timestamp(dates.now())` was off by the machine's zone
-    if let Ok(dt) = DateTime::parse_from_rfc3339(datetime_str) {
-        return Ok(Value::Integer(dt.timestamp()));
-    }
-    if let Ok(d) = NaiveDate::parse_from_str(datetime_str, "%Y-%m-%d") {
-        return Ok(Value::Integer(
-            d.and_time(NaiveTime::MIN).and_utc().timestamp(),
-        ));
-    }
-    let datetime = parse_datetime_flexible(datetime_str)?;
-
-    let timestamp = datetime.and_utc().timestamp();
-    Ok(Value::Integer(timestamp))
+    Ok(in_unit(moment_of(datetime_str)?.to_utc()))
 }
 
-/// Convert Unix timestamp to datetime
-/// Usage: dates.from_timestamp(1718461800) -> "2024-06-15T14:30:00"
-fn dates_from_timestamp(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+/// Unix time to a stamp, UTC: `from_timestamp` takes milliseconds,
+/// `from_timestamp_s` seconds.
+/// Usage: dates.from_timestamp(1718461800000) -> "2024-06-15T14:30:00+00:00"
+fn dates_from_timestamp(
+    args: Vec<Value>,
+    name: &str,
+    ms_per_unit: i64,
+) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
         return Err(misuse(format!(
-            "from_timestamp expects 1 argument, got {}",
+            "{} expects 1 argument, got {}",
+            name,
             args.len()
         )));
     }
 
     let timestamp = match &args[0] {
         Value::Integer(ts) => *ts,
-        _ => return Err(misuse("from_timestamp: argument must be an integer")),
+        _ => return Err(misuse(format!("{name}: argument must be an integer"))),
     };
 
-    match DateTime::from_timestamp(timestamp, 0) {
-        Some(datetime) => Ok(Value::String(datetime.naive_utc().to_string().into())),
+    match timestamp
+        .checked_mul(ms_per_unit)
+        .and_then(DateTime::from_timestamp_millis)
+    {
+        Some(datetime) => Ok(Value::String(rfc3339(&datetime).into())),
         None => Err(format!("Invalid timestamp: {}", timestamp).into()),
     }
 }

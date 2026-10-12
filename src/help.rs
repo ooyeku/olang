@@ -8398,7 +8398,7 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
             parameters: vec![],
             return_type: "String".to_string(),
             examples: vec![
-                "dates.utc_now()  // \"2024-06-15T14:30:00Z\"".to_string(),
+                "dates.utc_now()  // \"2024-06-15T14:30:00.123456+00:00\"".to_string(),
                 "let utc_time = dates.utc_now(); println(\"UTC: \" + utc_time)".to_string(),
             ],
             category: "Dates".to_string(),
@@ -8472,7 +8472,7 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
             ],
             return_type: "String".to_string(),
             examples: vec![
-                "dates.datetime(2024, 6, 15, 14, 30, 0)  // \"2024-06-15T14:30:00\"".to_string(),
+                "dates.datetime(2024, 6, 15, 14, 30, 0)  // Ok(\"2024-06-15T14:30:00+00:00\") (UTC)".to_string(),
                 "let meeting = dates.datetime(2024, 12, 25, 14, 30, 0)".to_string(),
             ],
             category: "Dates".to_string(),
@@ -8517,14 +8517,14 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
 
         self.add_function(FunctionDoc {
             name: "dates.parse_datetime".to_string(),
-            description: "Parse a datetime string in ISO format or RFC3339 format".to_string(),
+            description: "Read a moment from text and write it in RFC 3339 with its offset (an offset given is kept; text without one is UTC). Reads what now, utc_now, datetime, from_timestamp and stamp answer".to_string(),
             syntax: "dates.parse_datetime(datetime_string)".to_string(),
             parameters: vec![
                 "datetime_string: String - Datetime in ISO or RFC3339 format".to_string(),
             ],
             return_type: "String".to_string(),
             examples: vec![
-                "dates.parse_datetime(\"2024-06-15T14:30:00\")".to_string(),
+                "dates.parse_datetime(\"2024-06-15 14:30:00\")  // Ok(\"2024-06-15T14:30:00+00:00\")".to_string(),
                 "dates.parse_datetime(\"2024-06-15T14:30:00Z\")".to_string(),
             ],
             category: "Dates".to_string(),
@@ -8688,7 +8688,7 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
 
         self.add_function(FunctionDoc {
             name: "dates.diff_days".to_string(),
-            description: "Calculate the difference in days between two dates".to_string(),
+            description: "date1 minus date2 in days: positive when date1 is later".to_string(),
             syntax: "dates.diff_days(date1, date2)".to_string(),
             parameters: vec![
                 "date1: String - First date in YYYY-MM-DD format".to_string(),
@@ -8839,28 +8839,64 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
 
         self.add_function(FunctionDoc {
             name: "dates.timestamp".to_string(),
-            description: "Convert a stamp to Unix seconds: an offset is honoured, a stamp without one is UTC, and a bare day (a string or a Date) is its midnight UTC".to_string(),
+            description: "Convert a stamp to Unix milliseconds (timestamp_s: seconds): an offset is honoured, a stamp without one is UTC, and a bare day (a string or a Date) is its midnight UTC".to_string(),
             syntax: "dates.timestamp(stamp)".to_string(),
             parameters: vec!["stamp: String | Date - An ISO-8601 / RFC 3339 stamp, or a day".to_string()],
             return_type: "Result<Int>".to_string(),
             examples: vec![
-                "dates.timestamp(\"2024-06-15T14:30:00\")  // Ok(1718461800)".to_string(),
-                "dates.timestamp(\"2024-06-15T16:30:00+02:00\")  // Ok(1718461800)".to_string(),
-                "unwrap(dates.timestamp(dates.now()))  // seconds since the epoch, now".to_string(),
+                "dates.timestamp(\"2024-06-15T14:30:00\")  // Ok(1718461800000)".to_string(),
+                "dates.timestamp(\"2024-06-15T16:30:00+02:00\")  // Ok(1718461800000)".to_string(),
+                "unwrap(dates.timestamp(dates.now()))  // milliseconds since the epoch, now".to_string(),
             ],
             category: "Dates".to_string(),
-            see_also: vec!["dates.from_timestamp".to_string(), "dates.epoch_day".to_string()],
+            see_also: vec!["dates.from_timestamp".to_string(), "dates.timestamp_s".to_string(), "dates.epoch_day".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "dates.timestamp_s".to_string(),
+            description: "Convert a stamp to Unix seconds, as dates.timestamp does to milliseconds"
+                .to_string(),
+            syntax: "dates.timestamp_s(stamp)".to_string(),
+            parameters: vec![
+                "stamp: String | Date - An ISO-8601 / RFC 3339 stamp, or a day".to_string(),
+            ],
+            return_type: "Result<Int>".to_string(),
+            examples: vec![
+                "dates.timestamp_s(\"2024-06-15T14:30:00Z\")  // Ok(1718461800)".to_string(),
+            ],
+            category: "Dates".to_string(),
+            see_also: vec![
+                "dates.timestamp".to_string(),
+                "dates.from_timestamp_s".to_string(),
+            ],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "dates.from_timestamp_s".to_string(),
+            description: "Unix seconds to the UTC moment's text, RFC 3339".to_string(),
+            syntax: "dates.from_timestamp_s(seconds)".to_string(),
+            parameters: vec!["seconds: Int - Unix time in seconds".to_string()],
+            return_type: "Result<String>".to_string(),
+            examples: vec![
+                "dates.from_timestamp_s(1718461800)  // Ok(\"2024-06-15T14:30:00+00:00\")"
+                    .to_string(),
+            ],
+            category: "Dates".to_string(),
+            see_also: vec![
+                "dates.from_timestamp".to_string(),
+                "dates.timestamp_s".to_string(),
+            ],
         });
 
         self.add_function(FunctionDoc {
             name: "dates.from_timestamp".to_string(),
-            description: "Convert a Unix timestamp to datetime string".to_string(),
-            syntax: "dates.from_timestamp(timestamp)".to_string(),
-            parameters: vec!["timestamp: Int - Unix timestamp (seconds since epoch)".to_string()],
-            return_type: "String".to_string(),
+            description: "Unix milliseconds to the UTC moment's text, RFC 3339 (from_timestamp_s takes seconds)".to_string(),
+            syntax: "dates.from_timestamp(ms)".to_string(),
+            parameters: vec!["ms: Int - Unix time in milliseconds".to_string()],
+            return_type: "Result<String>".to_string(),
             examples: vec![
-                "dates.from_timestamp(1718461800)  // \"2024-06-15T14:30:00\"".to_string(),
-                "let dt = dates.from_timestamp(1704067200)  // \"2024-01-01T00:00:00\"".to_string(),
+                "dates.from_timestamp(1718461800000)  // Ok(\"2024-06-15T14:30:00+00:00\")".to_string(),
+                "dates.from_timestamp(time.now_ms())  // now, UTC".to_string(),
             ],
             category: "Dates".to_string(),
             see_also: vec!["dates.timestamp".to_string()],

@@ -135,6 +135,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   stability.md. `os.env(name)` is new: the value or `()`;
   `os.get_env` keeps its `Err`.
 
+- **Dates write RFC 3339 with the offset and read their own output.**
+  `dates.datetime`, `from_timestamp` and `parse_datetime` answer
+  `2026-01-02T03:04:05+00:00` (they answered `2026-01-02 03:04:05`,
+  which `parse_datetime` refused), fractional seconds only when the
+  moment has them; `parse_datetime` keeps an offset it is given and
+  reads text without one as UTC. **`dates.timestamp` answers
+  milliseconds and `dates.from_timestamp` takes them**, the unit of
+  every other clock; `timestamp_s` and `from_timestamp_s` are the
+  seconds forms. The clock functions (`now`, `utc_now`, `today`,
+  `stamp`) answer text and `date`/`parse` a `Date`, as before, now
+  stated; `weekday`'s numbering (0 Sunday) and `diff_days`'s sign (`a`
+  minus `b`) are documented.
+
 
 ### Added
 

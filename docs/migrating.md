@@ -30,6 +30,7 @@ upgrading; it reports the cases it can find.
   - [Rounding answers an Int](#rounding-answers-an-int)
   - [Stdlib records](#stdlib-records)
   - [Absence and "nothing yet"](#absence-and-nothing-yet)
+  - [Dates](#dates)
 - [In 0.88](#in-088)
   - [A missing field of an object is `()`](#a-missing-field-of-an-object-is-)
   - [A module's missing member reads as `()`](#a-modules-missing-member-reads-as-)
@@ -229,6 +230,19 @@ would now spin: add an `Ok(()) =>` arm that stops, before `Ok(v) =>`.
 `Ok(())` (test `== ()`, or `?? ""`), a group that took no part `()`,
 and `str.char_at` past the end `()`. Search for `try_recv`,
 `"channel is empty"`, `re.find`, `re.captures` and `char_at`.
+
+### Dates
+
+`dates.timestamp` answers milliseconds and `dates.from_timestamp` takes
+milliseconds; a program that used seconds calls `dates.timestamp_s` and
+`dates.from_timestamp_s`. `dates.datetime`, `dates.from_timestamp` and
+`dates.parse_datetime` answer RFC 3339 with the offset
+(`2026-01-02T03:04:05+00:00`, where they answered
+`2026-01-02 03:04:05`): text compared or sliced by position (a
+`str.substring(…, 11, 19)` for the time) still finds the time where it
+was, and the day in the first ten characters. Search for
+`dates.timestamp`, `from_timestamp`, `dates.datetime` and
+`parse_datetime`.
 
 ## In 0.88
 

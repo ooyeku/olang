@@ -896,19 +896,31 @@ println(unwrap(re.replace("\\s+", "too   many spaces", " ")))
 
 ## `dates` — dates and times
 
-ISO-8601 strings in, ISO-8601 strings out; fallible operations return
-`Result`.
+A moment is written in RFC 3339 with its offset —
+`2026-01-02T03:04:05+00:00`, fractional seconds only when the moment
+has them — by `now`, `utc_now`, `datetime`, `parse_datetime` and
+`from_timestamp`, and every one of them reads back what the others
+write (and `2026-01-02 03:04:05`; text without an offset is UTC). A day
+is `2026-01-02`. Fallible operations return `Result`.
+
+The rule for kinds: **what reads the clock answers text** (`now`,
+`utc_now`, `today`, `stamp`, `stamp_ms`: Strings, to store and print),
+**what builds or parses a day answers a `Date`** (`date`, `parse`,
+`from_epoch_day`), and a function that takes a day takes either and
+answers in kind. `dates.parse` answers the day a text names, as written:
+a time in it is dropped (`dates.parse("2026-01-02T23:30:00-05:00")` is
+2026-01-02); keep the text, or `timestamp` it, when the time matters.
 
 | Group | Functions |
 |---|---|
 | Now | `now` `utc_now` `today` · `stamp` — the storage form: UTC, second precision, `Z` suffix (`2026-08-31T23:40:06Z`), sortable as text · `stamp_ms` — the same at millisecond precision (`…06.503Z`), the one to key a row's version on: two edits inside one second are identical under `stamp` |
-| Build | `date(y, m, d)` → `Date` · `datetime(y, m, d, h, mi, s)` `time(h, mi, s)` |
+| Build | `date(y, m, d)` → `Date` · `datetime(y, m, d, h, mi, s)` → a UTC moment's text · `time(h, mi, s)` |
 | Parse/format | `parse(s)` → `Date` · `parse_date` `parse_datetime` `parse_time` · `format_date(d, fmt)` `format_datetime(dt, fmt)` `format_time(t, fmt)` — `fmt` in strftime's `%` form (`"%B %d, %Y"`); a specifier it does not know, a trailing `%`, or a field the value lacks (`%H` of a date) is an `Err` |
-| Fields | `year` `month` `day` `hour` `minute` `second` `weekday` |
-| Arithmetic | `add_days` `add_weeks` `add_months` `add_years` `diff_days` — or Date operators |
+| Fields | `year` `month` `day` `hour` `minute` `second` (a moment's own, in its offset) · `weekday` — 0 Sunday, 1 Monday, … 6 Saturday |
+| Arithmetic | `add_days` `add_weeks` `add_months` `add_years` · `diff_days(a, b)` — `a` minus `b` in days, positive when `a` is later (`d2 - d1` the same) |
 | Calendar | `start_of_week(d)` — the Monday on or before `d` · `start_of_month(d)` — its first day |
 | Day numbers | `epoch_day(d)` — days since 1970-01-01 (a stamp's day is the one it is written in) · `from_epoch_day(n)` → `Date` |
-| Epoch | `timestamp(dt)` — Unix seconds; an offset is honoured, a bare day is its midnight UTC · `from_timestamp(n)` |
+| Epoch | `timestamp(dt)` — Unix milliseconds, the unit of every other clock (`time.now_ms`, `modified_ms`); an offset is honoured, a bare day is its midnight UTC · `timestamp_s(dt)` — Unix seconds · `from_timestamp(ms)` / `from_timestamp_s(s)` → the UTC moment's text |
 | Facts | `is_leap_year(y)` `days_in_month(y, m)` |
 
 Since 0.69 a date is a first-class **`Date` value**: `dates.date(y, m, d)`
@@ -933,8 +945,8 @@ let s = unwrap(dates.add_days("2026-08-07", 30))   // strings still work
 println(s)
 ```
 
-`unwrap(dates.timestamp(dates.now()))` is the idiom for "seconds since
-the epoch, now" (`timestamp` parses its argument, so it returns a
+`unwrap(dates.timestamp(dates.now()))` is "milliseconds since the
+epoch, now" (`timestamp` parses its argument, so it returns a
 `Result`; for a plain millisecond clock, `time.now_ms()` is simpler).
 A stamp's offset is part of it: `…T16:30:00+02:00` and `…T14:30:00Z`
 are the same second.
