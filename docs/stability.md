@@ -164,11 +164,9 @@ and overflow is a runtime error pointing at `bigint`, never a silent
 wraparound. Float literals accept a decimal point, an exponent, or
 both (`3.14`, `1e20`, `2.5e-3`), and printing round-trips: `to_string`
 of any finite float is a valid literal reading back to the identical
-value. Floats trap rather than produce `NaN` — `0.0 / 0.0`,
-`math.sqrt(-1.0)` and the other would-be-`NaN` operations raise — with
-one recorded edge: overflow (`1e308 * 10.0`) currently yields `inf`
-rather than trapping, held on the roadmap for a decision rather than
-promised here. JSON keeps numbers lossless or loud: integers within
+value. Floats trap rather than produce `NaN` or `inf` — `0.0 / 0.0`,
+`math.sqrt(-1.0)`, overflow (`1e308 * 10.0`) and the other operations
+whose result is not a finite number raise, on every tier. JSON keeps numbers lossless or loud: integers within
 i64 arrive exactly, decimals take the standard IEEE reading, and an
 integer outside i64 (or a float text that overflows f64) is an `Err`
 naming the value — never a silently-lossy conversion.
