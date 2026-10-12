@@ -1438,6 +1438,30 @@ Note the asymmetry: `x |> f(a)` is `f(x, a)`, a call with the piped value
 prepended — so to pipe into the *result* of a call, bind it first
 (`let f = pick(mode)` then `x |> f`).
 
+A lambda may also be a stage without parentheses. An unparenthesized
+lambda stage ends at the next `|>`, however its body ends: the `|>`
+begins the next stage of the pipeline, not a pipeline inside the
+lambda's body. This holds when the body ends with an `if` whose last
+branch is not a block:
+
+```olang
+fn wrap(x) = [x]
+println(5 |> (v) => if v > 3 => v else => 0 |> wrap)   // [5]
+println(1 |> (v) => if v > 3 => v else => 0 |> wrap)   // [0]
+let total = #{}
+    |> (m) => map_set(m, "a", 1)
+    |> (m) => map_set(m, "b", 2)
+    |> map_len
+println(total)   // 2
+```
+
+A pipeline meant to stay inside the lambda is written in its body's
+parentheses or braces: `xs |> (v) => (v |> f)`. A lambda that is not a
+stage, such as `let h = (v) => v |> f` or an argument to `map`, keeps
+its whole expression as its body. Before 0.88 a lambda stage took the
+stages after it into its body, so the first line above answered `5`
+and the second `[0]`.
+
 ## User-defined types
 
 ### Structs

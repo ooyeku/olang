@@ -1234,9 +1234,50 @@ impl Parser {
     fn build_binary_expr(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
         let mut operands: Vec<Expr> = Vec::new();
         let mut operators: Vec<(Rule, String)> = Vec::new();
-        for pair in pairs {
+        self.collect_binary(pairs.collect(), &mut operands, &mut operators)?;
+        Self::finish_binary(operands, operators)
+    }
+
+    fn finish_binary(operands: Vec<Expr>, operators: Vec<(Rule, String)>) -> Result<Expr, ParseError> {
+        if operands.len() != operators.len() + 1 {
+            return Err(ParseError::InvalidSyntax {
+                message: "Missing operand in binary expression".to_string(),
+            });
+        }
+        let mut operands = operands.into_iter();
+        let mut operators = operators.into_iter().peekable();
+        let first = operands.next().expect("at least one operand");
+        Self::climb(first, &mut operands, &mut operators, 1)
+    }
+
+    /// A flat binary expression's operands and operators, in order. An
+    /// unparenthesized lambda right after `|>` is a *stage*: it ends at
+    /// the next `|>`, however deeply its body nests (the grammar's lambda
+    /// takes a whole expression as its body, so the parse tree has the
+    /// rest of the pipeline inside the lambda — moved back out here, to
+    /// the pipeline it belongs to).
+    fn collect_binary(
+        &self,
+        children: Vec<Pair<Rule>>,
+        operands: &mut Vec<Expr>,
+        operators: &mut Vec<(Rule, String)>,
+    ) -> Result<(), ParseError> {
+        let mut after_pipe = false;
+        for pair in children {
             match pair.as_rule() {
-                Rule::unary_expr => operands.push(self.build_unary_expr(pair.into_inner())?),
+                Rule::unary_expr => {
+                    match Self::bare_primary(&pair, Rule::lambda) {
+                        Some(lambda) if after_pipe => {
+                            let (stage, spill_ops, spill_operands) =
+                                self.build_lambda_stage(lambda.into_inner())?;
+                            operands.push(stage);
+                            operators.extend(spill_ops);
+                            operands.extend(spill_operands);
+                        }
+                        _ => operands.push(self.build_unary_expr(pair.into_inner())?),
+                    }
+                    after_pipe = false;
+                }
                 Rule::cmp_rhs => {
                     let inner =
                         pair.into_inner()
@@ -1248,19 +1289,181 @@ impl Parser {
                         Rule::unit => Expr::Tuple(std::sync::Arc::new(Vec::new())),
                         _ => self.build_unary_expr(inner.into_inner())?,
                     });
+                    after_pipe = false;
                 }
-                rule => operators.push((rule, pair.as_str().to_string())),
+                rule => {
+                    after_pipe = rule == Rule::pipe_op;
+                    operators.push((rule, pair.as_str().to_string()));
+                }
             }
         }
-        if operands.len() != operators.len() + 1 {
+        Ok(())
+    }
+
+    /// The `rule` pair a unary expression is, with nothing around it: no
+    /// sign, no call, no field, no `?`.
+    fn bare_primary<'i>(unary: &Pair<'i, Rule>, rule: Rule) -> Option<Pair<'i, Rule>> {
+        let mut inner = unary.clone().into_inner();
+        let call = inner.next().filter(|p| p.as_rule() == Rule::call_expr)?;
+        if inner.next().is_some() {
+            return None;
+        }
+        let mut parts = call.into_inner();
+        let primary = parts.next().filter(|p| p.as_rule() == Rule::primary)?;
+        if parts.next().is_some() {
+            return None;
+        }
+        primary.into_inner().next().filter(|p| p.as_rule() == rule)
+    }
+
+    /// A lambda written as a pipeline stage, its body cut at the first
+    /// `|>` on its tail (see `collect_binary`); the operators and
+    /// operands from that `|>` on are handed back to the pipeline.
+    #[allow(clippy::type_complexity)]
+    fn build_lambda_stage(
+        &self,
+        pairs: Pairs<Rule>,
+    ) -> Result<(Expr, Vec<(Rule, String)>, Vec<Expr>), ParseError> {
+        let mut parameters = Vec::new();
+        let mut return_type = None;
+        let mut body = None;
+        let mut spill = (Vec::new(), Vec::new());
+        for pair in pairs {
+            match pair.as_rule() {
+                Rule::param_list => parameters = self.build_param_list(pair.into_inner())?,
+                Rule::type_annotation => {
+                    return_type = Some(self.build_type_annotation(pair.into_inner())?)
+                }
+                Rule::block => body = Some(self.build_block(pair.into_inner())?),
+                Rule::expr => {
+                    let (expr, ops, operands) = self.build_expr_stage(pair)?;
+                    body = Some(expr);
+                    spill = (ops, operands);
+                }
+                _ => {}
+            }
+        }
+        let body = body.ok_or_else(|| ParseError::InvalidSyntax {
+            message: "Missing lambda body".to_string(),
+        })?;
+        Ok((
+            Expr::Lambda {
+                parameters,
+                return_type,
+                body: Box::new(body),
+            },
+            spill.0,
+            spill.1,
+        ))
+    }
+
+    /// An expression ending a pipeline stage: built up to the first `|>`
+    /// on its tail — its own operators, or the last branch of an `if` (or
+    /// the body of a lambda) it ends with — and what follows that `|>`
+    /// handed back.
+    #[allow(clippy::type_complexity)]
+    fn build_expr_stage(
+        &self,
+        expr: Pair<Rule>,
+    ) -> Result<(Expr, Vec<(Rule, String)>, Vec<Expr>), ParseError> {
+        let Some(binary) = expr.clone().into_inner().next().filter(|p| p.as_rule() == Rule::binary_expr)
+        else {
+            return Ok((self.build_expr(expr.into_inner())?, Vec::new(), Vec::new()));
+        };
+        let mut children: Vec<Pair<Rule>> = binary.into_inner().collect();
+        let mut operands = Vec::new();
+        let mut operators = Vec::new();
+        let mut spill_operands = Vec::new();
+        let mut spill_ops = Vec::new();
+        if let Some(at) = children.iter().position(|c| c.as_rule() == Rule::pipe_op) {
+            let rest = children.split_off(at);
+            self.collect_binary(children, &mut operands, &mut operators)?;
+            self.collect_binary(rest, &mut spill_operands, &mut spill_ops)?;
+            return Ok((Self::finish_binary(operands, operators)?, spill_ops, spill_operands));
+        }
+        let last = children.pop().expect("an operand");
+        self.collect_binary(children, &mut operands, &mut operators)?;
+        let tail = match last.as_rule() {
+            Rule::unary_expr => Some(last.clone()),
+            Rule::cmp_rhs => last.clone().into_inner().next().filter(|p| p.as_rule() == Rule::unary_expr),
+            _ => None,
+        };
+        let staged = match tail {
+            Some(unary) => {
+                if let Some(if_pair) = Self::bare_primary(&unary, Rule::if_expr) {
+                    Some(self.build_if_stage(if_pair.into_inner())?)
+                } else if let Some(lambda) = Self::bare_primary(&unary, Rule::lambda) {
+                    Some(self.build_lambda_stage(lambda.into_inner())?)
+                } else {
+                    None
+                }
+            }
+            None => None,
+        };
+        match staged {
+            Some((tail, ops, rest)) => {
+                operands.push(tail);
+                spill_ops = ops;
+                spill_operands = rest;
+            }
+            None => self.collect_binary(vec![last], &mut operands, &mut operators)?,
+        }
+        Ok((Self::finish_binary(operands, operators)?, spill_ops, spill_operands))
+    }
+
+    /// `build_if_expr` for an `if` ending a pipeline stage: its last
+    /// branch is built with `build_expr_stage`.
+    #[allow(clippy::type_complexity)]
+    fn build_if_stage(
+        &self,
+        pairs: Pairs<Rule>,
+    ) -> Result<(Expr, Vec<(Rule, String)>, Vec<Expr>), ParseError> {
+        let parts: Vec<Pair<Rule>> = pairs.filter(|p| !Self::is_kw_pair(p.as_rule())).collect();
+        if parts.len() < 2 {
+            let pairs_text: String = parts.iter().map(|p| p.as_str()).collect();
             return Err(ParseError::InvalidSyntax {
-                message: "Missing operand in binary expression".to_string(),
+                message: format!("Incomplete if expression: {pairs_text}"),
             });
         }
-        let mut operands = operands.into_iter();
-        let mut operators = operators.into_iter().peekable();
-        let first = operands.next().expect("at least one operand");
-        Self::climb(first, &mut operands, &mut operators, 1)
+        let mut parts = parts.into_iter();
+        let condition = self.build_expr(parts.next().expect("condition").into_inner())?;
+        let then_pair = parts.next().expect("then branch");
+        let else_pair = parts.next();
+        let mut spill = (Vec::new(), Vec::new());
+        let then_branch = match (then_pair.as_rule(), &else_pair) {
+            (Rule::expr, None) => {
+                let (e, ops, operands) = self.build_expr_stage(then_pair)?;
+                spill = (ops, operands);
+                e
+            }
+            (Rule::expr, Some(_)) => self.build_expr(then_pair.into_inner())?,
+            _ => self.build_block(then_pair.into_inner())?,
+        };
+        let else_branch = match else_pair {
+            None => None,
+            Some(pair) => Some(Box::new(match pair.as_rule() {
+                Rule::if_expr => {
+                    let (e, ops, operands) = self.build_if_stage(pair.into_inner())?;
+                    spill = (ops, operands);
+                    e
+                }
+                Rule::expr => {
+                    let (e, ops, operands) = self.build_expr_stage(pair)?;
+                    spill = (ops, operands);
+                    e
+                }
+                _ => self.build_block(pair.into_inner())?,
+            })),
+        };
+        Ok((
+            Expr::If {
+                condition: Box::new(condition),
+                then_branch: Box::new(then_branch),
+                else_branch,
+            },
+            spill.0,
+            spill.1,
+        ))
     }
 
     /// An operator's level on the ladder, loosest first.

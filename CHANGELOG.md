@@ -297,6 +297,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **A lambda stage ends at the next `|>`.** An unparenthesized lambda
+  written as a pipeline stage took the stages after it into its body, so
+  `5 |> (v) => if v > 3 => v else => 0 |> g` applied `g` only in the
+  `else` branch (answering `5`). The `|>` now begins the next stage,
+  however the lambda's body ends: the line above answers `g(5)`. A
+  pipeline inside a lambda stage is written in parentheses or braces,
+  and a lambda that is not a stage (`let h = (v) => v |> f`, an argument
+  to `map`) keeps its whole expression. Over the workspace 33 lambda
+  stages read differently; in 29 the result is the same (the cut stage's
+  body was arithmetic feeding the pipe), and in the other four, all
+  open-track's `sets_of` (lib/client/actions_list.ol), the old reading
+  was the bug: a bulk edit setting the state ignored every other field
+  (the later stages ran only in the first one's `else`). language.md's
+  Pipelines section states the rule.
 - **A module's member reads like a key** (with roadmap E1): reading a
   member a module does not have is `()`, as `map_get` answers, so
   `map_get(plugin, "init")` and `plugin.init` are one read (a plugin
