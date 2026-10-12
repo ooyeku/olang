@@ -477,6 +477,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A missing `}` in a map literal names the literal.** A statement
+  starting inside a `#{` an earlier line did not close was reported as
+  "expected an operator" at the statement (Heddle); the parse error now
+  says that the map literal opened at its line and column is still open
+  — a `}` missing after its last entry, or a `,` between two entries —
+  in `olang run`, `olang check` and the language server alike.
 - **A function named as a builtin calls itself on the bytecode tier.**
   A top-level `fn find(routes, method, path)` that called itself was
   promoted with the builtin `find` in its declaration-time closure, and

@@ -581,3 +581,19 @@ fn a_refusal_names_the_construct() {
         }
     }
 }
+
+// ── A missing `}` in a map literal ──────────────────────────────────────
+
+#[test]
+fn a_statement_inside_an_open_map_literal_names_the_literal() {
+    for (src, at) in [
+        ("let m = #{ \"a\": 1\nprintln(m)\n", "line 1, column 9"),
+        ("fn f() = {\n    let m = #{ \"a\": 1, \"b\": 2\n    println(m)\n}\n", "line 2, column 13"),
+    ] {
+        let err = Parser::new().parse(src).expect_err("a missing brace").to_string();
+        assert!(err.contains(&format!("the map literal `#{{` opened at {at} is still open")), "{err}");
+    }
+    // A closed literal's own error is not blamed on it.
+    let err = Parser::new().parse("let m = #{ \"a\": 1 }\nlet = 3\n").expect_err("bad let").to_string();
+    assert!(!err.contains("map literal"), "{err}");
+}

@@ -300,6 +300,76 @@ fn top_level_starts(input: &str) -> Vec<usize> {
     starts
 }
 
+/// The `#{` innermost open at `line`:`column`, if the innermost open
+/// delimiter there is a map literal's: its line and column. Strings,
+/// templates and `//` comments are skipped.
+fn open_map_literal_at(input: &str, line: usize, column: usize) -> Option<(usize, usize)> {
+    let mut stack: Vec<(char, bool, usize, usize)> = Vec::new();
+    let (mut l, mut c) = (1usize, 1usize);
+    let mut chars = input.chars().peekable();
+    let mut prev = '\0';
+    while let Some(ch) = chars.next() {
+        if l > line || (l == line && c >= column) {
+            break;
+        }
+        match ch {
+            '\n' => {
+                l += 1;
+                c = 1;
+                prev = ch;
+                continue;
+            }
+            '"' | '`' => {
+                let close = ch;
+                c += 1;
+                while let Some(s) = chars.next() {
+                    c += 1;
+                    match s {
+                        '\\' => {
+                            if chars.next() == Some('\n') {
+                                l += 1;
+                                c = 1;
+                            } else {
+                                c += 1;
+                            }
+                        }
+                        '\n' => {
+                            l += 1;
+                            c = 1;
+                        }
+                        s if s == close => break,
+                        _ => {}
+                    }
+                }
+                prev = close;
+                continue;
+            }
+            '/' if chars.peek() == Some(&'/') => {
+                for s in chars.by_ref() {
+                    if s == '\n' {
+                        l += 1;
+                        c = 1;
+                        break;
+                    }
+                }
+                prev = '\n';
+                continue;
+            }
+            '(' | '[' | '{' => stack.push((ch, ch == '{' && prev == '#', l, c)),
+            ')' | ']' | '}' => {
+                stack.pop();
+            }
+            _ => {}
+        }
+        prev = ch;
+        c += 1;
+    }
+    match stack.last() {
+        Some(&('{', true, ol, oc)) => Some((ol, oc - 1)),
+        _ => None,
+    }
+}
+
 /// Turn a raw pest error into the same rich, located ParseError the
 /// hand-written sub-parsers produce: plain-English message, line/column,
 /// and a caret snippet — instead of leaking the parser crate's name and
@@ -362,6 +432,17 @@ fn humanize_pest_error(e: pest::error::Error<Rule>, input: &str) -> ParseError {
          `#{ ... }` or `{ ... }` literal only — a list (`xs + ys`), a call's arguments and \
          a declared struct's literal (`map_merge(p, #{ ... })`) have none"
             .to_string()
+    } else if message.starts_with("expected")
+        && raw_line.chars().take(column.saturating_sub(1)).all(char::is_whitespace)
+        && let Some((oline, ocol)) = open_map_literal_at(input, line, column)
+    {
+        // A statement starting inside a `#{` the line before did not
+        // close: the missing `}` (or `,`) is the literal's, not this line's.
+        format!(
+            "the map literal `#{{` opened at line {}, column {} is still open here: \
+             a `}}` is missing after its last entry, or a `,` between two entries",
+            oline, ocol
+        )
     } else {
         message
     };
