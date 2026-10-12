@@ -3582,7 +3582,7 @@ dependencies = [
 
 [[package]]
 name = "olang"
-version = "0.87.0"
+version = "0.88.0"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -3689,7 +3689,7 @@ dependencies = [
 
 [[package]]
 name = "olang-playground"
-version = "0.87.0"
+version = "0.88.0"
 dependencies = [
  "olang",
 ]

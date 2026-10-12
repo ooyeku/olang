@@ -5,7 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.88.0] - 2026-10-11
+
+### Upgrading
+
+0.88 is the last release before 1.0; what it settles, 1.0 freezes. Most
+programs run unchanged. What may need a change, each found by `olang
+check` where it can be (the full guide is docs/migrating.md):
+
+- **A missing field of an object or a parsed JSON object reads as `()`**
+  instead of raising, as a map's missing key does; a declared struct's
+  still raises. A module's missing member reads as `()` too (calling it
+  raises).
+- **An unparenthesized lambda stage in a pipeline ends at the next
+  `|>`.** `5 |> (v) => if … else => 0 |> g` applies `g` to the stage's
+  result, not only in the `else` branch. Write a pipeline meant to stay
+  in the lambda in its parentheses.
+- **`a ?? b`** is new; its level is below the arithmetic and the
+  pipeline, above the comparisons: `m.n ?? 0 + 1` is `m.n ?? (0 + 1)`.
+- **`map_path` is deprecated** for `map_get_in`; `olang fix deprecated`
+  renames the calls. `olang fix maps` moves `map_get`/`map_get_or` to
+  `.` and `??`.
+- **`testing.snapshot` writes a String as its text**; a snapshot written
+  quoted still matches.
+- **1.0 promises macOS.** Linux and Windows are unsupported previews
+  (docs/stability.md, "Platforms").
 
 ### Added
 
@@ -389,6 +413,219 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   group's `inert` reaches the engine from the flat layout. (Loom's
   timeline in open-track desktop is the first user.)
 
+- `gui.read(w, "key")`: whether the window is the key one.
+
+- **A code field scrolled part of a row half-drew it under its top
+  edge**, and a wrapped line whose first row went above showed its
+  continuation with no line number. The row the edge half covers (a
+  wrapped line's row as much as a line's) is now hidden whole, as under
+  sticky scroll's pinned rows, and the line's number goes to its first
+  row still in view (tests/gui_test.rs). A decoration that is only a
+  colour (no fill, no underline) recolours its glyphs — olang Studio's
+  unused names, faded. Text after a line's end gives way at the field's
+  edge: cut at a word's end with nothing hanging before the ellipsis, or
+  left out whole where only a stub ("unused variable:…") would show.
+
+- **`gui.context_menu` opened the menu mirrored about the window's
+  middle.** muda's `show_context_menu_for_nsview` turns y as though the
+  view were unflipped, and winit's view is flipped: a right click near a
+  window's top opened its menu near the bottom (over olang Studio's
+  terminal). The engine now places the menu itself
+  (`popUpMenuPositioningItem:atLocation:inView:` in the view's own
+  points), at the click, opening upward or to the left where the screen's
+  visible part has no room below or to the right
+  (`gui::platform::context_menu_origin`, tests/gui_test.rs). A script's
+  armed pick (`context_pick`) now also reports where it asked (`at`) and
+  the menu's own window as AppKit placed it (`frame`, its
+  NSPopupMenuWindow read on the main thread while the menu tracks; the
+  window server's list holds a larger shadow window instead), both in
+  the screen's points, and the menu's `size`, so a live check can see
+  where the menu opened.
+
+- **pty.close reaps an interactive shell.** A session leader's exit waits
+  for its terminal's output to drain, and nothing read the master once
+  the handle was closed: an interactive zsh hung up with its prompt
+  unread stayed exiting (`?Es`) until the program ended (olang Studio's
+  terminal closed a session and left its shell). The reaper now reads
+  and drops what the child writes while it ends, then reaps it
+  (tests/pty_test.rs).
+- **vt.find reads a line that wrapped as one line and keeps the newest
+  matches.** A match across a wrap was missed, and past 2,000 matches the
+  oldest were kept, so "the match nearest the end" was not; a match
+  across a wrap is drawn on both rows.
+
+- **Nothing a client sends ends `olang lsp`.** A release build aborts on a
+  panic, and the server had three left: semantic tokens sliced two bytes
+  at any character that was not a word, a string or a comment, inside a
+  character wider than two bytes (`“hi”`, `→`, `—`, `…`, an emoji, a `─`
+  outside a comment — every edit asks for tokens); a code action for an
+  assignment to a name not declared mutable read line 0 of an empty
+  document; and params a method cannot read (a notification without its
+  document, a position of -1) returned from the loop, ending the process.
+  Now the slice is taken only where it is one, the line looked for only
+  where there is one, and a request that cannot be read is answered
+  `InvalidParams` (a notification said on stderr) with the server going
+  on. tests/lsp_test.rs. (The crash reports of 2026-10-09 10:53–11:09 —
+  `olang` and a bisect's `olang-head`, SIGABRT in `handle_request`'s
+  `str::slice_error_fail` — were the completion panic 0067fab fixed.)
+
+- **The language server's problems are `olang check`'s.** The server ran
+  its own analyzer and published where it stopped as an error, so an
+  editor showed problems the checker and the program did not have:
+  importing a name the language also provides (`use loom { task, find,
+  split }`) was a "Duplicate variable", a `let` constant written below
+  the function reading it an "Undefined variable", a second `let` of one
+  name a duplicate — and the first stop hid every finding after it
+  (olang Studio's own project: 11 errors in its Problems, `olang check`
+  clean). Errors and warnings now come from the checker's own pass for
+  the file (`check::file_diagnostics`: the same module resolution, scope
+  rules and `[check] promote`); Studio, Loom and open-track-desktop open
+  with exactly `olang check`'s findings. A name nothing reads is a hint
+  tagged unnecessary (faded in the editor, not a problem), and those are
+  now right: uses in match guards, assertions, struct literals and
+  patterns count, a re-export (`share use`) is the module's interface,
+  `_name` is unused on purpose, and the walk goes on past a redeclared
+  name. Diagnostics on a 50,000-line file are faster than before though
+  the whole check now runs (about 680 ms, was 735): the checker reads a
+  file's imports from its tree instead of parsing it again, skips the
+  template-escape parse when no template can hold an escape, and turns
+  only the statements that can warn into meta nodes for its shadowing
+  advisories.
+
+- **An armed run attached before it starts is sampled from its first
+  call.** `--profile-live DIR` with `DIR/attach` already there looked for
+  it only at the first snapshot (250–500 ms in), so a shorter run ended
+  with no samples (Loom's `tools/bench.ol` under Studio's Profile File:
+  0 samples of a 250 ms run). The attach file is read as the run starts
+  and every 50 ms after; the series begins with a point at the start.
+
+- **gui: a closed window goes away, in order (macOS).** The process's
+  GPU instance held the first window it presented to, so that window
+  was never dropped: closed by the program, it stayed on the screen
+  until the program ended, when winit tore it down long after its
+  accessibility adapter. The instance now holds the event loop's
+  display. A closed window is torn down surface and window first, in an
+  autorelease pool of its own, and its accessibility adapter (which
+  gives the content view its class back) is dropped only once AppKit
+  has let go of the window; the loop posts AppKit an event now and then
+  for a moment so an idle program does not keep a closed window.
+  tests/gui_macos_teardown_test.rs; tools/window_churn.sh opens and
+  closes real windows many times and counts crashes.
+
+- **gui: VoiceOver lists a node's actions (macOS).** A node's `actions`
+  were AccessKit custom actions that AccessKit's macOS adapter never
+  published, so VoiceOver's Actions rotor (VO-⌘-Space) was empty.
+  accesskit_macos 0.27.1 is now patched (vendor/accesskit_macos, through
+  `[patch.crates-io]`; written to go upstream): a node answers
+  `accessibilityCustomActions` with an `NSAccessibilityCustomAction` per
+  action, each sending the `CustomAction` request, so the program gets
+  the same `a11y` `custom` event. And a container's actions are its
+  active descendant's too (a list's moves act on its selected row, where
+  the platform's focus is); chosen there, the event carries the
+  container's key. tests/gui_macos_a11y_test.rs (no harness: AppKit
+  wants the first thread) checks it through a real window, in process
+  and through the AX client API, and hears a live region's announcement.
+- **gui: Linux and Windows compile again.** skrifa (COLRv1 glyphs) was
+  declared under the macOS-only dependencies, so `gui` built nowhere
+  else.
+- **gui: a drag on Wayland no longer lands in another window by a
+  guess.** A window that cannot learn its place on the screen (all of
+  them on Wayland) sends pointer events with `sx`/`sy` `()`; a drag
+  stays in its own window.
+- **gui: ctrl+home and ctrl+end reach a field's text start and end** on
+  Windows and Linux (they passed to the program; macOS keeps ⌘↑/⌘↓).
+- **gui: the clipboard on a Wayland session without XWayland.** arboard
+  is built with its Wayland data-control support.
+- **CI's Linux jobs install fontconfig** (the default build's `gui` links
+  it), xkbcommon, and Wayland's headers.
+
+- **`dates.timestamp` keeps a stamp's offset.** An RFC 3339 stamp with an
+  offset was read as if its local time were UTC, so
+  `timestamp(dates.now())` was off by the machine's zone and
+  `…T16:30:00+02:00` was two hours late. It also takes a bare day (text
+  or a `Date`: its midnight UTC).
+
+- **A typed, a wrapped, and a boxed list of the same values are equal on
+  the bytecode tier.** `==` answered false across list layouts (the
+  different-types shortcut, and `OvmValue`'s own equality, rejected
+  before the arms that compare by element): `a == map(a, (x) => x)` was
+  false for 80 ints, and Heddle's terminal check failed 51 tests.
+- **No argument fingerprint without a timeline replaying.** Every
+  nondeterministic builtin rendered and SHA-256 hashed its arguments (a
+  `gui` call's whole view) before looking whether a timeline was
+  attached, then dropped the result.
+- **A function with an early `return` answers its body's value on every
+  other path.** The compiler emitted the closing `Return` only when the
+  body held none; with early returns compiled, the paths that did not
+  return would have fallen off the end with `()`. It now ends the body
+  with a `Return` unless the last instruction already is one.
+  (`tests/bytecode_differential_test.rs`: `early_return_compiles_and_agrees`.)
+
+- **`gui` pictures in five formats.** An `image` node reads PNG, JPEG (its
+  EXIF orientation), WebP, GIF (the first frame), and SVG (resvg), from a
+  path or Bytes. A real window decodes on the engine's two decoding
+  threads and draws again when the picture is ready (never on the
+  window's thread); a picture is kept at the power of two above the size
+  it shows, in a 384 MB cache by source and size. `fit: "none"` draws one
+  image pixel to one display pixel. `gui.image_info(src)` reads a header.
+- **`gui` files from other programs.** Files hovered over and dropped on a
+  window arrive as one `files` event a gesture (`action`, `paths`, `x`,
+  `y`, `target`); on macOS the place is asked of the pointer. `gui.input`
+  takes `files` for tests.
+- **`gui.clipboard_image()`**: the clipboard's picture as PNG Bytes
+  (macOS so far).
+- **A focused region scrolls by the keys**: the arrows, page keys, space,
+  home and end; `gui.flatten` reads a region's `axis` (`"both"`) and
+  `focusable`.
+- **`http` responses as Bytes**: `#{ "bytes": true }` among a request's
+  options.
+
+- **`gui`: windows drawn by olang (Loom's L0).** A program lays its
+  view out and sends positioned, keyed nodes (`gui.apply`); the engine
+  draws them on the GPU (wgpu) or with the software reference
+  (tiny-skia), shapes text with parley (complex scripts, bidi, font
+  fallback, dictionary word breaks for Chinese, Japanese, and Thai),
+  edits text fields itself — movement, selection, the clipboard, undo,
+  the platform's input method — with the program's value as the
+  authority (`changed` carries a revision, so a stale echo never undoes
+  typing), hit-tests, scrolls, applies hover/pressed/focus variants
+  without a turn of the program, draws focus rings, and publishes the
+  accessibility tree (AccessKit: NSAccessibility, UI Automation,
+  AT-SPI). Events arrive on one channel (`gui.events()`). Headless
+  windows (`gui.headless`, `gui.input`, `gui.read`) draw in software and
+  are what tests drive. `gui.measure`, `gui.fonts`, the clipboard,
+  platform dialogs, and the macOS menu bar. The process's first thread
+  hosts the platform's event loop (macOS requires it); a program that
+  never opens a window never starts one (docs/stdlib.md, loom/SPEC.md).
+- **`gui`: canvases and images.** A node's `draw` is a list of shape
+  and text operations, rasterized at the window's scale and cached; its
+  `image` is a PNG (a path or Bytes) fitted to its box (`fit`:
+  `contain`, `cover`, `fill`). Both renderers draw them; the GPU keeps a
+  texture per picture.
+- **`gui`: the system's settings and a text size.** `gui.context()`
+  reads the dark appearance, increased contrast, and reduced motion
+  (macOS); a window reports them as an `appearance` event when it opens,
+  when they change, and when it comes back to the front.
+  `gui.set(w, #{ zoom })` sets a window's text size: its pixels stay,
+  and its boxes, reads, and events are in units of `zoom` logical
+  pixels. `align` takes `left` and `right`, which ignore the text's
+  direction, beside `start` and `end`, which follow it.
+- **`gui`: COLRv1 colour glyphs, and the bundled fonts first.** A
+  COLRv1 emoji (Noto Color Emoji, Segoe UI Emoji) is painted from its
+  paint graph — gradients, transforms, clips, layers and their composite
+  modes — where swash drew only its outline. `body` text is Inter, then
+  the emoji font, before the system's, when Loom has registered them; a
+  character followed by U+FE0F ("❤️", "1️⃣") is drawn from an emoji font.
+- **`olang build --app` and `asset`.** An application carries every
+  module its entry uses — its own package's and its dependencies' — with
+  each package's manifest and the files it lists under `assets`, and runs
+  them from itself, resolving `use`s as on the build machine.
+  `asset.read(package, path)` reads a package's file from its directory
+  or from the application.
+- **`testing.snapshot_dir()`** answers the `__snapshots__` directory
+  beside the file under test, for a library keeping snapshots of its own
+  kind (Loom's pixel snapshots).
+
 ### Changed
 
 - **`map_path` is deprecated** in favour of `map_get_in`, the same
@@ -538,6 +775,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`olang check --tier` says a file it could not check.** One that
+  does not parse was counted as "every function compiles" (it is an
+  error now, as in `olang check`), and one whose declarations do not
+  load is named. `otc new --help` says `--web` writes three files.
+
 - **`olang --help` describes `expand` and `bench` again**: `bench`'s
   description had moved onto `expand` ("Run benchmarks Show a file after
   macro expansion") and `bench` had none.
@@ -638,225 +880,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   tiers are two allocations, which `OvmValue`'s equality compares by
   pointer: every function building a map of three keys was reported a
   divergence. tests/verify_tiers_test.rs.
-
-### Added (gui)
-
-- `gui.read(w, "key")`: whether the window is the key one.
-
-- **A code field scrolled part of a row half-drew it under its top
-  edge**, and a wrapped line whose first row went above showed its
-  continuation with no line number. The row the edge half covers (a
-  wrapped line's row as much as a line's) is now hidden whole, as under
-  sticky scroll's pinned rows, and the line's number goes to its first
-  row still in view (tests/gui_test.rs). A decoration that is only a
-  colour (no fill, no underline) recolours its glyphs — olang Studio's
-  unused names, faded. Text after a line's end gives way at the field's
-  edge: cut at a word's end with nothing hanging before the ellipsis, or
-  left out whole where only a stub ("unused variable:…") would show.
-
-- **`gui.context_menu` opened the menu mirrored about the window's
-  middle.** muda's `show_context_menu_for_nsview` turns y as though the
-  view were unflipped, and winit's view is flipped: a right click near a
-  window's top opened its menu near the bottom (over olang Studio's
-  terminal). The engine now places the menu itself
-  (`popUpMenuPositioningItem:atLocation:inView:` in the view's own
-  points), at the click, opening upward or to the left where the screen's
-  visible part has no room below or to the right
-  (`gui::platform::context_menu_origin`, tests/gui_test.rs). A script's
-  armed pick (`context_pick`) now also reports where it asked (`at`) and
-  the menu's own window as AppKit placed it (`frame`, its
-  NSPopupMenuWindow read on the main thread while the menu tracks; the
-  window server's list holds a larger shadow window instead), both in
-  the screen's points, and the menu's `size`, so a live check can see
-  where the menu opened.
-
-- **pty.close reaps an interactive shell.** A session leader's exit waits
-  for its terminal's output to drain, and nothing read the master once
-  the handle was closed: an interactive zsh hung up with its prompt
-  unread stayed exiting (`?Es`) until the program ended (olang Studio's
-  terminal closed a session and left its shell). The reaper now reads
-  and drops what the child writes while it ends, then reaps it
-  (tests/pty_test.rs).
-- **vt.find reads a line that wrapped as one line and keeps the newest
-  matches.** A match across a wrap was missed, and past 2,000 matches the
-  oldest were kept, so "the match nearest the end" was not; a match
-  across a wrap is drawn on both rows.
-
-- **Nothing a client sends ends `olang lsp`.** A release build aborts on a
-  panic, and the server had three left: semantic tokens sliced two bytes
-  at any character that was not a word, a string or a comment, inside a
-  character wider than two bytes (`“hi”`, `→`, `—`, `…`, an emoji, a `─`
-  outside a comment — every edit asks for tokens); a code action for an
-  assignment to a name not declared mutable read line 0 of an empty
-  document; and params a method cannot read (a notification without its
-  document, a position of -1) returned from the loop, ending the process.
-  Now the slice is taken only where it is one, the line looked for only
-  where there is one, and a request that cannot be read is answered
-  `InvalidParams` (a notification said on stderr) with the server going
-  on. tests/lsp_test.rs. (The crash reports of 2026-10-09 10:53–11:09 —
-  `olang` and a bisect's `olang-head`, SIGABRT in `handle_request`'s
-  `str::slice_error_fail` — were the completion panic 0067fab fixed.)
-
-- **The language server's problems are `olang check`'s.** The server ran
-  its own analyzer and published where it stopped as an error, so an
-  editor showed problems the checker and the program did not have:
-  importing a name the language also provides (`use loom { task, find,
-  split }`) was a "Duplicate variable", a `let` constant written below
-  the function reading it an "Undefined variable", a second `let` of one
-  name a duplicate — and the first stop hid every finding after it
-  (olang Studio's own project: 11 errors in its Problems, `olang check`
-  clean). Errors and warnings now come from the checker's own pass for
-  the file (`check::file_diagnostics`: the same module resolution, scope
-  rules and `[check] promote`); Studio, Loom and open-track-desktop open
-  with exactly `olang check`'s findings. A name nothing reads is a hint
-  tagged unnecessary (faded in the editor, not a problem), and those are
-  now right: uses in match guards, assertions, struct literals and
-  patterns count, a re-export (`share use`) is the module's interface,
-  `_name` is unused on purpose, and the walk goes on past a redeclared
-  name. Diagnostics on a 50,000-line file are faster than before though
-  the whole check now runs (about 680 ms, was 735): the checker reads a
-  file's imports from its tree instead of parsing it again, skips the
-  template-escape parse when no template can hold an escape, and turns
-  only the statements that can warn into meta nodes for its shadowing
-  advisories.
-
-- **An armed run attached before it starts is sampled from its first
-  call.** `--profile-live DIR` with `DIR/attach` already there looked for
-  it only at the first snapshot (250–500 ms in), so a shorter run ended
-  with no samples (Loom's `tools/bench.ol` under Studio's Profile File:
-  0 samples of a 250 ms run). The attach file is read as the run starts
-  and every 50 ms after; the series begins with a point at the start.
-
-- **gui: a closed window goes away, in order (macOS).** The process's
-  GPU instance held the first window it presented to, so that window
-  was never dropped: closed by the program, it stayed on the screen
-  until the program ended, when winit tore it down long after its
-  accessibility adapter. The instance now holds the event loop's
-  display. A closed window is torn down surface and window first, in an
-  autorelease pool of its own, and its accessibility adapter (which
-  gives the content view its class back) is dropped only once AppKit
-  has let go of the window; the loop posts AppKit an event now and then
-  for a moment so an idle program does not keep a closed window.
-  tests/gui_macos_teardown_test.rs; tools/window_churn.sh opens and
-  closes real windows many times and counts crashes.
-
-- **gui: VoiceOver lists a node's actions (macOS).** A node's `actions`
-  were AccessKit custom actions that AccessKit's macOS adapter never
-  published, so VoiceOver's Actions rotor (VO-⌘-Space) was empty.
-  accesskit_macos 0.27.1 is now patched (vendor/accesskit_macos, through
-  `[patch.crates-io]`; written to go upstream): a node answers
-  `accessibilityCustomActions` with an `NSAccessibilityCustomAction` per
-  action, each sending the `CustomAction` request, so the program gets
-  the same `a11y` `custom` event. And a container's actions are its
-  active descendant's too (a list's moves act on its selected row, where
-  the platform's focus is); chosen there, the event carries the
-  container's key. tests/gui_macos_a11y_test.rs (no harness: AppKit
-  wants the first thread) checks it through a real window, in process
-  and through the AX client API, and hears a live region's announcement.
-- **gui: Linux and Windows compile again.** skrifa (COLRv1 glyphs) was
-  declared under the macOS-only dependencies, so `gui` built nowhere
-  else.
-- **gui: a drag on Wayland no longer lands in another window by a
-  guess.** A window that cannot learn its place on the screen (all of
-  them on Wayland) sends pointer events with `sx`/`sy` `()`; a drag
-  stays in its own window.
-- **gui: ctrl+home and ctrl+end reach a field's text start and end** on
-  Windows and Linux (they passed to the program; macOS keeps ⌘↑/⌘↓).
-- **gui: the clipboard on a Wayland session without XWayland.** arboard
-  is built with its Wayland data-control support.
-- **CI's Linux jobs install fontconfig** (the default build's `gui` links
-  it), xkbcommon, and Wayland's headers.
-
-- **`dates.timestamp` keeps a stamp's offset.** An RFC 3339 stamp with an
-  offset was read as if its local time were UTC, so
-  `timestamp(dates.now())` was off by the machine's zone and
-  `…T16:30:00+02:00` was two hours late. It also takes a bare day (text
-  or a `Date`: its midnight UTC).
-
-- **A typed, a wrapped, and a boxed list of the same values are equal on
-  the bytecode tier.** `==` answered false across list layouts (the
-  different-types shortcut, and `OvmValue`'s own equality, rejected
-  before the arms that compare by element): `a == map(a, (x) => x)` was
-  false for 80 ints, and Heddle's terminal check failed 51 tests.
-- **No argument fingerprint without a timeline replaying.** Every
-  nondeterministic builtin rendered and SHA-256 hashed its arguments (a
-  `gui` call's whole view) before looking whether a timeline was
-  attached, then dropped the result.
-- **A function with an early `return` answers its body's value on every
-  other path.** The compiler emitted the closing `Return` only when the
-  body held none; with early returns compiled, the paths that did not
-  return would have fallen off the end with `()`. It now ends the body
-  with a `Return` unless the last instruction already is one.
-  (`tests/bytecode_differential_test.rs`: `early_return_compiles_and_agrees`.)
-
-### Added
-
-- **`gui` pictures in five formats.** An `image` node reads PNG, JPEG (its
-  EXIF orientation), WebP, GIF (the first frame), and SVG (resvg), from a
-  path or Bytes. A real window decodes on the engine's two decoding
-  threads and draws again when the picture is ready (never on the
-  window's thread); a picture is kept at the power of two above the size
-  it shows, in a 384 MB cache by source and size. `fit: "none"` draws one
-  image pixel to one display pixel. `gui.image_info(src)` reads a header.
-- **`gui` files from other programs.** Files hovered over and dropped on a
-  window arrive as one `files` event a gesture (`action`, `paths`, `x`,
-  `y`, `target`); on macOS the place is asked of the pointer. `gui.input`
-  takes `files` for tests.
-- **`gui.clipboard_image()`**: the clipboard's picture as PNG Bytes
-  (macOS so far).
-- **A focused region scrolls by the keys**: the arrows, page keys, space,
-  home and end; `gui.flatten` reads a region's `axis` (`"both"`) and
-  `focusable`.
-- **`http` responses as Bytes**: `#{ "bytes": true }` among a request's
-  options.
-
-- **`gui`: windows drawn by olang (Loom's L0).** A program lays its
-  view out and sends positioned, keyed nodes (`gui.apply`); the engine
-  draws them on the GPU (wgpu) or with the software reference
-  (tiny-skia), shapes text with parley (complex scripts, bidi, font
-  fallback, dictionary word breaks for Chinese, Japanese, and Thai),
-  edits text fields itself — movement, selection, the clipboard, undo,
-  the platform's input method — with the program's value as the
-  authority (`changed` carries a revision, so a stale echo never undoes
-  typing), hit-tests, scrolls, applies hover/pressed/focus variants
-  without a turn of the program, draws focus rings, and publishes the
-  accessibility tree (AccessKit: NSAccessibility, UI Automation,
-  AT-SPI). Events arrive on one channel (`gui.events()`). Headless
-  windows (`gui.headless`, `gui.input`, `gui.read`) draw in software and
-  are what tests drive. `gui.measure`, `gui.fonts`, the clipboard,
-  platform dialogs, and the macOS menu bar. The process's first thread
-  hosts the platform's event loop (macOS requires it); a program that
-  never opens a window never starts one (docs/stdlib.md, loom/SPEC.md).
-- **`gui`: canvases and images.** A node's `draw` is a list of shape
-  and text operations, rasterized at the window's scale and cached; its
-  `image` is a PNG (a path or Bytes) fitted to its box (`fit`:
-  `contain`, `cover`, `fill`). Both renderers draw them; the GPU keeps a
-  texture per picture.
-- **`gui`: the system's settings and a text size.** `gui.context()`
-  reads the dark appearance, increased contrast, and reduced motion
-  (macOS); a window reports them as an `appearance` event when it opens,
-  when they change, and when it comes back to the front.
-  `gui.set(w, #{ zoom })` sets a window's text size: its pixels stay,
-  and its boxes, reads, and events are in units of `zoom` logical
-  pixels. `align` takes `left` and `right`, which ignore the text's
-  direction, beside `start` and `end`, which follow it.
-- **`gui`: COLRv1 colour glyphs, and the bundled fonts first.** A
-  COLRv1 emoji (Noto Color Emoji, Segoe UI Emoji) is painted from its
-  paint graph — gradients, transforms, clips, layers and their composite
-  modes — where swash drew only its outline. `body` text is Inter, then
-  the emoji font, before the system's, when Loom has registered them; a
-  character followed by U+FE0F ("❤️", "1️⃣") is drawn from an emoji font.
-- **`olang build --app` and `asset`.** An application carries every
-  module its entry uses — its own package's and its dependencies' — with
-  each package's manifest and the files it lists under `assets`, and runs
-  them from itself, resolving `use`s as on the build machine.
-  `asset.read(package, path)` reads a package's file from its directory
-  or from the application.
-- **`testing.snapshot_dir()`** answers the `__snapshots__` directory
-  beside the file under test, for a library keeping snapshots of its own
-  kind (Loom's pixel snapshots).
-
-### Fixed
 
 - **A bridge's own tier knows the program's modules.** A bridge
   interpreter was given every module's finished scope, but its own
