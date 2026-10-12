@@ -205,10 +205,10 @@ the native stack.
 Native code that *allocates* — struct construction, string
 concatenation — poses a memory-safety question the pure-arithmetic JIT
 never faced: heap values are reference-counted `Arc`s, and a deopt can
-abandon a native run at any guard. Who owns a value the native code
-built but never got to return?
+abandon a native run at any guard, leaving a value the native code built
+but never returned.
 
-The answer is a **scratch list owned by the VM, per native call**: every
+Such values are owned by a **scratch list owned by the VM, per native call**: every
 heap value a native invocation constructs is registered in that list at
 creation. If the call completes, ownership of the return value transfers
 once, at the entry boundary, where a retain helper resolves the borrowed
@@ -257,10 +257,11 @@ that behaved like one.
 
 Conventions the code relies on:
 
-- **Immutability**: values are never mutated in place; operations build new
-  values. `Arc` makes the copies cheap — and immutable-plus-refcounted is
-  what lets values cross thread and tier boundaries as a refcount bump
-  rather than a deep copy.
+- **Value semantics**: a value is never mutated while it is shared; an
+  update builds a new value, or mutates in place when the updater holds
+  the only reference (`Arc::make_mut`). `Arc` makes the copies cheap,
+  and immutable-while-shared plus refcounted is what lets values cross
+  thread and tier boundaries as a refcount bump rather than a deep copy.
 - **Struct-likeness**: anything with named fields is a `Struct` under the
   hood — which is why `map_get` and friends read objects, structs, and JSON
   uniformly.
@@ -328,7 +329,7 @@ namespaces, native value types, and operator behavior into *both*
 execution tiers at once. Its proving instance is the ods data stack
 (`src/ods/` — Series, Frames, stats, plot — over the pure-Rust
 `olang-ods/` workspace crate; the user-facing chapter is
-[The Data Stack](ods.md)). Native values cross the tier boundary as
+[The data stack](ods.md)). Native values cross the tier boundary as
 one shared Arc — a refcount bump, never a conversion — so the lossy
 round-trip failure mode is unrepresentable for them.
 
@@ -441,8 +442,8 @@ src/
   ods/                    the data stack modules: series, frame, stats, plot
   ovm/                    bytecode tier: compiler (bytecode.rs), value
                           model (value.rs), tier manager (tier.rs),
-                          Cranelift JIT (jit.rs), NaN-boxing primitives
-                          (nanbox.rs)
+                          Cranelift JIT (jit.rs), on-stack replacement
+                          (osr.rs), warm start (warm.rs)
   parallel.rs             par_map / par_filter / par for worker config
   playground.rs           the wasm session engine (playground + dom)
   pkg/                    package manager (see packages.md)
@@ -461,6 +462,6 @@ tests/                    integration suites
 ```
 
 Two of these subsystems have user-facing chapters of their own:
-`src/ods/` and `olang-ods/` are taught in [The Data Stack](ods.md), and
+`src/ods/` and `olang-ods/` are taught in [The data stack](ods.md), and
 `src/playground.rs` — the wasm boundary, the persistent browser
-session, and the `dom` bridge — in [olang in the Browser](wasm.md).
+session, and the `dom` bridge — in [olang in the browser](wasm.md).

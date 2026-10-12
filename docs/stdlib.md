@@ -20,7 +20,9 @@ a file system, a network, or a browser.
 - [`str` — strings](#str--strings)
 - [`col` / `colx` — collections](#col--colx--collections)
 - [`math` / `mathx` — mathematics](#math--mathx--mathematics)
+- [`vec` — vectors over lists](#vec--vectors-over-lists)
 - [`bigint` — arbitrary precision](#bigint--arbitrary-precision)
+- [`asset` — a package's files](#asset--a-packages-files)
 - [Collections, in olang](#collections-in-olang)
 - [`json` — JSON](#json--json)
 - [`toml` — TOML](#toml--toml)
@@ -34,9 +36,11 @@ a file system, a network, or a browser.
 - [`random` — randomness](#random--randomness)
 - [`crypto` — hashing and encryption](#crypto--hashing-and-encryption)
 - [`bytes` — binary data](#bytes--binary-data)
+- [`compress` — gzip and deflate](#compress--gzip-and-deflate)
 - [`base64` — base64](#base64--base64)
 - [`fs` — file system](#fs--file-system)
 - [`meta` — the program as data](#meta--the-program-as-data-the-open-ast)
+- [`runtime` — what this binary carries](#runtime--what-this-binary-carries)
 - [`os` — operating system](#os--operating-system)
 - [`proc` — child processes and pipelines](#proc--child-processes-and-pipelines)
 - [`pty` — a child on a pseudo-terminal](#pty--a-child-on-a-pseudo-terminal)
@@ -44,6 +48,7 @@ a file system, a network, or a browser.
 - [`cli` — command-line argument parsing](#cli--command-line-argument-parsing)
 - [`term` — the terminal toolkit](#term--the-terminal-toolkit)
 - [`tty` — the terminal as an interactive device](#tty--the-terminal-as-an-interactive-device)
+- [`gui` — windows drawn by olang](#gui--windows-drawn-by-olang)
 - [`http` — HTTP](#http--http)
 - [`db` — SQLite](#db--sqlite)
 - [`dom` — the browser](#dom--the-browser)
@@ -55,17 +60,18 @@ a file system, a network, or a browser.
 ## Conventions
 
 **Modules are always in scope.** `str.trim(...)`, `json.parse(...)`, and the
-rest work without any `use`. The exception is everything written in olang
-itself and embedded in the binary — the modules `colx` and `mathx` and
-the packages `cli`, `term`, `ui`, `viz`, and `dash` — which are imported
-with a bare `use colx` / `use term`. A `use str` still works — useful
-when you want the import list of a file to be explicit — but is never
-required for the native modules.
+rest work without any `use`. The exception is the code written in olang
+itself and embedded in the binary: the modules `colx` and `mathx` and
+the packages `cli`, `term`, `ui`, `viz`, and `dash` are imported with a
+bare `use colx` / `use term`. The one embedded module that needs no
+`use` is [`collections`](#collections-in-olang), which loads on first
+touch. A `use str` still works, and keeps a file's import list
+explicit, but is never required for the native modules.
 
-**One environment note:** `fs`, `os`, `http`, and `db` need an operating
-system and are absent from the browser playground build, where calling
-them reports exactly that; `dom` is the reverse — browser-only, an error
-everywhere else.
+**One environment note:** `fs`, `os`, `proc`, `pty`, `tty`, `gui`,
+`http`, and `db` need an operating system and are absent from the
+browser playground build, where calling them reports exactly that.
+`dom` is the reverse: browser-only, an error everywhere else.
 
 ### What a function returns, and when it raises
 
@@ -123,12 +129,13 @@ The three shapes never mix: a lookup says `Unit`, a parse or I/O
 operation says `Result`, a misused call raises. And because Unit *is*
 absence, a stored Unit and a missing key are deliberately the same
 answer — when the distinction matters, ask `map_has_key`. For the common
-lookup-with-fallback, `map_get_or` is the one-call form:
+lookup-with-fallback, `m.key ?? d` is the one-expression form, and
+`map_get_or(m, k, d)` the form for a computed key:
 
 ```olang
 let m = #{ "a": 1 }
-println(to_string(map_get_or(m, "a", 0)))   // 1
-println(to_string(map_get_or(m, "z", 0)))   // 0 — absent, so the default
+println(to_string(m.a ?? 0))   // 1
+println(to_string(m.z ?? 0))   // 0
 ```
 
 **Names follow three rules.** A function that raises on bad input and
@@ -145,9 +152,9 @@ The 0.82 audit of every documented name against the docs and examples
 found no duplicates beyond those aliases; the names used once or never
 outside their own chapter are the RSA and certificate family in
 `crypto`, the cell-editing family in `csv`, and the component parts of
-`dates` (`hour`, `minute`, `add_weeks`, …) — kept, because each is the
-one place its job is done, and listed here so a future trim starts from
-the evidence rather than from a feeling.
+`dates` (`hour`, `minute`, `add_weeks`, …). They are kept, because each
+is the one place its job is done, and are listed here as the record for
+any future review of the surface.
 
 ## Global builtins
 
@@ -166,9 +173,9 @@ the evidence rather than from a feeling.
 | `typeof(v)` | runtime type name as a string |
 | `show(v)` | display rendering: strings bare, others as `to_string` |
 | `to_string(v)` | the same text as `show` (strings bare) |
-| `to_int(v)` | string/float → Int (floats truncate) |
-| `to_float(v)` | string/int → Float |
-| `len(v)` | length of a list, string, tuple, or map |
+| `to_int(v)` | string/float → Int (floats truncate); a string that is not a number raises (`str.parse_int` is the `Result` form) |
+| `to_float(v)` | string/int → Float; a string that is not a number raises (`str.parse_float` is the `Result` form) |
+| `len(v)` | length of a list, a string (in characters), a tuple, or `Bytes`; a map raises, and its entry count is `map_len` |
 | `implements(v, "Trait")` | does the value's type implement the trait? |
 
 `to_string` and `show` render the same text: a string is returned as
@@ -187,7 +194,7 @@ println(show(len([1, 2, 3])) + " " + show(len("abcd")))
 
 | Function | Description |
 |---|---|
-| `range(a, b)` | list of integers `a` up to (excluding) `b` |
+| `range(n)` / `range(a, b)` / `range(a, b, step)` | list of integers from `a` (default 0) up to, excluding, `b`, by `step` (default 1) |
 | `head(xs)` / `tail(xs)` | first element / all but the first |
 | `take(xs, n)` / `skip(xs, n)` | first `n` / all but the first `n` (`drop` is `skip` under the name most languages pair with `take`) |
 | `reverse(xs)` / `sort(xs)` | reversed / ascending copy (numbers, strings, or tuples, which order lexicographically) |
@@ -196,7 +203,7 @@ println(show(len([1, 2, 3])) + " " + show(len("abcd")))
 | `cons(v, xs)` | prepend an element |
 | `chunk(xs, n)` | split into sublists of size `n` |
 | `flatten(xss)` | flatten one level of nesting |
-| `enumerate(xs)` | pair each element with its index: `[i, v]` |
+| `enumerate(xs)` | pair each element with its index: a list of `(i, v)` tuples |
 | `zip(a, b)` | pair elements: list of tuples, shortest wins |
 | `group_by(xs, f)` | list of `(key, [members])` tuples |
 
@@ -208,13 +215,14 @@ println(to_string(zip([1, 2], ["a", "b"])))
 println(to_string(group_by([1, 2, 3, 4], (x) => x % 2)))
 ```
 
-Every list helper here is also reachable under `col.` (`col.take`,
-`col.drop`, `col.contains`, `col.map`, `col.fold`, …), so there is one
-rule to remember rather than two namespaces to guess between: the
-global spelling is the short form, `col.` always works. Two helpers
-exist only there — `col.index_of(xs, v)` (position, or Unit) and
-`col.slice(xs, from, to)` (a half-open, clamped sub-list, the shape of
-`str.substring`):
+Most list helpers are also reachable under `col.` (`col.take`,
+`col.drop`, `col.contains`, `col.map`, `col.fold`, …); the global
+spelling is the short form. The ones that exist only as globals are
+`range`, `chunk`, `cons`, `concat`, `enumerate`, `group_by`, `find`,
+`reduce`, `par_map`, `par_filter`, `map_filtered`, `average`, `clamp`,
+and `abs`. Two helpers exist only under `col.`: `col.index_of(xs, v)`
+(position, or Unit) and `col.slice(xs, from, to)` (a half-open, clamped
+sub-list, the shape of `str.substring`):
 
 ```olang
 let xs = [10, 20, 30, 40]
@@ -247,7 +255,7 @@ println(`${abs(-3)} ${abs(2.5)}`)   // 3 2.5
 | `par_filter(xs, pred)` | `filter` fanned out across OS threads |
 | `fold(xs, init, f)` | reduce left with an accumulator |
 | `reduce(xs, init, f)` | same shape as `fold` |
-| `find(xs, pred)` | `Ok(first match)` or `Err` |
+| `find(xs, pred)` | `Ok(first match)`, or `Err("NotFound")` when nothing matches |
 | `all(xs, pred)` / `any(xs, pred)` | does every / some element match? Stops at the first that settles it (`col.all` / `col.any`) |
 | `map_filtered(xs, pred, f)` | fused filter-then-map in one pass |
 
@@ -309,14 +317,14 @@ The full string toolkit lives in [`str`](#str--strings).
 Read and update maps. **Every builtin here takes a map, an anonymous
 object and a parsed JSON object alike** (and a declared struct), reading
 *and* writing: updating a parsed JSON object yields a new JSON object,
-updating an object an object, a struct a new struct of the same type —
-a writer answers the kind of its first argument. Everything is immutable
-— writers return a new value; a value nothing else holds is updated in
-place, so `m = map_set(m, k, v)`, `m = map_set_in(m, path, v)`,
+updating an object an object, a struct a new struct of the same type:
+a writer answers the kind of its first argument. Everything is
+immutable, so writers return a new value. A value nothing else holds is
+updated in place, so `m = map_set(m, k, v)`, `m = map_set_in(m, path, v)`,
 `m = map_update(m, k, f)` and `m = map_merge(m, other)` cost the keys
-they write, not the map's size. An identifier key reads as `m.key` (exactly `map_get(m, "key")`)
-and defaults with `m.key ?? d` (exactly `map_get_or(m, "key", d)`, the
-default evaluated only when used).
+they write, not the map's size. An identifier key reads as `m.key`
+(exactly `map_get(m, "key")`) and defaults with `m.key ?? d` (exactly
+`map_get_or(m, "key", d)`, the default evaluated only when used).
 
 | Function | Description |
 |---|---|
@@ -326,7 +334,7 @@ default evaluated only when used).
 | `map_set_in(m, [k1, k2, …], v)` | new value with the end of the key path set — each level a new value of its own kind, a missing level a new map |
 | `map_update(m, k, f)` | new value with `k` set to `f(m.k)` (`f` is given `()` for an absent key) |
 | `map_has_key(m, k)` | presence test (distinguishes absent from null) |
-| `map_keys(m)` / `map_values(m)` | key/value lists (unordered) |
+| `map_keys(m)` / `map_values(m)` | key/value lists, in key order (the order `entries` uses) |
 | `entries(m)` | `(key, value)` tuples, sorted by key — for `for (k, v) in` |
 | `map_len(m)` | entry count (an object's or a JSON object's fields) |
 | `map_set(m, k, v)` | new value of the same kind with `k` set |
@@ -336,11 +344,11 @@ default evaluated only when used).
 
 ```olang
 let m = #{ "a": 1, "b": 2 }
-let m2 = map_set(m, "c", 3)
+let m2 = #{ ...m, "c": 3 }
 println(show(map_len(m)) + " -> " + show(map_len(m2)))
 println(show(map_get({ x: 42 }, "x")))            // objects read like maps
 let d = map_set(unwrap(json.parse("{\"a\": 1}")), "b", 2)
-println(typeof(d) + " " + show(map_get(d, "b")))  // JSON updates stay JSON
+println(typeof(d) + " " + show(d.b))              // JSON updates stay JSON
 let o = map_merge({ x: 1 }, #{ "y": 2 })
 println(typeof(o) + " " + show(map_len(o)))       // Object 2
 let s = #{ "pp": #{ "cur": 1 } }
@@ -354,7 +362,7 @@ println("")
 
 | Function | Description |
 |---|---|
-| `unwrap(r)` | value of `Ok`, aborts on `Err` |
+| `unwrap(r)` | value of `Ok`; raises on `Err` (a runtime error, which `attempt` catches) |
 | `unwrap_or(r, default)` | value or default |
 | `unwrap_or_else(r, f)` | value or `f(error)` |
 | `is_ok(r)` / `is_err(r)` | tests |
@@ -367,8 +375,14 @@ println("")
 let r = Ok(10)
 println(to_string(result_map(r, (v) => v * 2)))
 println(to_string(unwrap_or(Err("nope"), -1)))
-println(show(attempt(() => raise("widget: no kind \"dial\""))))   // Err("widget: no kind \"dial\"")
+println(show(attempt(() => raise("widget: no kind dial"))))   // Err("widget: no kind dial")
 ```
+
+### Assertions
+
+| Function | Description |
+|---|---|
+| `assert(cond[, msg])` · `assert_eq(a, b[, msg])` · `assert_ne(a, b[, msg])` · `assert_true(x[, msg])` · `assert_false(x[, msg])` · `assert_close(actual, expected, tolerance[, msg])` | language-level assertions: each raises on failure, which is what fails a [`test` block](language.md#testing); the [`testing`](#testing--assertions) module holds the `Result`-returning forms |
 
 ### Evaluation helpers
 
@@ -402,8 +416,9 @@ An alias is never removed in the release that deprecates it.
 
 The complete string toolkit. The module's one convention does a lot of
 work: pure transformations (`trim`, `replace`, `to_upper`, ...) return
-their value directly and never fail — out-of-range positions clamp,
-absent substrings report `-1` — while the two genuine *parsers*
+their value directly and never fail on well-formed arguments
+(out-of-range positions clamp, absent substrings report `()`), while
+the two genuine *parsers*
 (`parse_int`, `parse_float`) return `Result`, because "this text is not
 a number" is the caller's decision to make. Strings are immutable, so
 every function returns a new string.
@@ -483,17 +498,23 @@ Higher-order operations beyond the global builtins. The design principle:
 the *global* builtins cover what nearly every program touches (`map`,
 `filter`, `fold`, `sort`); `col` holds the next ring out — quantifiers,
 partitions, key-function variants — so the global namespace stays small
-while the full toolkit stays one dot away. `colx` is the same API
-implemented *in olang* and embedded in the binary (`use colx`) — the two
-are differential-tested against each other, so the language is exercised
-by its own standard library.
+while the full toolkit stays one dot away. `colx` (`use colx`)
+implements the higher-order core of `col` *in olang*, embedded in the
+binary: `all`, `any`, `count_by`, `drop_while`, `flat_map`,
+`frequencies`, `last`, `max_by`, `min_by`, `partition`, `sort_by`,
+`sum_by`, `take_while`, `unique`, `window`, and `zip_with`. It is not
+the whole `col` API; the functions it shares are differential-tested
+against their native twins, so the language is exercised by its own
+standard library.
 
 | Function | Description |
 |---|---|
 | `col.all(xs, p)` / `col.any(xs, p)` | quantifiers (short-circuit) |
 | `col.index_of(xs, v)` / `col.slice(xs, from, to)` | position of a value (or Unit) / a half-open, clamped sub-list |
 | `col.splice(xs, at, n, items)` | the `n` elements from `at` replaced by `items`, in one copy |
-| `col.take`, `col.drop`, `col.map`, … | every global list helper, mirrored here — one namespace that always works |
+| `col.take`, `col.drop`, `col.skip`, `col.map`, … | most global list helpers, mirrored here (the global-only ones are listed under [Lists](#lists)) |
+| `col.set(xs, i, v)` / `col.swap(xs, i, j)` | the list with element `i` replaced / elements `i` and `j` exchanged; `xs = col.set(xs, i, v)` on a list nothing else holds writes in place |
+| `col.filled(n, v)` | a list of `n` copies of `v`, the preallocation primitive |
 | `col.unique(xs)` | dedupe, first-seen order |
 | `col.partition(xs, p)` | `([matching], [rest])` |
 | `col.sum_by(xs, f)` | total of a projection |
@@ -510,7 +531,7 @@ by its own standard library.
 println(to_string(col.unique([3, 1, 3, 2, 1])))
 println(to_string(col.partition([1, 2, 3, 4], (x) => x % 2 == 0)))
 println(to_string(col.sum_by([{ v: 2 }, { v: 5 }], (r) => r.v)))
-println(to_string(map_get(col.frequencies(["a", "b", "a"]), "a")))
+println(to_string(col.frequencies(["a", "b", "a"]).a))
 println(to_string(col.window([1, 2, 3, 4], 2)))
 println(to_string(col.zip_with([1, 2], [10, 20], (a, b) => a + b)))
 ```
@@ -555,8 +576,10 @@ println(to_string((math.PI > 3.14159) && (math.TAU > 6.28)))
 ```
 
 `mathx` (`use mathx`) is an olang-source module covering the integer and
-rounding core (`abs` through `sqrt`, plus `PI`) — smaller in scope than
-`math`, and differential-tested against it.
+rounding core: `abs`, `sign`, `min`, `max`, `sqrt`, `floor`, `ceil`,
+`round`, `trunc`, `fract`, `gcd`, `lcm`, `factorial`, `radians`,
+`degrees`, and the constants `PI`, `E`, and `TAU`. It is smaller in
+scope than `math`, and differential-tested against it.
 
 ## `vec` — vectors over lists
 
@@ -586,7 +609,7 @@ zero-divisor errors), so promoting a computation changes its range and
 nothing else. When an Int computation does overflow, the error itself
 points here.
 
-| Function | Does |
+| Function | Description |
 |---|---|
 | `of(x)` | Int or digit-string → BigInt; raises on a malformed string |
 | `parse(s)` | the `Result`-returning twin of `of`, for data you don't control |
@@ -617,7 +640,7 @@ source, and from the application itself when it was built with `olang
 build --app` (the package lists them under `assets` in `olang.toml`).
 A path stays inside its package.
 
-| function | |
+| Function | Description |
 |---|---|
 | `asset.read(package, path)` | `Ok(Bytes)`, or `Err` naming the package or file it could not find |
 | `asset.exists(package, path)` | whether the package carries the file |
@@ -694,11 +717,11 @@ rebind discipline.
 put-and-probe workload ~46× faster than driving the builtin persistent
 map through the same loop (5.8s against 269s — flat probing against
 per-write structural copies); `dsu` unions cost ~6µs each; `heap`
-push-and-pop ~36µs a pair. Two honest boundaries: for *plain* sorting
-of a list, the native `sort` builtin remains hundreds of times faster
-than `alg.sort` — reach for `alg` when you need stability, keys, the
-bisect family, or selection — and structure operations run on the
-interpreter by design (the tier boundary would convert a whole handle
+push-and-pop ~36µs a pair. Two limits apply. For *plain* sorting of a
+list, the native `sort` builtin remains hundreds of times faster than
+`alg.sort`; reach for `alg` when you need stability, keys, the bisect
+family, or selection. And structure operations run on the interpreter
+by design (the tier boundary would convert a whole handle
 per call), so they are memory-fused microsecond operations, not
 nanosecond ones. Where the builtins already cover a shape natively,
 they stay the fast path; these modules cover the shapes the builtins
@@ -717,7 +740,7 @@ do not.
 | `json.stringify_pairs(pairs)` | `Result` of one JSON object whose keys are in the order of `pairs`, a list of `(key, value)` (each value as `stringify` writes it) |
 | `json.prettify(s)` / `json.minify(s)` | reformat JSON text |
 | `json.validate(s)` | is the text valid JSON? |
-| `json.get(s, path)` / `json.set(s, path, v)` | path access on raw text |
+| `json.get(s, key)` / `json.set(s, key, v)` | read or replace one top-level key of JSON text: `Result` of the value / of the new text |
 | `json.has_key(s, k)` / `json.remove(s, k)` | text-level operations |
 | `json.get_keys` `json.get_values` `json.get_type` | text-level inspection |
 | `json.array_get` `json.array_length` `json.array_push` | text-level arrays |
@@ -726,7 +749,8 @@ do not.
 ```olang
 let doc = unwrap(json.parse("{\"name\": \"ada\", \"tags\": [\"x\", \"y\"], \"age\": 36}"))
 println(`${doc.name} has ${len(doc.tags)} tags`)
-println(to_string(map_get(doc, "age")))          // dynamic key access
+let field = "age"
+println(to_string(map_get(doc, field)))          // a computed key
 let out = unwrap(json.stringify({ ok: true, n: 1 }))
 println(out)                                     // {"n":1,"ok":true}
 let row = unwrap(json.stringify_pairs([("id", 7), ("name", "ada"), ("tags", ["x"])]))
@@ -746,7 +770,7 @@ returns `Err` for anything else.
 ```olang
 let text = "name = \"cfg\"\n[server]\nport = 7317"
 let doc = unwrap(toml.parse(text))
-println(show(map_get(doc, "name")) + " on " + show(map_get(map_get(doc, "server"), "port")))
+println(show(doc.name) + " on " + show(doc.server.port))
 
 let out = unwrap(toml.stringify(#{ "retries": 3 }))
 println(str.trim(out))
@@ -952,12 +976,12 @@ it, or touching a cell from inside its own `cell.update`.
 let seen = cell(#{})
 fn remember(word) = {
     let counts = cell.get(seen)
-    let n = if map_has_key(counts, word) => map_get(counts, word) else => 0
+    let n = map_get_or(counts, word, 0)
     cell.set(seen, map_set(counts, word, n + 1))
     n + 1
 }
 for w in ["ok", "err", "ok", "ok"] { remember(w) }
-println(to_string(map_get(cell.get(seen), "ok")))   // 3
+println(to_string(cell.get(seen).ok))   // 3
 ```
 
 **Confinement.** A cell belongs to the thread that created it. Reading
@@ -1204,18 +1228,21 @@ println(show(len(unwrap(base64.decode_bytes(enc)))))   // 5
 ## `fs` — file system
 
 Whole-value I/O: `read_file` returns the entire contents as one string,
-`write_file` replaces them — no file handles, no open/close lifecycle to
-manage, which fits a language whose programs transform values. Every
-function returns `Result`, because the file system is the classic source
-of failures that are the *caller's* business (missing file, permissions)
-rather than bugs. (Examples are `no-run`: they touch the disk.)
+and `write_file` replaces them. There are no file handles and no
+open/close lifecycle to manage, which fits a language whose programs
+transform values. Every function that touches the disk and can fail
+returns `Result`, because the file system is the classic source of
+failures that are the *caller's* business (missing file, permissions)
+rather than bugs. The queries `exists`, `is_file`, and `is_dir` answer
+a `Bool`, and the path functions `join`, `dirname`, `basename`, and
+`ext` answer a `String`. (Examples are `no-run`: they touch the disk.)
 
 | Group | Functions |
 |---|---|
 | Files | `read_file` `write_file` `append_file` `copy_file` `move_file` `remove_file` `trash` — and `read_bytes` / `write_bytes` for [binary data](#bytes--binary-data) |
 | Directories | `create_dir` `create_dir_all` `list_dir` `walk` `glob` `remove_dir` `remove_dir_all` |
 | Queries | `exists` `is_file` `is_dir` `file_size` `file_info` |
-| Paths | `join(parts)` `dirname` `basename` `ext` — pure string surgery, answering the string itself; `abs_path` answers a **`Result`** (`Ok(path)`): it resolves against the current directory, which can fail, and normalizes `.`/`..` without requiring the file to exist; `real_path` (a `Result` too) also resolves symbolic links — `/tmp/x` is `/private/tmp/x` on macOS — and for a path that does not exist yet makes its nearest existing folder real and keeps the rest |
+| Paths | `join(parts)` `dirname` `basename` `ext`: pure string surgery, answering the string itself. `abs_path` answers a **`Result`** (`Ok(path)`): it resolves against the current directory, which can fail, and normalizes `.`/`..` without requiring the file to exist. `real_path` (a `Result` too) also resolves symbolic links (`/tmp/x` is `/private/tmp/x` on macOS); for a path that does not exist yet it makes the nearest existing folder real and keeps the rest |
 
 `fs.trash(path)` moves a file or a folder to the Trash as the Finder's
 Move to Trash does (macOS's NSFileManager) — never a permanent delete —
@@ -1286,8 +1313,8 @@ callee like `fs.read_file`, `args`), `field`, `binop`, `if`, `match`,
 ```olang
 // A dependency lister — a file's imports — in four lines over meta.parse.
 let program = unwrap(meta.parse("use geometry { area }\nuse fmt\nfn f() = 1"))
-for node in program |> filter((n) => map_get(n, "kind") == "use") {
-    println(map_get(node, "path") + " " + show(map_get(node, "items")))
+for node in program |> filter((n) => n.kind == "use") {
+    println(node.path + " " + show(node.items))
 }
 // geometry ["area"]
 // fmt ["*"]
@@ -1370,9 +1397,9 @@ that serves its own routes reads the same bytes.
 ```olang no-run
 let rt = unwrap(runtime.wasm())
 fn wasm(req, params) = {
-    status: 200, body: map_get(rt, "br"),
+    status: 200, body: rt.br,
     headers: #{ "Content-Type": "application/wasm", "Content-Encoding": "br",
-                "ETag": "\"" + map_get(rt, "hash") + "\"" }
+                "ETag": "\"" + rt.hash + "\"" }
 }
 ```
 
@@ -1422,7 +1449,7 @@ else.
 | Environment | `get_env` `set_env` `remove_env` `has_env` `list_env` |
 | Directories | `cwd` `chdir` `home_dir` `temp_dir` |
 | System | `hostname` `username` `os_type` `arch` `family` `path_separator` |
-| Signals | `on_interrupt()` — trap Ctrl-C (SIGINT) instead of terminating (`Result`: installing the handler can fail); `interrupted()` — has it been pressed? (`Bool`); `reset_interrupt()` — clear the flag |
+| Signals | `on_interrupt()` — trap Ctrl-C (SIGINT) instead of terminating (`Result`: installing the handler can fail); `interrupted()` — has it been pressed? (`Bool`); `reset_interrupt()` — clear the flag; `on_shutdown(handler)` — run `handler("shutdown")` on SIGINT or SIGTERM (below) |
 
 `os.exec` runs an external program to completion and returns
 `Ok({ code, stdout, stderr, timed_out })` — or `Err` if it could not be
@@ -1562,8 +1589,9 @@ println(str.trim(r.stdout))    // "3"
 println(show(r.codes))         // [0, 0, 0]
 ```
 
-The [`watch` example](../examples/tools/watch/) is the flagship: it streams a
-command's output, runs pipelines, and shuts down gracefully on Ctrl-C.
+The [`watch` example](../examples/tools/watch/) puts the module together:
+it streams a command's output, runs pipelines, and shuts down cleanly on
+Ctrl-C.
 
 ## `pty` — a child on a pseudo-terminal
 
@@ -1631,7 +1659,7 @@ rewraps the main screen.
 | `vt.claim(t)` | true once after each `vt.info`: a reader says "changed" once until the window looks (a burst is a frame) |
 | `vt.render(t, opts)` | canvas operations: backgrounds, text runs (bold, italic), underlines, strikes, the cursor (block, bar, underline; hollow; the input method's text). `opts`: `cell_w`, `cell_h`, `size`, `font`, `pad_x`, `pad_y`, `text_dy`, `rows`, `top`, `palette` (16), `fg`, `bg`, `cursor_color`, `cursor_text`, `selection_color`, `find_color`, `find_current_color`, `link_color`, `selection` `(l0, c0, l1, c1)`, `matches` and `match`, `hover`, `cursor`, `hollow`, `cursor_style`, `preedit` |
 | `vt.text(t, l0, c0, l1, c1)` · `vt.line(t, l)` · `vt.word_at(t, l, c)` · `vt.link_at(t, l, c)` · `vt.find(t, q, opts?)` | a selection's text; a line's text and each character's column; a double click's word; an OSC 8 link; every match `(line, col, cells)` — a line that wrapped read as one (a match's `cells` may run onto the next row), the newest 2,000 |
-| `vt.set_colors(t, #{ fg, bg })` · `vt.free(t)` | |
+| `vt.set_colors(t, #{ fg, bg })` · `vt.free(t)` | replace the colours OSC 10/11 answer, as `vt.new`'s `fg` and `bg` set them; release the screen (a later call on it does nothing) |
 
 ## `cli` — command-line argument parsing
 
@@ -1674,28 +1702,29 @@ let spec = #{
 }
 match cli.parse(spec, cli.args()) {
     Err(e) => { println("greet: " + e); os.exit(2) },
-    Ok(a) => if map_get(a, "help") => println(cli.help(spec))
+    Ok(a) => if a.help => println(cli.help(spec))
         else => {
-            let line = map_get(a, "who")
-            let shout = if map_get(a, "loud") => str.to_upper(line) else => line
-            for i in range(0, map_get(a, "count")) { println("Hello, " + shout + "!") }
+            let line = a.who
+            let shout = if a.loud => str.to_upper(line) else => line
+            for i in range(0, a.count) { println("Hello, " + shout + "!") }
         }
 }
 ```
 
 [`examples/tools/taskcli`](../examples/tools/taskcli/) is the worked example — a
 small task tracker whose entire command surface (`list`, `open`,
-`stats`, `add --priority`) is one `cli` spec, with `--help` and clean
-exit codes for free.
+`stats`, `add --priority`) is one `cli` spec; `--help` and the exit
+codes come from the package.
 
 ## `term` — the terminal toolkit
 
-`use term` — an embedded olang package — is what `plot`/`viz` are for
-the browser, for the terminal: color and text styling, aligned tables
+`use term`, an embedded olang package, does for the terminal what
+`plot`/`viz` do for the browser: color and text styling, aligned tables
 and rules, progress bars, and interactive prompts. Styling is emitted
-**only when it will render** — standard output is a TTY and `NO_COLOR`
-is unset — or when `CLICOLOR_FORCE` is set (the convention that also
-makes styled output testable through a pipe). The check is per call, so
+**only when it will render** (standard output is a TTY and `NO_COLOR`
+is unset) or when `CLICOLOR_FORCE` is set, the convention that also
+makes styled output testable through a pipe. The decision is made once
+and made again after the program's own `os.set_env`/`os.remove_env`, so
 a program's output is colored on a terminal and plain in a pipe or file
 with no extra logic.
 
@@ -1703,7 +1732,7 @@ with no extra logic.
 |---|---|
 | Color | `red` `green` `yellow` `blue` `magenta` `cyan` `white` `black` `gray` — each wraps a string |
 | Attributes | `bold` `dim` `italic` `underline` |
-| General | `style(s, opts)` — `opts` is `#{ "fg": ..., "bg": ..., "bold": ..., "dim": ..., "italic": ..., "underline": ... }`; `color()` — is styling active (decided once, when the module loads: a TTY without `NO_COLOR`, or `CLICOLOR_FORCE`) |
+| General | `style(s, opts)` — `opts` is `#{ "fg": ..., "bg": ..., "bold": ..., "dim": ..., "italic": ..., "underline": ... }`; `color()` — is styling active (a TTY without `NO_COLOR`, or `CLICOLOR_FORCE`; decided once, re-decided after the program's own `os.set_env`/`os.remove_env`) |
 | Structure | `rule(width)` — a horizontal line; `table(headers, rows)` — columns aligned to their widest plain cell, header bold |
 | Progress | `bar(fraction, width)` — a `[████░░░░]  50%` bar string; print it with a leading `\r` and `os.flush()` to redraw in place |
 | Input | `prompt(question)` — a line from stdin; `confirm(question)` — yes/no → bool; `select(question, options)` — a numbered menu → `Ok(chosen)` \| `Err` |
@@ -1770,7 +1799,7 @@ Every leave also writes `CSI ?2026l` (ends a synchronized update a
 crash left open) and `CSI 0m` (resets attributes), so a program that
 dies mid-frame leaves neither a frozen nor a coloured terminal.
 
-**Events** are maps with a `"kind"` (read them with `map_get`):
+**Events** are maps with a `"kind"` (read their fields as `ev.kind`, `ev.chord`):
 
 | `kind` | Fields |
 |---|---|
@@ -1811,8 +1840,8 @@ let mut going = true
 while going {
     match chan.recv(events) {
         Ok(ev) => {
-            if map_get(ev, "kind") == "key" && map_get(ev, "chord") == "q" => { going = false }
-            else if map_get(ev, "kind") == "key" && map_get(ev, "chord") == "ctrl+z" => { tty.suspend(h) }
+            if ev.kind == "key" && ev.chord == "q" => { going = false }
+            else if ev.kind == "key" && ev.chord == "ctrl+z" => { tty.suspend(h) }
             else => { tty.write(h, show(ev) + "\r\n") }
         },
         Err(e) => { going = false }
@@ -1905,6 +1934,10 @@ Native-only; on in the released binaries (the `gui` cargo feature).
 | `gui.dialog(kind, opts)` | the platform's dialog: `"open"`, `"open_many"`, `"save"`, `"folder"` (`title`, `directory`, `name`, `filters: [#{ name, extensions }]`) → a path, a list, or `()` when cancelled; `"message"` (`title`, `text`, `level`, `buttons`: `ok`, `ok_cancel`, `yes_no`, `yes_no_cancel`) → the button |
 | `gui.context_menu(window, items, at)` | a native context menu (macOS: NSMenu `popUpMenuPositioningItem:atLocation:inView:`) over `window` at `at` `#{ x, y }` (the content's logical pixels): `items` `[#{ id, label, keys?, enabled?, checked?, submenu? } or "separator"]`, keys shown as the menu bar shows them. `true` when shown — the window then hears `context` with the chosen item's `id` (`()` when dismissed); `false` on a headless window or a platform without one (`gui.platform().context_menu`): the program draws its own. A script arms a choice with `gui.input(w, #{ kind: "context_pick", label })`: the next menu shows, then closes as though that item was chosen (`picked: true`). ⌃-click arrives as the right button |
 | `gui.menu(spec)` | the macOS menu bar: `[#{ title, items: [#{ id, label, keys?, enabled?, checked? } or "separator"] }]`; an item chosen sends `menu` with its `id`. Elsewhere answers `false` — Loom draws the window's menu |
+
+`gui.flatten`, the `gui.flat_` family (`flat_emit`, `flat_join`,
+`flat_arrays`, `flat_keep`, `flat_geo`), and `gui.roles` are Loom's
+layout internals; they are not part of the surface a program uses.
 
 **The patch.** Each operation is a map; `op` defaults to `"node"`:
 
@@ -2083,8 +2116,8 @@ gui.apply(w, [#{ "op": "focus", "key": "name" }])
 let mut going = true
 while going {
     let e = unwrap(chan.recv(events))
-    let kind = map_get(e, "kind")
-    if kind == "changed" => { gui.apply(w, view(map_get(e, "value"))); () }
+    let kind = e.kind
+    if kind == "changed" => { gui.apply(w, view(e.value)); () }
     else if kind == "close_requested" => { going = false }
 }
 gui.close(w)
@@ -2114,8 +2147,8 @@ yet run.
 ## `http` — HTTP
 
 Both sides of HTTP in one module: a client for calling APIs, and
-`http.serve` — a real, blocking HTTP/1.1 server with keep-alive and a
-bounded worker pool. The design leans on the rest of the language rather
+`http.serve`, a blocking HTTP/1.1 server with keep-alive and a bounded
+worker pool. The design leans on the rest of the language rather
 than inventing its own idioms: requests are fallible so they return
 `Result`, a response is an ordinary struct-like value, and a server
 handler is just a function from request to response. (`no-run`: network.)
@@ -2132,6 +2165,7 @@ true for 2xx):
 | `http.encode_query(map)` / `http.decode_query(s)` | query strings — `encode_query` takes a `#{}` map or a `{ }` record, keys in sorted order |
 | `http.serve(port, handler[, options])` | serve `handler(request)` on a bounded worker pool; blocks the calling program |
 | `http.response(status, body)` / `http.response_with_headers(status, body, headers)` | build responses |
+| `http.shutdown()` | ask every running `http.serve` to drain: no new connections, in-flight requests finish (up to `drain_ms`), and `serve` returns `Ok` — what an [`os.on_shutdown`](#os--operating-system) handler calls |
 | `http.defer()` / `http.respond(ticket, response)` | park the connection a handler is answering and complete it later, from any thread |
 | `http.hold(topic)` / `http.notify(topic, response)` / `http.notify_all(response)` / `http.held(topic)` | park the current request under a topic; answer every connection held under it (the count answered); count what is parked |
 
@@ -2221,7 +2255,7 @@ this.
 
 ```olang no-run
 fn handle(req) = {
-    if req.path == "/hello" => "hi, " + to_string(map_get(req.query, "name"))
+    if req.path == "/hello" => "hi, " + (req.query.name ?? "anonymous")
     else if req.method == "POST" =>
         http.response_with_headers(201, req.body, #{ "Content-Type": "application/json" })
     else => http.response(404, "no route for " + req.path)
@@ -2238,14 +2272,14 @@ same server also delivering its own browser frontend from disk.
 ## `db` — SQLite
 
 A connection handle flows through every call. `:memory:` gives a fresh
-in-process database — the examples below really run.
+in-process database, so the examples below run in the test suite.
 
 | Function | Description |
 |---|---|
 | `db.open(path)` / `db.open(path, opts)` | open or create (`":memory:"` for in-memory); options below |
 | `db.execute(conn, sql)` / `db.execute(conn, sql, params)` | run a statement; `?` placeholders — `Ok(rows changed)` |
-| `db.query(conn, sql)` / with `params` | rows as a list of maps |
-| `db.query_one(conn, sql)` | the first row as a map, or `Ok(())` when there is none — unambiguous, since a row is always a map |
+| `db.query(conn, sql)` / with `params` | `Ok` of the rows, as a list of maps |
+| `db.query_one(conn, sql)` / with `params` | `Ok(row)`, the first row as a map, or `Ok(())` when there is none (unambiguous, since a row is always a map) |
 | `db.query_rows(conn, sql)` / with `params` | the columns and the rows as SQL has them: `#{ "columns": [#{ "name", "decltype", "index" }], "rows": [[value, …]] }` |
 | `db.cursor(conn, sql)` / with `params` | a statement to read a piece at a time — `Ok(cursor)` |
 | `db.next(cur, n)` | up to `n` more rows of a cursor, each a list; `[]` at the end |
@@ -2272,7 +2306,7 @@ unwrap(db.commit(conn))
 
 let rows = unwrap(db.query(conn, "SELECT name, points FROM scores ORDER BY points DESC"))
 for row in rows {
-    println(`${map_get(row, "name")}: ${map_get(row, "points")}`)
+    println(`${row.name}: ${row.points}`)
 }
 unwrap(db.close(conn))
 ```
@@ -2306,9 +2340,9 @@ let c = unwrap(db.open(":memory:"))
 unwrap(db.execute(c, "CREATE TABLE p (name TEXT, photo BLOB)"))
 unwrap(db.execute(c, "INSERT INTO p VALUES (?, ?)", ["ann", bytes.from_list([0, 255])]))
 let r = unwrap(db.query_rows(c, "SELECT name, photo, 1 AS name FROM p"))
-assert_eq(map(map_get(r, "columns"), (k) => map_get(k, "name")), ["name", "photo", "name"])
-assert_eq(map(map_get(r, "columns"), (k) => map_get(k, "decltype")), ["TEXT", "BLOB", ()])
-assert_eq(map_get(r, "rows"), [["ann", bytes.from_list([0, 255]), 1]])
+assert_eq(map(r.columns, (k) => k.name), ["name", "photo", "name"])
+assert_eq(map(r.columns, (k) => k.decltype), ["TEXT", "BLOB", ()])
+assert_eq(r.rows, [["ann", bytes.from_list([0, 255]), 1]])
 unwrap(db.close(c))
 ```
 
@@ -2322,7 +2356,7 @@ costs that screen, not the rest.
 ```olang
 let c = unwrap(db.open(":memory:"))
 let cur = unwrap(db.cursor(c, "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n LIMIT 10000000) SELECT i FROM n"))
-assert_eq(map(unwrap(db.columns(cur)), (k) => map_get(k, "name")), ["i"])
+assert_eq(map(unwrap(db.columns(cur)), (k) => k.name), ["i"])
 assert_eq(unwrap(db.next(cur, 3)), [[1], [2], [3]])
 assert_eq(unwrap(db.next(cur, 2)), [[4], [5]])
 unwrap(db.close_cursor(cur))
@@ -2409,6 +2443,7 @@ with timers and animation frames; everything else is ordinary olang.
 
 | Function | Description |
 |---|---|
+| `dom.available()` | `true` in the browser, `false` in a native build: the one `dom` function that works everywhere, so code shared by both can skip event wiring rather than raise |
 | `dom.query(sel)` | first element matching a CSS selector — an error if none matches |
 | `dom.get_text(el)` / `dom.set_text(el, s)` | read / write an element's text content |
 | `dom.set_html(el, html)` | replace an element's inner HTML — the render primitive |
@@ -2512,16 +2547,17 @@ navigation, and localStorage persistence.
 `h`, `hk`, `esc`, and `html` are pure and run anywhere; only `render`
 needs the browser.
 
-`dom` is the one browser-only module: in a native build every call
-reports that it needs the wasm build (mirroring how `fs`, `os`, `http`,
-and `db` are absent from the browser). The example is therefore
-`no-run` — it runs on a page, not in the test harness:
+`dom` is the one browser-only module: in a native build every call but
+`dom.available` reports that it needs the wasm build, mirroring how
+`fs`, `os`, `proc`, `pty`, `tty`, `gui`, `http`, and `db` are absent
+from the browser. The example is therefore `no-run`; it runs on a page,
+not in the test harness:
 
 ```olang no-run
 dom.set_html(dom.query("#list"),
     ["a", "b"] |> map((s) => "<li>" + s + "</li>") |> join(""))
-dom.on(dom.query("#list"), "click", (e) => select(map_get(e, "id")))
-dom.on(dom.query("#new-title"), "enter", (e) => add_item(map_get(e, "value")))
+dom.on(dom.query("#list"), "click", (e) => select(e.id))
+dom.on(dom.query("#new-title"), "enter", (e) => add_item(e.value))
 dom.fetch("GET", "/api/items", "", (resp) => render(unwrap(json.parse(resp))))
 dom.on_frame((f) => {
     dom.draw(canvas, [
@@ -2531,7 +2567,7 @@ dom.on_frame((f) => {
 })
 ```
 
-The module has its own chapter, **[olang in the Browser](wasm.md)**:
+The module has its own chapter, **[olang in the browser](wasm.md)**:
 element handles and their lifetime, the event payload conventions that
 make delegation the natural style, `dom.fetch`'s callback contract, the
 stateless-frontend architecture, and a guided reading of
@@ -2546,9 +2582,11 @@ friends are *language-level* forms that **raise** on failure — that is
 what makes a failing test fail. The `testing` module is the other
 surface: assertion *functions* that return the outcome as a `Result`
 value (`Ok(())` on success, `Err(message)` on failure) so a program can
-inspect, collect, and report failures itself — the raw material for a
+inspect, collect, and report failures itself, the raw material for a
 custom harness. A returned `Err` does nothing on its own; `unwrap` it
-(or match it) to act on it.
+(or match it) to act on it. The exception is `testing.snapshot`, which
+answers `()` and raises on a mismatch, as a language-level assertion
+does.
 
 | Function | Description |
 |---|---|
@@ -2556,7 +2594,8 @@ custom harness. A returned `Err` does nothing on its own; `unwrap` it
 | `testing.assert_true(x)` / `assert_false(x)` | boolean checks (non-boolean input is an `Err`) |
 | `testing.assert_ok(r)` / `assert_err(r)` | Result checks |
 | `testing.fail(msg)` | unconditional `Err` |
-| `testing.snapshot(name, value[, #{ update }])` | the snapshot test: `value` (a String as its text, else its display form) against `__snapshots__/<name>.snap` beside the file under test — written on the first run, compared after, refreshed by `OLANG_UPDATE_SNAPSHOTS=1`, `UPDATE_SNAPSHOTS=1` or the caller's `update: true` |
+| `testing.snapshot(name, value[, #{ update }])` | the snapshot test: `value` (a String as its text, else its display form) against `__snapshots__/<name>.snap` beside the file under test. The first run writes the file; a later run answers `()` when it matches and raises with both texts when it does not. `OLANG_UPDATE_SNAPSHOTS=1`, `UPDATE_SNAPSHOTS=1`, or the caller's `update: true` rewrites the file instead |
+| `testing.snapshot_dir()` / `testing.snapshot_failed(info)` | the `__snapshots__` directory beside the file under test, where a library keeps snapshots of its own kind (Loom's pixels); a library's report that one of its snapshots differs (`info`: `name`, `baseline`, `actual`, `diff`, …), carried by `olang test --format json` and otherwise ignored |
 | `testing.test_summary()` / `testing.reset_tests()` | the session's assertion tally: `#{ "passed", "failed", "total" }` over every `assert_*` outcome on this thread; `reset_tests()` zeroes it |
 | `testing.run_test(name, f)` | deliberately a redirect: a builtin cannot re-enter the interpreter to run `f`, and the error says to use a `test` block instead |
 
@@ -2573,7 +2612,7 @@ them with reporting built in.
 
 ## `ods` — Series and Frames
 
-The heart of the data stack: a **Series** is a typed, null-aware 1-D
+The core of the data stack: a **Series** is a typed, null-aware 1-D
 column of `Int`, `Float`, `Bool`, or `String` over a contiguous native
 buffer; a **Frame** is a table of named, equal-length Series. Operators
 are vectorized (`s * 2.0` runs one kernel over the whole column;
@@ -2593,7 +2632,7 @@ let summary = full
     |> ods.group_by("region", [["total", "sum", "revenue"], ["n", "count"]])
     |> ods.sort_by("total", true)
 for rec in ods.to_records(summary) {
-    println(`${map_get(rec, "region")}: ${map_get(rec, "total")}`)
+    println(`${rec.region}: ${rec.total}`)
 }
 ```
 
@@ -2661,11 +2700,11 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Aggregate / join | `group_by(f, key, aggs)` · `join` (inner) · `join_left` · `join_full` · `join_semi` · `join_anti` — all `(a, b, on, on_b = on)` · `concat(frames)` |
 | Masks | `eq(s, v)` · `ne(s, v)` · `all_of(masks)` · `any_of(masks)` · `not(mask)` — three-valued, like SQL |
 
-The stack has its own chapter, **[The Data Stack](ods.md)**: why the
-columnar model wins (with the measured 50× rewrite behind it), every
-Series and Frame verb with its semantics, null handling, joins and
-grouped aggregation, and the performance characteristics — all taught
-rather than merely listed. Engineering history and benchmark method
+The stack has its own chapter, **[The data stack](ods.md)**: the
+reasons for the columnar model (with the measured 50× rewrite behind
+it), every Series and Frame verb with its semantics, null handling,
+joins and grouped aggregation, and the performance characteristics,
+each explained with examples. Engineering history and benchmark method
 live in [that chapter's design record](ods.md#the-design-record).
 
 ## `stats` — statistical inference
@@ -2682,13 +2721,13 @@ reproducible.
 let a = ods.series([5.1, 4.9, 6.2, 5.7, 5.5, 4.8, 5.9, 6.1])
 let b = ods.series([4.2, 4.8, 4.5, 5.0, 4.4, 4.1, 4.9])
 let t = stats.t_test(a, b)
-println(`p = ${map_get(t, "p_value")}`)
+println(`p = ${t.p_value}`)
 println(to_string(stats.norm.ppf(0.975, 0.0, 1.0)))   // 1.9599...
 ```
 
-**[The Data Stack](ods.md#stats--from-description-to-inference)**
-teaches the module end to end — including a complete regression
-workflow and how to read p-values and `r2` honestly.
+**[The data stack](ods.md#stats--from-description-to-inference)**
+covers the module end to end, including a complete regression workflow
+and how to interpret p-values and `r2`.
 
 ## `plot` — charts as SVG text
 
@@ -2724,7 +2763,7 @@ know is an error naming it, so a misspelled option never renders
 silently at the default. With `"interactive": true` marks carry their datum as
 `data-*` attributes, and `viz.tooltip` / `viz.on_mark` / `viz.brush`
 turn hover, click-to-filter, and brush-to-zoom into one-liners. See
-[the Data Stack](ods.md#the-viz-grammar).
+[the data stack](ods.md#the-viz-grammar).
 
 | `viz` function | Purpose |
 |---|---|
@@ -2750,8 +2789,9 @@ dashboard shell as pure, escaped HTML strings (natively tested), and
 
 The wiring pattern stays in your program: fetch, compute, `dom.set_html`
 the shell, fill the chart mounts with `viz.chart`. The tracker's
-`/board.html` is the flagship: a KPI row, five charts, a URL-carried
-status filter, and a 5-second auto-refresh in one source file.
+`/board.html` is the complete example: a KPI row, five charts, a
+URL-carried status filter, and a 5-second auto-refresh in one source
+file.
 
 ```olang
 let x = ods.linspace(0.0, 6.28, 50)
@@ -2760,7 +2800,7 @@ let svg = plot.line(x, y, #{ "title": "sin(t)", "x_label": "t" })
 println(to_string(str.contains(svg, "<svg")))
 ```
 
-**[The Data Stack](ods.md#plot--charts-as-svg-text)** covers the
+**[The data stack](ods.md#plot--charts-as-svg-text)** covers the
 SVG-as-text philosophy, each chart type, and null handling per chart.
 
 ---

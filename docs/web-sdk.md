@@ -1,11 +1,16 @@
 # The web SDK
 
+Part of [the olang book](README.md) · [olang in the browser](wasm.md) ·
+[Packages and dependencies](packages.md)
+
 `frameworks/web-sdk` is the foundation layer for building full-stack
 web applications in olang — one process serving a JSON API and a wasm
 frontend, with one route table driving both sides. It is deliberately
 two things at once: directly usable (a working app is two small
 files), and foundational — the primitives a future olang web framework
 would build on rather than reinvent.
+
+## Table of contents
 
 - [The five contracts](#the-five-contracts)
 - [A complete application](#a-complete-application)
@@ -14,7 +19,10 @@ would build on rather than reinvent.
 - [The browser side](#the-browser-side)
 - [Forms](#forms)
 - [The data layer](#the-data-layer)
+- [The store](#the-store)
+- [The first paint](#the-first-paint)
 - [The bundle](#the-bundle)
+- [Server push](#server-push)
 - [Testing](#testing)
 
 ## The five contracts
@@ -63,7 +71,7 @@ let routes = [
     rpc("todos.list", (req, p) => rows(conn, "SELECT * FROM todos ORDER BY id", [])),
     rpc("todos.create", (req, p) => {
         let payload = unwrap(json.parse(req.body))
-        let id = insert_row(conn, "todos", #{ "title": map_get(payload, "title"), "done": 0 })
+        let id = insert_row(conn, "todos", #{ "title": payload.title, "done": 0 })
         row(conn, "SELECT * FROM todos WHERE id = ?", [id])
     })
 ]
@@ -83,7 +91,7 @@ fn view(s) = stack([
         input(#{ "id": "title", "class": "field-input" }),
         btn_primary("Add", "add")
     ])]),
-    stack(map(map_get(s, "todos"), (t) => card([map_get(t, "title")])))
+    stack(map(s.todos, (t) => card([t.title])))
 ])
 
 fn refresh() = call("todos.list", #{}, (r) =>
@@ -113,7 +121,7 @@ name is satisfied by the expansion that already happened.
 Two small forms beside `el`: `void_el(tag, attrs)` for an element with
 no children (`img`, `br`, `input` written through `el`), and `@when(cond,
 node)`, a macro — the node is built only when the condition holds, so
-`@when(t != (), span([map_get(t, "id")]))` cannot raise on the case it
+`@when(t != (), span([t.id]))` cannot raise on the case it
 exists to skip, which a function `when` would.
 
 ```olang no-run
@@ -169,7 +177,8 @@ in its config is a map added to each one — the `Content-Security-Policy`,
 `X-Content-Type-Options`, and `Referrer-Policy` a `<meta>` cannot carry —
 and `"head"` may be a function of the request, `(req) => html`, so a
 per-response CSP nonce is possible (the shell is then built per
-request). `"drain": true` registers a shutdown handler: on SIGINT or
+request). The configured headers are set on the response as it is, so a
+route that streams a file (`body_file`) keeps streaming. `"drain": true` registers a shutdown handler: on SIGINT or
 SIGTERM the server stops accepting, answers what is in flight with
 `Connection: close`, reads nothing more off a kept-alive connection, and
 after `"drain_ms"` (5000) cuts the rest — a long poll a tab keeps
@@ -183,8 +192,6 @@ spawned task or a channel service, with the same values a handler
 returns (`http.response(...)`, a `{ status, body }` record, `json(...)`).
 With sixty tabs polling, the server needs sixty sockets, not sixty
 workers.
-The configured headers are set on the response as it is, so a route that
-streams a file (`body_file`) keeps streaming.
 
 Dynamic responses are gzipped on the wire: a text body of a kilobyte or
 more, to a client whose `Accept-Encoding` names gzip, goes out with
@@ -511,7 +518,7 @@ connection costs a socket, not a worker, and one table serves however
 many servers the process runs:
 
 ```olang no-run
-use web { route, hold, notify, held }
+use web { route, hold, notify, held, json_response }
 route("GET", "/api/changes", (req, p) => hold("issues"))
 // ... later, from the request that changed something:
 notify("issues", json_response(200, changed))   // how many were answered
@@ -536,7 +543,7 @@ on a task, driven over a socket — runs handlers where production runs
 them, and a handler that defers (`http.defer`) holds a ticket for a
 real connection without any `OLANG_TEST` juggling.
 
-The SDK's tests are olang tests — 63 of them, `olang test
+The SDK's tests are olang tests — more than seventy of them, `olang test
 frameworks/web-sdk`. The route table and envelope are exercised
 in-process by constructing request values and calling `dispatch`
 directly; the data layer runs against `:memory:`; the demo (`demo/`

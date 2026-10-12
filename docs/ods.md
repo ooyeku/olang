@@ -38,7 +38,7 @@ let rows = [
     #{ "region": "west", "amount": 320.0, "qty": 3 },
 ]
 let total = rows
-    |> map((r) => map_get(r, "amount") * to_float(map_get(r, "qty")))
+    |> map((r) => r.amount * to_float(r.qty))
     |> fold(0.0, (acc, v) => acc + v)
 println(to_string(total))
 ```
@@ -208,8 +208,8 @@ println(to_string(ods.to_list(ods.eq(s, ods.series([1, 0, 2, 0])))))
 ### Nulls
 
 A null enters a Series wherever a source value was `()` — which is
-exactly what a missed `map_get`, an empty CSV cell, or a missing JSON
-key produces. From there, two rules govern its life:
+exactly what reading an absent key (`m.absent`), an empty CSV cell, or a
+missing JSON key produces. From there, two rules govern its life:
 
 - **Arithmetic propagates nulls.** `null * 2` is null; an operation
   cannot invent a value it does not have.
@@ -217,7 +217,7 @@ key produces. From there, two rules govern its life:
   computed over the two values that exist.
 
 ```olang
-let missing = map_get(#{}, "absent")              // Unit → null
+let missing = #{}.absent                          // Unit → null
 let s = ods.series([1.0, missing, 3.0])
 println(to_string(ods.null_count(s)))             // 1
 println(to_string(ods.null_count(s * 2.0)))       // propagates: still 1
@@ -229,7 +229,7 @@ is a mask of the null positions, and `ods.fill_null(s, v)` returns a
 copy with every null replaced:
 
 ```olang
-let missing = map_get(#{}, "absent")
+let missing = #{}.absent
 let s = ods.series([1.0, missing, 3.0])
 let filled = ods.fill_null(s, 0.0)
 println(to_string(ods.to_list(filled)))           // [1.0, 0.0, 3.0]
@@ -925,7 +925,7 @@ let summary = sales
     |> ods.group_by("region", [["total", "sum", "amount"], ["n", "count"]])
     |> ods.sort_by("total", true)
 for rec in ods.to_records(summary) {
-    println(`${map_get(rec, "region")}: ${map_get(rec, "total")} over ${map_get(rec, "n")} sales`)
+    println(`${rec.region}: ${rec.total} over ${rec.n} sales`)
 }
 ```
 
@@ -1054,8 +1054,8 @@ thread hand-off would cost more than it saves).
 Description says what the data at hand looks like; inference asks what
 can honestly be concluded from it. The `stats` module covers both, and
 every statistic it produces is pinned against scipy reference values
-in the test suite. Results come back as ordinary maps, destructured
-with `map_get` like any other map.
+in the test suite. Results come back as ordinary maps, read with
+`.` like any other map.
 
 ### Describing a column
 
@@ -1063,10 +1063,10 @@ with `map_get` like any other map.
 standard deviation, minimum, quartiles, and maximum in one map.
 
 ```olang
-let missing = map_get(#{}, "absent")
+let missing = #{}.absent
 let s = ods.series([5.1, 4.9, 6.2, 5.7, missing, 5.5])
 let d = stats.describe(s)
-println(`n=${map_get(d, "count")} nulls=${map_get(d, "null_count")} median=${map_get(d, "median")}`)
+println(`n=${d.count} nulls=${d.null_count} median=${d.median}`)
 ```
 
 `stats.corr(a, b)` and `stats.cov(a, b)` measure how two columns move
@@ -1085,8 +1085,8 @@ against that null mean. Both return `t`, `df`, and `p_value`:
 let a = ods.series([5.1, 4.9, 6.2, 5.7, 5.5, 4.8, 5.9, 6.1])
 let b = ods.series([4.2, 4.8, 4.5, 5.0, 4.4, 4.1, 4.9])
 let t = stats.t_test(a, b)
-println(`p = ${map_get(t, "p_value")}`)
-println(`means: ${map_get(t, "mean_a")} vs ${map_get(t, "mean_b")}`)
+println(`p = ${t.p_value}`)
+println(`means: ${t.mean_a} vs ${t.mean_b}`)
 ```
 
 Read the p-value for what it is: the probability of a gap at least
@@ -1103,7 +1103,7 @@ expected distribution?
 let observed = ods.series([18.0, 22.0, 20.0])
 let expected = ods.series([20.0, 20.0, 20.0])
 let r = stats.chi2_test(observed, expected)
-println(to_string(map_get(r, "p_value") > 0.05))   // consistent with uniform
+println(to_string(r.p_value > 0.05))   // consistent with uniform
 ```
 
 ### Regression — a complete workflow
@@ -1123,11 +1123,11 @@ let noise = stats.norm.sample(n, 0.0, 1.0)
 let y = x1 * 2.0 + x2 * -1.0 + noise + 3.0    // truth: b0=3, b1=2, b2=-1
 
 let fit = stats.lm(y, [x1, x2])
-let coef = map_get(fit, "coef")
+let coef = fit.coef
 println(`intercept ≈ ${math.round(ods.get(coef, 0))}`)   // true value: 3
 println(`b1 ≈ ${math.round(ods.get(coef, 1))}`)          // true value: 2
 println(`b2 ≈ ${math.round(ods.get(coef, 2))}`)          // true value: -1
-println(`r2 = ${map_get(fit, "r2") > 0.5}`)
+println(`r2 = ${fit.r2 > 0.5}`)
 ```
 
 The result map carries the full coefficient table as parallel Series —
@@ -1260,7 +1260,7 @@ entire rendering step. The tracker's `/charts.html` draws live
 analytics that way (one `dom.fetch_json`, then frames and charts),
 and `/gallery.html` is the showcase: computed art and statistical
 pieces, every one rendered by `plot`. See
-[olang in the Browser](wasm.md#the-dom-module).
+[olang in the browser](wasm.md#the-dom-module).
 
 ### The `viz` grammar
 
@@ -1722,5 +1722,5 @@ like the language it lives in.
 ---
 
 Next: [the stdlib reference](stdlib.md) for the surrounding modules, or
-[olang in the Browser](wasm.md) for the same stack running as
+[olang in the browser](wasm.md) for the same stack running as
 WebAssembly.

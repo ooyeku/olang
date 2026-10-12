@@ -19,6 +19,7 @@ where a tier falls back. For the rationale behind the tiered architecture, see
 - [Value model](#value-model)
 - [Bytecode VM](#bytecode-vm)
 - [The JIT](#the-jit)
+- [Compile-time knowledge](#compile-time-knowledge)
 - [Builtins](#builtins)
 - [Performance](#performance)
 - [Known limitations](#known-limitations)
@@ -180,7 +181,7 @@ partial version):
    `Context::compile` and reading `MachBufferFinalized::relocs()` before
    the module is given it, members of a group named by their member
    index.
-3. **A loader.** Map `MAP_JIT` memory, write with the thread's write
+3. **A loader.** Map `MAP_JIT` memory (macOS), write with the thread's write
    protection off (`pthread_jit_write_protect_np`), apply the
    relocations (each helper by name, each member by index), turn
    protection back on, invalidate the instruction cache, and enter the
@@ -275,8 +276,12 @@ A function is eligible when its body uses only the subset the VM implements:
   the captures as hidden trailing parameters. The resulting closure runs
   natively through `map`/`filter` and converts losslessly to an
   interpreter function when it crosses the tier boundary
-- blocks, `let` bindings, assignment to locals, `while` and `for` loops,
-  `break`, and `continue`
+- blocks, `let` bindings, assignment to locals and to a list element
+  (`xs[i] = v`), `while`, `for` and `loop` loops, `break` (with or
+  without a value), and `continue`
+- the bitwise operators (`& | ^ << >>`), natively on Ints
+- map and object spreads (`#{ ...m, "k": v }`)
+- `raise(message)`
 - method calls (`value.m(..)`) on pure receiver expressions — locals,
   field chains, literals. A `CallMethod` instruction mirrors the
   interpreter's dispatch exactly: struct fields take precedence (called
@@ -319,8 +324,7 @@ Anything else causes the function to stay interpreted:
   construction (unit and tuple variants compile)
 - `return` inside a promoted loop or OSR region — it unwinds past the
   region the bytecode was compiled for (a function's own `return`
-  compiles, and so do `loop`, `break value` and the bitwise operators
-  `& | ^ << >>`, natively on Ints)
+  compiles)
 - a lambda capturing a *local* the enclosing function binds only *later*
   (no register holds it yet at the lambda expression) — a *function*
   declared later resolves through the registry and compiles
@@ -328,15 +332,14 @@ Anything else causes the function to stay interpreted:
   leave different bindings on the success path)
 - calling a function that itself cannot be compiled (the rejection propagates
   to every caller)
-- default parameter values
 - arguments or return values that don't round-trip through the OVM value
-  model (promises, builtins, module values — and any struct holding one
-  of those). Structs, objects, parsed JSON objects, maps, enums, and
+  model (builtins and module values, and any struct holding one of
+  those). Structs, objects, parsed JSON objects, maps, enums, and
   function values all round-trip when their contents do
 
 None of these are errors. They are compile-time rejections that fall back to
 the interpreter, which is why enabling the tier can never break a program.
-A refusal's reason names the construct (`it contains a \`par for\` loop`),
+A refusal's reason names the construct (``it contains a `par for` loop``),
 as `--ovm-stats=json` and olang Studio's tier map report it.
 
 ## Correctness policy
@@ -400,15 +403,11 @@ queues the rest, so its depth is bounded by memory, not by the stack; see
 boundary: `round_trips`, `OvmValue::from_ast` and `to_ast` walk a value
 as deep as it is, and grow the stack as they go.
 
-The next slimming rung — NaN-boxing to 8 bytes — has its primitives
-implemented and boundary-tested (`src/ovm/nanbox.rs`: canonicalized
-floats, 48-bit small integers and pointers) but is **deliberately not
-wired**. Measurement priced the remaining win at roughly 10% on the most
-value-bound workloads, against the cost of manual reference counting at
-every register move — a raw-pointer discipline with a demonstrated
-leak-prone failure mode. The verdict and its evidence are recorded in
-the [CHANGELOG](../CHANGELOG.md) and the repository history so the
-question is not reopened without new data.
+NaN-boxing the value to 8 bytes was prototyped (canonicalized floats,
+48-bit small integers and pointers) and priced at roughly 10% on the
+most value-bound workloads, against the cost of manual reference
+counting at every register move. The prototype was deleted; the verdict
+and its evidence are recorded in the [CHANGELOG](../CHANGELOG.md).
 
 ## Bytecode VM
 
@@ -609,8 +608,8 @@ runaway recursion errors exactly as it does on bytecode instead of
 overflowing the native stack, and a deopt anywhere in a native call
 chain unwinds the whole chain back to the bytecode entry.
 
-What this buys, measured: fib(30) 89 ms → **4 ms** (level with the
-JavaScript JITs) — and fib split across two mutually recursive
+Measured against the bytecode VM alone: fib(30) 89 ms → **4 ms**, and
+fib split across two mutually recursive
 functions runs at the same speed, where a self-call-only design managed
 94 ms; N-body — structs, floats, lists, tuples, and `math.sqrt` in a
 hot loop — 400 ms → **26 ms**, its force loops compiling whole; integer
@@ -734,7 +733,7 @@ refused. A refused function no longer takes its callers with it — a
 caller compiles and calls it through the bridge — and a name is
 resolved against its module's finished scope, so a private helper
 written below its caller, a builtin with no native arm (`drop`,
-`map_path`, `map_get_or`, `attempt`), and a dispatch with a hundred
+`map_get_in`, `map_get_or`, `attempt`), and a dispatch with a hundred
 callees all compile. `olang check --tier [path]` runs the same compiler
 over every function of a project without running it.
 The counters are deterministic — call counts, not samples — which is
@@ -810,7 +809,7 @@ own measured section; the runner medians the repetitions. Since the
 tier is on by default, the olang numbers are what a plain
 `olang program.ol` gets, with no flags.
 
-Median milliseconds on an Apple Silicon laptop (Node 26, OpenJDK 25,
+Median milliseconds on an Apple M5 Pro (6P+12E, 24 GB), macOS 27.0 (Node 26, OpenJDK 25,
 CPython 3.14, Lua 5.5 without LuaJIT, R 4.6; C++ and Rust at `-O3`/`-O`):
 
 | Bench | olang | C++ | Rust | Go | Java | Node | Lua | Python | R |
@@ -824,10 +823,9 @@ CPython 3.14, Lua 5.5 without LuaJIT, R 4.6; C++ and Rust at `-O3`/`-O`):
 | word frequency, 3M words | 1178 | 104 | 143 | 130 | 90 | 358 | 301 | 636 | 7214 |
 | k-means, 200k points | 189 | 10 | 10 | 61 | 76 | 75 | 615 | 4530 | 2206 |
 
-The shape of the result: olang wins recursion and integer loops
-against the JavaScript JIT (fib and collatz run ahead of Node) and
-runs ahead of Lua, Python, and R on nearly everything, by 2× to 24×.
-Float- and array-heavy loops land within 2.5–7× of Node and the JVM.
+olang runs ahead of Node on fib and collatz, and ahead of Lua, Python
+and R on five of the eight rows. Float- and array-heavy loops run
+2.5–11× slower than Node and the JVM; the sieve is the outlier (below).
 The remaining distance to C and Rust — roughly an order of magnitude
 on compute loops — is the price of guards, value-semantics copies at
 ownership boundaries, and the refusal rules around allocation in
@@ -842,17 +840,15 @@ within ~25% of Polars and about 7× ahead of pandas. The
 [data stack chapter](ods.md#performance-characteristics) holds the
 per-operation numbers.
 
-Against its own interpreter, the tiers are worth roughly 275× (fib,
-bytecode + JIT) to ~900× (N-body): the whole N-body simulation —
+Against its own interpreter (`--no-ovm`), the tiers are worth roughly
+275× (fib, bytecode + JIT) to ~900× (N-body): the whole N-body simulation —
 construction, stepping, capturing lambdas, struct building, field
 access, `math.sqrt` — runs as 6 promoted functions, 0 rejected, with 7
 tier crossings.
 
 Two later additions moved the remaining hot spots: the scratch
 watermark plus scalar replacement put allocating kernels ahead of the
-JavaScript JITs on the project's benchmark suite (a struct-building
-kernel runs ~4× ahead of V8; list-building within striking distance),
-and the VM's in-place `+=` string append (an `AddAssign` fusion the
+JavaScript JITs on the project's benchmark suite, and the VM's in-place `+=` string append (an `AddAssign` fusion the
 compiler applies when the right-hand side cannot observe the target)
 turned quadratic string building linear — a 150×-class win on
 build-a-report workloads. Reproduce any of this with
@@ -896,9 +892,8 @@ These are real boundaries, stated so you can predict them:
 - **Tracing garbage collection.** Memory is reference-counted; `gc.rs` holds
   only the safepoint flags the interpreter polls. olang values are
   immutable and acyclic, so there are no cycles to collect.
-- **Full NaN-boxing.** The 8-byte value scheme's primitives are
-  implemented and tested (`src/ovm/nanbox.rs`) but deliberately not
-  wired — the measured verdict is recorded in the
+- **NaN-boxing.** An 8-byte value scheme was prototyped, priced at
+  roughly 10%, and deleted; the verdict is recorded in the
   [CHANGELOG](../CHANGELOG.md).
 - **Automatic SIMD vectorization** and pipeline fusion. If bulk numeric
   throughput matters, the honest route is explicit vectorized
@@ -926,7 +921,6 @@ These are real boundaries, stated so you can predict them:
 | `src/compile_cache.rs` | The compile cache's keys, packs, writer and bounds |
 | `src/ovm/value.rs` | `OvmValue`, the 16-byte reference-counted value model |
 | `src/ovm/jit.rs` | The Cranelift JIT: whitelist, kind inference, guards, deopt |
-| `src/ovm/nanbox.rs` | 8-byte NaN-boxed value primitives (proven, not wired) |
 | `src/ovm/gc.rs` | Safepoint flags the interpreter polls in loops |
 | `src/native.rs` | Module registry for native values, spanning both tiers |
 | `src/ods/`, `olang-ods/` | The data stack: language surface and pure-Rust engine |

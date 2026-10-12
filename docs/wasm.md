@@ -46,10 +46,13 @@ the browser. Start it and look at what the one process serves:
 | `GET /olang.wasm` | the olang language itself, compiled to WebAssembly |
 | `GET /api/...` | the JSON API, handled by the same `http.serve` |
 
-Three more pages use the same shim and link to each other through a shared
+Six more pages use the same shim and link to each other through a shared
 navigation bar: `/orbit.html` (an animated canvas scene), `/notes.html` (a
-routed single-page application with localStorage persistence), and
-`/primes.html` (a Web Worker running a second olang instance). Each page also
+routed single-page application with localStorage persistence),
+`/primes.html` (a Web Worker running a second olang instance),
+`/charts.html` (the tracker's issues drawn through the viz grammar),
+`/gallery.html` (plot SVG and a live draw-list), and `/board.html` (an
+operations dashboard built with the `dash` package and viz). Each page also
 serves its `.ol` source as plain text, so the source of every demo can be
 viewed directly.
 
@@ -60,7 +63,7 @@ functions executing in the browser. The shim is not a framework — it
 is a loader and a device driver, and it never grows, because
 everything application-shaped lives in `app.ol`.
 
-The payoff is uniformity. The same `Result` handling, the same
+The same `Result` handling, the same
 `json.parse`, the same pipelines and pattern matching work on both
 sides of the wire, and moving logic between client and server is a
 cut-and-paste, not a rewrite. What runs in the browser is not a
@@ -266,7 +269,7 @@ handlers, and answers how many it removed:
 ```olang no-run
 fn wire(list) = {
     dom.off(list, "click")
-    dom.on(list, "click", (e) => select(map_get(e, "id")))
+    dom.on(list, "click", (e) => select(e.id))
 }
 ```
 
@@ -294,12 +297,11 @@ technique:
 
 ```olang no-run
 dom.on(dom.query("#rows"), "input", (e) => {
-    update_item(map_get(e, "id"), map_get(e, "value"))
+    update_item(e.id, e.value)
 })
 dom.on(dom.query("#sky"), "click", (e) => {
     let rect = dom.measure(dom.query("#sky"))
-    add_body(map_get(e, "x") - map_get(rect, "x"),
-             map_get(e, "y") - map_get(rect, "y"))
+    add_body(e.x - rect.x, e.y - rect.y)
 })
 ```
 
@@ -309,16 +311,16 @@ dom.on(dom.query("#sky"), "click", (e) => {
 the browser and returns immediately; when the response arrives, the
 callback receives its **body text** — parse it with `json.parse` if it
 is JSON. A non-empty body is sent with a JSON content type. A network
-failure delivers `{"error": "..."}`, so one `map_has_key` check covers
-the failure path uniformly. There is deliberately no status code in
+failure delivers `{"error": "..."}`, so one check of the `error` key
+covers the failure path uniformly. There is deliberately no status code in
 the callback: design the API so the body says what happened, and the
 client stays one honest branch.
 
 ```olang no-run
 dom.fetch("GET", "/api/issues", "", (resp) => {
     let parsed = unwrap(json.parse(resp))
-    if map_has_key(parsed, "error") => show_error(map_get(parsed, "error"))
-    else => render(map_get(parsed, "items"))
+    if map_has_key(parsed, "error") => show_error(parsed.error)
+    else => render(parsed.items)
 })
 ```
 
@@ -329,8 +331,8 @@ unchanged:
 
 ```olang no-run
 dom.fetch_json("GET", "/api/issues", "", (parsed) => {
-    if map_has_key(parsed, "error") => show_error(map_get(parsed, "error"))
-    else => render(map_get(parsed, "items"))
+    if map_has_key(parsed, "error") => show_error(parsed.error)
+    else => render(parsed.items)
 })
 ```
 
@@ -359,9 +361,9 @@ Note what this deletes: no model objects, no store, no cache
 invalidation, no synchronization between a data structure and the
 screen. When a handler needs a current value, it reads it back from
 the page — a status *is* its button's label, one `dom.get_text` away.
-The pattern costs one round trip per action and buys total freedom
-from state bugs; for the tools-and-dashboards class of application
-this module targets, that is the right trade.
+The pattern costs one round trip per action and removes the class of
+bugs where program state and the screen disagree. It suits the
+tools-and-dashboards class of application this module targets.
 
 ### Event delegation
 
@@ -379,10 +381,10 @@ row — runs on two listeners bound once at boot; filters, sort headers,
 and the drawer's own controls each add one more on their containers:
 
 ```olang no-run
-dom.on(dom.query("#rows"), "click", (e) => on_rows_click(map_get(e, "id")))
+dom.on(dom.query("#rows"), "click", (e) => on_rows_click(e.id))
 dom.on(dom.query("#rows"), "change", (e) => on_rows_change(e))
-dom.on(dom.query("#filters"), "click", (e) => on_filter_click(map_get(e, "id")))
-dom.on(dom.query("#sort-row"), "click", (e) => on_sort_click(map_get(e, "id")))
+dom.on(dom.query("#filters"), "click", (e) => on_filter_click(e.id))
+dom.on(dom.query("#sort-row"), "click", (e) => on_sort_click(e.id))
 ```
 
 Rows can be re-rendered any number of times — the listeners sit on
@@ -423,7 +425,7 @@ shapes it holds:
 
 ```olang no-run
 dom.on_frame((f) => {
-    let t = map_get(f, "delta") / 1000.0
+    let t = f.delta / 1000.0
     dom.draw(sky, [
         #{ "op": "clear", "color": "rgba(11,14,20,0.35)" },
         #{ "op": "circle", "x": 360.0, "y": 240.0, "r": 16.0, "fill": "#f5c542" },
@@ -512,9 +514,9 @@ as a *value*, and let reconciliation decide what actually changes.
 ```olang no-run
 use ui { h, hk, render }
 
-fn note_row(n) = hk(map_get(n, "id"), "div", #{ "class": "note" }, [
-    h("span", #{}, [map_get(n, "text")]),
-    h("button", #{ "id": "del-" + map_get(n, "id") }, ["x"])
+fn note_row(n) = hk(n.id, "div", #{ "class": "note" }, [
+    h("span", #{}, [n.text]),
+    h("button", #{ "id": "del-" + n.id }, ["x"])
 ])
 
 fn draw() = render(dom.query("#list"), map(load_notes(), note_row))
@@ -555,10 +557,9 @@ the back button unselects — a complete SPA in ~80 lines.
 
 ## Workers: a second olang, off the main thread
 
-The [sandbox section](#the-sandbox-and-its-limits) is honest that the
-browser build runs interpreter-and-bytecode only — so what about
-genuinely heavy compute? The browser's own answer is threads, and
-`dom.worker` puts olang on them:
+The browser build runs the interpreter and bytecode only (see
+[the sandbox section](#the-sandbox-and-its-limits)). For heavy compute
+the browser provides threads, and `dom.worker` puts olang on them:
 
 ```olang no-run
 let w = dom.worker("/primes-worker.ol")
@@ -597,8 +598,8 @@ surface, and a worker's is two functions long.
 tracker's complete frontend: ~330 lines of olang for a full product —
 live search, status filters, sortable columns, an issue drawer with
 comments, a stats strip, and an activity ticker. Its JavaScript
-predecessor needed 574 lines for a bare grid. Worth reading top to
-bottom — here is the guided version.
+predecessor needed 574 lines for a bare grid. The guided reading
+follows.
 
 **State lives in the DOM.** The client state that must exist — sort
 column and order, the active status filter, the selected issue — is
@@ -682,12 +683,12 @@ brotli or gzip form the client accepts:
 let rt = unwrap(runtime.wasm())
 fn olang_wasm(req, params) = {
     status: 200,
-    body: map_get(rt, "br"),
+    body: rt.br,
     headers: #{ "Content-Type": "application/wasm", "Content-Encoding": "br" }
 }
 ```
 
-One development-loop detail earns its mention: the text routes are
+The text routes are
 served with `Cache-Control: no-store`, so editing `app.ol` and
 refreshing the browser is the whole iteration cycle — no build step,
 no bundler, no cache to bust. The frontend is *source* until the
@@ -695,7 +696,7 @@ moment the page fetches it.
 
 ## The sandbox and its limits
 
-Honesty about the boundaries, in both directions.
+The browser build's boundaries in capability, speed, and failure reporting.
 
 **Capability.** The wasm instance touches nothing but its own linear
 memory and its explicit imports. `fs`, `os`, `http`, and `db` are
@@ -751,6 +752,6 @@ contract are the ones any future backend would have to honor.
 
 ---
 
-Next: [The Data Stack](ods.md) — which runs, in full, inside the
+Next: [The data stack](ods.md) — which runs, in full, inside the
 build this chapter described — or [Internals](internals.md) for the
 runtime underneath both.

@@ -23,6 +23,8 @@ lives elsewhere.
 - [The manifest](#the-manifest)
 - [Commands](#commands)
 - [The library shelf](#the-library-shelf)
+- [The home directory](#the-home-directory)
+- [Updating and toolchains](#updating-and-toolchains)
 - [Benchmarks](#benchmarks)
 - [In the REPL](#in-the-repl)
 - [The lockfile](#the-lockfile)
@@ -168,7 +170,7 @@ is what lets its own tests import its public surface.
 
 ## Commands
 
-The whole surface is seven verbs:
+The project commands:
 
 ```bash
 otc new NAME [--lib|--web]   # scaffold a project
@@ -282,15 +284,17 @@ it against the release's `SHA256SUMS`, installs it under
 `~/.olang/bin` — the running binaries are never overwritten in place.
 `otc update --check` reports the current and latest versions without
 installing anything. Nothing contacts the network except these two
-invocations, explicitly.
+invocations, explicitly. Release builds target macOS, the supported
+platform; Linux builds are an unsupported preview
+([Stability](stability.md#platforms)).
 
 Multiple releases install side by side:
 
 ```bash
 otc toolchain list              # installed versions, default marked
-otc toolchain install 0.78.0    # add a specific release
-otc toolchain default 0.78.0    # switch the shims
-otc toolchain remove 0.78.0     # remove (the default refuses)
+otc toolchain install 0.87.0    # add a specific release
+otc toolchain default 0.87.0    # switch the shims
+otc toolchain remove 0.87.0     # remove (the default refuses)
 otc toolchain which             # the olang this project's pin resolves to
 otc toolchain link 0.89.0 ../olang   # a local build as a toolchain (a binary, or a checkout's target/release/olang)
 ```
@@ -613,22 +617,19 @@ capability it did not have is a mistake in how the program was deployed,
 and continuing past it would run a program the manifest does not
 describe.
 
-But a program that can degrade should be able to look before it leaps,
-and until now it could only attempt the call and be killed by it — so
-degradation had to be written as recovery from an error, which the
-language does not offer. The `caps` module closes that gap:
+A program that can run with less access checks its grant before making
+the call. The `caps` module reports it:
 
 ```olang
 let plan = if caps.allowed("fs") => "cache to disk" else => "in memory"
 println(caps.level("fs"))        // one of: none, read, full
 let all = caps.granted()         // the whole grant, as a map
-println(show(map_get(all, "net")))
+println(show(all.net))
 ```
 
 `caps.allowed` answers for the **caller**, not the application: code in an
 attenuated dependency sees what *that dependency* was given, which is the
-same set the gate would enforce a moment later. One classification, asked
-two ways — the same relationship `check` and `required` already have.
+same set the gate would enforce a moment later.
 
 None of the three is itself gated. Asking what you hold reaches nothing
 and reveals nothing a caller could not learn by making the call and
@@ -661,7 +662,7 @@ To determine the minimal manifest for a program, run it with
 prints a corresponding least-privilege `[capabilities]` block:
 
 ```bash
-olang run --trace-caps program.ol
+olang --trace-caps program.ol
 # ── capability profile (--trace-caps) ──
 # exercised: fs (read), net
 #
@@ -683,7 +684,7 @@ demands appear in the profile alongside an interpreted one's.
 Add `--write` to fold the block directly into the package's `olang.toml`:
 
 ```bash
-olang run --trace-caps --write program.ol
+olang --trace-caps --write program.ol
 ```
 
 `--write` never overwrites an existing `[capabilities]` block, so a
@@ -709,11 +710,8 @@ dependency's code reached through `spawn`, `par_map`, `par for`, or an
 that tier carries the same gate, so a worker cannot exercise a
 capability the main thread would have been refused.
 
-A capability-restricted run keeps the full tier and the full speed. This
-was not always true: a manifest used to switch the bytecode tier off,
-because the tier reaches some builtins through a bridge interpreter that
-carried no grant table and no idea which function was running, and a
-partial gate is worse than none. Turning on the security feature cost
+A capability-restricted run keeps the full tier and the full speed; earlier
+releases switched the bytecode tier off under a manifest, at a cost of
 roughly two orders of magnitude on hot numeric code.
 
 ### Modules loaded at run time
@@ -727,7 +725,7 @@ let grant = #{ "name": "tier-map", "fs": "read", "fs_roots": ["/work/project"], 
 match runtime.load_module("/work/plugins/tier-map/plugin.ol", grant) {
     Ok(m) => {
         let r = runtime.call_budget(m.on, [state, event], 250)
-        if map_get(r, "ok") => map_get(r, "value") else => println(map_get(r, "error"))
+        if r.ok => r.value else => println(r.error)
     },
     Err(e) => println("did not load: " + e)
 }

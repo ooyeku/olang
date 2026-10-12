@@ -72,7 +72,7 @@ fn build() = {
     m = map_set(m, "k", 1)        // insert into the map in place
     let mut acc = []
     acc = acc + [xs[1]]           // append one element in place
-    `${xs[1]} ${s} ${map_get(m, "k")} ${acc[0]}`
+    `${xs[1]} ${s} ${m.k} ${acc[0]}`
 }
 println(build())
 ```
@@ -102,7 +102,7 @@ and take 5 ms, which is what the loop took. A temporary that *is* read
 again holds a second reference, and a prepend (`out = [x] + out`) moves
 every element; neither can happen in place, and `olang check` says so
 where the loop is written (class `copy` of
-[`[check] promote`](tooling.md#olang-check)).
+[`[check] promote`](tooling.md#project-rules)).
 
 One ordering rule follows from the semantics: the arguments after the
 first are evaluated *before* the value is taken, so
@@ -211,14 +211,20 @@ sibling shadows a builtin of its name, and a later redefinition does not
 reach back — because each run keeps a table of its members by position,
 consulted after the closure by both tiers.
 
+The table compares 0.85.0 with 0.86.0, measured on an Apple M5 Pro
+(6P+12E, 24 GB), macOS 27.0:
+
 | Program | Resident, 0.85.0 | Resident, 0.86.0 | `runtime.memory()` heap |
 |---|---|---|---|
 | idle (`time.sleep`) | 10 MB | 10 MB | 0.3 MB |
 | the same after `runtime.wasm()` | 99 MB | 10 MB | 0.3 MB |
 | one file of 4,000 one-line functions | 137 MB | 32 MB | 12 MB |
 | the same as an imported module | 140 MB | 39 MB | 12 MB |
-| an application of 56 files and three packages, served with 18 http workers | 950 MB | 445 MB (330 MB since the flat expression grammar) | 97 MB |
+| an application of 56 files and three packages, served with 18 http workers | 950 MB | 445 MB | 97 MB |
 | twenty thousand closures created in a function, on the interpreter | 2.9 GB of heap | 82 MB | 60 MB |
+
+The served application has since fallen to 330 MB resident with the flat
+expression grammar described below.
 
 A value is 40 bytes (176 in 0.85.0): a function, an enum value, a
 constructor and a type are each one shared allocation the value points

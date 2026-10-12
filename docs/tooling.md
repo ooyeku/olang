@@ -14,6 +14,29 @@ with scaling curves and complexity detection) — is the companion tool
 `otc`, described in [Packages and dependencies](packages.md); the
 language server has [its own chapter](editors.md).
 
+## Table of contents
+
+- [Command overview](#command-overview)
+- [`olang test`](#olang-test)
+- [`olang fmt`](#olang-fmt)
+- [`olang fix maps`](#olang-fix-maps)
+- [`olang fix deprecated`](#olang-fix-deprecated)
+- [`olang check`](#olang-check)
+- [`olang eval`](#olang-eval)
+- [`olang repl --serve`](#olang-repl---serve)
+- [`olang bench`](#olang-bench)
+- [`olang profile`](#olang-profile)
+- [`olang build`](#olang-build)
+- [`olang doc`](#olang-doc)
+- [The REPL](#the-repl)
+- [`olang --watch`](#olang---watch)
+- [`olang record` and `olang replay` — the Open Timeline](#olang-record-and-olang-replay--the-open-timeline)
+- [Tier statistics (`--ovm-stats=json`)](#tier-statistics---ovm-statsjson)
+- [`--verify-tiers` — live tier verification](#--verify-tiers--live-tier-verification)
+- [Environment variables](#environment-variables)
+- [Writing custom tools with `meta`](#writing-custom-tools-with-meta)
+- [The examples harness](#the-examples-harness)
+
 ## Command overview
 
 `olang` is file-first: `olang <file> [args]` runs a program, and bare
@@ -38,9 +61,10 @@ language server has [its own chapter](editors.md).
 | `olang replay <trace>` | Re-run a recorded `.olt` timeline bit-for-bit |
 | `olang doc [path]` | Generate HTML (or `--markdown` Markdown) API reference |
 | `olang expand FILE` | Print a file after [macro expansion](macros.md) — the program the runtime actually receives |
-| `olang bench` | Run benchmarks |
+| `olang bench [path]` | Run benchmarks |
 | `olang profile <file>` | Run under the sampling profiler; report time per function and tier |
 | `olang lsp` | Start the language server (LSP over stdio) |
+| `olang completions SHELL` | Print a shell completion script (`zsh`, `bash`, `fish`, `elvish`, `powershell`) |
 | `olang repl --serve` | Serve the REPL to an editor: line-delimited JSON over stdio (below) |
 
 Because the tool is file-first, a word that is neither a known command
@@ -462,11 +486,15 @@ judgement about intent rather than a provable contradiction.
 - **A literal key a declared shape does not carry.** A parameter, `let`,
   or return annotated `{ summary: String, count: Int }` — or with an
   alias of it, `type Summary = { summary: String, count: Int }` —
-  declares the keys a map or record carries, and `map_get(r, "summry")`,
-  `r.summry`, and `r["summry"]` are then reported with the nearest key;
+  declares the keys a map or record carries, and `r.summry`,
+  `r["summry"]`, and `map_get(r, "summry")` are then reported with the
+  nearest key;
   the runtime answers such a read with Unit. The shape reaches the
   checker from wherever it was written — a macro's output included —
   and the runtime does not enforce it (a map's keys are data).
+- **A field a declared struct does not have.** `p.y` where `p` is
+  annotated `P = struct { x: Int }` is reported with the struct's
+  fields; unlike a map's, the read raises.
 - **A key no construction has.** `m.key` on a map without the key is
   `()`, so a misspelt key fails nowhere. The checker follows each map
   and object literal whose keys are written (`#{ "running": true }`,
@@ -486,18 +514,21 @@ judgement about intent rather than a provable contradiction.
   span) = span(s)` with `span` imported: the call reaches the argument,
   and the runtime can only say so at the call, in the browser, frames
   away from the parameter. Reported at the function.
-- Every statement carries its own position, at any depth — inside a
-  function body, a block, a test block — so a warning or a failure names
-  its own line, never the enclosing statement's. Expressions are placed
-  by the statement that contains them.
 - **A binding that takes a stdlib module's name.** `let fs = …` turns
   every later `fs.exists(…)` in its scope into a field access on a
-  value; `use lib.csv` binds `csv` over the stdlib module (the path
-  import wins, on purpose) and says so.
+  value. The same is reported for a parameter, a lambda parameter, a
+  loop variable, and a pattern binding whose name is then read as the
+  module (`fn h(fs) = fs.exists(p)`); `use lib.csv` binds `csv` over the
+  stdlib module (the path import wins, on purpose) and says so.
 - **An `==` between values of provably different types** — `"yes" ==
   true` — is always false (values of different types never compare
   equal), so the comparison is almost certainly not the one intended.
   Int and Float compare numerically and are not flagged.
+
+Every statement carries its own position, at any depth — inside a
+function body, a block, a test block — so a warning or a failure names
+its own line, never the enclosing statement's. Expressions are placed by
+the statement that contains them.
 
 ```text
   ⚠ the Result from fs.write_file is discarded, so a failure here is
@@ -541,7 +572,7 @@ does not. Refusals are advisories unless `[check] promote` names `tier`.
 refused ones, for an editor's gutter:
 
 ```json
-{"format":1,"kind":"tier-check","olang":"0.87.0","refused":1,"errors":0,
+{"format":1,"kind":"tier-check","olang":"0.88.0","refused":1,"errors":0,
  "files":[{"file":"/p/main.ol","error":null,"functions":[
    {"name":"fib","line":5,"col":4,"end_line":6,"verdict":"bytecode","reason":null,"code":null,
     "docs":null,"ambiguous":false,"pinned":"olang.toml","error":false},
@@ -677,8 +708,8 @@ map with `message` and `line` fields.
 // rules.ol
 share fn rule_no_bare_unwrap(nodes) =
     nodes
-      |> filter((n) => map_get(n, "kind") == "call" && map_get(n, "target") == "unwrap")
-      |> map((n) => #{ "message": "bare unwrap(): use match or ?", "line": map_get(n, "line") })
+      |> filter((n) => n.kind == "call" && n.target == "unwrap")
+      |> map((n) => #{ "message": "bare unwrap(): use match or ?", "line": n.line })
 ```
 
 `olang check` runs each rule against every checked file except the rules
@@ -726,7 +757,7 @@ What a program prints while the session serves is collected and sent with
 the evaluation that printed it (`out`); stdout belongs to the protocol.
 
 **Handshake.** On start the server says
-`{"event":"hello","protocol":1,"olang":"0.87.0","root":…,"pid":…,"ops":[…],"features":["bind","pure"]}`
+`{"event":"hello","protocol":1,"olang":"0.88.0","root":…,"pid":…,"ops":[…],"features":["bind","pure"]}`
 (`features`: what an `eval` takes beyond the protocol's first version).
 A client that does not know the protocol's version stops there. `{"op":"hello"}`
 asks again.
@@ -767,7 +798,7 @@ capabilities and pass.
 | `{"op":"ping","id":8}` | `{"running":…}` — answered even while an evaluation runs, so a client tells a busy session from one not answering |
 | `{"op":"reload","id":6,"path":"/p/util.ol"}` | `{"ok":true,"scopes":n,"ms":…}`, or `"ok":false,"kept":true` with the reason |
 | `{"op":"render","id":7,"h":9,"dark":true,"scale":2,"width":640,"loom":"/path/to/loom"?}` | `{"ok":true,"png":"<base64>","width":…,"height":…}` (logical pixels) |
-| `{"op":"stats","id":9,"reset":true}` | `{"ok":true,"stats":S}` — where each function ran in the evaluations since the last reset ([tier statistics](#tier-statistics--ovm-statsjson)); `reset` starts them again |
+| `{"op":"stats","id":9,"reset":true}` | `{"ok":true,"stats":S}` — where each function ran in the evaluations since the last reset ([tier statistics](#tier-statistics---ovm-statsjson)); `reset` starts them again |
 | `{"op":"command","id":10,"line":":type xs"}` | a `:` command, run as the terminal REPL runs it (below) |
 | `{"op":"commands","id":11,"prefix":":t"?}` | `{"ok":true,"commands":[{"name","aliases","usage","summary","arg","group","client","words"?}…]}` — every command, for completion and help |
 | `{"op":"complete","id":12,"line":":cd sr","pos":6}` | `{"ok":true,"start":4,"items":[{"label","kind","detail"}…],"command":{"name","usage","summary","client"}?}` — completion of a prompt line at `pos` (characters); `items` replace `line[start..pos]` |
@@ -894,7 +925,7 @@ olang bench fib.ol --format json --against base.json --profile profiles/
 ```
 
 ```
-{"event":"start","olang":"0.87.0","runs":7,"in_task":false,"files":["/…/fib.ol"],"against":"base.json"}
+{"event":"start","olang":"0.88.0","runs":7,"in_task":false,"files":["/…/fib.ol"],"against":"base.json"}
 {"event":"result","name":"fib","file":"/…/fib.ol","median_s":0.0392,"min_s":0.039,"max_s":0.0413,"cv_pct":3.1,"runs":7,
  "times_s":[…],"stable_output":true,"baseline_s":0.0371,"delta_pct":5.6,"threshold_pct":6.3,"verdict":"same",
  "profile":"profiles/fib.json"}
@@ -955,7 +986,7 @@ every function that appeared:
       4.8%  bench → <lambda in bench> → map
 ```
 
-**TIME BY TIER** is the headline a tiered language owes its reader:
+**TIME BY TIER** splits the run's samples by where they ran:
 `interp` is time on the tree-walking interpreter, and a large share
 there is the finding — a hot function that never promoted is usually a
 shape the bytecode compiler refused, not a slow algorithm. `builtin`
@@ -1033,7 +1064,8 @@ shadow stack is off: an armed run costs what an ordinary one does. The
 series' first point is the run's start. `OLANG_PROFILE_LIVE_EVERY` sets
 its period (ms).
 
-**Overhead**, measured on this Mac (median of 5, load ~3): a JSON
+**Overhead**, measured on an Apple M5 Pro (6P+12E, 24 GB), macOS 27.0
+(median of 5, load ~3): a JSON
 profile with live snapshots +2.7% on a bytecode- and native-heavy run
 (1.83 → 1.88 s), +2% on a tree-walker-heavy one (0.90 → 0.92 s); the
 text report +0.5% and +6.7%; an armed run not attached, nothing
@@ -1063,9 +1095,9 @@ Bundle a program into a **standalone executable** — a single file that
 runs on a machine with no olang installed:
 
 ```bash
-olang build greet.ol              # → ./greet
-olang build greet.ol -o mytool    # choose the output name
-./greet Ada --loud                # run it; its argv reaches cli.args()
+olang build examples/tools/watch/main.ol            # → ./main
+olang build examples/tools/watch/main.ol -o watch   # choose the output name
+./watch --interval 500 ls                           # run it; its argv reaches cli.args()
 ```
 
 The mechanism needs no C compiler or linker: `build` copies the `olang`
@@ -1082,7 +1114,8 @@ program never produces a binary.
 
 Because the runtime is baked in, the whole standard library and the
 embedded packages (`cli`, `term`, `ui`, `viz`, `dash`, `colx`,
-`mathx`) travel with the executable. A plain `build` bundles a single
+`mathx`, and `collections` with `heap`, `deque`, `table`, `dsu`,
+`bitset`, `alg`) travel with the executable. A plain `build` bundles a single
 source file; a program that `use`s local `.ol` files or depends on
 packages is built as an application:
 
@@ -1102,9 +1135,10 @@ smaller from a `--release` olang than a debug one). On macOS the
 appended data invalidates any code signature; re-sign the output if you
 distribute it.
 
-[`examples/greet.ol`](../examples/greet.ol) is a self-contained tool
-built exactly this way — `cli` for its arguments, `term` for color, and
-nothing external.
+[`examples/tools/watch/main.ol`](../examples/tools/watch/main.ol) is a
+self-contained tool built exactly this way — `cli` for its arguments,
+`term` for color, `proc` and `os` for the commands it runs, and nothing
+external.
 
 A built binary also embeds its exact source, its `olang.toml` and
 `olang.lock`, its capability manifest, and a checksum over all of them.
@@ -1157,8 +1191,11 @@ The embedded packages carry these comments, so `olang doc
 src/stdlib/embedded/cli.ol src/stdlib/embedded/term.ol` regenerates
 their reference from source rather than by hand.
 
-The same convention reaches the REPL. `:help <name>` answers from the
-builtin registry first; when the name is not a builtin, it answers
+## The REPL
+
+Bare `olang` (or `olang repl`) starts the interactive REPL. The doc
+comment convention of [`olang doc`](#olang-doc) reaches it: `:help
+<name>` answers from the builtin registry first; when the name is not a builtin, it answers
 from the user's own documented code — a `///` block above a
 declaration entered in the session, in a file the session `:run`, or
 in any module a program `use`d. `:help <module>` on a loaded file's
@@ -1167,7 +1204,7 @@ module.name` qualifies the lookup to one file. Docs are re-read from
 source at lookup time, so an edited file answers with its current
 text.
 
-```
+```text
 olang> /// Steps in the collatz orbit of n.
 olang> fn collatz(n, s) = if n == 1 => s else => ...
 olang> :help collatz
@@ -1284,7 +1321,7 @@ once on stderr. (Roadmap:
 "where did this number come from?" — a chain back to the recorded
 inputs.)
 
-## Tier statistics — `--ovm-stats=json`
+## Tier statistics (`--ovm-stats=json`)
 
 `olang --ovm-stats=json[:PATH] program.ol` keeps, for the whole run,
 where every function ran, and writes it as JSON at exit (to `PATH`, or
@@ -1301,7 +1338,7 @@ bench prog.ol` leaves the bench's own file and one for each of its runs
 reader adds them up, function by function.
 
 ```json
-{"format":1,"kind":"ovm-stats","olang":"0.87.0","threshold":1,"interval_us":250,
+{"format":1,"kind":"ovm-stats","olang":"0.88.0","threshold":1,"interval_us":250,
  "sampled_ms":41.2,"ms_per_sample":0.31,
  "tiers_ms":{"interpreter":3.1,"bytecode":0.9,"native":36.4,"builtin":0.3},
  "functions":[
@@ -1354,8 +1391,8 @@ already makes for `olang profile` (a load and a store on the thread's
 own counters, no lock, no clock), and native code's calls of native code
 at their call sites (a load, an add and a store, compiled in only when
 statistics are on); time is sampled by a thread that wakes every
-250 µs. Measured on this Mac (Apple silicon, best of 7 whole runs,
-start-up included): a native-heavy run (`fib(32)` × 6, 85 ms, its
+250 µs. Measured on an Apple M5 Pro (6P+12E, 24 GB), macOS 27.0 (best
+of 7 whole runs, start-up included): a native-heavy run (`fib(32)` × 6, 85 ms, its
 42 million calls of itself counted) +1–5%, a bytecode-heavy one (record
 and string helpers, 10⁶ calls, 1.5 s) +3%, a tree-walker-heavy one (a
 module passed as a value, 10⁶ calls, 1.3 s) +8%. Without the flag nothing changes: every push site is
@@ -1405,7 +1442,7 @@ both exist.
 |---|---|
 | `OLANG_DENY` | Deny capabilities for the run, as `--deny`: a comma list of `fs`, `fs-write`, `net`, `proc`, `db`, `env`. |
 | `OLANG_VERIFY_TIERS` | The `--verify-tiers` sampling rate (`0`–`1`). |
-| `OLANG_OVM_STATS` | `json` or `json:PATH`: keep [tier statistics](#tier-statistics--ovm-statsjson) for any command and write them at exit (`json:DIR/`: a file a process in `DIR`). |
+| `OLANG_OVM_STATS` | `json` or `json:PATH`: keep [tier statistics](#tier-statistics---ovm-statsjson) for any command and write them at exit (`json:DIR/`: a file a process in `DIR`). |
 | `OLANG_TIER_GUARD` | `1`: a run keeping tier statistics in which a pinned-native function fell back exits with status 3. |
 | `OLANG_STALL_ABORT` | `0` disables the deadlock abort: an all-threads-parked program hangs instead of exiting with the stall report. |
 | `OLANG_HTTP_WORKERS` | Default worker count for `http.serve` when the options map does not set one. |
