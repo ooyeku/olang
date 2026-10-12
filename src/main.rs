@@ -596,8 +596,7 @@ fn run() -> i32 {
             interval_us: olang::profile_live::ATTACH_INTERVAL_US,
             label: std::env::args()
                 .skip(1)
-                .filter(|a| a.ends_with(".ol"))
-                .last()
+                .rfind(|a| a.ends_with(".ol"))
                 .map(|a| {
                     std::path::absolute(&a)
                         .map(|p| p.display().to_string())
@@ -1779,16 +1778,19 @@ struct AppMeta {
     files: usize,
 }
 
+/// An application's files (path, bytes) and its dependency map.
+type AppFiles = (
+    Vec<(PathBuf, Vec<u8>)>,
+    std::collections::HashMap<String, PathBuf>,
+);
+
 /// The files an application carries and its dependency map: every module
 /// the entry's `use`s load (found by loading them, not running the
 /// entry), each package's olang.toml, and the assets they declare.
 fn collect_app(
     source_abs: &std::path::Path,
     program: &olang::ast::Program,
-) -> anyhow::Result<(
-    Vec<(PathBuf, Vec<u8>)>,
-    std::collections::HashMap<String, PathBuf>,
-)> {
+) -> anyhow::Result<AppFiles> {
     use std::collections::{BTreeSet, HashMap};
     let mut interp = olang::Interpreter::new();
     interp.set_current_file(source_abs);

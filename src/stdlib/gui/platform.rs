@@ -1099,13 +1099,19 @@ fn observe_documents() {
         objc2::ffi::class_addMethod(
             cls,
             objc2::sel!(application:openURLs:),
-            std::mem::transmute::<_, Imp>(open),
+            std::mem::transmute::<
+                unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject),
+                Imp,
+            >(open),
             c"v@:@@".as_ptr(),
         );
         objc2::ffi::class_addMethod(
             cls,
             objc2::sel!(newWindowForTab:),
-            std::mem::transmute::<_, Imp>(tab),
+            std::mem::transmute::<
+                unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject),
+                Imp,
+            >(tab),
             c"v@:@".as_ptr(),
         );
     }
@@ -2237,9 +2243,10 @@ unsafe fn content_on_screen(view: *const std::ffi::c_void) -> Option<(f64, f64)>
 /// `out`, in the screen's global points with y down from the top of the
 /// main display. A script's pick reads it: where the menu really opened.
 #[cfg(target_os = "macos")]
-unsafe fn menu_frame_timer(
-    out: std::sync::Arc<Mutex<Option<(f64, f64, f64, f64)>>>,
-) -> objc2::rc::Retained<objc2::runtime::AnyObject> {
+type MenuFrame = std::sync::Arc<Mutex<Option<(f64, f64, f64, f64)>>>;
+
+#[cfg(target_os = "macos")]
+unsafe fn menu_frame_timer(out: MenuFrame) -> objc2::rc::Retained<objc2::runtime::AnyObject> {
     use objc2::msg_send;
     use objc2::runtime::AnyObject;
     use objc2_foundation::NSRect;

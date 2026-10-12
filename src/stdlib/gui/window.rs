@@ -135,9 +135,9 @@ impl Clipboard for NoClipboard {
     fn set(&mut self, _: String) {}
 }
 
-/// A styled field says its first line in view when it moves into another
-/// band of this many lines.
-// (a field says its own band: rich.rs `band`, 16 lines by default)
+// A styled field says its first line in view when it moves into another
+// band of this many lines (a field says its own band: rich.rs `band`, 16
+// lines by default).
 
 pub struct WinState {
     pub id: u64,
@@ -242,9 +242,8 @@ pub struct AnimShown {
 /// The play (or pause) button over a still animation, `side` device
 /// pixels square: a dark disc, a white glyph.
 fn badge_picture(side: u32, play: bool) -> Arc<super::canvas::Picture> {
-    static CACHE: std::sync::OnceLock<
-        std::sync::Mutex<HashMap<(u32, bool), Arc<super::canvas::Picture>>>,
-    > = std::sync::OnceLock::new();
+    type Badges = std::sync::Mutex<HashMap<(u32, bool), Arc<super::canvas::Picture>>>;
+    static CACHE: std::sync::OnceLock<Badges> = std::sync::OnceLock::new();
     let cache = CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
     if let Ok(c) = cache.lock()
         && let Some(p) = c.get(&(side, play))
@@ -2374,11 +2373,13 @@ impl WinState {
         // in the gutter (left of the text, a code editor's): the line, with
         // column -2 and the mark's box
         let mut gutter = false;
-        if found.is_none() && tx < 0.0 && r.gutter.is_some() {
-            if let Some((line, b)) = r.gutter_line_at(ty, &mut ts) {
-                found = Some((line, usize::MAX, b));
-                gutter = true;
-            }
+        if found.is_none()
+            && tx < 0.0
+            && r.gutter.is_some()
+            && let Some((line, b)) = r.gutter_line_at(ty, &mut ts)
+        {
+            found = Some((line, usize::MAX, b));
+            gutter = true;
         }
         drop(ts);
         let now = found.as_ref().map(|(l, c, _)| (*l, *c));
@@ -3320,7 +3321,7 @@ pub fn eol_cut(label: &str, keep: usize) -> Option<String> {
     };
     let trimmed = at_word
         .trim_end()
-        .trim_end_matches(|c: char| matches!(c, ':' | ',' | ';' | '-' | '—' | '('))
+        .trim_end_matches([':', ',', ';', '-', '—', '('])
         .trim_end();
     if trimmed.chars().count() < 12 {
         return None;

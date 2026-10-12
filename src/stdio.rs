@@ -86,7 +86,7 @@ pub fn err_line(args: fmt::Arguments<'_>) {
 /// Text said while a capture is open: `(to stderr, text)` in order.
 pub type Captured = Vec<(bool, String)>;
 
-type Live = Box<dyn Fn(bool, &str) + Send>;
+pub type Live = Box<dyn Fn(bool, &str) + Send>;
 
 static CAPTURING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static CAPTURE: std::sync::Mutex<Option<(Captured, Option<Live>)>> = std::sync::Mutex::new(None);
@@ -98,7 +98,7 @@ pub fn capturing() -> bool {
 }
 
 /// Open a capture; `live` hears each piece as it is said.
-pub fn capture_begin(live: Option<Box<dyn Fn(bool, &str) + Send>>) {
+pub fn capture_begin(live: Option<Live>) {
     if let Ok(mut c) = CAPTURE.lock() {
         *c = Some((Vec::new(), live));
     }

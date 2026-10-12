@@ -491,7 +491,7 @@ impl Pack {
 fn encode_pack(mut rows: Vec<(Key, u64, Vec<u8>)>) -> Vec<u8> {
     if rows.len() > PACK_MAX {
         // stable: a key's entries keep their order
-        rows.sort_by(|a, b| b.1.cmp(&a.1));
+        rows.sort_by_key(|r| std::cmp::Reverse(r.1));
         rows.truncate(PACK_MAX);
     }
     let stamp = stamp();

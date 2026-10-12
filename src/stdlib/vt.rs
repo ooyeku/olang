@@ -171,6 +171,7 @@ struct Line {
     /// It goes on in the next line (it was wrapped there).
     wrapped: bool,
     /// Combining marks after a cell's character, by column.
+    #[allow(clippy::box_collection)] // one word a line: most lines have none
     extra: Option<Box<Vec<(u16, String)>>>,
 }
 
@@ -538,10 +539,7 @@ impl Term {
 
     fn put(&mut self, c0: char) {
         let c = self.map_charset(c0);
-        let w = match c.width() {
-            Some(w) => w,
-            None => 0,
-        };
+        let w = c.width().unwrap_or_default();
         if w == 0 {
             // a combining mark (or a zero-width joiner): the cell before's
             let col = if self.pending {
@@ -676,14 +674,12 @@ impl Term {
                     self.erase_cells(rr, 0, cols);
                 }
             }
-            3 => {
-                if self.alt.is_none() {
-                    let n = self.screen_base();
-                    for _ in 0..n {
-                        self.lines.pop_front();
-                    }
-                    self.evicted += n as i64;
+            3 if self.alt.is_none() => {
+                let n = self.screen_base();
+                for _ in 0..n {
+                    self.lines.pop_front();
                 }
+                self.evicted += n as i64;
             }
             _ => {}
         }
@@ -824,9 +820,9 @@ impl Term {
                     .map(|_| Line::new(self.cols, Attr::default()))
                     .collect(),
             );
-        } else if clear {
+        } else if clear && let Some(alt) = self.alt.as_mut() {
             let cols = self.cols;
-            for l in self.alt.as_mut().unwrap().iter_mut() {
+            for l in alt.iter_mut() {
                 *l = Line::new(cols, Attr::default());
             }
         }
@@ -1180,10 +1176,8 @@ impl Term {
                 }
             }
             St::Csi => self.csi(b),
-            St::CsiIgnore => {
-                if (0x40..=0x7e).contains(&b) {
-                    self.st = St::Ground;
-                }
+            St::CsiIgnore if (0x40..=0x7e).contains(&b) => {
+                self.st = St::Ground;
             }
             _ => {}
         }
@@ -1795,12 +1789,13 @@ fn percent_decode(t: &str) -> String {
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() {
-            if let Ok(v) = u8::from_str_radix(&t[i + 1..i + 3], 16) {
-                out.push(v);
-                i += 3;
-                continue;
-            }
+        if b[i] == b'%'
+            && i + 2 < b.len()
+            && let Ok(v) = u8::from_str_radix(&t[i + 1..i + 3], 16)
+        {
+            out.push(v);
+            i += 3;
+            continue;
         }
         out.push(b[i]);
         i += 1;
@@ -2431,7 +2426,8 @@ fn render(t: &Term, o: Option<&crate::ast::ValueMap>) -> Vec<Value> {
         .max(1);
     let bold_w = opt_num(o, "bold").unwrap_or(700.0);
     let min_contrast = opt_num(o, "min_contrast").unwrap_or(0.0) as f32;
-    let mut legible: HashMap<((u8, u8, u8), (u8, u8, u8), bool), (u8, u8, u8)> = HashMap::new();
+    type Rgb = (u8, u8, u8);
+    let mut legible: HashMap<(Rgb, Rgb, bool), Rgb> = HashMap::new();
     let font = match o.and_then(|m| m.get("font")) {
         Some(Value::String(f)) => f.as_ref().clone(),
         _ => "mono".to_string(),

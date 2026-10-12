@@ -710,11 +710,11 @@ impl Session {
         self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
         crate::interrupt::clear();
         let _ = crate::output::take_collected();
-        let live: Option<Box<dyn Fn(bool, &str) + Send>> = self.out.clone().map(|out| {
+        let live: Option<crate::stdio::Live> = self.out.clone().map(|out| {
             let id = id.clone();
             Box::new(move |err: bool, text: &str| {
                 out.send(&json!({ "event": "out", "id": id, "text": crate::repl_commands::strip_ansi(text), "err": err }));
-            }) as Box<dyn Fn(bool, &str) + Send>
+            }) as crate::stdio::Live
         });
         colored::control::set_override(true);
         crate::stdio::capture_begin(live);
@@ -932,7 +932,7 @@ impl Session {
         let (start, items) = crate::repl_commands::complete(line, pos, &names);
         let start_chars = line[..start].chars().count();
         // the command being typed, for help as it is typed
-        let word = line.trim_start().split_whitespace().next().unwrap_or("");
+        let word = line.split_whitespace().next().unwrap_or("");
         let about = if line.trim_start().starts_with(':') {
             crate::repl_commands::find(word).map(|c| json!({ "name": c.name, "usage": c.usage, "summary": c.summary, "client": c.client }))
         } else {

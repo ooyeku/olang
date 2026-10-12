@@ -746,7 +746,6 @@ mod tests {
 
     #[test]
     fn fingerprint_is_deterministic_across_map_order() {
-        use std::collections::HashMap;
         // Two maps with the same entries inserted in different orders must
         // fingerprint identically (sorted-key canonicalization).
         let mut a = crate::ast::ValueMap::default();

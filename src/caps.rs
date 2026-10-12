@@ -610,7 +610,7 @@ pub fn grant_from_value(
         Some(other) => {
             return Err(format!(
                 "runtime.load_module: grant 'fs' must be false, \"read\" or true, got {}",
-                other.to_string()
+                other
             ));
         }
     };

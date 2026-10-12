@@ -4765,9 +4765,9 @@ impl ErrorSuggestionEngine {
         let mut at_error: Option<((char, usize, usize), usize)> = None;
         while let Some(c) = chars.next() {
             if at_error.is_none() && (line > err_line || (line == err_line && col >= err_column)) {
-                match stack.last() {
-                    Some(top) => at_error = Some((*top, stack.len())),
-                    None => return None,
+                {
+                    let top = stack.last()?;
+                    at_error = Some((*top, stack.len()))
                 }
             }
             if let Some((_, depth)) = at_error

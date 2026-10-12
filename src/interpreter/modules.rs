@@ -1034,6 +1034,7 @@ impl Interpreter {
     /// 2. Relative to project root - `use utils.helpers { function }`
     /// 3. Standard library - `use std.io { println }` (built-in)
     /// 4. Current directory first - Always check same folder first
+    ///
     /// The file a `use` names, its path normalized: a module reached as
     /// `app/../dep/lib/x.ol` through one import and `dep/lib/x.ol` through
     /// another is one module, loaded once. (Keyed by the spelling, a

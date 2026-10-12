@@ -1756,7 +1756,7 @@ fn decode_query(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     use crate::ast::Value;
-    use std::collections::HashMap;
+
     use std::sync::Arc;
 
     // Helper functions to create test values

@@ -145,8 +145,10 @@ fn hash_bytes(b: &[u8]) -> u64 {
 /// Bytes values seen, by where their content lives: hashing a photo's
 /// megabytes each frame would cost more than drawing it. Checked by
 /// length and both ends, so an address reused for other bytes misses.
-fn bytes_ids() -> &'static Mutex<HashMap<(usize, usize), (u64, [u8; 32])>> {
-    static IDS: OnceLock<Mutex<HashMap<(usize, usize), (u64, [u8; 32])>>> = OnceLock::new();
+type BytesIds = Mutex<HashMap<(usize, usize), (u64, [u8; 32])>>;
+
+fn bytes_ids() -> &'static BytesIds {
+    static IDS: OnceLock<BytesIds> = OnceLock::new();
     IDS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 

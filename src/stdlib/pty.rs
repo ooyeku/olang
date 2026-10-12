@@ -559,12 +559,9 @@ mod imp {
         let deadline = Instant::now() + Duration::from_millis(50);
         loop {
             let room = max - out.len();
-            match read_now(fd, &mut out, room) {
-                None => {
-                    p.eof.store(true, Ordering::SeqCst);
-                    break;
-                }
-                Some(_) => {}
+            if read_now(fd, &mut out, room).is_none() {
+                p.eof.store(true, Ordering::SeqCst);
+                break;
             }
             if out.len() >= max || Instant::now() >= deadline || settle <= 0 {
                 break;

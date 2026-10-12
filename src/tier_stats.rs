@@ -356,7 +356,7 @@ pub fn report(reset: bool) -> J {
     // a function the run noted something about but never pushed (a
     // refusal at compile time of a function called only from compiled
     // code, say) still gets its row
-    for ((name, file), _) in facts.iter() {
+    for (name, file) in facts.keys() {
         if !rows.iter().any(|r| &r.name == name && &r.file == file) {
             rows.push(crate::profile::StatRow {
                 name: name.clone(),

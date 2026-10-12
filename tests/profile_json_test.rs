@@ -383,7 +383,7 @@ fn a_bench_as_events_against_a_baseline_with_profiles() {
     let fin = out
         .lines()
         .map(|l| serde_json::from_str::<J>(l).unwrap())
-        .last()
+        .next_back()
         .unwrap();
     assert_eq!(fin["regressed"], true);
 }
@@ -447,7 +447,7 @@ fn a_program_profiles_itself_live_in_the_snapshot_format_and_stops() {
     assert_eq!(doc["done"], true);
     assert_eq!(doc["live"], false);
     assert_eq!(doc["file"], "me");
-    assert_eq!(doc["pid"].as_u64().is_some(), true);
+    assert!(doc["pid"].as_u64().is_some());
     assert!(doc["samples"].as_u64().unwrap() > 0);
     assert!(!doc["series"].as_array().unwrap().is_empty());
     let (_, fib) = frame_named(&doc, "fib").expect("fib sampled");

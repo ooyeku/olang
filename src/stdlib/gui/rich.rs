@@ -1548,7 +1548,7 @@ impl RichEditor {
         let start = if word {
             c.previous_logical_word(layout).index()
         } else {
-            match c.logical_clusters(layout)[0].clone() {
+            match c.logical_clusters(layout)[0] {
                 Some(cl) if cl.is_emoji() => cl.text_range().start,
                 _ => {
                     let text = &self.buffer[self.paras[i].start..self.paras[i].start + l];
@@ -1581,7 +1581,7 @@ impl RichEditor {
         let end = if word {
             c.next_logical_word(layout).index()
         } else {
-            match c.logical_clusters(layout)[1].clone() {
+            match c.logical_clusters(layout)[1] {
                 Some(cl) => cl.text_range().end,
                 None => len,
             }

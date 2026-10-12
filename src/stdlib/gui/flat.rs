@@ -628,10 +628,10 @@ pub fn gui_flatten(args: Vec<Value>) -> Res<Value> {
     };
     let mut ts = text::system().lock().map_err(|_| "gui: text poisoned")?;
     let prev = Prev::read(args.get(2));
-    if let Some(pv) = &prev {
-        if let Some(answer) = flatten_aligned(root, &spec, &mut ts, pv)? {
-            return Ok(answer);
-        }
+    if let Some(pv) = &prev
+        && let Some(answer) = flatten_aligned(root, &spec, &mut ts, pv)?
+    {
+        return Ok(answer);
     }
     flatten_full(root, &spec, &mut ts, prev.as_ref(), &base)
 }
@@ -1241,10 +1241,10 @@ pub fn gui_flat_keep(args: Vec<Value>) -> Res<Value> {
 }
 
 fn keep_geo(id: i64, geo: Arc<Vec<f64>>) {
-    if let Some(st) = state_by_id(id) {
-        if let Ok(mut g) = st.geo.lock() {
-            *g = Some(geo);
-        }
+    if let Some(st) = state_by_id(id)
+        && let Ok(mut g) = st.geo.lock()
+    {
+        *g = Some(geo);
     }
 }
 

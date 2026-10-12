@@ -950,7 +950,7 @@ pub fn shadow_warnings_in(program: &Program, source: &str) -> Vec<CheckDiagnosti
             }
             _ => false,
         })
-        .map(|stmt| crate::stdlib::meta::stmt_node(stmt))
+        .map(crate::stdlib::meta::stmt_node)
         .collect();
     shadow_warnings_of(&nodes, &callable)
 }

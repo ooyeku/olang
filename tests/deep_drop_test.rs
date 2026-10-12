@@ -8,7 +8,6 @@
 //! Each test here builds a chain far deeper than the thread it drops on
 //! could recurse through.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use olang::ast::{EnumVariantData, Value};

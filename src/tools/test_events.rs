@@ -6,22 +6,22 @@
 //! - `test`      a block starts (file, name, line)
 //! - `passed`    a block passed (ms)
 //! - `failed`    a block failed: the message, where the failing assertion
-//!               or error is (file, line, col), the call frames, and for
-//!               `assert_eq`/`assert_ne` (and a text snapshot) the expected
-//!               and actual values (`kind`: `assert_eq`, `assert_ne`,
-//!               `snapshot`, `pixels`, `error`)
+//!   or error is (file, line, col), the call frames, and for
+//!   `assert_eq`/`assert_ne` (and a text snapshot) the expected
+//!   and actual values (`kind`: `assert_eq`, `assert_ne`,
+//!   `snapshot`, `pixels`, `error`)
 //! - `snapshot`  a pixel snapshot that differs (Loom's `snapshot`, through
-//!               `testing.snapshot_failed`): baseline, actual and diff
-//!               paths and the difference's numbers
+//!   `testing.snapshot_failed`): baseline, actual and diff
+//!   paths and the difference's numbers
 //! - `skipped`   a block of the file the run names that `--only` left out
 //! - `divergence` `--verify-tiers` found native code and the VM disagreeing
-//!               (the function and both values); the run ends after it
+//!   (the function and both values); the run ends after it
 //! - `file`      a file is done: its counts, and the error that stopped it
 //! - `args`      with `--record-args`, once a file is done: the last call
-//!               a test block made to each of the project's top-level
-//!               functions (file, fn, params, the block, and each
-//!               argument as olang source — `null` for one with no
-//!               literal: a function, a handle, a record)
+//!   a test block made to each of the project's top-level
+//!   functions (file, fn, params, the block, and each
+//!   argument as olang source — `null` for one with no
+//!   literal: a function, a handle, a record)
 //! - `finished`  the totals, the milliseconds, and the exit status
 //!
 //! What the program under test prints still goes to stdout, between the
@@ -88,7 +88,7 @@ pub fn set_aliases(paths: &[std::path::PathBuf]) {
             }
         }
     }
-    out.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    out.sort_by_key(|a| std::cmp::Reverse(a.0.len()));
     *ALIASES.lock().unwrap_or_else(|e| e.into_inner()) = out;
 }
 

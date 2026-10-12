@@ -2303,10 +2303,7 @@ impl BytecodeVm {
     /// Compile every owed callee now (`olang check --tier`: a verdict for
     /// each function its compiles reached, as the eager route gave).
     pub fn compile_owed_now(&mut self) {
-        loop {
-            let Some(&id) = self.lazy_pending.keys().next() else {
-                break;
-            };
+        while let Some(&id) = self.lazy_pending.keys().next() {
             let _ = self.materialize(id);
         }
     }
@@ -2536,6 +2533,7 @@ impl BytecodeVm {
         all
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn compile_function_with_closure_lent(
         &mut self,
         func_id: FunctionId,
@@ -9276,10 +9274,10 @@ impl BytecodeVm {
         // passes and the engine as typed lists sharing one allocation —
         // bridged, every number would be boxed one way and detected back.
         #[cfg(feature = "gui")]
-        if name.starts_with("gui.flat_") {
-            if let Some(result) = crate::stdlib::gui::flat::flat_vm_native(name, args) {
-                return result.map_err(BytecodeError::RuntimeError);
-            }
+        if name.starts_with("gui.flat_")
+            && let Some(result) = crate::stdlib::gui::flat::flat_vm_native(name, args)
+        {
+            return result.map_err(BytecodeError::RuntimeError);
         }
         // Higher-order builtins loop natively when the function argument
         // compiles — otherwise everything below bridges to the interpreter.
@@ -14503,6 +14501,17 @@ fn ovm_value_view(
     (v.type_name(), payload, arity, scalar)
 }
 
+// Debug switches read once a process: a compile asked the environment
+// for each (once a function, and once each `Move` the liveness pass
+// looked at), and `getenv` scans the whole environment under a lock.
+static DEBUG_LIVENESS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+static DEBUG_TAKEMOVE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+static DUMP_FN: std::sync::OnceLock<Option<std::ffi::OsString>> = std::sync::OnceLock::new();
+
+fn debug_flag(cell: &std::sync::OnceLock<bool>, name: &str) -> bool {
+    *cell.get_or_init(|| std::env::var_os(name).is_some())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -14978,15 +14987,4 @@ mod tests {
             "Should fail with wrong number of arguments"
         );
     }
-}
-
-// Debug switches read once a process: a compile asked the environment
-// for each (once a function, and once each `Move` the liveness pass
-// looked at), and `getenv` scans the whole environment under a lock.
-static DEBUG_LIVENESS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-static DEBUG_TAKEMOVE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-static DUMP_FN: std::sync::OnceLock<Option<std::ffi::OsString>> = std::sync::OnceLock::new();
-
-fn debug_flag(cell: &std::sync::OnceLock<bool>, name: &str) -> bool {
-    *cell.get_or_init(|| std::env::var_os(name).is_some())
 }

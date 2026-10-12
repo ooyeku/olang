@@ -460,12 +460,12 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
     let mut declared_fns = std::collections::HashSet::new();
     let mut imported = std::collections::HashSet::new();
     for (k, l) in lx.iter().enumerate() {
-        if l.kind == Lx::Word && word(l) == "fn" {
-            if let Some(nx) = lx.get(k + 1) {
-                if nx.kind == Lx::Word {
-                    declared_fns.insert(word(nx).to_string());
-                }
-            }
+        if l.kind == Lx::Word
+            && word(l) == "fn"
+            && let Some(nx) = lx.get(k + 1)
+            && nx.kind == Lx::Word
+        {
+            declared_fns.insert(word(nx).to_string());
         }
         if l.kind == Lx::Word
             && word(l) == "use"
@@ -543,8 +543,8 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
         }
         let prev = (k > 0).then(|| &lx[k - 1]);
         let next = lx.get(k + 1);
-        let pw = prev.map(|p| word(p)).unwrap_or("");
-        let nw = next.map(|p| word(p)).unwrap_or("");
+        let pw = prev.map(&word).unwrap_or("");
+        let nw = next.map(&word).unwrap_or("");
         let after_error_kw = pw == "error" && prev.is_some_and(|p| out_was_keyword(&out, p));
         let mut push = |kind: u32, mods: u32| {
             out.push(Token {
@@ -572,10 +572,11 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
                     }
                     _ => {}
                 }
-                if (p == "=" || p == "{") && reading_params.is_none() {
-                    if let Some(s) = scopes.last_mut() {
-                        s.begun = true;
-                    }
+                if (p == "=" || p == "{")
+                    && reading_params.is_none()
+                    && let Some(s) = scopes.last_mut()
+                {
+                    s.begun = true;
                 }
                 if p == "=" && binding.is_some() {
                     binding = None;
@@ -652,14 +653,15 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
                     }
                     continue;
                 }
-                if let Some(d) = reading_params {
-                    if depth == d + 1 && !(pw == ":" || pw == "=") {
-                        if let Some(s) = scopes.last_mut() {
-                            s.names.push(w.to_string());
-                        }
-                        push(T_PARAMETER, M_DECLARATION);
-                        continue;
+                if let Some(d) = reading_params
+                    && depth == d + 1
+                    && !(pw == ":" || pw == "=")
+                {
+                    if let Some(s) = scopes.last_mut() {
+                        s.names.push(w.to_string());
                     }
+                    push(T_PARAMETER, M_DECLARATION);
+                    continue;
                 }
                 if lambda_param[k] {
                     push(T_PARAMETER, M_DECLARATION);
@@ -721,11 +723,11 @@ pub fn tokens(text: &str, is_builtin: &dyn Fn(&str) -> bool, modules: &[&str]) -
                     );
                     continue;
                 }
-                if let Some(b) = binding {
-                    if pw == b || pw == "mut" || pw == "(" || pw == "," || pw == "[" {
-                        push(T_VARIABLE, M_DECLARATION);
-                        continue;
-                    }
+                if let Some(b) = binding
+                    && (pw == b || pw == "mut" || pw == "(" || pw == "," || pw == "[")
+                {
+                    push(T_VARIABLE, M_DECLARATION);
+                    continue;
                 }
                 let first_upper = w.chars().next().is_some_and(|c| c.is_uppercase());
                 if first_upper {

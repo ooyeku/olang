@@ -183,7 +183,7 @@ fn walk_files(root: &Path, w: &Walk) -> Vec<String> {
                     .and_then(|x| x.to_str())
                     .map(|x| x.to_lowercase())
                     .unwrap_or_default();
-                if !exts.iter().any(|x| *x == ext) {
+                if !exts.contains(&ext) {
                     return ignore::WalkState::Continue;
                 }
             }
@@ -358,6 +358,9 @@ fn replaced_with(line: &str, at: usize, needle: &Needle, template: &str) -> Stri
     }
 }
 
+/// A match: `(line, start, end, text, with)`.
+type Found = (usize, usize, usize, String, Option<String>);
+
 /// One file's matches: `(line, start, end, text, with)` with columns in
 /// characters, at most `cap`; `with` what the match becomes when
 /// `replace` is given.
@@ -367,7 +370,7 @@ fn search_file(
     word: bool,
     cap: usize,
     replace: Option<&str>,
-) -> Vec<(usize, usize, usize, String, Option<String>)> {
+) -> Vec<Found> {
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
         Err(_) => return Vec::new(),
@@ -385,16 +388,15 @@ fn search_file(
         text: t,
         case: true,
     } = needle
+        && !text.contains(t.as_str())
     {
-        if !text.contains(t.as_str()) {
-            return Vec::new();
-        }
+        return Vec::new();
     }
     #[cfg(feature = "regex-module")]
-    if let Needle::Regex(rx) = needle {
-        if !rx.is_match(text) {
-            return Vec::new();
-        }
+    if let Needle::Regex(rx) = needle
+        && !rx.is_match(text)
+    {
+        return Vec::new();
     }
     let mut out = Vec::new();
     for (i, line) in text.split('\n').enumerate() {
@@ -533,7 +535,7 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         None => walk_files(&root, &w),
     };
     use rayon::prelude::*;
-    let per: Vec<(usize, Vec<(usize, usize, usize, String, Option<String>)>)> = files
+    let per: Vec<(usize, Vec<Found>)> = files
         .par_iter()
         .enumerate()
         .map(|(i, rel)| {

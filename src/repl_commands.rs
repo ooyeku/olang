@@ -103,6 +103,7 @@ pub struct CommandSpec {
     pub tab: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 const fn c(
     name: &'static str,
     aliases: &'static [&'static str],
@@ -987,7 +988,7 @@ fn path_start(before: &str) -> usize {
 }
 
 fn complete_path(before: &str, start: usize, names: &Names, kind: PathKind) -> (usize, Vec<Item>) {
-    let start = path_start(&before[..]).max(start).min(before.len());
+    let start = path_start(before).max(start).min(before.len());
     let typed = &before[start..];
     let (dir_part, file_part) = match typed.rfind('/') {
         Some(i) => (&typed[..=i], &typed[i + 1..]),

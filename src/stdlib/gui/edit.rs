@@ -429,6 +429,7 @@ impl Editor {
 
 /// A field's editor: a plain one (parley's, the whole text one layout)
 /// or a styled one (`rich.rs`, a layout a paragraph).
+#[allow(clippy::large_enum_variant)] // one a field, never moved hot
 pub enum Field {
     Plain(Editor),
     Rich(Box<super::rich::RichEditor>),

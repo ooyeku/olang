@@ -1317,7 +1317,7 @@ fn gui_context_menu(args: Vec<Value>) -> Res<Value> {
     if w.lock().map_err(|_| "gui: window poisoned")?.headless {
         return Ok(Value::Boolean(false));
     }
-    Ok(platform::context_menu(id, items, x, y)?)
+    platform::context_menu(id, items, x, y)
 }
 
 /// `gui.compare(a, b, opts)`: two PNGs (Bytes) compared pixel by pixel,
