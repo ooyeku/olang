@@ -2191,12 +2191,33 @@ fn run_embedded(bundle: Bundle, logger: &Logger) -> i32 {
             {
                 olang::ovm::warm::set_embedded(profile);
             }
-            let manifest_caps = meta
-                .as_ref()
-                .and_then(|m| m.manifest.as_deref())
-                .and_then(|text| olang::pkg::manifest::Manifest::from_toml(text).ok())
-                .and_then(|m| m.capabilities)
-                .and_then(|c| c.base.resolve().ok());
+            // A carried manifest that declares capabilities and cannot be
+            // read, or resolved, refuses to run rather than run wide open.
+            let manifest_text = meta.as_ref().and_then(|m| m.manifest.as_deref());
+            let manifest_caps = match manifest_text {
+                None => None,
+                Some(text) => match olang::pkg::manifest::Manifest::from_toml(text) {
+                    Ok(m) => match m.capabilities.map(|c| c.base.resolve()) {
+                        None => None,
+                        Some(Ok(caps)) => Some(caps),
+                        Some(Err(e)) => {
+                            eprintln!(
+                                "Error: {}; refusing to run without the capabilities it declares",
+                                e
+                            );
+                            return 1;
+                        }
+                    },
+                    Err(e) if olang::pkg::manifest::Manifest::declares_capabilities(text) => {
+                        eprintln!(
+                            "Error: {}; refusing to run without the capabilities it declares",
+                            e
+                        );
+                        return 1;
+                    }
+                    Err(_) => None,
+                },
+            };
             let effective = match (manifest_caps, deny) {
                 (Some(a), Some(b)) => Some(a.intersect(b)),
                 (Some(a), None) => Some(a),
@@ -3121,7 +3142,15 @@ fn execute_program(
                 let mut map: std::collections::HashMap<_, _> = map.into_iter().collect();
                 // A package is referable by its own name from within itself,
                 // so a single-file package can `use <own_name> { ... }`.
-                let manifest = olang::pkg::manifest::Manifest::load(&root).ok();
+                // A manifest that declares capabilities but cannot be read
+                // refuses to run: its restriction cannot be honoured.
+                let manifest = olang::pkg::manifest::Manifest::load_for_capabilities(&root)
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "{}; refusing to run without the capabilities it declares",
+                            e
+                        )
+                    })?;
                 if let Some(m) = &manifest {
                     map.entry(m.package.name.clone())
                         .or_insert_with(|| root.clone());

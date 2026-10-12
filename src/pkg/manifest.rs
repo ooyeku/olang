@@ -130,6 +130,52 @@ impl Dependency {
     }
 }
 
+/// The keys a capability table takes; `dependencies` only at the top.
+const CAPABILITY_KEYS: &[&str] = &["fs", "net", "proc", "db", "env"];
+
+fn check_capability_keys(caps: &toml::Value) -> Result<(), ManifestError> {
+    let unknown = |table: &toml::value::Table, at: &str, deps: bool| {
+        for key in table.keys() {
+            if !(CAPABILITY_KEYS.contains(&key.as_str()) || (deps && key == "dependencies")) {
+                return Err(ManifestError::Parse(format!(
+                    "{} has no capability '{}' (known: {}); an unknown capability is refused, never ignored",
+                    at,
+                    key,
+                    CAPABILITY_KEYS.join(", ")
+                )));
+            }
+        }
+        Ok(())
+    };
+    let toml::Value::Table(t) = caps else {
+        return Err(ManifestError::Parse(
+            "[capabilities] must be a table".into(),
+        ));
+    };
+    unknown(t, "[capabilities]", true)?;
+    if let Some(deps) = t.get("dependencies") {
+        let toml::Value::Table(deps) = deps else {
+            return Err(ManifestError::Parse(
+                "[capabilities.dependencies] must be a table".into(),
+            ));
+        };
+        for (name, spec) in deps {
+            let toml::Value::Table(spec) = spec else {
+                return Err(ManifestError::Parse(format!(
+                    "[capabilities.dependencies.{}] must be a table",
+                    name
+                )));
+            };
+            unknown(
+                spec,
+                &format!("[capabilities.dependencies.{}]", name),
+                false,
+            )?;
+        }
+    }
+    Ok(())
+}
+
 /// Errors reading or writing a manifest.
 #[derive(Debug)]
 pub enum ManifestError {
@@ -151,9 +197,45 @@ impl std::fmt::Display for ManifestError {
 impl std::error::Error for ManifestError {}
 
 impl Manifest {
-    /// Parse a manifest from TOML text.
+    /// Parse a manifest from TOML text. A key `[capabilities]` does not
+    /// know is refused, never ignored: a misspelled or newer capability
+    /// must not leave its grant wide open.
     pub fn from_toml(text: &str) -> Result<Self, ManifestError> {
+        if let Ok(toml::Value::Table(t)) = toml::from_str::<toml::Value>(text)
+            && let Some(caps) = t.get("capabilities")
+        {
+            check_capability_keys(caps)?;
+        }
         toml::from_str(text).map_err(|e| ManifestError::Parse(e.to_string()))
+    }
+
+    /// Whether manifest text declares a `[capabilities]` block — read
+    /// even when the text is not a valid manifest, so a broken one that
+    /// meant to restrict is refused rather than run with no grant at all.
+    pub fn declares_capabilities(text: &str) -> bool {
+        match toml::from_str::<toml::Value>(text) {
+            Ok(toml::Value::Table(t)) => t.contains_key("capabilities"),
+            _ => text.contains("capabilities"),
+        }
+    }
+
+    /// `load`, refusing a manifest that declares `[capabilities]` but
+    /// cannot be read: `Ok(None)` when there is no usable manifest and
+    /// nothing was restricted, `Err` when a restriction was asked for and
+    /// cannot be honoured.
+    pub fn load_for_capabilities(dir: &Path) -> Result<Option<Self>, ManifestError> {
+        match Self::load(dir) {
+            Ok(m) => Ok(Some(m)),
+            Err(ManifestError::NotFound(_)) => Ok(None),
+            Err(e) => {
+                let text = crate::vfs::read_to_string(&dir.join("olang.toml")).unwrap_or_default();
+                if Self::declares_capabilities(&text) {
+                    Err(e)
+                } else {
+                    Ok(None)
+                }
+            }
+        }
     }
 
     /// Load `olang.toml` from a directory.

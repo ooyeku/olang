@@ -1025,3 +1025,82 @@ fn caps_allowed_folds_and_the_dead_branch_vanishes() {
     assert!(!blocked.status.success());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A manifest that declares capabilities but cannot be honoured refuses
+/// to run, never runs wide open: an unknown capability (a typo, or one a
+/// later olang added), a value the gate does not know, and a manifest
+/// that does not parse at all. `olang check` fails on each; a manifest
+/// with no `[capabilities]` keeps running as before.
+#[test]
+fn a_capability_manifest_that_cannot_be_honoured_refuses_to_run() {
+    let cases = [
+        (
+            "typo",
+            "[package]\nname = \"t\"\nversion = \"1.0.0\"\n\n[capabilities]\nfilesystem = false\n",
+        ),
+        (
+            "dep_typo",
+            "[package]\nname = \"t\"\nversion = \"1.0.0\"\n\n[capabilities]\nfs = false\n\n[capabilities.dependencies.x]\nnetwork = false\n",
+        ),
+        (
+            "bad_value",
+            "[package]\nname = \"t\"\nversion = \"1.0.0\"\n\n[capabilities]\nfs = false\nnet = \"no\"\n",
+        ),
+        ("no_package", "[capabilities]\nfs = false\n"),
+        (
+            "bad_version",
+            "[package]\nname = \"t\"\nversion = \"1.0\"\n\n[capabilities]\nfs = false\n",
+        ),
+    ];
+    for (tag, manifest) in cases {
+        let ws = workspace(tag);
+        write(&ws.join("olang.toml"), manifest);
+        write(&ws.join("main.ol"), "println(\"ran\")\n");
+        let out = Command::new(olang())
+            .current_dir(&ws)
+            .arg("main.ol")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !out.status.success() && !stdout.contains("ran"),
+            "{}: ran with a manifest it cannot honour: {} {}",
+            tag,
+            stdout,
+            stderr
+        );
+        assert!(
+            stderr.contains("olang.toml"),
+            "{}: unexpected: {}",
+            tag,
+            stderr
+        );
+        let check = Command::new(olang())
+            .current_dir(&ws)
+            .args(["check", "main.ol"])
+            .output()
+            .unwrap();
+        assert!(
+            !check.status.success(),
+            "{}: olang check passed: {}",
+            tag,
+            String::from_utf8_lossy(&check.stderr)
+        );
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+    // no [capabilities]: an unreadable manifest is not a restriction
+    let ws = workspace("no_caps");
+    write(
+        &ws.join("olang.toml"),
+        "[package]\nname = \"t\"\nversion = \"1.0\"\n",
+    );
+    write(&ws.join("main.ol"), "println(\"ran\")\n");
+    let out = Command::new(olang())
+        .current_dir(&ws)
+        .arg("main.ol")
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout).contains("ran"));
+    let _ = std::fs::remove_dir_all(&ws);
+}

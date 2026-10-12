@@ -585,6 +585,13 @@ manifest with no `[capabilities]`, runs unrestricted, so this is
 opt-in and never breaks existing code. A denied call is a runtime
 error naming the capability, the call, and the grant that refused it.
 
+A grant that cannot be honoured is refused, never ignored. A key
+`[capabilities]` does not know (a misspelling, or a capability a later
+olang added), a value the gate does not take, or an `olang.toml` that
+does not parse while it declares `[capabilities]`, stops the program
+before it runs, and `olang check` fails on it. The same holds for the
+manifest a built binary carries.
+
 **Per-dependency attenuation** grants a dependency fewer capabilities than
 the application, never more:
 

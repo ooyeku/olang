@@ -17,6 +17,7 @@ find.
 - [A lambda stage ends at the next `|>`](#a-lambda-stage-ends-at-the-next-)
 - [Renamed functions](#renamed-functions)
 - [Snapshots of strings](#snapshots-of-strings)
+- [A capability grant olang cannot honour](#a-capability-grant-olang-cannot-honour)
 - [Moving to `.` and `??`](#moving-to--and-)
 
 ## A missing field of an object is `()`
@@ -91,6 +92,16 @@ them is renamed in 0.88.
 had. A snapshot recorded quoted still matches, and is rewritten bare the
 next time snapshots are refreshed (`OLANG_UPDATE_SNAPSHOTS=1`), so
 nothing needs to change at once.
+
+## A capability grant olang cannot honour
+
+A `[capabilities]` block olang cannot honour stops the program before
+it runs, where it used to run with no restriction at all: a key the gate
+does not know (`filesystem = false` for `fs`), a value it does not take
+(`net = "no"`), or an `olang.toml` that does not parse while it declares
+capabilities. `olang check` fails on each and names the problem; fix the
+manifest. A tool's own table kept in `olang.toml` belongs under its own
+name — olang Studio's plugins write `[plugin.capabilities]`.
 
 ## Moving to `.` and `??`
 

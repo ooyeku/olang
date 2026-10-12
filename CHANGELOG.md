@@ -28,6 +28,11 @@ check` where it can be (the full guide is docs/migrating.md):
   `.` and `??`.
 - **`testing.snapshot` writes a String as its text**; a snapshot written
   quoted still matches.
+- **A `[capabilities]` olang cannot honour stops the program**: an
+  unknown capability key, a value the gate does not take, or an
+  `olang.toml` that does not parse while declaring one. These ran wide
+  open before. olang Studio plugins name their grants in
+  `[plugin.capabilities]`.
 - **1.0 promises macOS.** Linux and Windows are unsupported previews
   (docs/stability.md, "Platforms").
 
@@ -774,6 +779,17 @@ check` where it can be (the full guide is docs/migrating.md):
   hands a lambda to the VM (heddle-sql measured ~1.3 KB a call; now 3 B).
 
 ### Fixed
+
+- **A capabilities manifest that cannot be honoured refuses to run.**
+  Before, an `olang.toml` that declared `[capabilities]` but did not
+  parse (a value the gate does not take, as `net = "no"`; a bad
+  `[package] version`; no `[package]`) ran with no grant at all, and a
+  key the gate did not know (`filesystem = false`, or one in
+  `[capabilities.dependencies.<name>]`) was ignored — wide open either
+  way. Now each refuses to run, names the manifest and the problem, and
+  fails `olang check`; a built binary's carried manifest is held to the
+  same rule. A manifest with no `[capabilities]` runs as before.
+  tests/capabilities_test.rs.
 
 - **`olang check --tier` says a file it could not check.** One that
   does not parse was counted as "every function compiles" (it is an

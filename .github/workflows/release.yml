@@ -56,10 +56,11 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      # reqwest uses native-tls, which needs OpenSSL headers on Linux
-      - name: Install OpenSSL (Linux)
+      # reqwest uses native-tls (OpenSSL headers); the gui engine needs
+      # fontconfig, xkbcommon and wayland (as ci.yml installs)
+      - name: Install OpenSSL and the gui libraries (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev libfontconfig1-dev libxkbcommon-dev libwayland-dev
 
       # The browser runtime the olang binary embeds (build.rs reads the
       # artifact cargo xtask wasm leaves in target/).
