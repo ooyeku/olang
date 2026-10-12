@@ -252,6 +252,24 @@ impl Interpreter {
             (Value::String(ref a), BinaryOp::NotEqual, Value::String(ref b)) => {
                 Ok(Value::Boolean(*a != *b))
             }
+            // Tuples order lexicographically (`tuple_ordering`), as a sort
+            // by several keys needs: `(a.year, a.name) < (b.year, b.name)`.
+            (
+                Value::Tuple(ref a),
+                op @ (BinaryOp::LessThan
+                | BinaryOp::LessThanEqual
+                | BinaryOp::GreaterThan
+                | BinaryOp::GreaterThanEqual),
+                Value::Tuple(ref b),
+            ) => {
+                let ord = tuple_ordering(a, b)?;
+                Ok(Value::Boolean(match op {
+                    BinaryOp::LessThan => ord.is_lt(),
+                    BinaryOp::LessThanEqual => ord.is_le(),
+                    BinaryOp::GreaterThan => ord.is_gt(),
+                    _ => ord.is_ge(),
+                }))
+            }
             // Strings order lexicographically, matching the bytecode tier — so
             // character-range checks like `c >= "0" && c <= "9"` work and
             // strings sort. Ordering is by Unicode scalar value.
@@ -534,6 +552,47 @@ fn deep_eq(a: &Value, b: &Value) -> bool {
 /// Structural equality that treats the map kinds alike and compares Int
 /// with Float numerically, at every depth. What `==` means for maps,
 /// lists, tuples, and records on both tiers.
+/// The order `<` and `sort` give two tuples: element by element, the
+/// first unequal pair deciding by `<`'s own rule for it (numbers with
+/// numbers, strings with strings, tuples again), a tuple that runs out
+/// first being the smaller. Equal elements need no order of their own, so
+/// `(true, 1) < (true, 2)`; an unequal pair `<` cannot order is the error
+/// `<` raises for it.
+pub fn tuple_ordering(a: &[Value], b: &[Value]) -> Result<std::cmp::Ordering, InterpreterError> {
+    for (x, y) in a.iter().zip(b.iter()) {
+        if loose_eq(x, y) {
+            continue;
+        }
+        return value_ordering(x, y);
+    }
+    Ok(a.len().cmp(&b.len()))
+}
+
+/// `<`'s order of two values it can order, for a tuple's elements.
+fn value_ordering(x: &Value, y: &Value) -> Result<std::cmp::Ordering, InterpreterError> {
+    use std::cmp::Ordering;
+    let num = |v: &Value| match v {
+        Value::Integer(n) => Some(*n as f64),
+        Value::Float(f) => Some(*f),
+        _ => None,
+    };
+    match (x, y) {
+        (Value::Integer(a), Value::Integer(b)) => Ok(a.cmp(b)),
+        (Value::String(a), Value::String(b)) => Ok(a.cmp(b)),
+        (Value::Tuple(a), Value::Tuple(b)) => tuple_ordering(a, b),
+        _ => match (num(x), num(y)) {
+            (Some(a), Some(b)) => Ok(a.partial_cmp(&b).unwrap_or(Ordering::Equal)),
+            _ => Err(InterpreterError::TypeError {
+                message: format!(
+                    "cannot order {} and {} inside a tuple: `<` orders numbers, strings and tuples",
+                    x.type_name(),
+                    y.type_name()
+                ),
+            }),
+        },
+    }
+}
+
 pub fn loose_eq(a: &Value, b: &Value) -> bool {
     // A collection is equal to itself without a walk.
     match (a, b) {

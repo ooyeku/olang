@@ -189,7 +189,7 @@ println(show(len([1, 2, 3])) + " " + show(len("abcd")))
 | `range(a, b)` | list of integers `a` up to (excluding) `b` |
 | `head(xs)` / `tail(xs)` | first element / all but the first |
 | `take(xs, n)` / `skip(xs, n)` | first `n` / all but the first `n` (`drop` is `skip` under the name most languages pair with `take`) |
-| `reverse(xs)` / `sort(xs)` | reversed / ascending copy |
+| `reverse(xs)` / `sort(xs)` | reversed / ascending copy (numbers, strings, or tuples, which order lexicographically) |
 | `contains(xs, v)` | membership test |
 | `concat(a, b)` | join two lists (or use `a + b`) |
 | `cons(v, xs)` | prepend an element |

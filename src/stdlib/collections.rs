@@ -355,6 +355,14 @@ fn compare_keys(a: &Value, b: &Value) -> std::cmp::Ordering {
         _ => match (a, b) {
             (Value::String(x), Value::String(y)) => x.cmp(y),
             (Value::Boolean(x), Value::Boolean(y)) => x.cmp(y),
+            // Several keys at once: in order, as `<` orders tuples.
+            (Value::Tuple(x), Value::Tuple(y)) => {
+                x.iter()
+                    .zip(y.iter())
+                    .map(|(p, q)| compare_keys(p, q))
+                    .find(|o| o.is_ne())
+                    .unwrap_or_else(|| x.len().cmp(&y.len()))
+            }
             _ => a.to_string().cmp(&b.to_string()),
         },
     }

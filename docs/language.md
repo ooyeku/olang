@@ -654,14 +654,26 @@ println(to_string(2 + 0.5))
 
 ### Comparison and equality
 
-All comparison operators work on numbers (mixing Int/Float) **and on
-strings**, which order lexicographically by Unicode scalar value:
+All comparison operators work on numbers (mixing Int/Float), **on
+strings**, which order lexicographically by Unicode scalar value, and
+**on tuples**, which order lexicographically by element:
 
 ```olang
 println(to_string("apple" < "banana"))
 let c = "7"
 println(to_string((c >= "0") && (c <= "9")))   // character-range check
+println((2026, "mar") < (2026, "may"))         // true: the first unequal elements decide
+println(sort([(2, "b"), (1, "z"), (2, "a")]))  // [(1, "z"), (2, "a"), (2, "b")]
 ```
+
+Two tuples compare element by element: the first pair that is not equal
+decides, by `<`'s rule for that pair (numbers with numbers, strings with
+strings, tuples again), and a tuple that is a prefix of the other is
+the smaller. Equal elements need no order of their own, so `(true, 1) <
+(true, 2)` holds; an unequal pair `<` cannot order (`(1, "a") < ("b",
+2)`) raises. `sort` orders a list of tuples the same way, which is the
+way to sort by several keys: `sort(map(rows, (r) => (r.year, r.name)))`,
+or `col.sort_by(rows, (r) => (r.year, r.name))`.
 
 Equality is **structural** for lists, tuples, maps, structs, and enum
 values — two values are equal when they have the same shape and equal

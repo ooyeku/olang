@@ -6223,6 +6223,33 @@ impl BytecodeVm {
             }
         }
 
+        // Tuples order lexicographically, by the interpreter's one rule.
+        if matches!(
+            op,
+            BinaryOp::LessThan
+                | BinaryOp::LessThanEqual
+                | BinaryOp::GreaterThan
+                | BinaryOp::GreaterThanEqual
+        ) && matches!(left.data, ValueData::Tuple(_))
+            && matches!(right.data, ValueData::Tuple(_))
+        {
+            let (Ok(Value::Tuple(ref a)), Ok(Value::Tuple(ref b))) = (left.to_ast(), right.to_ast()) else {
+                return Err(BytecodeError::TypeError("cannot order these tuples".to_string()));
+            };
+            let ord = crate::interpreter::ops::tuple_ordering(&a, &b).map_err(|e| match e {
+                crate::interpreter::InterpreterError::TypeError { message } => {
+                    BytecodeError::TypeError(message)
+                }
+                other => BytecodeError::RuntimeError(other.to_string()),
+            })?;
+            return Ok(OvmValue::new_boolean(match op {
+                BinaryOp::LessThan => ord.is_lt(),
+                BinaryOp::LessThanEqual => ord.is_le(),
+                BinaryOp::GreaterThan => ord.is_gt(),
+                _ => ord.is_ge(),
+            }));
+        }
+
         // Operate directly on ValueData — converting operands through the AST
         // representation on every instruction dominated the dispatch loop.
         let result = match (&left.data, &right.data) {

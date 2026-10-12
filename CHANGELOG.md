@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Tuples order lexicographically** under `<`, `<=`, `>`, `>=` and
+  `sort`, on every tier: the first unequal pair of elements decides, by
+  `<`'s rule for that pair (numbers, strings, tuples again), a prefix is
+  the smaller, and an unequal pair with no order raises naming its
+  kinds. `sort([(2, 1), (1, 2)])` raised "cannot compare values of type
+  Tuple" though `==` compared tuples (Heddle; otc-hub sorted by key
+  functions instead). `col.sort_by` with a tuple key orders its numbers
+  as numbers (it compared the keys' text: `(10, 1)` before `(9, 2)`).
+
 - **`raise(message)`**: a runtime error whose message is `message`, word
   for word — `attempt` answers it as `Err(message)`, and uncaught it is
   reported as `Runtime error: message`, on every tier. A library that

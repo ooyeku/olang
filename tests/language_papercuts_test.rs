@@ -383,3 +383,68 @@ fn sort(xs, n) = if n == 0 => xs else => sort(xs + [n], n - 1)
         Ok(Value::Tuple(std::sync::Arc::new(vec![Value::Integer(3), ints(&[2, 1])])))
     );
 }
+
+// ── Tuples order lexicographically ──────────────────────────────────────
+
+#[test]
+fn tuples_order_lexicographically_under_every_comparison() {
+    let src = r#"
+fn main() = [
+    (1, 2) < (1, 3),
+    (2, 0) > (1, 9),
+    (1, "b") <= (1, "b"),
+    (1, (2, 3)) < (1, (2, 4)),
+    (1, 2) < (1, 2, 0),
+    (true, 1) < (true, 2),
+    (1.5, "a") >= (1, "z")
+]
+main()
+"#;
+    assert_eq!(
+        agree(src),
+        Ok(Value::List(std::sync::Arc::new(vec![Value::Boolean(true); 7])))
+    );
+}
+
+#[test]
+fn sort_orders_a_list_of_tuples() {
+    let src = r#"
+fn main() = sort([(2, "b"), (1, "z"), (2, "a"), (1, "a")])
+main()
+"#;
+    let t = |n: i64, x: &str| Value::Tuple(std::sync::Arc::new(vec![Value::Integer(n), s(x)]));
+    assert_eq!(
+        agree_tiered(src),
+        Ok(Value::List(std::sync::Arc::new(vec![
+            t(1, "a"),
+            t(1, "z"),
+            t(2, "a"),
+            t(2, "b")
+        ])))
+    );
+    // Several keys through col.sort_by: numbers as numbers, not text.
+    let src = r#"
+fn main() = col.sort_by([#{ "y": 10, "n": "a" }, #{ "y": 9, "n": "b" }], (r) => (r.y, r.n)) |> map((r) => r.n)
+main()
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(Value::List(std::sync::Arc::new(vec![s("b"), s("a")])))
+    );
+}
+
+#[test]
+fn an_unequal_pair_without_an_order_raises() {
+    let src = r#"
+fn main() = (1, "a") < ("b", 2)
+main()
+"#;
+    let err = agree(src).expect_err("no order");
+    assert!(err.contains("cannot order Int and String inside a tuple"), "{err}");
+    let src = r#"
+fn main() = sort([(1, "a"), (1, 2)])
+main()
+"#;
+    let err = agree_tiered(src).expect_err("no order");
+    assert!(err.contains("sort: cannot order ") && err.contains(" inside a tuple"), "{err}");
+}

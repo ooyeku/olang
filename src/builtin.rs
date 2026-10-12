@@ -2517,12 +2517,14 @@ impl BuiltinFunctions {
         enum SortClass {
             Numeric,
             Str,
+            Tuple,
             Other,
         }
         fn class_of(v: &Value) -> SortClass {
             match v {
                 Value::Integer(_) | Value::Float(_) => SortClass::Numeric,
                 Value::String(_) => SortClass::Str,
+                Value::Tuple(_) => SortClass::Tuple,
                 _ => SortClass::Other,
             }
         }
@@ -2536,13 +2538,37 @@ impl BuiltinFunctions {
             for item in list.iter() {
                 if class_of(item) != cls {
                     return Err(InterpreterError::TypeError {
-                        message: "sort: cannot compare values of different types (mix of numbers and strings)".to_string(),
+                        message: "sort: cannot compare values of different types (a list of numbers, of strings, or of tuples)".to_string(),
                     });
                 }
             }
         }
 
         let mut result: Vec<Value> = list.to_vec();
+
+        // Tuples order lexicographically, as `<` orders them; a pair `<`
+        // cannot order is its error.
+        if list.first().is_some_and(|v| matches!(v, Value::Tuple(_))) {
+            let mut failure = None;
+            result.sort_by(|a, b| match (a, b) {
+                (Value::Tuple(x), Value::Tuple(y)) => {
+                    match crate::interpreter::ops::tuple_ordering(x, y) {
+                        Ok(o) => o,
+                        Err(e) => {
+                            failure.get_or_insert(e);
+                            std::cmp::Ordering::Equal
+                        }
+                    }
+                }
+                _ => std::cmp::Ordering::Equal,
+            });
+            if let Some(InterpreterError::TypeError { message }) = failure {
+                return Err(InterpreterError::TypeError {
+                    message: format!("sort: {}", message),
+                });
+            }
+            return Ok(Value::List(result.into()));
+        }
 
         fn sort_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
             match (a, b) {
