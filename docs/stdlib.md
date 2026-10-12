@@ -2244,7 +2244,7 @@ in-process database — the examples below really run.
 | `db.transaction(conn, f)` | `f(conn)` inside a transaction: commit unless `f` returns an `Err` or raises, which roll back; `f`'s result is handed through. Transactions on one connection are serialized across threads — a second `db.transaction` waits for the first to end — so the http workers of a served app may share a connection; plain statements from another thread do not wait, and join whatever transaction is open |
 | `db.migrate(conn, steps)` | bring the schema to the head of `steps` (a list of versions, each a list of SQL); a `schema_version` table records progress, each version runs in its own transaction, a failing statement is named — `Ok(version)` |
 | `db.begin(conn)` / `db.commit(conn)` / `db.rollback(conn)` | transactions by hand |
-| `db.close(conn)` | close the handle (its open cursors are finished first) |
+| `db.close(conn)` | close the handle (its open cursors are finished first); a connection no value holds any more closes by itself once its cursors are dropped |
 
 Values: NULL is `()`, INTEGER an `Int`, REAL a `Float`, TEXT a `String`.
 A BLOB is `Bytes` from `db.query_rows` and `db.next`; `db.query` and

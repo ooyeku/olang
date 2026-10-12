@@ -522,6 +522,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A dropped `db` connection is closed.** Connections lived in the
+  module's registry until `db.close`: 3,000 opened and dropped left 3,010
+  descriptors open (heddle-sql). `db.open`'s `Connection` now carries a
+  `handle` field every copy shares, and when the last copy goes the
+  connection closes, once the cursors that hold it are dropped too. A
+  recorded run replays it as a handle that owns nothing. `show(conn)`
+  shows the field.
 - **A missing `}` in a map literal names the literal.** A statement
   starting inside a `#{` an earlier line did not close was reported as
   "expected an operator" at the statement (Heddle); the parse error now

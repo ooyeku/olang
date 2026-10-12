@@ -846,6 +846,75 @@ fn prepare_bound(
     }
 }
 
+// ── the connection's owner ──────────────────────────────────────────
+
+/// The `handle` field of `db.open`'s `Connection`: every copy of the
+/// connection value shares it, and dropping the last one closes the
+/// connection (once its cursors are dropped too, which hold it open), as
+/// `db.close` would have. A connection opened and dropped in a loop kept
+/// its file descriptors until the process ended.
+struct ConnectionOwner {
+    /// The registry id; a replayed handle (`detached_connection_owner`)
+    /// owns no connection and has none.
+    id: Option<i64>,
+}
+
+impl std::fmt::Debug for ConnectionOwner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.display())
+    }
+}
+
+impl Drop for ConnectionOwner {
+    fn drop(&mut self) {
+        let Some(id) = self.id else { return };
+        let entry = registry()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .connections
+            .remove(&id);
+        tx_locks()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&id);
+        // Dropped outside the registry's lock: the connection closes here
+        // unless a cursor still holds it.
+        drop(entry);
+    }
+}
+
+impl NativeObject for ConnectionOwner {
+    fn module(&self) -> &'static str {
+        "db"
+    }
+    fn type_name(&self) -> &'static str {
+        "ConnectionHandle"
+    }
+    fn display(&self) -> String {
+        // No id: a display is what a replay fingerprints.
+        "<db connection>".to_string()
+    }
+    fn native_eq(&self, other: &dyn NativeObject) -> bool {
+        other
+            .as_any()
+            .downcast_ref::<ConnectionOwner>()
+            .is_some_and(|o| o.id == self.id)
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+fn connection_owner(id: i64) -> Value {
+    Value::Native(NativeHandle::new(ConnectionOwner { id: Some(id) }))
+}
+
+/// A connection's handle under replay: it owns nothing, so dropping it
+/// closes nothing.
+pub fn detached_connection_owner() -> Value {
+    Value::Native(NativeHandle::new(ConnectionOwner { id: None }))
+}
+
 // ── the cursor value ────────────────────────────────────────────────
 
 /// `db.cursor`'s answer: a handle on a statement the connection's state
@@ -1181,6 +1250,7 @@ fn db_open(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let mut fields = crate::ast::ValueMap::default();
     fields.insert("id".to_string(), Value::Integer(id));
     fields.insert("path".to_string(), string(path));
+    fields.insert("handle".to_string(), connection_owner(id));
     Ok(ok(Value::Struct {
         type_name: "Connection".to_string(),
         fields: std::sync::Arc::new(fields),

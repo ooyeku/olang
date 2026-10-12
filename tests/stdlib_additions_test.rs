@@ -60,3 +60,17 @@ fn json_stringify_pairs_keeps_the_order() {
         );
     }
 }
+
+#[test]
+fn a_dropped_db_connection_is_closed() {
+    let dir = std::env::temp_dir().join(format!("olang-db-drop-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("dir");
+    let file = dir.join("t.db");
+    let src = format!(
+        "fn fds() = len(unwrap(fs.list_dir(\"/dev/fd\")))\nlet before = fds()\nfor i in 0..2000 {{\n    let c = unwrap(db.open(\"{f}\"))\n    let n = unwrap(db.execute(c, \"create table if not exists t (a)\"))\n}}\nprintln(fds() - before < 20)\nlet c = unwrap(db.open(\"{f}\"))\nlet cur = unwrap(db.cursor(c, \"select 1\"))\nprintln(typeof(c.handle))\n",
+        f = file.display()
+    );
+    for (stdout, _) in run("dbdrop.ol", &src) {
+        assert_eq!(stdout, "true\nConnectionHandle\n");
+    }
+}

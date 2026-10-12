@@ -420,7 +420,7 @@ fn portable(v: &Value) -> Value {
     match v {
         Value::Native(h) => {
             let kind = h.0.type_name();
-            if matches!(kind, "Channel" | "Task" | "Cursor" | "Bytes") {
+            if matches!(kind, "Channel" | "Task" | "Cursor" | "Bytes" | "ConnectionHandle") {
                 let mut fields = crate::ast::ValueMap::default();
                 fields.insert(
                     "kind".to_string(),
@@ -471,7 +471,10 @@ fn portable(v: &Value) -> Value {
 
 fn holds_handle(v: &Value) -> bool {
     match v {
-        Value::Native(h) => matches!(h.0.type_name(), "Channel" | "Task" | "Cursor" | "Bytes"),
+        Value::Native(h) => matches!(
+            h.0.type_name(),
+            "Channel" | "Task" | "Cursor" | "Bytes" | "ConnectionHandle"
+        ),
         Value::Map(m) => m.values().any(holds_handle),
         Value::Struct { fields, .. } => fields.values().any(holds_handle),
         Value::List(items) => items.iter().any(holds_handle),
@@ -513,6 +516,10 @@ fn revive(v: &Value) -> Value {
                         _ => String::new(),
                     };
                     crate::stdlib::db::detached_cursor(&sql)
+                }
+                #[cfg(feature = "native")]
+                Some(Value::String(k)) if k.as_str() == "ConnectionHandle" => {
+                    crate::stdlib::db::detached_connection_owner()
                 }
                 Some(Value::String(k)) if k.as_str() == "Bytes" => {
                     let raw = match fields.get("hex") {
