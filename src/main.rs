@@ -437,17 +437,6 @@ enum Commands {
         markdown: bool,
     },
 
-    /// Run benchmarks
-    // The runner parses its own flags out of the forwarded arguments, so
-    // clap knows nothing about them and prints no options. Spelling them
-    // here keeps `--help` from being the one place they are invisible.
-    #[command(long_about = "Run benchmarks\n\n\
-        Flags are parsed by the benchmark runner itself, so they do not\n\
-        appear under Options below:\n\n\
-        \x20 --runs N            timed runs per benchmark (default 7)\n\
-        \x20 --save FILE         store the medians as a baseline\n\
-        \x20 --against FILE      compare against a saved baseline\n\
-        \x20 --fail-on-regress   exit non-zero if anything got slower")]
     /// Show a file after macro expansion (docs/macros.md)
     ///
     /// Prints the program as the interpreter will actually run it: every
@@ -462,6 +451,17 @@ enum Commands {
         diff: bool,
     },
 
+    /// Run benchmarks
+    // The runner parses its own flags out of the forwarded arguments, so
+    // clap knows nothing about them and prints no options. Spelling them
+    // here keeps `--help` from being the one place they are invisible.
+    #[command(long_about = "Run benchmarks\n\n\
+        Flags are parsed by the benchmark runner itself, so they do not\n\
+        appear under Options below:\n\n\
+        \x20 --runs N            timed runs per benchmark (default 7)\n\
+        \x20 --save FILE         store the medians as a baseline\n\
+        \x20 --against FILE      compare against a saved baseline\n\
+        \x20 --fail-on-regress   exit non-zero if anything got slower")]
     Bench {
         /// Arguments forwarded to the benchmark runner
         #[arg(

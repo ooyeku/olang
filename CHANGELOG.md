@@ -531,6 +531,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`olang --help` describes `expand` and `bench` again**: `bench`'s
+  description had moved onto `expand` ("Run benchmarks Show a file after
+  macro expansion") and `bench` had none.
 - **The REPL's `:env`, `:help tutorials`, `:tutorial` and `:search` print
   the same every run**: bindings by name, tutorials by level then name,
   search results and suggestions by score then name (three piped runs
