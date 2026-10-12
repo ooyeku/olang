@@ -9814,12 +9814,23 @@ For function-specific syntax, use: {}:help <function_name>{}",
             parameters: vec!["value: Any - Olang value to convert to JSON".to_string()],
             return_type: "Result<String, Error>".to_string(),
             examples: vec![
-                "json.stringify({name: \"Alice\", age: 25})  // Ok(\"{\\\"name\\\":\\\"Alice\\\",\\\"age\\\":25}\")".to_string(),
+                "json.stringify({name: \"Alice\", age: 25})  // Ok(\"{\\\"age\\\":25,\\\"name\\\":\\\"Alice\\\"}\") — keys sorted".to_string(),
                 "json.stringify([1, 2, 3])  // Ok(\"[1,2,3]\")".to_string(),
                 "json.stringify(true)  // Ok(\"true\")".to_string(),
             ],
             category: "JSON".to_string(),
-            see_also: vec!["json.parse".to_string(), "json.prettify".to_string()],
+            see_also: vec!["json.parse".to_string(), "json.prettify".to_string(), "json.stringify_pairs".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "json.stringify_pairs".to_string(),
+            description: "One JSON object whose keys are in the order given — what stringify cannot do for a map, whose keys it writes sorted (a query's columns, a form's fields). Each value is written as stringify writes it; a value JSON has no form for is Err. Not a list of (String, value) pairs raises.".to_string(),
+            syntax: "json.stringify_pairs(pairs)".to_string(),
+            parameters: vec!["pairs: [(String, Any)] - the object's entries, in order".to_string()],
+            return_type: "Result<String, String>".to_string(),
+            examples: vec!["json.stringify_pairs([(\"id\", 1), (\"name\", \"ada\")])  // Ok(\"{\\\"id\\\":1,\\\"name\\\":\\\"ada\\\"}\")".to_string()],
+            category: "JSON".to_string(),
+            see_also: vec!["json.stringify".to_string()],
         });
 
         self.add_function(FunctionDoc {

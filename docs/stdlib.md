@@ -702,7 +702,8 @@ do not.
 | Function | Description |
 |---|---|
 | `json.parse(s)` | `Result` of the parsed value |
-| `json.stringify(v)` | `Result` of compact JSON text |
+| `json.stringify(v)` | `Result` of compact JSON text; an object's keys are written sorted |
+| `json.stringify_pairs(pairs)` | `Result` of one JSON object whose keys are in the order of `pairs`, a list of `(key, value)` (each value as `stringify` writes it) |
 | `json.prettify(s)` / `json.minify(s)` | reformat JSON text |
 | `json.validate(s)` | is the text valid JSON? |
 | `json.get(s, path)` / `json.set(s, path, v)` | path access on raw text |
@@ -716,7 +717,9 @@ let doc = unwrap(json.parse("{\"name\": \"ada\", \"tags\": [\"x\", \"y\"], \"age
 println(`${doc.name} has ${len(doc.tags)} tags`)
 println(to_string(map_get(doc, "age")))          // dynamic key access
 let out = unwrap(json.stringify({ ok: true, n: 1 }))
-println(out)
+println(out)                                     // {"n":1,"ok":true}
+let row = unwrap(json.stringify_pairs([("id", 7), ("name", "ada"), ("tags", ["x"])]))
+println(row)                                     // {"id":7,"name":"ada","tags":["x"]}
 ```
 
 ## `toml` — TOML

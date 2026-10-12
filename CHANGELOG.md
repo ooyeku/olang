@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`json.stringify_pairs([(k, v), …])`**: one JSON object with its keys
+  in the order given, each value written as `json.stringify` writes it
+  (whose maps' keys come out sorted). heddle-sql's `--json` keeps a
+  query's column order and wrote each object by hand. The help's
+  `json.stringify` example now shows the sorted keys it produces.
+
 - **`str.is_ascii(s)`**: whether every character is ASCII, one pass over
   the bytes. Heddle's painter asked "printable ASCII?" of thousands of
   spans a frame (8–16% of the frame) without it.

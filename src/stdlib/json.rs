@@ -36,6 +36,10 @@ pub fn create_json_module() -> Value {
         create_builtin_function("stringify", 1),
     );
     module.insert(
+        "stringify_pairs".to_string(),
+        create_builtin_function("stringify_pairs", 1),
+    );
+    module.insert(
         "prettify".to_string(),
         create_builtin_function("prettify", 1),
     );
@@ -108,6 +112,7 @@ pub fn call_json_function(
     match name {
         "parse" => json_parse(args),
         "stringify" => json_stringify(args),
+        "stringify_pairs" => json_stringify_pairs(args),
         "prettify" => json_prettify(args),
         "minify" => json_minify(args),
         "validate" => json_validate(args),
@@ -172,6 +177,64 @@ fn json_stringify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
             e
         )))))),
     }
+}
+
+/// `json.stringify_pairs([(k, v), …])`: one JSON object with its keys in
+/// the order given — what `stringify` cannot do for a map, whose keys it
+/// writes sorted (a query's columns, a form's fields). Each value is
+/// written as `stringify` writes it. A key repeated is written twice, as
+/// given. Misuse (not a list of `(String, value)` pairs) raises.
+fn json_stringify_pairs(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    if args.len() != 1 {
+        return Err(format!("stringify_pairs expects 1 argument, got {}", args.len()).into());
+    }
+    let Value::List(pairs) = &args[0] else {
+        return Err(format!(
+            "json.stringify_pairs: the argument must be a list of (key, value) pairs, got {}",
+            args[0].type_name()
+        )
+        .into());
+    };
+    let mut out = String::from("{");
+    for (i, pair) in pairs.iter().enumerate() {
+        let (key, value) = match pair {
+            Value::Tuple(kv) | Value::List(kv) if kv.len() == 2 => match &kv[0] {
+                Value::String(k) => (k, &kv[1]),
+                other => {
+                    return Err(format!(
+                        "json.stringify_pairs: the key of pair {} is {}, not a String",
+                        i,
+                        other.type_name()
+                    )
+                    .into());
+                }
+            },
+            other => {
+                return Err(format!(
+                    "json.stringify_pairs: element {} must be a (key, value) pair, got {}",
+                    i,
+                    preview(other)
+                )
+                .into());
+            }
+        };
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&serde_json::to_string(key.as_str())?);
+        out.push(':');
+        match serde_json::to_string(&AsJson(value)) {
+            Ok(text) => out.push_str(&text),
+            Err(e) => {
+                return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                    "Cannot convert to JSON: {}",
+                    e
+                ))))));
+            }
+        }
+    }
+    out.push('}');
+    Ok(Value::Ok(Box::new(Value::String(Arc::new(out)))))
 }
 
 /// A value as `show` prints it, cut at 60 characters: enough to name

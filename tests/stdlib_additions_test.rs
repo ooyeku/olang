@@ -49,3 +49,14 @@ fn str_is_ascii() {
         assert_eq!(stdout, "[true, true, false, false]\n");
     }
 }
+
+#[test]
+fn json_stringify_pairs_keeps_the_order() {
+    let src = "fn row(names, values) = json.stringify_pairs(zip(names, values))\nprintln(unwrap(row([\"z\", \"a\", \"m\"], [1, \"x\", #{ \"b\": 2, \"a\": [()] }])))\nprintln(json.stringify_pairs([]))\nprintln(attempt(() => json.stringify_pairs([(1, 2)])))\n";
+    for (stdout, _) in run("pairs.ol", src) {
+        assert_eq!(
+            stdout,
+            "{\"z\":1,\"a\":\"x\",\"m\":{\"a\":[null],\"b\":2}}\nOk(\"{}\")\nErr(\"json.stringify_pairs: the key of pair 0 is Int, not a String\")\n"
+        );
+    }
+}
