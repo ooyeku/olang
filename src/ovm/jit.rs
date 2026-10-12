@@ -3406,6 +3406,7 @@ pub(crate) fn whitelist_ok(bytecode: &CompiledBytecode) -> bool {
         | Instruction::Div { .. }
         | Instruction::Mod { .. }
         | Instruction::Neg { .. }
+        | Instruction::Bitwise { .. }
         | Instruction::Eq { .. }
         | Instruction::Ne { .. }
         | Instruction::Lt { .. }
@@ -3883,6 +3884,11 @@ pub(crate) fn for_each_reg(
         I::Not { dst, src } | I::Neg { dst, src } => {
             f(dst);
             f(src);
+        }
+        I::Bitwise { dst, lhs, rhs, .. } => {
+            f(dst);
+            f(lhs);
+            f(rhs);
         }
         I::BinImm { dst, lhs, .. } => {
             f(dst);
@@ -4867,6 +4873,11 @@ impl PlanFn {
                     narrow!(src.0, K_NUM);
                     let s = self.writes[src.0 as usize];
                     grow!(self.writes[dst.0 as usize], s & K_NUM);
+                }
+                Instruction::Bitwise { dst, lhs, rhs, .. } => {
+                    narrow!(lhs.0, K_INT);
+                    narrow!(rhs.0, K_INT);
+                    grow!(self.writes[dst.0 as usize], K_INT);
                 }
                 Instruction::Eq { dst, lhs, rhs } | Instruction::Ne { dst, lhs, rhs } => {
                     narrow!(lhs.0, K_NUM | K_BOOL | K_STR);
@@ -5877,6 +5888,7 @@ pub(crate) fn instruction_name(inst: &Instruction) -> &'static str {
         Instruction::Div { .. } => "Div",
         Instruction::Mod { .. } => "Mod",
         Instruction::Neg { .. } => "Neg",
+        Instruction::Bitwise { .. } => "Bitwise",
         Instruction::Eq { .. } => "Eq",
         Instruction::Ne { .. } => "Ne",
         Instruction::Lt { .. } => "Lt",
@@ -6377,6 +6389,33 @@ fn translate_body(
                     });
                 }
                 r#gen.write(builder, dst.0, acc?);
+            }
+            Instruction::Bitwise { dst, lhs, rhs, op } => {
+                if r#gen.kind(lhs.0)? != Kind::Int || r#gen.kind(rhs.0)? != Kind::Int {
+                    return None;
+                }
+                let a = builder.use_var(Variable::from_u32(lhs.0));
+                let b = builder.use_var(Variable::from_u32(rhs.0));
+                use crate::ast::BitwiseOp as B;
+                let val = match op {
+                    B::And => builder.ins().band(a, b),
+                    B::Or => builder.ins().bor(a, b),
+                    B::Xor => builder.ins().bxor(a, b),
+                    B::Shl | B::Shr => {
+                        // A count outside 0..64 raises: the VM reruns the
+                        // call and reports it.
+                        let out = builder.ins().icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, b, 64);
+                        let cont = builder.create_block();
+                        builder.ins().brif(out, deopt_block, &[], cont, &[]);
+                        builder.switch_to_block(cont);
+                        if matches!(op, B::Shl) {
+                            builder.ins().ishl(a, b)
+                        } else {
+                            builder.ins().sshr(a, b)
+                        }
+                    }
+                };
+                r#gen.write(builder, dst.0, val);
             }
             Instruction::Neg { dst, src } => {
                 let sk = r#gen.kind(src.0)?;

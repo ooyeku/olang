@@ -488,3 +488,96 @@ main()
         Ok(Value::Tuple(std::sync::Arc::new(vec![s("/x"), Value::Integer(4), s("mine")])))
     );
 }
+
+// ── Bitwise operators and `break value` on the bytecode tier ────────────
+
+#[test]
+fn bitwise_operators_compile_on_every_tier() {
+    let src = r#"
+fn bits(a, b) = (a & b) | 4
+fn mix(n) = {
+    let mut h = 0
+    for i in 0..n {
+        h = (h ^ (i << 3)) >> 1
+    }
+    h
+}
+fn main() = [bits(6, 3), mix(1000), -16 >> 2, 1 << 62, 5 ^ 1]
+main()
+"#;
+    assert_eq!(agree(src), Ok(ints(&[6, 2792, -4, 1 << 62, 4])));
+}
+
+#[test]
+fn a_shift_out_of_range_and_a_non_int_operand_raise_alike() {
+    for body in ["1 << 64", "1 >> -1", "1 & 2.0", "\"a\" | 1"] {
+        let src = format!("fn main() = {body}\nmain()\n");
+        let err = agree(&src).expect_err(body);
+        assert!(
+            err.contains("Shift amount") || err.contains("integer operands required"),
+            "{body}: {err}"
+        );
+    }
+}
+
+#[test]
+fn break_with_a_value_compiles_on_every_tier() {
+    let src = r#"
+fn first_over(xs, t) = {
+    let mut i = 0
+    loop {
+        if xs[i] > t => break xs[i]
+        i = i + 1
+    }
+}
+fn index_of(xs, t) = {
+    let mut i = 0
+    while i < len(xs) {
+        if xs[i] == t => break i
+        i = i + 1
+    }
+}
+fn first_negative(xs) = for x in xs { if x < 0 => break x }
+fn nested() = loop {
+    let inner = for x in [1, 2, 3] { if x == 2 => break x * 10 }
+    break inner + 1
+}
+fn main() = [
+    first_over([1, 5, 9], 4),
+    index_of([3, 4], 4),
+    index_of([3], 9),
+    first_negative([1, -2, 3]),
+    first_negative([1]),
+    nested()
+]
+main()
+"#;
+    assert_eq!(
+        agree(src),
+        Ok(Value::List(std::sync::Arc::new(vec![
+            Value::Integer(5),
+            Value::Integer(1),
+            Value::Unit,
+            Value::Integer(-2),
+            Value::Unit,
+            Value::Integer(21),
+        ])))
+    );
+}
+
+#[test]
+fn a_refusal_names_the_construct() {
+    let program = Parser::new()
+        .parse("fn f(xs) = { par for x in xs { println(x) } }\n")
+        .expect("parses");
+    let mut vm = BytecodeVm::new();
+    for statement in &program.statements {
+        if let Statement::FunctionDecl(func) = statement.unwrapped() {
+            let id = FunctionId::new();
+            vm.register_function(func.name.clone(), id);
+            let err = vm.compile_function(id, func).expect_err("refused").to_string();
+            assert!(err.contains("a `par for` loop"), "{err}");
+            assert!(!err.contains("Discriminant"), "{err}");
+        }
+    }
+}

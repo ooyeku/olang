@@ -317,10 +317,10 @@ Anything else causes the function to stay interpreted:
   compile-time snapshot can represent
 - background tasks (`spawn`), and struct-variant enum
   construction (unit and tuple variants compile)
-- `break value`, and `return` inside a promoted loop or OSR region — they
-  unwind in ways the bytecode loops don't model (a function's own
-  `return` compiles)
-- the bitwise operators `& | ^ << >>`
+- `return` inside a promoted loop or OSR region — it unwinds past the
+  region the bytecode was compiled for (a function's own `return`
+  compiles, and so do `loop`, `break value` and the bitwise operators
+  `& | ^ << >>`, natively on Ints)
 - a lambda capturing a *local* the enclosing function binds only *later*
   (no register holds it yet at the lambda expression) — a *function*
   declared later resolves through the registry and compiles
@@ -336,6 +336,8 @@ Anything else causes the function to stay interpreted:
 
 None of these are errors. They are compile-time rejections that fall back to
 the interpreter, which is why enabling the tier can never break a program.
+A refusal's reason names the construct (`it contains a \`par for\` loop`),
+as `--ovm-stats=json` and olang Studio's tier map report it.
 
 ## Correctness policy
 

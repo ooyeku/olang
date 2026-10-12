@@ -1135,7 +1135,7 @@ fn scan(e: &Expr, escaped: &mut HashSet<String>, assigned: &mut HashSet<String>,
 
 /// An expression's direct sub-expressions (a block's statements are
 /// walked by the callers that care about them).
-fn children(e: &Expr) -> Vec<&Expr> {
+pub(crate) fn children(e: &Expr) -> Vec<&Expr> {
     let mut v: Vec<&Expr> = Vec::new();
     match e {
         Expr::List(items) => v.extend(items.iter()),

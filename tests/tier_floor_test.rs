@@ -378,11 +378,12 @@ fn a_callee_compiles_at_its_first_call_not_with_its_caller() {
 
 #[test]
 fn a_callee_refused_at_its_first_call_runs_through_its_value() {
-    // The bitwise `&` keeps `odd_bit` off the tier. Its caller compiled
+    // The `spawn` keeps `odd_bit` off the tier. Its caller compiled
     // with a direct call to it, owed; the first call's compile refuses,
     // and that call and every later one run through the function's
     // value (the bridge), with the same answers.
-    let r = run("fn odd_bit(x) = x & 1\n\
+    let r = run("fn odd_bit(x) = task.join(spawn odd(x)) ?? 0\n\
+         fn odd(x) = x % 2\n\
          fn count_odd(xs) = {\n\
              let mut n = 0\n\
              for x in xs { n = n + odd_bit(x) }\n\

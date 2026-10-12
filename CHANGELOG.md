@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Bitwise operators, `loop` and `break value` on the bytecode tier.**
+  `& | ^ << >>` compile to one VM instruction (an Int pair, a shift
+  count outside 0..64 raising as the interpreter does) and to native
+  code in the JIT; `loop { … }` compiles, and `break value` gives a
+  `loop`, `while` or `for` its value on the VM. A function using any of
+  them stayed on the tree-walker ("an expression the compiler has no
+  form for (Discriminant(38))"); Heddle packed text attributes as bits
+  and tested them with division instead. Every refusal now names the
+  construct in the language's words (`it contains a \`par for\` loop`).
+
 - **`abs(x)`, `all(xs, f)` and `any(xs, f)` as globals**, beside `min`,
   `max` and `clamp`: the same functions as `math.abs`, `col.all` and
   `col.any`, on every tier (`all`/`any` stop at the first element that

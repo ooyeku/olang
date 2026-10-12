@@ -362,6 +362,9 @@ pub struct BytecodeCompiler {
     builtin_names: rustc_hash::FxHashSet<String>,
     /// Enclosing loops, innermost last: (continue target, break target)
     loop_targets: Vec<(Label, Label)>,
+    /// Beside each of `loop_targets`: the register a `break value` writes
+    /// the loop's value to, when the loop has one (`breaks_with_value`).
+    loop_results: Vec<Option<Register>>,
     /// Enclosing Located statements, innermost last, for span markers.
     span_stack: Vec<(u32, u32)>,
     /// The enclosing function's declaration-time closure. Lambdas whose free
@@ -605,6 +608,14 @@ pub enum Instruction {
     /// the list in `target`'s register, in place when the register holds
     /// the only reference — the indexed twin of AddAssign's extend
     /// fusion, and the write primitive of the olang-source collections.
+    /// `lhs & | ^ << >> rhs` on two Ints, as the interpreter computes
+    /// them (a shift by a count outside 0..64 raises).
+    Bitwise {
+        dst: Register,
+        lhs: Register,
+        rhs: Register,
+        op: crate::ast::BitwiseOp,
+    },
     ListSetAssign {
         target: Register,
         index: Register,
@@ -4977,6 +4988,37 @@ impl BytecodeVm {
                         None => self.execute_binary_op(left, right, BinaryOp::Modulo)?,
                     };
 
+                    self.execution_state.set_register(*dst, result)?;
+                }
+
+                Instruction::Bitwise { dst, lhs, rhs, op } => {
+                    use crate::ovm::value::ValueData;
+                    let (left, right) = self.execution_state.register_pair(*lhs, *rhs)?;
+                    let result = match (&left.data, &right.data) {
+                        (ValueData::Integer(l), ValueData::Integer(r)) => {
+                            let (l, r) = (*l, *r);
+                            let shift = |r: i64| {
+                                u32::try_from(r).ok().filter(|s| *s < 64).ok_or_else(|| {
+                                    BytecodeError::RuntimeError(format!(
+                                        "Shift amount {} out of range (must be 0..64)",
+                                        r
+                                    ))
+                                })
+                            };
+                            OvmValue::new_integer(match op {
+                                crate::ast::BitwiseOp::And => l & r,
+                                crate::ast::BitwiseOp::Or => l | r,
+                                crate::ast::BitwiseOp::Xor => l ^ r,
+                                crate::ast::BitwiseOp::Shl => l.wrapping_shl(shift(r)?),
+                                crate::ast::BitwiseOp::Shr => l.wrapping_shr(shift(r)?),
+                            })
+                        }
+                        _ => {
+                            return Err(BytecodeError::TypeError(
+                                "integer operands required for bitwise operation".to_string(),
+                            ));
+                        }
+                    };
                     self.execution_state.set_register(*dst, result)?;
                 }
 
@@ -10005,6 +10047,7 @@ impl BytecodeCompiler {
             local_variables: HashMap::new(),
             builtin_names: rustc_hash::FxHashSet::default(),
             loop_targets: Vec::new(),
+            loop_results: Vec::new(),
             span_stack: Vec::new(),
             enclosing_closure: std::sync::Arc::new(im::HashMap::new()),
             enclosing_bound_names: std::collections::HashSet::new(),
@@ -10149,6 +10192,7 @@ impl BytecodeCompiler {
         self.emitter.reset();
         self.local_variables.clear();
         self.loop_targets.clear();
+        self.loop_results.clear();
 
         // Names this function ever binds or assigns, for lambda eligibility
         self.enclosing_bound_names.clear();
@@ -11402,12 +11446,24 @@ impl BytecodeCompiler {
                 Ok(result_reg)
             }
 
-            // `break value` changes what the loop evaluates to — the bytecode
-            // loops don't model it; refuse so the function stays on the
-            // interpreter (never diverge).
-            Expr::Break(Some(_)) => Err(BytecodeError::CompilationFailed(
-                "'break' with a value is not supported in the bytecode tier".to_string(),
-            )),
+            // `break value`: the value is the loop's, written to the
+            // register the loop answers with, then the loop is left.
+            Expr::Break(Some(value)) => {
+                let (_, break_target) = *self.loop_targets.last().ok_or_else(|| {
+                    BytecodeError::CompilationFailed("'break' outside of a loop".to_string())
+                })?;
+                let Some(Some(result)) = self.loop_results.last().copied() else {
+                    return Err(BytecodeError::CompilationFailed(
+                        "it contains a `break` with a value where the loop's value is not kept"
+                            .to_string(),
+                    ));
+                };
+                let value_reg = self.compile_expression(value)?;
+                self.emitter.emit_move(result, value_reg);
+                self.emitter.emit_jump(break_target);
+                // Unreachable, but every expression must yield a register
+                self.unit_register()
+            }
 
             // `return` ends the call with its value, as the interpreter's
             // ReturnSignal does at the nearest function boundary: only
@@ -11519,14 +11575,17 @@ impl BytecodeCompiler {
                     let loop_step = self.emitter.create_label();
                     let loop_end = self.emitter.create_label();
 
+                    let result = self.loop_result_register(body)?;
                     self.emitter.place_label(loop_start);
                     let cond_reg = self.register_allocator.allocate_register();
                     self.emitter.emit_lt(cond_reg, var_reg, end_reg);
                     self.emitter.emit_branch_if_false(cond_reg, loop_end);
 
                     self.loop_targets.push((loop_step, loop_end));
+                    self.loop_results.push(result);
                     let body_result = self.compile_expression(body);
                     self.loop_targets.pop();
+                    self.loop_results.pop();
                     body_result?;
 
                     self.emitter.place_label(loop_step);
@@ -11540,7 +11599,10 @@ impl BytecodeCompiler {
                     self.emitter.emit_jump(loop_start);
 
                     self.emitter.place_label(loop_end);
-                    return self.unit_register();
+                    return match result {
+                        Some(r) => Ok(r),
+                        None => self.unit_register(),
+                    };
                 }
 
                 // Iterate by index over a list or range, matching the
@@ -11568,6 +11630,7 @@ impl BytecodeCompiler {
                 let loop_step = self.emitter.create_label();
                 let loop_end = self.emitter.create_label();
 
+                let result = self.loop_result_register(body)?;
                 self.emitter.place_label(loop_start);
                 let cond_reg = self.register_allocator.allocate_register();
                 self.emitter.emit_lt(cond_reg, idx_reg, len_reg);
@@ -11582,8 +11645,10 @@ impl BytecodeCompiler {
                 // `continue` jumps to the increment, not the test, so the
                 // loop still advances
                 self.loop_targets.push((loop_step, loop_end));
+                self.loop_results.push(result);
                 let body_result = self.compile_expression(body);
                 self.loop_targets.pop();
+                self.loop_results.pop();
                 body_result?;
 
                 self.emitter.place_label(loop_step);
@@ -11598,8 +11663,11 @@ impl BytecodeCompiler {
 
                 self.emitter.place_label(loop_end);
 
-                // For loops evaluate to Unit
-                self.unit_register()
+                // For loops evaluate to Unit, or a `break value`'s value
+                match result {
+                    Some(r) => Ok(r),
+                    None => self.unit_register(),
+                }
             }
 
             Expr::Assignment { target, value } => {
@@ -11805,25 +11873,63 @@ impl BytecodeCompiler {
                 let loop_start = self.emitter.create_label();
                 let loop_end = self.emitter.create_label();
 
+                let result = self.loop_result_register(body)?;
                 self.emitter.place_label(loop_start);
                 let condition_reg = self.compile_expression(condition)?;
                 self.emitter.emit_branch_if_false(condition_reg, loop_end);
 
                 // `continue` re-tests the condition; `break` exits
                 self.loop_targets.push((loop_start, loop_end));
+                self.loop_results.push(result);
                 let body_result = self.compile_expression(body);
                 self.loop_targets.pop();
+                self.loop_results.pop();
                 body_result?;
 
                 self.emitter.emit_jump(loop_start);
 
                 self.emitter.place_label(loop_end);
 
-                // While loops evaluate to Unit
+                // While loops evaluate to Unit, or a `break value`'s value
+                if let Some(r) = result {
+                    return Ok(r);
+                }
                 let const_idx = self.emitter.add_constant(OvmValue::from_ast(Value::Unit));
                 let dst_reg = self.register_allocator.allocate_register();
                 self.emitter.emit_load_const(dst_reg, const_idx);
                 Ok(dst_reg)
+            }
+
+            // `loop { … }`: runs until a `break` (its value the loop's) or
+            // a `return`; `continue` starts the body again.
+            Expr::Loop { body } => {
+                let loop_start = self.emitter.create_label();
+                let loop_end = self.emitter.create_label();
+                let result = self.unit_register()?;
+                self.emitter.place_label(loop_start);
+                self.loop_targets.push((loop_start, loop_end));
+                self.loop_results.push(Some(result));
+                let body_result = self.compile_expression(body);
+                self.loop_targets.pop();
+                self.loop_results.pop();
+                body_result?;
+                self.emitter.emit_jump(loop_start);
+                self.emitter.place_label(loop_end);
+                Ok(result)
+            }
+
+            Expr::BitwiseOp { left, op, right } => {
+                let left_reg = self.compile_expression(left)?;
+                let left_reg = self.shield_operand(left_reg, !Self::assignment_free(right));
+                let right_reg = self.compile_expression(right)?;
+                let dst = self.register_allocator.allocate_register();
+                self.emitter.instructions.push(Instruction::Bitwise {
+                    dst,
+                    lhs: left_reg,
+                    rhs: right_reg,
+                    op: op.clone(),
+                });
+                Ok(dst)
             }
 
             Expr::FieldAccess { object, field } => {
@@ -11865,10 +11971,7 @@ impl BytecodeCompiler {
                     Expr::AssertEq { .. } | Expr::AssertNe { .. } => {
                         "an assertion expression".to_string()
                     }
-                    _ => format!(
-                        "an expression the compiler has no form for ({:?})",
-                        std::mem::discriminant(other)
-                    ),
+                    _ => format!("{} (the compiler has no form for it)", Self::construct_name(other)),
                 };
                 Err(BytecodeError::CompilationFailed(format!(
                     "it contains {what}"
@@ -12824,6 +12927,90 @@ impl BytecodeCompiler {
     }
 
     /// Allocate a register holding Unit.
+    /// The register a loop answers with when its body has a `break
+    /// value` that ends it (`Unit` until one runs), else `None`: the loop
+    /// answers `Unit` as before.
+    fn loop_result_register(&mut self, body: &Expr) -> Result<Option<Register>, BytecodeError> {
+        if Self::breaks_with_value(body) {
+            Ok(Some(self.unit_register()?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Whether `e` has a `break value` that leaves the loop `e` is the
+    /// body of: not one in a nested loop's body, a lambda or a nested fn.
+    fn breaks_with_value(e: &Expr) -> bool {
+        match e {
+            Expr::Break(Some(_)) => true,
+            Expr::Lambda { .. } => false,
+            Expr::ForLoop { iterable, .. } | Expr::ParForLoop { iterable, .. } => {
+                Self::breaks_with_value(iterable)
+            }
+            Expr::WhileLoop { condition, .. } => Self::breaks_with_value(condition),
+            Expr::Loop { .. } => false,
+            Expr::Block(statements) => statements.iter().any(|s| match s.unwrapped() {
+                crate::ast::Statement::Expression(x) => Self::breaks_with_value(x),
+                crate::ast::Statement::LetDecl(l) => l.value.as_ref().is_some_and(Self::breaks_with_value),
+                _ => false,
+            }),
+            other => crate::tools::keys::children(other)
+                .into_iter()
+                .any(Self::breaks_with_value),
+        }
+    }
+
+    /// What a refused expression is, in the words of the language: a
+    /// refusal names the construct, never an enum discriminant.
+    fn construct_name(e: &Expr) -> String {
+        match e {
+            Expr::MacroCall { name, .. } => format!("an unexpanded macro call `@{name}`"),
+            Expr::Integer(_) | Expr::Float(_) | Expr::String(_) | Expr::Boolean(_) => {
+                "a literal".to_string()
+            }
+            Expr::RawString(_) | Expr::TemplateString { .. } => "a string literal".to_string(),
+            Expr::List(_) => "a list literal".to_string(),
+            Expr::Tuple(_) => "a tuple literal".to_string(),
+            Expr::Identifier(n) | Expr::LocalRef { name: n, .. } => format!("the name `{n}`"),
+            Expr::LocalAssign { name, .. } => format!("an assignment to `{name}`"),
+            Expr::Assignment { target, .. } => format!("an assignment to `{target}`"),
+            Expr::Call { .. } => "a call".to_string(),
+            Expr::Lambda { .. } => "a lambda".to_string(),
+            Expr::Pipeline { .. } => "a pipeline".to_string(),
+            Expr::Match { .. } => "a `match`".to_string(),
+            Expr::If { .. } => "an `if`".to_string(),
+            Expr::Range { .. } => "a range".to_string(),
+            Expr::Block(_) => "a block".to_string(),
+            Expr::BinaryOp { op, .. } => format!("the operator `{}`", op.symbol()),
+            Expr::UnaryOp { .. } => "a unary operator".to_string(),
+            Expr::StructLiteral(s) => format!("a `{}` literal", s.type_name),
+            Expr::AnonymousObject { .. } => "an object literal".to_string(),
+            Expr::MapLiteral { .. } => "a map literal".to_string(),
+            Expr::FieldAccess { field, .. } => format!("the field read `.{field}`"),
+            Expr::ResultOk(_) => "an `Ok(…)`".to_string(),
+            Expr::ResultErr(_) => "an `Err(…)`".to_string(),
+            Expr::Try(_) => "a `?`".to_string(),
+            Expr::ForLoop { .. } => "a `for` loop".to_string(),
+            Expr::ParForLoop { .. } => "a `par for` loop".to_string(),
+            Expr::WhileLoop { .. } => "a `while` loop".to_string(),
+            Expr::Loop { .. } => "a `loop`".to_string(),
+            Expr::Break(None) => "a `break`".to_string(),
+            Expr::Break(Some(_)) => "a `break` with a value".to_string(),
+            Expr::Continue => "a `continue`".to_string(),
+            Expr::Return(_) => "a `return`".to_string(),
+            Expr::Index { .. } => "a subscript `[…]`".to_string(),
+            Expr::Spawn(_) => "a `spawn`".to_string(),
+            Expr::BitwiseOp { .. } => "a bitwise operator".to_string(),
+            Expr::Spread(_) => "a spread `...`".to_string(),
+            Expr::Rest(_) => "a rest pattern `...`".to_string(),
+            Expr::AssertEq { .. }
+            | Expr::AssertNe { .. }
+            | Expr::Assert { .. }
+            | Expr::AssertTrue { .. }
+            | Expr::AssertFalse { .. } => "an assertion".to_string(),
+        }
+    }
+
     fn unit_register(&mut self) -> Result<Register, BytecodeError> {
         let const_idx = self.emitter.add_constant(OvmValue::new_unit());
         let dst_reg = self.register_allocator.allocate_register();
@@ -13907,6 +14094,11 @@ impl BytecodeOptimizer {
                 if let Some(r) = value {
                     uses.push(r.0);
                 }
+            }
+            I::Bitwise { dst, lhs, rhs, .. } => {
+                uses.push(lhs.0);
+                uses.push(rhs.0);
+                defs.push(dst.0);
             }
             I::Add { dst, lhs, rhs, .. }
             | I::Sub { dst, lhs, rhs }
