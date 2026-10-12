@@ -273,10 +273,10 @@ share fn render(node) = {
 /// A complete document: `page(title, head_extra, body_node)` — the
 /// shell `web.app` serves, and a one-call static-site generator.
 share fn page(title, head_extra, body) =
-    "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
-    + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-    + "<title>" + escape(title) + "</title>" + head_extra
-    + "</head><body>" + render(body) + "</body></html>"
+    "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">" +
+    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
+    "<title>" + escape(title) + "</title>" + head_extra +
+    "</head><body>" + render(body) + "</body></html>"
 
 test "void_el renders an element with no children; @when builds its node lazily" {
     assert_eq(render(void_el("img", #{ "src": "a.png" })), "<img src=\"a.png\">")

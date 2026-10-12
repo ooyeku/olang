@@ -159,17 +159,17 @@ fn commas(n) = {
 fn view_summary(report) = {
     let files = report.files
     let lines = total_lines(report)
-    println(term.bold("survey") + term.dim("  " + show(files) + " files · "
-        + commas(lines) + " lines"))
+    println(term.bold("survey") + term.dim("  " + show(files) + " files · " +
+        commas(lines) + " lines"))
     println("")
     let langs = ranked(report)
     let top = if len(langs) > 6 => take(langs, 6) else => langs
     let widest = if len(top) > 0 => top[0][2] else => 1
     for row in top {
         let frac = to_float(row[2]) / to_float(widest)
-        println("  " + paint(row[0], str.pad_end(row[0], 12, " ")) + " "
-            + paint(row[0], term.bar(frac, 22))
-            + term.dim("  " + commas(row[2])))
+        println("  " + paint(row[0], str.pad_end(row[0], 12, " ")) + " " +
+            paint(row[0], term.bar(frac, 22)) +
+            term.dim("  " + commas(row[2])))
     }
 }
 

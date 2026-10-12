@@ -158,10 +158,15 @@ fn index_of(args: Vec<Value>) -> Result<Value, InterpreterError> {
     let needle = args.get(1).ok_or_else(|| InterpreterError::RuntimeError {
         message: "col.index_of: missing value to find".to_string(),
     })?;
-    Ok(match list.iter().position(|item| item == needle) {
-        Some(i) => Value::Integer(i as i64),
-        None => Value::Unit,
-    })
+    // The first element `==` the needle (`ops::search_eq`).
+    for (i, item) in list.iter().enumerate() {
+        match crate::interpreter::ops::search_eq(item, needle) {
+            Ok(true) => return Ok(Value::Integer(i as i64)),
+            Ok(false) => {}
+            Err(message) => return Err(InterpreterError::TypeError { message }),
+        }
+    }
+    Ok(Value::Unit)
 }
 
 /// `col.slice(xs, from, to)` — the elements from index `from` (inclusive)

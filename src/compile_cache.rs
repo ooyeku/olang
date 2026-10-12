@@ -208,6 +208,9 @@ pub enum Plain {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LambdaSrc {
     pub self_name: Option<String>,
+    /// The lambda's return annotation, checked at each return.
+    #[serde(default)]
+    pub return_type: Option<crate::ast::TypeAnnotation>,
     pub params: Vec<Parameter>,
     pub body: Expr,
     pub captured: Vec<String>,

@@ -81,8 +81,8 @@ fn args_for(label) =
 let runnable = targets |> filter((t) => !map_has_key(long_running, t.label))
 for t in targets {
     if map_has_key(long_running, t.label) =>
-        { println("  ~ skip   " + t.label + "  (long-running; see "
-            + map_get(long_running, t.label) + ")") }
+        { println("  ~ skip   " + t.label + "  (long-running; see " +
+            map_get(long_running, t.label) + ")") }
 }
 let targets = runnable
 

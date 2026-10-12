@@ -27,8 +27,8 @@ use ui { esc }
 share fn kpi(label, value, note) = {
     let tail = if note == "" => ""
         else => "<div class=\"dash-note\">" + esc(note) + "</div>"
-    "<div class=\"dash-kpi\"><div class=\"dash-label\">" + esc(label)
-        + "</div><div class=\"dash-value\">" + esc(value) + "</div>" + tail + "</div>"
+    "<div class=\"dash-kpi\"><div class=\"dash-label\">" + esc(label) +
+        "</div><div class=\"dash-value\">" + esc(value) + "</div>" + tail + "</div>"
 }
 
 // A KPI tile with its own accent color for the value — dashboards
@@ -36,27 +36,27 @@ share fn kpi(label, value, note) = {
 share fn stat(label, value, note, accent) = {
     let tail = if note == "" => ""
         else => "<div class=\"dash-note\">" + esc(note) + "</div>"
-    "<div class=\"dash-kpi\"><div class=\"dash-label\">" + esc(label)
-        + "</div><div class=\"dash-value\" style=\"color:" + esc(accent) + "\">"
-        + esc(value) + "</div>" + tail + "</div>"
+    "<div class=\"dash-kpi\"><div class=\"dash-label\">" + esc(label) +
+        "</div><div class=\"dash-value\" style=\"color:" + esc(accent) + "\">" +
+        esc(value) + "</div>" + tail + "</div>"
 }
 
 // A card: a titled panel around arbitrary inner HTML. The inner HTML
 // is NOT escaped — it is your markup (a chart mount, a table); escape
 // any user data you interpolate into it.
 share fn card(title, inner) =
-    "<div class=\"dash-card\"><div class=\"dash-title\">" + esc(title)
-        + "</div>" + inner + "</div>"
+    "<div class=\"dash-card\"><div class=\"dash-title\">" + esc(title) +
+        "</div>" + inner + "</div>"
 
 // A card that spans two grid columns — the chart-friendly width.
 share fn half(title, inner) =
-    "<div class=\"dash-card dash-span2\"><div class=\"dash-title\">" + esc(title)
-        + "</div>" + inner + "</div>"
+    "<div class=\"dash-card dash-span2\"><div class=\"dash-title\">" + esc(title) +
+        "</div>" + inner + "</div>"
 
 // A card that spans the full grid width.
 share fn wide(title, inner) =
-    "<div class=\"dash-card dash-wide\"><div class=\"dash-title\">" + esc(title)
-        + "</div>" + inner + "</div>"
+    "<div class=\"dash-card dash-wide\"><div class=\"dash-title\">" + esc(title) +
+        "</div>" + inner + "</div>"
 
 // The grid: cards flow into `columns` columns; KPI tiles and cards
 // mix freely, and dash-wide cards break out to full width.
@@ -65,22 +65,22 @@ share fn grid(cards, columns) = {
     for c in cards {
         inner = inner + c
     }
-    "<div class=\"dash-grid\" style=\"grid-template-columns:repeat("
-        + show(columns) + ",1fr)\">" + inner + "</div>"
+    "<div class=\"dash-grid\" style=\"grid-template-columns:repeat(" +
+        show(columns) + ",1fr)\">" + inner + "</div>"
 }
 
 // The kit's stylesheet — dark, matching the suite. Prepend it once to
 // the mount's HTML and the classes above just work.
-share fn styles() = "<style>"
-    + ".dash-grid{display:grid;gap:1rem;align-items:stretch}"
-    + ".dash-kpi{background:#101720;border:1px solid #1d2937;border-radius:12px;"
-    + "padding:0.9rem 1.1rem;display:flex;flex-direction:column;gap:0.15rem}"
-    + ".dash-label{color:#55697a;font-size:11px;text-transform:uppercase;letter-spacing:0.08em}"
-    + ".dash-value{color:#3ddc97;font-size:26px;font-weight:600;font-family:ui-monospace,monospace}"
-    + ".dash-note{color:#7f93a3;font-size:12px}"
-    + ".dash-card{background:#101720;border:1px solid #1d2937;border-radius:12px;"
-    + "padding:0.6rem;overflow:hidden}"
-    + ".dash-title{color:#7f93a3;font-size:12px;padding:0.1rem 0.3rem 0.4rem}"
-    + ".dash-wide{grid-column:1 / -1}"
-    + ".dash-span2{grid-column:span 2}"
-    + "</style>"
+share fn styles() = "<style>" +
+    ".dash-grid{display:grid;gap:1rem;align-items:stretch}" +
+    ".dash-kpi{background:#101720;border:1px solid #1d2937;border-radius:12px;" +
+    "padding:0.9rem 1.1rem;display:flex;flex-direction:column;gap:0.15rem}" +
+    ".dash-label{color:#55697a;font-size:11px;text-transform:uppercase;letter-spacing:0.08em}" +
+    ".dash-value{color:#3ddc97;font-size:26px;font-weight:600;font-family:ui-monospace,monospace}" +
+    ".dash-note{color:#7f93a3;font-size:12px}" +
+    ".dash-card{background:#101720;border:1px solid #1d2937;border-radius:12px;" +
+    "padding:0.6rem;overflow:hidden}" +
+    ".dash-title{color:#7f93a3;font-size:12px;padding:0.1rem 0.3rem 0.4rem}" +
+    ".dash-wide{grid-column:1 / -1}" +
+    ".dash-span2{grid-column:span 2}" +
+    "</style>"

@@ -1386,6 +1386,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             Value::Integer(i) => Some(crate::ast::ScalarView::Int(*i)),
             Value::String(s) => Some(crate::ast::ScalarView::Str(s.as_ref())),
             Value::Boolean(b) => Some(crate::ast::ScalarView::Bool(*b)),
+            Value::Tuple(items) => Some(crate::ast::ScalarView::Tuple(items.len())),
             _ => None,
         }
     }
@@ -1910,7 +1911,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     .map_err(|e| Self::name_uncallable(e, callee_name.as_deref()))
             }
             Expr::Lambda {
-                parameters, body, ..
+                parameters,
+                body,
+                return_type,
             } => {
                 // What this lambda expression is, worked out once: its body
                 // with identifiers resolved to slots, and every name the
@@ -1936,10 +1939,16 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                         })
                         .collect()
                 };
+                // A return annotation is checked as a named function's
+                // is (aliases resolved).
+                let return_check = return_type
+                    .as_ref()
+                    .map(|ann| self.resolve_annotation(ann))
+                    .and_then(|ann| crate::ast::return_check_of(Some(&ann), &[]));
                 Ok(Value::Function(Arc::new(Function {
                     name: None,
                     param_checks: crate::ast::param_checks_of(&parameters, &[]),
-                    return_check: None,
+                    return_check,
                     parameters,
                     body: shape.resolved.clone(),
                     closure: Arc::new(closure),
@@ -2221,7 +2230,20 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                             crate::ast::BitwiseOp::And => l & r,
                             crate::ast::BitwiseOp::Or => l | r,
                             crate::ast::BitwiseOp::Xor => l ^ r,
-                            crate::ast::BitwiseOp::Shl => l.wrapping_shl(shift_amount(r)?),
+                            // A shift that drops a set bit (or flips the sign)
+                            // overflows, as `*` by the power of two would.
+                            crate::ast::BitwiseOp::Shl => {
+                                let n = shift_amount(r)?;
+                                let shifted = l.wrapping_shl(n);
+                                if shifted.wrapping_shr(n) != l {
+                                    return Err(InterpreterError::RuntimeError {
+                                        message: "Integer overflow in shift (bigint.of gives \
+                                                  arbitrary precision)"
+                                            .to_string(),
+                                    });
+                                }
+                                shifted
+                            }
                             crate::ast::BitwiseOp::Shr => l.wrapping_shr(shift_amount(r)?),
                         };
                         Ok(Value::Integer(result))
@@ -4671,7 +4693,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
 
         // Dereference Arc to iterate over ImHashMap
         for (name, value) in self.environment.variables.iter() {
-            if !builtin_names.contains(name) {
+            // `__` names are internal (a test hook's namespace), not the
+            // user's.
+            if !builtin_names.contains(name) && !name.starts_with("__") {
                 user_vars.insert(name.clone(), value);
             }
         }
@@ -5518,8 +5542,20 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     ),
                 });
             }
+        } else if let (Value::Builtin(builtin), Some((name, _))) = (callee, named_args.first()) {
+            // A builtin's parameters have no names a call could use; read
+            // as positional, `bogus: "0"` landed in whatever slot came
+            // next. Refused, so honouring names later stays additive.
+            return Err(InterpreterError::RuntimeError {
+                message: format!(
+                    "{} takes its arguments by position: named argument '{}' is not accepted \
+                     by a builtin",
+                    builtin.name, name
+                ),
+            });
         } else {
-            // For builtin functions, just append named arguments as positional
+            // Other callables (constructors, callable modules) take the
+            // values in order.
             for (_, value) in named_args {
                 resolved_args.push(ArgSlot::Given(value));
             }

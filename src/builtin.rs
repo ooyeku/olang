@@ -2362,8 +2362,21 @@ impl BuiltinFunctions {
             // silently inventing a number. A non-finite float has no integer
             // value, so reject it instead.
             Value::Float(x) => {
-                if x.is_finite() {
-                    Ok(Value::Integer(*x as i64))
+                // Truncates toward zero; a Float whose integer part is
+                // outside the Int range raises, as integer overflow does
+                // (`as i64` saturated it to the largest Int).
+                let t = x.trunc();
+                if x.is_finite()
+                    && (-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&t)
+                {
+                    Ok(Value::Integer(t as i64))
+                } else if x.is_finite() {
+                    Err(InterpreterError::RuntimeError {
+                        message: format!(
+                            "to_int: {} is outside the Int range (bigint.of gives arbitrary precision)",
+                            crate::ast::format_float(*x)
+                        ),
+                    })
                 } else {
                     Err(InterpreterError::TypeError {
                         message: format!(
@@ -2805,16 +2818,24 @@ impl BuiltinFunctions {
         let list = list_rc.as_ref();
         let item = &args[1];
 
-        // Use parallel processing for larger lists to speed up search
-        if should_parallelize(list.len()) {
-            // PARALLEL VERSION - parallel search using any()
-            let result = list.par_iter().any(|i| i == item);
-            Ok(Value::Boolean(result))
+        // Membership is `==` (`ops::search_eq`): `contains([1, 2], 1.0)`
+        // is true as `1 == 1.0` is.
+        let eq = crate::interpreter::ops::search_eq;
+        let hit = |i: &Value| eq(i, item);
+        let found = if should_parallelize(list.len()) {
+            list.par_iter()
+                .map(hit)
+                .find_any(|r| !matches!(r, Ok(false)))
+                .unwrap_or(Ok(false))
         } else {
-            // SEQUENTIAL VERSION for small lists
-            let result = list.iter().any(|i| i == item);
-            Ok(Value::Boolean(result))
-        }
+            list.iter()
+                .map(hit)
+                .find(|r| !matches!(r, Ok(false)))
+                .unwrap_or(Ok(false))
+        };
+        found
+            .map(Value::Boolean)
+            .map_err(|message| InterpreterError::TypeError { message })
     }
 
     fn sum(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {

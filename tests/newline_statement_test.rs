@@ -47,8 +47,15 @@ range(1, 6)
 
 #[test]
 fn multiline_binary_expressions_still_parse() {
-    let src = "let x = 1 + 2\n    + 3\n    + 4\nx";
+    // A sum continues when its line ends with the operator; a line that
+    // starts with `+` or `-` is a statement of its own.
+    let src = "let x = 1 + 2 +\n    3 +\n    4\nx";
     assert_eq!(eval(src), Value::Integer(10));
+    assert!(Parser::new().parse("let x = 1 + 2\n    + 3\nx").is_err());
+    let src = "let x = 7\n-1\nx";
+    assert_eq!(eval(src), Value::Integer(7));
+    let src = "let x = [1, 2]\n    |> len\n    == 2\nx";
+    assert_eq!(eval(src), Value::Boolean(true));
 }
 
 #[test]

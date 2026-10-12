@@ -57,11 +57,11 @@ println("  " + rpad("workload", 24) + lpad("time", 9) + lpad("share", 8) + "   c
 println(bar)
 for r in results {
     let pct = if total > 0 => (r.ms * 100) / total else => 0
-    println("  " + rpad(r.name, 24)
-        + lpad(`${r.ms} ms`, 9)
-        + lpad(`${pct}%`, 8)
-        + "   " + show(r.check))
+    println("  " + rpad(r.name, 24) +
+        lpad(`${r.ms} ms`, 9) +
+        lpad(`${pct}%`, 8) +
+        "   " + show(r.check))
 }
 println(bar)
-println("  " + rpad("total", 24) + lpad(`${total} ms`, 9)
-    + `      over ${len(results)} workloads`)
+println("  " + rpad("total", 24) + lpad(`${total} ms`, 9) +
+    `      over ${len(results)} workloads`)

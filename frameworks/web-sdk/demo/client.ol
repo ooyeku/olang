@@ -85,8 +85,8 @@ fn view(s) = stack([
             tab("Open", "open", s.filter == "open"),
             tab("Shipped", "done", s.filter == "done")
         ]),
-        muted(to_string(len(visible(s))) + " of "
-            + to_string(len(s.tasks)) + " tasks")
+        muted(to_string(len(visible(s))) + " of " +
+            to_string(len(s.tasks)) + " tasks")
     ),
     list_card(map(visible(s), (t) => task_row(t))),
     burn_chart(s.tasks)

@@ -85,8 +85,8 @@ fn spec_problems(spec, where_) = {
     let mut problems = []
     for k in map_keys(spec) {
         if contains(spec_keys, k) == false => {
-            problems = problems + ["viz: unknown key '" + k + "' in " + where_
-                + " — the spec keys are " + join(spec_keys, ", ")]
+            problems = problems + ["viz: unknown key '" + k + "' in " + where_ +
+                " — the spec keys are " + join(spec_keys, ", ")]
         }
     }
     if map_has_key(spec, "layers") => {
@@ -351,8 +351,8 @@ fn is_mark(d) =
 // One line per mark family; values arrive as attribute strings.
 fn tip_text(d) = {
     let prefix = if map_has_key(d, "s") && d.s != "" => d.s + " · " else => ""
-    if map_has_key(d, "med") => prefix + "median " + d.med
-            + "  [" + d.q1 + " – " + d.q3 + "]"
+    if map_has_key(d, "med") => prefix + "median " + d.med +
+            "  [" + d.q1 + " – " + d.q3 + "]"
     else => {
         if map_has_key(d, "xl") => d.xl + " × " + d.yl + ": " + d.value
         else => {

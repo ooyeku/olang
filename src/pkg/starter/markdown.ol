@@ -102,11 +102,11 @@ fn is_quote(line) = str.starts_with(line, "> ") || (str.trim(line) == ">")
 fn list_item(text) = {
     let t = str.trim_start(text)
     if str.starts_with(t, "[ ] ") || t == "[ ]" =>
-        "<li class=\"task\"><input type=\"checkbox\" disabled> "
-            + render_inline(str.trim_start(str.substring(t, 3, str.length(t)))) + "</li>"
+        "<li class=\"task\"><input type=\"checkbox\" disabled> " +
+            render_inline(str.trim_start(str.substring(t, 3, str.length(t)))) + "</li>"
     else if str.starts_with(t, "[x] ") || str.starts_with(t, "[X] ") || t == "[x]" =>
-        "<li class=\"task done\"><input type=\"checkbox\" disabled checked> "
-            + render_inline(str.trim_start(str.substring(t, 3, str.length(t)))) + "</li>"
+        "<li class=\"task done\"><input type=\"checkbox\" disabled checked> " +
+            render_inline(str.trim_start(str.substring(t, 3, str.length(t)))) + "</li>"
     else => "<li>" + render_inline(text) + "</li>"
 }
 
@@ -219,8 +219,8 @@ test "blocks" {
     assert_eq(to_html("# Title"), "<h1>Title</h1>")
     assert_eq(to_html("- a\n- b"), "<ul><li>a</li><li>b</li></ul>")
     assert_eq(to_html("- [ ] write tests\n- [x] ship"),
-        "<ul><li class=\"task\"><input type=\"checkbox\" disabled> write tests</li>"
-        + "<li class=\"task done\"><input type=\"checkbox\" disabled checked> ship</li></ul>")
+        "<ul><li class=\"task\"><input type=\"checkbox\" disabled> write tests</li>" +
+        "<li class=\"task done\"><input type=\"checkbox\" disabled checked> ship</li></ul>")
     assert_eq(to_html("1. a\n2. b"), "<ol><li>a</li><li>b</li></ol>")
     assert_eq(to_html("> quoted\n> words"), "<blockquote><p>quoted words</p></blockquote>")
     assert_eq(to_html("---"), "<hr>")

@@ -230,7 +230,11 @@ impl Interpreter {
                     Pattern::Literal(Value::String(ev)) => ev.chars().next().unwrap_or('\0'),
                     _ => return Ok(false),
                 };
-                let ch = s.chars().next().unwrap_or('\0');
+                // One character only: `'a'..='z'` does not match "zebra".
+                let mut chars = s.chars();
+                let (Some(ch), None) = (chars.next(), chars.next()) else {
+                    return Ok(false);
+                };
 
                 if *inclusive {
                     Ok(ch >= start_char && ch <= end_char)

@@ -37,8 +37,8 @@ fn words(s) = filter(str.split(str.trim(s), " "), (w) => w != "")
 
 // A dim, right-aligned run counter header, e.g. "── run 3 · every 800ms ──".
 fn header(run, interval) =
-    term.dim("── ") + term.bold("run " + show(run))
-        + term.dim(" · every " + show(interval) + "ms · Ctrl-C to stop ──")
+    term.dim("── ") + term.bold("run " + show(run)) +
+        term.dim(" · every " + show(interval) + "ms · Ctrl-C to stop ──")
 
 // ── one streamed run of a single command ────────────────────────────────
 
@@ -121,11 +121,11 @@ fn watch(cmd, is_pipe, interval, count) = {
     }
     println("")
     if os.interrupted() =>
-        println(term.yellow("watch stopped") + term.dim(" after " + show(run)
-            + " run(s); last exit " + show(last)))
+        println(term.yellow("watch stopped") + term.dim(" after " + show(run) +
+            " run(s); last exit " + show(last)))
     else =>
-        println(term.green("done") + term.dim(" — " + show(run)
-            + " run(s); last exit " + show(last)))
+        println(term.green("done") + term.dim(" — " + show(run) +
+            " run(s); last exit " + show(last)))
 }
 
 // ── dispatch ────────────────────────────────────────────────────────────

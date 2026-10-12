@@ -175,7 +175,7 @@ any future review of the surface.
 | `typeof(v)` | runtime type name as a string |
 | `show(v)` | display rendering: strings bare, others as `to_string` |
 | `to_string(v)` | the same text as `show` (strings bare) |
-| `to_int(v)` | string/float → Int (floats truncate); a string that is not a number raises (`str.parse_int` is the `Result` form) |
+| `to_int(v)` | string/float → Int (floats truncate toward zero); a string that is not a number raises (`str.parse_int` is the `Result` form), and so does a Float outside the Int range (`to_int(1e30)`) or not finite |
 | `to_float(v)` | string/int → Float; a string that is not a number raises (`str.parse_float` is the `Result` form) |
 | `len(v)` | length of a list, a string (in characters), a tuple, or `Bytes`; a map raises, and its entry count is `map_len` |
 | `implements(v, "Trait")` | does the value's type implement the trait? |
@@ -199,7 +199,7 @@ println(show(len([1, 2, 3])) + " " + show(len("abcd")))
 | `range(n)` / `range(a, b)` / `range(a, b, step)` | list of integers from `a` (default 0) up to, excluding, `b`, by `step` (default 1) |
 | `head(xs)` / `tail(xs)` | first element / all but the first |
 | `take(xs, n)` / `skip(xs, n)` | first `n` / all but the first `n` (`drop` is `skip` under the name most languages pair with `take`) |
-| `reverse(xs)` / `sort(xs)` | reversed / ascending copy (numbers, strings, or tuples, which order lexicographically) |
+| `reverse(xs)` / `sort(xs)` | reversed / ascending copy (numbers, strings, or tuples, which order lexicographically); the sort is stable: elements that compare equal keep their order |
 | `contains(xs, v)` | membership test |
 | `concat(a, b)` | join two lists (or use `a + b`) |
 | `cons(v, xs)` | prepend an element |
@@ -525,7 +525,7 @@ standard library.
 | `col.sum_by(xs, f)` | total of a projection |
 | `col.count_by(xs, f)` / `col.frequencies(xs)` | maps of counts |
 | `col.min_by(xs, f)` / `col.max_by(xs, f)` | extremes by key function |
-| `col.sort_by(xs, f)` | ascending by key function |
+| `col.sort_by(xs, f)` | ascending by key function, stable: elements with equal keys keep their order |
 | `col.take_while(xs, p)` / `col.drop_while(xs, p)` | prefix operations |
 | `col.flat_map(xs, f)` | map then flatten one level |
 | `col.window(xs, n)` | sliding windows |
@@ -1333,11 +1333,105 @@ olang scripts, not compiler changes.
 
 Nodes are discriminated-union maps. Top-level statements carry `line` and
 `column`; expressions nest (a `call`'s `callee` and `args` are themselves
-node maps). Common kinds: `use` (`path`, `items`), `fn` (`name`, `params`,
-`shared`, `body`), `let`, `type`, `test`, `call` (`target` is the dotted
-callee like `fs.read_file`, `args`), `field`, `binop`, `if`, `match`,
-`for`, `pipeline`, and the literals (`int`, `float`, `str`, `bool`,
-`ident`).
+node maps; `target` is the dotted callee, like `fs.read_file`). The table
+lists every `kind` and the fields a node of it has; a pattern node is
+`pattern/<form>` and a type node `type/<form>` (their `kind` is `pattern`
+or `type`, and the rest is in `form`). A field shown here may be absent
+when the source has no such part: an `if` with no `else`, a `break` or
+`return` with no value, an arm with no `guard`, an `index_assign` of a
+plain list (`field` is there for `m.k[i] = v`). A parameter, a struct's
+field, and a pattern's field are plain maps without a `kind`. Kinds and
+fields are only ever added; `tests/meta_parse_nodes_test.rs` holds this
+table to what `meta.parse` produces.
+
+<!-- meta.parse nodes -->
+| Kind | Fields |
+|---|---|
+| `arm` | `body`, `guard`, `pattern` |
+| `assert` | `value` |
+| `assert_eq` | `left`, `right` |
+| `assert_false` | `value` |
+| `assert_ne` | `left`, `right` |
+| `assert_true` | `value` |
+| `assign` | `target`, `value` |
+| `binop` | `left`, `op`, `right` |
+| `block` | `body` |
+| `bool` | `value` |
+| `break` | `value` |
+| `call` | `args`, `callee`, `target` |
+| `continue` | — |
+| `decorated_type` | `column`, `decl`, `decorators`, `line` |
+| `entry` | `key`, `value` |
+| `err` | `value` |
+| `error` | `column`, `line`, `name` |
+| `expr` | `column`, `line`, `value` |
+| `field` | `field`, `object` |
+| `field_value` | `name`, `value` |
+| `float` | `value` |
+| `fn` | `body`, `column`, `line`, `name`, `parameters`, `params`, `return_type`, `shared`, `type_params` |
+| `for` | `body`, `iterable`, `var` |
+| `ident` | `name` |
+| `if` | `condition`, `else`, `then` |
+| `impl` | `column`, `line`, `trait`, `type` |
+| `index` | `index`, `object` |
+| `index_assign` | `field`, `index`, `target`, `value` |
+| `int` | `value` |
+| `lambda` | `body`, `parameters`, `params` |
+| `let` | `column`, `line`, `mutable`, `name`, `pattern`, `shared`, `type`, `value` |
+| `list` | `items` |
+| `loop` | `body` |
+| `macro_call` | `args`, `name` |
+| `map` | `entries`, `entry_count` |
+| `match` | `arm_count`, `arms`, `value` |
+| `meta_fn` | `body`, `column`, `line`, `name`, `parameters`, `params`, `return_type`, `shared`, `type_params` |
+| `named_arg` | `name`, `value` |
+| `object` | `fields` |
+| `ok` | `value` |
+| `par_for` | `body`, `iterable`, `var` |
+| `pattern/enum` | `patterns`, `text`, `variant` |
+| `pattern/err` | `inner`, `text` |
+| `pattern/ident` | `name`, `text` |
+| `pattern/list` | `items`, `rest`, `text` |
+| `pattern/literal` | `text`, `value` |
+| `pattern/ok` | `inner`, `text` |
+| `pattern/or` | `alternatives`, `text` |
+| `pattern/range` | `end`, `inclusive`, `start`, `text` |
+| `pattern/record` | `fields`, `text` |
+| `pattern/struct` | `fields`, `text`, `type` |
+| `pattern/tuple` | `items`, `text` |
+| `pattern/wildcard` | `text` |
+| `pipeline` | `left`, `right` |
+| `range` | `end`, `inclusive`, `start` |
+| `return` | `value` |
+| `spawn` | `value` |
+| `spread` | `value` |
+| `spread_literal` | `of`, `parts` |
+| `str` | `value` |
+| `struct` | `fields`, `type` |
+| `template` | `parts` |
+| `test` | `body`, `column`, `line`, `name` |
+| `trait` | `column`, `line`, `name` |
+| `try` | `value` |
+| `tuple` | `items` |
+| `type` | `column`, `definition`, `fields`, `line`, `name`, `type`, `type_params`, `variants` |
+| `type/basic` | `name`, `text` |
+| `type/function` | `params`, `returns`, `text` |
+| `type/generic` | `args`, `base`, `text` |
+| `type/list` | `element`, `text` |
+| `type/literal` | `text`, `value` |
+| `type/named` | `name`, `text` |
+| `type/record` | `fields`, `text` |
+| `type/tuple` | `text`, `types` |
+| `type/union` | `text`, `types` |
+| `unary` | `op`, `operand` |
+| `use` | `column`, `items`, `line`, `path`, `shared` |
+| `while` | `body`, `condition` |
+<!-- /meta.parse nodes -->
+
+`spread_literal` is a map or object literal with spreads (`#{ ...m, "k":
+v }`): `of` is `map` or `object`, and `parts` the written runs (literal
+nodes of that kind) and the spreads (`spread` nodes), in source order.
+`index_assign` is `xs[i] = v` or `m.k[i] = v`.
 
 ```olang
 // A dependency lister — a file's imports — in four lines over meta.parse.

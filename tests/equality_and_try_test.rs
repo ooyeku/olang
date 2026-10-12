@@ -147,39 +147,41 @@ fn question_mark_at_top_level_is_an_error() {
 // ── functions ───────────────────────────────────────────────────────
 
 #[test]
-fn inside_a_value_a_function_equals_itself_and_not_one_over_other_values() {
-    let v = eval(
-        r#"
-        fn mk(x) = (y) => x + y
-        let f = mk(1)
-        let g = f
-        // `==` refuses two bare functions; inside a value they compare
-        [[f] == [g], [f] == [mk(2)], #{ "f": len } == #{ "f": len }, [len] == [str.length]]
-    "#,
+fn a_function_has_no_equality_inside_a_value_either() {
+    // `==` refuses two bare functions, and so a value holding one: the
+    // comparison would have to answer for the function.
+    for src in [
+        "fn mk(x) = (y) => x + y\nlet f = mk(1)\n[f] == [f]",
+        "#{ \"f\": len } == #{ \"f\": len }",
+        "[len] == [str.length]",
+        "fn mk(x) = (y) => x + y\nOk(mk(1)) == Ok(mk(2))",
+    ] {
+        let err = eval_res(src).expect_err(src);
+        assert!(err.contains("cannot compare"), "{src}: {err}");
+    }
+    // One collection compared with itself is equal without a walk.
+    assert_eq!(
+        eval("fn mk(x) = (y) => x + y\nlet xs = [mk(1)]\nxs == xs"),
+        Value::Boolean(true)
     );
-    assert_eq!(format!("{v}"), "[true, false, true, false]");
 }
 
 #[test]
-fn comparing_closures_does_not_walk_what_they_capture() {
+fn comparing_values_holding_closures_raises_without_walking_them() {
     // A closure captures the module's functions, each with its own
-    // environment; comparing them structurally took seconds or nothing,
-    // depending on hash order. Captured functions compare by identity.
+    // environment; comparing them structurally once took seconds. A value
+    // holding one is now refused at the first function found.
     let src = r#"
         fn helper1(x) = x + 1
         fn helper2(x) = helper1(x) * 2
         fn helper3(x) = helper2(x) - helper1(x)
         fn view(m) = #{ "rows": #{ "count": 1000000, "cell": (i, j) => helper3(m + i + j) } }
-        let mut same = 0
-        let t0 = time.monotonic()
-        for k in 0..2000 {
-            let a = view(k)
-            let b = view(k + 1)
-            if map_get(a, "rows") == map_get(b, "rows") => { same = same + 1 }
-        }
-        [same, time.monotonic() - t0 < 2000.0]
+        map_get(view(1), "rows") == map_get(view(2), "rows")
     "#;
-    assert_eq!(format!("{}", eval(src)), "[0, true]");
+    let t0 = std::time::Instant::now();
+    let err = eval_res(src).expect_err("refused");
+    assert!(err.contains("cannot compare"), "{err}");
+    assert!(t0.elapsed().as_secs() < 2);
 }
 
 // Compiled code (a function hot enough for the bytecode tier) compares

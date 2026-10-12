@@ -1217,6 +1217,8 @@ pub enum ScalarView<'a> {
     Int(i64),
     Str(&'a str),
     Bool(bool),
+    /// A tuple, by its length: what a tuple annotation's arity checks.
+    Tuple(usize),
 }
 
 /// A struct field's declared type reduced to the subset the runtime can
@@ -1245,6 +1247,15 @@ pub enum FieldTypeCheck {
     List,
     Map,
     Tuple,
+    /// `(A, B)`: a tuple of exactly that many elements (the elements'
+    /// types are the checker's concern, as a List's are). `display` is
+    /// the annotation's source, for error text.
+    TupleOf {
+        arity: usize,
+        display: String,
+    },
+    /// `()`: the value is Unit.
+    Unit,
     /// `Result<T, E>`: the value must be an Ok/Err, and the payload of
     /// whichever side is present checks *shallowly* against its declared
     /// type. Unlike containers, a Result holds one payload, so this stays
@@ -1299,7 +1310,11 @@ impl FieldTypeCheck {
             // Containers check shallowly: List<Int> promises "a List".
             TypeAnnotation::List(_) => Some(Self::List),
             TypeAnnotation::Map { .. } => Some(Self::Map),
-            TypeAnnotation::Tuple(_) => Some(Self::Tuple),
+            TypeAnnotation::Tuple(elements) => Some(Self::TupleOf {
+                arity: elements.len(),
+                display: ann.display_source(),
+            }),
+            TypeAnnotation::Unit => Some(Self::Unit),
             // Result<T, E> checks the present side's payload shallowly.
             TypeAnnotation::Result { ok_type, err_type } => Some(Self::Result {
                 ok: Self::from_annotation(ok_type, type_params).map(Box::new),
@@ -1371,7 +1386,8 @@ impl FieldTypeCheck {
             Self::String => "String",
             Self::List => "List",
             Self::Map => "Map",
-            Self::Tuple => "Tuple",
+            Self::Tuple | Self::TupleOf { .. } => "Tuple",
+            Self::Unit => "()",
             Self::Result { .. } => "Result",
             Self::Function { .. } => "Function",
             Self::Literal(LitCheck::Int(_)) => "Int",
@@ -1391,6 +1407,9 @@ impl FieldTypeCheck {
             Self::Union(branches) => branches.iter().any(|b| b.accepts(actual)),
             // Builtins are callable too.
             Self::Function { .. } => actual == "Function" || actual == "Builtin",
+            Self::Unit => actual == "Unit",
+            // A name says a tuple, not how long: only the value proves it.
+            Self::TupleOf { .. } => false,
             // A name alone can never prove a VALUE; value-aware checking
             // happens in check_value, and static discharge must refuse.
             Self::Literal(_) => false,
@@ -1409,7 +1428,7 @@ impl FieldTypeCheck {
                 };
                 format!("Result<{}, {}>", side(ok), side(err))
             }
-            Self::Function { display, .. } => display.clone(),
+            Self::Function { display, .. } | Self::TupleOf { display, .. } => display.clone(),
             Self::Literal(lit) => lit.display(),
             Self::Union(branches) => branches
                 .iter()
@@ -1454,7 +1473,7 @@ impl FieldTypeCheck {
                 Some(ScalarView::Str(v)) => format!("\"{}\"", v),
                 Some(ScalarView::Int(v)) => v.to_string(),
                 Some(ScalarView::Bool(v)) => v.to_string(),
-                None => type_name.to_string(),
+                Some(ScalarView::Tuple(_)) | None => type_name.to_string(),
             };
             return Some((lit.display(), actual));
         }
@@ -1474,9 +1493,16 @@ impl FieldTypeCheck {
                 (Some(ScalarView::Bool(v)), _) => v.to_string(),
                 (None, Some((true, p))) => format!("Ok({})", p),
                 (None, Some((false, p))) => format!("Err({})", p),
-                (None, None) => type_name.to_string(),
+                (Some(ScalarView::Tuple(_)), _) | (None, None) => type_name.to_string(),
             };
             return Some((self.display_name(), actual));
+        }
+        if let Self::TupleOf { arity, display } = self {
+            return match scalar {
+                Some(ScalarView::Tuple(n)) if n == *arity => None,
+                Some(ScalarView::Tuple(n)) => Some((display.clone(), format!("a {}-tuple", n))),
+                _ => Some((display.clone(), type_name.to_string())),
+            };
         }
         if !self.accepts(type_name) {
             // Function expectations name the signature, not "Function" —

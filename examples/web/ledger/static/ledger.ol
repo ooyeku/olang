@@ -161,14 +161,14 @@ fn row_html(t) = {
     let del = if armed() == id
         => "<button class=\"sure\" id=\"del-" + id + "\" title=\"click again to delete\">sure?</button>"
         else => "<button class=\"del\" id=\"del-" + id + "\" title=\"delete\">×</button>"
-    "<tr data-key=\"" + id + "\">"
-        + "<td class=\"date\">" + esc(t.date) + "</td>"
-        + "<td class=\"cat\">" + esc(t.category) + "</td>"
-        + "<td><input class=\"cell\" id=\"note-" + id + "\" value=\"" + esc(t.note) + "\"></td>"
-        + "<td class=\"amt " + tone + "\"><input class=\"cell\" style=\"width:7rem;text-align:right\" id=\"amt-"
-        + id + "\" value=\"" + dollars(cents) + "\"></td>"
-        + "<td class=\"act\">" + del + "</td>"
-        + "</tr>"
+    "<tr data-key=\"" + id + "\">" +
+        "<td class=\"date\">" + esc(t.date) + "</td>" +
+        "<td class=\"cat\">" + esc(t.category) + "</td>" +
+        "<td><input class=\"cell\" id=\"note-" + id + "\" value=\"" + esc(t.note) + "\"></td>" +
+        "<td class=\"amt " + tone + "\"><input class=\"cell\" style=\"width:7rem;text-align:right\" id=\"amt-" +
+        id + "\" value=\"" + dollars(cents) + "\"></td>" +
+        "<td class=\"act\">" + del + "</td>" +
+        "</tr>"
 }
 
 fn month_rows() = txs() |> filter((t) => month_of(t.date) == cur_month())
@@ -186,10 +186,10 @@ fn render_rows() = {
         |> map((t) => 0 - t.amount_cents) |> sum()
     let net = income - spent
     dom.set_html(dom.query("#summary"),
-        "<div class=\"stat\"><small>in</small><b class=\"pos\">" + money(income) + "</b></div>"
-        + "<div class=\"stat\"><small>out</small><b>" + money(spent) + "</b></div>"
-        + "<div class=\"stat\"><small>net</small><b class=\"" + (if net >= 0 => "pos" else => "neg") + "\">"
-        + money(net) + "</b></div>")
+        "<div class=\"stat\"><small>in</small><b class=\"pos\">" + money(income) + "</b></div>" +
+        "<div class=\"stat\"><small>out</small><b>" + money(spent) + "</b></div>" +
+        "<div class=\"stat\"><small>net</small><b class=\"" + (if net >= 0 => "pos" else => "neg") + "\">" +
+        money(net) + "</b></div>")
 }
 
 // ── rendering: budgets ─────────────────────────────────────────────────
@@ -231,13 +231,13 @@ fn budget_row_html(c, spent_map) = {
     let pct = if planned == 0 => (if spent > 0 => 100 else => 0)
         else => { let p = spent * 100 / planned; if p > 100 => 100 else => p }
     let bar_tone = if planned == 0 => "none" else => { if over => "over" else => "" }
-    "<div class=\"budget-row\">"
-        + "<span class=\"name\">" + esc(c.name) + "</span>"
-        + status
-        + "<input id=\"bud-" + key + "\" placeholder=\"0.00\" inputmode=\"decimal\" value=\""
-        + (if planned == 0 => "" else => dollars(planned)) + "\">"
-        + "<div class=\"bar\"><i class=\"" + bar_tone + "\" style=\"width:" + show(pct) + "%\"></i></div>"
-        + "</div>"
+    "<div class=\"budget-row\">" +
+        "<span class=\"name\">" + esc(c.name) + "</span>" +
+        status +
+        "<input id=\"bud-" + key + "\" placeholder=\"0.00\" inputmode=\"decimal\" value=\"" +
+        (if planned == 0 => "" else => dollars(planned)) + "\">" +
+        "<div class=\"bar\"><i class=\"" + bar_tone + "\" style=\"width:" + show(pct) + "%\"></i></div>" +
+        "</div>"
 }
 
 fn render_budgets() = {
@@ -262,12 +262,12 @@ fn cat_row_html(c) = {
     let del = if armed_cat() == id
         => "<button class=\"sure\" id=\"cdel-" + id + "\" title=\"click again to delete\">sure?</button>"
         else => "<button class=\"del\" id=\"cdel-" + id + "\" title=\"delete\">×</button>"
-    "<div class=\"cat-row\" data-key=\"" + id + "\">"
-        + "<input class=\"cell\" id=\"cname-" + id + "\" value=\"" + esc(c.name) + "\">"
-        + "<span class=\"kind " + (if kind == "income" => "income" else => "") + "\">" + esc(kind) + "</span>"
-        + "<span class=\"count\" title=\"transactions\">" + show(n) + "</span>"
-        + del
-        + "</div>"
+    "<div class=\"cat-row\" data-key=\"" + id + "\">" +
+        "<input class=\"cell\" id=\"cname-" + id + "\" value=\"" + esc(c.name) + "\">" +
+        "<span class=\"kind " + (if kind == "income" => "income" else => "") + "\">" + esc(kind) + "</span>" +
+        "<span class=\"count\" title=\"transactions\">" + show(n) + "</span>" +
+        del +
+        "</div>"
 }
 
 fn render_cats_manager() =
@@ -353,8 +353,8 @@ fn render_trend_chart() = {
         // rows arrive in data order — put "in" rows first so mint is
         // always money in and red always money out.
         let rows = ods.to_records(by_month)
-        let ordered = (rows |> filter((r) => r.kind == "in"))
-            + (rows |> filter((r) => r.kind == "out"))
+        let ordered = (rows |> filter((r) => r.kind == "in")) +
+            (rows |> filter((r) => r.kind == "out"))
         dom.set_html(dom.query("#chart-trend"), viz.chart(themed(#{
             "data": ordered,
             "mark": "bar", "x": "month", "y": "dollars",
@@ -381,8 +381,8 @@ fn render_all() = {
 
 fn render_category_select() = {
     let options = cats() |> map((c) =>
-        "<option value=\"" + show(c.id) + "\">"
-        + esc(c.name) + "</option>") |> join("")
+        "<option value=\"" + show(c.id) + "\">" +
+        esc(c.name) + "</option>") |> join("")
     let el = dom.query("#new-category")
     let before = dom.value(el)
     dom.set_html(el, options)
@@ -460,10 +460,10 @@ fn add_transaction() = {
                 let a = if entered < 0 => 0 - entered else => entered
                 let cents = if selected_kind() == "expense" => 0 - a else => a
                 let cid = unwrap_or(str.parse_int(dom.value(dom.query("#new-category"))), 0)
-                let body = "{\"date\": \"" + date + "\""
-                    + ", \"amount_cents\": " + show(cents)
-                    + ", \"category_id\": " + show(cid)
-                    + ", \"note\": \"" + json_esc(str.trim(dom.value(dom.query("#new-note")))) + "\"}"
+                let body = "{\"date\": \"" + date + "\"" +
+                    ", \"amount_cents\": " + show(cents) +
+                    ", \"category_id\": " + show(cid) +
+                    ", \"note\": \"" + json_esc(str.trim(dom.value(dom.query("#new-note")))) + "\"}"
                 dom.fetch_json("POST", "/api/transactions", body, (resp) => {
                     if map_has_key(resp, "error") => toast_error("add failed", resp)
                     else => {
@@ -528,9 +528,9 @@ fn on_budget_change(e) = {
             Err(msg) => { toast("budget: " + msg, "err") reload() },
             Ok(c) => if c < 0 => { toast("budget: must not be negative", "err") reload() }
                 else => {
-                    let body = "{\"category_id\": " + show(cid)
-                        + ", \"month\": \"" + cur_month() + "\""
-                        + ", \"amount_cents\": " + show(c) + "}"
+                    let body = "{\"category_id\": " + show(cid) +
+                        ", \"month\": \"" + cur_month() + "\"" +
+                        ", \"amount_cents\": " + show(c) + "}"
                     dom.fetch_json("PUT", "/api/budgets", body, (resp) => {
                         if map_has_key(resp, "error") => toast_error("budget failed", resp)
                         else => { toast(if c == 0 => "budget cleared" else => "budget set", "ok") reload() }
@@ -546,8 +546,8 @@ fn add_category() = {
     let name = str.trim(dom.value(dom.query("#cat-name")))
     if name == "" => toast("category: name it first", "err")
     else => {
-        let body = "{\"name\": \"" + json_esc(name)
-            + "\", \"kind\": \"" + dom.value(dom.query("#cat-kind")) + "\"}"
+        let body = "{\"name\": \"" + json_esc(name) +
+            "\", \"kind\": \"" + dom.value(dom.query("#cat-kind")) + "\"}"
         dom.fetch_json("POST", "/api/categories", body, (resp) => {
             if map_has_key(resp, "error") => toast_error("category", resp)
             else => {

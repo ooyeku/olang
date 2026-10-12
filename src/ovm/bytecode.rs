@@ -5070,7 +5070,17 @@ impl BytecodeVm {
                                 crate::ast::BitwiseOp::And => l & r,
                                 crate::ast::BitwiseOp::Or => l | r,
                                 crate::ast::BitwiseOp::Xor => l ^ r,
-                                crate::ast::BitwiseOp::Shl => l.wrapping_shl(shift(r)?),
+                                crate::ast::BitwiseOp::Shl => {
+                                    let n = shift(r)?;
+                                    let shifted = l.wrapping_shl(n);
+                                    if shifted.wrapping_shr(n) != l {
+                                        return Err(BytecodeError::RuntimeError(
+                                            "Integer overflow in shift (bigint.of gives arbitrary precision)"
+                                                .to_string(),
+                                        ));
+                                    }
+                                    shifted
+                                }
                                 crate::ast::BitwiseOp::Shr => l.wrapping_shr(shift(r)?),
                             })
                         }
@@ -6334,6 +6344,49 @@ impl BytecodeVm {
                 && !(list_like(&left.data) && list_like(&right.data))
             {
                 return Ok(OvmValue::new_boolean(matches!(op, BinaryOp::NotEqual)));
+            }
+            // A container holding a function, a builtin or a range has no
+            // equality, as on the interpreter (`ops::uncomparable_error`);
+            // a Result compares as its payload does; an Int and a Float
+            // are equal only exactly.
+            let container = |d: &ValueData| {
+                map_like(d)
+                    || list_like(d)
+                    || matches!(
+                        d,
+                        ValueData::Tuple(_) | ValueData::Enum(_) | ValueData::Result(_)
+                    )
+            };
+            if container(&left.data) && container(&right.data) {
+                let same = match (&left.data, &right.data) {
+                    (ValueData::List(x), ValueData::List(y))
+                    | (ValueData::Tuple(x), ValueData::Tuple(y)) => Arc::ptr_eq(x, y),
+                    (ValueData::Map(x), ValueData::Map(y)) => Arc::ptr_eq(x, y),
+                    (ValueData::AstMap(x), ValueData::AstMap(y)) => Arc::ptr_eq(x, y),
+                    (ValueData::AstList(x), ValueData::AstList(y)) => Arc::ptr_eq(x, y),
+                    _ => false,
+                };
+                if !same && let Some(kind) = left.uncomparable().or_else(|| right.uncomparable()) {
+                    return Err(BytecodeError::TypeError(format!(
+                        "cannot compare with ==: a {} has no equality, and a list, map or \
+                         record holding one has none either; compare the parts that hold data",
+                        kind
+                    )));
+                }
+                if let (ValueData::Result(_), ValueData::Result(_)) = (&left.data, &right.data) {
+                    let eq = left.structural_eq(right);
+                    return Ok(OvmValue::new_boolean(eq == matches!(op, BinaryOp::Equal)));
+                }
+            }
+            let int_float = match (&left.data, &right.data) {
+                (ValueData::Integer(i), ValueData::Float(f))
+                | (ValueData::Float(f), ValueData::Integer(i)) => {
+                    Some(crate::interpreter::ops::int_float_eq(*i, *f))
+                }
+                _ => None,
+            };
+            if let Some(eq) = int_float {
+                return Ok(OvmValue::new_boolean(eq == matches!(op, BinaryOp::Equal)));
             }
         }
 
@@ -11461,8 +11514,10 @@ impl BytecodeCompiler {
             // through the lambda machinery's bound-names rule, matching the
             // conservative treatment of names bound later.
             Expr::Lambda {
-                parameters, body, ..
-            } => self.compile_lambda(parameters, body, None),
+                parameters,
+                body,
+                return_type,
+            } => self.compile_lambda(parameters, body, None, return_type.as_ref()),
 
             Expr::Tuple(items) => {
                 // The empty tuple is Unit — `()` in source. The
@@ -12121,6 +12176,7 @@ impl BytecodeCompiler {
         parameters: &[crate::ast::Parameter],
         body: &Expr,
         self_name: Option<&str>,
+        return_type: Option<&crate::ast::TypeAnnotation>,
     ) -> Result<Register, BytecodeError> {
         // Only lambdas that reference nothing but their own parameters.
         // Such a lambda is a compile-time constant: with no free
@@ -12221,6 +12277,7 @@ impl BytecodeCompiler {
         // names its closure took, looked up again when used
         let lambda_src = || crate::compile_cache::LambdaSrc {
             self_name: self_name.map(str::to_string),
+            return_type: return_type.cloned(),
             params: parameters.to_vec(),
             body: body.clone(),
             captured: captured.keys().cloned().collect(),
@@ -12230,7 +12287,7 @@ impl BytecodeCompiler {
         let function = crate::ast::Function {
             name: self_name.map(|n| n.to_string()),
             param_checks: crate::ast::param_checks_of(parameters, &[]),
-            return_check: None,
+            return_check: crate::ast::return_check_of(return_type, &[]),
             parameters: parameters.to_vec(),
             body: std::sync::Arc::new(body.clone()),
             // Values cloned from the enclosing snapshot — free
@@ -12280,7 +12337,7 @@ impl BytecodeCompiler {
                 type_params: Vec::new(),
                 type_param_bounds: Vec::new(),
                 parameters: hidden_params,
-                return_type: None,
+                return_type: return_type.cloned(),
                 body: body.clone(),
             },
             std::sync::Arc::new(captured),
@@ -13469,7 +13526,9 @@ impl BytecodeCompiler {
                     (
                         crate::ast::Pattern::Identifier(name),
                         Some(Expr::Lambda {
-                            parameters, body, ..
+                            parameters,
+                            body,
+                            return_type,
                         }),
                     ) if !parameters.iter().any(|p| &p.name == name)
                         && !self.local_variables.contains_key(name)
@@ -13480,14 +13539,14 @@ impl BytecodeCompiler {
                             parameters.iter().map(|p| p.name.clone()).collect();
                         let mut free = std::collections::HashSet::new();
                         (Self::collect_free_vars(body, &bound, &mut free) && free.contains(name))
-                            .then_some((name.as_str(), parameters, body))
+                            .then_some((name.as_str(), parameters, body, return_type))
                     }
                     _ => None,
                 };
                 let value_reg = match &let_decl.value {
                     _ if self_named.is_some() => {
-                        let (name, parameters, body) = self_named.expect("checked");
-                        self.compile_lambda(parameters, body, Some(name))?
+                        let (name, parameters, body, return_type) = self_named.expect("checked");
+                        self.compile_lambda(parameters, body, Some(name), return_type.as_ref())?
                     }
                     Some(expr) => self.compile_expression(expr)?,
                     None => {
@@ -13533,8 +13592,12 @@ impl BytecodeCompiler {
                 // a self-binding, so recursion resolves to its own compiled
                 // id and an escaped copy (which carries the name) recurses
                 // interpreted via the call-time self-definition.
-                let value_reg =
-                    self.compile_lambda(&decl.parameters, &decl.body, Some(&decl.name))?;
+                let value_reg = self.compile_lambda(
+                    &decl.parameters,
+                    &decl.body,
+                    Some(&decl.name),
+                    decl.return_type.as_ref(),
+                )?;
                 let var_reg = self.register_allocator.allocate_register();
                 self.local_variables.insert(decl.name.clone(), var_reg);
                 self.emitter.emit_move(var_reg, value_reg);
@@ -14559,6 +14622,7 @@ fn ovm_value_view(
         ValueData::Integer(i) => Some(crate::ast::ScalarView::Int(*i)),
         ValueData::String(s) => Some(crate::ast::ScalarView::Str(s.as_str())),
         ValueData::Boolean(b) => Some(crate::ast::ScalarView::Bool(*b)),
+        ValueData::Tuple(items) => Some(crate::ast::ScalarView::Tuple(items.len())),
         _ => None,
     };
     (v.type_name(), payload, arity, scalar)

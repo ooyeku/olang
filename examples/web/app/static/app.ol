@@ -36,40 +36,40 @@ fn set_st(name, v) = dom.set_value(dom.query("#st-" + name), v)
 
 fn issues_url() = {
     let q = str.trim(dom.value(dom.query("#search")))
-    "/api/issues?limit=200&sort=" + st("sort") + "&order=" + st("order")
-        + (if st("status") != "" => "&status=" + st("status") else => "")
-        + (if q != "" => "&q=" + q else => "")
+    "/api/issues?limit=200&sort=" + st("sort") + "&order=" + st("order") +
+        (if st("status") != "" => "&status=" + st("status") else => "") +
+        (if q != "" => "&q=" + q else => "")
 }
 
 // ── rendering: rows ────────────────────────────────────────────────────
 
 fn pill(kind, value, id_prefix, id) =
-    "<button class=\"pill " + kind + "-" + value + "\" id=\"" + id_prefix + id + "\">"
-        + esc(value) + "</button>"
+    "<button class=\"pill " + kind + "-" + value + "\" id=\"" + id_prefix + id + "\">" +
+        esc(value) + "</button>"
 
 fn row_html(issue) = {
     let id = show(issue.id)
     let status = issue.status
     let selected = if st("sel") == id => " selected" else => ""
-    "<tr class=\"status-" + status + selected + "\" data-key=\"" + id + "\">"
-        + "<td class=\"id\">" + id + "</td>"
-        + "<td class=\"title-cell\" id=\"open-" + id + "\">" + esc(issue.title) + "</td>"
-        + "<td>" + pill("st", status, "adv-", id) + "</td>"
-        + "<td>" + pill("pr", issue.priority, "pri-", id) + "</td>"
-        + "<td><input class=\"cell\" id=\"asg-" + id + "\" value=\""
-        + esc(issue.assignee) + "\"></td>"
-        + "<td class=\"num\"><input class=\"cell num\" id=\"pts-" + id + "\" value=\""
-        + show(issue.points) + "\"></td>"
-        + "<td class=\"del\"><button id=\"del-" + id + "\" title=\"delete\">×</button></td>"
-        + "</tr>"
+    "<tr class=\"status-" + status + selected + "\" data-key=\"" + id + "\">" +
+        "<td class=\"id\">" + id + "</td>" +
+        "<td class=\"title-cell\" id=\"open-" + id + "\">" + esc(issue.title) + "</td>" +
+        "<td>" + pill("st", status, "adv-", id) + "</td>" +
+        "<td>" + pill("pr", issue.priority, "pri-", id) + "</td>" +
+        "<td><input class=\"cell\" id=\"asg-" + id + "\" value=\"" +
+        esc(issue.assignee) + "\"></td>" +
+        "<td class=\"num\"><input class=\"cell num\" id=\"pts-" + id + "\" value=\"" +
+        show(issue.points) + "\"></td>" +
+        "<td class=\"del\"><button id=\"del-" + id + "\" title=\"delete\">×</button></td>" +
+        "</tr>"
 }
 
 fn update_footer(items, total) = {
     let by = (s) => len(items |> filter((i) => i.status == s))
     dom.set_text(dom.query("#count"), show(total) + " issues")
     dom.set_text(dom.query("#summary"),
-        show(by("open")) + " open · " + show(by("in-progress"))
-        + " in progress · " + show(by("done")) + " done")
+        show(by("open")) + " open · " + show(by("in-progress")) +
+        " in progress · " + show(by("done")) + " done")
 }
 
 fn render_rows(items, total) = {
@@ -83,8 +83,8 @@ fn render_rows(items, total) = {
 // ── rendering: stats (ods computes the median, in the browser) ────────
 
 fn stat_card(n, label, tone) =
-    "<div class=\"stat " + tone + "\"><div class=\"n\">" + n
-        + "</div><div class=\"l\">" + label + "</div></div>"
+    "<div class=\"stat " + tone + "\"><div class=\"n\">" + n +
+        "</div><div class=\"l\">" + label + "</div></div>"
 
 fn status_count(rows, name) = {
     let hit = rows |> filter((r) => r.status == name)
@@ -99,21 +99,21 @@ fn render_stats() = {
         // point_quantiles is computed server-side on the ods data stack.
         let median = show(to_int(s.point_quantiles.p50))
         dom.set_html(dom.query("#stats"),
-            stat_card(show(totals.issues), "issues", "")
-            + stat_card(show(status_count(by, "open")), "open", "blue")
-            + stat_card(show(status_count(by, "in-progress")), "in progress", "amber")
-            + stat_card(show(status_count(by, "done")), "done", "mint")
-            + stat_card(show(totals.points), "total points", "")
-            + stat_card(median, "median points · ods", "mint"))
+            stat_card(show(totals.issues), "issues", "") +
+            stat_card(show(status_count(by, "open")), "open", "blue") +
+            stat_card(show(status_count(by, "in-progress")), "in progress", "amber") +
+            stat_card(show(status_count(by, "done")), "done", "mint") +
+            stat_card(show(totals.points), "total points", "") +
+            stat_card(median, "median points · ods", "mint"))
     })
 }
 
 // ── rendering: the activity ticker ─────────────────────────────────────
 
 fn event_html(ev) =
-    "<span class=\"ev\"><span class=\"k\">" + esc(ev.action)
-        + "</span> <b>#" + show(ev.issue_id) + "</b> "
-        + esc(ev.detail) + "</span>"
+    "<span class=\"ev\"><span class=\"k\">" + esc(ev.action) +
+        "</span> <b>#" + show(ev.issue_id) + "</b> " +
+        esc(ev.detail) + "</span>"
 
 fn render_activity() = {
     dom.fetch("GET", "/api/activity?limit=8", "", (resp) => {
@@ -125,19 +125,19 @@ fn render_activity() = {
 // ── rendering: the drawer ──────────────────────────────────────────────
 
 fn comment_html(c) =
-    "<div class=\"comment\"><div class=\"who\">" + esc(c.author)
-        + " · " + esc(c.at) + "</div>" + esc(c.text) + "</div>"
+    "<div class=\"comment\"><div class=\"who\">" + esc(c.author) +
+        " · " + esc(c.at) + "</div>" + esc(c.text) + "</div>"
 
 fn render_drawer(issue) = {
     let id = show(issue.id)
     dom.set_text(dom.query("#drawer-id"), "issue #" + id)
     dom.set_value(dom.query("#dtitle"), issue.title)
     dom.set_html(dom.query("#dmeta"),
-        pill("st", issue.status, "dadv-", id)
-        + pill("pr", issue.priority, "dpri-", id)
-        + "<span>" + esc(issue.assignee) + "</span>"
-        + "<span>" + show(issue.points) + " pts</span>"
-        + "<span>updated " + esc(issue.updated) + "</span>")
+        pill("st", issue.status, "dadv-", id) +
+        pill("pr", issue.priority, "dpri-", id) +
+        "<span>" + esc(issue.assignee) + "</span>" +
+        "<span>" + show(issue.points) + " pts</span>" +
+        "<span>updated " + esc(issue.updated) + "</span>")
     let comments = issue.comments
     dom.morph(dom.query("#comments"),
         if len(comments) == 0 => "<div class=\"comment\">no comments yet</div>"
@@ -202,10 +202,10 @@ fn add_issue() = {
     if title != "" => {
         let assignee = str.trim(dom.value(dom.query("#new-assignee")))
         let pts = unwrap_or(str.parse_int(str.trim(dom.value(dom.query("#new-points")))), 0)
-        let body = "{\"title\": \"" + json_esc(title) + "\""
-            + ", \"assignee\": \"" + json_esc(assignee) + "\""
-            + ", \"priority\": \"" + dom.value(dom.query("#new-priority")) + "\""
-            + ", \"points\": " + show(pts) + "}"
+        let body = "{\"title\": \"" + json_esc(title) + "\"" +
+            ", \"assignee\": \"" + json_esc(assignee) + "\"" +
+            ", \"priority\": \"" + dom.value(dom.query("#new-priority")) + "\"" +
+            ", \"points\": " + show(pts) + "}"
         dom.fetch("POST", "/api/issues", body, (resp) => {
             dom.set_value(dom.query("#new-title"), "")
             dom.set_value(dom.query("#new-assignee"), "")

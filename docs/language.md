@@ -47,6 +47,23 @@ let audience = "world"   // trailing comments are fine
 println(greeting + ", " + audience)
 ```
 
+An expression continues onto the next line when its line ends with a
+binary operator, or when the next line starts with one — but `-` and
+`+`: a line that starts with `-` or `+` starts a new statement, since
+`-1` is an expression of its own (`+` has no unary form, so such a line
+is a parse error pointing at it). So a long pipeline or
+condition breaks before its `|>`, `&&`, `||`, `??` or comparison, and a
+long sum breaks after its `+`.
+
+```olang
+let words = ["b", "a", "c"]
+    |> sort
+    |> join("-")
+let total = 1 +
+    2
+println(`${words} ${total}`)   // a-b-c 3
+```
+
 Statements are one of: a declaration (`let`, `fn`, `type`, `trait`, `impl`,
 `error`, `test`), a module statement (`use`, `share`), or an expression.
 A top-level function is declared once per file: a second `fn` of the
@@ -158,7 +175,7 @@ Double-quoted, with escape sequences:
 |---|---|
 | `\"` `\\` `\/` | quote, backslash, slash |
 | `\n` `\r` `\t` `\0` `\b` `\f` | newline, return, tab, NUL, backspace, form feed |
-| `\xNN` | byte by two hex digits |
+| `\xNN` | the character U+00NN, by two hex digits: `"\xe9"` is `é`, one character (two bytes in UTF-8), not the byte 0xE9 |
 | `\uNNNN`, `\u{...}` | Unicode scalar |
 
 ```olang
@@ -579,14 +596,18 @@ From loosest to tightest binding:
 | 4 | `??` | default for `()`, short-circuit |
 | 5 | `\|>` | pipeline |
 | 6 | `..` `..=` | ranges |
-| 7 | `+` `-` | additive |
-| 8 | `*` `/` `%` | multiplicative |
-| 9 | `&` `\|` `^` `<<` `>>` | bitwise |
-| 10 | `-` `!` (prefix) | unary |
-| 11 | `f(x)` `.field` `[i]` `?` | call, access, index, try |
+| 7 | `\|` | bitwise or |
+| 8 | `^` | bitwise xor |
+| 9 | `&` | bitwise and |
+| 10 | `<<` `>>` | shifts |
+| 11 | `+` `-` | additive |
+| 12 | `*` `/` `%` | multiplicative |
+| 13 | `-` `!` (prefix) | unary |
+| 14 | `f(x)` `.field` `[i]` `?` | call, access, index, try |
 
 All binary operators are **left-associative**, and comparisons do not
-chain (`a < b < c` is a type error — write `a < b && b < c`). The
+chain: `a < b < c` and `a == b == c` are parse errors (write `a < b &&
+b < c`, or parenthesize the comparison meant to come first). The
 ordering follows the conventional readings:
 
 - **`&&` binds tighter than `||`.** `a || b && c` is `a || (b && c)`,
@@ -602,8 +623,11 @@ ordering follows the conventional readings:
   `m.n ?? (1 + 2)`.
 - **Range bounds are arithmetic.** `0..n-1` is `0..(n-1)`, so the
   everyday loop bound needs no parentheses.
-- **Bitwise (9) binds tighter than arithmetic.** `1 << 4 * 2` is
-  `(1 << 4) * 2` — parenthesize mixed shift/arithmetic expressions.
+- **The bitwise operators take Rust's order** (and C's, but for
+  `&`/`^`/`|` sitting above the comparisons): shifts below `+`/`-`, so
+  `1 << 4 * 2` is `1 << 8` and `1 + 2 << 3` is `3 << 3`; then `&`,
+  `^`, `|`, all above the comparisons, so `x & 1 == 0` is `(x & 1) ==
+  0`.
 
 ```olang
 fn double(x) = x * 2
@@ -619,7 +643,11 @@ When in doubt, parenthesize — especially comparisons feeding `&&`, which
 read best fully grouped: `(a >= lo) && (a <= hi)`. See
 [Common pitfalls](pitfalls.md) for worked examples.
 
-> **History.** Before 0.69, `&&` and `||` shared one level, and `|>` and
+> **History.** Before the 1.0 freeze pass the bitwise operators shared
+> one level, tighter than `*` (`1 + 2 << 3` was 17), and comparisons
+> chained left to right (`1 == 1 == 1` was `false`).
+>
+> Before 0.69, `&&` and `||` shared one level, and `|>` and
 > ranges bound *tighter* than arithmetic — `0..n-1` was a runtime error
 > and `x + 1 |> f` piped only the `1`. Re-ordering them to the readings
 > above was the third and final deliberate pre-1.0 breaking change
@@ -651,8 +679,13 @@ A pipeline `a |> f(b)` evaluates like the call it desugars to,
 
 ### Arithmetic
 
-`/` on two integers is integer division; `%` is remainder. Mixing an `Int`
-and a `Float` produces a `Float`:
+`/` on two integers is integer division, truncating toward zero; `%` is
+the remainder of that division, so it takes the sign of the left
+operand: `-7 % 3` is `-1` and `7 % -3` is `1` (as in C, Rust, Go and
+JavaScript; Python's `%` floors instead). Integer overflow raises, a
+shift included: `x << n` that would lose a set bit or change the sign
+raises as the multiplication by 2ⁿ would, and a shift count outside
+`0..64` raises. Mixing an `Int` and a `Float` produces a `Float`:
 
 ```olang
 println(`${7 / 2} ${7 % 3} ${7.0 / 2}`)
@@ -695,10 +728,13 @@ println(to_string(#{ "a": 1 } == #{ "a": 1 }))
 
 The precise rules:
 
-- **Numbers compare numerically across Int and Float** at the operator:
-  `1 == 1.0` is `true`. Inside a *structural* comparison, however, kinds
-  are strict — `[1] == [1.0]` is `false`, because the elements are an
-  Int and a Float.
+- **An Int and a Float are equal when they are the same number,
+  exactly**: `1 == 1.0` is `true`, and `9007199254740993 ==
+  9007199254740992.0` is `false` (the Float is not that integer, though
+  it is the f64 nearest it). Inside a *structural* comparison kinds are
+  strict — `[1] == [1.0]` is `false`, because the elements are an Int
+  and a Float. `contains` and `col.index_of` find an element by `==`, so
+  `contains([1, 2], 1.0)` is `true`.
 - **Struct equality includes the type name**: two structs with the same
   fields but different declared types are not equal.
 - **Equality across unrelated kinds answers rather than raising.** `1 ==
@@ -708,12 +744,18 @@ The precise rules:
   stricter: `<`, `<=`, `>`, `>=` between kinds they cannot order (`1 <
   "a"`, `x < ()`) raise a type error. Convert explicitly (`to_string`,
   `to_int`) when a cross-type comparison is meant.
-- **`Result` values are not compared with `==`.** Match on
-  `Ok(v)`/`Err(e)` (or test with `is_ok`/`is_err`) and compare the
-  payloads — the pattern is clearer than a comparison would be, and it
-  is the supported form.
-- Within a structural comparison, a kind mismatch between elements makes
-  the values unequal (`false`) rather than raising.
+- **A `Result` compares structurally**: `Ok(1) == Ok(1)` is `true`,
+  `Ok(1) == Err(1)` `false`.
+- **Functions, builtins and ranges have no equality.** `f == g` raises,
+  and so does comparing a list, tuple, map, record, enum value or
+  `Result` that holds one, at any depth (`[f] == [f]`); compare the
+  parts that hold data. One collection compared with itself is equal
+  without being walked.
+- **One relation, at the top and inside containers**: what `==` answers
+  about two values it answers about them as elements, but for the
+  strict number kinds above. Within a structural comparison, a kind
+  mismatch between elements makes the values unequal (`false`) rather
+  than raising.
 
 ```olang
 type A = struct { x: Int }
@@ -808,9 +850,10 @@ println(to_string(sum))
 
 ## Strings
 
-Strings are immutable. Global builtins cover the basics (`len`, `contains`,
+Strings are immutable. Global builtins cover the basics (`len`,
 `starts_with`, `ends_with`, `split`, `join`), and the `str` module has the
-full toolkit — `str.substring`, `str.index_of`, `str.char_at`, `str.trim`,
+full toolkit — `str.contains` (the global `contains` searches a list),
+`str.substring`, `str.index_of`, `str.char_at`, `str.trim`,
 `str.pad_start/pad_end`, `str.to_upper/to_lower`, `str.replace`,
 `str.parse_int/parse_float`, and more (see the
 [stdlib reference](stdlib.md#str--strings)).
@@ -822,6 +865,17 @@ println(str.substring("hello", 1, 4))          // ell
 println(to_string(str.index_of("abc", "z")))   // () when absent — test with != ()
 println(join(split("a,b,c", ","), " + "))
 ```
+
+The edges, stated: `str.substring(s, start, end)` clamps — a negative
+`start` reads as 0, an `end` past the length as the length, and an
+`end` at or before `start` gives `""` — and never raises.
+`split(s, "")` splits around every character, with an empty string at
+each end (`split("abc", "")` is `["", "a", "b", "c", ""]`). Strings are
+compared and searched as their code points: olang does no Unicode
+normalization, so `"é"` (one code point) and `"e\u{301}"` (two) are
+different strings. `str.to_upper` and `str.to_lower` apply Unicode's
+full case mapping, which may change the length (`str.to_upper("straße")`
+is `"STRASSE"`), with no locale (no Turkish dotless i).
 
 Strings iterate by character with `for` (each a 1-character string), and
 `str.chars` gives the same characters as a list:
@@ -1114,7 +1168,11 @@ println(grade)
 
 ### Blocks are expressions
 
-A block evaluates its statements and yields the last expression's value:
+A block evaluates its statements and yields the last expression's
+value. A block whose last statement is a `let`, or ends in `;`, has no
+last expression, and its value is `()`, as an empty block's is; so is a
+function whose body is `{}` (`fn noop() = {}` answers `()`, not an
+empty object — write `#{}` for an empty map):
 
 ```olang
 let result = {
@@ -1123,6 +1181,13 @@ let result = {
     a * b
 }
 println(to_string(result))
+```
+
+```olang
+println(to_string({ let a = 1 }))   // ()
+println(to_string({ 1; }))          // ()
+fn noop() = {}
+println(to_string(noop()))          // ()
 ```
 
 `a` and `b` are gone after the block; `result` is what survives. That is
@@ -1248,7 +1313,10 @@ println(to_string(first_big_square))   // 64
 
 `match` tests a value against arms in order; the first matching pattern's
 expression is the result. Arms are separated by commas (a trailing comma is
-fine).
+fine). A value no arm matches raises a runtime error ("Pattern match
+failed"), as a `let` whose pattern does not match does; end with `_` when
+the arms are not exhaustive (`olang check` warns on a `match` over an
+enum that leaves a variant out).
 
 ```olang
 fn describe(n) = match n {
@@ -1265,9 +1333,9 @@ println(describe(0) + ", " + describe(2) + ", " + describe(7) + ", " + describe(
 
 | Pattern | Example | Matches |
 |---|---|---|
-| Literal | `0`, `"yes"`, `true` | that exact value |
+| Literal | `0`, `"yes"`, `true` | that exact value, of the same kind: `5` matches the Int 5 and not the Float 5.0, as `[5] == [5.0]` is false |
 | Or | `1 \| 2 \| 3` | any alternative |
-| Range | `1..10`, `'a'..'z'` | value within the range |
+| Range | `1..10`, `'a'..'z'` | an Int within the range; for a character range, a one-character String within it (`'a'..='z'` does not match `"zebra"`) |
 | Wildcard | `_` | anything, binds nothing |
 | Identifier | `x` | anything, binds it as `x` |
 | Tuple | `(a, b)` | a 2-tuple, binding parts |
@@ -1296,6 +1364,12 @@ fn sum(xs) = match xs {
 }
 println(to_string(sum([1, 2, 3, 4])))
 ```
+
+A pattern binds each name once: `(x, x)` is an error (compare two parts
+with a guard, `(a, b) if a == b`), and the alternatives of an
+or-pattern bind the same names, so the arm reads a name whichever
+alternative matched: `(1, y) | (y, 2)` is accepted, `(1, y) | (z, 2)` an
+error. Both are reported before the program runs.
 
 ### Identifier patterns vs unit variants
 
@@ -1356,7 +1430,9 @@ println(window(5, label: "custom"))
 
 Parameters without defaults are required; a call must cover them
 positionally or by name, and positional arguments may not follow named
-ones. Lambdas take defaults with the same rules. Functions with
+ones. Names are for functions written in olang: a builtin
+(`str.pad_start`, `map`) takes its arguments by position, and a named
+argument to one is an error naming it. Lambdas take defaults with the same rules. Functions with
 defaults run on every tier: a compiled call site fills literal
 defaults as constants, and any other omitted default is evaluated by
 the reference semantics — the two are indistinguishable by
@@ -1560,15 +1636,16 @@ a missing or surprise field is an error naming it, and an undeclared
 struct-literal name is an error (use an anonymous `{ ... }` object for
 free-form records).
 
-**Field values are checked against their declared types.** When a field's
-annotation is one the runtime can verify — `Int`, `Float`, `Bool`,
-`String`, or a declared struct or enum type — a value of the wrong type is
-an error naming the field, the type, what was expected, and what was
-supplied. The match is exact: an `Int` value does **not** satisfy a
-`Float` field (there is no widening at construction). Fields whose
-annotation the runtime cannot reliably check — a generic type parameter, a
-list or map, a function type — stay dynamic and accept any value, as do all
-fields of an anonymous `{ ... }` object.
+**Field values are checked against their declared types**, as a
+parameter's are. A value of the wrong type is an error naming the field,
+the type, what was expected, and what was supplied. The match is exact:
+an `Int` value does **not** satisfy a `Float` field (there is no
+widening at construction). A list or map field checks that the value is
+a List or a Map (its elements are the static checker's concern), a
+tuple field its length, a function field that the value is callable
+with the annotation's parameter count, `()` that it is Unit. A field
+whose type is a generic type parameter stays dynamic and accepts any
+value, as do all fields of an anonymous `{ ... }` object.
 
 ```olang no-run
 type Point = struct { x: Int, y: Int }
@@ -1576,6 +1653,8 @@ Point { x: 1 }                    // error: missing field 'y'
 Point { x: 1, y: 2, z: 3 }        // error: no field 'z'
 NeverDeclared { s: 42 }           // error: unknown struct type
 Point { x: "hi", y: 2 }           // error: field 'x' of Point expects Int, got String
+type Pair = struct { both: (Int, Int) }
+Pair { both: (1, 2, 3) }          // error: field 'both' of Pair expects (Int, Int), got a 3-tuple
 
 type Box<T> = struct { value: T }
 Box { value: "anything" }         // fine: a generic field stays dynamic
@@ -1650,7 +1729,9 @@ alias may be declared below its first use.
 
 Union type *declarations* (`type Id = Int | String`) are aliases of the
 union annotation, checked as `x: Int | String` is ([Types](types.md));
-a discriminated union with payloads is still an enum. Intersection annotations
+a discriminated union with payloads is still an enum. An enum variant
+takes positional fields only: `C { n: Int }` is a parse error (declare
+`C(Int)`, or a struct type and `C(Point)`). Intersection annotations
 (`A & B`) are not accepted at all; writing one is a parse error. See
 [Stability](stability.md) for the full list.
 
@@ -2215,9 +2296,13 @@ types are the static checker's concern — and it takes them:
 [`olang check`](tooling.md#olang-check) (and the language server in your
 editor) decomposes literals element by element, so `[1, "a"]` against
 `List<Int>` is flagged before the program runs, with no false positives.
-And `Int`/`Float` are strict — an `Int` does not satisfy a `Float`
-annotation, matching struct-field enforcement. Generic type parameters
-are erased at runtime and never checked (their trait *bounds* are).
+A tuple annotation checks the length as well: `(Int, Int)` refuses a
+3-tuple. `()` accepts only Unit, so `Int | ()` is an Int or nothing. A
+lambda's return annotation (`(x) -> Int => …`) is checked as a named
+function's. And `Int`/`Float` are strict — an `Int` does not satisfy a
+`Float` annotation, matching struct-field enforcement. Generic type
+parameters are erased at runtime and never checked (their trait
+*bounds* are).
 
 ```olang
 let count: Int = 3

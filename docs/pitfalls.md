@@ -15,9 +15,9 @@ division — account for most early confusion.
 2. [Integer division truncates; overflow is an error](#integer-division-truncates-overflow-is-an-error)
 3. [`to_string` prints values, not columns](#to_string-prints-values-not-columns)
 4. [Falsy values: `false`, `0`, `0.0`, `""`, `[]`, `()`](#falsy-values-false-0-00---)
-5. [Bitwise operators bind tighter than arithmetic](#bitwise-operators-bind-tighter-than-arithmetic)
+5. [A line starting with `-` or `+` is a new statement](#a-line-starting-with---or--is-a-new-statement)
 6. [Parsing returns a `Result`](#parsing-returns-a-result)
-7. [`Result` values can't be compared with `==`](#result-values-cant-be-compared-with-)
+7. [Functions can't be compared with `==`, even inside a list](#functions-cant-be-compared-with--even-inside-a-list)
 8. [Closures capture by value, at creation](#closures-capture-by-value-at-creation)
 9. [Definition order: functions are hoisted, values are not](#definition-order-functions-are-hoisted-values-are-not)
 10. [Indexing: negative wraps, no slicing, maps use `.`](#indexing-negative-wraps-no-slicing-maps-use-)
@@ -126,30 +126,41 @@ println(if [1] => "has items" else => "empty")   // has items
 Note the asymmetry: a bare value is fine in `if`, but `&&`/`||` require
 real booleans — `1 && 2` is a type error even though `if 1` is not.
 
-## Bitwise operators bind tighter than arithmetic
+## A line starting with `-` or `+` is a new statement
 
-Since 0.69 the precedence table reads conventionally: `&&` binds tighter
-than `||`, range bounds are arithmetic (`0..n-1` is `0..(n-1)`), and
-arithmetic feeds the pipeline (`x + 1 |> f` pipes the sum). The one
-ordering that still differs from C is **bitwise**, which binds tighter
-than `+`/`*`: `1 << 4 * 2` is `(1 << 4) * 2`, i.e. `32`. Parenthesize
-mixed shift/arithmetic expressions; the
-[operator table](language.md#operators-and-precedence) has the full
-ordering.
+A binary operator at the start of a line continues the expression above
+it — `|>`, `&&`, `||`, `??`, the comparisons, `*`, `/` and the bitwise
+operators — so a long pipeline or condition breaks before its operator.
+`-` and `+` are the exception: a line that starts with one starts a new
+statement, since `-1` is an expression of its own (and `+` has no
+unary form, so a line starting with it is a parse error that points at
+it). Break a long sum after its operator instead:
+
+```olang
+let base = 10
+let total = base +
+    5                     // continues: the `+` ends the line above
+println(total)            // 15
+let shown = base
+-1                        // a statement of its own, not `base - 1`
+println(shown)            // 10
+```
+
+(Before the 1.0 freeze pass a leading `-` continued the line above, so
+`println("x")` over `-1` raised "cannot apply '-' to Unit and Int".)
+
+Since 0.69 the precedence table reads conventionally, and since the
+freeze pass the bitwise operators take Rust's order: `1 << 4 * 2` is
+`1 << 8`; the [operator table](language.md#operators-and-precedence)
+has the full ordering.
 
 ```olang
 println(show(true || false && false))    // true — && binds tighter, as expected
 let xs = [10, 20, 30]
 for i in 0..len(xs)-1 { print(show(xs[i]) + " ") }   // 10 20
 println("")
-println(show(1 << 4 * 2))                // 32 — (1 << 4) * 2: parenthesize these
+println(show(1 << 4 * 2))                // 256 — 1 << (4 * 2)
 ```
-
-(Code written before 0.69 against the old table — where `&&`/`||` shared
-a level and ranges and `|>` bound tighter than arithmetic — parses
-differently now; the [CHANGELOG](../CHANGELOG.md) has the migration
-notes. Fully parenthesized code, which this chapter always advised, is
-unaffected.)
 
 ## Parsing returns a `Result`
 
@@ -165,14 +176,19 @@ match str.parse_float("3.14") {
 }
 ```
 
-## `Result` values can't be compared with `==`
+## Functions can't be compared with `==`, even inside a list
 
-There is no equality over `Ok`/`Err`, so `Ok(1) == Ok(1)` raises rather
-than returning `true`. Compare the payloads, or `match`:
+A function, a builtin and a range have no equality: `f == g` raises, and
+so does comparing two lists, maps, records or `Result`s that hold one
+(`[f] == [f]`), since the comparison would have to answer for the
+function. Compare the parts that hold data. A `Result` compares
+structurally (`Ok(1) == Ok(1)` is `true`).
 
 ```olang
 let r = str.parse_int("5")
-println(if is_ok(r) && unwrap(r) == 5 => "five" else => "other")   // five
+println(r == Ok(5))                                   // true
+let handlers = [#{ "name": "a", "run": () => 1 }]
+println(map(handlers, (h) => h.name) == ["a"])        // compare the data
 ```
 
 Two related equality quirks: struct equality includes the type name, so a

@@ -130,6 +130,15 @@ Details worth knowing:
   checker's territory; the callee's own annotations enforce themselves
   when it is called.
 
+- **A tuple annotation checks the length.** `(Int, String)` accepts a
+  tuple of two elements and refuses one of three (`expects (Int,
+  String), got a 3-tuple`); the element types are the checker's, as a
+  list's are.
+- **`()` accepts only Unit**, so `x: Int | ()` is an Int or nothing, and
+  refuses a String.
+- **A lambda's return annotation is enforced** as a named function's:
+  `(x) -> Int => …` checks what the lambda returns.
+
 - **`Result<T, E>` checks the payload that is present.** Unlike a
   container, a Result holds exactly one payload, so the O(1) discipline
   allows one step more: an `Ok` value checks its payload against `T`,

@@ -17,9 +17,9 @@ let treated = stats.norm.sample(n, 101.2, 15.0)     // a subtle 1.2-point lift
 
 let d = stats.describe(treated)
 println("═══ statlab ═══")
-println("arms: n=" + show(n) + " each; treated mean="
-    + show(math.round(d.mean * 100.0) / 100.0)
-    + " std=" + show(math.round(d.std * 100.0) / 100.0))
+println("arms: n=" + show(n) + " each; treated mean=" +
+    show(math.round(d.mean * 100.0) / 100.0) +
+    " std=" + show(math.round(d.std * 100.0) / 100.0))
 
 // ── parametric: Welch's t-test ──
 let t = stats.t_test(treated, control)
@@ -47,8 +47,8 @@ let exceed_counts = par_map(range(0, 8), (chunk) => {
     hits
 })
 let p_perm = to_float(sum(exceed_counts) + 1) / 1001.0
-println("permutation test:  p = " + show(math.round(p_perm * 10000.0) / 10000.0)
-    + "  (1,000 permutations, 8 workers)")
+println("permutation test:  p = " + show(math.round(p_perm * 10000.0) / 10000.0) +
+    "  (1,000 permutations, 8 workers)")
 
 // ── effect size: bootstrap CI of the mean difference ──
 let boot_gaps = par_map(range(0, 8), (chunk) => {
@@ -66,8 +66,8 @@ let boot_gaps = par_map(range(0, 8), (chunk) => {
 let mut gaps = ods.series(flatten(boot_gaps))
 let ci_lo = ods.quantile(gaps, 0.025)
 let ci_hi = ods.quantile(gaps, 0.975)
-println("bootstrap 95% CI:  [" + show(math.round(ci_lo * 100.0) / 100.0)
-    + ", " + show(math.round(ci_hi * 100.0) / 100.0) + "]  (1,000 resamples)")
+println("bootstrap 95% CI:  [" + show(math.round(ci_lo * 100.0) / 100.0) +
+    ", " + show(math.round(ci_hi * 100.0) / 100.0) + "]  (1,000 resamples)")
 
 // ── multiple regression: 3 predictors at n=5,000 ──
 random.seed(31)
@@ -78,10 +78,10 @@ let eps = stats.norm.sample(n, 0.0, 1.0)
 let y = x1 * 2.0 + x2 * -1.0 + x3 * 0.5 + eps + 3.0
 let fit = stats.lm(y, [x1, x2, x3])
 let coef = fit.coef
-println("ols n=5000: b1=" + show(math.round(ods.get(coef, 1) * 100.0) / 100.0)
-    + " b2=" + show(math.round(ods.get(coef, 2) * 100.0) / 100.0)
-    + " b3=" + show(math.round(ods.get(coef, 3) * 100.0) / 100.0)
-    + " r2=" + show(math.round(fit.r2 * 1000.0) / 1000.0)
+println("ols n=5000: b1=" + show(math.round(ods.get(coef, 1) * 100.0) / 100.0) +
+    " b2=" + show(math.round(ods.get(coef, 2) * 100.0) / 100.0) +
+    " b3=" + show(math.round(ods.get(coef, 3) * 100.0) / 100.0) +
+    " r2=" + show(math.round(fit.r2 * 1000.0) / 1000.0)
     )
 
 // ── charts ──

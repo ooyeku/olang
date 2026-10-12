@@ -30,8 +30,8 @@ println("═══ meterflow ═══")
 
 let meters = unwrap(ods.read_csv_file("data/meters.csv"))
 let tariffs = unwrap(ods.read_csv_file("data/tariffs.csv"))
-println("meters: " + show(ods.n_rows(meters)) + " over "
-    + show(ods.n_rows(tariffs)) + " tariffs")
+println("meters: " + show(ods.n_rows(meters)) + " over " +
+    show(ods.n_rows(tariffs)) + " tariffs")
 
 // ── 2. ingest, in bounded memory ──────────────────────────────────────
 //
@@ -65,8 +65,8 @@ loop {
 }
 
 let read_count = ods.rows_read(reader)
-println("read " + show(read_count) + " readings in "
-    + show(len(partials)) + " chunks of " + show(chunk_size))
+println("read " + show(read_count) + " readings in " +
+    show(len(partials)) + " chunks of " + show(chunk_size))
 
 // Each chunk produced its own partial aggregate, so the partials must be
 // stacked and re-reduced: a meter-day split across two chunks appears
@@ -74,9 +74,9 @@ println("read " + show(read_count) + " readings in "
 let daily = ods.concat(partials)
     |> ods.group_by(["meter", "day"], [["kwh", "sum", "kwh"], ["reads", "sum", "reads"]])
 
-println("rejected " + show(rejected) + " unusable readings ("
-    + show(math.round(to_float(rejected) / to_float(read_count) * 1000.0) / 10.0)
-    + "%), kept " + show(ods.n_rows(daily)) + " meter-days")
+println("rejected " + show(rejected) + " unusable readings (" +
+    show(math.round(to_float(rejected) / to_float(read_count) * 1000.0) / 10.0) +
+    "%), kept " + show(ods.n_rows(daily)) + " meter-days")
 
 // ── 3. dimensions joined, measures derived ────────────────────────────
 
@@ -121,8 +121,8 @@ println(show(info))
 
 let t_one = time.monotonic_ms()
 let just_cost = unwrap(ods.read_frame("cache/clean.olc", ["cost"]))
-println("one column back in " + show(time.monotonic_ms() - t_one) + "ms, total "
-    + show(math.round(ods.sum(just_cost["cost"]) * 100.0) / 100.0))
+println("one column back in " + show(time.monotonic_ms() - t_one) + "ms, total " +
+    show(math.round(ods.sum(just_cost["cost"]) * 100.0) / 100.0))
 
 // ── 6. charts ─────────────────────────────────────────────────────────
 //
@@ -157,8 +157,8 @@ let report = {
 }
 unwrap(fs.write_file("report.json", unwrap(json.stringify(report))))
 
-println("wrote by_site.csv, report.json · total "
-    + show(time.monotonic_ms() - t_start) + "ms")
+println("wrote by_site.csv, report.json · total " +
+    show(time.monotonic_ms() - t_start) + "ms")
 
 test "the pipeline conserves its rows" {
     // Every reading is either rejected or counted, with none lost in

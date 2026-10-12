@@ -217,9 +217,11 @@ comp_op       = { "==" | "!=" | "<=" | ">=" | "<" | ">" }
 range_op      = { "..=" | ".." }
 unary_op      = { "-" | "!" }
 
-// Precedence ladder, loosest → tightest (the 0.68 fix — the third and
-// final deliberate pre-1.0 breaking change):
-//   ||  <  &&  <  comparison  <  ??  <  |>  <  ranges  <  + -  <  * / %  <  bitwise
+// Precedence ladder, loosest → tightest (0.68's, with the bitwise
+// operators in Rust's order since the 1.0 freeze pass):
+//   ||  <  &&  <  comparison  <  ??  <  |>  <  ranges  <  |  <  ^  <  &
+//       <  << >>  <  + -  <  * / %
+// A comparison does not chain: `a < b < c` is refused by the builder.
 // so `a || b && c` is `a || (b && c)`, `x + 1 |> f` pipes the sum, and
 // `0..n-1` is `0..(n-1)`. `|>` sits between comparison and ranges
 // (Elixir's placement): arithmetic feeds a pipeline, and a pipeline's
@@ -238,12 +240,16 @@ unary_op      = { "-" | "!" }
 //   * a range's `..` takes no newline around it, and its bounds are
 //     additive — `0..n-1` — which precedence gives; a range of a range
 //     (`a..b..c`) is refused by the builder, as the ladder refused it;
-//   * every other operator may sit at the start of the next line.
+//   * every other operator may sit at the start of the next line, but
+//     `+` and `-`: a line that starts with one starts a new statement
+//     (`-1` is an expression of its own; a lone `+` a parse error), so
+//     `let t = base` over `-d` is two statements, never `base - d`.
 // Bitwise operators come before the comparisons in the choice so `<<`
 // is never read as `<`.
 binary_expr   = { unary_expr ~ binary_tail* }
 binary_tail   = _{
-    (NL* ~ (or_op | and_op | coalesce_op | pipe_op | bitwise_op | add_op | mul_op) ~ NL* ~ unary_expr)
+    (NL* ~ (or_op | and_op | coalesce_op | pipe_op | bitwise_op | mul_op) ~ NL* ~ unary_expr)
+  | (add_op ~ NL* ~ unary_expr)
   | (NL* ~ comp_op ~ NL* ~ cmp_rhs)
   | (range_op ~ unary_expr)
 }
@@ -342,7 +348,9 @@ type_annotation = { union_type | intersection_type | literal_type | anonymous_st
 // their `<...>`.
 base_type_annotation = { result_type | map_type | generic_type | list_type | tuple_type | unit_type | literal_type | basic_type | custom_type }
 anonymous_struct_type = { "{" ~ struct_field_list? ~ "}" }
-basic_type = { "Int" | "Float" | "String" | "Bool" | "Map" }
+// A built-in name ends at a word boundary: `Integer` and `Mapping` are
+// names of their own (custom types), not `Int` and `Map` with a tail.
+basic_type = @{ ("Int" | "Float" | "String" | "Bool" | "Map") ~ !(ASCII_ALPHANUMERIC | "_") }
 unit_type = { "()" }
 custom_type = { identifier }
 generic_type = { identifier ~ "<" ~ type_annotation ~ ("," ~ type_annotation)* ~ ">" }
@@ -356,7 +364,10 @@ intersection_type = { basic_type ~ ("&" ~ basic_type)+ }
 literal_type = { string | integer | boolean }
 
 // Struct expressions
-struct_literal = { identifier ~ "{" ~ field_value_list? ~ "}" }
+// An empty literal `T {}` takes a capitalized name: `for x in xs {}` and
+// `while ok {}` are a loop over an empty body, not a literal of type `xs`.
+struct_literal = { (identifier ~ "{" ~ field_value_list ~ "}") | (type_name_upper ~ "{" ~ NL* ~ "}") }
+type_name_upper = ${ &ASCII_ALPHA_UPPER ~ identifier }
 anonymous_object = { "{" ~ field_value_list? ~ "}" }
 field_value_list = { NL* ~ field_value ~ (NL* ~ "," ~ NL* ~ field_value)* ~ NL* ~ ","? ~ NL* }
 field_value = { spread | (identifier ~ ":" ~ expr) }

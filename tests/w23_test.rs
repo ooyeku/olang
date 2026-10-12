@@ -61,9 +61,10 @@ fn the_ladder_is_what_binary_expressions_mean() {
     for flags in [&["main.ol"][..], &["--no-ovm", "main.ol"][..]] {
         let (out, err, code) = olang(&ws, flags);
         assert_eq!(code, 0, "{flags:?}: {err}");
-        // 2*3 + (4<<1) = 14: bitwise binds tighter than the arithmetic.
+        // (2*3 + 4) << 1 = 20: shifts bind below the arithmetic (Rust's
+        // order, since the freeze pass; 14 before it).
         assert_eq!(
-            out, "[true, 14, true, 5, true, 6, true, 1, true]\n",
+            out, "[true, 20, true, 5, true, 6, true, 1, true]\n",
             "{flags:?}"
         );
     }

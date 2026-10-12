@@ -268,6 +268,9 @@ impl Validator {
         if let Some(v) = &d.value {
             self.expr(v);
         }
+        if let Err(message) = pattern_binders(&d.pattern) {
+            self.error(message);
+        }
         let mut names = Vec::new();
         collect_pattern_names(&d.pattern, &mut names);
         for n in names {
@@ -411,6 +414,9 @@ impl Validator {
                 } in arms
                 {
                     self.push();
+                    if let Err(message) = pattern_binders(pattern) {
+                        self.error(message);
+                    }
                     let mut names = Vec::new();
                     collect_pattern_names(pattern, &mut names);
                     for n in names {
@@ -538,6 +544,87 @@ impl Validator {
             | Expr::Continue => {}
         }
     }
+}
+
+/// The names a pattern binds, once each, or why it is refused: a name
+/// bound twice (`(x, x)`: which value would it hold?), or an or-pattern
+/// whose alternatives bind different names (`(1, y) | (z, 2)`: the arm
+/// would read a name one alternative never bound). A capitalized name
+/// is a variant, not a binder.
+pub fn pattern_binders(p: &Pattern) -> Result<Vec<String>, String> {
+    fn walk(p: &Pattern, out: &mut Vec<String>) -> Result<(), String> {
+        let add = |n: &String, out: &mut Vec<String>| -> Result<(), String> {
+            if n.starts_with(|c: char| c.is_uppercase()) {
+                return Ok(());
+            }
+            if out.contains(n) {
+                return Err(format!(
+                    "'{}' is bound twice in one pattern: bind each name once, and \
+                     compare two parts with a guard (`(a, b) if a == b`)",
+                    n
+                ));
+            }
+            out.push(n.clone());
+            Ok(())
+        };
+        match p {
+            Pattern::Identifier(n) | Pattern::Rest(n) => add(n, out),
+            Pattern::List { patterns, rest } => {
+                for p in patterns {
+                    walk(p, out)?;
+                }
+                match rest {
+                    Some(r) => add(r, out),
+                    None => Ok(()),
+                }
+            }
+            Pattern::Tuple(patterns) | Pattern::EnumVariant { patterns, .. } => {
+                patterns.iter().try_for_each(|p| walk(p, out))
+            }
+            Pattern::Or { alternatives } => {
+                let mut first: Option<Vec<String>> = None;
+                for alt in alternatives {
+                    let mut names = Vec::new();
+                    walk(alt, &mut names)?;
+                    names.sort();
+                    match &first {
+                        None => first = Some(names),
+                        Some(f) if *f != names => {
+                            return Err(format!(
+                                "the alternatives of an or-pattern bind different names \
+                                 ({} against {}): each alternative binds the same names",
+                                if f.is_empty() {
+                                    "none".to_string()
+                                } else {
+                                    f.join(", ")
+                                },
+                                if names.is_empty() {
+                                    "none".to_string()
+                                } else {
+                                    names.join(", ")
+                                }
+                            ));
+                        }
+                        Some(_) => {}
+                    }
+                }
+                for n in first.unwrap_or_default() {
+                    add(&n, out)?;
+                }
+                Ok(())
+            }
+            Pattern::Ok(p) | Pattern::Err(p) => walk(p, out),
+            Pattern::Struct { field_patterns, .. }
+            | Pattern::AnonymousStruct { field_patterns } => {
+                field_patterns.iter().try_for_each(|(_, p)| walk(p, out))
+            }
+            Pattern::Guarded { pattern, .. } => walk(pattern, out),
+            Pattern::Literal(_) | Pattern::Wildcard | Pattern::Range { .. } => Ok(()),
+        }
+    }
+    let mut out = Vec::new();
+    walk(p, &mut out)?;
+    Ok(out)
 }
 
 /// Every name a pattern binds, including list rests and nested patterns.

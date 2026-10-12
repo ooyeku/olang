@@ -21,6 +21,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **A top-level function declared twice in one file is an error**, from
   `olang check` and before the file runs (the second used to win
   silently). The REPL still lets a later input redefine a name.
+- **The bitwise operators take Rust's order**: shifts below `+`/`-`,
+  then `&`, `^`, `|`, all above the comparisons. `1 + 2 << 3` is 24
+  (was 17), `1 << 4 * 2` is 256 (was 32).
+- **A line that starts with `-` or `+` starts a new statement**; it
+  used to continue the line above (`let t = base` over `-d` was
+  `base - d`). `|>`, `&&`, `||`, `??`, `*`, `/`, the bitwise operators
+  and the comparisons still continue a line. Move a leading `+` or `-`
+  to the end of the line above; `olang check` reports each line that
+  no longer parses.
+- **A block ending in `let` or `;` is `()`**, and `fn f() = {}` answers
+  `()` (it answered an empty object). `{ let a = 1 }` was 1.
+- **Comparisons do not chain**: `a == b == c` and `a < b < c` are parse
+  errors (they compared a Bool with the third operand).
+- **Equality is one relation.** A `Result` compares structurally (`Ok(1)
+  == Ok(1)` raised); a function, builtin or range has no equality inside
+  a container either (`[f] == [f]` was true); an Int and a Float are
+  equal only exactly (`9007199254740993 == 9007199254740992.0` was
+  true); `contains` and `col.index_of` find by `==` (`contains([1, 2],
+  1.0)` is now true).
+- **Named arguments to a builtin are refused** with an error naming the
+  argument (`str.pad_start("x", 3, bogus: "0")` read `bogus` as the
+  third argument).
+- **Pattern rules**: a name bound twice in one pattern, and an
+  or-pattern whose alternatives bind different names, are errors before
+  the program runs; a character range matches only a one-character
+  String (`'a'..='z'` matched "zebra"); an enum variant with named fields
+  (`C { n: Int }`) is a parse error (it built only as `C(1)`).
+- **Annotations**: `()` is enforced (`fn f(x: ())` took 1, so `Int | ()`
+  took a String), a lambda's return annotation is enforced, and a tuple
+  annotation checks its length.
+- **Numbers**: `to_int` of a Float outside the Int range raises (it
+  answered the largest Int), and a `<<` that loses a bit raises as
+  integer overflow does (`3 << 63` dropped bits).
+- **`meta.parse`**: a literal with spreads is a `spread_literal` node and
+  `xs[i] = v` an `index_assign` node (they read as calls of the hidden
+  builtins `__spread` and `__index_set`); every node kind and field is
+  listed in stdlib.md.
+
 
 ### Added
 
@@ -31,6 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   private names are renamed to its own), where the bundle was one
   namespace and a module's private helper could replace another's.
 - **`re.replace_first(pattern, text, rep)`** replaces the first match.
+
 
 ### Changed
 
@@ -91,6 +130,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   - A cell inside a container compares by identity on every tier:
     `[c] == [c]` was true on the interpreter and false on the bytecode
     tier.
+
+- **Parser bugs**: a type named `Integer` or `Mapping` (a built-in type
+  name with a tail) is a type of its own; `for x in xs {}` and `while ok
+  {}` parse (the empty body was read as a struct literal of type `xs`);
+  `-9223372036854775808` is the smallest Int (it was a parse error).
+- **Documented**: `"\xNN"` is the character U+00NN; `%` takes the sign of
+  the left operand; `str.substring` clamps; `split(s, "")`'s empty ends;
+  no Unicode normalization and full, locale-free case mapping;
+  `contains` searches a list (language.md said it takes strings); a
+  `match` with no matching arm raises; `sort` and `col.sort_by` are
+  stable.
 
 ## [0.88.0] - 2026-10-12
 

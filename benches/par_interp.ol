@@ -30,6 +30,6 @@ let a = map(blocks, work)
 let t1 = time.monotonic()
 let b = par_map(blocks, work)
 let t2 = time.monotonic()
-println("map " + to_string(math.round(t1 - t0)) + " ms, par_map " + to_string(math.round(t2 - t1))
-    + " ms, ratio " + to_string(math.round((t2 - t1) / (t1 - t0) * 100.0) / 100.0)
-    + (if a == b => "" else => "  MISMATCH"))
+println("map " + to_string(math.round(t1 - t0)) + " ms, par_map " + to_string(math.round(t2 - t1)) +
+    " ms, ratio " + to_string(math.round((t2 - t1) / (t1 - t0) * 100.0) / 100.0) +
+    (if a == b => "" else => "  MISMATCH"))

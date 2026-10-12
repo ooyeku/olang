@@ -2607,7 +2607,12 @@ impl JitCache {
                     }
                     if let Some(check) = &plan.bytecode.return_check {
                         let ok = match (&inf.ret_tuple, inf.ret_kind) {
-                            (Some(_), _) => check.accepts("Tuple"),
+                            (Some(kinds), _) => match check {
+                                crate::ast::FieldTypeCheck::TupleOf { arity, .. } => {
+                                    *arity == kinds.len()
+                                }
+                                _ => check.accepts("Tuple"),
+                            },
                             (None, k) => kind_discharges(check, k, &group_shapes),
                         };
                         if !ok {
@@ -6451,7 +6456,15 @@ fn translate_body(
                         builder.ins().brif(out, deopt_block, &[], cont, &[]);
                         builder.switch_to_block(cont);
                         if matches!(op, B::Shl) {
-                            builder.ins().ishl(a, b)
+                            // A shift that loses bits overflows: the VM
+                            // reruns the call and raises.
+                            let shifted = builder.ins().ishl(a, b);
+                            let back = builder.ins().sshr(shifted, b);
+                            let lost = builder.ins().icmp(IntCC::NotEqual, back, a);
+                            let kept = builder.create_block();
+                            builder.ins().brif(lost, deopt_block, &[], kept, &[]);
+                            builder.switch_to_block(kept);
+                            shifted
                         } else {
                             builder.ins().sshr(a, b)
                         }
@@ -6506,6 +6519,13 @@ fn translate_body(
                 if (lk == Kind::Str) != (rk == Kind::Str) {
                     return None; // string-vs-other comparisons stay on bytecode
                 }
+                // An Int and a Float are equal only when the Float is that
+                // integer exactly (`ops::int_float_eq`): the VM decides.
+                if matches!(inst, Instruction::Eq { .. } | Instruction::Ne { .. })
+                    && (lk == Kind::Float) != (rk == Kind::Float)
+                {
+                    return None;
+                }
                 let flag = if lk == Kind::Float || rk == Kind::Float {
                     let fa = r#gen.to_float(builder, a, lk);
                     let fb = r#gen.to_float(builder, b, rk);
@@ -6551,6 +6571,13 @@ fn translate_body(
                     ValueData::Float(f) => (builder.ins().f64const(f), Kind::Float),
                     _ => return None,
                 };
+                // Int against Float equality is exact, decided by the VM.
+                let imm_is_float = matches!(imm.data, ValueData::Float(_));
+                if matches!(op, BinaryOp::Equal | BinaryOp::NotEqual)
+                    && (lk == Kind::Float) != imm_is_float
+                {
+                    return None;
+                }
                 match op {
                     BinaryOp::Add
                     | BinaryOp::Subtract

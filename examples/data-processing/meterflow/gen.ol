@@ -27,10 +27,10 @@ let rates = [0.284, 0.191, 0.412]
 let meter_count = 60
 let mut meters = "meter,site,tariff,installed\n"
 for i in 0..meter_count {
-    meters = meters + "M" + str.pad_start(show(i), 4, "0")
-        + "," + sites[i % len(sites)]
-        + "," + tariffs[i % len(tariffs)]
-        + ",2024-0" + show((i % 9) + 1) + "-01\n"
+    meters = meters + "M" + str.pad_start(show(i), 4, "0") +
+        "," + sites[i % len(sites)] +
+        "," + tariffs[i % len(tariffs)] +
+        ",2024-0" + show((i % 9) + 1) + "-01\n"
 }
 unwrap(fs.write_file("data/meters.csv", meters))
 

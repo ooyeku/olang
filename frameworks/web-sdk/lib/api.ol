@@ -55,15 +55,15 @@ share fn call(name, payload, k) =
         request("POST", "/api/rpc/" + name,
             unwrap(json.stringify(payload)),
             (resp) => k(from_response(resp)))
-    else => k(Err(#{ "message": "api.call(\"" + name
-        + "\") needs the browser — this is a static preview", "details": [] }))
+    else => k(Err(#{ "message": "api.call(\"" + name +
+        "\") needs the browser — this is a static preview", "details": [] }))
 
 /// GET a REST route, envelope-unwrapped: `fetch("/api/todos", k)`.
 share fn fetch(path, k) =
     if dom.available() =>
         request("GET", path, "", (resp) => k(from_response(resp)))
-    else => k(Err(#{ "message": "api.fetch(\"" + path
-        + "\") needs the browser — this is a static preview", "details": [] }))
+    else => k(Err(#{ "message": "api.fetch(\"" + path +
+        "\") needs the browser — this is a static preview", "details": [] }))
 
 /// A `dom.request` response (`#{ "status", "headers", "body" }`) as the
 /// api Result: a JSON body goes through the envelope; a network failure

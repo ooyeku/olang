@@ -864,6 +864,34 @@ impl PartialEq for OvmValue {
 }
 
 impl OvmValue {
+    /// The first value `==` cannot compare that this holds, at any depth
+    /// (`interpreter::ops::uncomparable`, on the VM's forms).
+    pub fn uncomparable(&self) -> Option<&'static str> {
+        use ValueData as D;
+        let ast = crate::interpreter::ops::uncomparable;
+        match &self.data {
+            D::Function(_) | D::AstFunction(_) | D::Closure(_) => Some("Function"),
+            D::Builtin(_) => Some("Builtin"),
+            D::Range(_) => Some("Range"),
+            D::List(items) | D::Tuple(items) => items.iter().find_map(|v| v.uncomparable()),
+            D::Map(m) => m.values().find_map(|v| v.uncomparable()),
+            D::Struct(s) => s.values.iter().find_map(|v| v.uncomparable()),
+            D::Enum(e) => match &e.data {
+                EnumData::Unit => None,
+                EnumData::Tuple(items) => items.iter().find_map(|v| v.uncomparable()),
+                EnumData::Struct(fields) => fields.iter().find_map(|(_, v)| v.uncomparable()),
+            },
+            D::Result(r) => {
+                r.ok.as_ref()
+                    .or(r.err.as_ref())
+                    .and_then(|v| v.uncomparable())
+            }
+            D::AstList(items) => items.iter().find_map(ast),
+            D::AstMap(m) | D::AstStruct(m, _) => m.values().find_map(ast),
+            _ => None,
+        }
+    }
+
     /// Equality as a value inside a collection: see `PartialEq`.
     pub fn structural_eq(&self, other: &OvmValue) -> bool {
         use ValueData as D;

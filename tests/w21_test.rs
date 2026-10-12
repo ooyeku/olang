@@ -781,8 +781,8 @@ fn a_program_profiles_itself_and_reads_the_counts_back() {
          time.sleep(80)\n\
          let p = unwrap(runtime.profile_stop())\n\
          let top = map_get(p, \"rows\")[0]\n\
-         println(map_get(top, \"function\") + \" \" + to_string(map_get(top, \"share\") > 0.8)\n\
-             + \" \" + to_string(map_get(p, \"blocked\") > 0) + \" \" + to_string(map_get(p, \"samples\") > 0))\n\
+         println(map_get(top, \"function\") + \" \" + to_string(map_get(top, \"share\") > 0.8) +\n\
+             \" \" + to_string(map_get(p, \"blocked\") > 0) + \" \" + to_string(map_get(p, \"samples\") > 0))\n\
          let a = time.monotonic()\n\
          let b = time.monotonic()\n\
          println(typeof(a) + \" \" + to_string(b >= a))\n",

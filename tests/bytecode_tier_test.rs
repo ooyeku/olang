@@ -1885,8 +1885,8 @@ total
 fn assorted_math_functions_agree_across_tiers() {
     assert_tier_transparent(
         r#"
-fn f(x) = math.sqrt(x) + math.pow(x, 3.0) + math.abs(0.0 - x)
-    + math.floor(x + 0.9) + math.max(x, 2.0) + math.min(x, 2.0)
+fn f(x) = math.sqrt(x) + math.pow(x, 3.0) + math.abs(0.0 - x) +
+    math.floor(x + 0.9) + math.max(x, 2.0) + math.min(x, 2.0)
 let mut s = 0.0
 for i in 0..30 { s = s + f(to_float(i) * 0.1 + 1.0) }
 s
@@ -1901,14 +1901,14 @@ fn every_float_math_fast_path_function_agrees_across_tiers() {
     // arguments, must produce bit-identical results to the interpreter.
     assert_tier_transparent(
         r#"
-fn probe(x) = math.sqrt(x) + math.cbrt(x) + math.floor(x) + math.ceil(x)
-    + math.round(x) + math.trunc(x) + math.fract(x)
-    + math.sin(x) + math.cos(x) + math.tan(x)
-    + math.asin(x / 10.0) + math.acos(x / 10.0) + math.atan(x)
-    + math.sinh(x) + math.cosh(x) + math.tanh(x)
-    + math.exp(x) + math.exp2(x) + math.ln(x) + math.log2(x) + math.log10(x)
-    + math.to_degrees(x) + math.to_radians(x)
-    + math.pow(x, 2.5) + math.atan2(x, 3.0)
+fn probe(x) = math.sqrt(x) + math.cbrt(x) + math.floor(x) + math.ceil(x) +
+    math.round(x) + math.trunc(x) + math.fract(x) +
+    math.sin(x) + math.cos(x) + math.tan(x) +
+    math.asin(x / 10.0) + math.acos(x / 10.0) + math.atan(x) +
+    math.sinh(x) + math.cosh(x) + math.tanh(x) +
+    math.exp(x) + math.exp2(x) + math.ln(x) + math.log2(x) + math.log10(x) +
+    math.to_degrees(x) + math.to_radians(x) +
+    math.pow(x, 2.5) + math.atan2(x, 3.0)
 fn probe_int(n) = math.sqrt(n) + math.pow(n, 2) + math.atan2(n, 2)
 let mut s = 0.0
 for i in 0..30 { s = s + probe(to_float(i) * 0.17 + 1.1) + probe_int(i + 1) }
@@ -2068,18 +2068,21 @@ bad(3)
 }
 
 #[test]
-fn a_block_ending_in_let_evaluates_to_the_bound_value() {
-    // eval_let_decl returns the bound value; a compiled block must too.
-    // This was a live divergence in 0.37.0: `fn f() = { let x = 5 }`
-    // returned 5 interpreted and Unit compiled.
+fn a_block_ending_in_let_evaluates_to_unit() {
+    // A block whose last statement is a `let` has no last expression:
+    // its value is `()` on every tier (the parser appends it). In 0.37.0
+    // this diverged the other way, 5 interpreted and Unit compiled.
     let src = r#"
 fn f(n) = { let x = n * 5 }
 f(1)
 f(1)
-f(1) + f(2)
+[f(1), f(2)]
 "#;
     assert!(promotion_count(src, 2) >= 1);
-    assert_eq!(eval(src, Some(2)).unwrap(), Value::Integer(15));
+    assert_eq!(
+        eval(src, Some(2)).unwrap(),
+        Value::List(vec![Value::Unit, Value::Unit].into())
+    );
     assert_tier_transparent(src);
 }
 
@@ -2099,10 +2102,10 @@ fn read_x(v) = v.x
 fn go(n) = {
     let mut t = 0
     for i in 0..n {
-        t = t + read_x(A { x: 1, z: 9 })
-            + read_x(B { a: 9, x: 2 })
-            + read_x(C { a: 9, b: 9, x: 3 })
-            + read_x({ x: 4 })
+        t = t + read_x(A { x: 1, z: 9 }) +
+            read_x(B { a: 9, x: 2 }) +
+            read_x(C { a: 9, b: 9, x: 3 }) +
+            read_x({ x: 4 })
     }
     t
 }
@@ -2634,12 +2637,12 @@ fn go(n) = {
     let p = map_set(P { a: n, b: 2 }, "c", n * 3)
     let e = entries(m)
     let l = concat([n], skip([1, 2, 3, 4], 2))
-    map_get(m, "x") + map_get(m, 7) + map_get(m, true)
-        + map_get(p, "a") + map_get(p, "c")
-        + len(e) + len(l) + head(l) + len(tail(l)) + head(cons(n, l))
-        + (if map_has_key(m, "x") => 1 else => 0)
-        + (if map_has_key(p, "c") => 10 else => 0)
-        + (if map_has_key(m, "zz") => 100 else => 0)
+    map_get(m, "x") + map_get(m, 7) + map_get(m, true) +
+        map_get(p, "a") + map_get(p, "c") +
+        len(e) + len(l) + head(l) + len(tail(l)) + head(cons(n, l)) +
+        (if map_has_key(m, "x") => 1 else => 0) +
+        (if map_has_key(p, "c") => 10 else => 0) +
+        (if map_has_key(m, "zz") => 100 else => 0)
 }
 let mut t = 0
 for i in 0..25 { t = t + go(i) }

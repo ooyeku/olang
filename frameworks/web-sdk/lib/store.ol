@@ -74,19 +74,19 @@ meta fn store(prefix, fields) = {
         let class = f[1]
         let default = f[2]
         if typeof(name) != "String" || !ident_ok(name) =>
-            raise("@store: field name must be a lowercase identifier, got "
-                + show(name))
+            raise("@store: field name must be a lowercase identifier, got " +
+                show(name))
         else => ()
         if contains(names, name) =>
             raise("@store: duplicate field '" + name + "'")
         else => ()
         if !contains(["mem", "url", "local"], class) =>
-            raise("@store: field '" + name + "' has unknown class '"
-                + show(class) + "' (mem | url | local)")
+            raise("@store: field '" + name + "' has unknown class '" +
+                show(class) + "' (mem | url | local)")
         else => ()
         if class != "mem" && typeof(default) != "String" =>
-            raise("@store: field '" + name + "' is '" + class
-                + "'-persisted, so its default must be a String")
+            raise("@store: field '" + name + "' is '" + class +
+                "'-persisted, so its default must be a String")
         else => ()
         names = names + [name]
         defaults = map_set(defaults, name, default)

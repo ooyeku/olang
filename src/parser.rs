@@ -1595,8 +1595,11 @@ impl Parser {
         ))
     }
 
-    /// An operator's level on the ladder, loosest first.
-    fn precedence(rule: Rule) -> u8 {
+    /// An operator's level on the ladder, loosest first. The bitwise
+    /// operators take Rust's order: `|` < `^` < `&` < shifts < `+ -`, all
+    /// above the comparisons (and above `??`, `|>` and the ranges, as
+    /// Rust puts them above `..`).
+    fn precedence(rule: Rule, text: &str) -> u8 {
         match rule {
             Rule::or_op => 1,
             Rule::and_op => 2,
@@ -1604,9 +1607,14 @@ impl Parser {
             Rule::coalesce_op => 4,
             Rule::pipe_op => 5,
             Rule::range_op => 6,
-            Rule::add_op => 7,
-            Rule::mul_op => 8,
-            _ => 9, // bitwise_op
+            Rule::bitwise_op => match text {
+                "|" => 7,
+                "^" => 8,
+                "&" => 9,
+                _ => 10, // << >>
+            },
+            Rule::add_op => 11,
+            _ => 12, // mul_op
         }
     }
 
@@ -1618,8 +1626,8 @@ impl Parser {
         operators: &mut std::iter::Peekable<std::vec::IntoIter<(Rule, String)>>,
         min: u8,
     ) -> Result<Expr, ParseError> {
-        while let Some((rule, _)) = operators.peek() {
-            let level = Self::precedence(*rule);
+        while let Some((rule, text)) = operators.peek() {
+            let level = Self::precedence(*rule, text);
             if level < min {
                 break;
             }
@@ -1628,6 +1636,19 @@ impl Parser {
                 message: "Missing right operand in binary expression".to_string(),
             })?;
             let right = Self::climb(next, operands, operators, level + 1)?;
+            // `a == b == c`, `a < b < c`: comparisons do not chain.
+            if rule == Rule::comp_op
+                && let Some((Rule::comp_op, then)) = operators.peek()
+            {
+                return Err(ParseError::InvalidSyntax {
+                    message: format!(
+                        "comparisons do not chain: `{}` follows `{}` — join two \
+                         comparisons with `&&` (`a < b && b < c`), or parenthesize \
+                         the one compared first",
+                        then, text
+                    ),
+                });
+            }
             left = match rule {
                 Rule::pipe_op => Expr::Pipeline {
                     left: Box::new(left),
@@ -1998,6 +2019,23 @@ impl Parser {
                 }
                 _ => {}
             }
+        }
+
+        // `-9223372036854775808`: the smallest Int is written as the
+        // negation of a literal one past the largest, which alone does
+        // not fit; the pair is read as the one literal it spells.
+        if operators.last() == Some(&UnaryOp::Negate)
+            && let Some(pair) = &call_expr_pair
+            && pair.as_str().replace('_', "") == "9223372036854775808"
+        {
+            let mut result = Expr::Integer(i64::MIN);
+            for op in operators.into_iter().rev().skip(1) {
+                result = Expr::UnaryOp {
+                    op,
+                    operand: Box::new(result),
+                };
+            }
+            return Ok(result);
         }
 
         // Parse the base expression
@@ -3265,10 +3303,14 @@ impl Parser {
 
     fn build_block(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
         let mut statements = Vec::new();
+        // Where the last statement ends, in the whole input: what follows
+        // it before the block's `}` says whether it ends in `;`.
+        let mut last_end: Option<(&str, usize)> = None;
 
         for pair in pairs {
             if pair.as_rule() == Rule::statement {
                 let (line, column) = self.line_col(pair.as_span().start_pos());
+                last_end = Some((pair.as_span().get_input(), pair.as_span().end()));
                 let inner = pair
                     .into_inner()
                     .next()
@@ -3279,7 +3321,57 @@ impl Parser {
             }
         }
 
+        // A block's value is its last expression's. A block that ends in
+        // a `let` (or any statement followed by `;`) has no last
+        // expression, and its value is `()` — on every tier, since the
+        // parser says so.
+        let ends_in_let = statements
+            .last()
+            .is_some_and(|s| matches!(s.unwrapped(), Statement::LetDecl(_)));
+        let ends_in_semicolon =
+            last_end.is_some_and(|(input, end)| Self::semicolon_follows(input, end));
+        if ends_in_let || ends_in_semicolon {
+            statements.push(Statement::Expression(Expr::Tuple(std::sync::Arc::new(
+                Vec::new(),
+            ))));
+        }
+
         Ok(Expr::Block(statements))
+    }
+
+    /// Whether `text` is `{}`, with nothing but whitespace and comments
+    /// between the braces.
+    fn is_empty_braces(text: &str) -> bool {
+        let Some(inner) = text
+            .trim()
+            .strip_prefix('{')
+            .and_then(|t| t.strip_suffix('}'))
+        else {
+            return false;
+        };
+        let mut rest = inner;
+        loop {
+            rest = rest.trim_start();
+            if let Some(after) = rest.strip_prefix("//") {
+                rest = after.find('\n').map_or("", |i| &after[i..]);
+                continue;
+            }
+            return rest.is_empty();
+        }
+    }
+
+    /// Whether a `;` comes after `at` in `input` before anything but
+    /// whitespace, newlines and comments.
+    fn semicolon_follows(input: &str, at: usize) -> bool {
+        let mut rest = &input[at..];
+        loop {
+            rest = rest.trim_start();
+            if let Some(after) = rest.strip_prefix("//") {
+                rest = after.find('\n').map_or("", |i| &after[i..]);
+                continue;
+            }
+            return rest.starts_with(';');
+        }
     }
 
     fn build_if_expr(&self, pairs: Pairs<Rule>) -> Result<Expr, ParseError> {
@@ -3462,7 +3554,14 @@ impl Parser {
                     return_type = Some(self.build_type_annotation(pair.into_inner())?);
                 }
                 Rule::expr => {
-                    body_expr = Some(self.build_expr(pair.into_inner())?);
+                    // `fn f() = {}` is an empty body, as `if c => {}` is an
+                    // empty branch: a block whose value is `()`, not an
+                    // empty object (write `#{}` or `({})` for one).
+                    body_expr = Some(if Self::is_empty_braces(pair.as_str()) {
+                        Expr::Block(Vec::new())
+                    } else {
+                        self.build_expr(pair.into_inner())?
+                    });
                 }
                 _ => {}
             }
@@ -3638,11 +3737,17 @@ impl Parser {
                     Some(types)
                 }
                 Rule::struct_field_list => {
-                    // Struct-style variant: convert struct fields to type annotations
-                    let fields = self.build_struct_field_list(pair.into_inner())?;
-                    let types: Vec<TypeAnnotation> =
-                        fields.into_iter().map(|f| f.field_type).collect();
-                    Some(types)
+                    // `C { n: Int }` declared a variant built only as
+                    // `C(1)`, its field names read nowhere: refused, so a
+                    // struct variant stays free to mean one later.
+                    return Err(ParseError::InvalidSyntax {
+                        message: format!(
+                            "enum variant '{}' has named fields, which an enum variant \
+                             cannot have: declare it with positional fields (`{}(Int)`), \
+                             or give it a struct type (`{}(Point)`)",
+                            name, name, name
+                        ),
+                    });
                 }
                 _ => {
                     // Unknown rule - treat as no data
@@ -5522,6 +5627,7 @@ fn rename_walk(
                     | Rule::enum_variant_pattern
                     | Rule::struct_pattern
                     | Rule::struct_literal
+                    | Rule::type_name_upper
                     | Rule::error_type_decl
                     | Rule::error_variant
                     | Rule::trait_decl

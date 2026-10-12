@@ -340,13 +340,216 @@ main()
     );
 }
 
-// ── A file declares a function once; a bundle keeps module scope ──────
+// ── Language rulings ───────────────────────────────────────────────────
+
+fn parse_err(src: &str) -> String {
+    match Parser::new().parse(src) {
+        Ok(_) => panic!("expected a parse error\n{src}"),
+        Err(e) => e.to_string(),
+    }
+}
 
 #[test]
 fn a_function_declared_twice_in_a_file_is_refused() {
     let err =
         agree_tiered("fn f() = 1\nfn f() = 2\nfn main() = f()\nmain()\n").expect_err("refused");
     assert!(err.contains("'f' is already declared"), "{err}");
+}
+
+#[test]
+fn bitwise_operators_take_rusts_order() {
+    let src = r#"
+fn main() = [1 + 2 << 3, 1 << 4 * 2, 6 & 3 == 2, 1 | 2 ^ 3, 12 & 10 | 1, 1 | 6 & 3]
+main()
+"#;
+    let t = Value::Boolean(true);
+    assert_eq!(
+        agree(src),
+        Ok(l(vec![
+            Value::Integer(24),
+            Value::Integer(256),
+            t,
+            Value::Integer(1),
+            Value::Integer(9),
+            Value::Integer(3),
+        ]))
+    );
+}
+
+#[test]
+fn a_line_starting_with_minus_or_plus_is_a_new_statement() {
+    let src = "fn main() = {\n    let base = 10\n    let shown = base\n    -1\n    let sum = base +\n        5\n    let piped = [1, 2]\n        |> len\n    (shown, sum, piped)\n}\nmain()\n";
+    assert_eq!(
+        agree(src),
+        Ok(Value::Tuple(std::sync::Arc::new(vec![
+            Value::Integer(10),
+            Value::Integer(15),
+            Value::Integer(2),
+        ])))
+    );
+}
+
+#[test]
+fn a_block_ending_in_let_or_semicolon_is_unit_and_an_empty_body_too() {
+    let src = r#"
+fn empty() = {}
+fn main() = [{ let a = 1 }, { 1; }, empty(), { 1 }]
+main()
+"#;
+    assert_eq!(
+        agree(src),
+        Ok(l(vec![
+            Value::Unit,
+            Value::Unit,
+            Value::Unit,
+            Value::Integer(1)
+        ]))
+    );
+}
+
+#[test]
+fn comparisons_do_not_chain() {
+    for src in ["1 == 1 == 1", "1 < 2 < 3", "1 < 2 == true"] {
+        assert!(parse_err(src).contains("comparisons do not chain"), "{src}");
+    }
+    assert_eq!(agree_tiered("(1 < 2) == true\n"), Ok(Value::Boolean(true)));
+}
+
+#[test]
+fn a_named_argument_to_a_builtin_is_refused() {
+    let err = agree_tiered(r#"str.pad_start("x", 3, bogus: "0")"#).expect_err("refused");
+    assert!(err.contains("named argument 'bogus'"), "{err}");
+}
+
+#[test]
+fn pattern_rules() {
+    let err = agree_tiered("let (x, x) = (1, 2)\n").expect_err("a binder twice");
+    assert!(err.contains("'x' is bound twice"), "{err}");
+    let err = agree_tiered("match (1, 2) { (1, y) | (z, 2) => 1, _ => 0 }\n")
+        .expect_err("alternatives bind different names");
+    assert!(err.contains("bind different names"), "{err}");
+    assert_eq!(
+        agree_tiered("match (1, 2) { (1, y) | (y, 2) => y, _ => 0 }\n"),
+        Ok(Value::Integer(2))
+    );
+    let src = r#"
+fn kind(c) = match c { 'a'..='z' => "letter", _ => "other" }
+fn main() = [kind("q"), kind("zebra"), kind("")]
+main()
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(l(vec![s("letter"), s("other"), s("other")]))
+    );
+    assert!(parse_err("type E = enum { C { n: Int } }").contains("named fields"));
+    let err = agree_tiered("match 3 { 1 => 0 }\n").expect_err("no arm");
+    assert!(err.contains("Pattern match failed"), "{err}");
+}
+
+#[test]
+fn unit_tuple_and_lambda_return_annotations_are_enforced() {
+    let cases = [
+        ("fn f(x: ()) = x\nf(1)\n", "expects ()"),
+        ("fn f(x: Int | ()) = x\nf(\"s\")\n", "expects Int | ()"),
+        ("fn f(p: (Int, Int)) = p\nf((1, 2, 3))\n", "a 3-tuple"),
+        ("let g = (x) -> Int => \"s\"\ng(1)\n", "return value"),
+    ];
+    for (src, want) in cases {
+        let err = agree_tiered(src).expect_err(src);
+        assert!(err.contains(want), "{src}: {err}");
+    }
+    assert_eq!(
+        agree_tiered("fn f(x: Int | ()) = x\n[f(()), f(2)]\n"),
+        Ok(l(vec![Value::Unit, Value::Integer(2)]))
+    );
+    assert_eq!(
+        agree_tiered("fn f(p: (Int, Int)) -> (Int, Int) = p\nf((1, 2))\n"),
+        Ok(Value::Tuple(std::sync::Arc::new(vec![
+            Value::Integer(1),
+            Value::Integer(2)
+        ])))
+    );
+}
+
+#[test]
+fn numbers_at_their_edges() {
+    let err = agree_tiered("to_int(1e30)\n").expect_err("out of range");
+    assert!(err.contains("outside the Int range"), "{err}");
+    assert_eq!(agree_tiered("to_int(-2.9)\n"), Ok(Value::Integer(-2)));
+    let src = "fn shift(a, n) = a << n\nfn main() = shift(3, 63)\nmain()\n";
+    let err = agree(src).expect_err("a shift that loses bits overflows");
+    assert!(err.contains("overflow"), "{err}");
+    assert_eq!(
+        agree(
+            "fn shift(a, n) = a << n\nfn main() = [shift(1, 62), shift(-1, 63), -7 % 3, 7 % -3]\nmain()\n"
+        ),
+        Ok(l(vec![
+            Value::Integer(1 << 62),
+            Value::Integer(i64::MIN),
+            Value::Integer(-1),
+            Value::Integer(1),
+        ]))
+    );
+}
+
+#[test]
+fn equality_is_one_relation() {
+    let src = r#"
+fn main() = [
+    Ok(1) == Ok(1), Ok(1) == Err(1), Ok([1]) != Ok([2]),
+    1 == 1.0, 9007199254740993 == 9007199254740992.0, [1] == [1.0],
+    contains([1, 2], 1.0), col.index_of([1, 2], 2.0)
+]
+main()
+"#;
+    let (t, f) = (Value::Boolean(true), Value::Boolean(false));
+    assert_eq!(
+        agree_tiered(src),
+        Ok(l(vec![
+            t.clone(),
+            f.clone(),
+            t.clone(),
+            t.clone(),
+            f.clone(),
+            f,
+            t,
+            Value::Integer(1)
+        ]))
+    );
+    for src in [
+        "fn g() = 1\n[g] == [g]\n",
+        "fn g() = 1\nOk(g) == Ok(g)\n",
+        "#{ \"r\": 0..2 } == #{ \"r\": 0..2 }\n",
+        "fn g() = 1\ncontains([g], g)\n",
+    ] {
+        let err = agree_tiered(src).expect_err(src);
+        assert!(err.contains("cannot compare"), "{src}: {err}");
+    }
+}
+
+#[test]
+fn the_parser_bugs() {
+    let src = r#"
+type Integer = struct { v: Int }
+type Mapping = struct { }
+fn f(x: Integer) -> Int = x.v
+fn g(m: Mapping) = 1
+fn main() = {
+    let mut n = 0
+    for x in [1, 2] {}
+    while false {}
+    [f(Integer { v: 3 }), g(Mapping {}), -9223372036854775808]
+}
+main()
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(l(vec![
+            Value::Integer(3),
+            Value::Integer(1),
+            Value::Integer(i64::MIN)
+        ]))
+    );
 }
 
 #[test]

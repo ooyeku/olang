@@ -411,7 +411,7 @@ impl BytecodeCompiler {
         Some(crate::ast::Function {
             name: src.self_name.clone(),
             param_checks: crate::ast::param_checks_of(&src.params, &[]),
-            return_check: None,
+            return_check: crate::ast::return_check_of(src.return_type.as_ref(), &[]),
             parameters: src.params.clone(),
             body: Arc::new(src.body.clone()),
             closure: Arc::new(closure),

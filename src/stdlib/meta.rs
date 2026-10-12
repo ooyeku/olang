@@ -835,6 +835,24 @@ fn expr_to_value(e: &Expr) -> Value {
         Expr::Boolean(b) => map(vec![("kind", s("bool")), ("value", Value::Boolean(*b))]),
         Expr::Identifier(n) => map(vec![("kind", s("ident")), ("name", s(n))]),
         Expr::LocalRef { name, .. } => map(vec![("kind", s("ident")), ("name", s(name))]),
+        // The forms the parser builds as calls of hidden builtins are
+        // nodes of their own: a literal with spreads, and `xs[i] = v`.
+        Expr::Call { callee, arguments } if matches!(callee.as_ref(), Expr::Identifier(n) if n == crate::parser::SPREAD_BUILTIN) => {
+            spread_to_value(arguments)
+        }
+        Expr::Assignment { target, value } if index_assign_parts(value).is_some() => {
+            let (field, index, element) = index_assign_parts(value).expect("checked");
+            let mut pairs = vec![
+                ("kind", s("index_assign")),
+                ("target", s(target)),
+                ("index", expr_to_value(index)),
+                ("value", expr_to_value(element)),
+            ];
+            if let Some(field) = field {
+                pairs.push(("field", s(field)));
+            }
+            map(pairs)
+        }
         Expr::Call { callee, arguments } => map(vec![
             ("kind", s("call")),
             ("callee", expr_to_value(callee)),
@@ -1059,6 +1077,69 @@ fn expr_to_value(e: &Expr) -> Value {
             // over the node tree can never silently miss a call hidden in a
             // subtree. A new `Expr` variant is a build error here until it gets
             // an explicit arm, which is the intended completeness check.
+    }
+}
+
+/// A literal with spreads (`[...xs, 1]`, `#{ ...m, "k": v }`, `{ ...o }`):
+/// `of` is the literal's kind (`list`, `map`, `object`), and `parts`
+/// lists, in source order, each run of written entries as a literal node
+/// of that kind and each spread as a `spread` node. (A spread of a literal
+/// of the same kind reads as a run of its entries, which it is.)
+fn spread_to_value(arguments: &[Argument]) -> Value {
+    let arg = |a: &Argument| match a {
+        Argument::Positional(e) | Argument::Named { value: e, .. } => e.clone(),
+    };
+    // The first argument is the empty literal the parts are laid over.
+    let args = arguments.iter().skip(1).map(arg);
+    let of = match arguments.first().map(arg) {
+        Some(Expr::List(_)) => "list",
+        Some(Expr::MapLiteral { .. }) => "map",
+        _ => "object",
+    };
+    let parts = args
+        .map(|e| {
+            let same_kind = matches!(
+                (&e, of),
+                (Expr::List(_), "list")
+                    | (Expr::MapLiteral { .. }, "map")
+                    | (Expr::AnonymousObject { .. }, "object")
+            );
+            if same_kind {
+                expr_to_value(&e)
+            } else {
+                map(vec![("kind", s("spread")), ("value", expr_to_value(&e))])
+            }
+        })
+        .collect();
+    map(vec![
+        ("kind", s("spread_literal")),
+        ("of", s(of)),
+        ("parts", list(parts)),
+    ])
+}
+
+/// `xs[i] = v` (`Assignment` of `__index_set(xs, i, v)`) and `m.k[i] = v`
+/// (`__index_set_in(m, "k", i, v)`): the field, the index and the value.
+fn index_assign_parts(value: &Expr) -> Option<(Option<&str>, &Expr, &Expr)> {
+    let Expr::Call { callee, arguments } = value else {
+        return None;
+    };
+    let Expr::Identifier(name) = callee.as_ref() else {
+        return None;
+    };
+    let positional = |i: usize| match arguments.get(i) {
+        Some(Argument::Positional(e)) => Some(e),
+        _ => None,
+    };
+    if name == crate::parser::INDEX_SET_BUILTIN {
+        Some((None, positional(1)?, positional(2)?))
+    } else if name == crate::parser::INDEX_SET_IN_BUILTIN {
+        match positional(1)? {
+            Expr::String(field) => Some((Some(field.as_str()), positional(2)?, positional(3)?)),
+            _ => None,
+        }
+    } else {
+        None
     }
 }
 
