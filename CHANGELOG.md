@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`olang check` reports a wrong argument count to a builtin.** A call
+  of a global builtin outside the counts its implementation takes is an
+  error in the runtime's words (`sort([1], 2)`: `Arity mismatch: expected
+  1, got 2`; `range` takes 1 to 3), and a stdlib module's function called
+  with fewer arguments than it takes is one too (`str.thousands(1234)`:
+  `str.thousands: missing argument 2`, which passed the checker and
+  failed at run time in Loom). A pipeline's right side, whose first
+  argument the pipeline supplies, and a name the file binds itself are
+  not judged; the table of global counts is pinned against the runtime.
+  Over the workspace's corpus it reports nothing.
+
 - **Bitwise operators, `loop` and `break value` on the bytecode tier.**
   `& | ^ << >>` compile to one VM instruction (an Int pair, a shift
   count outside 0..64 raising as the interpreter does) and to native

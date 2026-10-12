@@ -2458,7 +2458,58 @@ struct Checker {
     /// Qualified stdlib names documented as returning `Result`, from the
     /// help registry. Populated lazily — most checks never need it.
     fallible: std::collections::HashSet<String>,
+    /// Names a `use` or a top-level `let` binds in this file, and whether
+    /// a wildcard `use` may bind any name: a call of one of them is not a
+    /// builtin's.
+    user_bound: std::collections::HashSet<String>,
+    wildcard_use: bool,
     out: Vec<CheckDiagnostic>,
+}
+
+/// How many arguments each global builtin takes, as its implementation
+/// counts them (`min`, `max`): a call outside the range raises. Measured
+/// against the runtime and pinned by `builtin_arity_table_agrees_with_the_runtime`.
+/// The variadic output and assertion forms are left out.
+const GLOBAL_ARITY: &[(&str, usize, usize)] = &[
+    ("abs", 1, 1), ("all", 2, usize::MAX), ("any", 2, usize::MAX), ("attempt", 1, 1),
+    ("average", 1, 1), ("chunk", 2, 2), ("clamp", 3, 3), ("concat", 2, 2), ("cons", 2, 2),
+    ("contains", 2, 2), ("drop", 2, 2), ("ends_with", 2, 2), ("entries", 1, 1),
+    ("enumerate", 1, 1), ("filter", 2, 2), ("find", 2, 2), ("flatten", 1, 1), ("fold", 3, 3),
+    ("force", 1, 1), ("group_by", 2, 2), ("head", 1, 1), ("implements", 2, 2), ("is_err", 1, 1),
+    ("is_ok", 1, 1), ("join", 2, 2), ("lazy", 1, 1), ("len", 1, 1), ("map", 2, 2),
+    ("map_clear", 1, 1), ("map_filtered", 3, 3), ("map_get", 2, 2), ("map_get_in", 2, 2),
+    ("map_get_or", 3, 3), ("map_has_key", 2, 2), ("map_keys", 1, 1), ("map_len", 1, 1),
+    ("map_merge", 2, 2), ("map_path", 2, 2), ("map_remove", 2, 2), ("map_set", 3, 3),
+    ("map_set_in", 3, 3), ("map_update", 3, 3), ("map_values", 1, 1), ("max", 1, usize::MAX),
+    ("min", 1, usize::MAX), ("par_filter", 2, 2), ("par_map", 2, 2), ("raise", 1, 1),
+    ("range", 1, 3), ("reduce", 3, 3), ("result_map", 2, 2), ("result_map_err", 2, 2),
+    ("reverse", 1, 1), ("show", 1, 1), ("skip", 2, 2), ("sort", 1, 1), ("split", 2, 2),
+    ("starts_with", 2, 2), ("sum", 1, 1), ("tail", 1, 1), ("take", 2, 2), ("to_float", 1, 1),
+    ("to_int", 1, 1), ("to_string", 1, 1), ("typeof", 1, 1), ("unwrap", 1, 1),
+    ("unwrap_or", 2, 2), ("unwrap_or_else", 2, 2), ("zip", 2, 2),
+];
+
+/// The fewest arguments a stdlib module's function takes: the arity its
+/// module registers it with ("the fewest arguments a call takes"), which
+/// its implementation asks for ("str.thousands: missing argument 2").
+fn module_min_arity(module: &str, function: &str) -> Option<usize> {
+    static TABLE: std::sync::OnceLock<HashMap<String, usize>> = std::sync::OnceLock::new();
+    TABLE
+        .get_or_init(|| {
+            let mut t = HashMap::new();
+            for (name, module) in crate::stdlib::get_stdlib().iter() {
+                if let Value::Struct { fields, .. } = module {
+                    for (f, v) in fields.iter() {
+                        if let Value::Builtin(b) = v {
+                            t.insert(format!("{}.{}", name, f), b.arity);
+                        }
+                    }
+                }
+            }
+            t
+        })
+        .get(&format!("{}.{}", module, function))
+        .copied()
 }
 
 impl Checker {
@@ -2497,6 +2548,100 @@ impl Checker {
     fn collect(&mut self, program: &Program) {
         for stmt in &program.statements {
             self.collect_statement(stmt.unwrapped());
+            let use_decl = match stmt.unwrapped() {
+                Statement::UseDecl(u) | Statement::ShareDecl(crate::ast::ShareDecl::Use(u)) => Some(u),
+                _ => None,
+            };
+            if let Some(u) = use_decl {
+                if let Some(last) = u.path.last() {
+                    self.user_bound.insert(last.clone());
+                }
+                for item in &u.items {
+                    match item.bound_name() {
+                        Some(n) => {
+                            self.user_bound.insert(n.to_string());
+                        }
+                        None => self.wildcard_use = true,
+                    }
+                }
+            }
+            let let_decl = match stmt.unwrapped() {
+                Statement::LetDecl(l) | Statement::ShareDecl(crate::ast::ShareDecl::Let(l)) => Some(l),
+                _ => None,
+            };
+            if let Some(l) = let_decl {
+                let mut names = std::collections::HashSet::new();
+                crate::resolve::pattern_names_of(&l.pattern, &mut names);
+                self.user_bound.extend(names);
+            }
+        }
+    }
+
+    /// A call of a global builtin or a stdlib module's function with an
+    /// argument count its implementation refuses. A name the file binds
+    /// (a local, a `use`, a top-level `let` or `fn`) is not the builtin.
+    fn check_builtin_arity(&mut self, callee: &Expr, arguments: &[Argument], span: (u32, u32)) {
+        if !arguments.iter().all(|a| matches!(a, Argument::Positional(_))) {
+            return;
+        }
+        let bound = |me: &Self, n: &str| {
+            me.sigs.contains_key(n)
+                || me.user_bound.contains(n)
+                || me.scopes.iter().any(|scope| scope.contains_key(n))
+        };
+        let got = arguments.len();
+        match callee {
+            Expr::Identifier(name) if !self.wildcard_use && !bound(self, name) => {
+                let Some(&(_, min, max)) = GLOBAL_ARITY.iter().find(|(n, _, _)| n == name) else {
+                    return;
+                };
+                if got >= min && got <= max {
+                    return;
+                }
+                let message = if min == max {
+                    format!("Arity mismatch: expected {}, got {}", min, got)
+                } else if max == usize::MAX {
+                    format!("`{}` takes at least {} arguments, got {}", name, min, got)
+                } else {
+                    format!("`{}` takes {} to {} arguments, got {}", name, min, max, got)
+                };
+                self.diag(span, true, message);
+            }
+            Expr::FieldAccess { object, field } => {
+                let Expr::Identifier(module) = object.as_ref() else {
+                    return;
+                };
+                // The modules that register a function by the fewest
+                // arguments it takes; the data stack's and the engines'
+                // (`ods`, `gui`, `vt`, …) register a usual count instead.
+                const MIN_REGISTERED: &[&str] = &[
+                    "str", "col", "math", "json", "toml", "csv", "re", "dates", "time",
+                    "base64", "fs", "os", "db", "crypto", "chan", "task", "cell", "proc",
+                    "bytes", "compress", "bigint", "random", "caps", "runtime", "asset", "vec",
+                    "meta", "testing",
+                ];
+                if bound(self, module) || !MIN_REGISTERED.contains(&module.as_str()) {
+                    return;
+                }
+                let Some(min) = module_min_arity(module, field) else {
+                    return;
+                };
+                if got < min {
+                    self.diag(
+                        span,
+                        true,
+                        format!(
+                            "{}.{}: missing argument {} (it takes at least {}, got {})",
+                            module,
+                            field,
+                            got + 1,
+                            min,
+                            got
+                        ),
+                    );
+                }
+            }
+            _ => {}
         }
     }
 
@@ -3602,6 +3747,9 @@ impl Checker {
         {
             self.check_needs(name, arguments, span);
         }
+        if let Expr::Call { callee, arguments } = expr {
+            self.check_builtin_arity(callee, arguments, span);
+        }
         // Check this node, then walk its children.
         if let Expr::Call { callee, arguments } = expr
             && let Expr::Identifier(name) = callee.as_ref()
@@ -4197,6 +4345,61 @@ mod tests {
     fn check(src: &str) -> Vec<CheckDiagnostic> {
         check_program(&Parser::new().parse(src).expect("parses"))
     }
+
+    #[test]
+    fn a_wrong_argument_count_to_a_builtin_is_reported() {
+        let d = check("println(str.thousands(1234))\n");
+        assert_eq!(d.len(), 1, "{:?}", d);
+        assert!(d[0].runtime && !d[0].warning);
+        assert!(d[0].message.contains("str.thousands: missing argument 2"), "{}", d[0].message);
+        let d = check("let r = sort([1], 2)\nlet n = len()\nlet x = range(1, 2, 3, 4)\n");
+        let messages: Vec<&str> = d.iter().map(|d| d.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "Arity mismatch: expected 1, got 2",
+                "Arity mismatch: expected 1, got 0",
+                "`range` takes 1 to 3 arguments, got 4"
+            ]
+        );
+        // Variadic forms, a pipeline's injected argument, and a name the
+        // file binds itself are not judged.
+        assert!(check("let a = min(1, 2, 3)\nlet b = str.fmt(\"{} {}\", 1, 2)\nlet c = [3, 1] |> sort\nlet d = [1] |> take(1)\nlet e = fs.join(\"a\", \"b\", \"c\")\n").is_empty());
+        assert!(check("fn sort(a, b) = a\nlet r = sort(1, 2)\n").is_empty());
+        assert!(check("fn f(str) = str.thousands(1)\n").iter().all(|d| d.warning));
+        assert!(check("use colx { * }\nlet r = all([1])\n").is_empty());
+    }
+
+    #[test]
+    fn the_global_arity_table_agrees_with_the_runtime() {
+        // Every entry's bounds are the runtime's: one short and one over
+        // (where there is an over) raise; the bounds themselves do not
+        // raise an arity error.
+        let names = crate::builtin::BuiltinFunctions::global_names();
+        for (name, min, max) in GLOBAL_ARITY {
+            assert!(names.iter().any(|n| n == name), "{name} is a global builtin");
+            // (raised at all, raised over the count)
+            let call = |k: usize| {
+                let args = vec!["()"; k].join(", ");
+                let src = format!("show(attempt(() => {name}({args})))");
+                let program = Parser::new().parse(&src).expect("parses");
+                let mut interpreter = crate::Interpreter::new();
+                let v = interpreter
+                    .eval_program(program)
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|e| e.to_string());
+                let count = v.contains("Arity mismatch") || v.contains("missing") || v.contains("expects");
+                (v.trim_start_matches('"').starts_with("Err(") || count, count)
+            };
+            assert!(call(min - 1).0, "{name} with {} arguments", min - 1);
+            assert!(!call(*min).1, "{name} with {min} arguments");
+            if *max != usize::MAX {
+                assert!(!call(*max).1, "{name} with {max} arguments");
+                assert!(call(max + 1).1, "{name} with {} arguments", max + 1);
+            }
+        }
+    }
+
 
     #[test]
     fn an_unrebound_collection_write_warns() {

@@ -377,6 +377,15 @@ A bare `use m` brings every name of `m`, an imported type brings its
 variants, and a module is its own namespace; when a bare `use` cannot be
 resolved, what it brings is unknown and nothing is reported.
 
+A call of a global builtin or a stdlib module's function with an
+argument count its implementation refuses is an error with the
+runtime's words: `sort([1], 2)` is `Arity mismatch: expected 1, got 2`,
+and `str.thousands(1234)` is `str.thousands: missing argument 2`. A
+module function is judged by the fewest arguments it takes (several take
+options after their required ones); a call in a pipeline's right side,
+whose first argument the pipeline supplies, is not judged, nor a name
+the file binds itself.
+
 The checker also goes where the runtime deliberately doesn't: **element
 types**. The runtime checks `List<Int>` shallowly ("a List", O(1)), but
 the checker decomposes literals element by element — `[1, "a", 3]`
