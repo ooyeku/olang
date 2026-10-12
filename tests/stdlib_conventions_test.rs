@@ -51,10 +51,7 @@ fn host_introspection_returns_values_not_results() {
     assert_eq!(run("typeof(os.is_tty())").unwrap(), "Bool");
     assert_eq!(run("typeof(os.has_env(\"PATH\"))").unwrap(), "Bool");
     // list_env returns a struct-like record, not a bare Map.
-    assert_eq!(
-        run("typeof(os.list_env())").unwrap(),
-        "Map"
-    );
+    assert_eq!(run("typeof(os.list_env())").unwrap(), "Map");
     assert_eq!(run("typeof(os.interrupted())").unwrap(), "Bool");
 }
 

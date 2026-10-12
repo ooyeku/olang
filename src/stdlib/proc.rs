@@ -822,10 +822,7 @@ fn proc_pipeline(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     fields.insert("code".to_string(), final_code);
     fields.insert("stdout".to_string(), Value::String(Arc::new(final_out)));
     fields.insert("stderr".to_string(), Value::String(Arc::new(stderr_all)));
-    fields.insert(
-        "codes".to_string(),
-        Value::List(codes.into()),
-    );
+    fields.insert("codes".to_string(), Value::List(codes.into()));
     Ok(ok(Value::Struct {
         type_name: "Object".to_string(),
         fields: std::sync::Arc::new(fields),

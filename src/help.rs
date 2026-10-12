@@ -2708,8 +2708,8 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
             "chan.try_recv(c)",
             "Result",
             "chan",
-            "Ok(value), Err(\"channel is empty\"), or Err(\"channel is closed\")",
-            &[r##"chan.try_recv(c)  // Ok(v), Err("channel is empty"), or closed"##],
+            "Ok(value), Ok(()) when nothing is waiting, or Err(\"channel is closed\") once closed and drained",
+            &[r##"chan.try_recv(c)  // Ok(v), Ok(()) when empty, or Err("channel is closed")"##],
         );
         self.doc_ex(
             "chan.recv_timeout",
@@ -5689,10 +5689,10 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
         });
         self.add_function(FunctionDoc {
             name: "str.char_at".to_string(),
-            description: "Character at index i (empty if out of range).".to_string(),
+            description: "Character at index i, () past the end; a negative i raises.".to_string(),
             syntax: "str.char_at(s, i)".to_string(),
             parameters: vec![],
-            return_type: "String".to_string(),
+            return_type: "String | ()".to_string(),
             examples: vec!["str.char_at(\"hello\", 1)  // \"e\"".to_string()],
             category: "String".to_string(),
             see_also: vec![],
@@ -6004,7 +6004,7 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
         });
         self.add_function(FunctionDoc {
             name: "re.find".to_string(),
-            description: "First match as a string, or empty if none.".to_string(),
+            description: "First match as Ok(string), or Ok(()) when nothing matches.".to_string(),
             syntax: "re.find(pattern, text)".to_string(),
             parameters: vec![],
             return_type: "Result".to_string(),
@@ -6034,7 +6034,7 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
         });
         self.add_function(FunctionDoc {
             name: "re.captures".to_string(),
-            description: "Capture groups of the first match; index 0 is the whole match."
+            description: "Capture groups of the first match; index 0 is the whole match, a group that took no part is (), and Ok(()) when nothing matches."
                 .to_string(),
             syntax: "re.captures(pattern, text)".to_string(),
             parameters: vec![],
@@ -10321,7 +10321,21 @@ For function-specific syntax, use: {}:help <function_name>{}",
                 "os.get_env(\"NONEXISTENT\")  // Err(\"Environment variable 'NONEXISTENT' not found\")".to_string(),
             ],
             category: "OS".to_string(),
-            see_also: vec!["os.set_env".to_string(), "os.has_env".to_string()],
+            see_also: vec!["os.env".to_string(), "os.set_env".to_string(), "os.has_env".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
+            name: "os.env".to_string(),
+            description: "The value of an environment variable, or () when it is not set: os.get_env's absence form, for `os.env(\"PORT\") ?? \"8080\"`".to_string(),
+            syntax: "os.env(var_name)".to_string(),
+            parameters: vec!["var_name: String - The environment variable name".to_string()],
+            return_type: "String | ()".to_string(),
+            examples: vec![
+                "os.env(\"HOME\")  // \"/home/username\"".to_string(),
+                "os.env(\"NONEXISTENT\") ?? \"default\"  // \"default\"".to_string(),
+            ],
+            category: "OS".to_string(),
+            see_also: vec!["os.get_env".to_string(), "os.has_env".to_string()],
         });
 
         self.add_function(FunctionDoc {

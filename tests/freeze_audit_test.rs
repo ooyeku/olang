@@ -645,7 +645,7 @@ main()
         agree_tiered(
             "[str.substring(\"abc\", 1, 99), str.substring(\"abc\", 2, 1), str.char_at(\"abc\", 9)]\n"
         ),
-        Ok(l(vec![s("bc"), s(""), s("")]))
+        Ok(l(vec![s("bc"), s(""), Value::Unit]))
     );
     assert_eq!(
         agree_tiered("col.slice([1, 2, 3], 1, 99)\n"),
@@ -852,6 +852,34 @@ let r = http.response(404, "no")
             Value::Boolean(false),
             s("Object"),
             s("Object"),
+        ]))
+    );
+}
+
+// ── absence is (), "nothing yet" is Ok(()) ─────────────────────────────
+
+#[test]
+fn absence_is_unit_and_nothing_yet_is_ok_unit() {
+    let src = r#"
+let c = chan.new()
+let empty = chan.try_recv(c)
+chan.close(c)
+[re.find("z+", "abc"), re.captures("z", "abc"), re.captures("(x)?b", "b"), str.char_at("ab", 2),
+ empty, chan.try_recv(c), chan.recv_timeout(chan.new(), 1), os.env("OLANG_FREEZE_SURELY_UNSET"),
+ is_err(os.get_env("OLANG_FREEZE_SURELY_UNSET"))]
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(l(vec![
+            ok(Value::Unit),
+            ok(Value::Unit),
+            ok(l(vec![s("b"), Value::Unit])),
+            Value::Unit,
+            ok(Value::Unit),
+            Value::Err(Box::new(s("channel is closed"))),
+            Value::Err(Box::new(s("timed out"))),
+            Value::Unit,
+            Value::Boolean(true),
         ]))
     );
 }

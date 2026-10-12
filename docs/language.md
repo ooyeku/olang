@@ -901,7 +901,7 @@ The edges, stated: `str.substring(s, start, end)` follows the slices'
 one rule (`col.slice` and `bytes.slice` too): a position past the
 length stops at the length, an `end` at or before `start` gives `""`,
 and a negative position raises. `str.char_at(s, i)` raises on a negative
-`i` and answers `""` past the end.
+`i` and answers `()` past the end.
 `split(s, "")` splits around every character, with an empty string at
 each end (`split("abc", "")` is `["", "a", "b", "c", ""]`). Strings are
 compared and searched as their code points: olang does no Unicode

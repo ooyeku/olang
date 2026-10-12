@@ -498,10 +498,12 @@ fn str_char_at(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         )
         .into());
     }
-    let ch = s.chars().nth(i as usize);
-    // Out of range yields an empty string, so callers can probe without
-    // guarding — total operation
-    Ok(ok_string(ch.map(|c| c.to_string()).unwrap_or_default()))
+    // Past the end there is no character: () (absence), so a caller
+    // can probe without guarding.
+    Ok(match s.chars().nth(i as usize) {
+        Some(c) => ok_string(c.to_string()),
+        None => Value::Unit,
+    })
 }
 
 /// The Unicode code point of a string's first character, as an Int —

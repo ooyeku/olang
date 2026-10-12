@@ -1945,8 +1945,18 @@ mod tests {
                 assert_eq!(fields["scheme"], string_val(expected.0));
                 assert_eq!(fields["host"], string_val(expected.1));
                 // a part the URL does not name is ()
-                let or_unit = |s: &str| if s.is_empty() { Value::Unit } else { string_val(s) };
-                let port = if expected.2 < 0 { Value::Unit } else { int_val(expected.2) };
+                let or_unit = |s: &str| {
+                    if s.is_empty() {
+                        Value::Unit
+                    } else {
+                        string_val(s)
+                    }
+                };
+                let port = if expected.2 < 0 {
+                    Value::Unit
+                } else {
+                    int_val(expected.2)
+                };
                 assert_eq!(fields["port"], port);
                 assert_eq!(fields["path"], string_val(expected.3));
                 assert_eq!(fields["query"], or_unit(expected.4));

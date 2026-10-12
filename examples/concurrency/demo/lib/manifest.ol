@@ -20,6 +20,7 @@ share fn log_line(tick: Int, event: String, callsign: String, berth: Int, name: 
 share fn parse_log_line(line) = {
     let pattern = "^T(\\d+) (\\w+) ([A-Z]{4}-\\d{3}) @(-?\\d+) \\| (.+)$"
     match re.captures(pattern, line) {
+        Ok(()) => Err("wrong shape: " + line),
         Ok(groups) => if len(groups) >= 6 => Ok(#{
             "tick": unwrap(str.parse_int(groups[1])),
             "event": groups[2],

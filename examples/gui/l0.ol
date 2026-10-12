@@ -129,6 +129,7 @@ fn drain() = {
     let mut more = true
     while more {
         match chan.try_recv(events) {
+            Ok(()) => { more = false },
             Ok(e) => { out = out + [e] },
             _ => { more = false }
         }

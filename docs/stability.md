@@ -167,6 +167,15 @@ or an `@` macro. The *contextual* declaration words (eight,
 after `meta` joined in 0.68) may gain members additively, since a
 contextual word never stops being an ordinary identifier.
 
+**Absence and the sentinels.** Where an operation finds nothing, or
+nothing has arrived yet, it answers `()` (or `Ok(())` from a function
+that answers a `Result`). Three error strings are named and are
+contract: `"eof"` (a stream ended), `"timed out"` (a wait's time ran
+out) and `"channel is closed"` (a channel closed and drained); a
+program may match them, and they will not change in 1.x. Every other
+`Err` payload's text, like a runtime error's, is for people and may
+change ([stdlib.md](stdlib.md#absence-is-unit) lists the three).
+
 **Number semantics are read-back-clean.** Integers are 64-bit signed
 and overflow is a runtime error pointing at `bigint`, never a silent
 wraparound. Float literals accept a decimal point, an exponent, or

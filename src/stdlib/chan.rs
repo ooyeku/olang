@@ -633,7 +633,9 @@ fn chan_try_recv(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
             chan.depth.fetch_sub(1, Ordering::Relaxed);
             ok(v)
         }
-        Err(TryRecvError::Empty) => err("channel is empty"),
+        // nothing yet: Ok(()), as every "not yet" answers; a closed and
+        // drained channel is the named sentinel
+        Err(TryRecvError::Empty) => ok(Value::Unit),
         Err(TryRecvError::Disconnected) => err("channel is closed"),
     })
 }

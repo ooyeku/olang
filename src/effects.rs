@@ -169,6 +169,7 @@ fn recorded_of(op: &str) -> bool {
             | "dates.today"
             // environment and console input.
             | "os.get_env"
+            | "os.env"
             | "os.list_env"
             | "os.has_env"
             | "os.hostname"
@@ -279,6 +280,7 @@ fn os_env_gated(name: &str) -> bool {
     matches!(
         name,
         "get_env"
+            | "env"
             | "set_env"
             | "list_env"
             | "has_env"

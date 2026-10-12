@@ -454,7 +454,7 @@ fn a_modal_layer_keeps_the_focus_and_hears_a_press_outside() {
         gui.input(w, #{ "kind": "pointer", "action": "up", "x": 20, "y": 20 })
         let mut kinds = []
         let mut more = true
-        while more { match chan.try_recv(ev) { Ok(e) => { kinds = kinds + [map_get(e, "kind")] }, _ => { more = false } } }
+        while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { kinds = kinds + [map_get(e, "kind")] }, _ => { more = false } } }
         [first, after_tabs, gui.read(w, "hit", (20, 20)), contains(kinds, "outside"), contains(kinds, "activate")]
     "##);
     assert_eq!(text(&v), r#"["ok", "ok", (), true, false]"#);
@@ -467,7 +467,7 @@ fn a_drag_is_followed_across_windows_and_a_node_has_actions_of_its_own() {
         let w = gui.headless(#{ "size": (300, 200) })
         let ev = gui.events()
         let mut stale = true
-        while stale { match chan.try_recv(ev) { Ok(e) => (), _ => { stale = false } } }
+        while stale { match chan.try_recv(ev) { Ok(()) => { stale = false }, Ok(e) => (), _ => { stale = false } } }
         gui.apply(w, [
           #{ "key": "root", "box": (0, 0, 300, 200) },
           #{ "key": "card", "parent": "root", "role": "button", "box": (10, 10, 100, 40), "text": "Card",
@@ -483,7 +483,7 @@ fn a_drag_is_followed_across_windows_and_a_node_has_actions_of_its_own() {
         gui.input(w, #{ "kind": "a11y", "key": "card", "action": "custom", "index": 1 })
         let mut got = []
         let mut more = true
-        while more { match chan.try_recv(ev) { Ok(e) => { got = got + [e] }, _ => { more = false } } }
+        while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { got = got + [e] }, _ => { more = false } } }
         let moved = filter(got, (e) => map_get(e, "kind") == "moved")
         let far = filter(got, (e) => map_get(e, "kind") == "pointer" && map_get(e, "action") == "move")
         let acted = filter(got, (e) => map_get(e, "kind") == "a11y")
@@ -524,7 +524,7 @@ fn a_lists_actions_are_its_active_rows_too() {
         let w = gui.headless(#{ "size": (300, 200) })
         let ev = gui.events()
         let mut stale = true
-        while stale { match chan.try_recv(ev) { Ok(e) => (), _ => { stale = false } } }
+        while stale { match chan.try_recv(ev) { Ok(()) => { stale = false }, Ok(e) => (), _ => { stale = false } } }
         gui.apply(w, [
           #{ "key": "root", "box": (0, 0, 300, 200) },
           #{ "key": "col", "parent": "root", "role": "list", "box": (0, 0, 150, 200), "focusable": true,
@@ -536,7 +536,7 @@ fn a_lists_actions_are_its_active_rows_too() {
         gui.input(w, #{ "kind": "a11y", "key": "r1", "action": "custom", "index": 1 })
         let mut got = []
         let mut more = true
-        while more { match chan.try_recv(ev) { Ok(e) => { got = got + [e] }, _ => { more = false } } }
+        while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { got = got + [e] }, _ => { more = false } } }
         let acted = filter(got, (e) => map_get(e, "kind") == "a11y")
         let custom = (k) => map_get(filter(gui.read(w, "a11y"), (n) => map_get(n, "key") == k)[0], "custom")
         [custom("col"), custom("r1"), custom("r0"), len(acted), map_get(acted[0], "key"), map_get(acted[0], "label")]
@@ -752,7 +752,7 @@ fn a_test_can_close_command_paste_and_see_the_caret() {
         gui.input(w, #{ "kind": "close" })
         let mut kinds = []
         let mut more = true
-        while more { match chan.try_recv(ev) { Ok(e) => { kinds = kinds + [map_get(e, "kind") + (if map_get(e, "id") == () => "" else => ":" + map_get(e, "id"))] }, _ => { more = false } } }
+        while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { kinds = kinds + [map_get(e, "kind") + (if map_get(e, "id") == () => "" else => ":" + map_get(e, "id"))] }, _ => { more = false } } }
         gui.apply(w, [#{ "op": "focus" }])
         [caret != () && caret[0] >= 10.0 && caret[3] > 10.0, gui.read(w, "value", "f"), contains(kinds, "menu:save"), contains(kinds, "close_requested"), gui.read(w, "caret")]
     "##);
@@ -773,7 +773,7 @@ fn the_application_hears_what_it_is_asked_to_open_and_the_tab_bar() {
         gui.input(w, #{ "kind": "new_tab" })
         let mut seen = []
         let mut more = true
-        while more { match chan.try_recv(ev) { Ok(e) => { seen = seen + [map_get(e, "kind") + (if map_get(e, "paths") == () => "" else => ":" + join(map_get(e, "paths"), ","))] }, _ => { more = false } } }
+        while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { seen = seen + [map_get(e, "kind") + (if map_get(e, "paths") == () => "" else => ":" + join(map_get(e, "paths"), ","))] }, _ => { more = false } } }
         let bare = match attempt(() => gui.input(w, #{ "kind": "open" })) { Ok(v) => "taken", Err(e) => "refused" }
         gui.close(w2)
         gui.close(w)
@@ -886,7 +886,7 @@ fn a_zoomed_window_lays_out_in_larger_units_at_the_same_pixels() {
         let after = gui.read(w, "rgba")
         let mut resized = ()
         let mut more = true
-        while more { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "resize" => { resized = (map_get(e, "width"), map_get(e, "height")) } }, _ => { more = false } } }
+        while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { if map_get(e, "kind") == "resize" => { resized = (map_get(e, "width"), map_get(e, "height")) } }, _ => { more = false } } }
         [size, resized, map_get(before, "width") == map_get(after, "width"), gui.read(w, "hit", (60, 30)), gui.read(w, "hit", (150, 30))]
     "##);
     // 400×200 logical pixels at zoom 2 are 200×100 units (what reads and
@@ -907,7 +907,7 @@ fn the_system_settings_are_read_and_a_change_is_an_event() {
         gui.input(w, #{ "kind": "appearance", "dark": true, "contrast": true })
         let mut got = ()
         let mut more = true
-        while more { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "appearance" => { got = e } }, _ => { more = false } } }
+        while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { if map_get(e, "kind") == "appearance" => { got = e } }, _ => { more = false } } }
         [sort(map_keys(c)), map_get(got, "dark"), map_get(got, "contrast"), map_get(got, "reduce_motion")]
     "##);
     assert_eq!(
@@ -932,7 +932,7 @@ fn under_a_zoom_the_pointer_lands_where_the_pixels_show() {
         gui.input(w, #{ "kind": "pointer", "action": "up", "x": 120, "y": 60 })
         let mut hit = ()
         let mut more = true
-        while more { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "activate" => { hit = map_get(e, "key") } }, _ => { more = false } } }
+        while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { if map_get(e, "kind") == "activate" => { hit = map_get(e, "key") } }, _ => { more = false } } }
         hit
     "##);
     assert_eq!(text(&v), r#""b""#);
@@ -1491,12 +1491,12 @@ fn the_systems_settings_reach_a_window_and_its_program() {
         let w = gui.headless(#{ "size": (120, 80) })
         let ev = gui.events()
         let mut stale = true
-        while stale { match chan.try_recv(ev) { Ok(e) => (), Err(e) => { stale = false } } }
+        while stale { match chan.try_recv(ev) { Ok(()) => { stale = false }, Ok(e) => (), Err(e) => { stale = false } } }
         let before = gui.read(w, "settings")
         gui.input(w, #{ "kind": "appearance", "dark": true, "reduce_motion": true, "reduce_transparency": true, "accent": "#ff2d55" })
         let mut got = ()
         let mut more = true
-        while more { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "appearance" => { got = e } }, Err(e) => { more = false } } }
+        while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { if map_get(e, "kind") == "appearance" => { got = e } }, Err(e) => { more = false } } }
         let bad = attempt(() => gui.input(w, #{ "kind": "appearance", "accent": "pink" }))
         let ctx = gui.context()
         [map_get(before, "reduce_motion"), gui.read(w, "settings"),
@@ -1516,7 +1516,7 @@ fn files_dropped_on_a_window_say_where_they_landed() {
         let w = gui.headless(#{ "size": (300, 200) })
         let ev = gui.events()
         let mut stale = true
-        while stale { match chan.try_recv(ev) { Ok(e) => (), Err(e) => { stale = false } } }
+        while stale { match chan.try_recv(ev) { Ok(()) => { stale = false }, Ok(e) => (), Err(e) => { stale = false } } }
         gui.apply(w, [
           #{ "key": "root", "box": (0, 0, 300, 200) },
           #{ "key": "left", "parent": "root", "role": "region", "box": (0, 0, 150, 200) },
@@ -1527,7 +1527,7 @@ fn files_dropped_on_a_window_say_where_they_landed() {
         gui.input(w, #{ "kind": "files", "action": "cancel" })
         let mut got = []
         let mut more = true
-        while more { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "files" => { got = got + [(map_get(e, "action"), map_get(e, "target"), map_get(e, "paths"))] } }, Err(e) => { more = false } } }
+        while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { if map_get(e, "kind") == "files" => { got = got + [(map_get(e, "action"), map_get(e, "target"), map_get(e, "paths"))] } }, Err(e) => { more = false } } }
         got
     "##);
     assert_eq!(
@@ -1750,7 +1750,7 @@ fn a_canvas_hears_the_wheel_the_pinch_and_says_what_is_under_the_pointer() {
         let w = gui.headless(#{ "size": (300, 200) })
         let ev = gui.events()
         let mut stale = true
-        while stale { match chan.try_recv(ev) { Ok(e) => (), Err(e) => { stale = false } } }
+        while stale { match chan.try_recv(ev) { Ok(()) => { stale = false }, Ok(e) => (), Err(e) => { stale = false } } }
         gui.apply(w, [
           #{ "key": "root", "box": (0, 0, 300, 200) },
           #{ "key": "sc", "parent": "root", "role": "region", "box": (0, 0, 300, 200), "content": (300, 800) },
@@ -1764,7 +1764,7 @@ fn a_canvas_hears_the_wheel_the_pinch_and_says_what_is_under_the_pointer() {
         gui.input(w, #{ "kind": "pinch", "delta": 0.25, "phase": "move" })
         let mut got = []
         let mut more = true
-        while more { match chan.try_recv(ev) { Ok(e) => { got = got + [e] }, Err(e) => { more = false } } }
+        while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { got = got + [e] }, Err(e) => { more = false } } }
         let moves = filter(got, (e) => map_get(e, "kind") == "pointer")
         let wheels = filter(got, (e) => map_get(e, "kind") == "wheel")
         let pinches = filter(got, (e) => map_get(e, "kind") == "pinch")
@@ -1796,12 +1796,12 @@ fn a_styled_field_edits_a_paragraph_at_a_time_and_says_what_changed() {
           #{ "op": "focus", "key": "f" }
         ])
         let mut drain = true
-        while drain { match chan.try_recv(ev) { Ok(e) => (), _ => { drain = false } } }
+        while drain { match chan.try_recv(ev) { Ok(()) => { drain = false }, Ok(e) => (), _ => { drain = false } } }
         // typed in the first line: one line changed, the caret after it
         gui.input(w, #{ "kind": "text", "text": "X" })
         let mut changed = ()
         let mut more = true
-        while more { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "changed" => { changed = e } }, _ => { more = false } } }
+        while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { if map_get(e, "kind") == "changed" => { changed = e } }, _ => { more = false } } }
         let d = map_get(changed, "delta")
         let caret = map_get(changed, "caret")
         // the end of the text, by key: the field scrolls to its caret
@@ -1814,7 +1814,7 @@ fn a_styled_field_edits_a_paragraph_at_a_time_and_says_what_changed() {
              "edit": #{ "value": "X" + text, "rich": true, "styles": styles, "spans": [], "select": (1, 3, 2), "undo": false } }])
         let mut sel = ()
         let mut more2 = true
-        while more2 { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "select" => { sel = map_get(e, "selection") } }, _ => { more2 = false } } }
+        while more2 { match chan.try_recv(ev) { Ok(()) => { more2 = false }, Ok(e) => { if map_get(e, "kind") == "select" => { sel = map_get(e, "selection") } }, _ => { more2 = false } } }
         [map_get(d, "first"), map_get(d, "removed"), map_get(d, "lines"), map_get(d, "at"), map_get(d, "inserted"), map_get(changed, "selection"),
          caret[0] > 10.0 && caret[1] >= 8.0, shown != () && shown[1] > 10.0 && shown[1] < 110.0, gui.read(w, "value", "f") == "X" + text, sel]
     "##);
@@ -1853,7 +1853,7 @@ fn a_code_field_numbers_marks_decorates_and_scrolls_large_text() {
         let opened_ms = time.monotonic() - t0
         let same_as_plain = px == gui.read(plain, "pixels")
         let mut drain = true
-        while drain { match chan.try_recv(ev) { Ok(e) => (), _ => { drain = false } } }
+        while drain { match chan.try_recv(ev) { Ok(()) => { drain = false }, Ok(e) => (), _ => { drain = false } } }
         // the program scrolls to line 30,000; a key says the first line in view
         gui.apply(w, [field(#{ "numbers": true }, [], (30000, 1))])
         let _p = gui.read(w, "pixels")
@@ -1861,7 +1861,7 @@ fn a_code_field_numbers_marks_decorates_and_scrolls_large_text() {
         gui.input(w, #{ "kind": "wheel", "dy": -400 })
         let mut viewport = ()
         let mut more = true
-        while more { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "viewport" => { viewport = map_get(e, "top") } }, _ => { more = false } } }
+        while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { if map_get(e, "kind") == "viewport" => { viewport = map_get(e, "top") } }, _ => { more = false } } }
         // a press with the command key
         gui.input(w, #{ "kind": "modifiers", "mod": true })
         gui.input(w, #{ "kind": "pointer", "action": "down", "x": 120, "y": 40 })
@@ -1869,12 +1869,12 @@ fn a_code_field_numbers_marks_decorates_and_scrolls_large_text() {
         gui.input(w, #{ "kind": "modifiers" })
         let mut sel = ()
         let mut more2 = true
-        while more2 { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "select" => { sel = e } }, _ => { more2 = false } } }
+        while more2 { match chan.try_recv(ev) { Ok(()) => { more2 = false }, Ok(e) => { if map_get(e, "kind") == "select" => { sel = e } }, _ => { more2 = false } } }
         // typed there: the delta names the line
         gui.input(w, #{ "kind": "text", "text": "Z" })
         let mut changed = ()
         let mut more3 = true
-        while more3 { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "changed" => { changed = e } }, _ => { more3 = false } } }
+        while more3 { match chan.try_recv(ev) { Ok(()) => { more3 = false }, Ok(e) => { if map_get(e, "kind") == "changed" => { changed = e } }, _ => { more3 = false } } }
         let d = map_get(changed, "delta")
         [same_as_plain, opened_ms < 250.0, viewport != () && viewport > 30000, map_get(sel, "click_mod"), map_get(sel, "top") > 30000,
          map_get(d, "first") == map_get(sel, "top") + 2 || map_get(d, "first") > 30000, map_get(d, "removed"), len(map_get(d, "lines")), map_get(d, "inserted"),
@@ -2240,18 +2240,18 @@ fn a_code_field_pins_scopes_says_problems_and_hands_over_chords() {
                       #{ "op": "focus", "key": "f" }])
         let drawn = gui.read(w, "pixels") != gui.read(plain, "pixels")
         let mut drain = true
-        while drain { match chan.try_recv(ev) { Ok(e) => (), _ => { drain = false } } }
+        while drain { match chan.try_recv(ev) { Ok(()) => { drain = false }, Ok(e) => (), _ => { drain = false } } }
         // a press on the pinned first line
         gui.input(w, #{ "kind": "pointer", "action": "down", "x": 120, "y": 10 })
         gui.input(w, #{ "kind": "pointer", "action": "up", "x": 120, "y": 10 })
         let mut lens = ()
         let mut more = true
-        while more { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "lens" => { lens = e } }, _ => { more = false } } }
+        while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { if map_get(e, "kind") == "lens" => { lens = e } }, _ => { more = false } } }
         // a chord handed over: a key, the text as it was
         gui.input(w, #{ "kind": "key", "key": "up", "alt": true })
         let mut key = ()
         let mut more2 = true
-        while more2 { match chan.try_recv(ev) { Ok(e) => { if map_get(e, "kind") == "key" => { key = map_get(e, "mod_chord") } }, _ => { more2 = false } } }
+        while more2 { match chan.try_recv(ev) { Ok(()) => { more2 = false }, Ok(e) => { if map_get(e, "kind") == "key" => { key = map_get(e, "mod_chord") } }, _ => { more2 = false } } }
         // a field to read: typing changes nothing
         gui.apply(w, [field(#{ "readonly": true })])
         gui.input(w, #{ "kind": "text", "text": "Z" })
@@ -2278,12 +2278,13 @@ fn headless_windows_have_one_key_window() {
     let v = run(r##"
         let events = gui.events()
         let mut draining = true
-        while draining { match chan.try_recv(events) { Ok(e) => (), Err(e) => { draining = false } } }
+        while draining { match chan.try_recv(events) { Ok(()) => { draining = false }, Ok(e) => (), Err(e) => { draining = false } } }
         fn said(events) = {
             let mut out = []
             let mut going = true
             while going {
                 match chan.try_recv(events) {
+                    Ok(()) => { going = false },
                     Ok(e) => { if map_get(e, "kind") == "window_focus" => { out = out + [map_get(e, "on")] } },
                     Err(e) => { going = false }
                 }

@@ -3,6 +3,7 @@
 let LINE = "^(\\S+ \\S+) \\[(\\w+)\\] (.+)$"
 
 share fn parse_line(line) = match re.captures(LINE, line) {
+    Ok(()) => Err(line),
     Ok(groups) => if len(groups) >= 4 =>
         Ok({ time: groups[1], level: groups[2], message: groups[3] })
     else => Err(line),
@@ -11,6 +12,6 @@ share fn parse_line(line) = match re.captures(LINE, line) {
 
 // Extract an HTTP route from a message, or "" when there isn't one.
 share fn route_of(message) = match re.find("/\\w[\\w/]*", message) {
-    Ok(r) => r,
+    Ok(r) => r ?? "",
     Err(e) => ""
 }

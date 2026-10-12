@@ -31,13 +31,27 @@ fn try_recv_reports_empty_without_blocking() {
     let v = eval(
         r#"
 let c = chan.new()
-match chan.try_recv(c) {
-    Ok(v) => "value",
-    Err(e) => e
-}
+let empty = chan.try_recv(c)
+unwrap(chan.send(c, 5))
+let one = chan.try_recv(c)
+chan.close(c)
+[empty, one, chan.try_recv(c)]
 "#,
     );
-    assert_eq!(v, Value::String("channel is empty".to_string().into()));
+    // nothing yet is Ok(()); a closed, drained channel the named sentinel
+    assert_eq!(
+        v,
+        Value::List(
+            vec![
+                Value::Ok(Box::new(Value::Unit)),
+                Value::Ok(Box::new(Value::Integer(5))),
+                Value::Err(Box::new(Value::String(
+                    "channel is closed".to_string().into()
+                )))
+            ]
+            .into()
+        )
+    );
 }
 
 #[test]

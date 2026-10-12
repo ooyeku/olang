@@ -29,6 +29,7 @@ upgrading; it reports the cases it can find.
   - [`task.join` answers a Result](#taskjoin-answers-a-result)
   - [Rounding answers an Int](#rounding-answers-an-int)
   - [Stdlib records](#stdlib-records)
+  - [Absence and "nothing yet"](#absence-and-nothing-yet)
 - [In 0.88](#in-088)
   - [A missing field of an object is `()`](#a-missing-field-of-an-object-is-)
   - [A module's missing member reads as `()`](#a-modules-missing-member-reads-as-)
@@ -218,6 +219,16 @@ instead. Reading fields with `.` is unchanged. A process that did not
 exit by itself has `code: ()` and its `signal` (it was -1): `code == 0`
 still tells success. `http.parse_url`'s missing `port`, `query` and
 `fragment` are `()` (were 0 and `""`).
+
+### Absence and "nothing yet"
+
+`chan.try_recv` on an empty channel answers `Ok(())` where it answered
+`Err("channel is empty")`. A loop that drains a channel until `Err`
+would now spin: add an `Ok(()) =>` arm that stops, before `Ok(v) =>`.
+`re.find` with no match is `Ok(())` and `re.captures` with no match
+`Ok(())` (test `== ()`, or `?? ""`), a group that took no part `()`,
+and `str.char_at` past the end `()`. Search for `try_recv`,
+`"channel is empty"`, `re.find`, `re.captures` and `char_at`.
 
 ## In 0.88
 

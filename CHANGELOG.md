@@ -109,6 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and Float, so `math.round(x * 100.0) / 100.0` is unchanged; what
   changes is a rounded value printed alone (`3` where it was `3.0`).
   `to_int(math.round(x))` keeps working.
+
 - **Stdlib records are Maps or plain objects.** What is keyed by data
   is a Map: `http.decode_query`, `os.list_env()`, the rows of
   `csv.parse_with_headers`, and an `HttpResponse`'s `headers` (so
@@ -123,6 +124,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   was -1 for both. `http.parse_url` answers `()` for a port, query or
   fragment the URL does not name (it answered 0 and `""`), and
   `http.response` has the client response's `success`.
+
+- **Absence is `()`, and "nothing yet" is `Ok(())`.** `re.find` with no
+  match answers `Ok(())` (was `Ok("")`), `re.captures` with no match
+  `Ok(())` (was `Ok([])`) and a group that took no part `()` (was
+  `""`); `str.char_at` past the end is `()` (was `""`); `chan.try_recv`
+  with nothing waiting is `Ok(())` (was `Err("channel is empty")`), so a
+  drain loop matches `Ok(())` before `Ok(v)`. `"eof"`, `"timed out"` and
+  `"channel is closed"` are named as contract in stdlib.md and
+  stability.md. `os.env(name)` is new: the value or `()`;
+  `os.get_env` keeps its `Err`.
+
 
 ### Added
 

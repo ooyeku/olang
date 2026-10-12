@@ -24,6 +24,7 @@ pub fn create_os_module() -> Value {
 
     // Environment variables
     module.insert("get_env".to_string(), create_builtin_function("get_env", 1));
+    module.insert("env".to_string(), create_builtin_function("env", 1));
     module.insert("set_env".to_string(), create_builtin_function("set_env", 2));
     module.insert("stdin".to_string(), create_builtin_function("stdin", 0));
     module.insert(
@@ -139,6 +140,7 @@ fn create_builtin_function(name: &str, arity: usize) -> Value {
 pub fn call_os_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     match name {
         "get_env" => os_get_env(args),
+        "env" => os_env(args),
         "set_env" => os_set_env(args),
         "stdin" => os_stdin(args),
         "stdin_lines" => os_stdin_lines(args),
@@ -177,6 +179,19 @@ pub fn call_os_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
 
 /// Get an environment variable
 /// Usage: os.get_env("PATH") -> Result<String, Error>
+/// `os.env(name)`: the variable's value, or `()` when it is not set (or
+/// is not valid Unicode) — the absence form of `os.get_env`.
+fn os_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let name = match args.as_slice() {
+        [Value::String(s)] => s.as_ref(),
+        [_] => return Err("os.env: the name must be a string".into()),
+        _ => return Err(format!("os.env expects 1 argument, got {}", args.len()).into()),
+    };
+    Ok(env::var(name)
+        .map(|v| Value::String(Arc::new(v)))
+        .unwrap_or(Value::Unit))
+}
+
 fn os_get_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
         return Err(format!("os.get_env expects 1 argument, got {}", args.len()).into());

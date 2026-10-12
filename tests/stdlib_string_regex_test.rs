@@ -56,8 +56,8 @@ fn str_char_indexing_is_unicode() {
     // "héllo": index 1 is the accented e; length counts characters
     assert_eq!(eval(r#"str.length("héllo")"#), Value::Integer(5));
     assert_eq!(s(eval(r#"str.char_at("héllo", 1)"#)), "é");
-    // out-of-range char_at yields empty string, not an error
-    assert_eq!(s(eval(r#"str.char_at("hi", 9)"#)), "");
+    // past the end there is no character: (), not an error
+    assert_eq!(eval(r#"str.char_at("hi", 9)"#), Value::Unit);
 }
 
 // ── str: fallible operations return Result ──────────────────────────
@@ -176,9 +176,15 @@ let groups = unwrap(re.captures("^(\\S+ \\S+) \\[(\\w+)\\] (.+)$", "2026-08-06 0
         }
         other => panic!("expected list, got {:?}", other),
     }
-    // A non-matching line yields Ok([]) — the analyzer treats that as malformed.
-    let no_match = eval(r#"len(unwrap(re.captures("^(\\S+) \\[(\\w+)\\]$", "junk line")))"#);
-    assert_eq!(no_match, Value::Integer(0));
+    // A non-matching line yields Ok(()) — the analyzer treats that as malformed.
+    let no_match = eval(r#"unwrap(re.captures("^(\\S+) \\[(\\w+)\\]$", "junk line"))"#);
+    assert_eq!(no_match, Value::Unit);
+    // no match for find either, and a group that took no part is ()
+    assert_eq!(eval(r#"unwrap(re.find("z+", "abc"))"#), Value::Unit);
+    assert_eq!(
+        eval(r#"unwrap(re.captures("(x)?b", "b"))"#),
+        Value::List(vec![Value::String("b".to_string().into()), Value::Unit].into())
+    );
 }
 
 // ── concurrency (found by dogfooding the scheduler) ──

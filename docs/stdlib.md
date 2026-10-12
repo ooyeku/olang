@@ -127,6 +127,25 @@ crossing in — all produce the same `()`, tested with `== ()` / `!= ()`.
 indexing made genuinely dangerous, since `s[str.index_of(s, x)]` on a
 miss silently read the last character.)
 
+The same holds where an operation looks for something and finds
+nothing: `re.find` with no match is `Ok(())`, a capture group that took
+no part is `()`, `str.char_at` past the end is `()`, `http.parse_url`'s
+missing port is `()`. And **"nothing yet" is `Ok(())` everywhere**: a
+`chan.try_recv` with nothing waiting, a `pty.read` that timed out, a
+`pty.wait` while the process runs. Three strings are the contract
+where a wait or a stream ends instead, and stay as they are:
+
+| Sentinel | Meaning | From |
+|---|---|---|
+| `Err("eof")` | the stream ended | `os.read_line`, `proc.read_line`, `pty.read` |
+| `Err("timed out")` | the wait's time ran out | `task.join_timeout`, `chan.recv_timeout` |
+| `Err("channel is closed")` | the channel is closed and drained | `chan.recv`, `chan.try_recv`, `chan.recv_timeout`, `chan.send` |
+
+A program may match these strings; any other error's text is for
+people and may change. `os.get_env(name)` keeps its `Err` for a
+variable that is not set (a configuration that must be there), and
+`os.env(name)` is the lookup: the value, or `()`.
+
 The three shapes never mix: a lookup says `Unit`, a parse or I/O
 operation says `Result`, a misused call raises. And because Unit *is*
 absence, a stored Unit and a missing key are deliberately the same
@@ -432,7 +451,7 @@ every function returns a new string.
 | Function | Description |
 |---|---|
 | `str.length(s)` | character count |
-| `str.char_at(s, i)` | 1-char string, `""` past the end; a negative `i` raises |
+| `str.char_at(s, i)` | 1-char string, `()` past the end; a negative `i` raises |
 | `str.char_code(s)` | the Unicode code point of the first character, `()` for `""` |
 | `str.from_char_code(n)` | the character of code point `n`, or the string of a list of them (`[27, 91, 72]` is ESC `[` `H`); a number that is no character raises |
 | `str.chars(s)` | list of characters (codepoints) |
@@ -860,10 +879,10 @@ its Unicode tables are a fifth of the runtime's code); a page that calls
 | Function | Description |
 |---|---|
 | `re.is_match(pat, s)` | boolean test |
-| `re.find(pat, s)` | first match text |
+| `re.find(pat, s)` | first match text, `Ok(())` when nothing matches |
 | `re.find_all(pat, s)` | all match texts |
 | `re.find_spans(pat, s)` | where every match is: `(start, end)` character offsets |
-| `re.captures(pat, s)` | full match + capture groups |
+| `re.captures(pat, s)` | full match + capture groups (`()` for a group that took no part), `Ok(())` when nothing matches |
 | `re.replace(pat, s, rep)` | every match replaced, as `str.replace` replaces every occurrence; `$1` and `${name}` in `rep` name a capture |
 | `re.replace_first(pat, s, rep)` | the first match replaced |
 | `re.split(pat, s)` | split by pattern |
@@ -1059,7 +1078,7 @@ boundary like anything else.
 | `chan.bounded(n)` | a channel holding at most `n` messages |
 | `chan.send(c, v)` | `Ok(())`, or `Err` when the channel is closed |
 | `chan.recv(c)` | blocks; `Ok(value)`, or `Err` when closed and drained |
-| `chan.try_recv(c)` | `Ok(value)`, `Err("channel is empty")`, or `Err("channel is closed")` |
+| `chan.try_recv(c)` | `Ok(value)`; `Ok(())` when nothing is waiting; `Err("channel is closed")` once closed and drained. A channel that carries `()` cannot tell it from empty this way: use `chan.recv_timeout` |
 | `chan.recv_timeout(c, ms)` | like `recv`, plus `Err("timed out")` once `ms` pass — receivers on one channel wait side by side, so the bound is this wait's own, never another waiter's |
 | `chan.ask(service, request)` | the reply pattern in one call: sends `#{ "req": request, "reply": r }` on a fresh reply channel and answers `Ok(reply)` — spinning briefly before it parks, so a service that answers in microseconds costs no thread wake-up |
 | `chan.stat(c)` | a snapshot map: `id`, `queued`, `closed`, `recv_waiting`, `send_waiting` |
@@ -1606,21 +1625,23 @@ else.
 | Process | `args` `exit(code)` `pid` `exe_path` `exec(program, args)` |
 | Terminal | `is_tty()` — is stdout a terminal? (`Bool`); `stdin_is_tty()` — is stdin? (`Bool`: `false` reading a pipe or a file); `color_enabled()` — will ANSI styling render? (`CLICOLOR_FORCE` set, or a terminal with `NO_COLOR` unset; decided once, re-decided after the program's own `set_env`/`remove_env`); `flush()` — flush buffered stdout, for progress bars |
 | Input | `read_line()` — one line from stdin as `Ok(line)`, `Err("eof")` at end; `stdin()` — everything to end-of-file as one string; `stdin_lines()` — everything as a list of lines, endings stripped. The stdin pair is what makes olang pipe-friendly: `cat access.log \| olang analyze.ol` |
-| Environment | `get_env` `set_env` `remove_env` `has_env` `list_env` |
+| Environment | `get_env` (`Err` when unset) `env` (the value or `()`) `set_env` `remove_env` `has_env`; `list_env()` — every variable as a map, `#{ "PATH": "…", … }` |
 | Directories | `cwd` `chdir` `home_dir` `temp_dir` |
 | System | `hostname` `username` `os_type` `arch` `family` `path_separator` |
 | Signals | `on_interrupt()` — trap Ctrl-C (SIGINT) instead of terminating (`Result`: installing the handler can fail); `interrupted()` — has it been pressed? (`Bool`); `reset_interrupt()` — clear the flag; `on_shutdown(handler)` — run `handler("shutdown")` on SIGINT or SIGTERM (below) |
 
 `os.exec` runs an external program to completion and returns
-`Ok({ code, stdout, stderr, timed_out })` — or `Err` if it could not be
+`Ok({ code, signal, stdout, stderr, timed_out })` — or `Err` if it could not be
 launched at all (the program was not found, or `cwd` names no
 directory: the error says which). An optional third argument configures
 the child: `#{ "cwd": dir, "stdin": text, "env": #{ name: value },
 "timeout_ms": n }` (any subset). With `timeout_ms` the program runs in a
 process group of its own; if it has not exited and closed its output
 within `n` ms, the whole group is killed — a shell and everything it
-started — and the answer is `Ok` with `timed_out: true`, `code: -1`, and
-the output read before the kill. (Being in its own group, it does not
+started — and the answer is `Ok` with `timed_out: true`, `code: ()`, and
+the output read before the kill. `code` is the exit code when the
+program exited by itself, `()` when it did not (a timeout, or a signal:
+`signal` names it, `()` otherwise). (Being in its own group, it does not
 receive the terminal's Ctrl-C.) Without `timeout_ms` the run is
 unbounded and `timed_out` is `false`.
 `os.args()` is the program's argv (`[script, arg1, ...]`).

@@ -158,8 +158,8 @@ fn re_is_match(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     Ok(ok(Value::Boolean(re.is_match(text))))
 }
 
-/// First match as `Ok(string)`, or `Ok("")` when there is no match — the
-/// pattern was valid, so this is a success with an empty result.
+/// First match as `Ok(string)`, or `Ok(())` when there is no match — the
+/// pattern was valid, so this is a success that found nothing.
 fn re_find(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let pattern = arg_str(&args, 0, "find")?;
     let text = arg_str(&args, 1, "find")?;
@@ -167,8 +167,10 @@ fn re_find(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Ok(re) => re,
         Err(e) => return Ok(e),
     };
-    let found = re.find(text).map(|m| m.as_str()).unwrap_or("");
-    Ok(ok(string(found)))
+    Ok(ok(re
+        .find(text)
+        .map(|m| string(m.as_str()))
+        .unwrap_or(Value::Unit)))
 }
 
 fn re_find_all(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
@@ -216,7 +218,8 @@ fn re_find_spans(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 }
 
 /// Capture groups of the first match: index 0 is the whole match, then each
-/// group. `Ok([])` when there is no match.
+/// group, `()` for a group that took no part in the match. `Ok(())` when
+/// there is no match.
 fn re_captures(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let pattern = arg_str(&args, 0, "captures")?;
     let text = arg_str(&args, 1, "captures")?;
@@ -224,14 +227,15 @@ fn re_captures(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Ok(re) => re,
         Err(e) => return Ok(e),
     };
-    let groups: Vec<Value> = match re.captures(text) {
-        Some(caps) => caps
-            .iter()
-            .map(|g| string(g.map(|m| m.as_str()).unwrap_or("")))
-            .collect(),
-        None => Vec::new(),
-    };
-    Ok(ok(Value::List(groups.into())))
+    Ok(ok(match re.captures(text) {
+        Some(caps) => Value::List(
+            caps.iter()
+                .map(|g| g.map(|m| string(m.as_str())).unwrap_or(Value::Unit))
+                .collect::<Vec<_>>()
+                .into(),
+        ),
+        None => Value::Unit,
+    }))
 }
 
 fn re_split(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
