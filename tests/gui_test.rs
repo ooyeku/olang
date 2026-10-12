@@ -400,9 +400,13 @@ fn a_bad_patch_says_what_is_wrong() {
          gui.apply(w, [#{ "key": "c", "style": #{ "colour": "#fff" } }])]
     "##);
     let t = text(&v);
-    assert!(t.contains("unknown role \"buton\""), "{t}");
-    assert!(t.contains("parent \"nope\", which does not exist"), "{t}");
-    assert!(t.contains("unknown style \"colour\""), "{t}");
+    // A string inside a printed list is escaped.
+    assert!(t.contains(r#"unknown role \"buton\""#), "{t}");
+    assert!(
+        t.contains(r#"parent \"nope\", which does not exist"#),
+        "{t}"
+    );
+    assert!(t.contains(r#"unknown style \"colour\""#), "{t}");
 }
 
 #[test]
@@ -1912,7 +1916,7 @@ fn a_styled_field_composes_in_place_and_is_read_as_runs() {
     .replace("TO_END", to_end));
     assert_eq!(
         text(&v),
-        "[\"ab\ncd\", true, \"ab\ncd日本\", 2, (1, 4, 1, 4)]"
+        "[\"ab\\ncd\", true, \"ab\\ncd日本\", 2, (1, 4, 1, 4)]"
     );
 }
 
@@ -2028,8 +2032,8 @@ fn a_context_menu_is_checked_and_headless_windows_leave_it_to_the_program() {
         "false"
     };
     assert!(t.starts_with(&format!("[false, {native}, ")), "{t}");
-    assert!(t.contains(r#""A" needs an "id""#), "{t}");
-    assert!(t.contains(r#"keys "mod+zz+q""#), "{t}");
+    assert!(t.contains(r#"\"A\" needs an \"id\""#), "{t}");
+    assert!(t.contains(r#"keys \"mod+zz+q\""#), "{t}");
     assert!(t.contains("a submenu is a list"), "{t}");
 }
 

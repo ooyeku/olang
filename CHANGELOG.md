@@ -74,6 +74,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   condition must be a Bool" on any other value, as `&&`, `||` and `!`
   do; an empty list, `0`, `""` and `()` were false.
 
+- **Values print as olang source**: `print`, `show`, `to_string` and a
+  template's `${…}` write a string inside a container quoted and escaped
+  (`["a\"b"]`), a map `#{"k": 1}`, an object or parsed JSON object
+  `{ a: 1 }`, a struct `P { x: 1 }` in its declaration's order (it was
+  `<struct: P>{x: 1}`, fields sorted), and an enum value as its
+  constructor (`Circle(2.0)`, was `Shape.Circle(2.0)`). A String at the
+  top level still prints as its text. The float rule (plain in [1e-4,
+  1e16), exponent form outside it, `-0.0`) is documented.
+
 
 ### Added
 

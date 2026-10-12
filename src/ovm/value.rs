@@ -1908,6 +1908,11 @@ impl OvmValue {
 
 impl fmt::Display for OvmValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // A value prints as the interpreter prints it (olang's source
+        // form); a form that does not convert falls back to a tag.
+        if let Ok(value) = self.to_ast() {
+            return write!(f, "{}", value);
+        }
         match &self.data {
             ValueData::Integer(i) => write!(f, "{}", i),
             ValueData::Float(fl) => write!(f, "{}", crate::ast::format_float(*fl)),

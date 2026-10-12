@@ -259,7 +259,7 @@ fn meta_lit_renders_an_object_as_its_literal() {
     .expect("object");
     assert_eq!(
         format!("{out}"),
-        r#"["{ a: 1, b: "x", inner: { z: 2.5 }, m: #{"k": [1]} }", true]"#
+        r#"["{ a: 1, b: \"x\", inner: { z: 2.5 }, m: #{\"k\": [1]} }", true]"#
     );
 }
 

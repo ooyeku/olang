@@ -144,7 +144,10 @@ println(to_string(1e20))      // 1e20
 
 Printing round-trips: `to_string` of any finite float is itself a valid
 float literal that reads back to the identical value, whether it prints
-in plain form (`1500.0`) or exponent form (`1e301`).
+in plain form (`1500.0`) or exponent form (`1e301`). The form is plain
+for a magnitude in [1e-4, 1e16) and for zero, and exponent form
+otherwise (`1e-5`, `1e16`); a whole number in plain form keeps its `.0`,
+and negative zero prints `-0.0`.
 
 A Float is always a finite number. Operations whose IEEE result would
 be `NaN` or infinite raise a runtime error instead: `0.0 / 0.0`,
@@ -216,6 +219,34 @@ separate character type:
 ```olang
 let c = 'x'
 println(typeof(c) + " " + c)
+```
+
+### How values print
+
+`print`, `println`, `show`, `to_string` and a template's `${…}` write a
+value as olang source writes it, so what a program prints reads back as
+the value. A String at the top level is the exception: it prints as its
+text (`println("a")` writes `a`); inside a container it is quoted and
+escaped.
+
+| Value | Printed |
+|---|---|
+| String inside a container | `"a\"b"`, with `\"`, `\\`, `\n`, `\r`, `\t` and other control characters escaped |
+| List, tuple | `[1, "a"]`, `(1, "a")` |
+| Map | `#{"k": 1}`, its keys sorted |
+| Object, parsed JSON object | `{ a: 1, b: 2 }`, its fields sorted (a JSON object with a key that is not a name prints as the map it reads as, `#{"a b": 1}`) |
+| Struct | `P { x: 1, y: 2 }`, its fields in the order the declaration writes them |
+| Enum value | its constructor: `North`, `Circle(2.0)` |
+| `Result` | `Ok(1)`, `Err("bad")` |
+| Unit | `()` |
+| Function, builtin, range, module | `<function: name>`, `<builtin: name>`, `1..5`, `<module: N members>` |
+
+```olang
+type P = struct { y: Int, x: Int }
+type Shape = enum { Dot, Circle(Float) }
+println([P { x: 1, y: 2 }, Circle(2.0), Dot])   // [P { y: 2, x: 1 }, Circle(2.0), Dot]
+println(#{ "k": ["a\"b"] })                     // #{"k": ["a\"b"]}
+println({ name: "ada" })                         // { name: "ada" }
 ```
 
 ## Variables and assignment

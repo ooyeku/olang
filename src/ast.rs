@@ -1985,29 +1985,100 @@ impl std::fmt::Display for Value {
     }
 }
 
+/// The order a declared struct's fields were written in, by its type
+/// name, for printing (`P { x: 1, y: 2 }`). A process-wide table: a
+/// struct printed before its declaration ran, or whose name two modules
+/// declare differently, prints its fields sorted.
+static STRUCT_ORDER: std::sync::OnceLock<
+    std::sync::RwLock<std::collections::HashMap<String, Vec<String>>>,
+> = std::sync::OnceLock::new();
+
+/// Record a struct declaration's field order.
+pub fn note_struct_order(type_name: &str, fields: Vec<String>) {
+    let table = STRUCT_ORDER.get_or_init(Default::default);
+    if let Ok(mut t) = table.write() {
+        t.insert(type_name.to_string(), fields);
+    }
+}
+
+fn struct_order(type_name: &str, fields: &ValueMap) -> Vec<String> {
+    let declared = STRUCT_ORDER
+        .get()
+        .and_then(|t| t.read().ok().and_then(|t| t.get(type_name).cloned()));
+    match declared {
+        Some(order)
+            if order.len() == fields.len() && order.iter().all(|k| fields.contains_key(k)) =>
+        {
+            order
+        }
+        _ => {
+            let mut names: Vec<String> = fields.keys().cloned().collect();
+            names.sort();
+            names
+        }
+    }
+}
+
+/// A string as olang source writes it: quoted, with `\"`, `\\` and the
+/// control characters escaped.
+pub fn quote_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            c if (c as u32) < 0x20 || c == '\u{7f}' => {
+                out.push_str(&format!("\\u{{{:x}}}", c as u32))
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn is_identifier(k: &str) -> bool {
+    k.chars()
+        .next()
+        .is_some_and(|c| c.is_alphabetic() || c == '_')
+        && k.chars().all(|c| c.is_alphanumeric() || c == '_')
+}
+
 impl Value {
+    /// Printing writes a value as olang source writes it (a top-level
+    /// String excepted, which `print`, `to_string` and interpolation write
+    /// as its text): strings quoted and escaped, a map `#{"k": 1}`, an
+    /// object `{ a: 1 }`, a struct `P { x: 1 }` in declaration order, an
+    /// enum value as its constructor (`Circle(2.0)`, `North`).
     fn fmt_value(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let list = |f: &mut std::fmt::Formatter<'_>, items: &[Value]| -> std::fmt::Result {
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", item)?;
+            }
+            Ok(())
+        };
         match self {
             Value::Integer(n) => write!(f, "{}", n),
             Value::Float(x) => write!(f, "{}", format_float(*x)),
-            Value::String(s) => write!(f, "\"{}\"", s),
+            Value::String(s) => write!(f, "{}", quote_string(s)),
             Value::Boolean(b) => write!(f, "{}", b),
-            Value::List(items_rc) => {
-                let items = items_rc.as_ref();
+            Value::List(items) => {
                 write!(f, "[")?;
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", item)?;
-                }
+                list(f, items)?;
                 write!(f, "]")
             }
             Value::Map(map_rc) => {
                 // Sorted by key: printing must be deterministic across
-                // sessions and tiers (a HashMap iterates in per-process
-                // random order), and sorted-by-key is already the
-                // language's canonical order — `entries()` documents it.
+                // sessions and tiers, and sorted-by-key is the language's
+                // canonical order (`entries()`).
                 let map = map_rc.as_ref();
                 let mut keys: Vec<&String> = map.keys().collect();
                 keys.sort();
@@ -2016,19 +2087,13 @@ impl Value {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "\"{}\": {}", key, map[key])?;
+                    write!(f, "{}: {}", quote_string(key), map[key])?;
                 }
                 write!(f, "}}")
             }
-            Value::Tuple(items_rc) => {
-                let items = items_rc.as_ref();
+            Value::Tuple(items) => {
                 write!(f, "(")?;
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", item)?;
-                }
+                list(f, items)?;
                 write!(f, ")")
             }
             Value::Function(func) => {
@@ -2039,19 +2104,54 @@ impl Value {
                 }
             }
             Value::Builtin(builtin) => write!(f, "<builtin: {}>", builtin.name),
-            Value::Struct { type_name, fields } => {
-                // Sorted by key, like Map above — deterministic output.
-                write!(f, "<struct: {}>", type_name)?;
-                write!(f, "{{")?;
+            Value::Struct { type_name, fields } if type_name == "Module" => {
                 let mut names: Vec<&String> = fields.keys().collect();
                 names.sort();
+                write!(f, "<module: {} members>", names.len())
+            }
+            Value::Struct { type_name, fields }
+                if type_name == "Object" || type_name == "JsonObject" =>
+            {
+                // An object (and a parsed JSON object) as its literal,
+                // fields sorted; one whose keys are not all names is
+                // written as the map it reads as.
+                let mut names: Vec<&String> = fields.keys().collect();
+                names.sort();
+                if !names.iter().all(|k| is_identifier(k)) {
+                    write!(f, "#{{")?;
+                    for (i, name) in names.into_iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{}: {}", quote_string(name), fields[name])?;
+                    }
+                    return write!(f, "}}");
+                }
+                if names.is_empty() {
+                    return write!(f, "{{}}");
+                }
+                write!(f, "{{ ")?;
                 for (i, name) in names.into_iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
                     write!(f, "{}: {}", name, fields[name])?;
                 }
-                write!(f, "}}")
+                write!(f, " }}")
+            }
+            Value::Struct { type_name, fields } => {
+                let names = struct_order(type_name, fields);
+                if names.is_empty() {
+                    return write!(f, "{} {{}}", type_name);
+                }
+                write!(f, "{} {{ ", type_name)?;
+                for (i, name) in names.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}: {}", name, fields[name])?;
+                }
+                write!(f, " }}")
             }
             Value::Ok(value) => write!(f, "Ok({})", value),
             Value::Err(value) => write!(f, "Err({})", value),
@@ -2068,22 +2168,16 @@ impl Value {
             }
             Value::Unit => write!(f, "()"),
             Value::Enum(e) => match &e.variant_data {
-                EnumVariantData::Unit => write!(f, "{}.{}", e.type_name, e.variant_name),
+                EnumVariantData::Unit => write!(f, "{}", e.variant_name),
                 EnumVariantData::Tuple(values) => {
-                    write!(f, "{}.{}(", e.type_name, e.variant_name)?;
-                    for (i, value) in values.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "{}", value)?;
-                    }
+                    write!(f, "{}(", e.variant_name)?;
+                    list(f, values)?;
                     write!(f, ")")
                 }
                 EnumVariantData::Struct(fields) => {
-                    // Sorted by key, like Map above — deterministic output.
-                    write!(f, "{}.{} {{ ", e.type_name, e.variant_name)?;
                     let mut names: Vec<&String> = fields.keys().collect();
                     names.sort();
+                    write!(f, "{} {{ ", e.variant_name)?;
                     for (i, name) in names.into_iter().enumerate() {
                         if i > 0 {
                             write!(f, ", ")?;
@@ -2093,7 +2187,7 @@ impl Value {
                     write!(f, " }}")
                 }
             },
-            Value::EnumConstructor(c) => write!(f, "{}.{}", c.type_name, c.variant_name),
+            Value::EnumConstructor(c) => write!(f, "{}", c.variant_name),
             Value::TypeInfo(t) => write!(f, "<type: {}>", t.name),
             Value::Native(handle) => write!(f, "{}", handle.0.display()),
         }

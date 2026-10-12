@@ -215,13 +215,13 @@ fn a_deep_value_prints_and_serializes() {
                 EnumVariantData::Tuple(vec![Value::Integer(1), next]),
             )
         });
-        assert!(enum_chain.to_string().starts_with("L.Cons(1, L.Cons(1, "));
+        assert!(enum_chain.to_string().starts_with("Cons(1, Cons(1, "));
         // An enum has no JSON form; the error names it in a short preview
         // rather than printing a million levels of it.
         let (ok, message) = stringify(enum_chain);
         assert!(!ok, "an enum serialized");
         assert!(
-            message.contains("Cannot convert L.Cons(1, L.Cons(1, "),
+            message.contains("Cannot convert Cons(1, Cons(1, "),
             "{message}"
         );
         assert!(message.len() < 200, "{message}");

@@ -272,7 +272,7 @@ fn a_declared_function_costs_kilobytes_not_tens_of_them() {
         "main.ol",
         "use lib.many { f1999 }\n\
          println(to_string(f1999(0)))\n\
-         println(json.stringify(runtime.memory()))\n",
+         println(unwrap(json.stringify(runtime.memory())))\n",
     );
     for flags in [&["main.ol"][..], &["--no-ovm", "main.ol"][..]] {
         let (out, err, code) = olang(&ws, flags);

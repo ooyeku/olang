@@ -173,8 +173,8 @@ any future review of the surface.
 | Function | Description |
 |---|---|
 | `typeof(v)` | runtime type name as a string |
-| `show(v)` | display rendering: strings bare, others as `to_string` |
-| `to_string(v)` | the same text as `show` (strings bare) |
+| `show(v)` | the value as olang source writes it ([How values print](language.md#how-values-print)); a String is its text |
+| `to_string(v)` | the same text as `show` (a String is its text) |
 | `to_int(v)` | string/float → Int (floats truncate toward zero); a string that is not a number raises (`str.parse_int` is the `Result` form), and so does a Float outside the Int range (`to_int(1e30)`) or not finite |
 | `to_float(v)` | string/int → Float; a string that is not a number raises (`str.parse_float` is the `Result` form) |
 | `len(v)` | length of a list, a string (in characters), a tuple, or `Bytes`; a map raises, and its entry count is `map_len` |

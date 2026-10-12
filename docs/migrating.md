@@ -24,6 +24,7 @@ upgrading; it reports the cases it can find.
   - [A field of `()` reads `()`](#a-field-of--reads-)
   - [A negative index raises](#a-negative-index-raises)
   - [A condition is a Bool](#a-condition-is-a-bool)
+  - [Values print as source](#values-print-as-source)
 - [In 0.88](#in-088)
   - [A missing field of an object is `()`](#a-missing-field-of-an-object-is-)
   - [A module's missing member reads as `()`](#a-modules-missing-member-reads-as-)
@@ -163,6 +164,17 @@ counted from the end.
 `if`, `while` and a `match` guard raise on a condition that is not a
 Bool, where `0`, `""`, an empty list and `()` were false. Write the
 test: `len(xs) > 0`, `x != ()`, `s != ""`, `n != 0`.
+
+### Values print as source
+
+A value printed (by `print`, `show`, `to_string` or `${…}`) is written
+as olang source: a string inside a list, map or record is quoted and
+escaped, an object is `{ a: 1 }`, a struct `P { x: 1 }` with its fields
+in declaration order, an enum value `Circle(2.0)` without its type's
+name. A program that compared printed text, or a snapshot of it,
+changes with it; a top-level String prints as its text, as before. Take
+a string out of a value before comparing it (`match r { Err(e) => e }`
+rather than `show(r)`).
 
 ## In 0.88
 

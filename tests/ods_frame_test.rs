@@ -27,6 +27,15 @@ fn eval(source: &str, tier_threshold: Option<u32>) -> Result<Value, String> {
     })
 }
 
+/// A shown String as the tests wrote it before printing escaped the
+/// quotes inside one: quoted, its text as it is.
+fn shown(v: &Value) -> String {
+    match v {
+        Value::String(text) => format!("\"{}\"", text),
+        other => other.to_string(),
+    }
+}
+
 fn assert_tier_transparent(source: &str) -> Result<Value, String> {
     let interpreted = eval(source, None);
     let promoted = eval(source, Some(2));
@@ -311,7 +320,7 @@ show([ods.n_rows(back), ods.n_cols(back)]) + " " + show(ods.sum(ods.column(back,
         None,
     )
     .expect("round-trip");
-    assert_eq!(out.to_string(), "\"[2, 4] 4.0\"".to_string());
+    assert_eq!(shown(&out), "\"[2, 4] 4.0\"".to_string());
 }
 
 #[test]
@@ -348,7 +357,7 @@ show(is_ok(w)) + " " + show(ods.sum(ods.column(back, "v")))
         p = path.to_string_lossy()
     );
     let out = eval(&src, None).expect("file round-trip");
-    assert_eq!(out.to_string(), "\"true 42\"".to_string());
+    assert_eq!(shown(&out), "\"true 42\"".to_string());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -361,7 +370,7 @@ fn a_missing_file_is_an_err_not_a_raise() {
         None,
     )
     .expect("should not raise");
-    assert_eq!(out.to_string(), "\"true\"".to_string());
+    assert_eq!(shown(&out), "\"true\"".to_string());
 }
 
 #[test]
@@ -419,7 +428,7 @@ show([rows, ods.rows_read(r), total == ods.sum(ods.column(whole, "amount")), ods
         p = path.to_string_lossy()
     );
     let out = eval(&src, None).expect("stream");
-    assert_eq!(out.to_string(), "\"[2500, 2500, true, true]\"".to_string());
+    assert_eq!(shown(&out), "\"[2500, 2500, true, true]\"".to_string());
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
@@ -444,7 +453,7 @@ show([len(sizes), sizes[8], sizes[9], ods.n_cols(last)])
         p = path.to_string_lossy()
     );
     let out = eval(&src, None).expect("tail");
-    assert_eq!(out.to_string(), "\"[10, 100, 0, 3]\"".to_string());
+    assert_eq!(shown(&out), "\"[10, 100, 0, 3]\"".to_string());
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
@@ -462,7 +471,7 @@ match task.join(spawn ods.next_chunk(r, 5)) {{ Err(e) => "refused", v => "LEAKED
         p = path.to_string_lossy()
     );
     let out = eval(&src, None).expect("confinement");
-    assert_eq!(out.to_string(), "\"refused\"".to_string());
+    assert_eq!(shown(&out), "\"refused\"".to_string());
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
@@ -509,7 +518,7 @@ fn opening_a_missing_file_is_an_err() {
         None,
     )
     .expect("no raise");
-    assert_eq!(out.to_string(), "\"true\"".to_string());
+    assert_eq!(shown(&out), "\"true\"".to_string());
 }
 
 // ── Table rendering ───────────────────────────────────────────────────
@@ -694,7 +703,7 @@ fn json_lines_become_a_frame() {
     )
     .expect("read_jsonl");
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[[\"name\", \"note\", \"score\"], [2, 1]]\"".to_string()
     );
 }
@@ -725,7 +734,7 @@ show(unwrap(ods.read_jsonl(ods.to_jsonl(f))) == f)
         None,
     )
     .expect("round trip");
-    assert_eq!(out.to_string(), "\"true\"".to_string());
+    assert_eq!(shown(&out), "\"true\"".to_string());
 }
 
 #[test]
@@ -745,13 +754,13 @@ fn a_non_object_line_names_the_line_number() {
 fn malformed_json_is_an_err_not_a_raise() {
     // The caller chose the file, so its contents are input, not a bug.
     let out = eval("show(is_err(ods.read_jsonl(\"{oops\\n\")))", None).expect("no raise");
-    assert_eq!(out.to_string(), "\"true\"".to_string());
+    assert_eq!(shown(&out), "\"true\"".to_string());
     let out = eval(
         "show(is_err(ods.read_jsonl_file(\"/nope/missing.jsonl\")))",
         None,
     )
     .expect("no raise");
-    assert_eq!(out.to_string(), "\"true\"".to_string());
+    assert_eq!(shown(&out), "\"true\"".to_string());
 }
 
 #[test]
@@ -775,7 +784,7 @@ show([rows, ods.rows_read(r), total == ods.sum(ods.column(whole, "amount")), ods
         p = path.to_string_lossy()
     );
     let out = eval(&src, None).expect("stream");
-    assert_eq!(out.to_string(), "\"[2500, 2500, true, true]\"".to_string());
+    assert_eq!(shown(&out), "\"[2500, 2500, true, true]\"".to_string());
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
@@ -796,7 +805,7 @@ show([ods.columns(empty) == ods.columns(full), [ods.n_rows(empty), ods.n_cols(em
         p = path.to_string_lossy()
     );
     let out = eval(&src, None).expect("tail");
-    assert_eq!(out.to_string(), "\"[true, [0, 3]]\"".to_string());
+    assert_eq!(shown(&out), "\"[true, [0, 3]]\"".to_string());
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
@@ -832,7 +841,7 @@ show([rows, ods.rows_read(r)])
     )
     .expect("jsonl");
     assert_eq!(from_csv, from_jsonl);
-    assert_eq!(from_csv.to_string(), "\"[40, 40]\"".to_string());
+    assert_eq!(shown(&from_csv), "\"[40, 40]\"".to_string());
     let _ = std::fs::remove_dir_all(csv.parent().unwrap());
     let _ = std::fs::remove_dir_all(jsonl.parent().unwrap());
 }
@@ -850,7 +859,7 @@ match task.join(spawn ods.next_chunk(r, 5)) {{ Err(e) => "refused", v => "LEAKED
         p = path.to_string_lossy()
     );
     let out = eval(&src, None).expect("confinement");
-    assert_eq!(out.to_string(), "\"refused\"".to_string());
+    assert_eq!(shown(&out), "\"refused\"".to_string());
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
@@ -940,7 +949,7 @@ show([s[0], s[2], s[ods.len(s) - 1]])
         None,
     )
     .expect("series index");
-    assert_eq!(out.to_string(), "\"[10, 30, 30]\"".to_string());
+    assert_eq!(shown(&out), "\"[10, 30, 30]\"".to_string());
     let err = eval("ods.series([1, 2])[5]", None).expect_err("out of bounds");
     assert!(err.contains("out of bounds"), "{err}");
     let err = eval("ods.series([1, 2])[-1]", None).expect_err("a negative index");
@@ -1019,7 +1028,7 @@ show([ods.null_count(d["mean"]), ods.to_list(d["max"])])
         None,
     )
     .expect("describe");
-    assert_eq!(out.to_string(), "\"[1, [(), 2.0]]\"".to_string());
+    assert_eq!(shown(&out), "\"[1, [(), 2.0]]\"".to_string());
 }
 
 #[test]
@@ -1033,7 +1042,7 @@ show([ods.columns(s), ods.to_list(s["dtype"])])
     )
     .expect("schema");
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[[\"column\", \"dtype\", \"nulls\"], [\"Int\", \"String\", \"Bool\"]]\"".to_string()
     );
 }
@@ -1083,7 +1092,7 @@ show(unwrap(ods.read_frame("{p}")) == f)
         p = path.to_string_lossy()
     );
     let out = eval(&src, None).expect("round trip");
-    assert_eq!(out.to_string(), "\"true\"".to_string());
+    assert_eq!(shown(&out), "\"true\"".to_string());
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
@@ -1106,7 +1115,7 @@ show([ods.to_list(back["zip"]), ods.to_list(viacsv["zip"])])
     );
     let out = eval(&src, None).expect("types");
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[[\"007\", \"042\", \"100\"], [7, 42, 100]]\"".to_string()
     );
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
@@ -1127,7 +1136,7 @@ show([ods.columns(some), ods.to_list(some["c"])])
         p = path.to_string_lossy()
     );
     let out = eval(&src, None).expect("projection");
-    assert_eq!(out.to_string(), "\"[[\"c\", \"a\"], [3, 6]]\"".to_string());
+    assert_eq!(shown(&out), "\"[[\"c\", \"a\"], [3, 6]]\"".to_string());
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
@@ -1274,7 +1283,7 @@ show(unwrap(ods.read_frame("{p}")) == f)
         p = path.to_string_lossy()
     );
     let out = eval(&src, None).expect("round trip");
-    assert_eq!(out.to_string(), "\"true\"".to_string());
+    assert_eq!(shown(&out), "\"true\"".to_string());
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
@@ -1315,7 +1324,7 @@ show([ods.columns(back), [ods.n_rows(back)]])
         p = path.to_string_lossy()
     );
     let out = eval(&src, None).expect("empty");
-    assert_eq!(out.to_string(), "\"[[\"a\", \"b\"], [0]]\"".to_string());
+    assert_eq!(shown(&out), "\"[[\"a\", \"b\"], [0]]\"".to_string());
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
@@ -1349,7 +1358,7 @@ fn a_file_that_is_not_ours_is_an_err_not_a_crash() {
         );
         let out =
             eval(&src, None).unwrap_or_else(|err| panic!("{name} raised instead of Err: {err}"));
-        assert_eq!(out.to_string(), "\"true\"".to_string(), "{name}");
+        assert_eq!(shown(&out), "\"true\"".to_string(), "{name}");
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1403,7 +1412,7 @@ show([ods.to_list(f[keep]["k"]), ods.to_list(f[either]["k"])])
         None,
     )
     .expect("masks");
-    assert_eq!(out.to_string(), "\"[[5, 9], [7, 9]]\"".to_string());
+    assert_eq!(shown(&out), "\"[[5, 9], [7, 9]]\"".to_string());
 }
 
 #[test]
@@ -1424,7 +1433,7 @@ show([ods.to_list(ods.all_of([known, other])), ods.to_list(ods.any_of([known, ot
     // Row 2: a is null (unknown) and b is true -> all_of unknown, any_of true.
     // Row 3: both unknown -> both unknown.
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[[true, (), ()], [true, true, ()]]\"".to_string()
     );
 }
@@ -1439,7 +1448,7 @@ show(ods.to_list(ods.not(f["a"] > 0)))
         None,
     )
     .expect("not");
-    assert_eq!(out.to_string(), "\"[false, (), true]\"".to_string());
+    assert_eq!(shown(&out), "\"[false, (), true]\"".to_string());
 }
 
 #[test]
@@ -1479,7 +1488,7 @@ show([ods.to_list(ods.eq(f["q"], "ok")), ods.to_list(ods.ne(f["q"], "ok"))])
     )
     .expect("scalar eq");
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[[true, false, true], [false, true, false]]\"".to_string()
     );
 }
@@ -1500,7 +1509,7 @@ show([ods.columns(both), ods.to_list(both["x"]), ods.to_list(both["y"])])
     )
     .expect("concat");
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[[\"x\", \"y\"], [1, 2, 3], [\"a\", \"b\", \"c\"]]\"".to_string()
     );
 }
@@ -1518,7 +1527,7 @@ show([ods.to_list(ods.concat([a, b])["x"]), ods.to_list(ods.concat([a, b])["y"])
         None,
     )
     .expect("by name");
-    assert_eq!(out.to_string(), "\"[[1, 2], [10, 20]]\"".to_string());
+    assert_eq!(shown(&out), "\"[[1, 2], [10, 20]]\"".to_string());
 }
 
 #[test]
@@ -1550,7 +1559,7 @@ show(ods.to_list(both["n"]))
         None,
     )
     .expect("widen");
-    assert_eq!(out.to_string(), "\"[1.0, 2.5]\"".to_string());
+    assert_eq!(shown(&out), "\"[1.0, 2.5]\"".to_string());
 }
 
 #[test]
@@ -1566,7 +1575,7 @@ show([ods.columns(joined), ods.to_list(joined["site"])])
     )
     .expect("join");
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[[\"meter\", \"kwh\", \"site\"], [\"north\", \"south\"]]\"".to_string()
     );
 }
@@ -1582,7 +1591,7 @@ show(ods.to_list(ods.join(facts, dim, "meter", "id")["site"]))
         None,
     )
     .expect("join");
-    assert_eq!(out.to_string(), "\"[\"north\"]\"".to_string());
+    assert_eq!(shown(&out), "\"[\"north\"]\"".to_string());
 }
 
 #[test]
@@ -1615,7 +1624,7 @@ show([ods.columns(j), ods.to_list(j["amount"] - j["cost"])])
     )
     .expect("rename");
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[[\"id\", \"amount\", \"cost\"], [7.0, 16.0]]\"".to_string()
     );
 }
@@ -1653,7 +1662,7 @@ show([ods.columns(ods.drop(f, ["b"])), ods.columns(ods.drop(f, ["a", "c"]))])
         None,
     )
     .expect("drop");
-    assert_eq!(out.to_string(), "\"[[\"a\", \"c\"], [\"b\"]]\"".to_string());
+    assert_eq!(shown(&out), "\"[[\"a\", \"c\"], [\"b\"]]\"".to_string());
     let err =
         eval(r#"ods.drop(ods.read_csv("a\n1\n"), ["nope"])"#, None).expect_err("unknown column");
     assert!(err.contains("no column 'nope'"), "{err}");
@@ -1674,7 +1683,7 @@ fn tail_takes_the_last_rows_and_defaults_to_ten() {
         None,
     )
     .expect("tail");
-    assert_eq!(out.to_string(), "\"[10, [27, 28, 29]]\"".to_string());
+    assert_eq!(shown(&out), "\"[10, [27, 28, 29]]\"".to_string());
 
     // Asking for more rows than exist yields the whole frame rather than
     // an error — `tail(f, 1000)` on a short frame is a reasonable ask.
@@ -1701,7 +1710,7 @@ show([ods.to_list(ods.distinct(f)["r"]), ods.to_list(ods.distinct(f, ["r"])["v"]
     // Whole-row distinct drops only the exact repeat; subset distinct
     // keeps the first row for each region, so west's v is 2, not 9.
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[[\"east\", \"west\", \"north\", \"west\"], [1, 2, 3]]\"".to_string()
     );
 }
@@ -1737,7 +1746,7 @@ show([ods.n_rows(f), ods.n_rows(ods.distinct(f, ["x"])), ods.null_count(f["x"])]
     )
     .expect("distinct nulls");
     // Three rows, two distinct x values ("" and null), so two kept.
-    assert_eq!(out.to_string(), "\"[3, 2, 1]\"".to_string());
+    assert_eq!(shown(&out), "\"[3, 2, 1]\"".to_string());
 }
 
 #[test]
@@ -1751,7 +1760,7 @@ show([ods.n_rows(ods.drop_null(f)), ods.n_rows(ods.drop_null(f, ["a"]))])
     )
     .expect("drop_null");
     // Whole-row: only rows 1 and 4 are complete. On `a` alone: 3 survive.
-    assert_eq!(out.to_string(), "\"[2, 3]\"".to_string());
+    assert_eq!(shown(&out), "\"[2, 3]\"".to_string());
 }
 
 #[test]
@@ -1782,7 +1791,7 @@ show([ods.columns(vc), ods.to_list(vc["value"]), ods.to_list(vc["count"])])
     // east (3) leads; west and north tie at 1, and west appeared first,
     // so the tie breaks by first appearance rather than arbitrarily.
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[[\"value\", \"count\"], [\"east\", \"west\", \"north\"], [3, 1, 1]]\"".to_string()
     );
 }
@@ -1803,7 +1812,7 @@ show([ods.to_list(vc["count"]), ods.to_list(g["n"]), ods.n_unique(f["r"])])
     .expect("agreement");
     // Four values: east(3), west(1), null(1) — the null row counts as a
     // value on both sides rather than vanishing from one of them.
-    assert_eq!(out.to_string(), "\"[[3, 1, 1], [3, 1, 1], 3]\"".to_string());
+    assert_eq!(shown(&out), "\"[[3, 1, 1], [3, 1, 1], 3]\"".to_string());
 }
 
 #[test]
@@ -1819,7 +1828,7 @@ show([ods.to_list(ods.unique(s)), ods.n_unique(s),
     )
     .expect("unique");
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[[\"b\", \"a\", \"c\"], 3, [1, (), 2], 3]\"".to_string()
     );
 }
@@ -1840,7 +1849,7 @@ show([ods.median(odd), ods.quantile(odd, 0.5),
         None,
     )
     .expect("median");
-    assert_eq!(out.to_string(), "\"[2.0, 2.0, 2.5, 2.5, 2.0]\"".to_string());
+    assert_eq!(shown(&out), "\"[2.0, 2.0, 2.5, 2.5, 2.0]\"".to_string());
 }
 
 #[test]
@@ -1856,7 +1865,7 @@ show([ods.to_list(ints), ods.null_count(ints)])
         None,
     )
     .expect("cast");
-    assert_eq!(out.to_string(), "\"[[1, 2, (), (), 4], 2]\"".to_string());
+    assert_eq!(shown(&out), "\"[[1, 2, (), (), 4], 2]\"".to_string());
 }
 
 #[test]
@@ -1873,7 +1882,7 @@ show(ods.to_list(ods.cast(f, "Int")))
         None,
     )
     .expect("cast");
-    assert_eq!(out.to_string(), "\"[2, -2, (), ()]\"".to_string());
+    assert_eq!(shown(&out), "\"[2, -2, (), ()]\"".to_string());
 }
 
 #[test]
@@ -1922,7 +1931,7 @@ show([len(a), ods.n_unique(ods.series(a)), a == sort(a)])
     // Eight draws are eight distinct rows, and they come back in the
     // frame's own order rather than draw order. (Seed reproducibility
     // needs its own process — see the test below.)
-    assert_eq!(out.to_string(), "\"[8, 8, true]\"".to_string());
+    assert_eq!(shown(&out), "\"[8, 8, true]\"".to_string());
 }
 
 /// Reproducibility has to be checked in a fresh process each time.
@@ -1983,7 +1992,7 @@ show([ods.n_rows(ods.sample(f, 999)), ods.n_rows(ods.sample(f, 0)),
         None,
     )
     .expect("sample");
-    assert_eq!(out.to_string(), "\"[3, 0, [\"a\", \"b\"]]\"".to_string());
+    assert_eq!(shown(&out), "\"[3, 0, [\"a\", \"b\"]]\"".to_string());
 }
 
 #[test]
@@ -2020,7 +2029,7 @@ show([ok(100000, 5), ok(100, 25), ok(100, 26), ok(100, 100), ok(1, 1), ok(10, 0)
     )
     .expect("sample");
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[true, true, true, true, true, true]\"".to_string()
     );
 }
@@ -2048,7 +2057,7 @@ show([ods.to_list(j["k"]), ods.to_list(j["v"]), ods.to_list(j["n"])])
     // where the reader needs it. Null keys match nothing on either side,
     // so both null-keyed rows survive unpaired.
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[[\"east\", \"west\", (), \"north\", ()], [1, 2, 3, (), ()], [10, (), (), 20, 30]]\""
             .to_string()
     );
@@ -2069,7 +2078,7 @@ show([ods.n_rows(ods.join(l, r, "k")), ods.n_rows(ods.join_semi(l, r, "k")),
         None,
     )
     .expect("join_semi");
-    assert_eq!(out.to_string(), "\"[3, 1, [\"k\", \"v\"]]\"".to_string());
+    assert_eq!(shown(&out), "\"[3, 1, [\"k\", \"v\"]]\"".to_string());
 }
 
 #[test]
@@ -2091,7 +2100,7 @@ show([ods.n_rows(s) + ods.n_rows(a) == ods.n_rows(l),
     .expect("semi/anti");
     // A null key matches nothing, so the null-keyed row lands in anti —
     // the same rule every other join kind follows.
-    assert_eq!(out.to_string(), "\"[true, [1], [2, 3]]\"".to_string());
+    assert_eq!(shown(&out), "\"[true, [1], [2, 3]]\"".to_string());
 }
 
 #[test]
@@ -2141,7 +2150,7 @@ show([ods.columns(wide), ods.to_list(wide["Q1"]), ods.to_list(wide["Q2"])])
     // that cell is null — the combination did not occur, which is a
     // different fact from a null amount in it.
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[[\"region\", \"Q1\", \"Q2\", \"Q3\"], [13.0, 5.0], [20.0, ()]]\"".to_string()
     );
 }
@@ -2163,10 +2172,7 @@ show([ods.to_list(wide["Q1"]), ods.to_list(ods.sort_by(q1, "region", false)["tot
         None,
     )
     .expect("pivot vs group_by");
-    assert_eq!(
-        out.to_string(),
-        "\"[[13.0, 5.0], [13.0, 5.0]]\"".to_string()
-    );
+    assert_eq!(shown(&out), "\"[[13.0, 5.0], [13.0, 5.0]]\"".to_string());
 }
 
 #[test]
@@ -2188,7 +2194,7 @@ show([ods.columns(long), ods.n_rows(long), ods.n_rows(present),
     )
     .expect("unpivot");
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[[\"region\", \"name\", \"value\"], 6, 4, [\"Q1\", \"Q1\", \"Q2\", \"Q3\"], \
          [13.0, 5.0, 20.0, 7.0]]\""
             .to_string()
@@ -2209,7 +2215,7 @@ show([ods.n_rows(ods.unpivot(f, "id")), ods.n_rows(ods.unpivot(f, "id", ["a"])),
     )
     .expect("unpivot");
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[4, 2, [\"a\", \"a\", \"b\", \"b\"]]\"".to_string()
     );
 }
@@ -2296,7 +2302,7 @@ show([ods.to_list(ods.shift(s, 1)), ods.to_list(ods.shift(s, -1)),
     )
     .expect("shift");
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[[(), 4, 1, 7, 1], [1, 7, 1, 9, ()], [(), -3, 6, -6, 8], [(), (), (), (), ()]]\""
             .to_string()
     );
@@ -2313,7 +2319,7 @@ show([ods.to_list(ods.cum_max(s)), ods.to_list(ods.cum_min(s)), ods.to_list(ods.
     )
     .expect("cum");
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[[4, 4, 7, 7, 9], [4, 1, 1, 1, 1], [4, 5, 12, 13, 22]]\"".to_string()
     );
 }
@@ -2333,7 +2339,7 @@ show([ods.to_list(ods.rank(s, "min")), ods.to_list(ods.rank(s, "max")),
     )
     .expect("rank");
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[[3, 1, 4, 1, 5], [3, 2, 4, 2, 5], [3.0, 1.5, 4.0, 1.5, 5.0], [3, 1, 4, 2, 5], \
          [2, 1, 3, 1, 4], [3, 1, 4, 1, 5]]\""
             .to_string()
@@ -2356,7 +2362,7 @@ show([ods.to_list(ods.rank(s)), ods.null_count(ods.rank(s)),
     )
     .expect("rank");
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[[3, (), 1, 2], 1, true, true]\"".to_string()
     );
 }
@@ -2375,7 +2381,7 @@ show([ods.to_list(ods.rolling(s, 3, "sum")), ods.to_list(ods.rolling(s, 3, "mean
     )
     .expect("rolling");
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[[(), (), 6.0, 9.0, 12.0], [(), (), 2.0, 3.0, 4.0], [(), (), 3.0, 4.0, 5.0], \
          [1.0, 2.0, 3.0, 4.0, 5.0]]\""
             .to_string()
@@ -2397,7 +2403,7 @@ show([ods.to_list(ods.rolling(s, 2, "mean")), ods.to_list(ods.rolling(s, 2, "cou
     // element, and a count of 1. An all-null window would sum to null
     // rather than to zero — no data is not the same as zero.
     assert_eq!(
-        out.to_string(),
+        shown(&out),
         "\"[[(), 1.0, 3.0, 3.5], [(), 1, 1, 2], [(), 1.0, 3.0, 7.0]]\"".to_string()
     );
 }

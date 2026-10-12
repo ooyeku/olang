@@ -4338,6 +4338,13 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             );
             return Ok(Value::Unit);
         }
+        if let TypeDefinition::Struct { fields } = &type_decl.definition {
+            // A struct prints its fields in the order it declares them.
+            crate::ast::note_struct_order(
+                &type_decl.name,
+                fields.iter().map(|f| f.name.clone()).collect(),
+            );
+        }
         if let TypeDefinition::Enum { variants } = &type_decl.definition {
             // Remember the enum's type name so an annotation naming it is
             // recognized as a real type (and a name that is *not* declared

@@ -673,3 +673,36 @@ main()
         assert!(err.contains("a condition must be a Bool"), "{src}: {err}");
     }
 }
+
+// ── Printing writes the source form ────────────────────────────────────
+
+#[test]
+fn printing_writes_the_source_form() {
+    let src = r#"
+type P = struct { y: Int, x: Int }
+type Shape = enum { Dot, Circle(Float) }
+fn shown(v) = show(v)
+fn main() = [
+    shown([P { x: 1, y: 2 }, Circle(2.0), Dot]),
+    shown(#{ "k": ["a\"b\n"] }),
+    shown({ b: 1, a: "x" }),
+    shown(unwrap(json.parse("{\"a b\": 1}"))),
+    shown("top"),
+    `${[1, "s"]}`,
+    shown([-0.0, 1e20, 0.00001, 1500.0])
+]
+main()
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(l(vec![
+            s("[P { y: 2, x: 1 }, Circle(2.0), Dot]"),
+            s("#{\"k\": [\"a\\\"b\\n\"]}"),
+            s("{ a: \"x\", b: 1 }"),
+            s("#{\"a b\": 1}"),
+            s("top"),
+            s("[1, \"s\"]"),
+            s("[-0.0, 1e20, 1e-5, 1500.0]"),
+        ]))
+    );
+}
