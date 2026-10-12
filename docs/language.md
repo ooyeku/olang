@@ -708,6 +708,20 @@ println(to_string(A { x: 1 } == B { x: 1 }))   // false: type names differ
 println(to_string(1 == 1.0))                   // true: numeric comparison
 ```
 
+On the right of a comparison, a parenthesized group followed by `=>` is
+an operand, not a lambda's parameters: `if pos == (row, col) => …`
+compares `pos` with the tuple, and the `=>` is the `if`'s. A function
+literal compared with is written in parentheses of its own.
+
+```olang
+fn at_origin(p) = {
+    if p == (0, 0) => return "origin"
+    "elsewhere"
+}
+println(at_origin((0, 0)))   // origin
+println(at_origin((1, 0)))   // elsewhere
+```
+
 ### Logical operators
 
 `&&` and `||` **short-circuit**: the right operand is evaluated only when

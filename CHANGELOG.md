@@ -428,6 +428,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`if a == (x, y) => …` compares with the tuple.** On the right of a
+  comparison, a parenthesized group followed by `=>` parsed as a
+  lambda's parameters, so the `if` lost its `=>` ("expected an operator"
+  at the next line; olang Studio's terminal had to bind the tuple
+  first). It is an operand now, as `()` already was there.
 - **A module's missing member used as a receiver names the nearest
   member again.** Since a missing member reads as `()`,
   `collections.headp.new()` raised "Cannot access field 'new' on

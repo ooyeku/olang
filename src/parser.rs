@@ -1287,6 +1287,9 @@ impl Parser {
                             })?;
                     operands.push(match inner.as_rule() {
                         Rule::unit => Expr::Tuple(std::sync::Arc::new(Vec::new())),
+                        Rule::cmp_group => self.build_paren_expr(
+                            inner.into_inner().next().expect("a parenthesized group").into_inner(),
+                        )?,
                         _ => self.build_unary_expr(inner.into_inner())?,
                     });
                     after_pipe = false;

@@ -252,7 +252,14 @@ binary_tail   = _{
 // then this branch" — never "t equals a function" — but ordered choice
 // would otherwise let `lambda` swallow the `=>` that belongs to the `if`.
 // Comparing against a literal function is still writable, parenthesized.
-cmp_rhs = { unit | unary_expr }
+//
+// The same holds for a parenthesized group followed by `=>`: on the
+// right of a comparison it is an operand — `if a == (x, y) => …` compares
+// with the tuple, and the `=>` is the `if`'s — never a lambda's
+// parameters. A function literal compared with is written in parentheses
+// of its own.
+cmp_rhs = { unit | cmp_group | unary_expr }
+cmp_group = { paren_expr ~ &(NL* ~ "=>") }
 pipe_op       = { "|>" }
 // `a ?? b`: `b` when `a` is `()`, else `a`; `b` is evaluated only when
 // needed. Below the arithmetic (and the pipeline and ranges), above the

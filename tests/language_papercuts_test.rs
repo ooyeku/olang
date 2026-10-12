@@ -169,3 +169,44 @@ main()
 "#;
     assert_eq!(agree(src), Ok(Value::Integer(7)));
 }
+
+// ── A tuple after a comparison is an operand ───────────────────────────
+
+#[test]
+fn a_tuple_after_a_comparison_is_compared_not_a_lambda() {
+    let src = r#"
+fn same(a, x, y) = {
+    if a == (x, y) => return "same"
+    "diff"
+}
+fn kind(p) = match p {
+    q if q == (0, 0) => "origin",
+    q if q != (0, 0) => "elsewhere"
+}
+fn main() = [same((1, 2), 1, 2), same((1, 2), 2, 1), kind((0, 0)), kind((3, 4))]
+main()
+"#;
+    assert_eq!(
+        agree(src),
+        Ok(Value::List(std::sync::Arc::new(vec![
+            s("same"),
+            s("diff"),
+            s("origin"),
+            s("elsewhere")
+        ])))
+    );
+}
+
+#[test]
+fn unit_and_a_parenthesized_lambda_still_compare() {
+    let src = r#"
+fn main() = {
+    let t = ()
+    let a = if t == () => 1 else => 2
+    let b = if (1) == (1) => 3 else => 4
+    a + b
+}
+main()
+"#;
+    assert_eq!(agree(src), Ok(Value::Integer(4)));
+}
