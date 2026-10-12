@@ -451,6 +451,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A function named as a builtin calls itself on the bytecode tier.**
+  A top-level `fn find(routes, method, path)` that called itself was
+  promoted with the builtin `find` in its declaration-time closure, and
+  the compiled call went to the builtin ("Arity mismatch: expected 2, got
+  3"); the interpreter reached the user's function. The web SDK's route
+  index test failed on it. The compiler now treats a closure's builtin
+  of a declared function's name as shadowed, as the interpreter's lookup
+  does.
 - **`if a == (x, y) => …` compares with the tuple.** On the right of a
   comparison, a parenthesized group followed by `=>` parsed as a
   lambda's parameters, so the `if` lost its `=>` ("expected an operator"

@@ -10900,6 +10900,18 @@ impl BytecodeCompiler {
                         .known_function_values
                         .get(&function_name)
                         .is_none_or(|known| !std::sync::Arc::ptr_eq(&known.body, &f.body)),
+                    // The builtin of the same name in a closure taken
+                    // before the user's function of that name was bound
+                    // (a top-level `fn find` calling itself sees the
+                    // builtin `find` in its own declaration-time closure):
+                    // the user's function shadows it, as the interpreter's
+                    // lookup finds.
+                    Some(Value::Builtin(ref b))
+                        if b.name == function_name
+                            && self.known_function_values.contains_key(&function_name) =>
+                    {
+                        false
+                    }
                     Some(_) => true,
                     None => false,
                 };

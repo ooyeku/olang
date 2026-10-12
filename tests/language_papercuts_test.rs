@@ -365,3 +365,21 @@ main()
     let err = agree(src).expect_err("raises");
     assert_eq!(err, "Runtime error: check: n must be positive, got 0");
 }
+
+// ── A function named as a builtin calls itself ─────────────────────────
+
+#[test]
+fn a_function_named_as_a_builtin_calls_itself_on_every_tier() {
+    // Its declaration-time closure holds the builtin `find`; the bytecode
+    // tier called that at threshold 1 ("Arity mismatch: expected 2, got
+    // 3"), where the interpreter reaches the user's function.
+    let src = r#"
+fn find(a, b, c) = if a > 0 => find(a - 1, b, c) else => b + c
+fn sort(xs, n) = if n == 0 => xs else => sort(xs + [n], n - 1)
+(find(3, 1, 2), sort([], 2))
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(Value::Tuple(std::sync::Arc::new(vec![Value::Integer(3), ints(&[2, 1])])))
+    );
+}
