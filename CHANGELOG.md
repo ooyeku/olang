@@ -58,6 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `xs[i] = v` an `index_assign` node (they read as calls of the hidden
   builtins `__spread` and `__index_set`); every node kind and field is
   listed in stdlib.md.
+
 - **A field of `()` reads as `()`**: `s.pp.cur` when `s.pp` is absent,
   `().k ?? 5`, and `map_get((), k)` (it raised "Cannot access field on
   non-struct value"); a field of another non-record (`5.k`) and a
@@ -69,6 +70,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   share one rule: `str.substring`, `col.slice`, `bytes.slice` and
   `str.char_at` raise on a negative position, and a position past the
   end stops at the end. `first(xs)` and `last(xs)` are new.
+- **A condition is a Bool**: `if`, `while` and a `match` guard raise "a
+  condition must be a Bool" on any other value, as `&&`, `||` and `!`
+  do; an empty list, `0`, `""` and `()` were false.
+
 
 ### Added
 
@@ -79,8 +84,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   private names are renamed to its own), where the bundle was one
   namespace and a module's private helper could replace another's.
 - **`re.replace_first(pattern, text, rep)`** replaces the first match.
+
 - **`first(xs)` and `last(xs)`**: the first or last element of a list
   (or tuple, or character of a string), `()` when it is empty.
+
 
 ### Changed
 

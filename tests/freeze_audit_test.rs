@@ -652,3 +652,24 @@ main()
         Ok(l(vec![Value::Integer(2), Value::Integer(3)]))
     );
 }
+
+// ── A condition is a Bool ──────────────────────────────────────────────
+
+#[test]
+fn a_condition_is_a_bool() {
+    let src = r#"
+fn pick(c) = if c => "yes" else => "no"
+fn main() = [pick(true), pick(false)]
+main()
+"#;
+    assert_eq!(agree(src), Ok(l(vec![s("yes"), s("no")])));
+    for src in [
+        "fn pick(c) = if c => 1 else => 2\nfn main() = pick([])\nmain()\n",
+        "fn pick(c) = if c => 1 else => 2\nfn main() = pick(())\nmain()\n",
+        "fn spin(c) = {\n    while c { return 1 }\n    2\n}\nfn main() = spin(1)\nmain()\n",
+        "fn guard(x) = match x { y if y => 1, _ => 2 }\nfn main() = guard(\"s\")\nmain()\n",
+    ] {
+        let err = agree(src).expect_err(src);
+        assert!(err.contains("a condition must be a Bool"), "{src}: {err}");
+    }
+}

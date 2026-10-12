@@ -1160,8 +1160,11 @@ println(to_string(o.email == () && j.email == ()))   // true: absent is ()
 ### `if` expressions
 
 `if` is an expression. Its arms use `=>` and produce values; `else` is
-optional (a false condition without `else` yields `Unit`). Chains use
-`else if`:
+optional (a false condition without `else` yields `Unit`). The
+condition is a Bool, as an operand of `&&`, `||` and `!` is: any other
+value raises "a condition must be a Bool" (an empty list or `()` is not
+false; write `len(xs) > 0`, `x != ()`). The same holds for `while` and a
+`match` guard. Chains use `else if`:
 
 ```olang
 let x = 15

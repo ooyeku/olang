@@ -464,27 +464,15 @@ impl Interpreter {
         }
     }
 
+    /// A condition's answer (`if`, `while`, a match guard): a Bool, as
+    /// `&&`, `||` and `!` take. Any other value raises — an empty list
+    /// or `()` is not false; say what is meant (`len(xs) > 0`, `x != ()`).
     pub(crate) fn to_boolean(&self, value: &Value) -> Result<bool, InterpreterError> {
         match value {
             Value::Boolean(b) => Ok(*b),
-            Value::Integer(n) => Ok(*n != 0),
-            Value::Float(x) => Ok(*x != 0.0),
-            Value::String(s) => Ok(!s.is_empty()),
-            Value::List(items) => Ok(!items.is_empty()),
-            Value::Tuple(items) => Ok(!items.is_empty()),
-            Value::Range {
-                start,
-                end,
-                inclusive,
-            } => {
-                if *inclusive {
-                    Ok(start <= end)
-                } else {
-                    Ok(start < end)
-                }
-            }
-            Value::Unit => Ok(false),
-            _ => Ok(true),
+            other => Err(InterpreterError::TypeError {
+                message: condition_error(&other.type_name()),
+            }),
         }
     }
 
@@ -629,6 +617,15 @@ fn value_ordering(x: &Value, y: &Value) -> Result<std::cmp::Ordering, Interprete
             }),
         },
     }
+}
+
+/// What a condition that is not a Bool raises, on every tier.
+pub fn condition_error(type_name: &str) -> String {
+    format!(
+        "a condition must be a Bool, got {}: say what is meant (`len(xs) > 0`, \
+         `x != ()`, `s != \"\"`)",
+        type_name
+    )
 }
 
 /// The first value `==` cannot compare that `v` holds, at any depth: a

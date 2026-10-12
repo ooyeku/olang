@@ -137,36 +137,39 @@ fn bytecode_calls(source: &str, threshold: u32) -> u64 {
 }
 
 #[test]
-fn empty_collection_truthiness_agrees_across_tiers() {
-    // An empty string/list/tuple/range is falsy, exactly like 0/false/Unit.
-    // The bytecode tier's condition test used to treat empty collections as
-    // truthy (only Unit and zero were falsy), so a promoted `if xs => …`
-    // took the wrong branch for an empty `xs` — a tier disagreement.
+fn a_condition_that_is_not_a_bool_raises_on_both_tiers() {
+    // A condition is a Bool, as `&&`'s operands are. (Before the 1.0
+    // freeze pass an empty string, list, tuple or range was false, which
+    // the bytecode tier once disagreed about.)
     let src = r#"
 fn t(c) = if c => 1 else => 0
 fn w(c) = { let mut n = 0
     let mut c = c
     while c { n = n + 1; c = false }
     n }
-[ t(""), t([]), t("x"), t([1]), t(0), t(5), w([]), w([9]) ]
+[ t(true), t(false), w(true), w(false) ]
 "#;
     assert_tier_transparent(src);
     assert_eq!(
         eval(src, Some(2)).unwrap(),
         Value::List(
             vec![
-                Value::Integer(0), // t("")  — empty string is falsy
-                Value::Integer(0), // t([])  — empty list is falsy
-                Value::Integer(1), // t("x")
-                Value::Integer(1), // t([1])
-                Value::Integer(0), // t(0)
-                Value::Integer(1), // t(5)
-                Value::Integer(0), // w([])  — loop body never runs
-                Value::Integer(1), // w([9]) — runs once
+                Value::Integer(1),
+                Value::Integer(0),
+                Value::Integer(1),
+                Value::Integer(0),
             ]
             .into()
         )
     );
+    for bad in ["t(\"\")", "t([])", "t(5)", "w([9])"] {
+        let src = format!(
+            "fn t(c) = if c => 1 else => 0\nfn w(c) = {{ let mut c = c\n    while c {{ c = false }}\n    1 }}\nt(true)\nt(true)\n{bad}\n"
+        );
+        let err = eval(&src, Some(1)).expect_err(bad);
+        assert!(err.contains("a condition must be a Bool"), "{bad}: {err}");
+        assert!(eval(&src, None).is_err());
+    }
 }
 
 #[test]

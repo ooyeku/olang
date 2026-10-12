@@ -5216,7 +5216,7 @@ impl BytecodeVm {
                 }
 
                 Instruction::JumpIfTrue { condition, target } => {
-                    if self.is_truthy(self.execution_state.register_ref(*condition)?) {
+                    if self.is_truthy(self.execution_state.register_ref(*condition)?)? {
                         let t = target.0 as usize;
                         if t <= pc && crate::interrupt::pending() {
                             return Err(crate::interrupt::vm_error());
@@ -5241,7 +5241,7 @@ impl BytecodeVm {
                 }
 
                 Instruction::JumpIfFalse { condition, target } => {
-                    if !self.is_truthy(self.execution_state.register_ref(*condition)?) {
+                    if !self.is_truthy(self.execution_state.register_ref(*condition)?)? {
                         let t = target.0 as usize;
                         if t <= pc && crate::interrupt::pending() {
                             return Err(crate::interrupt::vm_error());
@@ -9678,35 +9678,14 @@ impl BytecodeVm {
         }
     }
 
-    /// Check if value is truthy
-    /// Truthiness for `if`/`while` conditions. Must match the interpreter's
-    /// `to_boolean` (src/interpreter/ops.rs) exactly, or a promoted function
-    /// disagrees with the tree-walker: an *empty* string, list, tuple, or
-    /// range is falsy (like `0`/`false`/Unit), not just Unit. The old
-    /// catch-all made empty collections truthy, so `if xs => …` on a
-    /// promoted function took the wrong branch for an empty `xs`.
-    fn is_truthy(&self, value: &OvmValue) -> bool {
-        use crate::ovm::value::ValueData;
-
+    /// A condition's answer (`if`, `while`, a guard): a Bool, as on the
+    /// interpreter (`ops::to_boolean`); any other value raises its error.
+    fn is_truthy(&self, value: &OvmValue) -> Result<bool, BytecodeError> {
         match &value.data {
-            ValueData::Boolean(b) => *b,
-            ValueData::Integer(i) => *i != 0,
-            ValueData::Float(f) => *f != 0.0,
-            ValueData::String(s) => !s.is_empty(),
-            ValueData::List(items) => !items.is_empty(),
-            ValueData::AstList(items) => !items.is_empty(),
-            ValueData::FloatList(items) => !items.is_empty(),
-            ValueData::IntList(items) => !items.is_empty(),
-            ValueData::Tuple(items) => !items.is_empty(),
-            ValueData::Range(r) => {
-                if r.inclusive {
-                    r.start <= r.end
-                } else {
-                    r.start < r.end
-                }
-            }
-            ValueData::Unit => false,
-            _ => true,
+            crate::ovm::value::ValueData::Boolean(b) => Ok(*b),
+            _ => Err(BytecodeError::TypeError(
+                crate::interpreter::ops::condition_error(value.type_name()),
+            )),
         }
     }
 

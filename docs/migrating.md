@@ -21,8 +21,9 @@ upgrading; it reports the cases it can find.
   - [A block ending in `let` or `;` is `()`](#a-block-ending-in-let-or--is-)
   - [Equality](#equality)
   - [Smaller rulings](#smaller-rulings)
-  - [A negative index raises](#a-negative-index-raises)
   - [A field of `()` reads `()`](#a-field-of--reads-)
+  - [A negative index raises](#a-negative-index-raises)
+  - [A condition is a Bool](#a-condition-is-a-bool)
 - [In 0.88](#in-088)
   - [A missing field of an object is `()`](#a-missing-field-of-an-object-is-)
   - [A module's missing member reads as `()`](#a-modules-missing-member-reads-as-)
@@ -156,6 +157,12 @@ negative index, and `col.set`/`col.swap` with one. Read the ends with
 `xs[len(xs) - 1]`. `str.substring`, `col.slice`, `bytes.slice` and
 `str.char_at` raise on a negative position where they clamped or
 counted from the end.
+
+### A condition is a Bool
+
+`if`, `while` and a `match` guard raise on a condition that is not a
+Bool, where `0`, `""`, an empty list and `()` were false. Write the
+test: `len(xs) > 0`, `x != ()`, `s != ""`, `n != 0`.
 
 ## In 0.88
 

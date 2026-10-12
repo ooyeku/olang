@@ -14,13 +14,13 @@ division — account for most early confusion.
 1. [Missing map keys return Unit, not a Result](#missing-map-keys-return-unit-not-a-result)
 2. [Integer division truncates; overflow is an error](#integer-division-truncates-overflow-is-an-error)
 3. [`to_string` prints values, not columns](#to_string-prints-values-not-columns)
-4. [Falsy values: `false`, `0`, `0.0`, `""`, `[]`, `()`](#falsy-values-false-0-00---)
+4. [A condition is a Bool](#a-condition-is-a-bool)
 5. [A line starting with `-` or `+` is a new statement](#a-line-starting-with---or--is-a-new-statement)
 6. [Parsing returns a `Result`](#parsing-returns-a-result)
 7. [Functions can't be compared with `==`, even inside a list](#functions-cant-be-compared-with--even-inside-a-list)
 8. [Closures capture by value, at creation](#closures-capture-by-value-at-creation)
 9. [Definition order: functions are hoisted, values are not](#definition-order-functions-are-hoisted-values-are-not)
-10. [Indexing: negative wraps, no slicing, maps use `.`](#indexing-negative-wraps-no-slicing-maps-use-)
+10. [Indexing: a negative index raises, no slicing, maps use `.`](#indexing-a-negative-index-raises-no-slicing-maps-use-)
 11. [`ods.read_csv` takes text; `ods.read_csv_file` takes a path](#odsread_csv-takes-text-odsread_csv_file-takes-a-path)
 12. [Empty-collection builtins raise](#empty-collection-builtins-raise)
 13. [`to_string` and `show` agree — a string is already its text](#to_string-and-show-agree--a-string-is-already-its-text)
@@ -109,22 +109,21 @@ println(str.thousands(1234567.891, 2))   // 1,234,567.89
 println("$" + str.thousands(-4.5, 2))    // $-4.50 — put the sign first yourself
 ```
 
-## Falsy values: `false`, `0`, `0.0`, `""`, `[]`, `()`
+## A condition is a Bool
 
-An `if`/`while` condition is normally a boolean from a comparison, but
-olang accepts any value and defines truthiness: **`false`, `0`, `0.0`, the
-empty string, the empty list/tuple, an empty range, and `Unit` are falsy;
-everything else is truthy.** So `if xs => …` *does* test a list for
-emptiness — but relying on that reads worse than saying what you mean.
+An `if`, a `while` and a `match` guard take a Bool, as `&&`, `||` and
+`!` do: `if xs => …` on a list, a number, a string or `()` raises "a
+condition must be a Bool". There is no truthiness; say what is meant.
 
 ```olang
 let xs = []
-println(if xs => "has items" else => "empty")   // empty
-println(if [1] => "has items" else => "empty")   // has items
+let name = ()
+println(if len(xs) > 0 => "has items" else => "empty")   // empty
+println(if name != () => "named" else => "anonymous")      // anonymous
 ```
 
-Note the asymmetry: a bare value is fine in `if`, but `&&`/`||` require
-real booleans — `1 && 2` is a type error even though `if 1` is not.
+(Before the 1.0 freeze pass a condition took any value: `false`, `0`,
+`0.0`, `""`, an empty list, tuple or range, and `()` were false.)
 
 ## A line starting with `-` or `+` is a new statement
 
