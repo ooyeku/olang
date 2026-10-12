@@ -74,3 +74,35 @@ fn a_dropped_db_connection_is_closed() {
         assert_eq!(stdout, "true\nConnectionHandle\n");
     }
 }
+
+#[test]
+fn a_string_snapshot_is_its_text_and_the_caller_may_refresh_it() {
+    let dir = std::env::temp_dir().join(format!("olang-snap-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("__snapshots__")).expect("dir");
+    let test = |body: &str, envs: &[(&str, &str)]| {
+        std::fs::write(dir.join("snap_test.ol"), format!("test \"s\" {{\n{body}\n}}\n")).expect("write");
+        let mut c = olang();
+        c.arg("test").arg(dir.join("snap_test.ol")).env_remove("OLANG_UPDATE_SNAPSHOTS").env_remove("UPDATE_SNAPSHOTS");
+        for (k, v) in envs {
+            c.env(k, v);
+        }
+        c.output().expect("runs").status.success()
+    };
+    let snap = |name: &str| std::fs::read_to_string(dir.join("__snapshots__").join(name)).expect("snap");
+    // Written bare on the first run; a list keeps its display form.
+    assert!(test("testing.snapshot(\"text\", \"<p>hi</p>\")\ntesting.snapshot(\"list\", [\"a\"])", &[]));
+    assert_eq!(snap("text.snap"), "<p>hi</p>");
+    assert_eq!(snap("list.snap"), "[\"a\"]");
+    // An old, quoted snapshot of a String still matches.
+    std::fs::write(dir.join("__snapshots__/old.snap"), "\"kept\"").expect("write");
+    assert!(test("testing.snapshot(\"old\", \"kept\")", &[]));
+    // A change fails, unless the caller, or either variable, accepts it.
+    assert!(!test("testing.snapshot(\"text\", \"<p>new</p>\")", &[]));
+    assert!(test("testing.snapshot(\"text\", \"<p>new</p>\", #{ \"update\": true })", &[]));
+    assert_eq!(snap("text.snap"), "<p>new</p>");
+    assert!(test("testing.snapshot(\"text\", \"<p>3</p>\")", &[("UPDATE_SNAPSHOTS", "1")]));
+    assert_eq!(snap("text.snap"), "<p>3</p>");
+    assert!(test("testing.snapshot(\"old\", \"kept\")", &[("OLANG_UPDATE_SNAPSHOTS", "1")]));
+    assert_eq!(snap("old.snap"), "kept");
+}

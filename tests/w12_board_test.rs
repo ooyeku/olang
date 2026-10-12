@@ -48,10 +48,10 @@ fn snapshots_record_then_compare_then_refresh() {
     let (out, err, rc) = olang(&ws, &["test", "s.ol"]);
     assert_eq!(rc, 0, "{out}{err}");
     let snap = ws.join("__snapshots__/card.snap");
-    // The display form of a string: quoted, its own quotes as written.
+    // A string is kept as its text (0.88; before, quoted).
     assert_eq!(
         std::fs::read_to_string(&snap).unwrap(),
-        "\"<div class=\"card\">1</div>\""
+        "<div class=\"card\">1</div>"
     );
     // Same output passes.
     let (out, _, rc) = olang(&ws, &["test", "s.ol"]);

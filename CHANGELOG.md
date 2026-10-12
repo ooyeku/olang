@@ -391,6 +391,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`testing.snapshot` keeps a String as its text**, without the quotes
+  its display form added (a snapshot of HTML read as one long quoted
+  line). A snapshot written quoted before still matches, and an update
+  rewrites it bare, so no snapshot in the workspace had to change. The
+  generic `UPDATE_SNAPSHOTS=1` refreshes snapshots beside
+  `OLANG_UPDATE_SNAPSHOTS=1`, and a library with its own update
+  variable passes it: `testing.snapshot(name, value, #{ "update": true
+  })` (Heddle set `OLANG_UPDATE_SNAPSHOTS` from `HEDDLE_UPDATE_SNAPSHOTS`
+  for every call).
 - **A lambda stage ends at the next `|>`.** An unparenthesized lambda
   written as a pipeline stage took the stages after it into its body, so
   `5 |> (v) => if v > 3 => v else => 0 |> g` applied `g` only in the

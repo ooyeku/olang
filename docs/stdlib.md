@@ -2545,7 +2545,7 @@ custom harness. A returned `Err` does nothing on its own; `unwrap` it
 | `testing.assert_true(x)` / `assert_false(x)` | boolean checks (non-boolean input is an `Err`) |
 | `testing.assert_ok(r)` / `assert_err(r)` | Result checks |
 | `testing.fail(msg)` | unconditional `Err` |
-| `testing.snapshot(name, value)` | the snapshot test: `value`'s display form against `__snapshots__/<name>.snap` beside the file under test — written on the first run, compared after, refreshed by `OLANG_UPDATE_SNAPSHOTS=1` |
+| `testing.snapshot(name, value[, #{ update }])` | the snapshot test: `value` (a String as its text, else its display form) against `__snapshots__/<name>.snap` beside the file under test — written on the first run, compared after, refreshed by `OLANG_UPDATE_SNAPSHOTS=1`, `UPDATE_SNAPSHOTS=1` or the caller's `update: true` |
 | `testing.test_summary()` / `testing.reset_tests()` | the session's assertion tally: `#{ "passed", "failed", "total" }` over every `assert_*` outcome on this thread; `reset_tests()` zeroes it |
 | `testing.run_test(name, f)` | deliberately a redirect: a builtin cannot re-enter the interpreter to run `f`, and the error says to use a `test` block instead |
 

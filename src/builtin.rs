@@ -4408,12 +4408,49 @@ fn testing_snapshot(
     arguments: Vec<Value>,
     interpreter: &mut crate::interpreter::Interpreter,
 ) -> Result<Value, InterpreterError> {
-    if arguments.len() != 2 {
+    if arguments.len() != 2 && arguments.len() != 3 {
         return Err(InterpreterError::ArityMismatch {
             expected: 2,
             got: arguments.len(),
         });
     }
+    // `#{ "update": true }`: the caller's own flag (a library's
+    // `HEDDLE_UPDATE_SNAPSHOTS`), beside the variables read below.
+    let caller_update = match arguments.get(2) {
+        None | Some(Value::Unit) => false,
+        Some(Value::Map(m)) | Some(Value::Struct { fields: m, .. }) => {
+            for key in m.keys() {
+                if key != "update" {
+                    return Err(InterpreterError::RuntimeError {
+                        message: format!(
+                            "testing.snapshot: unknown option \"{}\" (it takes update)",
+                            key
+                        ),
+                    });
+                }
+            }
+            match m.get("update") {
+                None | Some(Value::Unit) => false,
+                Some(Value::Boolean(b)) => *b,
+                Some(other) => {
+                    return Err(InterpreterError::TypeError {
+                        message: format!(
+                            "testing.snapshot: update must be true or false, got {}",
+                            other.type_name()
+                        ),
+                    });
+                }
+            }
+        }
+        Some(other) => {
+            return Err(InterpreterError::TypeError {
+                message: format!(
+                    "testing.snapshot: the options must be a map (#{{ \"update\": true }}), got {}",
+                    other.type_name()
+                ),
+            });
+        }
+    };
     let name = match &arguments[0] {
         Value::String(s) => s.to_string(),
         other => {
@@ -4437,10 +4474,17 @@ fn testing_snapshot(
             ),
         });
     }
-    let actual = format!("{}", arguments[1]);
+    // A String is kept as its text; any other value as `show` writes it.
+    // (A String was written quoted before 0.88; such a snapshot still
+    // matches, and an update rewrites it bare.)
+    let (actual, quoted) = match &arguments[1] {
+        Value::String(text) => (text.to_string(), Some(format!("\"{}\"", text))),
+        other => (format!("{}", other), None),
+    };
     let dir = snapshot_dir(interpreter);
     let path = dir.join(format!("{}.snap", name));
-    let update = std::env::var("OLANG_UPDATE_SNAPSHOTS").is_ok_and(|v| !v.is_empty() && v != "0");
+    let on = |var: &str| std::env::var(var).is_ok_and(|v| !v.is_empty() && v != "0");
+    let update = caller_update || on("OLANG_UPDATE_SNAPSHOTS") || on("UPDATE_SNAPSHOTS");
     let write = |text: &str| -> Result<(), InterpreterError> {
         std::fs::create_dir_all(&dir).map_err(|e| InterpreterError::RuntimeError {
             message: format!("testing.snapshot: cannot create {}: {}", dir.display(), e),
@@ -4451,6 +4495,10 @@ fn testing_snapshot(
     };
     match std::fs::read_to_string(&path) {
         Ok(expected) if expected == actual => {
+            crate::stdlib::testing::record_pass();
+            Ok(Value::Unit)
+        }
+        Ok(expected) if Some(&expected) == quoted.as_ref() && !update => {
             crate::stdlib::testing::record_pass();
             Ok(Value::Unit)
         }
@@ -4469,7 +4517,7 @@ fn testing_snapshot(
             );
             Err(InterpreterError::RuntimeError {
                 message: format!(
-                    "snapshot '{}' changed ({}):\n── recorded ──\n{}\n── now ──\n{}\nset OLANG_UPDATE_SNAPSHOTS=1 to accept the new form",
+                    "snapshot '{}' changed ({}):\n── recorded ──\n{}\n── now ──\n{}\nset OLANG_UPDATE_SNAPSHOTS=1 (or UPDATE_SNAPSHOTS=1, or pass #{{ \"update\": true }}) to accept the new form",
                     name,
                     path.display(),
                     expected,

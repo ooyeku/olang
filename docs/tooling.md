@@ -112,12 +112,16 @@ its first import.
 target changes — the edit-test loop, each run a child process so a
 crash ends the run and never the watcher.
 
-**Snapshot tests.** `testing.snapshot(name, value)` compares the value's
-display form with `__snapshots__/<name>.snap` beside the file under
-test: the first run writes the file and passes, a later run that
-differs fails with both texts, and `OLANG_UPDATE_SNAPSHOTS=1` accepts
-the new form. It is for the long HTML and SVG strings a test would
-otherwise inline; commit the directory.
+**Snapshot tests.** `testing.snapshot(name, value)` compares the value
+with `__snapshots__/<name>.snap` beside the file under test — a String
+as its text, any other value as `show` writes it: the first run writes
+the file and passes, a later run that differs fails with both texts,
+and `OLANG_UPDATE_SNAPSHOTS=1` (or the generic `UPDATE_SNAPSHOTS=1`)
+accepts the new form. A library with an update variable of its own
+passes it: `testing.snapshot(name, value, #{ "update": true })`. It is
+for the long HTML and SVG strings a test would otherwise inline; commit
+the directory. (Before 0.88 a String was written with quotes around
+it; such a snapshot still matches, and an update rewrites it bare.)
 
 ```text
 examples/language/markdown/main.ol

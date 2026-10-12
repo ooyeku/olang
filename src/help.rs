@@ -5816,9 +5816,9 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
         }
         self.add_function(FunctionDoc {
             name: "testing.snapshot".to_string(),
-            description: "The snapshot test: the value's display form is compared with `__snapshots__/<name>.snap` beside the file under test. The first run writes the file and passes; a later run that differs fails with both texts; OLANG_UPDATE_SNAPSHOTS=1 accepts the new form. For the long HTML and SVG strings a test would otherwise inline.".to_string(),
-            syntax: "testing.snapshot(name, value)".to_string(),
-            parameters: vec!["name: String - letters, digits, _ - . (the file stem)".to_string(), "value: any - compared by its display form".to_string()],
+            description: "The snapshot test: the value — a String as its text, any other value as show writes it — is compared with `__snapshots__/<name>.snap` beside the file under test. The first run writes the file and passes; a later run that differs fails with both texts; OLANG_UPDATE_SNAPSHOTS=1, UPDATE_SNAPSHOTS=1 or the caller's #{ \"update\": true } accepts the new form. For the long HTML and SVG strings a test would otherwise inline.".to_string(),
+            syntax: "testing.snapshot(name, value[, #{ update }])".to_string(),
+            parameters: vec!["name: String - letters, digits, _ - . (the file stem)".to_string(), "value: any - a String as its text, else its display form".to_string(), "options: #{ update: Bool } - optional; the caller's own update flag".to_string()],
             return_type: "Unit".to_string(),
             examples: vec!["testing.snapshot(\"issue_card\", render(card(issue)))".to_string()],
             category: "Testing".to_string(),
