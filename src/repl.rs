@@ -2487,10 +2487,16 @@ impl Repl {
             let builtins = classic_interpreter.get_builtin_functions();
             let user_vars = classic_interpreter.get_user_variables();
 
-            let mut builtin_names: Vec<String> = builtins.keys().cloned().collect();
+            // The forms the parser builds with (`__spread`, …) are no
+            // function a program names.
+            let mut builtin_names: Vec<String> = builtins
+                .keys()
+                .filter(|n| !crate::parser::is_hidden_builtin(n))
+                .cloned()
+                .collect();
             builtin_names.sort();
 
-            (builtins.len(), builtin_names, user_vars.len())
+            (builtin_names.len(), builtin_names, user_vars.len())
         };
 
         // Built-in functions
@@ -2556,7 +2562,9 @@ impl Repl {
         } else {
             // Get user variables again (after releasing previous borrow)
             let user_vars = self.interpreter.get_user_variables();
-            for (name, value) in &user_vars {
+            let mut sorted: Vec<(&String, &Value)> = user_vars.iter().map(|(k, v)| (k, *v)).collect();
+            sorted.sort_by(|a, b| a.0.cmp(b.0));
+            for (name, value) in sorted {
                 let type_name = Self::get_type_name(value);
                 let value_str = Self::format_value_preview(value);
                 println!(

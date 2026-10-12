@@ -11,6 +11,7 @@ let x = 41
 :fn twice(a) = a * 2
 :use collections
 twice(z)
+:env
 :memory
 :config
 :config show_types true

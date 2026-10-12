@@ -4,6 +4,11 @@
 :help syntax
 :help nosuchthing
 :search
+:search map
+:search file operations limit:5
+:search lst
+:help tutorials
+:tutorial
 :tutorial basic_operations
 :help_advanced
 :contextual_help

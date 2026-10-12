@@ -176,10 +176,12 @@ impl HelpSystem {
         }
 
         // Sort by relevance score (descending)
+        // Score first, then name: ties come out the same on every run.
         results.sort_by(|a, b| {
             b.relevance_score
                 .partial_cmp(&a.relevance_score)
                 .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.function_doc.name.cmp(&b.function_doc.name))
         });
 
         // Limit results
@@ -564,7 +566,7 @@ impl HelpSystem {
             let order = ["Beginner", "Intermediate", "Advanced"];
             let a_idx = order.iter().position(|&x| x == a.difficulty).unwrap_or(999);
             let b_idx = order.iter().position(|&x| x == b.difficulty).unwrap_or(999);
-            a_idx.cmp(&b_idx)
+            a_idx.cmp(&b_idx).then_with(|| a.name.cmp(&b.name))
         });
 
         for tutorial in tutorials {
@@ -11622,10 +11624,12 @@ For function-specific syntax, use: {}:help <function_name>{}",
         }
 
         // Sort all suggestions by score (highest first)
-        function_suggestions
-            .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        category_suggestions
-            .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        function_suggestions.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.0.cmp(&b.0))
+        });
+        category_suggestions.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.0.cmp(&b.0))
+        });
 
         // Add function suggestions
         for (name, _score) in function_suggestions.iter().take(8) {

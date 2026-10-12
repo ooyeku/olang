@@ -20,6 +20,76 @@ Variable 'x' updated to: 5
 <function: twice>
 6
 
+=== Current Environment ===
+
+Core Functions (80):
+  abs  all  any  assert  assert_close  assert_eq
+  assert_false  assert_ne  assert_true  attempt  average  chunk
+  clamp  concat  cons  contains  drop  ends_with
+  entries  enumerate  eprint  eprintln  filter  find
+  flatten  fold  force  group_by  head  implements
+  is_err  is_ok  join  lazy  len  map
+  map_clear  map_filtered  map_get  map_get_in  map_get_or  map_has_key
+  map_keys  map_len  map_merge  map_path  map_remove  map_set
+  map_set_in  map_update  map_values  max  min  par_filter
+  par_map  print  println  raise  range  reduce
+  result_map  result_map_err  reverse  set_parallel  show  skip
+  sort  split  starts_with  sum  tail  take
+  to_float  to_int  to_string  typeof  unwrap  unwrap_or
+  unwrap_or_else  zip
+  (use :env --full for detailed descriptions)
+
+User Environment (48):
+    alg : struct = Module { ... }
+    asset : struct = Module { ... }
+    base64 : struct = Module { ... }
+    bigint : struct = Module { ... }
+    bitset : struct = Module { ... }
+    bytes : struct = Module { ... }
+    caps : struct = Module { ... }
+    cell : struct = Module { ... }
+    chan : struct = Module { ... }
+    col : struct = Module { ... }
+    collections : struct = Module { ... }
+    compress : struct = Module { ... }
+    crypto : struct = Module { ... }
+    csv : struct = Module { ... }
+    dates : struct = Module { ... }
+    db : struct = Module { ... }
+    deque : struct = Module { ... }
+    dom : struct = Module { ... }
+    dsu : struct = Module { ... }
+    fs : struct = Module { ... }
+    gui : struct = Module { ... }
+    heap : struct = Module { ... }
+    http : struct = Module { ... }
+    it : int = 6
+    json : struct = Module { ... }
+    math : struct = Module { ... }
+    meta : struct = Module { ... }
+    ods : struct = Module { ... }
+    os : struct = Module { ... }
+    plot : struct = Module { ... }
+    proc : struct = Module { ... }
+    pty : struct = Module { ... }
+    random : struct = Module { ... }
+    re : struct = Module { ... }
+    runtime : struct = Module { ... }
+    stats : struct = Module { ... }
+    str : struct = Module { ... }
+    table : struct = Module { ... }
+    task : struct = Module { ... }
+    testing : struct = Module { ... }
+    time : struct = Module { ... }
+    toml : struct = Module { ... }
+    tty : struct = Module { ... }
+    twice : function = <function: twice>
+    vec : struct = Module { ... }
+    vt : struct = Module { ... }
+    x : int = 5
+    z : int = 3
+
+
 === Memory ===
   Values are reference-counted and reclaimed deterministically.
   User bindings: 48

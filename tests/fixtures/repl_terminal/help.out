@@ -43,17 +43,17 @@ Anything without a leading colon is olang: [36muse collections { heap }[0m, [
 
 
 ═══ Module: str ═══
-  38 function(s), call as str.<fn>(...):
+  39 function(s), call as str.<fn>(...):
     capitalize, cell_width, char_at, char_code
     chars, contains, count, ends_with
     fixed, fmt, from_char_code, fuzzy_score
-    graphemes, index_of, is_empty, join
-    last_index_of, length, lines, pad_end
-    pad_start, parse_float, parse_int, repeat
-    replace, replace_first, reverse, split
-    starts_with, substring, thousands, to_lower
-    to_upper, trim, trim_end, trim_start
-    width, words
+    graphemes, index_of, is_ascii, is_empty
+    join, last_index_of, length, lines
+    pad_end, pad_start, parse_float, parse_int
+    repeat, replace, replace_first, reverse
+    split, starts_with, substring, thousands
+    to_lower, to_upper, trim, trim_end
+    trim_start, width, words
 
   Try :help str.<fn> for a function's documentation.
 [1m=== Olang Syntax Reference ===[0m
@@ -124,6 +124,163 @@ Usage: :search <query> [filters]
   :search returns:Bool
   :search transform limit:5
   :search "file operations"
+[1m=== Search Results (20 found) ===[0m
+
+[2m1. FUZZY[0m [34mmap_clear[0m [2m(Maps)[0m
+   [32mAn empty value of the same kind (a map, an object, a parsed JSON object) — for a map, equivalent to #{}.[0m
+   [35mSyntax:[0m [36mmap_clear(map)[0m
+
+[2m2. FUZZY[0m [34mmap_merge[0m [2m(Maps)[0m
+   [32mA new value of a's kind (a map, an object, a parsed JSON object) holding both's entries; where keys collide, b wins.[0m
+   [35mSyntax:[0m [36mmap_merge(a, b)[0m
+
+[2m3. FUZZY[0m [34mmap_remove[0m [2m(Maps)[0m
+   [32mA new map without key; removing an absent key returns an equal map.[0m
+   [35mSyntax:[0m [36mmap_remove(map, key)[0m
+
+[2m4. FUZZY[0m [34mmap_set[0m [2m(Maps)[0m
+   [32mA new map with key bound to value; the original is unchanged, like every                  olang value.[0m
+   [35mSyntax:[0m [36mmap_set(map, key, value)[0m
+
+[2m5. FUZZY[0m [34mmap_set_in[0m [2m(Maps)[0m
+   [32mA copy with the value at the end of the key path set: each level a new value of its own kind, a missing level a new map. A level nothing else holds is written in place, as map_set's sole-owner write.[0m
+   [35mSyntax:[0m [36mmap_set_in(value, keys, v)[0m
+
+[2m6. FUZZY[0m [34mmap_update[0m [2m(Maps)[0m
+   [32mA copy with key set to f(the old value) — f is given Unit for an absent key. The old value is moved into f when nothing else holds the map.[0m
+   [35mSyntax:[0m [36mmap_update(value, key, f)[0m
+
+[2m7. FUZZY[0m [34mmap_get[0m [2m(Maps)[0m
+   [32mThe value under key, or Unit () when the key is absent — a missing key is                  not an error. Reads maps, structs, objects, and parsed JSON uniformly.[0m
+   [35mSyntax:[0m [36mmap_get(map, key)[0m
+
+[2m8. FUZZY[0m [34mmap_get_in[0m [2m(Maps)[0m
+   [32mThe value at the end of a key path, or Unit at the first missing hop — map_set_in's reading half (map_path is the same function).[0m
+   [35mSyntax:[0m [36mmap_get_in(value, keys)[0m
+
+[2m9. FUZZY[0m [34mmap_get_or[0m [2m(Maps)[0m
+   [32mThe value under key, or the default when the key is absent — the one-call form of the missing-key-with-default idiom (map_get returns Unit for absence, which unwrap_or cannot take).[0m
+   [35mSyntax:[0m [36mmap_get_or(map, key, default)[0m
+
+[2m10. FUZZY[0m [34mmap_path[0m [2m(Maps)[0m
+   [32mA nested read in one call: follow the list of keys through maps, objects, structs, and parsed JSON, returning the value at the end or Unit at the first missing hop — the same absence-as-Unit rule as map_get, without spelling it once per level.[0m
+   [35mSyntax:[0m [36mmap_path(value, keys)[0m
+
+[2m11. FUZZY[0m [34mmap_values[0m [2m(Maps)[0m
+   [32mEvery value, in the sorted-key order map_keys reports.[0m
+   [35mSyntax:[0m [36mmap_values(map)[0m
+
+[2m12. FUZZY[0m [34mpar_map[0m [2m(List)[0m
+   [32mmap fanned out across OS threads: same results in the same order, one worker interpreter per thread (no GIL). The function runs against worker snapshots like spawn, so mutations to enclosing state are not visible to the caller[0m
+   [35mSyntax:[0m [36mpar_map(list, function)[0m
+
+[2m13. FUZZY[0m [34mcol.flat_map[0m [2m(Collections)[0m
+   [32mMap then flatten one level.[0m
+   [35mSyntax:[0m [36mcol.flat_map(list, fn)[0m
+
+[2m14. FUZZY[0m [34mcolx.flat_map[0m [2m(colx)[0m
+   [32mmap f over xs and concatenate the resulting lists[0m
+   [35mSyntax:[0m [36mcolx.flat_map(xs, f)[0m
+
+[2m15. FUZZY[0m [34mmap_filtered[0m [2m(Higher-Order)[0m
+   [32mFilter then map in one pass: function applied to each element the                  predicate accepts.[0m
+   [35mSyntax:[0m [36mmap_filtered(list, predicate, function)[0m
+
+[2m16. FUZZY[0m [34mplot.heatmap[0m [2m(plot)[0m
+   [32ma heatmap of the row-major value grid, as an SVG string[0m
+   [35mSyntax:[0m [36mplot.heatmap(x_labels, y_labels, rows, opts)[0m
+
+[2m17. FUZZY[0m [34mmap_has_key[0m [2m(Maps)[0m
+   [32mWhether key is present — the way to tell an absent key from one stored                  with a Unit value.[0m
+   [35mSyntax:[0m [36mmap_has_key(map, key)[0m
+
+[2m18. FUZZY[0m [34mmap_keys[0m [2m(Maps)[0m
+   [32mEvery key, sorted — the same deterministic order entries uses.[0m
+   [35mSyntax:[0m [36mmap_keys(map)[0m
+
+[2m19. FUZZY[0m [34mmap_len[0m [2m(Maps)[0m
+   [32mThe number of entries (an object's or a parsed JSON object's fields).[0m
+   [35mSyntax:[0m [36mmap_len(map)[0m
+
+[2m20. EXACT[0m [34mmap[0m [2m(List)[0m
+   [32mApplies a function to each element in a list, returning a new list[0m
+   [35mSyntax:[0m [36mmap(list, function)[0m
+
+[2mTIP: Use ':help <function>' for detailed documentation[0m
+
+[33mNo functions found matching your search.[0m
+
+[36mSearch Tips:[0m
+  • Try broader terms: 'list' instead of 'list_operations'
+  • Use category filters: 'category:List map'
+  • Use return type filters: 'returns:List filter'
+  • Use fuzzy search: 'lst' will match 'list' functions
+  • Search in descriptions: 'transform' finds map, filter, etc.
+[1m=== Search Results (3 found) ===[0m
+
+[2m1. DESC[0m [34mdom.storage_get[0m [2m(dom)[0m
+   [32mRead a localStorage value (missing keys read as "").[0m
+   [33mMatch:[0m Read a localStorage value (missing keys read as "").
+   [35mSyntax:[0m [36mdom.storage_get(k)[0m
+
+[2m2. DESC[0m [34mdom.storage_remove[0m [2m(dom)[0m
+   [32mRemove a localStorage key.[0m
+   [33mMatch:[0m Remove a localStorage key.
+   [35mSyntax:[0m [36mdom.storage_remove(k)[0m
+
+[2m3. DESC[0m [34mdom.storage_set[0m [2m(dom)[0m
+   [32mWrite a localStorage value. Answers false when the browser refused it (a full quota, storage disabled) instead of raising.[0m
+   [33mMatch:[0m Write a localStorage value. Answers false when the browser refused it (a full quota, storage disabled) instead of raising.
+   [35mSyntax:[0m [36mdom.storage_set(k, v)[0m
+
+[2mTIP: Use ':help <function>' for detailed documentation[0m
+
+[1m=== Interactive Tutorials ===[0m
+
+[34mTUTORIAL: basic_operations[0m [32m([1mBeginner[0m)[0m
+   [2mLearn basic Olang operations and syntax[0m
+   [2mTIME: 5 minutes • 3 steps[0m
+
+[34mTUTORIAL: file_handling[0m [33m([1mIntermediate[0m)[0m
+   [2mWorking with files and directories[0m
+   [2mTIME: 8 minutes • 3 steps[0m
+   [2mPrerequisites: basic_operations[0m
+
+[34mTUTORIAL: list_operations[0m [33m([1mIntermediate[0m)[0m
+   [2mMaster list operations and functional programming[0m
+   [2mTIME: 10 minutes • 4 steps[0m
+   [2mPrerequisites: basic_operations[0m
+
+[34mTUTORIAL: web_requests[0m [31m([1mAdvanced[0m)[0m
+   [2mMaking HTTP requests and handling responses[0m
+   [2mTIME: 12 minutes • 3 steps[0m
+   [2mPrerequisites: basic_operations, file_handling[0m
+
+[2mTIP: Start a tutorial: :help tutorial <name>[0m
+
+[1m=== Interactive Tutorials ===[0m
+
+[34mTUTORIAL: basic_operations[0m [32m([1mBeginner[0m)[0m
+   [2mLearn basic Olang operations and syntax[0m
+   [2mTIME: 5 minutes • 3 steps[0m
+
+[34mTUTORIAL: file_handling[0m [33m([1mIntermediate[0m)[0m
+   [2mWorking with files and directories[0m
+   [2mTIME: 8 minutes • 3 steps[0m
+   [2mPrerequisites: basic_operations[0m
+
+[34mTUTORIAL: list_operations[0m [33m([1mIntermediate[0m)[0m
+   [2mMaster list operations and functional programming[0m
+   [2mTIME: 10 minutes • 4 steps[0m
+   [2mPrerequisites: basic_operations[0m
+
+[34mTUTORIAL: web_requests[0m [31m([1mAdvanced[0m)[0m
+   [2mMaking HTTP requests and handling responses[0m
+   [2mTIME: 12 minutes • 3 steps[0m
+   [2mPrerequisites: basic_operations, file_handling[0m
+
+[2mTIP: Start a tutorial: :help tutorial <name>[0m
+
 [1m=== Tutorial: basic_operations ===[0m
 
 [32mLearn basic Olang operations and syntax[0m

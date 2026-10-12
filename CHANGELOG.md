@@ -531,6 +531,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The REPL's `:env`, `:help tutorials`, `:tutorial` and `:search` print
+  the same every run**: bindings by name, tutorials by level then name,
+  search results and suggestions by score then name (three piped runs
+  gave three outputs; olang Studio's pinned transcripts left them out).
+  `:env` no longer lists the parser's own forms (`__spread`). The terminal
+  transcripts in tests/repl_commands_test.rs now pin all four.
 - **A path dependency's own path dependencies are followed** (by `otc`,
   a run, the language server — everything that installs), at any depth,
   each against the manifest that names it, and locked by their path from
