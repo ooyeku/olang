@@ -2664,7 +2664,7 @@ const GLOBAL_ARITY: &[(&str, usize, usize)] = &[
     ("abs", 1, 1), ("all", 2, usize::MAX), ("any", 2, usize::MAX), ("attempt", 1, 1),
     ("average", 1, 1), ("chunk", 2, 2), ("clamp", 3, 3), ("concat", 2, 2), ("cons", 2, 2),
     ("contains", 2, 2), ("drop", 2, 2), ("ends_with", 2, 2), ("entries", 1, 1),
-    ("enumerate", 1, 1), ("filter", 2, 2), ("find", 2, 2), ("flatten", 1, 1), ("fold", 3, 3),
+    ("enumerate", 1, 1), ("eprint", 1, 1), ("filter", 2, 2), ("find", 2, 2), ("flatten", 1, 1), ("fold", 3, 3),
     ("force", 1, 1), ("group_by", 2, 2), ("head", 1, 1), ("implements", 2, 2), ("is_err", 1, 1),
     ("is_ok", 1, 1), ("join", 2, 2), ("lazy", 1, 1), ("len", 1, 1), ("map", 2, 2),
     ("map_clear", 1, 1), ("map_filtered", 3, 3), ("map_get", 2, 2), ("map_get_in", 2, 2),

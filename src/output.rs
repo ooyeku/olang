@@ -73,6 +73,16 @@ pub fn emit_line(text: &str) {
     });
 }
 
+/// Write `text` to standard error, as it is (`eprint`, `eprintln`). A
+/// stderr that has gone drops it. The playground has no stderr: the text
+/// joins the output it collects.
+pub fn emit_err(text: &str) {
+    #[cfg(feature = "native")]
+    crate::stdio::err(format_args!("{}", text));
+    #[cfg(not(feature = "native"))]
+    CAPTURE.with(|c| c.borrow_mut().push_str(text));
+}
+
 /// Take everything captured on this thread since the last drain.
 #[cfg(not(feature = "native"))]
 pub fn drain_captured() -> String {

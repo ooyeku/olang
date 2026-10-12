@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`eprint(v)` and `eprintln(...)`**: `print` and `println` to standard
+  error, so a diagnostic stays out of `prog > out.csv`; a stderr that has
+  gone drops the text, and in the browser it joins the output. heddle-sql
+  wrote its errors with `fs.append_file("/dev/stderr", …)` (Unix only).
+
 - **A field a declared struct never has, reported.** `olang check` and
   the language server warn (advisory class `shape`) on a field read off
   a value whose declared struct type (`type Point = struct { x: Int, y:

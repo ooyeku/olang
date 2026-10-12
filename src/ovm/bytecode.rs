@@ -1566,6 +1566,8 @@ impl BytecodeVm {
             // output
             "print",
             "println",
+            "eprint",
+            "eprintln",
             // higher-order: reachable now that non-capturing lambdas compile
             // to function values. group_by is still excluded because it
             // returns a Map, which does not survive the round trip.

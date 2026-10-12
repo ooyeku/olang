@@ -111,6 +111,16 @@ impl BuiltinFunctions {
                 arity: 1,
             },
         );
+        // `eprint` / `eprintln`: the same, to standard error.
+        for (name, arity) in [("eprint", 1), ("eprintln", 0)] {
+            functions.insert(
+                name.to_string(),
+                BuiltinFunction {
+                    name: name.to_string(),
+                    arity,
+                },
+            );
+        }
 
         // List functions
         functions.insert(
@@ -1238,6 +1248,16 @@ impl BuiltinFunctions {
                 Ok(Value::Unit)
             }
             "println" => builtins.println(arguments),
+            "eprintln" => Self::eprint_values(arguments, true),
+            "eprint" => {
+                if arguments.len() != 1 {
+                    return Err(InterpreterError::ArityMismatch {
+                        expected: 1,
+                        got: arguments.len(),
+                    });
+                }
+                Self::eprint_values(arguments, false)
+            }
             "raise" => Self::raise(arguments),
             "print" => builtins.print(arguments),
             "map" => builtins.map(arguments, interpreter),
@@ -1356,6 +1376,24 @@ impl BuiltinFunctions {
             other => format!("{}", other),
         };
         Err(InterpreterError::RuntimeError { message })
+    }
+
+    /// `eprint` and `eprintln`: as `print` and `println` render, to
+    /// standard error (in the browser, beside the output).
+    fn eprint_values(args: Vec<Value>, newline: bool) -> Result<Value, InterpreterError> {
+        let mut text = args
+            .iter()
+            .map(|arg| match arg {
+                Value::String(s) => s.as_str().to_string(),
+                _ => format!("{}", arg),
+            })
+            .collect::<Vec<String>>()
+            .join(" ");
+        if newline {
+            text.push('\n');
+        }
+        crate::output::emit_err(&text);
+        Ok(Value::Unit)
     }
 
     fn println(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {

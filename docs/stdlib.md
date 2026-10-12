@@ -157,6 +157,7 @@ the evidence rather than from a feeling.
 |---|---|
 | `print(v)` | write without newline |
 | `println(...)` | write with newline; several arguments print space-separated |
+| `eprint(v)` / `eprintln(...)` | the same, to standard error: diagnostics stay out of `prog > out.csv` (in the browser they join the output) |
 
 ### Introspection and conversion
 

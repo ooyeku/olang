@@ -915,6 +915,26 @@ impl HelpSystem {
             category: "I/O".to_string(),
             see_also: vec!["println".to_string()],
         });
+        self.add_function(FunctionDoc {
+            name: "eprintln".to_string(),
+            description: "Prints its arguments to standard error, space-separated, with a trailing newline — as println renders them. For diagnostics that must stay out of a program's output when it is redirected (`prog > out.csv`).".to_string(),
+            syntax: "eprintln(values...)".to_string(),
+            parameters: vec!["values: Any - zero or more values".to_string()],
+            return_type: "Unit".to_string(),
+            examples: vec!["eprintln(\"warning: skipped\", n, \"rows\")".to_string()],
+            category: "I/O".to_string(),
+            see_also: vec!["eprint".to_string(), "println".to_string()],
+        });
+        self.add_function(FunctionDoc {
+            name: "eprint".to_string(),
+            description: "Prints a value to standard error without a trailing newline, as print renders it.".to_string(),
+            syntax: "eprint(value)".to_string(),
+            parameters: vec!["value: Any - The value to print".to_string()],
+            return_type: "Unit".to_string(),
+            examples: vec!["eprint(\"progress: \" + show(n) + \"\\r\")".to_string()],
+            category: "I/O".to_string(),
+            see_also: vec!["eprintln".to_string(), "print".to_string()],
+        });
 
         // List Functions
         self.add_function(FunctionDoc {
