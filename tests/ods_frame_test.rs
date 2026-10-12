@@ -336,9 +336,9 @@ show(ods.n_cols(back)) + " " + show(ods.to_records(back))
         None,
     )
     .expect("quoting");
-    let s = out.to_string();
+    let s = shown(&out);
     assert!(s.contains("a, b"), "{s}");
-    assert!(s.contains("say \"hi\""), "{s}");
+    assert!(s.contains("say \\\"hi\\\""), "{s}");
     assert!(s.starts_with("\"1 "), "column count changed: {s}");
 }
 
@@ -1006,7 +1006,7 @@ show([ods.columns(d), ods.to_list(d["column"]), ods.to_list(d["nulls"])])
         None,
     )
     .expect("describe");
-    let text = out.to_string();
+    let text = shown(&out);
     assert!(
         text.contains("\"mean\", \"std\", \"min\", \"q25\", \"median\", \"q75\", \"max\""),
         "{text}"
@@ -1172,7 +1172,7 @@ show([ods.columns(info), ods.to_list(info["column"]), ods.to_list(info["nulls"])
         p = path.to_string_lossy()
     );
     let out = eval(&src, None).expect("info");
-    let text = out.to_string();
+    let text = shown(&out);
     assert!(
         text.contains("[\"column\", \"dtype\", \"nulls\", \"bytes\"]"),
         "{text}"

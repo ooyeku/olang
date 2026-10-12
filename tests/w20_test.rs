@@ -204,7 +204,7 @@ fn a_spawned_tasks_effects_record_and_replay_on_their_own_stream() {
              d\n\
          }\n\
          let n = unwrap(chan.recv(inbox))\n\
-         println(\"rows \" + to_string(n) + \" drew \" + to_string(task.join(t)) + \" main \" + to_string(random.randint(1, 1000000)))\n",
+         println(\"rows \" + to_string(n) + \" drew \" + to_string(unwrap(task.join(t))) + \" main \" + to_string(random.randint(1, 1000000)))\n",
     );
     let (recorded, err, rc) = olang(&ws, &["--record", "run.olt", "w.ol"]);
     assert_eq!(rc, 0, "{recorded}{err}");

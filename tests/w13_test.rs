@@ -113,8 +113,8 @@ fn remote_addr_honours_the_forwarded_header_only_when_asked() {
          println(str.starts_with(a.body, \"127.0.0.1:\"))\n\
          println(b.body)\n\
          http.shutdown()\n\
-         task.join(plain)\n\
-         task.join(trusting)\n\
+         unwrap(task.join(plain))\n\
+         unwrap(task.join(trusting))\n\
          println(\"drained\")\n",
     );
     let (out, err, rc) = olang(&ws, &["run", "s.ol"]);

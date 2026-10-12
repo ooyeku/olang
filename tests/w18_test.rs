@@ -328,12 +328,12 @@ fn an_alias_let_checks_the_aliased_annotation_on_every_tier_and_thread() {
          let mut acc = \"\"\n\
          for i in range(0, 5) { acc = outer(t, i) }\n\
          println(acc)\n\
-         println(show(task.join(spawn { by_let(t) + \"/\" + by_param(t) + \"/\" + show(local_let(t)) })))\n\
+         println(show(unwrap(task.join(spawn { by_let(t) + \"/\" + by_param(t) + \"/\" + show(local_let(t)) }))))\n\
          unwrap(os.on_shutdown((why) => http.shutdown()))\n\
          let srv = spawn { http.serve(0, (req) => by_let(t) + \"/\" + show(local_let(t))) }\n\
          time.sleep(300)\n\
          http.shutdown()\n\
-         println(show(task.join(srv)))\n",
+         println(show(unwrap(task.join(srv))))\n",
     );
     for mode in [vec!["run"], vec!["--no-ovm", "run"]] {
         let mut args = mode.clone();

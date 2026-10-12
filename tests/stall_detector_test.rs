@@ -44,7 +44,7 @@ fn a_recv_nobody_can_satisfy_aborts_with_the_site() {
 fn a_join_on_a_parked_task_reports_both_sites() {
     let (code, text) = run("let c = chan.new()\n\
          let t = spawn chan.recv(c)\n\
-         task.join(t)\n\
+         unwrap(task.join(t))\n\
          println(\"unreachable\")");
     assert_eq!(code, 101, "expected the stall abort, got:\n{text}");
     assert!(text.contains("task.join on task 1"), "join site:\n{text}");
@@ -72,7 +72,7 @@ fn a_late_sender_is_progress_not_deadlock() {
     let (code, text) = run("let c = chan.new()\n\
          let t = spawn { time.sleep(900) ; unwrap(chan.send(c, 42)) }\n\
          println(unwrap(chan.recv(c)))\n\
-         task.join(t)\n\
+         unwrap(task.join(t))\n\
          println(\"done\")");
     assert_eq!(code, 0, "no abort expected:\n{text}");
     assert!(text.contains("42") && text.contains("done"));
@@ -85,7 +85,7 @@ fn rendezvous_handoff_under_the_polling_send() {
     let (code, text) = run("let c = chan.bounded(0)\n\
          let t = spawn { time.sleep(400) ; unwrap(chan.recv(c)) }\n\
          unwrap(chan.send(c, 7))\n\
-         println(task.join(t))\n\
+         println(unwrap(task.join(t)))\n\
          println(\"done\")");
     assert_eq!(code, 0, "no abort expected:\n{text}");
     assert!(text.contains("7") && text.contains("done"));
@@ -105,7 +105,7 @@ fn introspection_names_tasks_channels_and_parked_sites() {
          println(`tasks ${len(tasks)}`)\n\
          let p = task.parked()\n\
          println(`parked ${len(p)} on ${map_get(p[0], \"on\")}`)\n\
-         println(task.join(t1))");
+         println(unwrap(task.join(t1)))");
     assert_eq!(code, 0, "introspection run failed:\n{text}");
     assert!(text.contains("queued 2 closed false"), "chan.stat:\n{text}");
     assert!(text.contains("tasks 2"), "task.list:\n{text}");
@@ -136,9 +136,9 @@ fn a_short_timed_recv_does_not_wait_behind_a_long_one() {
          let long = spawn { let r = chan.recv_timeout(stop, 3000) ; \"done\" }\n\
          time.sleep(50)\n\
          let short = spawn { let t0 = time.monotonic_ms() ; let r = chan.recv_timeout(stop, 100) ; time.monotonic_ms() - t0 }\n\
-         println(`short ${task.join(short)}`)\n\
+         println(`short ${unwrap(task.join(short))}`)\n\
          chan.close(stop)\n\
-         println(task.join(long))");
+         println(unwrap(task.join(long)))");
     assert_eq!(code, 0, "run failed:\n{text}");
     let short: i64 = text
         .lines()
@@ -167,7 +167,7 @@ fn timed_receivers_on_one_channel_wait_side_by_side() {
              n\n\
          }\n\
          let ts = [spawn worker(c), spawn worker(c), spawn worker(c), spawn worker(c)]\n\
-         for t in ts { println(`n ${task.join(t)}`) }");
+         for t in ts { println(`n ${unwrap(task.join(t))}`) }");
     assert_eq!(code, 0, "run failed:\n{text}");
     let counts: Vec<i64> = text
         .lines()
@@ -189,7 +189,7 @@ fn a_timed_recv_does_not_wait_behind_a_blocking_recv() {
          let r = chan.recv_timeout(c, 100)\n\
          println(`took ${time.monotonic_ms() - t0}`)\n\
          unwrap(chan.send(c, 7))\n\
-         println(unwrap(task.join(blocked)))");
+         println(unwrap(unwrap(task.join(blocked))))");
     assert_eq!(code, 0, "run failed:\n{text}");
     let took: i64 = text
         .lines()

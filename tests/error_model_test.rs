@@ -85,7 +85,7 @@ fn a_task_boundary_turns_a_runtime_error_into_a_value() {
     let out = run(
         "fn risky(n) = if n > 2 => 1 + \"not a number\" else => n * 10\n\
                    let jobs = [spawn risky(1), spawn risky(9)]\n\
-                   to_string(jobs |> map((j) => match task.join(j) { Err(e) => -1, v => v }))\n",
+                   to_string(jobs |> map((j) => match task.join(j) { Err(e) => -1, Ok(v) => v }))\n",
     )
     .unwrap();
     assert_eq!(out, "[10, -1]");

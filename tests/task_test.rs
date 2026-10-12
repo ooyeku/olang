@@ -44,7 +44,7 @@ typeof(spawn answer())
     );
     assert_eq!(
         run("fn answer() = 20 + 22
-task.join(spawn answer())
+unwrap(task.join(spawn answer()))
 ")
         .unwrap(),
         "42"
@@ -59,7 +59,7 @@ fn tasks_run_concurrently() {
     let out = run("fn slow(n) = { time.sleep(60); n }\n\
                    let t0 = time.monotonic_ms()\n\
                    let jobs = [spawn slow(1), spawn slow(2), spawn slow(3)]\n\
-                   let got = jobs |> map(task.join)\n\
+                   let got = jobs |> map((t) => unwrap(task.join(t)))\n\
                    let ms = time.monotonic_ms() - t0\n\
                    to_string(sum(got)) + \" \" + to_string(ms < 150)\n")
     .unwrap();
@@ -74,7 +74,7 @@ fn joining_many_is_just_map() {
     // No `join_all`: every task is already running, so `map` over the
     // handles is the fan-in. This is the documented idiom.
     assert_eq!(
-        run("fn id(n) = n\nlet jobs = [spawn id(1), spawn id(2), spawn id(3)]\nto_string(jobs |> map(task.join))\n").unwrap(),
+        run("fn id(n) = n\nlet jobs = [spawn id(1), spawn id(2), spawn id(3)]\nto_string(jobs |> map((t) => unwrap(task.join(t))))\n").unwrap(),
         "[1, 2, 3]"
     );
 }
@@ -87,7 +87,7 @@ fn a_task_sees_a_snapshot_of_its_spawning_scope() {
                    fn scaled() = 5 * factor\n\
                    let t = spawn scaled()\n\
                    let factor = 999\n\
-                   task.join(t)\n")
+                   unwrap(task.join(t))\n")
     .unwrap();
     assert_eq!(out, "50");
 }
@@ -96,7 +96,7 @@ fn a_task_sees_a_snapshot_of_its_spawning_scope() {
 fn joining_twice_returns_the_memoized_result() {
     let out = run("fn once(n) = { time.sleep(10); n }\n\
                    let t = spawn once(7)\n\
-                   to_string(task.join(t)) + \" \" + to_string(task.join(t))\n")
+                   to_string(unwrap(task.join(t))) + \" \" + to_string(unwrap(task.join(t)))\n")
     .unwrap();
     assert_eq!(out, "7 7");
 }
@@ -116,7 +116,7 @@ fn one_failed_task_does_not_kill_the_batch() {
     let out = run(
         "fn work(n) = if n == 1 => unwrap(Err(\"died\")) else => n * 10\n\
                    let jobs = [spawn work(0), spawn work(1), spawn work(2)]\n\
-                   to_string(jobs |> map((j) => match task.join(j) { Err(e) => -1, v => v }))\n",
+                   to_string(jobs |> map((j) => match task.join(j) { Err(e) => -1, Ok(v) => v }))\n",
     )
     .unwrap();
     assert_eq!(out, "[0, -1, 20]");
@@ -134,7 +134,7 @@ fn join_timeout_reports_a_timeout_without_stopping_the_task() {
                    let later = task.join_timeout(t, 5000)\n\
                    show(first) + \" then \" + show(later)\n")
     .unwrap();
-    assert_eq!(out, "Err(\"timed out\") then Ok(9)");
+    assert_eq!(out, "Err(\"timed out\") then Ok(Ok(9))");
 }
 
 #[test]
@@ -168,20 +168,15 @@ fn task_operations_reject_values_that_are_not_tasks() {
 // ── the removed surface ───────────────────────────────────────────────
 
 #[test]
-fn the_async_vocabulary_is_gone_and_its_words_are_free() {
-    // 0.63 removed async/await/Promise. The grammar carried migration
-    // stubs for a release; with no olang code outside this repository
-    // there was nobody to migrate, so the stubs came out and the words
-    // are ordinary identifiers.
-    assert_eq!(
-        run("let async = 1\nlet await = 2\nlet Promise = 3\nto_string(async + await + Promise)\n")
-            .unwrap(),
-        "6"
-    );
-    // `await_all` reads fine as a helper name now.
+fn the_async_vocabulary_is_gone_and_its_words_are_reserved() {
+    // 0.63 removed async/await/Promise; the freeze pass reserved `async`
+    // and `await` for a form the language may add. `Promise` is a name.
+    assert_eq!(run("let Promise = 3\nto_string(Promise)\n").unwrap(), "3");
+    assert!(run("let async = 1\n").is_err());
+    // `await_all` reads fine as a helper name.
     assert_eq!(
         run("fn one() = 7\n\
-             fn await_all(ts) = ts |> map(task.join)\n\
+             fn await_all(ts) = ts |> map((t) => unwrap(task.join(t)))\n\
              to_string(sum(await_all([spawn one(), spawn one()])))\n")
         .unwrap(),
         "14"
@@ -196,7 +191,7 @@ fn task_handles_survive_promotion_to_the_bytecode_tier() {
     // compiled: the handle is a native value shared verbatim across the
     // tier boundary.
     let out = run("fn double(n) = n * 2\n\
-                   fn both(n) = task.join(spawn double(n)) + task.join(spawn double(n))\n\
+                   fn both(n) = unwrap(task.join(spawn double(n))) + unwrap(task.join(spawn double(n)))\n\
                    let mut last = 0\n\
                    for i in 0..200 { last = both(i) }\n\
                    to_string(last)\n")

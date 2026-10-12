@@ -373,7 +373,7 @@ println(to_string(len(calibrated)))
 
 let a = spawn calibrate(21.5)
 let b = spawn calibrate(24.0)                    // both run concurrently
-println(to_string(task.join(a) < task.join(b)))
+println(to_string(unwrap(task.join(a)) < unwrap(task.join(b))))
 ```
 
 ### The snapshot rule

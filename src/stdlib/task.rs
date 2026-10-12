@@ -131,9 +131,11 @@ fn raise(message: String) -> InterpreterError {
 /// A task's failure is a *value*, not a crash: one worker falling over
 /// must not take the program with it. `Err(e)` composes with `match`,
 /// `unwrap_or`, `?`, and `try`/`catch` like any other fallible result.
+/// A finished task as a `Result`: `Ok(value)` when it returned (a value
+/// that is itself an `Err` included), `Err(message)` when it raised.
 fn settle(outcome: Result<Value, String>) -> Value {
     match outcome {
-        Ok(v) => v,
+        Ok(v) => Value::Ok(Box::new(v)),
         Err(e) => Value::Err(Box::new(Value::String(Arc::new(e)))),
     }
 }
@@ -248,9 +250,9 @@ fn task_join_timeout(args: Vec<Value>) -> Result<Value, InterpreterError> {
     let id = task_id(&args[0]).map_err(raise)?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
     match spawn_registry::join_until(id, deadline) {
-        // Finished in time. Wrapped in Ok so the caller can tell "the task
-        // produced Err(e)" from "we gave up waiting" — both are Err
-        // otherwise, and they mean very different things.
+        // Finished in time: `Ok` of what `task.join` answers (`Ok(v)`, or
+        // `Err(failure)` when it raised); `Err("timed out")` is the wait
+        // given up, never the task's own answer.
         Some(Some(outcome)) => Ok(Value::Ok(Box::new(settle(outcome)))),
         Some(None) => Ok(Value::Err(Box::new(Value::String(Arc::new(
             "timed out".to_string(),

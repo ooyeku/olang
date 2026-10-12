@@ -603,7 +603,7 @@ let worker = spawn {
     for n in [1, 2, 3] { cell.update(local, (t) => t + n) }
     cell.get(local)
 }
-cell.set(readings, [task.join(worker)])
+cell.set(readings, [unwrap(task.join(worker))])
 println(to_string(cell.get(readings)))   // [6]
 ```
 
@@ -1936,7 +1936,7 @@ failure site:
 ```olang
 fn risky(n) = if n > 2 => 1 + "not a number" else => n * 10
 let jobs = [spawn risky(1), spawn risky(9)]
-println(to_string(jobs |> map((j) => match task.join(j) { Err(e) => -1, v => v })))
+println(to_string(jobs |> map((j) => match task.join(j) { Ok(v) => v, Err(e) => -1 })))
 ```
 
 That is the whole recovery story, and it is deliberate. A supervisor
@@ -2026,7 +2026,9 @@ running an ordinary call.
 
 `spawn expr` evaluates the expression on its own thread and returns a
 **task handle** immediately. `task.join(t)` blocks until that thread
-finishes and returns what it produced:
+finishes and answers a `Result`: `Ok(value)` with what it produced
+(even when that value is itself an `Err`), or `Err(message)` when it
+raised:
 
 ```olang
 fn heavy(n) = {
@@ -2035,7 +2037,7 @@ fn heavy(n) = {
 }
 let a = spawn heavy(10)
 let b = spawn heavy(11)
-println(to_string(task.join(a) + task.join(b)))   // both ran concurrently
+println(to_string(unwrap(task.join(a)) + unwrap(task.join(b))))   // both ran concurrently
 ```
 
 Both calls above overlap: the second `spawn` does not wait for the
@@ -2048,7 +2050,7 @@ fn heavy(n) = {
     n * 2
 }
 let jobs = [spawn heavy(1), spawn heavy(2), spawn heavy(3)]
-println(to_string(jobs |> map(task.join)))   // [2, 4, 6]
+println(to_string(jobs |> map((j) => unwrap(task.join(j)))))   // [2, 4, 6]
 ```
 
 A spawned thread sees a **snapshot** of the bindings at spawn time —
@@ -2063,22 +2065,24 @@ let p = spawn heavy(21)
 println(to_string(task.join(p) == task.join(p)))   // memoized: true
 ```
 
-**Failure is a value.** A task that fails yields `Err(e)` from
+**Failure is a value.** A task that raises yields `Err(message)` from
 `task.join` rather than aborting the program, so worker failure is
 handled with the ordinary Result toolkit and one bad task never kills
-the batch:
+the batch. A task that *returns* an `Err` joins as `Ok(Err(…))`, so the
+two are never confused:
 
 ```olang
 fn work(n) = if n == 1 => raise("task died") else => n * 10
 let jobs = [spawn work(0), spawn work(1), spawn work(2)]
-let results = jobs |> map((j) => match task.join(j) { Err(e) => -1, v => v })
+let results = jobs |> map((j) => match task.join(j) { Ok(v) => v, Err(e) => -1 })
 println(to_string(results))   // [0, -1, 20]
 ```
 
 ### Bounding the wait
 
-`task.join_timeout(t, ms)` returns `Ok(v)` if the task finished within
-the budget and `Err("timed out")` otherwise.
+`task.join_timeout(t, ms)` returns `Ok` of what `task.join` would answer
+if the task finished within the budget (`Ok(Ok(v))`, or `Ok(Err(e))`
+when it raised) and `Err("timed out")` otherwise.
 
 Be precise about what that means: it bounds how long you *wait*, not
 how long the task *works*. An OS thread cannot be cancelled from
@@ -2091,7 +2095,7 @@ handle:
 fn slow(n) = { time.sleep(80); n }
 let t = spawn slow(7)
 println(show(task.join_timeout(t, 5)))      // Err("timed out")
-println(show(task.join_timeout(t, 5000)))   // Ok(7) — it kept running
+println(show(task.join_timeout(t, 5000)))   // Ok(Ok(7)) — it kept running
 ```
 
 When you need work that genuinely stops early, give the task something
@@ -2121,7 +2125,7 @@ while going {
         Err(e) => { going = false }
     }
 }
-println(to_string(total) + " (" + show(task.join(worker)) + ")")
+println(to_string(total) + " (" + show(unwrap(task.join(worker))) + ")")
 ```
 
 ### Data parallelism

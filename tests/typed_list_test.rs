@@ -278,8 +278,8 @@ fn guarded_domain_math_agrees_across_tiers() {
          fn bad_ln(n) = { let mut t = 0.0\n\
              for i in 0..n { t = t + math.ln(to_float(1000 - i)) }\nt }\n\
          println(ok_sqrt(2000))\n\
-         println(task.join(spawn bad_sqrt(2000)))\n\
-         println(task.join(spawn bad_ln(2000)))",
+         println(unwrap(task.join(spawn bad_sqrt(2000))))\n\
+         println(unwrap(task.join(spawn bad_ln(2000))))",
     );
 }
 

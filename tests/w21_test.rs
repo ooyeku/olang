@@ -119,7 +119,7 @@ fn ordinary_code_compiles_and_a_refusal_no_longer_takes_its_callers() {
         &ws,
         "main.ol",
         "use lib.weft { read, uses_attempt, uses_drop, uses_map_path, in_lambda }\n\
-         fn uncompilable(x) = { let t = spawn { x + 1 }; task.join(t) }\n\
+         fn uncompilable(x) = { let t = spawn { x + 1 }; unwrap(task.join(t)) }\n\
          fn caller(x) = uncompilable(x) * 2\n\
          fn dispatch(n) = a0(n) + a1(n) + a2(n) + a3(n)\n\
          fn a0(n) = n\nfn a1(n) = n + 1\nfn a2(n) = n + 2\nfn a3(n) = n + 3\n\
@@ -173,7 +173,7 @@ fn check_tier_lists_refusals_ahead_of_time() {
         "lib/a.ol",
         "share fn fine(x) = helper(x) + 1\n\
          fn helper(x) = x * 2\n\
-         share fn starts(x) = { let t = spawn { x }; task.join(t) }\n\
+         share fn starts(x) = { let t = spawn { x }; unwrap(task.join(t)) }\n\
          share fn leaks(x) = never_imported(x)\n",
     );
     let (out, err, rc) = olang(&ws, &["check", "--tier", "lib"]);
@@ -323,7 +323,7 @@ fn a_shared_closure_keeps_what_a_snapshot_per_declaration_meant() {
          println(to_string(late(xs)))\n\
          println(to_string(use_it(1)))\n\
          println(to_string(before_k() + after_k()))\n\
-         println(to_string(task.join(spawn go(xs))))\n",
+         println(to_string(unwrap(task.join(spawn go(xs)))))\n",
     );
     for flags in [&["main.ol"][..], &["--no-ovm", "main.ol"][..]] {
         let (out, err, code) = olang(&ws, flags);
@@ -349,7 +349,7 @@ fn memory_names_its_tasks_and_the_embedded_runtime_costs_no_heap() {
          println(to_string(len(tasks)))\n\
          println(map_get(tasks[0], \"name\"))\n\
          println(to_string(map_get(tasks[0], \"bytes\") > 1000000))\n\
-         println(to_string(task.join(t)))\n\
+         println(to_string(unwrap(task.join(t))))\n\
          println(to_string(len(map_get(runtime.memory(), \"tasks\"))))\n",
     );
     let (out, err, code) = olang(&ws, &["main.ol"]);
@@ -388,8 +388,9 @@ fn the_harness_pins_repaint_counts_against_the_sdk() {
     // nothing or a change no view reads, a memo_list that keeps the rows
     // that did not move, and a stale `keep` that heals in one extra pass
     // — counted where the patches arrive, in the dom harness, over a
-    // client bundled as `serve` bundles it. Skips where node or the wasm
-    // artifact is absent.
+    // client bundled as `serve` bundles it (from this checkout's SDK, not
+    // the machine's shelf). Skips where node or the wasm artifact is
+    // absent.
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let wasm = root.join("target/wasm32-unknown-unknown/release/olang_playground.wasm");
     if !wasm.exists() || Command::new("node").arg("--version").output().is_err() {
@@ -401,9 +402,9 @@ fn the_harness_pins_repaint_counts_against_the_sdk() {
     write(
         &ws,
         "bundle.ol",
-        "use lib.server { bundle_client }\n\
+        "use lib.server { bundle_clients_in }\n\
          let dir = os.args()[1]\n\
-         unwrap(fs.write_file(dir + \"/bundle.ol\", bundle_client(unwrap(fs.read_file(dir + \"/client.ol\")))))\n",
+         unwrap(fs.write_file(dir + \"/bundle.ol\", bundle_clients_in(\".\", [unwrap(fs.read_file(dir + \"/client.ol\"))])))\n",
     );
     let script = ws.join("bundle.ol").to_string_lossy().to_string();
     let dir = ws.to_string_lossy().to_string();
@@ -553,7 +554,7 @@ fn transactions_on_a_shared_connection_do_not_interleave() {
              db.execute(c, \"UPDATE c SET n = ?\", [n + 1])\n\
          })\n\
          let tasks = map(range(0, 8), (i) => spawn bump(i))\n\
-         let failed = filter(map(tasks, (t) => task.join(t)), (r) => match r { Err(e) => true, _ => false })\n\
+         let failed = filter(map(tasks, (t) => unwrap(task.join(t))), (r) => match r { Err(e) => true, _ => false })\n\
          println(to_string(len(failed)) + \" \" + to_string(map_get(unwrap(db.query(conn, \"SELECT n FROM c\", []))[0], \"n\")))\n",
     );
     let (out, err, code) = olang(&ws, &["main.ol"]);

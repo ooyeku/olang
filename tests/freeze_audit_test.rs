@@ -722,3 +722,27 @@ fn the_reserved_words_are_refused_as_names_and_allowed_as_members() {
         Ok(l(vec![s("Builtin"), Value::Integer(2)]))
     );
 }
+
+// ── task.join answers a Result ─────────────────────────────────────────
+
+#[test]
+fn task_join_tells_a_raise_from_a_returned_err() {
+    let src = r#"
+let ok = spawn 7
+let bad = spawn Err("bad")
+let raised = spawn unwrap(Err("boom"))
+let timed = task.join_timeout(spawn { time.sleep(300); 1 }, 10)
+[task.join(ok), task.join(bad), match task.join(raised) { Err(e) => str.contains(e, "boom"), Ok(v) => false },
+ task.join_timeout(ok, 1000), timed]
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(l(vec![
+            ok(Value::Integer(7)),
+            ok(Value::Err(Box::new(s("bad")))),
+            Value::Boolean(true),
+            ok(ok(Value::Integer(7))),
+            Value::Err(Box::new(s("timed out"))),
+        ]))
+    );
+}

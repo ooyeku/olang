@@ -28,7 +28,7 @@ fn slow(n) = {
 let a = spawn slow(1)
 let b = spawn slow(2)
 let c = spawn slow(3)
-task.join(a) + task.join(b) + task.join(c)
+unwrap(task.join(a)) + unwrap(task.join(b)) + unwrap(task.join(c))
 "#;
     let started = Instant::now();
     assert_eq!(eval(src).unwrap(), Value::Integer(6));
@@ -45,7 +45,7 @@ fn spawn_returns_before_the_task_finishes() {
 let t0 = time.monotonic_ms()
 let p = spawn { time.sleep(120) }
 let spawn_cost = time.monotonic_ms() - t0
-task.join(p)
+unwrap(task.join(p))
 spawn_cost < 60
 "#;
     assert_eq!(eval(src).unwrap(), Value::Boolean(true));
@@ -59,8 +59,8 @@ fn work() = {
     42
 }
 let p = spawn work()
-let first = task.join(p)
-let second = task.join(p)
+let first = unwrap(task.join(p))
+let second = unwrap(task.join(p))
 first + second
 "#;
     assert_eq!(eval(src).unwrap(), Value::Integer(84));
@@ -72,7 +72,7 @@ fn spawn_captures_bindings_by_value() {
 let base = 100
 let p = spawn (base + 1)
 let base = 999
-task.join(p)
+unwrap(task.join(p))
 "#;
     assert_eq!(eval(src).unwrap(), Value::Integer(101));
 }
@@ -103,7 +103,7 @@ fn a_failed_task_does_not_stop_its_siblings() {
     let src = r#"
 fn work(n) = if n == 1 => unwrap(Err("died")) else => n * 10
 let jobs = [spawn work(0), spawn work(1), spawn work(2)]
-jobs |> map((j) => match task.join(j) { Err(e) => 0 - 1, v => v })
+jobs |> map((j) => match task.join(j) { Err(e) => 0 - 1, Ok(v) => v })
 "#;
     match eval(src).unwrap() {
         Value::List(ref items) => {
@@ -126,7 +126,7 @@ fn slow(n) = {
     n * 2
 }
 let jobs = [spawn slow(1), spawn slow(2), spawn slow(3)]
-sum(jobs |> map(task.join))
+sum(jobs |> map((t) => unwrap(task.join(t))))
 "#;
     let started = Instant::now();
     assert_eq!(eval(src).unwrap(), Value::Integer(12));

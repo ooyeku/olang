@@ -191,11 +191,11 @@ let groups = unwrap(re.captures("^(\\S+ \\S+) \\[(\\w+)\\] (.+)$", "2026-08-06 0
 #[test]
 fn a_dynamically_built_list_of_tasks_joins() {
     // The original guarded `Promise.all` accepting any list expression,
-    // not only a literal. The same question applies to `map(task.join)`.
+    // not only a literal. The same question applies to `map((t) => unwrap(task.join(t)))`.
     let src = r#"
 fn id(n) = n
 let ts = range(1, 4) |> map((n) => spawn id(n))
-ts |> map(task.join)
+ts |> map((t) => unwrap(task.join(t)))
 "#;
     match eval(src) {
         Value::List(ref items) => assert_eq!(
@@ -214,7 +214,7 @@ fn joined_tasks_keep_their_order_and_overlap_in_time() {
     let src = r#"
 fn work(name, ms) = { time.sleep(ms); name }
 let jobs = [spawn work("slow", 60), spawn work("fast", 5)]
-join(jobs |> map(task.join), ",")
+join(jobs |> map((t) => unwrap(task.join(t))), ",")
 "#;
     let started = std::time::Instant::now();
     assert_eq!(s(eval(src)), "slow,fast");

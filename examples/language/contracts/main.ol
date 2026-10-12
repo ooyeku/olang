@@ -35,7 +35,7 @@ test "a violated contract quotes its own source" {
             assert_true(str.contains(e, "contract violated (require)"))
             assert_true(str.contains(e, "stock >= n"))
         },
-        v => assert_true(false)
+        Ok(v) => assert_true(false)
     }
 }
 

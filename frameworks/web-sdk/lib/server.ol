@@ -122,7 +122,8 @@ fn dispatch_in(routes, req, log, hop) = {
     let response = if hit.found => {
         let h = hit.handler
         let params = hit.params
-        let result = if hop => task.join(spawn { h(req, params) })
+        // a raise on the hop is its Err; what the handler returned is as it is
+        let result = if hop => match task.join(spawn { h(req, params) }) { Ok(v) => v, Err(m) => Err(m) }
             else => h(req, params)
         match result {
             Err(message) => error_response(500, "internal", show(message)),

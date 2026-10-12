@@ -118,7 +118,7 @@ while going {
         Err(e) => { going = false }
     }
 }
-total * 10 + task.join(worker)
+total * 10 + unwrap(task.join(worker))
 "#,
     );
     assert_eq!(v, Value::Integer(155));
@@ -149,7 +149,7 @@ chan.send(req, 20)
 let a = unwrap(chan.recv(rep))
 let b = unwrap(chan.recv(rep))
 chan.close(req)
-task.join(worker)
+unwrap(task.join(worker))
 a + b
 "#,
     );
@@ -170,7 +170,7 @@ fn sender(ch) = {
 let c = chan.bounded(0)
 let worker = spawn sender(c)
 let got = unwrap(chan.recv(c))
-task.join(worker)
+unwrap(task.join(worker))
 got
 "#,
     );

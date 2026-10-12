@@ -178,7 +178,7 @@ fn a_function_naming_a_later_top_level_binding_resolves_in_a_task() {
         "use lib.m { digest }\n\
          println(to_string(digest(1)))\n\
          let t = spawn { digest(2) }\n\
-         println(show(task.join(t)))\n\
+         println(show(unwrap(task.join(t))))\n\
          fn in_task(f) = {\n\
              let c = chan.new()\n\
              let t2 = spawn { chan.send(c, f()) }\n\
@@ -187,7 +187,7 @@ fn a_function_naming_a_later_top_level_binding_resolves_in_a_task() {
          println(show(in_task(() => digest(3))))\n\
          let handlers = [(req) => digest(4)]\n\
          let t3 = spawn { handlers[0](()) }\n\
-         println(show(task.join(t3)))\n",
+         println(show(unwrap(task.join(t3))))\n",
     );
     for flags in [vec!["run", "main.ol"], vec!["--no-ovm", "run", "main.ol"]] {
         let (out, err, rc) = olang(&ws, &flags);

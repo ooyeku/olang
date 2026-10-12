@@ -424,7 +424,7 @@ fn a_recording_covers_db_reads_channels_and_joins_and_replays_its_workers() {
              d * 2\n\
          }\n\
          let got = unwrap(chan.recv(inbox))\n\
-         let joined = task.join(t)\n\
+         let joined = unwrap(task.join(t))\n\
          println(\"consistent \" + show(joined == got * 2))\n\
          let svc = chan.new()\n\
          let s = spawn {\n\

@@ -943,17 +943,17 @@ The model is covered in
 
 | Function | Returns |
 |---|---|
-| `task.join(t)` | the task's value, or `Err(e)` if it failed — blocks until it finishes |
-| `task.join_timeout(t, ms)` | `Ok(v)` if it finished within `ms`, else `Err("timed out")` |
+| `task.join(t)` | `Ok(value)` when the task returned (a value that is itself an `Err` included), `Err(message)` when it raised — blocks until it finishes |
+| `task.join_timeout(t, ms)` | `Ok` of what `task.join` answers (`Ok(Ok(v))`, `Ok(Err(e))`) if it finished within `ms`, else `Err("timed out")` |
 | `task.watch(t, c)` | the channel dies with the task: when `t` ends, however it ends, `c` is closed, so a `chan.recv` on it returns `Err` instead of waiting forever. Ownership is declared here, not inferred — any task may hold either end of a channel |
 | `task.list()` | every task a live handle still watches: `#{ id, state, elapsed_ms }` |
 | `task.parked()` | threads blocked on unbounded waits: `#{ thread, on, waited_ms }` |
 
-Neither wraps success in `Result` unnecessarily: `task.join` hands back
-the value itself, and reports failure as `Err(e)` so one bad worker is
-a value to handle rather than a crash. `task.join_timeout` *does* wrap,
-because it must distinguish "the task produced `Err`" from "we stopped
-waiting" — two very different things.
+`task.join` always answers a `Result`, so a task that raised
+(`Err(message)`) is told from one that returned an `Err` (`Ok(Err(…))`),
+and one bad worker is a value to handle rather than a crash.
+`task.join_timeout` wraps that once more, because "we stopped waiting"
+(`Err("timed out")`) is a third thing.
 
 `task.list` reports each watched task's state — `"running"`,
 `"joining"` (a thread is mid-collect), or `"done"` (finished, its
@@ -965,7 +965,7 @@ currently blocked in an unbounded wait, and what it is waiting on.
 fn work(n) = { time.sleep(10); n * n }
 
 let jobs = [spawn work(2), spawn work(3), spawn work(4)]
-println(to_string(jobs |> map(task.join)))   // [4, 9, 16]
+println(to_string(jobs |> map((j) => unwrap(task.join(j)))))   // [4, 9, 16]
 ```
 
 **A timeout bounds the wait, not the work.** An OS thread cannot be
@@ -1100,7 +1100,7 @@ while going {
         Err(e) => { going = false }
     }
 }
-println(`${total} from ${task.join(worker)} squares`)
+println(`${total} from ${unwrap(task.join(worker))} squares`)
 ```
 
 ## `random` — randomness

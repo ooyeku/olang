@@ -50,7 +50,7 @@ let r = db.query(c, "{ENDLESS}")
 let took = time.monotonic_ms() - t0
 assert_eq(r, Err("db.query: interrupted"))
 assert(took < 1150, "the interrupted query answered after " + to_string(took) + " ms")
-assert_eq(task.join(t), Ok(()))
+assert_eq(unwrap(task.join(t)), Ok(()))
 // the connection is usable afterwards, and a later statement is not
 // interrupted by the interrupt that is spent
 assert_eq(map_get(unwrap(db.query_one(c, "SELECT 41 + 1 AS n")), "n"), 42)
@@ -70,11 +70,11 @@ let c = unwrap(db.open(":memory:"))
 unwrap(db.execute(c, "CREATE TABLE t (x)"))
 let t1 = spawn {{ time.sleep(100); db.interrupt(c) }}
 assert_eq(db.execute(c, "INSERT INTO t {INSERT}"), Err("db.execute: interrupted"))
-task.join(t1)
+unwrap(task.join(t1))
 assert_eq(map_get(unwrap(db.query_one(c, "SELECT count(*) AS n FROM t")), "n"), 0)
 let t2 = spawn {{ time.sleep(100); db.interrupt(c) }}
 assert_eq(db.query_rows(c, "{ENDLESS}"), Err("db.query_rows: interrupted"))
-task.join(t2)
+unwrap(task.join(t2))
 unwrap(db.close(c))
 "ok"
 "#,
@@ -228,7 +228,7 @@ let t = spawn {{ time.sleep(100); db.interrupt(cur) }}
 let t0 = time.monotonic_ms()
 assert_eq(db.next(cur, 1), Err("db.next: interrupted"))
 assert(time.monotonic_ms() - t0 < 1000, "the interrupt was prompt")
-task.join(t)
+unwrap(task.join(t))
 // a failed cursor is finished: later reads answer why
 assert_eq(db.next(cur, 1), Err("db.next: the cursor failed: interrupted"))
 // the connection goes on, and another cursor on it is not interrupted
@@ -254,7 +254,7 @@ let cur = unwrap(db.cursor(c, "SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3"))
 assert_eq(unwrap(db.next(cur, 1)), [[1]])
 let t = spawn {{ time.sleep(100); db.interrupt(c) }}
 assert_eq(db.query(c, "{ENDLESS}"), Err("db.query: interrupted"))
-task.join(t)
+unwrap(task.join(t))
 assert_eq(unwrap(db.next(cur, 5)), [[2], [3]])
 assert_eq(len(unwrap(db.query(c, "SELECT 1"))), 1)
 unwrap(db.close(c))
@@ -446,12 +446,12 @@ for i in 0..20 {{ assert_eq(map_get(unwrap(db.query_one(quick, "SELECT sum(x) AS
 let took = time.monotonic_ms() - t0
 assert(took < 500, "20 quick reads took " + to_string(took) + " ms beside a running statement")
 unwrap(db.interrupt(slow))
-assert_eq(task.join(t), Err("db.query: interrupted"))
+assert_eq(unwrap(task.join(t)), Err("db.query: interrupted"))
 // two tasks, two connections, both reading at once
 let a = spawn {{ let c = unwrap(db.open("{path}")); let r = unwrap(db.query_rows(c, "SELECT x FROM t ORDER BY x")); db.close(c); map_get(r, "rows") }}
 let b = spawn {{ let c = unwrap(db.open("{path}")); let r = unwrap(db.query_rows(c, "SELECT x FROM t ORDER BY x DESC")); db.close(c); map_get(r, "rows") }}
-assert_eq(task.join(a), [[1], [2], [3]])
-assert_eq(task.join(b), [[3], [2], [1]])
+assert_eq(unwrap(task.join(a)), [[1], [2], [3]])
+assert_eq(unwrap(task.join(b)), [[3], [2], [1]])
 unwrap(db.close(slow))
 unwrap(db.close(quick))
 "ok"
@@ -474,7 +474,7 @@ let cur = unwrap(db.cursor(a, "SELECT x FROM t ORDER BY x"))
 assert_eq(unwrap(db.next(cur, 2)), [[1], [2]])
 let t = spawn {{ map_get(unwrap(db.query_one(b, "SELECT count(*) AS n, sum(x) AS s FROM t")), "s") }}
 assert_eq(unwrap(db.next(cur, 2)), [[3], [4]])
-assert_eq(task.join(t), 5050)
+assert_eq(unwrap(task.join(t)), 5050)
 let rest = unwrap(db.next(cur, 1000))
 assert_eq(len(rest), 96)
 assert_eq(rest[95], [100])
@@ -482,7 +482,7 @@ assert_eq(unwrap(db.next(cur, 1)), [])
 // a cursor is read from another task as well
 let cur2 = unwrap(db.cursor(b, "SELECT x FROM t WHERE x > ? ORDER BY x", [97]))
 let t2 = spawn {{ unwrap(db.next(cur2, 10)) }}
-assert_eq(task.join(t2), [[98], [99], [100]])
+assert_eq(unwrap(task.join(t2)), [[98], [99], [100]])
 unwrap(db.close(a))
 unwrap(db.close(b))
 "ok"

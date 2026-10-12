@@ -63,7 +63,7 @@ fn a_name_a_task_cannot_resolve_never_lands_on_the_callers_like_named_function()
         "share fn serve(head) = {\n\
              fn head_for(req) = head(req)\n\
              let t = spawn { head_for(0) }\n\
-             show(task.join(t))\n\
+             match task.join(t) { Ok(v) => show(v), Err(e) => e }\n\
          }\n\
          share fn serve_inline(head) = {\n\
              fn head_for(req) = head(req)\n\
@@ -90,7 +90,7 @@ fn a_name_a_task_cannot_resolve_never_lands_on_the_callers_like_named_function()
          fn serve(head) = {\n\
              fn head_for(req) = head(req)\n\
              let t = spawn { head_for(0) }\n\
-             show(task.join(t))\n\
+             match task.join(t) { Ok(v) => show(v), Err(e) => e }\n\
          }\n\
          println(serve(page_head))\n",
     );
@@ -128,7 +128,7 @@ fn a_nested_functions_parameter_named_like_a_builtin_reaches_the_parameter_on_a_
         "fn outer(head) = {\n\
              fn inner(r) = head(r)\n\
              let t = spawn { inner(0) }\n\
-             show(task.join(t))\n\
+             match task.join(t) { Ok(v) => show(v), Err(e) => e }\n\
          }\n\
          fn outer_hot(head) = {\n\
              fn inner(r) = head(r)\n\
@@ -160,7 +160,7 @@ fn siblings_forward_references_and_later_globals_resolve_lexically_everywhere() 
              fn f() = g() + 1\n\
              fn g() = 41\n\
              let t = spawn { f() }\n\
-             to_string(f()) + \" \" + show(task.join(t))\n\
+             to_string(f()) + \" \" + show(unwrap(task.join(t)))\n\
          }\n\
          share fn lam(xs) = {\n\
              let k = 10\n\
@@ -179,7 +179,7 @@ fn siblings_forward_references_and_later_globals_resolve_lexically_everywhere() 
          let later_val = 41\n\
          println(to_string(later_user()))\n\
          let t = spawn { later_user() }\n\
-         println(show(task.join(t)))\n",
+         println(show(unwrap(task.join(t))))\n",
     );
     in_every_mode(&ws, "main.ol", "b\n42 42\n[12, 14]\n42\n42\n");
 }

@@ -2589,17 +2589,17 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
         self.doc_ex(
             "task.join",
             "task.join(t)",
-            "Any",
+            "Result",
             "task",
-            "block until the task finishes; its value, or Err(e) if it failed",
-            &[r##"task.join(t)  // the task's value"##],
+            "block until the task finishes: Ok(value) when it returned, Err(message) when it raised",
+            &[r##"unwrap(task.join(t))  // the task's value"##],
         );
         self.doc_ex(
             "task.join_timeout",
             "task.join_timeout(t, ms)",
             "Result",
             "task",
-            "Ok(v) if it finished within ms, else Err(\"timed out\") — the task keeps running",
+            "Ok(what task.join answers) if it finished within ms, else Err(\"timed out\") — the task keeps running",
             &[r##"task.join_timeout(t, 2000)  // Err("timed out") leaves it running"##],
         );
         self.doc_ex(
@@ -5481,7 +5481,7 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             parameters: vec!["conn_or_cursor: Connection | Cursor".to_string()],
             return_type: "Result<(), String>".to_string(),
             examples: vec![
-                "let t = spawn { db.query(c, slow_sql) }\nunwrap(db.interrupt(c))\ntask.join(t)  // Err(\"db.query: interrupted\")".to_string(),
+                "let t = spawn { db.query(c, slow_sql) }\nunwrap(db.interrupt(c))\nunwrap(task.join(t))  // Err(\"db.query: interrupted\")".to_string(),
             ],
             category: "Database".to_string(),
             see_also: vec!["db.query".to_string(), "db.cursor".to_string()],

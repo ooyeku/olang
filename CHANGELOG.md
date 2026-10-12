@@ -90,6 +90,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `spawn`, `assert`, `assert_eq` and `assert_ne` are documented as the
   statement-position keywords they are.
 
+- **`task.join` always answers a `Result`**: `Ok(value)` when the task
+  returned, `Err(message)` when it raised. A task that returned
+  `Err(e)` joins to `Ok(Err(e))`, so a raise and a returned `Err` are
+  told apart (both joined to `Err` before, and success joined bare).
+  `task.join_timeout` answers `Ok` of that (`Ok(Ok(v))`, `Ok(Err(msg))`)
+  or `Err("timed out")`. Unwrap a join (`unwrap(task.join(t))`), and
+  match `Ok(v)` where a bare `v` arm took the value.
+
 
 ### Added
 

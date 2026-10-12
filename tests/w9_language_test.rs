@@ -76,7 +76,7 @@ fn identifiers_may_begin_with_an_underscore() {
          let spawn_cost = 9 - t0\n\
          let meta_data = spawn_cost * 2\n\
          let t = spawn { 40 + 2 }\n\
-         println(to_string(spawn_cost) + \" \" + to_string(meta_data) + \" \" + to_string(task.join(t)))",
+         println(to_string(spawn_cost) + \" \" + to_string(meta_data) + \" \" + to_string(unwrap(task.join(t))))",
     );
     assert_eq!(rc, 0, "{out}");
     assert_eq!(out, "4 8 42\n");

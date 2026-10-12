@@ -286,10 +286,10 @@ let c = chan.new()
 chan.send(c, adder(5))
 println(to_string(unwrap(chan.recv(c))(1)))
 let t = spawn adder(7)(3)
-println(to_string(task.join(t)))
+println(to_string(unwrap(task.join(t))))
 let g = scaler([5])
 let t2 = spawn g(2)
-println(to_string(task.join(t2)))
+println(to_string(unwrap(task.join(t2))))
 "#;
 
 #[test]

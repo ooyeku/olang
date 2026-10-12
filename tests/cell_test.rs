@@ -137,7 +137,7 @@ fn a_cell_created_inside_a_task_belongs_to_that_task() {
                        cell.set(c, 41)\n\
                        cell.get(c) + 1\n\
                    }\n\
-                   task.join(t)\n")
+                   unwrap(task.join(t))\n")
     .unwrap();
     assert_eq!(out, "42");
 }
@@ -149,7 +149,7 @@ fn a_cell_merely_in_scope_during_a_task_stays_legal() {
     // for one existing in the enclosing scope.
     let out = run("let c = cell(0)\n\
                    let t = spawn { 1 + 1 }\n\
-                   let n = task.join(t)\n\
+                   let n = unwrap(task.join(t))\n\
                    cell.set(c, 5)\n\
                    to_string(n) + \" \" + to_string(cell.get(c))\n")
     .unwrap();

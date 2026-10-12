@@ -593,7 +593,7 @@ fn a_refused_helper_does_not_take_its_caller() {
     // deleting the test.)
     let src = r#"
 fn inner(n) = n
-fn bump(n) = task.join(spawn inner(n))
+fn bump(n) = unwrap(task.join(spawn inner(n)))
 fn label(n) = bump(n) + 1
 label(1) + label(2)
 "#;

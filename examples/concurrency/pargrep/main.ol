@@ -33,7 +33,7 @@ let t1 = time.monotonic_ms()
 let chunk_size = (len(files) + workers - 1) / workers
 let jobs = chunk(files, chunk_size)
     |> map((paths) => spawn search_chunk(paths, pattern))
-let outcomes = jobs |> map((job) => match task.join(job) { Err(e) => [], hits => hits })
+let outcomes = jobs |> map((job) => match task.join(job) { Err(e) => [], Ok(hits) => hits })
 let par_hits = flatten(outcomes)
 let par_ms = time.monotonic_ms() - t1
 

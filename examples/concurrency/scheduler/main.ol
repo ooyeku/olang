@@ -7,7 +7,7 @@ println("═══ concurrent scheduler ═══")
 // just `map`, since by then they are all already running. Total wall time
 // is the slowest, not the sum.
 let jobs = [start("users", 120), start("orders", 80), start("stats", 150), start("health", 30)]
-let results = jobs |> map(task.join)
+let results = jobs |> map((t) => unwrap(task.join(t)))
 
 println("── all completed (concurrently) ──")
 for r in results {
@@ -32,7 +32,7 @@ for spec in [("fast", 40), ("slow", 250)] {
 fn faulty() = 1 + "not a number"
 match task.join(spawn faulty()) {
     Err(e) => println("faulty worker: reported, not fatal")
-    v => println("unexpected: " + show(v))
+    Ok(v) => println("unexpected: " + show(v))
 }
 
 println("═══ done ═══")

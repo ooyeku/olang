@@ -26,6 +26,7 @@ upgrading; it reports the cases it can find.
   - [A condition is a Bool](#a-condition-is-a-bool)
   - [Values print as source](#values-print-as-source)
   - [Six reserved words](#six-reserved-words)
+  - [`task.join` answers a Result](#taskjoin-answers-a-result)
 - [In 0.88](#in-088)
   - [A missing field of an object is `()`](#a-missing-field-of-an-object-is-)
   - [A module's missing member reads as `()`](#a-modules-missing-member-reads-as-)
@@ -182,6 +183,15 @@ rather than `show(r)`).
 `await`, `yield`, `async`, `defer`, `const` and `pub` cannot name a
 binding, a parameter or a function; the parser says which word. Rename
 it. A member after `.` and a map key are not names and are unaffected.
+
+### `task.join` answers a Result
+
+`task.join(t)` is `Ok(value)` when the task returned and `Err(message)`
+when it raised; it answered the value bare, and a raise and a returned
+`Err` both as `Err`. `task.join_timeout` answers `Ok` of the same, or
+`Err("timed out")`. Wrap a join whose value is used in `unwrap(…)`
+(`map(task.join)` becomes `map((t) => unwrap(task.join(t)))`), and give
+a match's catch-all arm `Ok(v) =>`. Search for `task.join`.
 
 ## In 0.88
 

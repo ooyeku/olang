@@ -938,7 +938,7 @@ fn a_manifest_does_not_cost_a_worker_its_tier() {
         &dir.join("main.ol"),
         "fn fib(n) = if n < 2 => n else => fib(n - 1) + fib(n - 2)\n\
          let ws = range(0, 4) |> map((i) => spawn fib(30))\n\
-         let s = ws |> map((w) => match task.join(w) { Err(e) => 0, v => v })\n\
+         let s = ws |> map((w) => match task.join(w) { Err(e) => 0, Ok(v) => v })\n\
          println(to_string(fold(s, 0, (a, b) => a + b)))\n",
     );
     let start = std::time::Instant::now();

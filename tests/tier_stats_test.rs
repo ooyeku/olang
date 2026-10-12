@@ -29,7 +29,7 @@ const MAIN: &str = r#"fn fib(n) = if n < 2 => n else => fib(n - 1) + fib(n - 2)
 
 fn doubled_later(n) = {
     let t = spawn (n * 2)
-    task.join(t)
+    unwrap(task.join(t))
 }
 
 fn apply(f, x) = f(x)
