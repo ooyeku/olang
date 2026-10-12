@@ -6283,7 +6283,7 @@ impl BytecodeVm {
             let (Ok(Value::Tuple(ref a)), Ok(Value::Tuple(ref b))) = (left.to_ast(), right.to_ast()) else {
                 return Err(BytecodeError::TypeError("cannot order these tuples".to_string()));
             };
-            let ord = crate::interpreter::ops::tuple_ordering(&a, &b).map_err(|e| match e {
+            let ord = crate::interpreter::ops::tuple_ordering(a, b).map_err(|e| match e {
                 crate::interpreter::InterpreterError::TypeError { message } => {
                     BytecodeError::TypeError(message)
                 }

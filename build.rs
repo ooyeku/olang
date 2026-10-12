@@ -149,11 +149,11 @@ fn build_info(manifest_dir: &std::path::Path) {
                 l.trim().strip_prefix(k).and_then(|r| r.trim().strip_prefix('=')).map(|v| v.trim().trim_matches('"').to_string())
             })
         };
-        if let (Some(name), Some(version)) = (field("name "), field("version ")) {
-            if CRATES.contains(&name.as_str()) {
-                let local = !block.contains("source =");
-                found.push((name, version, local));
-            }
+        if let (Some(name), Some(version)) = (field("name "), field("version "))
+            && CRATES.contains(&name.as_str())
+        {
+            let local = !block.contains("source =");
+            found.push((name, version, local));
         }
     }
     let mut crates = Vec::new();
