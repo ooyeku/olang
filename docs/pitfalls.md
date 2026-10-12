@@ -9,11 +9,34 @@ place. Each is intentional; each entry describes the behavior and the idiom
 that works with it. The first two — missing map keys and integer
 division — account for most early confusion.
 
+## Table of contents
+
+1. [Missing map keys return Unit, not a Result](#missing-map-keys-return-unit-not-a-result)
+2. [Integer division truncates; overflow is an error](#integer-division-truncates-overflow-is-an-error)
+3. [`to_string` prints values, not columns](#to_string-prints-values-not-columns)
+4. [Falsy values: `false`, `0`, `0.0`, `""`, `[]`, `()`](#falsy-values-false-0-00---)
+5. [Bitwise operators bind tighter than arithmetic](#bitwise-operators-bind-tighter-than-arithmetic)
+6. [Parsing returns a `Result`](#parsing-returns-a-result)
+7. [`Result` values can't be compared with `==`](#result-values-cant-be-compared-with-)
+8. [Closures capture by value, at creation](#closures-capture-by-value-at-creation)
+9. [Definition order: functions are hoisted, values are not](#definition-order-functions-are-hoisted-values-are-not)
+10. [Indexing: negative wraps, no slicing, maps use `.`](#indexing-negative-wraps-no-slicing-maps-use-)
+11. [`ods.read_csv` takes text; `ods.read_csv_file` takes a path](#odsread_csv-takes-text-odsread_csv_file-takes-a-path)
+12. [Empty-collection builtins raise](#empty-collection-builtins-raise)
+13. [`to_string` and `show` agree — a string is already its text](#to_string-and-show-agree--a-string-is-already-its-text)
+14. [`_` discards; it never binds](#_-discards-it-never-binds)
+15. [A bare name in a `match` pattern is a binding](#a-bare-name-in-a-match-pattern-is-a-binding)
+16. [A block's bindings end with the block](#a-blocks-bindings-end-with-the-block)
+17. [`os.args()` includes the program path](#osargs-includes-the-program-path)
+18. [Template strings take no escape sequences and do not nest](#template-strings-take-no-escape-sequences-and-do-not-nest)
+19. [A bare `use` can shadow an earlier named import](#a-bare-use-can-shadow-an-earlier-named-import)
+20. [Small syntax reminders](#small-syntax-reminders)
+
 ## Missing map keys return Unit, not a Result
 
 `m.key` (and `map_get(m, "key")`, which it is) on a key that is not
 present returns **`Unit`** (`()`), not an error and not a `Result`.
-This is the single most common trip-up.
+It is the most frequent source of early confusion.
 
 ```olang no-run
 let m = #{ "a": 1 }
@@ -35,9 +58,10 @@ println(show(a) + " " + show(z))   // 1 0
 
 `??` replaces only `()`: `m.flag ?? true` keeps a stored `false`.
 
-A misspelt key is `Unit` too — `p.runing` reads nothing rather than
-raising (`olang check` reports a key no map built in the module has); an object (`{ name: v }`) and a parsed JSON object read the
-same way. A declared struct is the record with fixed fields: reading a
+A misspelt key is `Unit` too: `p.runing` reads nothing rather than
+raising (`olang check` reports a key that no map built in the module
+has). An object (`{ name: v }`) and a parsed JSON object read the same
+way. A declared struct is the record with fixed fields: reading a
 field it does not have raises.
 
 Contrast this with parsing, which *does* speak `Result` (below): the two
@@ -129,7 +153,7 @@ unaffected.)
 
 ## Parsing returns a `Result`
 
-Unlike `map_get`, the `str.parse_*` family returns a `Result` you must
+Unlike a map read (`m.key`), the `str.parse_*` family returns a `Result` you must
 consume — `unwrap`, `unwrap_or`, `?`, or `match`.
 
 ```olang
@@ -204,7 +228,7 @@ par for x in xs { tally = tally + 1 }   // refused: the write hits a snapshot
 let tally = sum(par_map(xs, (x) => 1)) // one value per item, then combine
 ```
 
-## Definition order: bodies resolve late, values resolve now
+## Definition order: functions are hoisted, values are not
 
 A function *body* may call a function defined **later** in the file — call
 resolution happens when the call runs, by which point everything is
@@ -216,16 +240,18 @@ fn b() = 10
 println(show(a()))      // 11
 ```
 
-But binding a name to a function *value* is eager — the right-hand side is
-evaluated immediately, so the name must already exist:
+Top-level `fn` declarations are hoisted: `let g = f` or `let x = f()`
+above `fn f` works. What is still eager is a value: `let g = h` above
+`let h = 1` is `Undefined variable: h`, and inside a function body a
+`let` cannot refer to a nested `fn` declared below it.
 
 ```olang no-run
-let g = f               // ERROR: Undefined variable: f  (f is defined below)
-fn f() = 1
+let g = h               // ERROR: Undefined variable: h  (h is bound below)
+let h = 1
 ```
 
-Rule of thumb: you can call downward, but you must *reference a value*
-upward. Define helpers you assign to variables before the assignment.
+Rule of thumb: functions can be referenced from anywhere in the file;
+`let` values must be bound before they are read.
 
 ## Indexing: negative wraps, no slicing, maps use `.`
 
@@ -238,7 +264,7 @@ println(show(xs[-1]))   // 30
 println(show(xs[-2]))   // 20
 ```
 
-Three things `[]` does *not* do:
+Three limits of `[]`:
 
 - **No slicing.** `xs[1..3]` is a runtime type error — use `take`/`skip`
   (`take(skip(xs, 1), 2)`).
@@ -247,10 +273,12 @@ Three things `[]` does *not* do:
   A Frame *is* — `f["amount"]` is its column — which is easy to
   over-generalize: the string subscript belongs to the data stack's types,
   not to maps.
-- **No index- or field-assignment.** `xs[0] = 5` and `p.x = 5` do not
-  parse — build a new value (`map_set`, list concatenation, a fresh
-  struct). This holds for Frames too: `f["a"] = x` is not the way to add
-  a column; `ods.with_column(f, "a", x)` is.
+- **Element assignment only; no field assignment.** `xs[i] = v` on a
+  `let mut` list and `m.k[i] = v` one level into a map work
+  ([Lists](language.md#lists)). `p.x = 5`, `m.k = v` and deeper paths do
+  not parse; write `#{ ...m, "k": v }`, `map_set`, or `map_set_in`.
+  Frames are not lists: `f["a"] = x` is not the way to add a column;
+  `ods.with_column(f, "a", x)` is.
 
 ## `ods.read_csv` takes text; `ods.read_csv_file` takes a path
 
@@ -443,16 +471,11 @@ A few things that are easy to forget rather than truly surprising:
   binding that was not declared `let mut`. Re-declaring (shadowing) with
   a fresh `let` is always allowed and is usually the better fix. See
   [the mutability model](language.md#the-mutability-model).
-- **A block's bindings end with the block.** A `let` inside `{ ... }`,
-  a loop body, an `if` branch, or a `match` arm is not visible
-  afterward. Declare the name before the block — `let mut` if the block
-  needs to write to it. See [Scope](language.md#scope).
 
 ---
 
 None of these are bugs — they are the consequences of a few simple rules
 (Unit for absence, values-not-references in closures, C-style argv,
-comparisons that refuse across kinds). Once they are in muscle memory the
-language gets out of your way. For the precise semantics behind each, the
-[Language Reference](language.md) is the authority; for the standard-library
+integer arithmetic that is checked). For the precise semantics behind each, the
+[Language reference](language.md) is the authority; for the standard-library
 functions mentioned here, see [the stdlib chapter](stdlib.md).

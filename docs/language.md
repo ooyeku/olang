@@ -276,9 +276,8 @@ snapshot their environment cheaply, `spawn` and `par_map` can hand
 values to other threads without locks, and the execution tiers can
 share values by reference without defensive copies.
 
-Assignment (`name = expr`) updates an existing binding — or creates one if
-the name is unbound. Prefer `let` for first bindings; it reads better and
-survives future tightening of this rule (see [Stability](stability.md)).
+Assignment (`name = expr`) only updates an existing `let mut` binding;
+it never creates one.
 
 An initializer is optional; an uninitialized binding is `Unit` until
 assigned. An uninitialized `let` must end its statement — a forgotten `=`
@@ -292,14 +291,14 @@ println(typeof(pending))   // Unit
 
 `()` is also a literal, which is how a Unit is written down rather than
 arrived at. It is the value a function with nothing to return gives
-back, what `map_get` yields for a missing key, and what a null becomes
+back, what reading a missing key yields, and what a null becomes
 when it crosses in from JSON or a data column — so being able to write
 it is what makes those comparable:
 
 ```olang
 let nothing = ()
 println(to_string(nothing == ()))                  // true
-println(to_string(map_get(#{ "a": 1 }, "zz") == ()))   // true
+println(to_string(#{ "a": 1 }.zz == ()))   // true
 ```
 
 ### Destructuring
@@ -480,7 +479,7 @@ fn render(items) =
 
 fn reload() =
     dom.fetch("GET", "/api/items", "", (resp) => {
-        render(map_get(unwrap(json.parse(resp)), "items"))
+        render(unwrap(json.parse(resp)).items)
     })
 
 dom.on(dom.query("#add"), "click", (id) => {
@@ -610,7 +609,7 @@ println(to_string(hits))                     // 4: 0..(n-1)
 
 When in doubt, parenthesize — especially comparisons feeding `&&`, which
 read best fully grouped: `(a >= lo) && (a <= hi)`. See
-[Common Pitfalls](pitfalls.md) for worked examples.
+[Common pitfalls](pitfalls.md) for worked examples.
 
 > **History.** Before 0.69, `&&` and `||` shared one level, and `|>` and
 > ranges bound *tighter* than arithmetic — `0..n-1` was a runtime error
@@ -694,17 +693,13 @@ The precise rules:
   Int and a Float.
 - **Struct equality includes the type name**: two structs with the same
   fields but different declared types are not equal.
-- **Comparing unrelated kinds is a type error, not `false`** — `1 ==
-  "1"` and `true == 1` raise rather than quietly answering. Convert
-  explicitly (`to_string`, `to_int`) when you mean a cross-type
-  comparison.
-- **The one exception is Unit.** `x == ()` and `x != ()` answer for
-  *every* value — false and true respectively unless `x` is Unit.
-  Unit is the absence value (a missing map key, an absent substring, a
-  JSON null), so "is this nothing?" must be askable about a value that
-  turned out to be present; requiring the answer to already be known
-  before asking would defeat the question. Ordering against Unit
-  (`x < ()`) is still a type error.
+- **Equality across unrelated kinds answers rather than raising.** `1 ==
+  "1"` is `false` and `true != 1` is `true` (since 0.83), so `x == ()`
+  asks "is this nothing?" of any value — Unit is the absence value (a
+  missing map key, an absent substring, a JSON null). Ordering is
+  stricter: `<`, `<=`, `>`, `>=` between kinds they cannot order (`1 <
+  "a"`, `x < ()`) raise a type error. Convert explicitly (`to_string`,
+  `to_int`) when a cross-type comparison is meant.
 - **`Result` values are not compared with `==`.** Match on
   `Ok(v)`/`Err(e)` (or test with `is_ok`/`is_err`) and compare the
   payloads — the pattern is clearer than a comparison would be, and it
@@ -924,7 +919,7 @@ The rule such a type is expected to follow is the one the Frame follows:
 **one key, one reading.** A Frame accepts a String (a column) and a Bool
 mask (rows), which are disjoint by type, and refuses a row position
 outright rather than adding a third meaning. See
-[The Data Stack](ods.md#reaching-a-column).
+[The data stack](ods.md#reaching-a-column).
 
 ### Tuples
 
@@ -963,8 +958,8 @@ returns a new map:
 
 ```olang
 let scores = #{ "ada": 99, "bob": 82 }
-println(to_string(map_get(scores, "ada")))
-let scores2 = map_set(scores, "cyn", 91)
+println(to_string(scores.ada))
+let scores2 = #{ ...scores, "cyn": 91 }
 println(`${map_len(scores)} then ${map_len(scores2)}`)
 println(`${map_has_key(scores, "cyn")}/${map_has_key(scores2, "cyn")}`)
 println(to_string(sort(map_keys(scores2))))
@@ -1025,8 +1020,9 @@ arguments one by one — the parser says so where one is written.
 A key wins over a trait method of the same name, as a struct's field
 does ([Traits](#traits)): `m.name()` calls the function stored under
 `"name"` when the map has that key, and the method only when it has
-not. `.` only reads; olang has no field assignment, so a write is
-`map_set`.
+not. `.` reads a key; `m.k = v` is not an assignment form, so a key is
+written with a spread (`#{ ...m, "k": v }`) or `map_set`. The one write
+through `.` is an element of a list held at a key, `m.k[i] = v`.
 
 The `map_*` accessors also read **any struct-like value** —
 anonymous objects, structs, and parsed JSON objects — so dynamic key access
@@ -1382,7 +1378,7 @@ object fields; pass and return them freely:
 
 ```olang
 let ops = #{ "inc": (x) => x + 1, "dbl": (x) => x * 2 }
-let f = map_get(ops, "dbl")
+let f = ops.dbl
 println(to_string(f(21)))
 
 fn compose(f, g) = (x) => f(g(x))
@@ -1611,7 +1607,7 @@ declaration:
 ```olang
 type Task = { title: String, done: Bool }
 type Tasks = [Task]
-fn title_of(t: Task) -> String = map_get(t, "title")
+fn title_of(t: Task) -> String = t.title
 fn first_title(ts: Tasks) = title_of(head(ts))
 let t: Task = #{ "title": "ship", "done": false }
 println(first_title([t]))
@@ -1917,7 +1913,7 @@ handled with the ordinary Result toolkit and one bad task never kills
 the batch:
 
 ```olang
-fn work(n) = if n == 1 => unwrap(Err("task died")) else => n * 10
+fn work(n) = if n == 1 => raise("task died") else => n * 10
 let jobs = [spawn work(0), spawn work(1), spawn work(2)]
 let results = jobs |> map((j) => match task.join(j) { Err(e) => -1, v => v })
 println(to_string(results))   // [0, -1, 20]
@@ -2010,25 +2006,25 @@ owner performs it.
 ```olang no-run
 // One owner. Requests arrive on `asks`; each carries its own reply channel.
 let asks = chan.new()
-spawn(() => {
+spawn {
     let state = cell(#{ "built_at": 0, "value": () })
     loop {
-        let ask = chan.recv(asks)
-        match map_get(ask, "kind") {
-            "get" => chan.send(map_get(ask, "reply"), map_get(cell.get(state), "value")),
+        let ask = unwrap(chan.recv(asks))
+        match ask.kind {
+            "get" => chan.send(ask.reply, cell.get(state).value),
             "rebuild" => {
                 cell.set(state, #{ "built_at": time.monotonic_ms(), "value": expensive() })
-                chan.send(map_get(ask, "reply"), true)
+                chan.send(ask.reply, true)
             }
         }
     }
-})
+}
 
 // Workers never touch the cell; they ask.
 fn cached_value() = {
     let reply = chan.new()
     chan.send(asks, #{ "kind": "get", "reply": reply })
-    chan.recv(reply)
+    unwrap(chan.recv(reply))
 }
 
 http.serve(8080, (req) => http.response(200, show(cached_value())))
@@ -2101,7 +2097,8 @@ alias.
 Paths are dot-separated. The first segment decides where the search
 goes, in this order:
 
-1. **Embedded stdlib modules** (`colx`, `mathx`) — olang source shipped
+1. **Embedded stdlib modules and packages** (`colx`, `mathx`; `cli`,
+   `term`, `ui`, `viz`, `dash`) — olang source shipped
    inside the binary.
 2. **Package dependencies** — if the first segment names a dependency
    from `olang.toml`, resolution continues inside that package (see
@@ -2121,8 +2118,8 @@ helpers regardless of declaration order, because exports are closed
 over the module's *complete* scope after the whole file has run.
 
 Native stdlib modules (`str`, `col`, `math`, `json`, ...) are always in
-scope — no `use` needed. Embedded olang-source modules (`colx`, `mathx`)
-are imported with `use colx` and ship inside the binary.
+scope — no `use` needed. Embedded olang-source modules and packages
+(`colx`, `mathx`, `cli`, `term`, `ui`, `viz`, `dash`) are imported with `use colx` and ship inside the binary.
 
 For dependencies on other packages — manifests, versioning, lockfiles, the
 registry — see [Packages](packages.md).
@@ -2216,7 +2213,7 @@ names, `[T]` lists, `(A, B)` tuples, `Map<K, V>`, `(A, B) -> R` functions,
 A record shape names the keys a map or anonymous record carries. The
 runtime does not enforce it — a map's keys are data — but
 [`olang check`](tooling.md#olang-check) reads it at every `map_get`,
-field, and index site with a literal key, so `map_get(r, "summry")`
+field, and index site with a literal key, so `r.summry`
 against `r: { summary: String, count: Int }` is reported with the key
 it resembles rather than answering Unit at runtime.
 
@@ -2253,7 +2250,7 @@ Each keyword and contextual word, in one line:
 |---|---|
 | `fn` | Declare a function (`fn name(params) = expr`) |
 | `let` | Bind a name; `let mut` makes the binding reassignable |
-| `type` | *(contextual)* Declare a `struct` or `enum` type |
+| `type` | *(contextual)* Declare a `struct`, `enum`, or alias type |
 | `if` / `else` | Conditional *expression* — `if cond => a else => b` |
 | `match` | Pattern-match an expression over arms |
 | `for` | Iterate over a list, tuple, range, or string (for a map, iterate `entries(m)`) |
