@@ -41,12 +41,14 @@ a file system, a network, or a browser.
 - [`fs` — file system](#fs--file-system)
 - [`meta` — the program as data](#meta--the-program-as-data-the-open-ast)
 - [`runtime` — what this binary carries](#runtime--what-this-binary-carries)
+- [`caps` — what this code was granted](#caps--what-this-code-was-granted)
 - [`os` — operating system](#os--operating-system)
 - [`proc` — child processes and pipelines](#proc--child-processes-and-pipelines)
 - [`pty` — a child on a pseudo-terminal](#pty--a-child-on-a-pseudo-terminal)
 - [`vt` — a terminal's screen](#vt--a-terminals-screen)
 - [`cli` — command-line argument parsing](#cli--command-line-argument-parsing)
 - [`term` — the terminal toolkit](#term--the-terminal-toolkit)
+- [`ui`, `viz` and `dash` — views, charts and dashboards](#ui-viz-and-dash--views-charts-and-dashboards)
 - [`tty` — the terminal as an interactive device](#tty--the-terminal-as-an-interactive-device)
 - [`gui` — windows drawn by olang](#gui--windows-drawn-by-olang)
 - [`http` — HTTP](#http--http)
@@ -512,7 +514,7 @@ standard library.
 | `col.all(xs, p)` / `col.any(xs, p)` | quantifiers (short-circuit) |
 | `col.index_of(xs, v)` / `col.slice(xs, from, to)` | position of a value (or Unit) / a half-open, clamped sub-list |
 | `col.splice(xs, at, n, items)` | the `n` elements from `at` replaced by `items`, in one copy |
-| `col.take`, `col.drop`, `col.skip`, `col.map`, … | most global list helpers, mirrored here (the global-only ones are listed under [Lists](#lists)) |
+| `col.map` `col.filter` `col.fold` `col.sort` `col.contains` `col.reverse` `col.flatten` `col.zip` `col.take` `col.drop` `col.skip` `col.head` `col.tail` `col.sum` `col.min` `col.max` | the global list helpers of the same names, mirrored here: each behaves exactly as its global ([Lists](#lists), [Aggregates](#aggregates), [Higher-order functions](#higher-order-functions)) |
 | `col.set(xs, i, v)` / `col.swap(xs, i, j)` | the list with element `i` replaced / elements `i` and `j` exchanged; `xs = col.set(xs, i, v)` on a list nothing else holds writes in place |
 | `col.filled(n, v)` | a list of `n` copies of `v`, the preallocation primitive |
 | `col.unique(xs)` | dedupe, first-seen order |
@@ -696,13 +698,28 @@ the next write through either handle pays a one-time copy; the
 language's aliasing guarantee is never suspended, only the speed
 changes.
 
+**Each submodule's functions.** A write answers the new handle, to be
+rebound; a read answers a value.
+
+| Submodule | Functions |
+|---|---|
+| `heap` | `new()` · `size(h)` · `is_empty(h)` · `top_prio(h)` / `top_item(h)` — the smallest priority and its item · `push(h, prio, item)` · `pop(h)` — without its smallest pair · `from_lists(prios, items)` — built in O(n) from parallel lists |
+| `deque` | `new()` · `size(q)` · `is_empty(q)` · `front(q)` / `back(q)` · `push_back(q, x)` / `push_front(q, x)` · `pop_front(q)` / `pop_back(q)` · `to_list(q)` — front to back |
+| `table` | `new()` · `size(t)` · `has(t, k)` · `get(t, k)` — the value or `()` (a stored `()` reads as absent; `has` answers presence) · `get_or(t, k, fallback)` · `put(t, k, v)` · `remove(t, k)` — a no-op when absent · `keys(t)` / `values(t)` — in slot order, stable between writes |
+| `dsu` | `new(n)` — `n` elements, each its own group · `size(d)` — the element count · `find(d, x)` — the group's representative · `connected(d, a, b)` · `union(d, a, b)` · `groups(d)` — the number of groups |
+| `bitset` | `new(n)` — members `0..n-1` · `capacity(b)` · `has(b, i)` · `add(b, i)` · `remove(b, i)` · `count(b)` · `union(a, b)` / `intersect(a, b)` / `difference(a, b)` — of equal capacity · `to_list(b)` — ascending; a position outside the capacity raises |
+| `alg` | `sort(xs)` — stable merge sort · `sort_by_key(xs, key_fn)` · `lower_bound(xs, x)` / `upper_bound(xs, x)` — insertion points in a sorted list · `bin_search(xs, x)` — the index or `()` · `select_kth(xs, k)` — the k-th smallest, 0-based · `graph(n, edges)` from `[[u, v], …]` and `wgraph(n, edges)` from `[[u, v, w], …]` — flat adjacency handles · `bfs(g, src)` — hop distances, -1 unreachable · `topo_sort(g)` — `Ok(order)` or `Err("cycle")` · `dijkstra(g, src)` — distances over a `wgraph`, -1 unreachable |
+
 **Empty structures.** A read of an element that is not there answers
 `()`: `heap.top_prio`, `heap.top_item`, `deque.front` and `deque.back`
 on an empty structure. A removal from an empty structure (`heap.pop`,
 `deque.pop_front`, `deque.pop_back`) answers the handle unchanged, so a
 drain loop may test `is_empty` or the read, whichever it holds.
 
-**The representation discipline.** Every handle is one flat list with a
+**The representation discipline.** A handle is to be used only through
+its submodule's functions: its layout is internal, outside the
+[compatibility contract](stability.md), and may change in any release.
+Every handle is one flat list with a
 small metadata prefix — a heap is `[size, p0, i0, p1, i1, ...]`, a
 union-find is `[n, parents..., ranks...]`, a graph is CSR offsets and
 targets — so operations are index arithmetic over contiguous memory.
@@ -1098,7 +1115,8 @@ testable.
 | `random.randbool()` | coin flip |
 | `random.choice(xs)` / `random.choices(xs, k)` / `random.sample(xs, k)` | pick from a list |
 | `random.shuffle(xs)` | new shuffled list |
-| `random.randstr(n)` (+ `_alpha` `_alnum` `_numeric`) | random strings |
+| `random.randstr(n)` | a random string of `n` letters and digits |
+| `random.randstr_alpha(n)` / `random.randstr_alnum(n)` / `random.randstr_numeric(n)` | a random string of `n` letters / letters and digits / digits |
 
 ```olang
 random.seed(7)
@@ -1439,6 +1457,27 @@ before `cargo xtask wasm`, or a `cargo install` from crates.io) answers
 `Err`; `serve` then serves the shell and answers the runtime's URLs
 with a 503 that says what to build.
 
+## `caps` — what this code was granted
+
+A program run under a capability grant (an `olang.toml`'s
+`[capabilities]`, a dependency's attenuation, or `--deny`) can ask what
+it holds before making a call the gate would stop. The answer is the
+**caller's** grant: code in an attenuated dependency hears what that
+dependency was given. None of the three functions is itself gated
+([Packages and dependencies](packages.md#asking-what-you-were-granted)).
+
+| Function | Description |
+|---|---|
+| `caps.allowed(name)` | whether the capability is held: `"fs"` (at read level or above), `"net"`, `"proc"`, `"db"`, `"env"`; another name raises |
+| `caps.level(name)` | `"none"`, `"read"` or `"full"` for `"fs"`; `"none"` or `"full"` for the others |
+| `caps.granted()` | the whole grant as a map: `fs` its level, the others a Bool |
+
+```olang
+let plan = if caps.allowed("fs") => "cache to disk" else => "in memory"
+println(caps.level("net"))
+println(typeof(caps.granted().fs))
+```
+
 ## `os` — operating system
 
 The process's view of its world: arguments, environment, directories,
@@ -1740,6 +1779,7 @@ with no extra logic.
 | Attributes | `bold` `dim` `italic` `underline` |
 | General | `style(s, opts)` — `opts` is `#{ "fg": ..., "bg": ..., "bold": ..., "dim": ..., "italic": ..., "underline": ... }`; `color()` — is styling active (a TTY without `NO_COLOR`, or `CLICOLOR_FORCE`; decided once, re-decided after the program's own `os.set_env`/`os.remove_env`) |
 | Structure | `rule(width)` — a horizontal line; `table(headers, rows)` — columns aligned to their widest plain cell, header bold |
+| Measure | `visible_len(s)` — the width of `s` on screen, its styling escapes not counted (`visible_len(term.red("hi"))` is 2) |
 | Progress | `bar(fraction, width)` — a `[████░░░░]  50%` bar string; print it with a leading `\r` and `os.flush()` to redraw in place |
 | Input | `prompt(question)` — a line from stdin; `confirm(question)` — yes/no → bool; `select(question, options)` — a numbered menu → `Ok(chosen)` \| `Err` |
 
@@ -1766,6 +1806,35 @@ The [`taskcli` example](../examples/tools/taskcli/) uses it for a colored
 summary and a `term.table` breakdown — both of which print plain when
 its output is piped (which is why the examples harness still sees clean
 text).
+
+## `ui`, `viz` and `dash` — views, charts and dashboards
+
+Three embedded packages, each imported with `use`, that build HTML and
+SVG as strings: pure functions, testable natively, mounted in a page
+with `dom` ([olang in the browser](wasm.md)).
+
+| Function | Description |
+|---|---|
+| `ui.h(tag, attrs, children)` | a node: a map of `tag`, `attrs` and `children` (a String child is a text node) |
+| `ui.hk(key, tag, attrs, children)` | a node with a reconciliation key |
+| `ui.esc(s)` | `s` (a non-String is first written with `to_string`) with `&`, `<`, `>` and `"` escaped for HTML |
+| `ui.html(node)` | a tree rendered to an HTML string, its text escaped |
+| `ui.render(el, children)` | a keyed list mounted in `el`, diffed against what it rendered last ([wasm.md](wasm.md)) |
+| `viz.check(spec)` | `Ok(spec)` when a chart spec will render, or `Err` naming an unknown key or the absence of points to draw |
+| `viz.chart(spec)` | a spec compiled to SVG text ([the `viz` grammar](ods.md#the-viz-grammar)) |
+| `viz.draw(canvas, spec)` | the same spec drawn on a canvas, in the browser |
+| `viz.tooltip(el)` / `viz.on_mark(el, event, handler)` / `viz.brush(el, handler)` | a chart's hover tip, mark events, and a dragged range |
+| `dash.kpi(label, value, note)` / `dash.stat(label, value, note, accent)` | a number tile (`note` `""` for none; `accent` a color for the value) |
+| `dash.card(title, inner)` / `dash.half(title, inner)` / `dash.wide(title, inner)` | a titled panel one, two, or every column wide; `inner` is HTML and is not escaped |
+| `dash.grid(cards, columns)` | the tiles and cards in a grid of `columns` columns |
+| `dash.styles()` | the kit's stylesheet, a `<style>` element to prepend once |
+
+```olang
+use ui
+use dash
+println(ui.html(ui.h("p", #{ "class": "note" }, ["a < b"])))
+println(str.contains(dash.kpi("open", "12", ""), "open"))
+```
 
 ## `tty` — the terminal as an interactive device
 
@@ -2697,7 +2766,7 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Native format | `write_frame(f, path)` · `read_frame(path, columns)` · `frame_info(path)` — exact types, faster loads, one column at a time |
 | Inspect | `columns(f)` · `n_rows(f)` · `n_cols(f)` · `head(f, n)` · `tail(f, n)` · `describe(f)` · `schema(f)` · `to_records(f)` · `to_matrix(f, names)` — Float/Int columns as a list of Float lists, for `vec` |
 | Splits | `split(f, frac)` — a deterministic holdout under `random.seed`, `[kept, rest]` · `split_at(f, column, frac)` — the forward-in-time split: sorted by `column`, the first `frac` first |
-| Version | `ods.version()` — the engine's version string, worth quoting in a bug report |
+| Version | `ods.version()` — the engine's version, the same as `runtime.version()`, worth quoting in a bug report |
 | Subscript | `f["name"]` a column · `f[mask]` the rows a Bool Series keeps · `s[i]` an element (negatives from the end) · `column(f, name)` is the same as `f[name]`, for when a call reads better than a subscript |
 | Shape | `select(f, names)` · `drop(f, names)` · `rename(f, mapping)` · `with_column(f, name, series)` · `filter(f, mask)` · `sort_by(f, name, descending)` |
 | Whole rows | `distinct(f, names = all)` · `drop_null(f, names = all)` — duplicates and missing data, first occurrence kept |
@@ -2730,6 +2799,15 @@ let t = stats.t_test(a, b)
 println(`p = ${t.p_value}`)
 println(to_string(stats.norm.ppf(0.975, 0.0, 1.0)))   // 1.9599...
 ```
+
+| Function | Description |
+|---|---|
+| `stats.norm`, `stats.t`, `stats.chi2`, `stats.f` | distributions, each with `pdf`, `cdf`, `ppf` and `sample` |
+| `stats.describe(s)` | a map: `count`, `null_count`, `mean`, `std`, `min`, `q25`, `median`, `q75`, `max` |
+| `stats.corr(a, b)` / `stats.cov(a, b)` | Pearson correlation / sample covariance of two Series, over the rows where both are present |
+| `stats.t_test(a, b)` | Welch's two-sample test when `b` is a Series, the one-sample test against the mean `b` when it is a number: a map with `t`, `df`, `p_value` and the means |
+| `stats.chi2_test(observed, expected)` | the χ² goodness-of-fit test of two Series of counts: a map with `chi2`, `df`, `p_value` |
+| `stats.lm(y, xs)` | ordinary least squares with an intercept, a map of coefficients and fit |
 
 **[The data stack](ods.md#stats--from-description-to-inference)**
 covers the module end to end, including a complete regression workflow

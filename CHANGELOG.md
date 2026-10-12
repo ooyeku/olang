@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`ods.version()` answers the plain version** (the release, as
+  `runtime.version()` does) instead of `"0.88.0 (phase 4)"`. The seam's
+  test hooks `ods.probe` and `ods.probe_tag` left the `ods` namespace
+  (they were never documented; the test suite reaches them under an
+  internal name).
+
+
 ### Fixed
 
 - **A date format string olang cannot read is an `Err`.**
@@ -24,6 +33,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   element that is not there is now `()`, and a pop of an empty
   structure answers the handle unchanged (stdlib.md, "Collections, in
   olang").
+
+- **The book and the binary are checked both ways.**
+  `doc_references_test` counted `let probe = module.fn` evaluating as
+  resolved, and since 0.88 a missing member reads `()`, so any name
+  passed; it now takes a reference as resolved only when it names a
+  function, a builtin or a submodule. Its module list is the binary's
+  own (it left out `gui`, `vt`, `pty`, `bytes`, `compress`, `vec`,
+  `bigint`, `asset`, `runtime`, the embedded packages and the
+  collections' short names), and a reverse test reads every member of
+  every module from the binary and requires it in stdlib.md or on an
+  internal list with its reason. What it found is documented:
+  `caps` has its own section; the `col` mirrors of the global list
+  helpers are listed; every `collections` submodule's functions are
+  tabled, with their handles' layouts stated as internal; `stats`,
+  `random.randstr_*`, `term.visible_len`, and a section for `ui`, `viz`
+  and `dash`.
 
 ## [0.88.0] - 2026-10-12
 

@@ -98,10 +98,10 @@ fn probe_arithmetic_is_tier_transparent() {
     let result = assert_tier_transparent(
         r#"
         fn bump(p) = p + 3
-        let a = bump(ods.probe(5))
+        let a = bump(__ods_test.probe(5))
         let b = bump(a)
         let c = bump(b)
-        ods.probe_tag(c)
+        __ods_test.probe_tag(c)
         "#,
     );
     assert_eq!(result, Ok(Value::Integer(14)));
@@ -112,10 +112,10 @@ fn probe_addition_is_commutative_across_tiers() {
     let result = assert_tier_transparent(
         r#"
         fn bump_left(p) = 10 + p
-        let x = bump_left(ods.probe(1))
+        let x = bump_left(__ods_test.probe(1))
         let y = bump_left(x)
         let z = bump_left(y)
-        ods.probe_tag(z)
+        __ods_test.probe_tag(z)
         "#,
     );
     assert_eq!(result, Ok(Value::Integer(31)));
@@ -126,9 +126,9 @@ fn probe_equality_is_tier_transparent() {
     let result = assert_tier_transparent(
         r#"
         fn same(a, b) = a == b
-        let p = ods.probe(7)
-        let q = ods.probe(7)
-        let r = ods.probe(8)
+        let p = __ods_test.probe(7)
+        let q = __ods_test.probe(7)
+        let r = __ods_test.probe(8)
         let x = same(p, q)
         let y = same(p, q)
         let z = same(p, r)
@@ -153,7 +153,7 @@ fn probe_equality_is_tier_transparent() {
 fn probe_typeof_and_display() {
     let result = assert_tier_transparent(
         r#"
-        let p = ods.probe(9)
+        let p = __ods_test.probe(9)
         [typeof(p), to_string(p)]
         "#,
     );
@@ -176,22 +176,34 @@ fn unsupported_probe_operation_errors_in_both_tiers() {
     let result = assert_tier_transparent(
         r#"
         fn shrink(p) = p * 2
-        let a = shrink(ods.probe(5))
-        let b = shrink(ods.probe(5))
-        let c = shrink(ods.probe(5))
-        ods.probe_tag(c)
+        let a = shrink(__ods_test.probe(5))
+        let b = shrink(__ods_test.probe(5))
+        let c = shrink(__ods_test.probe(5))
+        __ods_test.probe_tag(c)
         "#,
     );
     assert!(result.is_err(), "probe * Int must be a type error");
 }
 
 #[test]
-fn ods_version_reports_phase() {
+fn ods_version_is_the_plain_version() {
     let result = eval("ods.version()", None).expect("version");
-    match result {
-        Value::String(ref s) => assert!(s.contains("phase"), "got {}", s),
-        other => panic!("ods.version() returned {:?}", other),
-    }
+    assert_eq!(
+        result,
+        Value::String(env!("CARGO_PKG_VERSION").to_string().into())
+    );
+}
+
+#[test]
+fn the_probe_hooks_are_not_in_the_ods_namespace() {
+    assert_eq!(
+        eval("typeof(ods.probe)", None),
+        Ok(Value::String("Unit".to_string().into()))
+    );
+    assert_eq!(
+        eval("typeof(ods.probe_tag)", None),
+        Ok(Value::String("Unit".to_string().into()))
+    );
 }
 
 #[test]

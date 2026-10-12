@@ -71,8 +71,7 @@ impl OvmModule for OdsModule {
 
     fn namespaces(&self) -> Vec<(String, Value)> {
         let mut module = crate::ast::ValueMap::default();
-        let seam_probes = [("version", 0), ("probe", 1), ("probe_tag", 1)];
-        for (name, arity) in seam_probes
+        for (name, arity) in [("version", 0)]
             .iter()
             .copied()
             .chain(series::FUNCTIONS.iter().copied())
@@ -86,13 +85,35 @@ impl OvmModule for OdsModule {
                 }),
             );
         }
-        vec![(
-            "ods".to_string(),
-            Value::Struct {
-                type_name: "Module".to_string(),
-                fields: std::sync::Arc::new(module),
-            },
-        )]
+        // The seam's probe is a test hook, not library surface: it lives
+        // in a namespace of its own whose name no program would write,
+        // and the reverse documentation test skips `__` names.
+        let mut hooks = crate::ast::ValueMap::default();
+        for (name, arity) in [("probe", 1), ("probe_tag", 1)] {
+            hooks.insert(
+                name.to_string(),
+                Value::Builtin(BuiltinFunction {
+                    name: format!("ods.{}", name),
+                    arity,
+                }),
+            );
+        }
+        vec![
+            (
+                "ods".to_string(),
+                Value::Struct {
+                    type_name: "Module".to_string(),
+                    fields: std::sync::Arc::new(module),
+                },
+            ),
+            (
+                "__ods_test".to_string(),
+                Value::Struct {
+                    type_name: "Module".to_string(),
+                    fields: std::sync::Arc::new(hooks),
+                },
+            ),
+        ]
     }
 
     fn dispatch(&self, func: &str, args: Vec<Value>) -> Result<Value, String> {
@@ -111,10 +132,9 @@ impl OvmModule for OdsModule {
             return series::dispatch(func, args).expect("membership checked above");
         }
         match func {
-            "version" => Ok(Value::String(Arc::new(format!(
-                "{} (phase 4)",
-                env!("CARGO_PKG_VERSION")
-            )))),
+            "version" => Ok(Value::String(Arc::new(
+                env!("CARGO_PKG_VERSION").to_string(),
+            ))),
             "probe" => match args.as_slice() {
                 [Value::Integer(tag)] => {
                     Ok(Value::Native(NativeHandle::new(OdsProbe { tag: *tag })))
