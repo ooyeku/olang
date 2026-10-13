@@ -1817,6 +1817,8 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     }
                 }
             }
+            // An assignment answers `()`: the write is its effect
+            // (language.md, "Assignment").
             Expr::LocalAssign {
                 name,
                 depth,
@@ -1824,25 +1826,26 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 value,
             } => {
                 if let Some(result) = self.try_fused_list_write(name, value) {
-                    return result;
+                    return result.map(|_| Value::Unit);
                 }
                 if let Some(result) = self.try_fused_move_call(name, value) {
-                    return result;
+                    return result.map(|_| Value::Unit);
                 }
                 // The same fusion the unresolved form has: a resolved body
                 // must not be the slower one.
                 if let Some(result) = self.try_fused_list_extend(name, value) {
-                    return result;
+                    return result.map(|_| Value::Unit);
                 }
                 let val = self.eval_expr(value)?;
-                match self.environment.set_slot(name, *depth, *slot, val.clone()) {
-                    Ok(()) => Ok(val),
-                    Err(_) => {
-                        // Same behavior as unresolved assignment to a new name
-                        self.environment.define(name.clone(), val.clone());
-                        Ok(val)
-                    }
+                if self
+                    .environment
+                    .set_slot(name, *depth, *slot, val.clone())
+                    .is_err()
+                {
+                    // Same behavior as unresolved assignment to a new name
+                    self.environment.define(name.clone(), val);
                 }
+                Ok(Value::Unit)
             }
             Expr::Call { callee, arguments } => {
                 // Method-call dispatch: `receiver.method(args)` where `method`
@@ -2173,21 +2176,20 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             }
             Expr::Assignment { target, value } => {
                 if let Some(result) = self.try_fused_list_write(target, value) {
-                    return result;
+                    return result.map(|_| Value::Unit);
                 }
                 if let Some(result) = self.try_fused_move_call(target, value) {
-                    return result;
+                    return result.map(|_| Value::Unit);
                 }
                 if let Some(result) = self.try_fused_list_extend(target, value) {
-                    return result;
+                    return result.map(|_| Value::Unit);
                 }
                 let val = self.eval_expr(value)?;
-                self.environment.set(target, val.clone()).or_else(|_| {
+                if self.environment.set(target, val.clone()).is_err() {
                     // If variable not defined, define it
-                    self.environment.define(target.clone(), val.clone());
-                    Ok(())
-                })?;
-                Ok(val)
+                    self.environment.define(target.clone(), val);
+                }
+                Ok(Value::Unit)
             }
             Expr::RawString(s) => Ok(Value::String(std::sync::Arc::new(s.as_str().to_string()))),
             Expr::TemplateString { parts } => {

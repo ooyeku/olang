@@ -919,3 +919,38 @@ let dt = unwrap(dates.datetime(2026, 1, 2, 3, 4, 5))
         ]))
     );
 }
+
+// ── assignment answers () ──────────────────────────────────────────────
+
+#[test]
+fn an_assignment_answers_unit_on_every_tier() {
+    let src = r#"
+fn ends_in_assignment() = { let mut x = 1; x = 7 }
+fn bound() = { let mut x = 1; let y = (x = 5); [y, x] }
+fn branch() = { let mut m = #{}; let r = if true => { m = map_set(m, "a", 1) } else => (); [r, m] }
+fn indexed() = { let mut xs = [1]; xs[0] = 9 }
+fn appended() = { let mut xs = [1]; xs = xs + [2] }
+fn hot() = {
+    let mut i = 0
+    let mut last = 0
+    while i < 3000 { last = (i = i + 1) }
+    [last, i]
+}
+fn main() = [ends_in_assignment(), bound(), branch(), indexed(), appended(), hot()]
+main()
+"#;
+    assert_eq!(
+        agree(src),
+        Ok(l(vec![
+            Value::Unit,
+            l(vec![Value::Unit, Value::Integer(5)]),
+            l(vec![
+                Value::Unit,
+                eval("#{ \"a\": 1 }", None).expect("a map"),
+            ]),
+            Value::Unit,
+            Value::Unit,
+            l(vec![Value::Unit, Value::Integer(3000)]),
+        ]))
+    );
+}

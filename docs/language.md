@@ -291,6 +291,12 @@ let raw = str.trim(raw)     // a new binding, not a mutation
 println(raw)
 ```
 
+An assignment answers `()`: the write is its effect, and it is not a
+value to pass on. `println(n = 3)` prints `()`, `let y = (x = 5)` binds
+`()`, and a block or function that ends in an assignment answers `()`
+(end it with the name, `{ total = total + n; total }`, when its value
+is wanted). Every tier agrees.
+
 ### The mutability model
 
 It is worth being precise about what assignment does, because olang

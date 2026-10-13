@@ -105,16 +105,19 @@ build(2000)
 }
 
 #[test]
-fn append_result_is_the_new_list_value() {
-    // `xs = xs + [v]` evaluates to the updated list, like any assignment.
+fn append_answers_unit_and_extends_the_list() {
+    // `xs = xs + [v]` answers `()`, like any assignment; `xs` is extended.
     let r = eval(
         r#"
 let mut xs = [1]
 let out = (xs = xs + [2])
-len(out)
+[out, len(xs)]
 "#,
     );
-    assert_eq!(r, Ok(Value::Integer(2)));
+    assert_eq!(
+        r,
+        Ok(Value::List(vec![Value::Unit, Value::Integer(2)].into()))
+    );
 }
 
 /// Tiered — the VM's AddAssign fusion is what runs.

@@ -627,10 +627,20 @@ fn fuse_rebinds(statements: &[Statement]) -> Option<Vec<Statement>> {
 /// `map_set` took 3.5 s where the same loop written with `m = map_set(m,
 /// …)` took 3 ms. The final expression is rewritten to that rebinding
 /// form, `p = f(p, …)`, which both tiers already fuse into an in-place
-/// write when the value is solely owned. An assignment's value is the
-/// value assigned and the frame ends with the expression, so nothing can
-/// observe the difference but the clock.
+/// write when the value is solely owned, followed by a read of the
+/// parameter (an assignment answers `()`), so nothing can observe the
+/// difference but the clock.
 pub(crate) fn tail_accumulate(body: &Expr, parameters: &[String]) -> Option<Expr> {
+    /// `{ p = value; p }`: the rebinding, then its value.
+    fn rebind_then_read(target: String, value: &Expr) -> Expr {
+        Expr::Block(vec![
+            Statement::Expression(Expr::Assignment {
+                target: target.clone(),
+                value: Box::new(value.clone()),
+            }),
+            Statement::Expression(Expr::Identifier(target)),
+        ])
+    }
     fn is_param(e: &Expr, parameters: &[String]) -> Option<String> {
         match e {
             Expr::Identifier(name) | Expr::LocalRef { name, .. } if parameters.contains(name) => {
@@ -653,7 +663,7 @@ pub(crate) fn tail_accumulate(body: &Expr, parameters: &[String]) -> Option<Expr
             // A `let` of the same name inside the block would make the
             // parameter's name mean something else at the tail.
             let rewritten = tail_accumulate(expr, parameters)?;
-            if let Expr::Assignment { target, .. } = &rewritten
+            if let Some(target) = rebound_target(&rewritten)
                 && before.iter().any(|s| {
                     let mut names = std::collections::HashSet::new();
                     collect_let_names(s, &mut names);
@@ -734,10 +744,7 @@ pub(crate) fn tail_accumulate(body: &Expr, parameters: &[String]) -> Option<Expr
                 return None;
             };
             let target = is_param(first, parameters)?;
-            Some(Expr::Assignment {
-                target,
-                value: Box::new(body.clone()),
-            })
+            Some(rebind_then_read(target, body))
         }
         Expr::BinaryOp {
             left,
@@ -745,11 +752,19 @@ pub(crate) fn tail_accumulate(body: &Expr, parameters: &[String]) -> Option<Expr
             ..
         } => {
             let target = is_param(left, parameters)?;
-            Some(Expr::Assignment {
-                target,
-                value: Box::new(body.clone()),
-            })
+            Some(rebind_then_read(target, body))
         }
+        _ => None,
+    }
+}
+
+/// The parameter `tail_accumulate`'s rewrite rebinds, when `e` is one.
+fn rebound_target(e: &Expr) -> Option<&String> {
+    let Expr::Block(statements) = e else {
+        return None;
+    };
+    match statements.first() {
+        Some(Statement::Expression(Expr::Assignment { target, .. })) => Some(target),
         _ => None,
     }
 }

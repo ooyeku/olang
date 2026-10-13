@@ -324,6 +324,11 @@ pub enum LazyEvent {
 
 /// Bytecode compiler that transforms AST to bytecode
 pub struct BytecodeCompiler {
+    /// Set by a block for a statement whose value nothing reads: an
+    /// assignment there skips loading the `()` it answers. Read (and
+    /// cleared) by the next `compile_expression`, so it reaches only the
+    /// statement's own expression.
+    value_unused: bool,
     /// Names that two different functions share somewhere in the program.
     /// A call to one cannot resolve through the by-name registry; it
     /// resolves through the calling function's closure instead — the
@@ -10211,6 +10216,7 @@ impl BytecodeCompiler {
     pub fn new() -> Self {
         Self {
             static_caps: None,
+            value_unused: false,
             ambiguous_names: std::collections::HashSet::new(),
             current_def_file: None,
             pending_param_checks: std::sync::Arc::from(Vec::new()),
@@ -10583,6 +10589,7 @@ impl BytecodeCompiler {
     }
 
     fn compile_expression(&mut self, expr: &Expr) -> Result<Register, BytecodeError> {
+        let value_unused = std::mem::take(&mut self.value_unused);
         match expr {
             Expr::Integer(value) => {
                 let const_idx = self
@@ -10625,10 +10632,13 @@ impl BytecodeCompiler {
             // A slot-resolved reference from the interpreter's resolver is
             // just a named identifier here — the VM has its own registers
             Expr::LocalRef { name, .. } => self.compile_expression(&Expr::Identifier(name.clone())),
-            Expr::LocalAssign { name, value, .. } => self.compile_expression(&Expr::Assignment {
-                target: name.clone(),
-                value: value.clone(),
-            }),
+            Expr::LocalAssign { name, value, .. } => {
+                self.value_unused = value_unused;
+                self.compile_expression(&Expr::Assignment {
+                    target: name.clone(),
+                    value: value.clone(),
+                })
+            }
 
             Expr::Identifier(name) => {
                 if let Some(&reg) = self.local_variables.get(name) {
@@ -11376,8 +11386,15 @@ impl BytecodeCompiler {
                 // register.
                 let saved_locals = self.local_variables.clone();
                 let mut result_reg = None;
-                for statement in statements.iter() {
+                let last = statements.len().saturating_sub(1);
+                for (i, statement) in statements.iter().enumerate() {
+                    if i < last
+                        && matches!(statement.unwrapped(), crate::ast::Statement::Expression(_))
+                    {
+                        self.value_unused = true;
+                    }
                     result_reg = Some(self.compile_statement(statement)?);
+                    self.value_unused = false;
                 }
                 self.local_variables = saved_locals;
                 match result_reg {
@@ -11874,205 +11891,16 @@ impl BytecodeCompiler {
                 }
             }
 
+            // An assignment answers `()` (language.md): the write is its
+            // effect; a statement whose value nothing reads loads nothing.
             Expr::Assignment { target, value } => {
-                let target_reg = match self.local_variables.get(target) {
-                    Some(&reg) => reg,
-                    None => {
-                        return Err(BytecodeError::CompilationFailed(format!(
-                            "Assignment to unresolved variable '{}' (globals not supported in bytecode tier)",
-                            target
-                        )));
-                    }
-                };
-                // Fuse `x = col.set(x, i, v)` / `x = col.swap(x, i, j)`
-                // into an in-place indexed write — the interpreter fuses
-                // the identical shape, so the tiers stay observationally
-                // identical including the O(1) cost. Guards mirror the
-                // interpreter's: the real builtin (an unshadowed `col`),
-                // three positional args naming the target first, and
-                // assignment-free index/value expressions.
-                // `xs[i] = v` is the parser's `xs = __index_set(xs, i, v)`:
-                // the same write, raising a subscript's errors.
-                let fused = match value.as_ref() {
-                    Expr::Call { callee, arguments } if arguments.len() == 3 => {
-                        match callee.as_ref() {
-                            Expr::FieldAccess { object, field }
-                                if matches!(object.as_ref(), Expr::Identifier(m)
-                                if m == "col" && !self.local_variables.contains_key(m))
-                                    && matches!(field.as_str(), "set" | "swap")
-                                    && self.q_builtin(&format!("col.{}", field)) =>
-                            {
-                                Some((field.as_str(), arguments))
-                            }
-                            Expr::Identifier(name)
-                                if name == crate::parser::INDEX_SET_BUILTIN
-                                    && !self.local_variables.contains_key(name)
-                                    && self.q_builtin(name) =>
-                            {
-                                Some(("subscript", arguments))
-                            }
-                            _ => None,
-                        }
-                    }
-                    _ => None,
-                };
-                if let Some((field, arguments)) = fused {
-                    let exprs: Vec<&Expr> = arguments
-                        .iter()
-                        .filter_map(|a| match a {
-                            crate::ast::Argument::Positional(e) => Some(e),
-                            crate::ast::Argument::Named { .. } => None,
-                        })
-                        .collect();
-                    let names_target = exprs.len() == 3
-                        && (matches!(exprs[0], Expr::Identifier(n) if n == target)
-                            || matches!(exprs[0], Expr::LocalRef { name, .. } if name == target));
-                    if names_target
-                        && Self::assignment_free(exprs[1])
-                        && Self::assignment_free(exprs[2])
-                    {
-                        let a1 = self.compile_expression(exprs[1])?;
-                        let a2 = self.compile_expression(exprs[2])?;
-                        self.emitter.instructions.push(if field != "swap" {
-                            Instruction::ListSetAssign {
-                                target: target_reg,
-                                index: a1,
-                                value: a2,
-                                subscript: field == "subscript",
-                            }
-                        } else {
-                            Instruction::ListSwapAssign {
-                                target: target_reg,
-                                i: a1,
-                                j: a2,
-                            }
-                        });
-                        return Ok(target_reg);
-                    }
+                self.compile_assignment(target, value)?;
+                if value_unused {
+                    // any register will do: nothing reads it
+                    self.unit_register_unless_unused()
+                } else {
+                    self.unit_register()
                 }
-                // Fuse the accumulate pattern `x = x + rhs` into AddAssign,
-                // which appends in place when x holds the only reference to
-                // its string. Only when the rhs provably contains no
-                // assignment: fusing evaluates the rhs before reading x, so
-                // an rhs that writes x would observe the wrong order.
-                if let Expr::BinaryOp {
-                    left,
-                    op: crate::ast::BinaryOp::Add,
-                    right,
-                } = value.as_ref()
-                    && (matches!(left.as_ref(),
-                        Expr::Identifier(n) if n == target)
-                        || matches!(left.as_ref(),
-                            Expr::LocalRef { name, .. } if name == target))
-                    && Self::assignment_free(right)
-                {
-                    let rhs_reg = self.compile_expression(right)?;
-                    self.emitter.instructions.push(Instruction::AddAssign {
-                        target: target_reg,
-                        rhs: rhs_reg,
-                    });
-                    return Ok(target_reg);
-                }
-                // Fuse `m = map_set(m, k, v)` into MapSetAssign — the
-                // sole-owner in-place map write. Key and value are
-                // evaluated before the target is taken, so they may read
-                // it freely; a local named map_set shadows the builtin
-                // and declines (the call goes through CallValue as
-                // usual), and a user FUNCTION shadow is honored by the
-                // instruction itself at run time.
-                if let Expr::Call { callee, arguments } = value.as_ref()
-                    && matches!(callee.as_ref(), Expr::Identifier(n) if n == "map_set")
-                    && !self.local_variables.contains_key("map_set")
-                    && self.q_known("map_set").is_none()
-                    && arguments.len() == 3
-                {
-                    let mut exprs = Vec::with_capacity(3);
-                    for a in arguments {
-                        if let crate::ast::Argument::Positional(e) = a {
-                            exprs.push(e);
-                        }
-                    }
-                    let names_target = exprs.len() == 3
-                        && (matches!(exprs[0], Expr::Identifier(n) if n == target)
-                            || matches!(exprs[0], Expr::LocalRef { name, .. } if name == target));
-                    if names_target
-                        && Self::assignment_free(exprs[1])
-                        && Self::assignment_free(exprs[2])
-                    {
-                        let k = self.compile_expression(exprs[1])?;
-                        let v = self.compile_expression(exprs[2])?;
-                        self.emitter.instructions.push(Instruction::MapSetAssign {
-                            target: target_reg,
-                            key: k,
-                            value: v,
-                        });
-                        return Ok(target_reg);
-                    }
-                }
-                // `x = f(x, ...)`: pass x by move — TakeMove into a temp
-                // that becomes argument 0, so the callee's frame holds
-                // the only reference and its in-place writes stay in
-                // place. Mirrors the interpreter's move-call fusion; the
-                // remaining arguments must be assignment-free for the
-                // same evaluation-order reason.
-                if let Expr::Call { callee, arguments } = value.as_ref()
-                    && matches!(callee.as_ref(), Expr::Identifier(_) | Expr::LocalRef { .. })
-                    && !arguments.is_empty()
-                {
-                    if debug_flag(&DEBUG_TAKEMOVE, "OLANG_DEBUG_TAKEMOVE") {
-                        eprintln!("[takemove] candidate: {} = call", target);
-                    }
-                    let mut exprs = Vec::with_capacity(arguments.len());
-                    for a in arguments {
-                        match a {
-                            crate::ast::Argument::Positional(e) => exprs.push(e),
-                            crate::ast::Argument::Named { .. } => {
-                                exprs.clear();
-                                break;
-                            }
-                        }
-                    }
-                    let names_target = !exprs.is_empty()
-                        && (matches!(exprs[0], Expr::Identifier(n) if n == target)
-                            || matches!(exprs[0], Expr::LocalRef { name, .. } if name == target));
-                    if names_target
-                        && exprs[1..]
-                            .iter()
-                            .all(|e| Self::assignment_free(e) && !Self::references_name(e, target))
-                        && !self.local_variables.contains_key("__moved_arg0__")
-                    {
-                        if debug_flag(&DEBUG_TAKEMOVE, "OLANG_DEBUG_TAKEMOVE") {
-                            eprintln!("[takemove] FIRES for {}", target);
-                        }
-                        let tmp = self.register_allocator.allocate_register();
-                        self.emitter.instructions.push(Instruction::TakeMove {
-                            dst: tmp,
-                            src: target_reg,
-                        });
-                        self.local_variables
-                            .insert("__moved_arg0__".to_string(), tmp);
-                        let mut moved_args = arguments.clone();
-                        moved_args[0] = crate::ast::Argument::Positional(Expr::Identifier(
-                            "__moved_arg0__".to_string(),
-                        ));
-                        let rewritten = Expr::Call {
-                            callee: callee.clone(),
-                            arguments: moved_args,
-                        };
-                        let value_reg = self.compile_expression(&rewritten);
-                        self.local_variables.remove("__moved_arg0__");
-                        let value_reg = value_reg?;
-                        if value_reg != target_reg {
-                            self.emitter.emit_move(target_reg, value_reg);
-                        }
-                        return Ok(target_reg);
-                    }
-                }
-                let value_reg = self.compile_expression(value)?;
-                if value_reg != target_reg {
-                    self.emitter.emit_move(target_reg, value_reg);
-                }
-                Ok(target_reg)
             }
 
             Expr::WhileLoop { condition, body } => {
@@ -13222,6 +13050,213 @@ impl BytecodeCompiler {
             | Expr::AssertTrue { .. }
             | Expr::AssertFalse { .. } => "an assertion".to_string(),
         }
+    }
+
+    /// The register holding nothing a reader may use: a statement's
+    /// discarded value. Allocates one without a load.
+    fn unit_register_unless_unused(&mut self) -> Result<Register, BytecodeError> {
+        Ok(self.register_allocator.allocate_register())
+    }
+
+    /// An assignment's write: `target = value`, fused where it can be.
+    /// Answers the target's register (the caller decides what the
+    /// assignment itself answers).
+    #[allow(clippy::borrowed_box, clippy::ptr_arg)]
+    fn compile_assignment(
+        &mut self,
+        target: &String,
+        value: &Box<Expr>,
+    ) -> Result<Register, BytecodeError> {
+        let target_reg = match self.local_variables.get(target) {
+            Some(&reg) => reg,
+            None => {
+                return Err(BytecodeError::CompilationFailed(format!(
+                    "Assignment to unresolved variable '{}' (globals not supported in bytecode tier)",
+                    target
+                )));
+            }
+        };
+        // Fuse `x = col.set(x, i, v)` / `x = col.swap(x, i, j)`
+        // into an in-place indexed write — the interpreter fuses
+        // the identical shape, so the tiers stay observationally
+        // identical including the O(1) cost. Guards mirror the
+        // interpreter's: the real builtin (an unshadowed `col`),
+        // three positional args naming the target first, and
+        // assignment-free index/value expressions.
+        // `xs[i] = v` is the parser's `xs = __index_set(xs, i, v)`:
+        // the same write, raising a subscript's errors.
+        let fused = match value.as_ref() {
+            Expr::Call { callee, arguments } if arguments.len() == 3 => match callee.as_ref() {
+                Expr::FieldAccess { object, field }
+                    if matches!(object.as_ref(), Expr::Identifier(m)
+                        if m == "col" && !self.local_variables.contains_key(m))
+                        && matches!(field.as_str(), "set" | "swap")
+                        && self.q_builtin(&format!("col.{}", field)) =>
+                {
+                    Some((field.as_str(), arguments))
+                }
+                Expr::Identifier(name)
+                    if name == crate::parser::INDEX_SET_BUILTIN
+                        && !self.local_variables.contains_key(name)
+                        && self.q_builtin(name) =>
+                {
+                    Some(("subscript", arguments))
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some((field, arguments)) = fused {
+            let exprs: Vec<&Expr> = arguments
+                .iter()
+                .filter_map(|a| match a {
+                    crate::ast::Argument::Positional(e) => Some(e),
+                    crate::ast::Argument::Named { .. } => None,
+                })
+                .collect();
+            let names_target = exprs.len() == 3
+                && (matches!(exprs[0], Expr::Identifier(n) if n == target)
+                    || matches!(exprs[0], Expr::LocalRef { name, .. } if name == target));
+            if names_target && Self::assignment_free(exprs[1]) && Self::assignment_free(exprs[2]) {
+                let a1 = self.compile_expression(exprs[1])?;
+                let a2 = self.compile_expression(exprs[2])?;
+                self.emitter.instructions.push(if field != "swap" {
+                    Instruction::ListSetAssign {
+                        target: target_reg,
+                        index: a1,
+                        value: a2,
+                        subscript: field == "subscript",
+                    }
+                } else {
+                    Instruction::ListSwapAssign {
+                        target: target_reg,
+                        i: a1,
+                        j: a2,
+                    }
+                });
+                return Ok(target_reg);
+            }
+        }
+        // Fuse the accumulate pattern `x = x + rhs` into AddAssign,
+        // which appends in place when x holds the only reference to
+        // its string. Only when the rhs provably contains no
+        // assignment: fusing evaluates the rhs before reading x, so
+        // an rhs that writes x would observe the wrong order.
+        if let Expr::BinaryOp {
+            left,
+            op: crate::ast::BinaryOp::Add,
+            right,
+        } = value.as_ref()
+            && (matches!(left.as_ref(),
+                Expr::Identifier(n) if n == target)
+                || matches!(left.as_ref(),
+                    Expr::LocalRef { name, .. } if name == target))
+            && Self::assignment_free(right)
+        {
+            let rhs_reg = self.compile_expression(right)?;
+            self.emitter.instructions.push(Instruction::AddAssign {
+                target: target_reg,
+                rhs: rhs_reg,
+            });
+            return Ok(target_reg);
+        }
+        // Fuse `m = map_set(m, k, v)` into MapSetAssign — the
+        // sole-owner in-place map write. Key and value are
+        // evaluated before the target is taken, so they may read
+        // it freely; a local named map_set shadows the builtin
+        // and declines (the call goes through CallValue as
+        // usual), and a user FUNCTION shadow is honored by the
+        // instruction itself at run time.
+        if let Expr::Call { callee, arguments } = value.as_ref()
+            && matches!(callee.as_ref(), Expr::Identifier(n) if n == "map_set")
+            && !self.local_variables.contains_key("map_set")
+            && self.q_known("map_set").is_none()
+            && arguments.len() == 3
+        {
+            let mut exprs = Vec::with_capacity(3);
+            for a in arguments {
+                if let crate::ast::Argument::Positional(e) = a {
+                    exprs.push(e);
+                }
+            }
+            let names_target = exprs.len() == 3
+                && (matches!(exprs[0], Expr::Identifier(n) if n == target)
+                    || matches!(exprs[0], Expr::LocalRef { name, .. } if name == target));
+            if names_target && Self::assignment_free(exprs[1]) && Self::assignment_free(exprs[2]) {
+                let k = self.compile_expression(exprs[1])?;
+                let v = self.compile_expression(exprs[2])?;
+                self.emitter.instructions.push(Instruction::MapSetAssign {
+                    target: target_reg,
+                    key: k,
+                    value: v,
+                });
+                return Ok(target_reg);
+            }
+        }
+        // `x = f(x, ...)`: pass x by move — TakeMove into a temp
+        // that becomes argument 0, so the callee's frame holds
+        // the only reference and its in-place writes stay in
+        // place. Mirrors the interpreter's move-call fusion; the
+        // remaining arguments must be assignment-free for the
+        // same evaluation-order reason.
+        if let Expr::Call { callee, arguments } = value.as_ref()
+            && matches!(callee.as_ref(), Expr::Identifier(_) | Expr::LocalRef { .. })
+            && !arguments.is_empty()
+        {
+            if debug_flag(&DEBUG_TAKEMOVE, "OLANG_DEBUG_TAKEMOVE") {
+                eprintln!("[takemove] candidate: {} = call", target);
+            }
+            let mut exprs = Vec::with_capacity(arguments.len());
+            for a in arguments {
+                match a {
+                    crate::ast::Argument::Positional(e) => exprs.push(e),
+                    crate::ast::Argument::Named { .. } => {
+                        exprs.clear();
+                        break;
+                    }
+                }
+            }
+            let names_target = !exprs.is_empty()
+                && (matches!(exprs[0], Expr::Identifier(n) if n == target)
+                    || matches!(exprs[0], Expr::LocalRef { name, .. } if name == target));
+            if names_target
+                && exprs[1..]
+                    .iter()
+                    .all(|e| Self::assignment_free(e) && !Self::references_name(e, target))
+                && !self.local_variables.contains_key("__moved_arg0__")
+            {
+                if debug_flag(&DEBUG_TAKEMOVE, "OLANG_DEBUG_TAKEMOVE") {
+                    eprintln!("[takemove] FIRES for {}", target);
+                }
+                let tmp = self.register_allocator.allocate_register();
+                self.emitter.instructions.push(Instruction::TakeMove {
+                    dst: tmp,
+                    src: target_reg,
+                });
+                self.local_variables
+                    .insert("__moved_arg0__".to_string(), tmp);
+                let mut moved_args = arguments.clone();
+                moved_args[0] = crate::ast::Argument::Positional(Expr::Identifier(
+                    "__moved_arg0__".to_string(),
+                ));
+                let rewritten = Expr::Call {
+                    callee: callee.clone(),
+                    arguments: moved_args,
+                };
+                let value_reg = self.compile_expression(&rewritten);
+                self.local_variables.remove("__moved_arg0__");
+                let value_reg = value_reg?;
+                if value_reg != target_reg {
+                    self.emitter.emit_move(target_reg, value_reg);
+                }
+                return Ok(target_reg);
+            }
+        }
+        let value_reg = self.compile_expression(value)?;
+        if value_reg != target_reg {
+            self.emitter.emit_move(target_reg, value_reg);
+        }
+        Ok(target_reg)
     }
 
     fn unit_register(&mut self) -> Result<Register, BytecodeError> {

@@ -31,6 +31,7 @@ upgrading; it reports the cases it can find.
   - [Stdlib records](#stdlib-records)
   - [Absence and "nothing yet"](#absence-and-nothing-yet)
   - [Dates](#dates)
+  - [An assignment answers `()`](#an-assignment-answers-)
 - [In 0.88](#in-088)
   - [A missing field of an object is `()`](#a-missing-field-of-an-object-is-)
   - [A module's missing member reads as `()`](#a-modules-missing-member-reads-as-)
@@ -243,6 +244,13 @@ milliseconds; a program that used seconds calls `dates.timestamp_s` and
 was, and the day in the first ten characters. Search for
 `dates.timestamp`, `from_timestamp`, `dates.datetime` and
 `parse_datetime`.
+
+### An assignment answers `()`
+
+`x = v` answers `()`, where it answered `v`. A block, branch or
+function whose last line is an assignment and whose value something
+reads now answers `()`: add the name after it (`{ count = count + 1;
+count }`). `let y = (x = 5)` and `f(x = 5)` pass `()`.
 
 ## In 0.88
 

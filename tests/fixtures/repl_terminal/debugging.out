@@ -5,7 +5,6 @@ Now watching variable: n
 
 Watched variable changes:
   Variable 'n' changed: 1 -> 2
-2
 Currently watched variables:
   n
 Usage: :watch <variable>

@@ -148,6 +148,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   stated; `weekday`'s numbering (0 Sunday) and `diff_days`'s sign (`a`
   minus `b`) are documented.
 
+- **An assignment answers `()`** on every tier (it answered the value
+  assigned: `println(a = 3)` printed 3, and a block ending in
+  `x = x + 1` answered the new `x`). A function or branch that ends in
+  an assignment and whose value is used ends with the name instead:
+  `{ total = total + n; total }`.
+
 
 ### Added
 
