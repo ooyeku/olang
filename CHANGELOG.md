@@ -288,6 +288,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   a project promoting `all`, so name classes to fix the set. `unused` is
   a hint's class and never promoted.
 
+- The command line's traps. A word that is no file and is close to a
+  command name is suggested, not read as a file (`olang chek` → `no
+  such file or command: chek — did you mean \`olang check\`?`), and
+  command names are reserved: an extensionless script whose name a
+  later olang takes runs as `olang ./name`. `olang run` takes run
+  options after `run` (`olang run --deny net app.ol`). What follows the
+  program file is the program's: `olang app.ol --version --verbose`
+  hands both to app.ol instead of printing olang's version. `--ovm-stats
+  json app.ol` says the flag takes its value after `=`.
+- Exit codes are published (tooling.md): a path that does not exist now
+  exits 2, misuse, for every command (it was 1, the code for findings
+  and failures, from a run, `check`, `test`, `fmt` and `build`), and
+  `olang test --fail-if-none` exits 1 when no test block ran.
+
 
 ### Fixed
 

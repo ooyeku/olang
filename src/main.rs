@@ -333,6 +333,10 @@ enum Commands {
         /// parameters from them)
         #[arg(long)]
         record_args: bool,
+        /// Exit 1 when no test block ran (no file has one, or --only
+        /// matched none) instead of passing over nothing
+        #[arg(long)]
+        fail_if_none: bool,
     },
 
     /// Compile a program to a self-contained executable
@@ -549,8 +553,11 @@ fn run() -> i32 {
     // on PATH. Handled before clap, whose auto --version exits first.
     {
         let args: Vec<String> = std::env::args().collect();
-        let wants_version = args.iter().any(|a| a == "--version" || a == "-V");
-        let verbose = args.iter().any(|a| a == "--verbose" || a == "-v");
+        // only olang's own options: what follows the program file is the
+        // program's (`olang a.ol --version` hands `--version` to a.ol)
+        let own = &args[..first_positional(&args).unwrap_or(args.len())];
+        let wants_version = own.iter().any(|a| a == "--version" || a == "-V");
+        let verbose = own.iter().any(|a| a == "--verbose" || a == "-v");
         if wants_version && verbose {
             println!("olang {}", olang::VERSION);
             if let Ok(exe) = std::env::current_exe() {
@@ -561,7 +568,7 @@ fn run() -> i32 {
         }
     }
 
-    let mut cli = Cli::parse();
+    let mut cli = Cli::parse_from(hoist_run_options(std::env::args().collect()));
 
     // Tier statistics (`--ovm-stats=json[:PATH]`, `OLANG_OVM_STATS`):
     // kept from here to exit, written by `main` as the process ends (or
@@ -709,6 +716,9 @@ fn run() -> i32 {
     // repl` — starts the REPL. Taking `command` out leaves the run options on
     // `cli` for the runner to read.
     let command = cli.command.take();
+    if let Some(code) = command.as_ref().and_then(missing_path) {
+        return code;
+    }
     match command {
         Some(Commands::Completions { shell }) => {
             use clap::CommandFactory;
@@ -747,6 +757,7 @@ fn run() -> i32 {
             deps,
             format,
             record_args,
+            fail_if_none,
         }) => {
             if format != "text" && format != "json" {
                 eprintln!("olang test: --format is `text` or `json`, not `{}`", format);
@@ -798,6 +809,7 @@ fn run() -> i32 {
                     deps,
                     json: format == "json",
                     record_args,
+                    fail_if_none,
                 },
             )
         }
@@ -1140,6 +1152,163 @@ fn run_eval(cli: &Cli, source: &str) -> i32 {
             show_classic_interpreter_error(&e, &probe, &interpreter, location, source);
             1
         }
+    }
+}
+
+/// The run options that take a value as the next argument (`--deny net`);
+/// `--ovm-stats` and `--ovm-tier` take theirs only after `=`.
+const RUN_OPTIONS_WITH_VALUE: &[&str] = &[
+    "--profile-live",
+    "--verify-tiers",
+    "--ovm-parallelism",
+    "--deny",
+    "--record",
+    "--max-depth",
+];
+
+/// Whether `arg` is one of olang's run options (`Cli`'s own flags).
+fn is_run_option(arg: &str) -> bool {
+    use clap::CommandFactory;
+    let name = arg.split_once('=').map(|(n, _)| n).unwrap_or(arg);
+    if let Some(long) = name.strip_prefix("--") {
+        Cli::command()
+            .get_arguments()
+            .any(|a| a.get_long() == Some(long))
+    } else if let Some(short) = name.strip_prefix('-') {
+        let mut cs = short.chars();
+        matches!((cs.next(), cs.next()), (Some(c), None) if Cli::command().get_arguments().any(|a| a.get_short() == Some(c)))
+    } else {
+        false
+    }
+}
+
+/// The index of the first argument that is not one of olang's leading
+/// options or their values: the command, or the program file.
+fn first_positional(args: &[String]) -> Option<usize> {
+    let mut i = 1;
+    while i < args.len() {
+        let a = &args[i];
+        if a == "--" || !a.starts_with('-') || a == "-" {
+            return Some(i);
+        }
+        if RUN_OPTIONS_WITH_VALUE.contains(&a.as_str()) {
+            i += 1;
+        }
+        i += 1;
+    }
+    None
+}
+
+/// `olang run --deny net app.ol`: run options written after `run` are
+/// moved before it, where clap reads them, so `olang run [RUN OPTIONS]
+/// <FILE>` is the same run as `olang [RUN OPTIONS] <FILE>`. Only the
+/// options between `run` and the file move; what follows the file is the
+/// program's.
+fn hoist_run_options(mut args: Vec<String>) -> Vec<String> {
+    let Some(at) = first_positional(&args) else {
+        return args;
+    };
+    if args[at] != "run" {
+        return args;
+    }
+    let mut moved = Vec::new();
+    let mut i = at + 1;
+    while i < args.len() && args[i] != "--" && args[i].starts_with('-') && is_run_option(&args[i]) {
+        moved.push(args[i].clone());
+        if RUN_OPTIONS_WITH_VALUE.contains(&args[i].as_str()) && i + 1 < args.len() {
+            i += 1;
+            moved.push(args[i].clone());
+        }
+        i += 1;
+    }
+    if moved.is_empty() {
+        return args;
+    }
+    args.drain(at + 1..i);
+    for (k, m) in moved.into_iter().enumerate() {
+        args.insert(at + k, m);
+    }
+    args
+}
+
+/// A path a command was given that does not exist: said, with exit code 2
+/// (misuse), before the command runs. For the file-first form, a word that
+/// is no file and is close to a command name is suggested as the command
+/// (`olang chek` → `olang check`); a script whose name is a command runs
+/// as `olang ./name`.
+fn missing_path(command: &Commands) -> Option<i32> {
+    use clap::CommandFactory;
+    let say = |cmd: &str, path: &std::path::Path| {
+        eprintln!("olang {cmd}: no such file or directory: {}", path.display());
+        Some(2)
+    };
+    let gone = |p: &std::path::Path| !p.exists();
+    match command {
+        Commands::External(parts) => {
+            let word = parts.first()?;
+            let path = std::path::Path::new(word);
+            if !gone(path) {
+                return None;
+            }
+            let commands: Vec<String> = Cli::command()
+                .get_subcommands()
+                .map(|c| c.get_name().to_string())
+                .collect();
+            let near = (!word.contains('/') && !word.contains('.'))
+                .then(|| {
+                    commands
+                        .iter()
+                        .map(|c| {
+                            (
+                                olang::interpreter::IntuitiveErrorFormatter::levenshtein_distance(
+                                    word, c,
+                                ),
+                                c,
+                            )
+                        })
+                        .filter(|(d, c)| *d <= 2 && *d < c.len())
+                        .min()
+                        .map(|(_, c)| c.clone())
+                })
+                .flatten();
+            match near {
+                Some(c) => {
+                    eprintln!("olang: no such file or command: {word} — did you mean `olang {c}`?")
+                }
+                None => {
+                    let args: Vec<String> = std::env::args().collect();
+                    let before = args
+                        .iter()
+                        .position(|a| a == word)
+                        .and_then(|i| i.checked_sub(1))
+                        .map(|i| args[i].as_str());
+                    match before {
+                        Some(flag @ ("--ovm-stats" | "--ovm-tier")) => eprintln!(
+                            "olang: no such file or directory: {word} ({flag} takes its value after `=`: {flag}={word})"
+                        ),
+                        _ => eprintln!("olang: no such file or directory: {word}"),
+                    }
+                }
+            }
+            Some(2)
+        }
+        Commands::Run { file, .. } if gone(file) => say("run", file),
+        Commands::Profile { file, .. } if gone(file) => say("profile", file),
+        Commands::Build { file, .. } if gone(file) => say("build", file),
+        Commands::Record { file, .. } if gone(file) => say("record", file),
+        Commands::Expand { file, .. } if gone(file) => say("expand", file),
+        Commands::Replay { trace, .. } if gone(trace) => say("replay", trace),
+        Commands::Inspect { binary, .. } if gone(binary) => say("inspect", binary),
+        Commands::Doctor { path: Some(p) } if gone(p) => say("doctor", p),
+        Commands::Caps { path: Some(p) } if gone(p) => say("caps", p),
+        Commands::Check { paths, .. } => {
+            paths.iter().find(|p| gone(p)).and_then(|p| say("check", p))
+        }
+        Commands::Fmt { paths, .. } => paths.iter().find(|p| gone(p)).and_then(|p| say("fmt", p)),
+        Commands::Fix { paths, .. } => paths.iter().find(|p| gone(p)).and_then(|p| say("fix", p)),
+        Commands::Test { path, .. } => path.iter().find(|p| gone(p)).and_then(|p| say("test", p)),
+        Commands::Doc { paths, .. } => paths.iter().find(|p| gone(p)).and_then(|p| say("doc", p)),
+        _ => None,
     }
 }
 

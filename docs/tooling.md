@@ -69,12 +69,35 @@ language server has [its own chapter](editors.md).
 
 Because the tool is file-first, a word that is neither a known command
 nor a flag is taken as a file to run — so `olang report.ol` and `olang
-./build` still run those files even though `build` is a command.
+./build` still run those files even though `build` is a command. Command
+names are reserved: a later olang may add a command, so a script with no
+`.ol` extension runs as `olang ./name`, which never reads as a command.
+A word that is no file and is close to a command name is not run as
+one: `olang chek` says `no such file or command: chek — did you mean
+\`olang check\`?` and exits 2.
 
 **Run options** (before the file: `olang --watch app.ol`) shape how a
 program runs — `--watch`, `--deny CAPS`, `--record TRACE.olt`,
 `--trace-caps`, `--ovm-tier`, `--max-depth N`, and more. See `olang --help` for the full
-set. Every command also honors the `OLANG_DENY` environment variable.
+set. `olang run` takes them after `run` as well (`olang run --deny net
+app.ol`). Everything after the program file is the program's own
+arguments, read with `os.args()` — `olang app.ol --version` hands
+`--version` to app.ol. A run option whose value is optional,
+`--ovm-stats` and `--ovm-tier`, takes it only after `=`
+(`--ovm-stats=json`, `--ovm-tier=10`): written `--ovm-stats json
+app.ol`, `json` would be the program file. Every command also honors
+the `OLANG_DENY` environment variable.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Success: the program finished, the check is clean (warnings allowed), every test passed |
+| `1` | Findings or failures: a runtime error the program did not handle, `olang check` problems, a failed test, a failed build, `olang fmt --check` or `olang fix --check` with something to change, a bench row past its baseline, an `olang doctor` finding, `olang test --fail-if-none` with no test block run |
+| `2` | Misuse: an unknown flag or command, a bad flag value, a path that does not exist, a `--deny` or `OLANG_DENY` olang does not know, an output file that cannot be written |
+| `3` | The tier guard: a run keeping tier statistics with `OLANG_TIER_GUARD=1` in which a pinned-native function fell back |
+| `102` | `--verify-tiers` found a native call whose result differs from the bytecode VM's |
+| any | A program's own `os.exit(n)` |
 
 ## `olang test`
 
@@ -160,7 +183,9 @@ tests/math_test.ol
 ```
 
 The exit code is non-zero when anything fails — `olang test` slots directly
-into CI. An error *outside* any test block (setup code failed) is reported
+into CI. A run that finds no test block passes; `--fail-if-none` makes
+it exit 1 instead (no file has one, or `--only` matched none), so a CI
+step pointed at the wrong directory cannot pass over nothing. An error *outside* any test block (setup code failed) is reported
 as a file error and counts as a failure.
 
 Conventions that work well: name dedicated suites `*_test.ol`, or keep a

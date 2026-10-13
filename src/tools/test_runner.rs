@@ -30,6 +30,10 @@ pub struct Options {
     /// call its test blocks made to each of the project's functions, its
     /// arguments as olang source (an `args` event each).
     pub record_args: bool,
+    /// `--fail-if-none`: a run in which no test block ran exits 1 — no
+    /// file has one, or `--only` matched none — so CI cannot pass over
+    /// nothing.
+    pub fail_if_none: bool,
 }
 
 /// The project a file belongs to — its package root, canonical; None
@@ -94,7 +98,7 @@ pub fn run_paths(
     // reporting success for a typo'd path lets CI pass over nothing.
     if let Some(missing) = paths.iter().find(|p| !p.exists()) {
         eprintln!("error: path not found: {}", missing.display());
-        return 1;
+        return 2;
     }
     let mut files = super::discover_ol_files(path);
     for more in paths.iter().skip(1) {
@@ -424,8 +428,12 @@ pub fn run_paths(
     }
 
     let elapsed = started.elapsed().as_millis();
+    let none_ran = options.fail_if_none && total_passed + total_failed == 0;
+    if none_ran && !json {
+        eprintln!("olang test --fail-if-none: no test block ran");
+    }
     if json {
-        let failed = total_failed + file_errors + parse_errors > 0;
+        let failed = total_failed + file_errors + parse_errors > 0 || none_ran;
         let code = if failed { 1 } else { 0 };
         super::test_events::finished(
             total_passed,
@@ -444,7 +452,7 @@ pub fn run_paths(
             files.len()
         );
         // Unparseable files still make the run fail, even with no test blocks.
-        return if parse_errors > 0 { 1 } else { 0 };
+        return if parse_errors > 0 || none_ran { 1 } else { 0 };
     }
     let summary = format!(
         "  {} passed, {} failed  ({} test file{}, {}ms)",
@@ -480,5 +488,5 @@ pub fn run_paths(
         super::coverage::print_report(&coverage_hits, show_missing);
     }
 
-    if failed { 1 } else { 0 }
+    if failed || none_ran { 1 } else { 0 }
 }

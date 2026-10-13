@@ -517,7 +517,7 @@ pub fn run(paths: &[std::path::PathBuf], check: bool) -> i32 {
     for path in paths {
         if !path.exists() {
             eprintln!("error: path not found: {}", path.display());
-            return 1;
+            return 2;
         }
     }
 

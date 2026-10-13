@@ -84,7 +84,7 @@ pub fn run_json(paths: &[PathBuf]) -> i32 {
     for path in paths {
         if !path.exists() {
             eprintln!("olang check: path not found: {}", path.display());
-            return 1;
+            return 2;
         }
         files.extend(super::discover_ol_files(path));
     }
@@ -225,7 +225,7 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
     for path in paths {
         if !path.exists() {
             eprintln!("olang check: path not found: {}", path.display());
-            return 1;
+            return 2;
         }
         files.extend(super::discover_ol_files(path));
     }
@@ -4547,7 +4547,7 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
     for path in paths {
         if !path.exists() {
             eprintln!("olang check: path not found: {}", path.display());
-            return 1;
+            return 2;
         }
         files.extend(super::discover_ol_files(path));
     }
