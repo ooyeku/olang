@@ -578,6 +578,7 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let mut cwd: Option<String> = None;
     let mut timeout_ms: Option<u64> = None;
     let mut stdin_data: Option<String> = None;
+    let mut bytes = false;
     let mut env_vars: Vec<(String, String)> = Vec::new();
     if let Some(options) = args.get(2) {
         let fields = match options {
@@ -593,6 +594,7 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             match (key.as_str(), value) {
                 ("cwd", Value::String(s)) => cwd = Some(s.as_ref().clone()),
                 ("stdin", Value::String(s)) => stdin_data = Some(s.as_ref().clone()),
+                ("bytes", Value::Boolean(b)) => bytes = *b,
                 ("timeout_ms", Value::Integer(n)) if *n >= 0 => timeout_ms = Some(*n as u64),
                 ("timeout_ms", other) => {
                     return Err(format!(
@@ -617,7 +619,7 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                 }
                 (other_key, _) => {
                     return Err(format!(
-                        "os.exec: unknown or mistyped option '{}' (supported: cwd, stdin, env, timeout_ms)",
+                        "os.exec: unknown or mistyped option '{}' (supported: cwd, stdin, env, timeout_ms, bytes)",
                         other_key
                     )
                     .into());
@@ -650,13 +652,15 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             // by itself: a timeout, or a signal (`signal` names it).
             let (code, signal) = crate::stdlib::proc::exit_parts(&output.status);
             let code = if timed_out { Value::Unit } else { code };
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            // text replaces bytes that are not UTF-8 with U+FFFD;
+            // `bytes: true` keeps them as written
+            let stdout = crate::stdlib::proc::text_or_bytes(output.stdout, bytes);
+            let stderr = crate::stdlib::proc::text_or_bytes(output.stderr, bytes);
             let mut fields = crate::ast::ValueMap::default();
             fields.insert("code".to_string(), code);
             fields.insert("signal".to_string(), signal);
-            fields.insert("stdout".to_string(), Value::String(Arc::new(stdout)));
-            fields.insert("stderr".to_string(), Value::String(Arc::new(stderr)));
+            fields.insert("stdout".to_string(), stdout);
+            fields.insert("stderr".to_string(), stderr);
             fields.insert("timed_out".to_string(), Value::Boolean(timed_out));
             Ok(Value::Ok(Box::new(Value::Struct {
                 type_name: "Object".to_string(),

@@ -304,17 +304,14 @@ fn perform(
     match builder.send() {
         Ok(response) => {
             let status = response.status().as_u16() as i64;
-            // Response headers, lowercased for predictable lookup; the
-            // first value wins for a repeated header.
-            let mut headers = crate::ast::ValueMap::default();
-            for (name, value) in response.headers() {
-                let key = name.as_str().to_lowercase();
-                if let Ok(v) = value.to_str() {
-                    headers
-                        .entry(key)
-                        .or_insert_with(|| Value::String(Arc::new(v.to_string())));
-                }
-            }
+            // Response headers, lowercased for predictable lookup; a
+            // repeated header (`set-cookie`) keeps every value, as a list.
+            let headers = multi_map(response.headers().iter().filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|v| (name.as_str().to_lowercase(), v.to_string()))
+            }));
             let body = if opts.bytes {
                 response
                     .bytes()
@@ -447,7 +444,7 @@ struct ParsedRequest {
     path: String,
     query: Vec<(String, String)>,
     headers: Vec<(String, String)>,
-    body: String,
+    body: Vec<u8>,
 }
 
 /// Read and parse one HTTP/1.1 request from the stream. Minimal but honest:
@@ -587,18 +584,35 @@ fn read_request(
         path,
         query,
         headers,
-        body: String::from_utf8_lossy(&body_bytes).to_string(),
+        body: body_bytes,
     }))
+}
+
+/// Name/value pairs as a map that keeps every value: a name said once is
+/// its string, a name said again a list of its strings in order (a query's
+/// `tag=a&tag=b`, a response's two `set-cookie` headers).
+pub(crate) fn multi_map(pairs: impl IntoIterator<Item = (String, String)>) -> crate::ast::ValueMap {
+    let mut out = crate::ast::ValueMap::default();
+    for (k, v) in pairs {
+        let v = Value::String(Arc::new(v));
+        match out.get_mut(&k) {
+            None => {
+                out.insert(k, v);
+            }
+            Some(Value::List(items)) => Arc::make_mut(items).push(v),
+            Some(first) => {
+                let was = std::mem::replace(first, Value::Unit);
+                *first = Value::List(Arc::new(vec![was, v]));
+            }
+        }
+    }
+    out
 }
 
 /// The request value handed to the olang handler: a struct with dot access,
 /// with `query` and `headers` as maps so `map_get` reads them.
 fn request_to_value(req: &ParsedRequest, remote_addr: &str) -> Value {
-    let query_map: crate::ast::ValueMap = req
-        .query
-        .iter()
-        .map(|(k, v)| (k.clone(), Value::String(Arc::new(v.clone()))))
-        .collect();
+    let query_map = multi_map(req.query.iter().cloned());
     let header_map: crate::ast::ValueMap = req
         .headers
         .iter()
@@ -616,9 +630,14 @@ fn request_to_value(req: &ParsedRequest, remote_addr: &str) -> Value {
     );
     fields.insert("query".to_string(), Value::Map(Arc::new(query_map)));
     fields.insert("headers".to_string(), Value::Map(Arc::new(header_map)));
+    // the body as text (invalid UTF-8 replaced by U+FFFD) and as it came
     fields.insert(
         "body".to_string(),
-        Value::String(Arc::new(req.body.clone())),
+        Value::String(Arc::new(String::from_utf8_lossy(&req.body).into_owned())),
+    );
+    fields.insert(
+        "body_bytes".to_string(),
+        crate::stdlib::bytes::to_value(req.body.clone()),
     );
     fields.insert(
         "remote_addr".to_string(),
@@ -1692,28 +1711,48 @@ fn encode_query(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let entries: Vec<(&String, &Value)> = match &args[0] {
         Value::Struct { fields, .. } => fields.iter().collect(),
         Value::Map(map) => map.iter().collect(),
-        _ => {
-            return Ok(Value::Err(Box::new(Value::String(Arc::new(
-                "encode_query: argument must be a map or a record".to_string(),
-            )))));
+        other => {
+            return Err(format!(
+                "http.encode_query: takes a map or a record, got {}",
+                other.type_name()
+            )
+            .into());
         }
     };
     let mut entries = entries;
     entries.sort_by(|a, b| a.0.cmp(b.0));
-    let mut query_pairs = Vec::new();
-    for (key, value) in entries {
-        let value_str = match value {
+    // A value is a string, a number or a Bool; a list of them is the name
+    // said once for each (what decode_query reads back as the list). A
+    // nested value has no query form, and is refused.
+    fn scalar(v: &Value) -> Option<String> {
+        Some(match v {
             Value::String(s) => s.as_ref().clone(),
             Value::Integer(n) => n.to_string(),
-            Value::Float(f) => f.to_string(),
+            Value::Float(f) => crate::ast::format_float(*f),
             Value::Boolean(b) => b.to_string(),
-            _ => continue, // Skip non-primitive values
-        };
-        query_pairs.push(format!(
-            "{}={}",
-            urlencoding::encode(key),
-            urlencoding::encode(&value_str)
-        ));
+            _ => return None,
+        })
+    }
+    let mut query_pairs = Vec::new();
+    for (key, value) in entries {
+        let values: Vec<String> = match value {
+            Value::List(items) => items.iter().map(scalar).collect::<Option<_>>(),
+            v => scalar(v).map(|s| vec![s]),
+        }
+        .ok_or_else(|| {
+            format!(
+                "http.encode_query: the value of '{}' is {}: a query holds strings, numbers, Bools and lists of them",
+                key,
+                value.type_name()
+            )
+        })?;
+        for value_str in values {
+            query_pairs.push(format!(
+                "{}={}",
+                urlencoding::encode(key),
+                urlencoding::encode(&value_str)
+            ));
+        }
     }
     {
         Ok(Value::Ok(Box::new(Value::String(Arc::new(
@@ -1738,18 +1777,14 @@ fn decode_query(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
     };
 
-    let mut params = crate::ast::ValueMap::default();
-
-    for pair in query_str.split('&') {
-        if let Some((key, value)) = pair.split_once('=') {
-            let decoded_key = urlencoding::decode(key).unwrap_or_default();
-            let decoded_value = urlencoding::decode(value).unwrap_or_default();
-            params.insert(
-                decoded_key.to_string(),
-                Value::String(Arc::new(decoded_value.to_string())),
-            );
-        }
-    }
+    // a name said again keeps every value, as a list (`multi_map`)
+    let params = multi_map(query_str.split('&').filter_map(|pair| {
+        let (key, value) = pair.split_once('=')?;
+        Some((
+            urlencoding::decode(key).unwrap_or_default().to_string(),
+            urlencoding::decode(value).unwrap_or_default().to_string(),
+        ))
+    }));
 
     // Data keyed by what the query says: a Map.
     Ok(Value::Map(Arc::new(params)))
@@ -2350,35 +2385,28 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_query_skips_complex_types() {
+    fn test_encode_query_repeats_a_list_and_refuses_a_nested_value() {
         let mut params = crate::ast::ValueMap::default();
         params.insert("simple_string".to_string(), string_val("hello"));
         params.insert("simple_int".to_string(), int_val(42));
         params.insert(
-            "complex_struct".to_string(),
-            struct_val("ComplexType", crate::ast::ValueMap::default()),
-        );
-        params.insert(
             "list".to_string(),
             Value::List(Arc::new(vec![string_val("item1"), string_val("item2")])),
         );
-
-        let params_struct = struct_val("QueryParams", params);
-        let result = encode_query(vec![params_struct]).unwrap();
-        let encoded = assert_ok(&result);
-
-        if let Value::String(query_string) = encoded {
-            let query = query_string.as_ref();
-            assert!(query.contains("simple_string=hello"));
-            assert!(query.contains("simple_int=42"));
-            // Complex types should be skipped
-            assert!(!query.contains("complex_struct"));
-            assert!(!query.contains("list"));
-        } else {
-            panic!(
-                "Expected string result from encode_query, got: {:?}",
-                encoded
-            );
+        let encoded = encode_query(vec![Value::Map(Arc::new(params.clone()))]).unwrap();
+        match assert_ok(&encoded) {
+            Value::String(q) => assert_eq!(
+                q.as_str(),
+                "list=item1&list=item2&simple_int=42&simple_string=hello"
+            ),
+            other => panic!("Expected string result from encode_query, got: {:?}", other),
         }
+        // a nested value has no query form
+        params.insert(
+            "complex_struct".to_string(),
+            struct_val("ComplexType", crate::ast::ValueMap::default()),
+        );
+        let refused = encode_query(vec![Value::Map(Arc::new(params))]);
+        assert!(refused.unwrap_err().to_string().contains("complex_struct"));
     }
 }

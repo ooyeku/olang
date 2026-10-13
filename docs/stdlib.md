@@ -1205,7 +1205,7 @@ println(to_string(crypto.secure_compare("abc", "abc")))
 
 `crypto.random_hex(n)` answers `n` random bytes as `2n` hexadecimal
 characters (at most 1,024 bytes a call), and `crypto.random_bytes(n)` the
-same bytes as a list of integers. Both draw from a cryptographically
+same bytes as `Bytes`. Both draw from a cryptographically
 secure generator — ChaCha12, seeded from the operating system's entropy
 source and reseeded from it periodically; in the browser the seed comes
 from the page's `getRandomValues` — so they are the functions to mint a
@@ -1221,6 +1221,18 @@ let token = crypto.random_hex(32)                       // 64 hex characters
 let mac = crypto.hmac_sha256(secret, payload)
 let genuine = crypto.secure_compare(mac, received_mac)
 ```
+
+`crypto.encrypt_aes(plaintext, key)` is AES-256-GCM. The key is 32 bytes
+written as 64 hexadecimal characters (`crypto.random_hex(32)` makes one;
+`derive_key` makes one from a password). The answer is `Ok` of one
+hexadecimal string: the 12-byte nonce (24 characters), then the
+ciphertext, then the 16-byte authentication tag — so a ciphertext is 56
+hexadecimal characters longer than twice its plaintext's bytes, and a
+fresh random nonce makes every encryption of the same text different.
+`crypto.decrypt_aes(data, key)` takes that string whole, or `(ciphertext,
+key, nonce)` with the nonce apart (both hexadecimal); a wrong key or a
+changed byte is an `Err`, never a wrong plaintext. The plaintext is text
+(UTF-8) both ways.
 
 ## `bytes` — binary data
 
@@ -1655,7 +1667,10 @@ the output read before the kill. `code` is the exit code when the
 program exited by itself, `()` when it did not (a timeout, or a signal:
 `signal` names it, `()` otherwise). (Being in its own group, it does not
 receive the terminal's Ctrl-C.) Without `timeout_ms` the run is
-unbounded and `timed_out` is `false`.
+unbounded and `timed_out` is `false`. `stdout` and `stderr` are text,
+any bytes in them that are not UTF-8 replaced by U+FFFD; with `"bytes":
+true` among the options they are `Bytes`, exactly as the program wrote
+them.
 `os.args()` is the program's argv (`[script, arg1, ...]`).
 
 Most of `os` cannot fail, and as of 0.64 says so: `args`, `arch`,
@@ -1725,11 +1740,11 @@ deadlocks against a caller reading only one stream. Native-only.
 
 | Group | Functions |
 |---|---|
-| Spawn | `spawn(program, args)` / `spawn(program, args, #{ cwd, env, group, framing })` → `Ok(Process)`; a `cwd` that names no directory is an `Err` saying so |
+| Spawn | `spawn(program, args)` / `spawn(program, args, #{ cwd, env, group, framing, bytes })` → `Ok(Process)`; a `cwd` that names no directory is an `Err` saying so. Output is text, bytes that are not UTF-8 read as U+FFFD; `bytes: true` makes `read_all` and `stderr` answer `Bytes` as written (and `read_line`, which reads text, raise) |
 | Input | `write(p, s)` · `write_line(p, s)` · `write_frame(p, s)` (one `Content-Length`-framed message) · `close_stdin(p)` (signals EOF) |
 | Output | `read_line(p)` → `Ok(line)` \| `Err("eof")`; `read_all(p)` → the rest of stdout; `stderr(p)` → all stderr (complete after exit) |
 | Lifecycle | `wait(p)` → `Ok({ code, signal })` (the exit code and `()`, or `()` and the signal that ended it) · `kill(p)` / `kill(p, #{ tree: true })` · `pid(p)` |
-| Pipeline | `pipeline(stages)` / `pipeline(stages, #{ cwd, env, stdin })` |
+| Pipeline | `pipeline(stages)` / `pipeline(stages, #{ cwd, env, stdin, bytes })` — `bytes: true` answers `stdout` and `stderr` as `Bytes` |
 
 ```olang no-run
 // Stream a filter: feed lines in, read matches back out.
@@ -2377,16 +2392,17 @@ than inventing its own idioms: requests are fallible so they return
 handler is just a function from request to response. (`no-run`: network.)
 
 A client response (an `HttpResponse`, the shape `http.response` builds)
-carries `status` (Int), `body` (String), `headers`
-(a map of lowercased header name to first value), and `success` (Bool,
-true for 2xx):
+carries `status` (Int), `body` (String, or Bytes with `"bytes": true`),
+`headers` (a map of lowercased header name to its value, a list of the
+values for a header sent more than once, as `set-cookie` is), and
+`success` (Bool, true for 2xx):
 
 | Function | Description |
 |---|---|
 | `http.get(url[, opts])` / `http.post(url, body[, opts])` / `http.put` / `http.delete` | requests |
 | `http.request(method, url, body[, opts])` | any method |
 | `http.parse_url(url)` | split a URL into parts: `Ok({ scheme, host, port, path, query, fragment })`, `port`, `query` and `fragment` `()` when the URL names none |
-| `http.encode_query(map)` / `http.decode_query(s)` | query strings — `encode_query` takes a `#{}` map or a `{ }` record, keys in sorted order; `decode_query` answers a map |
+| `http.encode_query(map)` / `http.decode_query(s)` | query strings — `encode_query` takes a `#{}` map or a `{ }` record, keys in sorted order, each value a string, a number, a Bool or a list of them (the name repeated for each); anything nested raises. `decode_query` answers a map: a name given once its string, a name given more than once a list of its strings in order (`"t=a&t=b"` is `#{ "t": ["a", "b"] }`) |
 | `http.serve(port, handler[, options])` | serve `handler(request)` on a bounded worker pool; blocks the calling program |
 | `http.response(status, body)` / `http.response_with_headers(status, body, headers)` | build responses: an `HttpResponse` of the client's shape, `{ status, body, headers, success }`, `headers` a map |
 | `http.shutdown()` | ask every running `http.serve` to drain: no new connections, in-flight requests finish (up to `drain_ms`), and `serve` returns `Ok` — what an [`os.on_shutdown`](#os--operating-system) handler calls |
@@ -2439,9 +2455,10 @@ threads or memory without limit. The handler receives a request struct:
 |---|---|
 | `req.method` | `"GET"`, `"POST"`, ... (uppercased) |
 | `req.path` | the path, without the query string |
-| `req.query` | map of decoded query parameters |
+| `req.query` | map of decoded query parameters (a name given more than once: a list of its values) |
 | `req.headers` | map of headers, keys lowercased |
-| `req.body` | the request body as a string |
+| `req.body` | the request body as text (bytes that are not UTF-8 read as U+FFFD) |
+| `req.body_bytes` | the request body as `Bytes`, exactly as sent (an upload, an image) |
 | `req.remote_addr` | client socket address (`ip:port`) |
 
 An optional map/object configures the bounded server:

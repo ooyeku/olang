@@ -141,6 +141,29 @@ fn parses_query_strings_and_reports_status_codes() {
     assert!(resp.ends_with("GET /ping pong"), "still serving: {resp}");
 }
 
+#[test]
+fn a_body_arrives_as_bytes_too_and_a_repeated_query_name_keeps_every_value() {
+    let (_guard, port) = spawn_server(
+        r#"
+fn handle(req) = `${typeof(req.body_bytes)} ${len(req.body_bytes)} ${req.body_bytes[0]} ${show(req.query.t)} ${req.query.one}`
+http.serve(0, handle)
+"#,
+    );
+    let mut raw = b"POST /up?t=a&t=b&one=x HTTP/1.1\r\nHost: t\r\nConnection: close\r\nContent-Length: 3\r\n\r\n".to_vec();
+    raw.extend_from_slice(&[0xff, 0x00, 0x41]);
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    stream.write_all(&raw).expect("write request");
+    let mut response = String::new();
+    stream.read_to_string(&mut response).expect("read response");
+    assert!(
+        response.ends_with(r#"Bytes 3 255 ["a", "b"] x"#),
+        "got: {response}"
+    );
+}
+
 /// Read exactly one HTTP response from the stream: headers, then
 /// Content-Length body bytes. Leaves the connection open.
 fn read_one_response(stream: &mut TcpStream) -> String {

@@ -35,6 +35,7 @@ upgrading; it reports the cases it can find.
   - [`[package] olang` is a minimum](#package-olang-is-a-minimum)
   - [Maps, objects and JSON objects](#maps-objects-and-json-objects)
   - [Top-level names are read when a function runs](#top-level-names-are-read-when-a-function-runs)
+  - [Bytes and repeated names at the boundaries](#bytes-and-repeated-names-at-the-boundaries)
 - [In 0.88](#in-088)
   - [A missing field of an object is `()`](#a-missing-field-of-an-object-is-)
   - [A module's missing member reads as `()`](#a-modules-missing-member-reads-as-)
@@ -276,6 +277,15 @@ call, where it saw the value it had when the function was declared; a
 top-level name bound again by a later `let` is seen rebound. A program
 that relied on the old snapshot binds the value it wants under a name of
 its own (`let base0 = base`, then read `base0`) or passes it in.
+
+### Bytes and repeated names at the boundaries
+
+`crypto.random_bytes` answers Bytes: index it or `bytes.to_list` it where
+a list of Ints was read. A query name given more than once
+(`http.decode_query`, `req.query`) and a response header sent more than
+once are a list of their values: a reader expecting a string there
+takes `xs[0]` or the last. `http.encode_query` raises on a nested value
+where it dropped it silently.
 
 ## In 0.88
 

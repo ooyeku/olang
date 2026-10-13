@@ -6990,7 +6990,7 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
 
         self.add_function(FunctionDoc {
             name: "http.encode_query".to_string(),
-            description: "Encode a struct of parameters into a URL query string".to_string(),
+            description: "Encode a map or record into a URL query string: each value a string, number, Bool or a list of them (the name repeated); a nested value raises".to_string(),
             syntax: "http.encode_query(params)".to_string(),
             parameters: vec!["params: Struct - Key-value pairs to encode as query parameters".to_string()],
             return_type: "Result<String, Error>".to_string(),
@@ -7004,13 +7004,13 @@ println(map_get(b, "version") + " " + str.substring(map_get(b, "commit"), 0, 9))
 
         self.add_function(FunctionDoc {
             name: "http.decode_query".to_string(),
-            description: "Decode a URL query string into a struct of parameters".to_string(),
+            description: "Decode a URL query string into a map: a name given once is its string, a name given more than once a list of its strings".to_string(),
             syntax: "http.decode_query(query_string)".to_string(),
             parameters: vec!["query_string: String - The query string to decode".to_string()],
             return_type: "Map".to_string(),
             examples: vec![
                 "http.decode_query(\"name=John%20Doe&age=30&city=New%20York\")".to_string(),
-                "match http.decode_query(request.query) { Ok(params) => println(params.name), Err(e) => println(\"Invalid query\") }".to_string(),
+                "http.decode_query(\"t=a&t=b\")  // #{\"t\": [\"a\", \"b\"]}".to_string(),
             ],
             category: "HTTP".to_string(),
             see_also: vec!["http.encode_query".to_string(), "http.parse_url".to_string()],
@@ -10783,9 +10783,9 @@ For function-specific syntax, use: {}:help <function_name>{}",
             parameters: vec![
                 "count: Int - Number of random bytes to generate (max 1024)".to_string(),
             ],
-            return_type: "Result<[Int], Error>".to_string(),
+            return_type: "Bytes".to_string(),
             examples: vec![
-                "crypto.random_bytes(16)  // Ok([255, 42, 128, ...]) - 16 random bytes".to_string(),
+                "crypto.random_bytes(16)  // 16 random bytes, as Bytes".to_string(),
                 "crypto.random_bytes(32)  // Generate 256-bit key".to_string(),
             ],
             category: "Crypto".to_string(),

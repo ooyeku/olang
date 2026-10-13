@@ -181,6 +181,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   forgotten when the program rebinds it, and a function reading a
   rebound name runs on the interpreter.
 
+- **Bytes at the boundaries.** `http.serve` requests carry
+  `req.body_bytes` (the body as sent) beside `req.body`; `os.exec`,
+  `proc.spawn` and `proc.pipeline` take `bytes: true` for stdout and
+  stderr as Bytes (text stays the default, and bytes that are not UTF-8
+  read as U+FFFD — a process's stdout no longer stops at the first such
+  line); `crypto.random_bytes` answers Bytes (it answered a list of
+  Ints). `http.decode_query` and `req.query` keep every value of a name
+  given more than once, as a list (`t=a&t=b` is `#{ "t": ["a", "b"] }`;
+  the last one won), and a client response's `headers` every value of a
+  repeated header (`set-cookie`; the first won). `http.encode_query`
+  writes a list as the name repeated and raises on a nested value (it
+  dropped it) or an argument that is not a map or record (it answered
+  `Err`). stdlib.md states AES-256-GCM's key and ciphertext formats.
+
 
 ### Added
 

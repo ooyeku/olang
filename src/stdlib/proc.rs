@@ -40,8 +40,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 struct Proc {
     child: Mutex<Child>,
     stdin: Mutex<Option<ChildStdin>>,
-    out_rx: Mutex<Receiver<String>>,
-    stderr: Arc<Mutex<String>>,
+    /// stdout as it drains: a line each (its end removed) — or, spawned
+    /// with `bytes: true`, the raw chunks as they came.
+    out_rx: Mutex<Receiver<Vec<u8>>>,
+    stderr: Arc<Mutex<Vec<u8>>>,
+    /// `bytes: true`: stdout and stderr answer Bytes, not text.
+    bytes: bool,
     pid: u32,
     /// Spawned as the leader of its own process group (`#{ group: true }`),
     /// so `kill(p, #{ tree: true })` can end everything it started.
@@ -252,6 +256,9 @@ struct Opts {
     /// `Content-Length` headers (the language server protocol's), each
     /// one read whole by `read_line`.
     framed: bool,
+    /// `bytes: true`: stdout and stderr as Bytes, exactly as written
+    /// (text replaces invalid UTF-8 with U+FFFD).
+    bytes: bool,
 }
 
 /// Parse the shared options map (`cwd`, `env`, and for pipelines `stdin`,
@@ -269,6 +276,7 @@ fn parse_opts(value: &Value, who: &str) -> Result<Opts, Value> {
             ("cwd", Value::String(s)) => opts.cwd = Some(s.as_ref().clone()),
             ("stdin", Value::String(s)) if pipeline => opts.stdin = Some(s.as_ref().clone()),
             ("group", Value::Boolean(b)) if !pipeline => opts.group = *b,
+            ("bytes", Value::Boolean(b)) => opts.bytes = *b,
             ("framing", Value::String(f)) if !pipeline => match f.as_str() {
                 "content-length" => opts.framed = true,
                 "lines" => opts.framed = false,
@@ -295,7 +303,7 @@ fn parse_opts(value: &Value, who: &str) -> Result<Opts, Value> {
             }
             (other, _) => {
                 return Err(err(format!(
-                    "{}: unknown or mistyped option '{}' (supported: cwd, env, {})",
+                    "{}: unknown or mistyped option '{}' (supported: cwd, env, bytes, {})",
                     who,
                     other,
                     if pipeline { "stdin" } else { "group, framing" }
@@ -328,6 +336,7 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         env,
         group,
         framed,
+        bytes,
         ..
     } = match args.get(2) {
         Some(opts) => match parse_opts(opts, "spawn") {
@@ -364,7 +373,7 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
     // Drain stdout into a line channel: read_line pops from the channel,
     // never from the pipe, so the child can outrun a slow reader.
-    let (tx, rx) = mpsc::channel::<String>();
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
     // `framed` first: the pipe is taken only by the branch that drains it
     // (taking it in the test of the first branch left a plain child's
     // stdout undrained — no lines, no EOF until it exited).
@@ -372,21 +381,42 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         std::thread::spawn(move || {
             let mut r = BufReader::new(out);
             while let Some(body) = read_frame(&mut r) {
-                if tx.send(body).is_err() {
+                if tx.send(body.into_bytes()).is_err() {
+                    break;
+                }
+            }
+        });
+    } else if bytes && let Some(mut out) = child.stdout.take() {
+        // raw chunks, as they come: `read_all` joins them
+        std::thread::spawn(move || {
+            let mut chunk = [0u8; 8192];
+            while let Ok(n) = out.read(&mut chunk) {
+                if n == 0 || tx.send(chunk[..n].to_vec()).is_err() {
                     break;
                 }
             }
         });
     } else if let Some(out) = child.stdout.take() {
         std::thread::spawn(move || {
-            for line in BufReader::new(out).lines() {
-                match line {
-                    Ok(l) => {
-                        if tx.send(l).is_err() {
+            // a line at a time, its `\n` (and a `\r` before it) removed;
+            // bytes that are not UTF-8 never stop the drain (they become
+            // U+FFFD when the line is read as text)
+            let mut r = BufReader::new(out);
+            loop {
+                let mut line = Vec::new();
+                match r.read_until(b'\n', &mut line) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        if line.last() == Some(&b'\n') {
+                            line.pop();
+                            if line.last() == Some(&b'\r') {
+                                line.pop();
+                            }
+                        }
+                        if tx.send(line).is_err() {
                             break; // receiver gone; stop draining
                         }
                     }
-                    Err(_) => break,
                 }
             }
             // tx dropped here → read_line sees EOF
@@ -395,12 +425,12 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
     // Drain stderr into a shared buffer so it can never fill and block the
     // child while the caller is busy reading stdout.
-    let stderr_buf = Arc::new(Mutex::new(String::new()));
+    let stderr_buf = Arc::new(Mutex::new(Vec::new()));
     if let Some(mut se) = child.stderr.take() {
         let sink = stderr_buf.clone();
         std::thread::spawn(move || {
-            let mut buf = String::new();
-            let _ = se.read_to_string(&mut buf);
+            let mut buf = Vec::new();
+            let _ = se.read_to_end(&mut buf);
             *sink.lock().unwrap() = buf;
         });
     }
@@ -411,6 +441,7 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         stdin: Mutex::new(stdin),
         out_rx: Mutex::new(rx),
         stderr: stderr_buf,
+        bytes,
         pid,
         group,
     });
@@ -522,9 +553,17 @@ fn proc_read_line(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
         return Ok(err("read_line expects (process)"));
     }
     let p = proc_of(&args[0])?;
+    if p.bytes {
+        return Err(
+            "proc.read_line: a process spawned with bytes: true is read whole, with proc.read_all"
+                .into(),
+        );
+    }
     let rx = p.out_rx.lock().unwrap();
     match rx.recv() {
-        Ok(line) => Ok(ok(Value::String(Arc::new(line)))),
+        Ok(line) => Ok(ok(Value::String(Arc::new(
+            String::from_utf8_lossy(&line).into_owned(),
+        )))),
         Err(_) => Ok(err("eof")),
     }
 }
@@ -537,9 +576,16 @@ fn proc_read_all(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     }
     let p = proc_of(&args[0])?;
     let rx = p.out_rx.lock().unwrap();
+    if p.bytes {
+        let mut all = Vec::new();
+        while let Ok(chunk) = rx.recv() {
+            all.extend_from_slice(&chunk);
+        }
+        return Ok(ok(crate::stdlib::bytes::to_value(all)));
+    }
     let mut lines = Vec::new();
     while let Ok(line) = rx.recv() {
-        lines.push(line);
+        lines.push(String::from_utf8_lossy(&line).into_owned());
     }
     Ok(ok(Value::String(Arc::new(lines.join("\n")))))
 }
@@ -552,7 +598,17 @@ fn proc_stderr(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     }
     let p = proc_of(&args[0])?;
     let s = p.stderr.lock().unwrap().clone();
-    Ok(ok(Value::String(Arc::new(s))))
+    Ok(ok(text_or_bytes(s, p.bytes)))
+}
+
+/// Output as the caller asked for it: Bytes as written, or text with any
+/// bytes that are not UTF-8 replaced by U+FFFD.
+pub(crate) fn text_or_bytes(raw: Vec<u8>, bytes: bool) -> Value {
+    if bytes {
+        crate::stdlib::bytes::to_value(raw)
+    } else {
+        Value::String(Arc::new(String::from_utf8_lossy(&raw).into_owned()))
+    }
 }
 
 /// An exit status as `(code, signal)`: the exit code and `()`, or `()` and
@@ -712,6 +768,7 @@ fn proc_pipeline(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         cwd,
         env,
         stdin: mut stdin_data,
+        bytes,
         ..
     } = match args.get(1) {
         Some(opts) => match parse_opts(opts, "pipeline") {
@@ -782,18 +839,18 @@ fn proc_pipeline(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     for child in &mut children {
         let se = child.stderr.take();
         stderr_threads.push(std::thread::spawn(move || {
-            let mut buf = String::new();
+            let mut buf = Vec::new();
             if let Some(mut s) = se {
-                let _ = s.read_to_string(&mut buf);
+                let _ = s.read_to_end(&mut buf);
             }
             buf
         }));
     }
 
     // Read the last stage's stdout on this thread.
-    let mut final_out = String::new();
+    let mut final_out = Vec::new();
     if let Some(mut out) = prev_out.take() {
-        let _ = out.read_to_string(&mut final_out);
+        let _ = out.read_to_end(&mut final_out);
     }
 
     // Collect exit codes in order.
@@ -810,18 +867,18 @@ fn proc_pipeline(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     if let Some(f) = feeder {
         let _ = f.join();
     }
-    let mut stderr_all = String::new();
+    let mut stderr_all = Vec::new();
     for t in stderr_threads {
         if let Ok(s) = t.join() {
-            stderr_all.push_str(&s);
+            stderr_all.extend_from_slice(&s);
         }
     }
 
     let final_code = codes.last().cloned().unwrap_or(Value::Unit);
     let mut fields = crate::ast::ValueMap::default();
     fields.insert("code".to_string(), final_code);
-    fields.insert("stdout".to_string(), Value::String(Arc::new(final_out)));
-    fields.insert("stderr".to_string(), Value::String(Arc::new(stderr_all)));
+    fields.insert("stdout".to_string(), text_or_bytes(final_out, bytes));
+    fields.insert("stderr".to_string(), text_or_bytes(stderr_all, bytes));
     fields.insert("codes".to_string(), Value::List(codes.into()));
     Ok(ok(Value::Struct {
         type_name: "Object".to_string(),

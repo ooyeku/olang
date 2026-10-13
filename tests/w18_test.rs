@@ -168,13 +168,14 @@ fn encode_query_takes_a_map_as_well_as_a_record() {
         "q.ol",
         "println(show(http.encode_query(#{ \"q\": \"a b\", \"page\": 2 })))\n\
          println(show(http.encode_query({ q: \"x&y\", ok: true })))\n\
-         println(show(http.encode_query(\"nope\")))\n",
+         println(show(attempt(() => http.encode_query(\"nope\"))))\n",
     );
     let (out, err, rc) = olang(&ws, &["run", "q.ol"]);
     assert_eq!(rc, 0, "{out}{err}");
+    // anything but a map or a record is a misuse: it raises
     assert_eq!(
         out,
-        "Ok(\"page=2&q=a%20b\")\nOk(\"ok=true&q=x%26y\")\nErr(\"encode_query: argument must be a map or a record\")\n"
+        "Ok(\"page=2&q=a%20b\")\nOk(\"ok=true&q=x%26y\")\nErr(\"http.encode_query: takes a map or a record, got String\")\n"
     );
 }
 

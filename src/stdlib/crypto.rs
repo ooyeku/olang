@@ -461,12 +461,7 @@ fn crypto_random_bytes(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Er
     let mut bytes = vec![0u8; count];
     rand::rng().fill_bytes(&mut bytes);
 
-    let byte_values: Vec<Value> = bytes
-        .into_iter()
-        .map(|b| Value::Integer(b as i64))
-        .collect();
-
-    Ok(Value::List(byte_values.into()))
+    Ok(crate::stdlib::bytes::to_value(bytes))
 }
 
 /// Generate cryptographically secure random hex string

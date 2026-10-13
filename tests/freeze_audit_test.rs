@@ -1034,3 +1034,43 @@ fn local_capture() = { let n = 1; let get = () => n; let n = 2; get() }
         ]))
     );
 }
+
+// ── bytes at the boundaries ─────────────────────────────────────────────
+
+#[test]
+fn bytes_and_repeated_names_at_the_boundaries() {
+    let src = r#"
+let bin = unwrap(os.exec("printf", ["\\377A"], #{ "bytes": true }))
+let text = unwrap(os.exec("printf", ["\\377A"]))
+let p = unwrap(proc.spawn("printf", ["\\377B"], #{ "bytes": true }))
+let all = unwrap(proc.read_all(p))
+let w = proc.wait(p)
+let q = unwrap(proc.spawn("printf", ["one\\n\\377two\\nthree"]))
+let lines = [unwrap(proc.read_line(q)), unwrap(proc.read_line(q)), unwrap(proc.read_line(q))]
+let ww = proc.wait(q)
+[typeof(bin.stdout), len(bin.stdout), bin.stdout[0], text.stdout, typeof(all), len(all), lines,
+ typeof(crypto.random_bytes(4)), len(crypto.random_bytes(4)),
+ http.decode_query("t=a&t=b&one=x"), unwrap(http.encode_query(#{ "t": ["a", "b"], "n": 1 })),
+ match attempt(() => http.encode_query(#{ "deep": #{ "x": 1 } })) { Err(e) => str.contains(e, "deep"), Ok(v) => false }]
+"#;
+    let mut query = olang::ast::ValueMap::default();
+    query.insert("t".to_string(), l(vec![s("a"), s("b")]));
+    query.insert("one".to_string(), s("x"));
+    assert_eq!(
+        agree_tiered(src),
+        Ok(l(vec![
+            s("Bytes"),
+            Value::Integer(2),
+            Value::Integer(255),
+            s("\u{FFFD}A"),
+            s("Bytes"),
+            Value::Integer(2),
+            l(vec![s("one"), s("\u{FFFD}two"), s("three")]),
+            s("Bytes"),
+            Value::Integer(4),
+            Value::Map(std::sync::Arc::new(query)),
+            s("n=1&t=a&t=b"),
+            Value::Boolean(true),
+        ]))
+    );
+}
