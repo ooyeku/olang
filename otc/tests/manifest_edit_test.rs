@@ -50,15 +50,24 @@ fn add_and_remove_keep_the_manifests_comments_and_unknown_keys() {
     let (ok, out) = otc(&app, &home, &["add", "../lib"]);
     assert!(ok, "{out}");
     let added = std::fs::read_to_string(app.join("olang.toml")).unwrap();
-    assert!(added.starts_with("# the app\n[package]\nname = \"app\"   # its name\n"), "{added}");
+    assert!(
+        added.starts_with("# the app\n[package]\nname = \"app\"   # its name\n"),
+        "{added}"
+    );
     assert!(added.contains("lib = { path = \"../lib\" }"), "{added}");
-    assert!(added.contains("# none yet") && added.contains("[extra]\nkept = true"), "{added}");
+    assert!(
+        added.contains("# none yet") && added.contains("[extra]\nkept = true"),
+        "{added}"
+    );
 
     let (ok, out) = otc(&app, &home, &["remove", "lib"]);
     assert!(ok, "{out}");
     let removed = std::fs::read_to_string(app.join("olang.toml")).unwrap();
     assert!(!removed.contains("lib = "), "{removed}");
-    assert!(removed.contains("# the app") && removed.contains("[extra]\nkept = true"), "{removed}");
+    assert!(
+        removed.contains("# the app") && removed.contains("[extra]\nkept = true"),
+        "{removed}"
+    );
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&home);
 }

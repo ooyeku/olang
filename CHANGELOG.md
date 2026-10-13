@@ -271,6 +271,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `version = 1`, and a toolchain that finds a newer shelf refuses it
   rather than rewriting it without what it does not know.
 
+- `olang check` and `olang doctor` warn about what olang.toml holds that
+  olang does not read: a key in `[package]`, `[check]` or a dependency
+  entry it does not know (`autors`, a `rev` beside a `path`), a top-level
+  section that is a near miss of one it reads (`[dependancies]`), and a
+  `[check] promote` name that is not a class, each with the nearest
+  name. Other tools' sections (Loom's `[bundle]`, Studio's `[plugin]`)
+  pass. `olang doctor` marks warnings `!` and still exits 0.
+- `[check] promote` is safe to freeze. A finding's class is a field set
+  where the checker makes it — the `code` in `--format json` — not
+  matched from its message, so rewording a message cannot change what a
+  project promotes. The class names are the contract: `exhaustiveness`,
+  `shape`, `keys`, `result`, `copy`, `shadow`, `deprecated`, `tier`.
+  `all` is every class the running olang knows, stated as such: a later
+  olang's new class, or `deprecated` meeting a new deprecation, can fail
+  a project promoting `all`, so name classes to fix the set. `unused` is
+  a hint's class and never promoted.
+
 
 ### Fixed
 

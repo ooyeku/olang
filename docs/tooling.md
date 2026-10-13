@@ -691,10 +691,26 @@ pattern binding of a module's name that its scope then reads as the
 module: `fn table_sort(rows, col) = col.sort_by(…)`), `copy` (a loop that copies the collection it is
 building on every pass: a temporary read again after the rebind, or a
 prepend — see [the rebind forms](performance.md#the-rebind-forms)),
-`tier` (a function `olang check --tier` finds the
-bytecode tier refuses), and `all`. A
+`deprecated` (a name kept working under an older spelling, which
+`olang fix deprecated` rewrites), `tier` (a function `olang check --tier`
+finds the bytecode tier refuses), and `all`. A
 promoted finding fails `olang check` and shows as an error in the
 editor, and its message says which block promoted it.
+
+A class is a field of the finding, set where the checker makes it — the
+`code` of `--format json` — never read back from its wording, and the
+class names are the contract: a message may be reworded in any release,
+its class does not change. `all` means every class the running olang
+knows: a later olang may add a class, or a class such as `keys` or
+`shape` may learn to find more, so a project that promotes `all` (or
+`deprecated`) can see a new failure when it moves to a newer olang —
+name the classes instead to fix the set. `unused`, the class of the
+hint for a name nothing reads, is a hint and never promoted. A name
+`promote` does not know is warned about, with the nearest class, by
+`olang check` and `olang doctor`, as is any key or section of
+olang.toml that olang does not read (a near miss such as
+`[dependancies]` or `autors`; other tools' sections, Loom's `[bundle]`
+and Studio's `[plugin]`, pass).
 
 Define a rule as a top-level function whose name begins with `rule_`. The
 function takes one argument: the file's AST, flattened to a list of nodes.

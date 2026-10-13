@@ -127,10 +127,7 @@ pub fn run_json(paths: &[PathBuf]) -> i32 {
                 }],
             }));
         }
-        if let Some(problem) = crate::pkg::manifest::Manifest::load(root)
-            .ok()
-            .and_then(|m| m.lock_value_problem())
-        {
+        for problem in crate::pkg::manifest::Manifest::warnings(root) {
             warnings += 1;
             rows.push(serde_json::json!({
                 "file": root.join("olang.toml").to_string_lossy(),
@@ -262,10 +259,7 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
             eprintln!("{}: error: {}", root.join("olang.toml").display(), problem);
             problems += 1;
         }
-        if let Some(problem) = crate::pkg::manifest::Manifest::load(root)
-            .ok()
-            .and_then(|m| m.lock_value_problem())
-        {
+        for problem in crate::pkg::manifest::Manifest::warnings(root) {
             eprintln!(
                 "{}: warning: {}",
                 root.join("olang.toml").display(),
@@ -331,7 +325,7 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
             } else {
                 // A promoted advisory speaks for its own class; the
                 // annotation label is the type checker's.
-                promoted_label(&d.message).unwrap_or("the annotation's promise is broken here")
+                promoted_label(&d).unwrap_or("the annotation's promise is broken here")
             };
             let mut diagnostic = miette::MietteDiagnostic::new(d.message.clone())
                 .with_label(miette::LabeledSpan::at_offset(offset, label));
@@ -742,6 +736,7 @@ fn unimported_names(
                 runtime: true,
                 warning: false,
                 scope: false,
+                class: None,
             }
         })
         .collect()
@@ -862,6 +857,7 @@ the later binding wins silently for every importer; alias one of them \
                     runtime: false,
                     warning: true,
                     scope: false,
+                    class: None,
                 });
             } else {
                 reexported.push((n.to_string(), line));
@@ -908,6 +904,7 @@ from line {} — call it as `{}.{}`, or alias the earlier import \
                         runtime: false,
                         warning: true,
                         scope: false,
+                        class: None,
                     });
                 }
             }
@@ -1162,6 +1159,7 @@ not the module — rename the binding",
             runtime: false,
             warning: true,
             scope: false,
+            class: Some("shadow"),
         });
     }
 
@@ -1346,6 +1344,7 @@ calls — the call reaches the argument, not the function; rename the parameter"
                             runtime: false,
                             warning: true,
                             scope: false,
+                            class: None,
                         });
                     }
                 }
@@ -1374,6 +1373,7 @@ this module, not the standard library — rename the file if that is not intende
                         runtime: false,
                         warning: true,
                         scope: false,
+                        class: None,
                     });
                 }
             }
@@ -1408,6 +1408,7 @@ this module, not the standard library — rename the file if that is not intende
             runtime: false,
             warning: true,
             scope: false,
+            class: Some("shadow"),
         });
     }
     out
@@ -1558,6 +1559,7 @@ pub fn template_escape_warnings(source: &str) -> Vec<CheckDiagnostic> {
                             runtime: false,
                             warning: true,
                             scope: false,
+                            class: None,
                         });
                     }
                     _ => {}
@@ -1804,6 +1806,11 @@ pub struct CheckDiagnostic {
     /// Only the rendered label distinguishes them; they gate like any
     /// other problem.
     pub scope: bool,
+    /// The advisory's class, which `[check] promote` names and
+    /// `--format json` reports as its `code`: `exhaustiveness`, `shape`,
+    /// `keys`, `result`, `copy`, `deprecated`, `shadow`. Set where the
+    /// finding is made, never read back from its wording.
+    pub class: Option<&'static str>,
 }
 
 /// The checker's knowledge of a type, structurally deep where the source
@@ -2159,38 +2166,10 @@ pub fn key_warnings(program: &Program, source: &str) -> Vec<CheckDiagnostic> {
                 runtime: false,
                 warning: true,
                 scope: false,
+                class: Some("keys"),
             }
         })
         .collect()
-}
-
-/// The class a warning belongs to, by its message: `exhaustiveness`,
-/// `shape`, `result`, `shadow`, `copy`, or none.
-pub fn warning_class(message: &str) -> Option<&'static str> {
-    if message.contains("is not exhaustive") || message.contains("covers none of the scrutinee") {
-        Some("exhaustiveness")
-    } else if message.contains("is not a key of the declared shape")
-        || message.contains("is not a field of the declared struct")
-    {
-        Some("shape")
-    } else if message.contains("is not a key any construction of") {
-        // roadmap E4: a `.key` read no map or object built here has
-        Some("keys")
-    } else if message.contains("the Result from") && message.contains("is discarded") {
-        Some("result")
-    } else if message.contains("is copied on every pass") || message.contains("moves every element")
-    {
-        // A loop that rebuilds the collection it is accumulating.
-        Some("copy")
-    } else if message.contains("is deprecated: it is `") {
-        Some("deprecated")
-    } else if message.contains("shadows the stdlib module") {
-        // `let cell = …`: every later `cell.get` in the scope reaches the
-        // binding and fails at run time, far from the `let`.
-        Some("shadow")
-    } else {
-        None
-    }
 }
 
 /// The rule a finding comes from, as `olang check --format json` and the
@@ -2199,7 +2178,7 @@ pub fn warning_class(message: &str) -> Option<&'static str> {
 /// before the program runs), `runtime` (would fail when it runs),
 /// `advisory` (another warning) or `type` (an annotation's promise).
 pub fn rule_of(d: &CheckDiagnostic) -> &'static str {
-    if let Some(class) = warning_class(&d.message) {
+    if let Some(class) = d.class {
         class
     } else if d.scope {
         "scope"
@@ -2214,11 +2193,11 @@ pub fn rule_of(d: &CheckDiagnostic) -> &'static str {
 
 /// The label an advisory promoted by `[check] promote` is rendered with:
 /// what its class says about the spot, not the annotation checker's.
-pub fn promoted_label(message: &str) -> Option<&'static str> {
-    if !message.contains("promoted to an error") {
+pub fn promoted_label(d: &CheckDiagnostic) -> Option<&'static str> {
+    if !d.message.ends_with(PROMOTED) {
         return None;
     }
-    Some(match warning_class(message)? {
+    Some(match d.class? {
         "shadow" => "shadows the module from here",
         "exhaustiveness" => "this match misses a case",
         "shape" => "the declared shape has no such key",
@@ -2229,20 +2208,20 @@ pub fn promoted_label(message: &str) -> Option<&'static str> {
     })
 }
 
+/// What a promoted advisory's message ends with.
+const PROMOTED: &str = " (promoted to an error by [check] promote in olang.toml)";
+
 /// Turn a warning into an error when its class is promoted.
 pub fn promote(d: &mut CheckDiagnostic, promoted: &[String]) {
     if !d.warning || promoted.is_empty() {
         return;
     }
-    let Some(class) = warning_class(&d.message) else {
+    let Some(class) = d.class else {
         return;
     };
     if promoted.iter().any(|p| p == class || p == "all") {
         d.warning = false;
-        d.message = format!(
-            "{} (promoted to an error by [check] promote in olang.toml)",
-            d.message
-        );
+        d.message = format!("{}{}", d.message, PROMOTED);
     }
 }
 
@@ -2646,6 +2625,7 @@ pub fn check_program_with_context(context: &[&Program], program: &Program) -> Ve
             runtime: false,
             warning: false,
             scope: true,
+            class: None,
         });
     }
 
@@ -2945,7 +2925,8 @@ impl Checker {
             && !bound(self, name)
             && let Some((_, now)) = DEPRECATED_GLOBALS.iter().find(|(old, _)| old == name)
         {
-            self.warn(
+            self.advise(
+                "deprecated",
                 span,
                 format!(
                     "`{}` is deprecated: it is `{}` under an older name, kept working — \
@@ -2960,7 +2941,8 @@ impl Checker {
         {
             let full = format!("{module}.{field}");
             if let Some((_, now)) = DEPRECATED_MODULE_FNS.iter().find(|(old, _)| *old == full) {
-                self.warn(
+                self.advise(
+                    "deprecated",
                     span,
                     format!(
                         "`{}` is deprecated: it is `{}` under an older name, kept working — \
@@ -3222,8 +3204,12 @@ impl Checker {
                     missing.join(", ")
                 ),
             );
+            if let Some(d) = self.out.last_mut() {
+                d.class = Some("exhaustiveness");
+            }
         } else {
-            self.warn(
+            self.advise(
+                "exhaustiveness",
                 span,
                 format!(
                     "match is not exhaustive: {} {} no arm — add {} or a catch-all",
@@ -3268,7 +3254,8 @@ impl Checker {
         if missing.is_empty() {
             return;
         }
-        self.warn(
+        self.advise(
+            "exhaustiveness",
             span,
             format!(
                 "match over `{}` is not exhaustive: {} {} no arm — add {} or a catch-all",
@@ -3394,7 +3381,8 @@ impl Checker {
             "index" => "the index reads Unit for it at runtime".to_string(),
             _ => "the read is () at run time".to_string(),
         };
-        self.warn(
+        self.advise(
+            "shape",
             span,
             format!(
                 "`{}` is not a key of the declared shape {}: {}{}",
@@ -3430,7 +3418,7 @@ impl Checker {
             Some(n) => format!(" — did you mean `{}`?", n),
             None => String::new(),
         };
-        self.warn(
+        self.advise("shape", 
             span,
             format!(
                 "`{}` is not a field of the declared struct {} ({}): reading it raises at run time{}",
@@ -3450,6 +3438,7 @@ impl Checker {
             runtime,
             warning: false,
             scope: false,
+            class: None,
         });
     }
 
@@ -3525,7 +3514,7 @@ impl Checker {
                         .binary_search(temp)
                         .is_ok()
                     {
-                        self.warn(
+                        self.advise("copy", 
                             at,
                             format!(
                                 "`{collection}` is copied on every pass of this loop: `{temp}` still holds \
@@ -3546,7 +3535,7 @@ impl Checker {
                         && matches!(left.as_ref(), Expr::List(_))
                         && matches!(right.as_ref(), Expr::Identifier(n) if n == target)
                     {
-                        self.warn(
+                        self.advise("copy", 
                             at,
                             format!(
                                 "`{target} = [..] + {target}` moves every element of `{target}` on each \
@@ -3593,7 +3582,8 @@ impl Checker {
         if !self.fallible.contains(&qualified) {
             return;
         }
-        self.warn(
+        self.advise(
+            "result",
             span,
             format!(
                 "the Result from {qualified} is discarded, so a failure here is invisible. \
@@ -3671,6 +3661,20 @@ impl Checker {
             runtime: false,
             warning: true,
             scope: false,
+            class: None,
+        });
+    }
+
+    /// An advisory of a class `[check] promote` can name.
+    fn advise(&mut self, class: &'static str, span: (u32, u32), message: String) {
+        self.out.push(CheckDiagnostic {
+            line: span.0,
+            column: span.1,
+            message,
+            runtime: false,
+            warning: true,
+            scope: false,
+            class: Some(class),
         });
     }
 
@@ -4328,6 +4332,7 @@ impl Checker {
                         runtime: false,
                         warning: true,
                         scope: false,
+                        class: None,
                     });
                 }
             }
@@ -4812,10 +4817,7 @@ mod tests {
         assert!(messages[1].starts_with("`k` is not a field of the declared struct Point"));
         assert!(messages[2].starts_with("`titel` is not a key of the declared shape"));
         assert!(messages[2].contains("the read is () at run time"));
-        assert!(
-            d.iter()
-                .all(|d| d.warning && warning_class(&d.message) == Some("shape"))
-        );
+        assert!(d.iter().all(|d| d.warning && d.class == Some("shape")));
         // A trait method of the name, called or read, is not a field.
         let d = check(
             "type Point = struct { x: Int }\ntrait Norm { fn norm(self) }\nimpl Norm for Point { fn norm(self) = self.x }\nfn a(p: Point) = p.norm()\nfn b(p: Point) = p.norm\n",
@@ -4906,10 +4908,7 @@ mod tests {
         assert!(messages[1].contains("`col.sort_by`"));
         assert!(messages[2].starts_with("the lambda parameter `json`"));
         assert!(messages[3].starts_with("the pattern binding `math`"));
-        assert!(
-            d.iter()
-                .all(|d| d.warning && warning_class(&d.message) == Some("shadow"))
-        );
+        assert!(d.iter().all(|d| d.warning && d.class == Some("shadow")));
     }
 
     #[test]

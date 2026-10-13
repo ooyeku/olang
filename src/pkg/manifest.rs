@@ -77,6 +77,53 @@ pub struct PackageMeta {
     pub lock: Option<String>,
 }
 
+/// The sections olang reads from olang.toml.
+pub const TOP_SECTIONS: &[&str] = &["package", "dependencies", "capabilities", "check"];
+
+/// The keys `[package]` takes.
+pub const PACKAGE_KEYS: &[&str] = &[
+    "name",
+    "version",
+    "description",
+    "authors",
+    "license",
+    "assets",
+    "olang",
+    "lock",
+];
+
+/// The keys `[check]` takes.
+pub const CHECK_KEYS: &[&str] = &["promote", "native"];
+
+/// The advisory classes `[check] promote` names, each a stable name for
+/// one kind of finding. `all` is every one of these: the classes the
+/// running olang knows, so a later olang's new class is promoted by `all`
+/// only once the project runs on that olang. `unused` (a name nothing
+/// reads) is a hint's class, never a finding, and is not promoted.
+pub const PROMOTE_CLASSES: &[&str] = &[
+    "exhaustiveness",
+    "shape",
+    "keys",
+    "result",
+    "copy",
+    "shadow",
+    "deprecated",
+    "tier",
+];
+
+/// The known name `word` is a likely misspelling of: case aside, at most
+/// two edits away, or the singular or plural of it.
+fn near_miss<'a>(word: &str, known: &[&'a str]) -> Option<&'a str> {
+    let w = word.to_ascii_lowercase();
+    known.iter().copied().find(|k| {
+        let k = k.to_ascii_lowercase();
+        w == k
+            || crate::interpreter::IntuitiveErrorFormatter::levenshtein_distance(&w, &k) <= 2
+            || (w.len() >= 4 && (k.starts_with(&w) || w.starts_with(&k)))
+            || k.trim_end_matches("ies") == w.trim_end_matches('y')
+    })
+}
+
 /// The values `[package] lock` accepts.
 pub const LOCK_VALUES: &[&str] = &["auto", "never"];
 
@@ -331,6 +378,113 @@ impl Manifest {
             "[package] lock = \"{}\" is not a lock policy (expected \"auto\" or \"never\"); treated as \"auto\"",
             v
         ))
+    }
+
+    /// The keys and sections of manifest text that olang does not read,
+    /// each with the warning `olang check` and `olang doctor` give: a key
+    /// in `[package]`, `[check]` or a dependency entry olang does not know
+    /// (a misspelling is otherwise silently ignored), and a top-level
+    /// section that is a near miss of one olang reads (`[dependency]`,
+    /// `[Package]`). Other top-level sections belong to other tools —
+    /// Loom's bundler reads `[bundle]`, Studio `[plugin]` — and pass.
+    /// `[capabilities]` is not here: a key it does not know is refused.
+    pub fn unknown_keys(text: &str) -> Vec<String> {
+        let Ok(toml::Value::Table(top)) = toml::from_str::<toml::Value>(text) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        let unknown = |section: &str,
+                       table: &toml::Table,
+                       known: &[&str],
+                       out: &mut Vec<String>| {
+            for key in table.keys() {
+                if !known.contains(&key.as_str()) {
+                    let hint = near_miss(key, known)
+                        .map(|k| format!(" (did you mean `{k}`?)"))
+                        .unwrap_or_default();
+                    out.push(format!(
+                        "{section} has a key olang does not read: `{key}`{hint}; expected one of {}",
+                        known.join(", ")
+                    ));
+                }
+            }
+        };
+        for (name, value) in &top {
+            if TOP_SECTIONS.contains(&name.as_str()) {
+                continue;
+            }
+            if let Some(k) = near_miss(name, TOP_SECTIONS) {
+                out.push(format!(
+                    "`[{name}]` is not a section olang reads (did you mean `[{k}]`?)"
+                ));
+            } else if !value.is_table() && !value.is_array() {
+                out.push(format!(
+                    "`{name}` is not a top-level key olang reads; keys belong in a section such as [package]"
+                ));
+            }
+        }
+        if let Some(toml::Value::Table(t)) = top.get("package") {
+            unknown("[package]", t, PACKAGE_KEYS, &mut out);
+        }
+        if let Some(toml::Value::Table(t)) = top.get("check") {
+            unknown("[check]", t, CHECK_KEYS, &mut out);
+        }
+        if let Some(toml::Value::Table(deps)) = top.get("dependencies") {
+            for (name, dep) in deps {
+                let toml::Value::Table(t) = dep else { continue };
+                let known: &[&str] = if t.contains_key("path") {
+                    &["path"]
+                } else if t.contains_key("git") {
+                    &["git", "tag", "rev", "branch"]
+                } else if t.contains_key("shelf") {
+                    &["shelf"]
+                } else if t.contains_key("version") {
+                    &["version", "registry"]
+                } else {
+                    &["path", "git", "shelf", "version"]
+                };
+                unknown(&format!("dependency `{name}`"), t, known, &mut out);
+            }
+        }
+        out
+    }
+
+    /// Every warning olang gives about the manifest in `dir` — an unknown
+    /// `[package] lock` value, keys and sections olang does not read, and
+    /// `[check] promote` names it does not know — as `olang check` and
+    /// `olang doctor` print them. Empty when there is no readable manifest.
+    pub fn warnings(dir: &Path) -> Vec<String> {
+        let Ok(text) = crate::vfs::read_to_string(&dir.join("olang.toml")) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        if let Ok(m) = Self::from_toml(&text) {
+            out.extend(m.lock_value_problem());
+            out.extend(m.promote_problems());
+        }
+        out.extend(Self::unknown_keys(&text));
+        out
+    }
+
+    /// `[check] promote` names that are not a class this olang knows.
+    pub fn promote_problems(&self) -> Vec<String> {
+        let Some(check) = &self.check else {
+            return Vec::new();
+        };
+        check
+            .promote
+            .iter()
+            .filter(|p| p.as_str() != "all" && !PROMOTE_CLASSES.contains(&p.as_str()))
+            .map(|p| {
+                let hint = near_miss(p, PROMOTE_CLASSES)
+                    .map(|k| format!(" (did you mean `{k}`?)"))
+                    .unwrap_or_default();
+                format!(
+                    "[check] promote names `{p}`, which is not a class this olang knows{hint}; the classes are {}, and `all`",
+                    PROMOTE_CLASSES.join(", ")
+                )
+            })
+            .collect()
     }
 
     /// Walk upward from `start` to find the nearest directory containing an

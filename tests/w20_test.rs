@@ -235,3 +235,53 @@ fn a_spawned_tasks_effects_record_and_replay_on_their_own_stream() {
         "{threads:?}"
     );
 }
+
+#[test]
+fn check_and_doctor_warn_on_what_the_manifest_holds_that_olang_does_not_read() {
+    let ws = workspace("unknown-keys");
+    write(
+        &ws,
+        "olang.toml",
+        "[package]\nname = \"p\"\nversion = \"0.1.0\"\nautors = []\n\n[dependancies]\n\n[check]\npromote = [\"shapes\", \"shape\"]\n\n[bundle]\nname = \"P\"\n",
+    );
+    write(&ws, "m.ol", "println(1)\n");
+    let (out, err, rc) = olang(&ws, &["check", "m.ol"]);
+    let all = out + &err;
+    assert_eq!(rc, 0, "warnings, not errors: {all}");
+    assert!(all.contains("`autors` (did you mean `authors`?)"), "{all}");
+    assert!(all.contains("`[dependancies]` is not a section olang reads (did you mean `[dependencies]`?)"), "{all}");
+    assert!(all.contains("promote names `shapes`, which is not a class this olang knows (did you mean `shape`?)"), "{all}");
+    // another tool's section passes
+    assert!(!all.contains("bundle"), "{all}");
+    assert!(all.contains("3 warnings"), "{all}");
+    let (out, err, rc) = olang(&ws, &["doctor"]);
+    assert_eq!(rc, 0, "{out}{err}");
+    assert!(out.contains("! olang.toml: [package] has a key olang does not read: `autors`"), "{out}");
+    assert!(out.contains("with 3 warnings"), "{out}");
+    let (out, _, _) = olang(&ws, &["check", "--format", "json", "m.ol"]);
+    assert!(out.contains("\"code\":\"manifest\""), "{out}");
+}
+
+#[test]
+fn a_finding_carries_its_class_and_promote_reads_it() {
+    // the class comes from the finding, so `--format json` names it as
+    // the code and `promote` gates on it
+    let ws = workspace("class-field");
+    write(
+        &ws,
+        "olang.toml",
+        "[package]\nname = \"p\"\nversion = \"0.1.0\"\n\n[check]\npromote = [\"all\"]\n",
+    );
+    write(
+        &ws,
+        "m.ol",
+        "type Shape = enum { Circle(Float), Rect(Float, Float) }\n\
+         fn area(s: Shape) = match s { Circle(r) => 1.0 }\n\
+         let s = re.replace_all(\"a\", \"a\", \"b\")\n",
+    );
+    let (out, _, rc) = olang(&ws, &["check", "--format", "json", "m.ol"]);
+    assert_eq!(rc, 1, "{out}");
+    assert!(out.contains("\"code\":\"exhaustiveness\""), "{out}");
+    assert!(out.contains("\"code\":\"deprecated\""), "{out}");
+    assert!(out.contains("\"errors\":2"), "{out}");
+}

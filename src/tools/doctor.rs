@@ -8,12 +8,23 @@ use std::path::{Path, PathBuf};
 
 struct Finding {
     ok: bool,
+    /// Said, marked `!`, but not a finding: the exit code ignores it.
+    warn: bool,
     line: String,
 }
 
 fn ok(line: impl Into<String>) -> Finding {
     Finding {
         ok: true,
+        warn: false,
+        line: line.into(),
+    }
+}
+
+fn warn(line: impl Into<String>) -> Finding {
+    Finding {
+        ok: true,
+        warn: true,
         line: line.into(),
     }
 }
@@ -21,6 +32,7 @@ fn ok(line: impl Into<String>) -> Finding {
 fn bad(line: impl Into<String>) -> Finding {
     Finding {
         ok: false,
+        warn: false,
         line: line.into(),
     }
 }
@@ -34,9 +46,24 @@ pub fn run(path: &Path) -> i32 {
     let findings = audit(&root);
     let problems = findings.iter().filter(|f| !f.ok).count();
     for f in &findings {
-        println!("  {} {}", if f.ok { "✓" } else { "✗" }, f.line);
+        let mark = if f.warn {
+            "!"
+        } else if f.ok {
+            "✓"
+        } else {
+            "✗"
+        };
+        println!("  {} {}", mark, f.line);
     }
-    if problems == 0 {
+    let warnings = findings.iter().filter(|f| f.warn).count();
+    if problems == 0 && warnings > 0 {
+        println!(
+            "everything checks out, with {} warning{}.",
+            warnings,
+            if warnings == 1 { "" } else { "s" }
+        );
+        0
+    } else if problems == 0 {
         println!("everything checks out.");
         0
     } else {
@@ -59,6 +86,9 @@ fn audit(root: &Path) -> Vec<Finding> {
                 "olang.toml: package {} {}",
                 m.package.name, m.package.version
             )));
+            for w in crate::pkg::manifest::Manifest::warnings(root) {
+                out.push(warn(format!("olang.toml: {w}")));
+            }
             Some(m)
         }
         Err(crate::pkg::manifest::ManifestError::NotFound(_)) => {
