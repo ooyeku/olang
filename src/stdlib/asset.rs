@@ -55,6 +55,26 @@ pub fn call_asset_function(
     name: &str,
     args: Vec<Value>,
 ) -> Result<Value, Box<dyn std::error::Error>> {
+    // a call made wrongly raises: two strings, a package and a path
+    if matches!(name, "read" | "exists" | "path") {
+        if args.len() != 2 {
+            return Err(crate::stdlib::misuse::arity(
+                &format!("asset.{name}"),
+                "2",
+                args.len(),
+            ));
+        }
+        for (i, which) in [(0, "package"), (1, "path")] {
+            if !matches!(args[i], Value::String(_)) {
+                return Err(crate::stdlib::misuse::arg_type(
+                    &format!("asset.{name}"),
+                    which,
+                    "a string",
+                    &args[i],
+                ));
+            }
+        }
+    }
     match name {
         "read" => Ok(
             match located(&args, "read").and_then(|p| {

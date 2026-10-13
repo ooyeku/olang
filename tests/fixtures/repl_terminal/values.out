@@ -22,21 +22,21 @@ Variable 'x' updated to: 5
 
 === Current Environment ===
 
-Core Functions (82):
+Core Functions (79):
   abs  all  any  assert  assert_close  assert_eq
   assert_false  assert_ne  assert_true  attempt  average  chunk
   clamp  concat  cons  contains  drop  ends_with
   entries  enumerate  eprint  eprintln  filter  find
-  first  flatten  fold  force  group_by  head
-  implements  is_err  is_ok  join  last  lazy
-  len  map  map_clear  map_filtered  map_get  map_get_in
-  map_get_or  map_has_key  map_keys  map_len  map_merge  map_path
-  map_remove  map_set  map_set_in  map_update  map_values  max
-  min  par_filter  par_map  print  println  raise
-  range  reduce  result_map  result_map_err  reverse  set_parallel
-  show  skip  sort  split  starts_with  sum
-  tail  take  to_float  to_int  to_string  typeof
-  unwrap  unwrap_or  unwrap_or_else  zip
+  first  flatten  fold  group_by  head  implements
+  is_err  is_ok  join  last  len  map
+  map_clear  map_filtered  map_get  map_get_in  map_get_or  map_has_key
+  map_keys  map_len  map_merge  map_remove  map_set  map_set_in
+  map_update  map_values  max  min  par_filter  par_map
+  print  println  raise  range  reduce  result_map
+  result_map_err  reverse  set_parallel  show  skip  sort
+  split  starts_with  sum  tail  take  to_float
+  to_int  to_string  typeof  unwrap  unwrap_or  unwrap_or_else
+  zip
   (use :env --full for detailed descriptions)
 
 User Environment (48):

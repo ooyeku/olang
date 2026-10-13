@@ -49,30 +49,34 @@ pub fn call_toml_function(
     }
 }
 
-fn one_string_arg<'a>(name: &str, args: &'a [Value]) -> Result<&'a str, Value> {
+/// The one string a function takes; a call without one is a misuse, and
+/// raises.
+fn one_string_arg<'a>(
+    name: &str,
+    args: &'a [Value],
+) -> Result<&'a str, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Err(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "{} expects 1 argument, got {}",
-            name,
-            args.len()
-        ))))));
+        return Err(crate::stdlib::misuse::arity(
+            &format!("toml.{name}"),
+            "1",
+            args.len(),
+        ));
     }
     match &args[0] {
         Value::String(s) => Ok(s.as_ref()),
-        _ => Err(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "{}: argument must be a string",
-            name
-        )))))),
+        other => Err(crate::stdlib::misuse::arg_type(
+            &format!("toml.{name}"),
+            "the text",
+            "a string",
+            other,
+        )),
     }
 }
 
 /// `toml.parse(text)` — a TOML document as a Map (tables → Maps,
 /// arrays → Lists, datetimes → strings).
 fn toml_parse(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    let text = match one_string_arg("parse", &args) {
-        Ok(t) => t,
-        Err(e) => return Ok(e),
-    };
+    let text = one_string_arg("parse", &args)?;
     match text.parse::<toml::Value>() {
         Ok(tv) => match super::json::json_to_olang_value(toml_to_json(tv)) {
             Ok(v) => Ok(Value::Ok(Box::new(v))),
@@ -181,9 +185,6 @@ fn toml_stringify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
 
 /// `toml.validate(text)` — does the text parse as TOML?
 fn toml_validate(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    let text = match one_string_arg("validate", &args) {
-        Ok(t) => t,
-        Err(e) => return Ok(e),
-    };
+    let text = one_string_arg("is_valid", &args)?;
     Ok(Value::Boolean(text.parse::<toml::Value>().is_ok()))
 }

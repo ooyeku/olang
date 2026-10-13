@@ -344,7 +344,7 @@ fn parse_opts(value: &Value, who: &str) -> Result<Opts, Value> {
 /// `Process` handle. Both output streams begin draining immediately.
 fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.is_empty() || args.len() > 3 {
-        return Ok(err(
+        return Err(misuse(
             "spawn expects (argv), (program, args) or (program, args, opts)",
         ));
     }
@@ -353,14 +353,14 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let args: Vec<Value> = match args.first() {
         Some(Value::List(argv)) if args.len() <= 2 => {
             let Some(first) = argv.first() else {
-                return Ok(err("spawn: argv is empty"));
+                return Err(misuse("spawn: argv is empty"));
             };
             let mut out = vec![first.clone(), Value::List(Arc::new(argv[1..].to_vec()))];
             out.extend(args.into_iter().skip(1));
             out
         }
         _ if args.len() < 2 => {
-            return Ok(err(
+            return Err(misuse(
                 "spawn expects (argv), (program, args) or (program, args, opts)",
             ));
         }
@@ -368,11 +368,11 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     };
     let program = match as_program(&args[0], "spawn") {
         Ok(p) => p,
-        Err(e) => return Ok(e),
+        Err(e) => return Err(raised(e)),
     };
     let cargs = match as_args(&args[1], "spawn") {
         Ok(a) => a,
-        Err(e) => return Ok(e),
+        Err(e) => return Err(raised(e)),
     };
     let Opts {
         cwd,
@@ -386,7 +386,7 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     } = match args.get(2) {
         Some(opts) => match parse_opts(opts, "spawn") {
             Ok(o) => o,
-            Err(e) => return Ok(e),
+            Err(e) => return Err(raised(e)),
         },
         None => Opts::default(),
     };
@@ -525,10 +525,10 @@ fn read_frame(r: &mut impl BufRead) -> Option<String> {
 /// language server protocol frames them.
 fn proc_write_frame(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(err("write_frame expects (process, string)"));
+        return Err(misuse("write_frame expects (process, string)"));
     }
     let Value::String(body) = &args[1] else {
-        return Ok(err(format!(
+        return Err(misuse(format!(
             "write_frame: value must be a string, got {}",
             args[1].type_name()
         )));
@@ -543,13 +543,13 @@ fn proc_write_frame(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
 /// `proc.write(p, s)` / `proc.write_line(p, s)` — feed the child's stdin.
 fn proc_write(args: Vec<Value>, newline: bool) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 2 {
-        return Ok(err("write expects (process, string)"));
+        return Err(misuse("write expects (process, string)"));
     }
     let p = proc_of(&args[0])?;
     let s = match &args[1] {
         Value::String(s) => s.as_ref().clone(),
         other => {
-            return Ok(err(format!(
+            return Err(misuse(format!(
                 "write: value must be a string, got {}",
                 other.type_name()
             )));
@@ -581,7 +581,7 @@ fn proc_write(args: Vec<Value>, newline: bool) -> Result<Value, Box<dyn std::err
 /// so a filter can finish. Idempotent.
 fn proc_close_stdin(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(err("close_stdin expects (process)"));
+        return Err(misuse("close_stdin expects (process)"));
     }
     let p = proc_of(&args[0])?;
     *p.stdin.lock().unwrap() = None;
@@ -593,7 +593,7 @@ fn proc_close_stdin(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error
 /// available.
 fn proc_read_line(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(err("read_line expects (process)"));
+        return Err(misuse("read_line expects (process)"));
     }
     let p = proc_of(&args[0])?;
     if p.bytes {
@@ -615,7 +615,7 @@ fn proc_read_line(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
 /// (lines rejoined with `\n`). Blocks until stdout closes.
 fn proc_read_all(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(err("read_all expects (process)"));
+        return Err(misuse("read_all expects (process)"));
     }
     let p = proc_of(&args[0])?;
     let rx = p.out_rx.lock().unwrap();
@@ -637,7 +637,7 @@ fn proc_read_all(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 /// once the child exits; read it after `proc.wait`.
 fn proc_stderr(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(err("stderr expects (process)"));
+        return Err(misuse("stderr expects (process)"));
     }
     let p = proc_of(&args[0])?;
     let s = p.stderr.lock().unwrap().clone();
@@ -651,6 +651,28 @@ pub(crate) fn text_or_bytes(raw: Vec<u8>, bytes: bool) -> Value {
         crate::stdlib::bytes::to_value(raw)
     } else {
         Value::String(Arc::new(String::from_utf8_lossy(&raw).into_owned()))
+    }
+}
+
+/// A misuse of a `proc` function: raised, with the module named.
+fn misuse(msg: impl Into<String>) -> Box<dyn std::error::Error> {
+    let msg = msg.into();
+    if msg.starts_with("proc.") {
+        msg.into()
+    } else {
+        format!("proc.{msg}").into()
+    }
+}
+
+/// An options or argument problem a helper answered as `Err(text)`,
+/// raised instead (misuse raises).
+fn raised(v: Value) -> Box<dyn std::error::Error> {
+    match &v {
+        Value::Err(inner) => match inner.as_ref() {
+            Value::String(t) => misuse(t.as_ref().clone()),
+            other => misuse(other.to_string()),
+        },
+        other => misuse(other.to_string()),
     }
 }
 
@@ -682,7 +704,7 @@ pub(crate) fn exit_parts(status: &std::process::ExitStatus) -> (Value, Value) {
 /// empty, so the child can always make progress to exit.
 fn proc_wait(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(err("wait expects (process)"));
+        return Err(misuse("wait expects (process)"));
     }
     let p = proc_of(&args[0])?;
     // Close stdin first if still open, so a filter waiting on more input
@@ -788,7 +810,7 @@ fn proc_kill(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     #[cfg(unix)]
     if let Some(sig) = signal {
         if tree && !p.group {
-            return Ok(err(
+            return Err(misuse(
                 "kill: a tree kill needs a process spawned with #{ group: true } \
                  (proc.spawn(program, args, #{ group: true }))",
             ));
@@ -806,7 +828,7 @@ fn proc_kill(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     #[cfg(not(unix))]
     let _ = signal;
     if tree && !p.group {
-        return Ok(err(
+        return Err(misuse(
             "kill: a tree kill needs a process spawned with #{ group: true } \
              (proc.spawn(program, args, #{ group: true }))",
         ));
@@ -823,7 +845,7 @@ fn proc_kill(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// `proc.pid(p)` — the child's OS process id.
 fn proc_pid(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(err("pid expects (process)"));
+        return Err(misuse("pid expects (process)"));
     }
     let p = proc_of(&args[0])?;
     Ok(ok(Value::Integer(p.pid as i64)))
@@ -837,18 +859,18 @@ fn proc_pid(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// per-stage codes. `opts.stdin` feeds the first stage.
 fn proc_pipeline(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.is_empty() || args.len() > 2 {
-        return Ok(err("pipeline expects (stages) or (stages, opts)"));
+        return Err(misuse("pipeline expects (stages) or (stages, opts)"));
     }
     let stage_list = match &args[0] {
         Value::List(items) => items,
         _ => {
-            return Ok(err(
+            return Err(misuse(
                 "pipeline: stages must be a list of [program, ...args] lists",
             ));
         }
     };
     if stage_list.is_empty() {
-        return Ok(err("pipeline: needs at least one stage"));
+        return Err(misuse("pipeline: needs at least one stage"));
     }
     // Each stage: a non-empty list whose head is the program.
     let mut stages: Vec<(String, Vec<String>)> = Vec::with_capacity(stage_list.len());
@@ -856,21 +878,21 @@ fn proc_pipeline(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         let parts = match stage {
             Value::List(p) if !p.is_empty() => p,
             _ => {
-                return Ok(err(
+                return Err(misuse(
                     "pipeline: each stage must be a non-empty [program, ...args] list",
                 ));
             }
         };
         let program = match as_program(&parts[0], "pipeline") {
             Ok(p) => p,
-            Err(e) => return Ok(e),
+            Err(e) => return Err(raised(e)),
         };
         let mut cargs = Vec::with_capacity(parts.len() - 1);
         for a in parts.iter().skip(1) {
             match a {
                 Value::String(s) => cargs.push(s.as_ref().clone()),
                 other => {
-                    return Ok(err(format!(
+                    return Err(misuse(format!(
                         "pipeline: stage arguments must be strings, found {}",
                         other.type_name()
                     )));
@@ -890,7 +912,7 @@ fn proc_pipeline(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     } = match args.get(1) {
         Some(opts) => match parse_opts(opts, "pipeline") {
             Ok(o) => o,
-            Err(e) => return Ok(e),
+            Err(e) => return Err(raised(e)),
         },
         None => Opts::default(),
     };

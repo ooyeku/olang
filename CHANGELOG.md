@@ -222,7 +222,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `re.replace_all(`, `json.validate(` or `toml.validate(` call and `olang
   fix deprecated` rewrites it. stdlib.md and ods.md give `set_parallel`
   its real signature, a Bool.
-
+- **A call made wrongly raises in every module** (stdlib.md's rule
+  since 0.64): wrong arity, a wrong argument type, and an unknown option
+  key now raise in `db`, `proc`, `pty`, the `fs` path functions,
+  `fs.scan`/`fs.search`, `asset`, `toml`, `vt`, `runtime`, `caps`,
+  `testing`, `http.serve` and `http.shutdown`, where they answered
+  `Err` (or ignored the extra argument or key). What the world says —
+  a missing file, a closed connection, a port in use, a folder that is
+  not there — is still an `Err`. Correct calls are unchanged.
 
 ### Added
 

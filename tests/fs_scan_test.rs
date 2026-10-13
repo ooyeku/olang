@@ -122,7 +122,7 @@ fn scan_refuses_what_is_not_a_folder_and_options_it_does_not_know() {
     );
     let d = tree();
     let msg = s(eval(&format!(
-        r#"match fs.scan("{}", #{{ "deep": true }}) {{ Ok(x) => "", Err(e) => e }}"#,
+        r#"match attempt(() => fs.scan("{}", #{{ "deep": true }})) {{ Ok(x) => "", Err(e) => e }}"#,
         root_of(&d)
     )));
     assert!(msg.contains("unknown option 'deep'"), "{}", msg);

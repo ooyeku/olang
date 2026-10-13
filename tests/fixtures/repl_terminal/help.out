@@ -162,49 +162,49 @@ Usage: :search <query> [filters]
    [32mThe value under key, or the default when the key is absent — the one-call form of the missing-key-with-default idiom (map_get returns Unit for absence, which unwrap_or cannot take).[0m
    [35mSyntax:[0m [36mmap_get_or(map, key, default)[0m
 
-[2m10. FUZZY[0m [34mmap_path[0m [2m(Maps)[0m
-   [32mDeprecated (0.88): map_get_in under an older name, kept working; olang fix deprecated renames the calls. A nested read in one call — the value at the end of the key path, or Unit at the first missing hop.[0m
-   [35mSyntax:[0m [36mmap_path(value, keys)[0m
-
-[2m11. FUZZY[0m [34mmap_values[0m [2m(Maps)[0m
+[2m10. FUZZY[0m [34mmap_values[0m [2m(Maps)[0m
    [32mEvery value, in the sorted-key order map_keys reports.[0m
    [35mSyntax:[0m [36mmap_values(map)[0m
 
-[2m12. FUZZY[0m [34mpar_map[0m [2m(List)[0m
+[2m11. FUZZY[0m [34mpar_map[0m [2m(List)[0m
    [32mmap fanned out across OS threads: same results in the same order, one worker interpreter per thread (no GIL). The function runs against worker snapshots like spawn, so mutations to enclosing state are not visible to the caller[0m
    [35mSyntax:[0m [36mpar_map(list, function)[0m
 
-[2m13. FUZZY[0m [34mcol.flat_map[0m [2m(Collections)[0m
+[2m12. FUZZY[0m [34mcol.flat_map[0m [2m(Collections)[0m
    [32mMap then flatten one level.[0m
    [35mSyntax:[0m [36mcol.flat_map(list, fn)[0m
 
-[2m14. FUZZY[0m [34mcolx.flat_map[0m [2m(colx)[0m
+[2m13. FUZZY[0m [34mcolx.flat_map[0m [2m(colx)[0m
    [32mmap f over xs and concatenate the resulting lists[0m
    [35mSyntax:[0m [36mcolx.flat_map(xs, f)[0m
 
-[2m15. FUZZY[0m [34mmap_filtered[0m [2m(Higher-Order)[0m
+[2m14. FUZZY[0m [34mmap_filtered[0m [2m(Higher-Order)[0m
    [32mFilter then map in one pass: function applied to each element the                  predicate accepts.[0m
    [35mSyntax:[0m [36mmap_filtered(list, predicate, function)[0m
 
-[2m16. FUZZY[0m [34mplot.heatmap[0m [2m(plot)[0m
+[2m15. FUZZY[0m [34mplot.heatmap[0m [2m(plot)[0m
    [32ma heatmap of the row-major value grid, as an SVG string[0m
    [35mSyntax:[0m [36mplot.heatmap(x_labels, y_labels, rows, opts)[0m
 
-[2m17. FUZZY[0m [34mmap_has_key[0m [2m(Maps)[0m
+[2m16. FUZZY[0m [34mmap_has_key[0m [2m(Maps)[0m
    [32mWhether key is present — the way to tell an absent key from one stored                  with a Unit value.[0m
    [35mSyntax:[0m [36mmap_has_key(map, key)[0m
 
-[2m18. FUZZY[0m [34mmap_keys[0m [2m(Maps)[0m
+[2m17. FUZZY[0m [34mmap_keys[0m [2m(Maps)[0m
    [32mEvery key, sorted — the same deterministic order entries uses.[0m
    [35mSyntax:[0m [36mmap_keys(map)[0m
 
-[2m19. FUZZY[0m [34mmap_len[0m [2m(Maps)[0m
+[2m18. FUZZY[0m [34mmap_len[0m [2m(Maps)[0m
    [32mThe number of entries (an object's or a parsed JSON object's fields).[0m
    [35mSyntax:[0m [36mmap_len(map)[0m
 
-[2m20. EXACT[0m [34mmap[0m [2m(List)[0m
+[2m19. EXACT[0m [34mmap[0m [2m(List)[0m
    [32mApplies a function to each element in a list, returning a new list[0m
    [35mSyntax:[0m [36mmap(list, function)[0m
+
+[2m20. FUZZY[0m [34mresult_map[0m [2m(Result)[0m
+   [32mTransform the Ok value of a Result using a function, leaving Err values unchanged[0m
+   [35mSyntax:[0m [36mresult_map(result, function)[0m
 
 [2mTIP: Use ':help <function>' for detailed documentation[0m
 

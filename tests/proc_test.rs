@@ -170,7 +170,7 @@ fn a_tree_kill_needs_a_grouped_spawn() {
     assert_all_true(
         r#"
 let p = unwrap(proc.spawn("sleep", ["5"]))
-let refused = match proc.kill(p, #{ "tree": true }) { Ok(u) => "", Err(e) => e }
+let refused = match attempt(() => proc.kill(p, #{ "tree": true })) { Ok(u) => "", Err(e) => e }
 let plain = proc.kill(p)
 let w = proc.wait(p)
 [ str.contains(refused, "group: true"), is_ok(plain) ]

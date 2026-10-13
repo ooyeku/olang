@@ -92,7 +92,7 @@ assert_eq(map_get(unwrap(db.query_one(c, "SELECT 1 AS n")), "n"), 1)
 unwrap(db.close(c))
 // a closed connection has nothing to interrupt
 assert_eq(db.interrupt(c), Ok(()))
-assert(is_err(db.interrupt(42)), "not a connection")
+assert(is_err(attempt(() => db.interrupt(42))), "not a connection: a misuse, raised")
 "ok"
 "#,
     );
@@ -143,8 +143,8 @@ assert_eq(db.execute(c, "INSERT INTO t {INSERT}", [], #{{ "timeout_ms": 50 }}), 
 assert_eq(map_get(unwrap(db.query_one(c, "SELECT ? + 1 AS n", [1], #{{ "timeout_ms": 5000 }})), "n"), 2)
 assert_eq(len(unwrap(db.query(c, "SELECT 1"))), 1)
 // bad options are named
-assert_eq(db.query(c, "SELECT 1", [], #{{ "timeout_ms": 0 }}), Err("db.query: timeout_ms must be a positive number of milliseconds, got 0"))
-assert_eq(db.query(c, "SELECT 1", [], #{{ "timeout": 5 }}), Err("db.query: unknown option \"timeout\" (it takes timeout_ms)"))
+assert_eq(attempt(() => db.query(c, "SELECT 1", [], #{{ "timeout_ms": 0 }})), Err("db.query: timeout_ms must be a positive number of milliseconds, got 0"))
+assert_eq(attempt(() => db.query(c, "SELECT 1", [], #{{ "timeout": 5 }})), Err("db.query: unknown option \"timeout\" (it takes timeout_ms)"))
 unwrap(db.close(c))
 "ok"
 "#,
@@ -208,8 +208,8 @@ let none = unwrap(db.cursor(c, "SELECT name FROM t WHERE id > 100"))
 assert_eq(map(unwrap(db.columns(none)), (k) => map_get(k, "name")), ["name"])
 assert_eq(unwrap(db.next(none, 10)), [])
 // misuse is named
-assert_eq(db.next(none, 0), Err("db.next: n must be a positive integer, got 0"))
-assert(is_err(db.next(c, 1)), "a connection is not a cursor")
+assert_eq(attempt(() => db.next(none, 0)), Err("db.next: n must be a positive integer, got 0"))
+assert(is_err(attempt(() => db.next(c, 1))), "a connection is not a cursor: a misuse, raised")
 assert(is_err(db.cursor(c, "SELECT nope FROM t")), "bad SQL")
 assert_eq(db.cursor(c, "SELECT 1; SELECT 2"), Err("db.cursor: more than one statement: run them one at a time"))
 unwrap(db.close(c))
@@ -396,9 +396,9 @@ unwrap(db.close(w))
 let again = unwrap(db.open("{path}", #{{ "create": false }}))
 assert_eq(unwrap(db.execute(again, "INSERT INTO t VALUES (1)")), 1)
 unwrap(db.close(again))
-assert_eq(db.open("{path}", #{{ "readonly": true, "create": true }}), Err("db.open: readonly and create cannot both be true: a read-only open never makes a file"))
-assert_eq(db.open("{path}", #{{ "mode": "ro" }}), Err("db.open: unknown option \"mode\" (it takes readonly and create)"))
-assert_eq(db.open("{path}", #{{ "readonly": 1 }}), Err("db.open: readonly must be true or false, got 1"))
+assert_eq(attempt(() => db.open("{path}", #{{ "readonly": true, "create": true }})), Err("db.open: readonly and create cannot both be true: a read-only open never makes a file"))
+assert_eq(attempt(() => db.open("{path}", #{{ "mode": "ro" }})), Err("db.open: unknown option \"mode\" (it takes readonly and create)"))
+assert_eq(attempt(() => db.open("{path}", #{{ "readonly": 1 }})), Err("db.open: readonly must be true or false, got 1"))
 // the defaults are today's: read-write, created when missing
 let m = unwrap(db.open(":memory:", #{{}}))
 unwrap(db.close(m))

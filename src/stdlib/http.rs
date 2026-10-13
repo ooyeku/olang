@@ -118,6 +118,11 @@ pub fn call_http_function(
         "delete" => http_delete(args),
         "request" => http_request(args),
         "serve" => http_serve(args),
+        "shutdown" if !args.is_empty() => Err(crate::stdlib::misuse::arity(
+            "http.shutdown",
+            "0",
+            args.len(),
+        )),
         "shutdown" => {
             // Ask every running `http.serve` to stop accepting and drain:
             // in-flight requests finish, workers exit, `serve` returns Ok.
@@ -1379,24 +1384,30 @@ pub fn serve_blocking(
     use std::io::Write;
 
     let err_val = |msg: String| Ok(Value::Err(Box::new(Value::String(Arc::new(msg)))));
+    // a call made wrongly raises; a port that cannot be bound is an Err
+    let misuse = |msg: String| {
+        Err(crate::interpreter::InterpreterError::runtime(format!(
+            "http.{msg}"
+        )))
+    };
 
     if !(2..=3).contains(&args.len()) {
-        return err_val(format!(
+        return misuse(format!(
             "serve expects 2 or 3 arguments (port, handler[, options]), got {}",
             args.len()
         ));
     }
     let port = match &args[0] {
         Value::Integer(p) if (0..=65535).contains(p) => *p as u16,
-        _ => return err_val("serve: port must be an integer in 0..=65535".to_string()),
+        _ => return misuse("serve: port must be an integer in 0..=65535".to_string()),
     };
     let handler = args[1].clone();
     if !matches!(handler, Value::Function(_) | Value::Builtin(_)) {
-        return err_val("serve: handler must be a function".to_string());
+        return misuse("serve: handler must be a function".to_string());
     }
     let config = match serve_config(args.get(2)) {
         Ok(config) => config,
-        Err(message) => return err_val(message),
+        Err(message) => return misuse(message),
     };
 
     let listener = match std::net::TcpListener::bind((config.bind.as_str(), port)) {

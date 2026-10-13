@@ -87,6 +87,26 @@ pub fn create_pty_module() -> Value {
 }
 
 pub fn call_pty_function(name: &str, args: Vec<Value>) -> Res {
+    // a call with too few or too many arguments is a misuse: it raises
+    let (min, max) = match name {
+        "spawn" | "read" | "kill" | "wait" => (1, 2),
+        "write" => (2, 2),
+        "resize" => (3, 3),
+        "pid" | "foreground" | "cwd" | "close" => (1, 1),
+        _ => (0, 0),
+    };
+    if args.len() < min || args.len() > max {
+        let expected = if min == max {
+            min.to_string()
+        } else {
+            format!("{min} or {max}")
+        };
+        return Err(crate::stdlib::misuse::arity(
+            &format!("pty.{name}"),
+            &expected,
+            args.len(),
+        ));
+    }
     #[cfg(unix)]
     {
         imp::call(name, args)
@@ -112,6 +132,16 @@ fn handle(id: i64) -> Value {
     Value::Struct {
         type_name: "Pty".to_string(),
         fields: Arc::new(fields),
+    }
+}
+
+/// A handle problem: a value that is no Pty at all is a misuse, and
+/// raises; a Pty closed already is the answer `Err` says.
+fn pty_fail(e: String) -> Result<Value, Box<dyn std::error::Error>> {
+    if e.contains("expected a Pty handle") || e.contains("malformed") {
+        Err(e.into())
+    } else {
+        Ok(err(e))
     }
 }
 
@@ -221,7 +251,7 @@ mod imp {
             "pid" => {
                 let p = match pty_of(args.first().unwrap_or(&Value::Unit)) {
                     Ok(p) => p,
-                    Err(e) => return Ok(err(e)),
+                    Err(e) => return pty_fail(e),
                 };
                 Ok(Value::Integer(p.pid as i64))
             }
@@ -537,13 +567,26 @@ mod imp {
     fn read(args: Vec<Value>) -> Res {
         let p = match pty_of(args.first().unwrap_or(&Value::Unit)) {
             Ok(p) => p,
-            Err(e) => return Ok(err(e)),
+            Err(e) => return pty_fail(e),
         };
         let empty = crate::ast::ValueMap::default();
         let o = match args.get(1) {
             Some(Value::Map(m)) => m.as_ref(),
-            _ => &empty,
+            None => &empty,
+            Some(other) => {
+                return Err(
+                    format!("pty.read: options must be a map, got {}", other.type_name()).into(),
+                );
+            }
         };
+        if let Some(k) = o
+            .keys()
+            .find(|k| !matches!(k.as_str(), "timeout_ms" | "settle_ms" | "max"))
+        {
+            return Err(
+                format!("pty.read: unknown option '{k}' (timeout_ms, settle_ms, max)").into(),
+            );
+        }
         let timeout = num_opt(o, "timeout_ms").unwrap_or(1000);
         let settle = num_opt(o, "settle_ms").unwrap_or(2);
         let max = num_opt(o, "max").unwrap_or(1 << 20).max(1) as usize;
@@ -586,7 +629,7 @@ mod imp {
         }
         let p = match pty_of(&args[0]) {
             Ok(p) => p,
-            Err(e) => return Ok(err(e)),
+            Err(e) => return pty_fail(e),
         };
         let data = match &args[1] {
             Value::String(t) => t.as_bytes().to_vec(),
@@ -615,7 +658,7 @@ mod imp {
         }
         let p = match pty_of(&args[0]) {
             Ok(p) => p,
-            Err(e) => return Ok(err(e)),
+            Err(e) => return pty_fail(e),
         };
         let n = |v: &Value| match v {
             Value::Integer(i) => *i,
@@ -690,7 +733,7 @@ mod imp {
     fn kill(args: Vec<Value>) -> Res {
         let p = match pty_of(args.first().unwrap_or(&Value::Unit)) {
             Ok(p) => p,
-            Err(e) => return Ok(err(e)),
+            Err(e) => return pty_fail(e),
         };
         let sig = signal_of(args.get(1))?;
         signal_groups(&p, sig);
@@ -734,7 +777,7 @@ mod imp {
     fn wait(args: Vec<Value>) -> Res {
         let p = match pty_of(args.first().unwrap_or(&Value::Unit)) {
             Ok(p) => p,
-            Err(e) => return Ok(err(e)),
+            Err(e) => return pty_fail(e),
         };
         // an Int of milliseconds, or #{ timeout_ms } as every wait takes
         let ms = match args.get(1) {
@@ -822,7 +865,7 @@ mod imp {
     fn foreground(args: Vec<Value>) -> Res {
         let p = match pty_of(args.first().unwrap_or(&Value::Unit)) {
             Ok(p) => p,
-            Err(e) => return Ok(err(e)),
+            Err(e) => return pty_fail(e),
         };
         if status(&p).is_some() {
             return Ok(Value::Unit);
@@ -845,7 +888,7 @@ mod imp {
     fn cwd(args: Vec<Value>) -> Res {
         let p = match pty_of(args.first().unwrap_or(&Value::Unit)) {
             Ok(p) => p,
-            Err(e) => return Ok(err(e)),
+            Err(e) => return pty_fail(e),
         };
         // SAFETY: tcgetpgrp on the master we hold.
         let fg = unsafe { libc::tcgetpgrp(p.master.as_raw_fd()) };

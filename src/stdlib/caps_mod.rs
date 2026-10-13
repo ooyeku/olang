@@ -93,6 +93,15 @@ fn unknown(name: &str) -> String {
 /// itself lives in the interpreter, which is what knows whose code is
 /// executing.
 pub fn call(function: &str, args: Vec<Value>, caps: &Caps) -> Result<Value, String> {
+    // a call made wrongly raises: one name, or (granted) none
+    let wanted = if function == "granted" { 0 } else { 1 };
+    if args.len() != wanted {
+        return Err(format!(
+            "caps.{function} expects {wanted} argument{}, got {}",
+            if wanted == 1 { "" } else { "s" },
+            args.len()
+        ));
+    }
     match function {
         "allowed" => match args.first() {
             Some(Value::String(name)) => holds(caps, name.as_str())

@@ -48,6 +48,13 @@ pub fn call_runtime_function(
     name: &str,
     args: Vec<Value>,
 ) -> Result<Value, Box<dyn std::error::Error>> {
+    if name == "version" && !args.is_empty() {
+        return Err(crate::stdlib::misuse::arity(
+            "runtime.version",
+            "0",
+            args.len(),
+        ));
+    }
     match name {
         "version" => Ok(Value::String(Arc::new(crate::version::VERSION.to_string()))),
         "wasm" => runtime_wasm(args),
@@ -439,6 +446,9 @@ pub fn call_host(
         })(),
         "module_permits" => host_module_permits(args),
         "call_budget" => host_call_budget(args, interpreter),
+        "last_error" if !args.is_empty() => {
+            Err(host_err("runtime.last_error expects no arguments"))
+        }
         "last_error" => Ok(match crate::errtrace::last() {
             None => Value::Unit,
             Some((message, frames)) => map_value(vec![
@@ -446,9 +456,9 @@ pub fn call_host(
                 ("frames", crate::errtrace::frames_value(&frames)),
             ]),
         }),
-        "shape" => match args.first() {
-            Some(v) => Ok(Value::String(Arc::new(shape_of(v, 0)))),
-            None => Err(host_err("runtime.shape expects a value")),
+        "shape" => match args {
+            [v] => Ok(Value::String(Arc::new(shape_of(v, 0)))),
+            _ => Err(host_err("runtime.shape expects one value")),
         },
         _ => return None,
     })

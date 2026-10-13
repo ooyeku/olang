@@ -211,6 +211,28 @@ fn walk_files(root: &Path, w: &Walk) -> Vec<String> {
     out
 }
 
+/// An options problem a helper answered as `Err(text)`: a misuse, raised.
+fn raised(v: Value) -> Box<dyn std::error::Error> {
+    match &v {
+        Value::Err(inner) => match inner.as_ref() {
+            Value::String(t) => t.as_ref().clone().into(),
+            other => other.to_string().into(),
+        },
+        other => other.to_string().into(),
+    }
+}
+
+/// A root that is not a folder is the answer `Err` says; a root that is
+/// not a path at all is a misuse, and raises.
+fn root_fail(e: Value) -> Result<Value, Box<dyn std::error::Error>> {
+    let text = e.to_string();
+    if text.contains("is not a folder") {
+        Ok(e)
+    } else {
+        Err(raised(e))
+    }
+}
+
 fn root_arg(args: &[Value], who: &str) -> Result<PathBuf, Value> {
     match args.first() {
         Some(Value::String(s)) => {
@@ -242,16 +264,16 @@ pub fn scan(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     }
     let root = match root_arg(&args, "fs.scan") {
         Ok(r) => r,
-        Err(e) => return Ok(e),
+        Err(e) => return root_fail(e),
     };
     let opts = match args.get(1).map(fields_of) {
         None => ValueMap::default(),
         Some(Some(m)) => m,
-        Some(None) => return Ok(err("fs.scan: options must be a map".to_string())),
+        Some(None) => return Err("fs.scan: options must be a map".into()),
     };
     let w = match walk_opts(&opts, "fs.scan", &[]) {
         Ok(w) => w,
-        Err(e) => return Ok(e),
+        Err(e) => return Err(raised(e)),
     };
     let files = walk_files(&root, &w);
     let list: Vec<Value> = files
@@ -438,21 +460,22 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     }
     let root = match root_arg(&args, "fs.search") {
         Ok(r) => r,
-        Err(e) => return Ok(e),
+        Err(e) => return root_fail(e),
     };
     let query = match &args[1] {
         Value::String(s) => s.as_ref().clone(),
         other => {
-            return Ok(err(format!(
+            return Err(format!(
                 "fs.search: the query must be a string, got {}",
                 other.type_name()
-            )));
+            )
+            .into());
         }
     };
     let opts = match args.get(2).map(fields_of) {
         None => ValueMap::default(),
         Some(Some(m)) => m,
-        Some(None) => return Ok(err("fs.search: options must be a map".to_string())),
+        Some(None) => return Err("fs.search: options must be a map".into()),
     };
     let extra = [
         "regex", "case", "word", "limit", "per_file", "files", "replace",
@@ -460,31 +483,31 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     // (the walk's own `limit` is `files_limit` here: `limit` counts matches)
     let w = match walk_opts(&opts, "fs.search", &extra) {
         Ok(w) => w,
-        Err(e) => return Ok(e),
+        Err(e) => return Err(raised(e)),
     };
     let get = |k: &str| opts.get(k);
     let regex_on = match get("regex").map(|v| flag(v, "fs.search", "regex")) {
-        Some(Err(e)) => return Ok(e),
+        Some(Err(e)) => return Err(raised(e)),
         Some(Ok(b)) => b,
         None => false,
     };
     let case = match get("case").map(|v| flag(v, "fs.search", "case")) {
-        Some(Err(e)) => return Ok(e),
+        Some(Err(e)) => return Err(raised(e)),
         Some(Ok(b)) => b,
         None => false,
     };
     let word = match get("word").map(|v| flag(v, "fs.search", "word")) {
-        Some(Err(e)) => return Ok(e),
+        Some(Err(e)) => return Err(raised(e)),
         Some(Ok(b)) => b,
         None => false,
     };
     let limit = match get("limit").map(|v| count(v, "fs.search", "limit")) {
-        Some(Err(e)) => return Ok(e),
+        Some(Err(e)) => return Err(raised(e)),
         Some(Ok(n)) => n,
         None => 2000,
     };
     let per_file = match get("per_file").map(|v| count(v, "fs.search", "per_file")) {
-        Some(Err(e)) => return Ok(e),
+        Some(Err(e)) => return Err(raised(e)),
         Some(Ok(n)) => n.max(1),
         None => 200,
     };
@@ -532,7 +555,7 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let files: Vec<String> = match get("files") {
         Some(v) => match strings(v, "fs.search", "files") {
             Ok(fs) => fs,
-            Err(e) => return Ok(e),
+            Err(e) => return Err(raised(e)),
         },
         None => walk_files(&root, &w),
     };

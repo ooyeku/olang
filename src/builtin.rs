@@ -1106,12 +1106,24 @@ impl BuiltinFunctions {
         // snapshots (Loom's pixels) says one differs, for `olang test
         // --format json`'s `snapshot` event. Nothing otherwise.
         if name == "testing.snapshot_failed" {
+            if arguments.len() != 1 {
+                return Err(InterpreterError::runtime(format!(
+                    "testing.snapshot_failed expects 1 argument (the snapshot's facts), got {}",
+                    arguments.len()
+                )));
+            }
             if let Some(info) = arguments.first() {
                 crate::tools::test_events::note_snapshot(info);
             }
             return Ok(Value::Unit);
         }
         if name == "testing.snapshot_dir" {
+            if !arguments.is_empty() {
+                return Err(InterpreterError::runtime(format!(
+                    "testing.snapshot_dir expects no arguments, got {}",
+                    arguments.len()
+                )));
+            }
             return Ok(Value::String(std::sync::Arc::new(
                 snapshot_dir(interpreter).to_string_lossy().to_string(),
             )));

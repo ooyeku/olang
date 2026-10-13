@@ -141,7 +141,7 @@ fn serve_takes_a_bind_address_and_refuses_a_bad_one() {
     write(
         &ws,
         "b.ol",
-        "match http.serve(0, (req) => \"x\", #{ \"bind\": 5 }) {\n\
+        "match attempt(() => http.serve(0, (req) => \"x\", #{ \"bind\": 5 })) {\n\
              Err(e) => println(\"err: \" + show(e)), Ok(v) => println(\"ok\") }\n",
     );
     let (out, err, rc) = olang(&ws, &["run", "b.ol"]);

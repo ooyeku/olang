@@ -90,6 +90,13 @@ pub fn call_testing_function(
     name: &str,
     args: Vec<Value>,
 ) -> Result<Value, Box<dyn std::error::Error>> {
+    if matches!(name, "test_summary" | "reset_tests" | "snapshot_dir") && !args.is_empty() {
+        return Err(crate::stdlib::misuse::arity(
+            &format!("testing.{name}"),
+            "0",
+            args.len(),
+        ));
+    }
     let result = match name {
         "assert_eq" => assert_eq(args),
         "assert_ne" => assert_ne(args),

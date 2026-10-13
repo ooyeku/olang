@@ -327,6 +327,23 @@ fn err(msg: impl Into<String>) -> Value {
     Value::Err(Box::new(Value::String(std::sync::Arc::new(msg.into()))))
 }
 
+/// A misuse: raised, its text as written.
+fn misuse_text(msg: impl Into<String>) -> Box<dyn std::error::Error> {
+    msg.into().into()
+}
+
+/// A misuse a helper answered as `Err(text)`: raised instead (a call made
+/// wrongly raises; only what the database says is an `Err`).
+fn raised(v: Value) -> Box<dyn std::error::Error> {
+    match &v {
+        Value::Err(inner) => match inner.as_ref() {
+            Value::String(t) => t.as_ref().clone().into(),
+            other => other.to_string().into(),
+        },
+        other => other.to_string().into(),
+    }
+}
+
 fn string(s: impl Into<String>) -> Value {
     Value::String(std::sync::Arc::new(s.into()))
 }
@@ -1030,7 +1047,7 @@ fn cursor_of<'a>(func: &str, value: &'a Value) -> Result<&'a CursorObject, Value
 /// before it. Returns the version now recorded.
 fn db_migrate(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if let Err(e) = connection_id(args.first().unwrap_or(&UNIT)) {
-        return Ok(e);
+        return Err(raised(e));
     }
     let steps: Vec<Vec<String>> = match args.get(1) {
         Some(Value::List(versions)) => {
@@ -1044,7 +1061,7 @@ fn db_migrate(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                             match stmt {
                                 Value::String(s) => v.push(s.to_string()),
                                 other => {
-                                    return Ok(err(format!(
+                                    return Err(misuse_text(format!(
                                         "db.migrate: version {} holds a {}, expected SQL strings",
                                         i + 1,
                                         other.type_name()
@@ -1055,7 +1072,7 @@ fn db_migrate(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                         out.push(v);
                     }
                     other => {
-                        return Ok(err(format!(
+                        return Err(misuse_text(format!(
                             "db.migrate: version {} is a {}, expected a list of SQL strings",
                             i + 1,
                             other.type_name()
@@ -1066,7 +1083,7 @@ fn db_migrate(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             out
         }
         _ => {
-            return Ok(err(
+            return Err(misuse_text(
                 "db.migrate: steps must be a list of versions, each a list of SQL strings"
                     .to_string(),
             ));
@@ -1131,13 +1148,12 @@ fn db_transaction_statement(
     sql: &str,
 ) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Ok(Value::Err(Box::new(Value::String(std::sync::Arc::new(
-            format!(
-                "{} expects 1 argument (connection), got {}",
-                sql.to_lowercase(),
-                args.len()
-            ),
-        )))));
+        return Err(format!(
+            "db.{} expects 1 argument (connection), got {}",
+            sql.to_lowercase(),
+            args.len()
+        )
+        .into());
     }
     let conn = args.into_iter().next().unwrap();
     db_execute(vec![
@@ -1159,7 +1175,7 @@ fn is_plain_file_path(path: &str) -> bool {
 fn db_open(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let path = match args.first() {
         Some(Value::String(s)) => s.to_string(),
-        _ => return Ok(err("db.open: path must be a string")),
+        _ => return Err(misuse_text("db.open: path must be a string")),
     };
     let mut readonly = false;
     let mut create = None;
@@ -1168,7 +1184,7 @@ fn db_open(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Some(Value::Map(m)) => {
             for (key, value) in m.iter() {
                 if key != "readonly" && key != "create" {
-                    return Ok(err(format!(
+                    return Err(misuse_text(format!(
                         "db.open: unknown option \"{}\" (it takes readonly and create)",
                         key
                     )));
@@ -1176,7 +1192,7 @@ fn db_open(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                 let flag = match value {
                     Value::Boolean(b) => *b,
                     other => {
-                        return Ok(err(format!(
+                        return Err(misuse_text(format!(
                             "db.open: {} must be true or false, got {}",
                             key, other
                         )));
@@ -1190,17 +1206,17 @@ fn db_open(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             }
         }
         Some(other) => {
-            return Ok(err(format!(
+            return Err(misuse_text(format!(
                 "db.open: options must be a map (#{{ \"readonly\": true, \"create\": false }}), got {}",
                 other.type_name()
             )));
         }
     }
     if args.len() > 2 {
-        return Ok(err("db.open: too many arguments (path, options)"));
+        return Err(misuse_text("db.open: too many arguments (path, options)"));
     }
     if readonly && create == Some(true) {
-        return Ok(err(
+        return Err(misuse_text(
             "db.open: readonly and create cannot both be true: a read-only open never makes a file",
         ));
     }
@@ -1261,15 +1277,15 @@ fn db_open(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// affected). For statements that change data (CREATE/INSERT/UPDATE/DELETE).
 fn db_execute(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if let Err(e) = connection_id(args.first().unwrap_or(&UNIT)) {
-        return Ok(e);
+        return Err(raised(e));
     }
     let sql = match sql_arg("execute", &args) {
         Ok(s) => s,
-        Err(e) => return Ok(e),
+        Err(e) => return Err(raised(e)),
     };
     let tail = match call_tail("execute", &args, 2) {
         Ok(t) => t,
-        Err(e) => return Ok(e),
+        Err(e) => return Err(raised(e)),
     };
     let params: Vec<Param> = tail.params.into_iter().map(Param).collect();
     let outcome = with_conn("execute", &args[0], tail.timeout_ms, |st| {
@@ -1288,15 +1304,15 @@ fn db_execute(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 fn db_query(args: Vec<Value>, one: bool) -> Result<Value, Box<dyn std::error::Error>> {
     let func = if one { "query_one" } else { "query" };
     if let Err(e) = connection_id(args.first().unwrap_or(&UNIT)) {
-        return Ok(e);
+        return Err(raised(e));
     }
     let sql = match sql_arg(func, &args) {
         Ok(s) => s,
-        Err(e) => return Ok(e),
+        Err(e) => return Err(raised(e)),
     };
     let tail = match call_tail(func, &args, 2) {
         Ok(t) => t,
-        Err(e) => return Ok(e),
+        Err(e) => return Err(raised(e)),
     };
     let params: Vec<Param> = tail.params.into_iter().map(Param).collect();
 
@@ -1336,15 +1352,15 @@ fn db_query(args: Vec<Value>, one: bool) -> Result<Value, Box<dyn std::error::Er
 /// row a list in that order, BLOBs as Bytes.
 fn db_query_rows(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if let Err(e) = connection_id(args.first().unwrap_or(&UNIT)) {
-        return Ok(e);
+        return Err(raised(e));
     }
     let sql = match sql_arg("query_rows", &args) {
         Ok(s) => s,
-        Err(e) => return Ok(e),
+        Err(e) => return Err(raised(e)),
     };
     let tail = match call_tail("query_rows", &args, 2) {
         Ok(t) => t,
-        Err(e) => return Ok(e),
+        Err(e) => return Err(raised(e)),
     };
     let outcome = with_conn("query_rows", &args[0], tail.timeout_ms, |st| {
         let (stmt, cols) = prepare_bound(st, &sql, &tail.params)?;
@@ -1375,15 +1391,15 @@ fn db_query_rows(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 fn db_cursor(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let id = match connection_id(args.first().unwrap_or(&UNIT)) {
         Ok(id) => id,
-        Err(e) => return Ok(e),
+        Err(e) => return Err(raised(e)),
     };
     let sql = match sql_arg("cursor", &args) {
         Ok(s) => s,
-        Err(e) => return Ok(e),
+        Err(e) => return Err(raised(e)),
     };
     let tail = match call_tail("cursor", &args, 2) {
         Ok(t) => t,
-        Err(e) => return Ok(e),
+        Err(e) => return Err(raised(e)),
     };
     let Some(entry) = lookup(id) else {
         return Ok(err("db.cursor: connection is closed"));
@@ -1423,20 +1439,20 @@ static UNIT: Value = Value::Unit;
 fn db_next(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let cur = match cursor_of("next", args.first().unwrap_or(&UNIT)) {
         Ok(c) => c,
-        Err(e) => return Ok(e),
+        Err(e) => return Err(raised(e)),
     };
     let n = match args.get(1) {
         Some(Value::Integer(n)) if *n > 0 => *n as usize,
         Some(other) => {
-            return Ok(err(format!(
+            return Err(misuse_text(format!(
                 "db.next: n must be a positive integer, got {}",
                 other
             )));
         }
-        None => return Ok(err("db.next: n (how many rows) is required")),
+        None => return Err(misuse_text("db.next: n (how many rows) is required")),
     };
     if args.len() > 2 {
-        return Ok(err("db.next: too many arguments (cursor, n)"));
+        return Err(misuse_text("db.next: too many arguments (cursor, n)"));
     }
     let id = cur.id;
     let timeout_ms = cur.timeout_ms;
@@ -1481,10 +1497,10 @@ fn db_next(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
 /// db.columns(cur) -> Result<List<Map>>: the cursor's column descriptors.
 fn db_columns(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    Ok(match cursor_of("columns", args.first().unwrap_or(&UNIT)) {
-        Ok(c) => ok(c.columns.clone()),
-        Err(e) => e,
-    })
+    match cursor_of("columns", args.first().unwrap_or(&UNIT)) {
+        Ok(c) => Ok(ok(c.columns.clone())),
+        Err(e) => Err(raised(e)),
+    }
 }
 
 /// db.close_cursor(cur) -> Result<Unit>: finalize now. Closing a closed
@@ -1492,7 +1508,7 @@ fn db_columns(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 fn db_close_cursor(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let cur = match cursor_of("close_cursor", args.first().unwrap_or(&UNIT)) {
         Ok(c) => c,
-        Err(e) => return Ok(e),
+        Err(e) => return Err(raised(e)),
     };
     cur.entry.lock().cursors.remove(&cur.id);
     Ok(ok(Value::Unit))
@@ -1508,7 +1524,7 @@ fn db_interrupt(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Err(_) => match connection_id(target) {
             Ok(id) => lookup(id),
             Err(_) => {
-                return Ok(err(
+                return Err(misuse_text(
                     "db.interrupt: expected a connection (from db.open) or a cursor (from db.cursor)",
                 ));
             }
@@ -1525,7 +1541,7 @@ fn db_interrupt(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 fn db_close(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let id = match connection_id(args.first().unwrap_or(&UNIT)) {
         Ok(id) => id,
-        Err(e) => return Ok(e),
+        Err(e) => return Err(raised(e)),
     };
     tx_locks()
         .lock()

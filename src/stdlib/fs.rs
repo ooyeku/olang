@@ -335,20 +335,24 @@ fn append_file(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// Check if a file or directory exists
 /// Usage: fs.exists("/path/to/file") -> Result<Bool, Error>
 /// Extract the single string argument shared by the path helpers.
-fn one_path_arg<'a>(name: &str, args: &'a [Value]) -> Result<&'a str, Value> {
+/// The one path a path function takes; a call without one is a misuse,
+/// and raises.
+fn one_path_arg<'a>(name: &str, args: &'a [Value]) -> Result<&'a str, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Err(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "{} expects 1 argument, got {}",
-            name,
-            args.len()
-        ))))));
+        return Err(crate::stdlib::misuse::arity(
+            &format!("fs.{name}"),
+            "1",
+            args.len(),
+        ));
     }
     match &args[0] {
         Value::String(s) => Ok(s.as_ref()),
-        _ => Err(Value::Err(Box::new(Value::String(Arc::new(format!(
-            "{}: path must be a string",
-            name
-        )))))),
+        other => Err(crate::stdlib::misuse::arg_type(
+            &format!("fs.{name}"),
+            "path",
+            "a string",
+            other,
+        )),
     }
 }
 
@@ -388,7 +392,7 @@ fn path_join(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 fn path_dirname(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let path = match one_path_arg("dirname", &args) {
         Ok(p) => p,
-        Err(e) => return Ok(e),
+        Err(e) => return Err(e),
     };
     let parent = std::path::Path::new(path)
         .parent()
@@ -401,7 +405,7 @@ fn path_dirname(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 fn path_basename(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let path = match one_path_arg("basename", &args) {
         Ok(p) => p,
-        Err(e) => return Ok(e),
+        Err(e) => return Err(e),
     };
     let name = std::path::Path::new(path)
         .file_name()
@@ -414,7 +418,7 @@ fn path_basename(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 fn path_ext(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let path = match one_path_arg("ext", &args) {
         Ok(p) => p,
-        Err(e) => return Ok(e),
+        Err(e) => return Err(e),
     };
     let ext = std::path::Path::new(path)
         .extension()
@@ -428,7 +432,7 @@ fn path_ext(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 fn path_abs(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let path = match one_path_arg("abs_path", &args) {
         Ok(p) => p,
-        Err(e) => return Ok(e),
+        Err(e) => return Err(e),
     };
     match std::path::absolute(path) {
         Ok(p) => {
@@ -462,7 +466,7 @@ fn path_abs(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 fn path_real(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let path = match one_path_arg("real_path", &args) {
         Ok(p) => p,
-        Err(e) => return Ok(e),
+        Err(e) => return Err(e),
     };
     Ok(Value::Ok(Box::new(Value::String(Arc::new(
         crate::caps::gate_path(path).to_string_lossy().into_owned(),

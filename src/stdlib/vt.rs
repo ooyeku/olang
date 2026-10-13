@@ -1890,6 +1890,33 @@ fn line_col(v: Option<&Value>) -> i64 {
 pub fn call_vt_function(name: &str, args: Vec<Value>) -> Res {
     let who = format!("vt.{name}");
     if name == "new" {
+        // `vt.new(rows?, cols?, opts?)`: numbers and a map, or a misuse
+        if args.len() > 3 {
+            return Err(crate::stdlib::misuse::arity("vt.new", "0 to 3", args.len()));
+        }
+        for (i, which) in [(0, "rows"), (1, "cols")] {
+            if let Some(v) = args.get(i)
+                && num(Some(v)).is_none()
+                && !matches!(v, Value::Unit)
+            {
+                return Err(
+                    format!("vt.new: {which} must be a number, got {}", v.type_name()).into(),
+                );
+            }
+        }
+        if let Some(v) = args.get(2)
+            && fields(Some(v)).is_none()
+            && !matches!(v, Value::Unit)
+        {
+            return Err(format!("vt.new: options must be a map, got {}", v.type_name()).into());
+        }
+        if let Some(k) = fields(args.get(2)).and_then(|o| {
+            o.keys()
+                .find(|k| !matches!(k.as_str(), "scrollback" | "fg" | "bg"))
+                .cloned()
+        }) {
+            return Err(format!("vt.new: unknown option '{k}' (scrollback, fg, bg)").into());
+        }
         let rows = num(args.first()).unwrap_or(24.0) as usize;
         let cols = num(args.get(1)).unwrap_or(80.0) as usize;
         let o = fields(args.get(2));
@@ -1911,10 +1938,13 @@ pub fn call_vt_function(name: &str, args: Vec<Value>) -> Res {
         return Ok(handle(id));
     }
     if name == "free" {
-        if let Some(Value::Struct { fields, .. }) = args.first()
-            && let Some(Value::Integer(i)) = fields.get("id")
-        {
-            screens().lock().unwrap().remove(i);
+        match args.as_slice() {
+            [Value::Struct { type_name, fields }] if type_name == "Screen" => {
+                if let Some(Value::Integer(i)) = fields.get("id") {
+                    screens().lock().unwrap().remove(i);
+                }
+            }
+            _ => return Err("vt.free expects a Screen (from vt.new)".into()),
         }
         return Ok(Value::Unit);
     }
@@ -1922,6 +1952,11 @@ pub fn call_vt_function(name: &str, args: Vec<Value>) -> Res {
     // go (its terminal closed): nothing to do, not an error
     let sc = match screen_of(args.first(), &who) {
         Ok(sc) => sc,
+        // a value that is no Screen is a misuse; a Screen freed already
+        // is only gone
+        Err(e) if e.contains("expected a Screen") || e.contains("malformed") => {
+            return Err(e.into());
+        }
         Err(e) => {
             return match name {
                 "feed" => Ok(s("")),
