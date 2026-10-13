@@ -116,7 +116,8 @@ struct Cli {
     watch: bool,
 
     /// Set maximum parallelism for OVM/builtins (threads). Also respects the
-    /// OVM_PARALLELISM environment variable.
+    /// OLANG_PARALLELISM environment variable (OVM_PARALLELISM, its older
+    /// name, too).
     #[arg(long, value_name = "N", help_heading = "Run options")]
     ovm_parallelism: Option<usize>,
 
@@ -556,7 +557,7 @@ fn run() -> i32 {
     // CLI parsing, so the bundled tool's own arguments reach it intact.
     if let Some(bundle) = embedded_program() {
         let logger = init_logger();
-        let _ = initialize_parallelization(None);
+        let _ = initialize_parallelization(olang::parallel::parallelism_from_env());
         set_parallel_threshold(10_000);
         olang::stdio::set_panic_hook();
         return run_embedded(bundle, logger);
@@ -674,7 +675,10 @@ fn run() -> i32 {
     let logger = init_logger();
 
     // Initialize parallelization early for optimal performance
-    match initialize_parallelization(cli.ovm_parallelism) {
+    let parallelism = cli
+        .ovm_parallelism
+        .or_else(olang::parallel::parallelism_from_env);
+    match initialize_parallelization(parallelism) {
         Err(e) => {
             if cli.verbose {
                 logger.warn(
@@ -697,8 +701,9 @@ fn run() -> i32 {
     }
 
     if let Some(n) = cli.ovm_parallelism {
+        // the children a run starts get the same count
         // SAFETY: CLI startup, before any worker thread exists.
-        unsafe { std::env::set_var("OVM_PARALLELISM", n.to_string()) };
+        unsafe { std::env::set_var("OLANG_PARALLELISM", n.to_string()) };
     }
 
     // Parallelize only where the work plausibly outweighs thread overhead.

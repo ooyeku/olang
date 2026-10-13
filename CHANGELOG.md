@@ -383,6 +383,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `match` with no matching arm raises; `sort` and `col.sort_by` are
   stable.
 
+- `OLANG_PARALLELISM` sets the thread count for `par_map`, `par for`
+  and the other parallel work, as ods.md and stdlib.md already said;
+  `OVM_PARALLELISM`, the old name, is kept as an alias. Neither was read
+  before: only `--ovm-parallelism N` took effect.
+- Environment variables have one table in tooling.md with a public
+  column: the public ones (`OLANG_HOME`, `OLANG_SHELF`, `OLANG_DENY`,
+  `OLANG_PARALLELISM`, …) hold across 1.x; the diagnostic ones are
+  stated unsupported, free to change in any release.
+
 ## [0.88.0] - 2026-10-12
 
 ### Upgrading

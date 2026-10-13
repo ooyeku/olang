@@ -1512,40 +1512,61 @@ spot-checking for a few percent of overhead.
 
 ## Environment variables
 
-Controls read at startup. Command-line flags take precedence where
-both exist.
+Every variable olang reads, in one table. **Public** ones are part of
+the contract ([stability](stability.md#tools-and-file-formats)): their
+names and meanings hold across 1.x, and a command-line flag takes
+precedence where both exist. **Internal** ones are development and
+diagnostic aids: they may change or go away in any release, and
+nothing should depend on them.
 
-| Variable | Effect |
-|---|---|
-| `OLANG_DENY` | Deny capabilities for the run, as `--deny`: a comma list of `fs`, `fs-write`, `net`, `proc`, `db`, `env`. |
-| `OLANG_VERIFY_TIERS` | The `--verify-tiers` sampling rate (`0`–`1`). |
-| `OLANG_OVM_STATS` | `json` or `json:PATH`: keep [tier statistics](#tier-statistics---ovm-statsjson) for any command and write them at exit (`json:DIR/`: a file a process in `DIR`). |
-| `OLANG_TIER_GUARD` | `1`: a run keeping tier statistics in which a pinned-native function fell back exits with status 3. |
-| `OLANG_STALL_ABORT` | `0` disables the deadlock abort: an all-threads-parked program hangs instead of exiting with the stall report. |
-| `OLANG_HTTP_WORKERS` | Default worker count for `http.serve` when the options map does not set one. |
-| `OLANG_ODS_WORKERS` | Worker count for the ods data stack's parallel operations. |
-| `OVM_PARALLELISM` | Thread count for `par_map`/`par for` and other VM parallelism (also `--ovm-parallelism N`). |
-| `OLANG_HOME` | Relocate the whole `~/.olang` tree ([the home directory](packages.md#the-home-directory)). |
-| `OLANG_SHELF` | Location of the shelf manifest (default `~/.olang/shelf.toml`). |
-| `NO_COLOR` / `CLICOLOR_FORCE` | Disable or force `term` styling regardless of whether output is a TTY. |
+| Variable | Public | Effect |
+|---|---|---|
+| `OLANG_HOME` | yes | Relocate the whole `~/.olang` tree ([the home directory](packages.md#the-home-directory)). |
+| `OLANG_SHELF` | yes | Location of the shelf manifest (default `~/.olang/shelf.toml`). |
+| `OLANG_CACHE` | yes | Location of the git dependency cache (default `~/.olang/cache`). |
+| `OLANG_REGISTRY` | yes | The registry registry-version dependencies resolve against ([packages.md](packages.md)). |
+| `OLANG_LOCK_READONLY` | yes | `1`: resolve as usual but never write `olang.lock`. |
+| `OLANG_DENY` | yes | Deny capabilities for the run, as `--deny`: a comma list of `fs`, `fs-write`, `net`, `proc`, `db`, `env`. |
+| `OLANG_PARALLELISM` | yes | Thread count for `par_map`/`par for` and other parallel work (also `--ovm-parallelism N`). |
+| `OVM_PARALLELISM` | yes | The older name of `OLANG_PARALLELISM`, kept as an alias; `OLANG_PARALLELISM` wins when both are set. |
+| `OLANG_HTTP_WORKERS` | yes | Default worker count for `http.serve` when the options map does not set one. |
+| `OLANG_ODS_WORKERS` | yes | Worker count for the ods data stack's parallel operations. |
+| `OLANG_STALL_ABORT` | yes | `0` disables the deadlock abort: an all-threads-parked program hangs instead of exiting with the stall report. |
+| `OLANG_VERIFY_TIERS` | yes | The `--verify-tiers` sampling rate (`0`–`1`). |
+| `OLANG_OVM_STATS` | yes | `json` or `json:PATH`: keep [tier statistics](#tier-statistics---ovm-statsjson) for any command and write them at exit (`json:DIR/`: a file a process in `DIR`). |
+| `OLANG_TIER_GUARD` | yes | `1`: a run keeping tier statistics in which a pinned-native function fell back exits with status 3. |
+| `OLANG_PROFILE_LIVE` | yes | A live-profile directory, as `--profile-live DIR`; reaches the children a run starts. |
+| `OLANG_PROFILE_LIVE_EVERY` | yes | Milliseconds between live-profile snapshots (default 500). |
+| `OLANG_UPDATE_SNAPSHOTS` | yes | `1`: `testing.snapshot` rewrites its snapshots instead of comparing (`UPDATE_SNAPSHOTS=1`, the generic spelling, too). |
+| `OLANG_TEST` | yes | Set to `1` by `olang test` for the files it runs, for a program to read. |
+| `OLANG_COMPILE_CACHE` | yes | `0` turns off the compile cache ([ovm.md](ovm.md)). |
+| `OLANG_COMPILE_CACHE_MB` | yes | The compile cache's size cap in MB (default 64). |
+| `OLANG_PARSE_CACHE` | no | `0`: parse every module instead of reading it back from `~/.olang/state/parsed`. |
+| `OLANG_WARM` | yes | `0` disables the warm tier profile ([ovm.md](ovm.md)), for measurement. |
+| `LOOM_RENDERER` | yes | `gpu` (the default) or `software`: the renderer `gui.open` uses when its options name none. |
+| `NO_COLOR` / `CLICOLOR_FORCE` | yes | Disable or force `term` styling regardless of whether output is a TTY. |
+| `OLANG_LOG_LEVEL`, `OLANG_LOG_TIMESTAMP`, `OLANG_LOG_MODULE` | no | The runtime's own log (`ERROR` … `TRACE`; default `WARN`). |
+| `OLANG_TIER_STATS` | no | `1`: machine-readable tier counters on exit. |
+| `OLANG_TIER_VERBOSE` | no | The bytecode tier says what it compiles and refuses. |
+| `OLANG_BOOT_TRACE` | no | `1`: where a program's start goes — a line on stderr at each landmark (the interpreter's thread started, the entry parsed, the program starting, the platform's loop, a window asked for and made, the first frame presented), stamped from the process's start, and at the first frame the modules read and loaded and the compiles, with their times. |
+| `OLANG_LAZY_COMPILE` | no | `0`: compile every callee with its caller (the eager route) instead of at its first call, for A/B measurement. |
+| `OLANG_JIT_DEBUG` | no | `1`: JIT compilation decisions: what compiled, what refused, and the instruction or register that refused it. |
+| `OLANG_OSR_DEBUG`, `OLANG_OSR_OFF` | no | On-stack-replacement decisions; `1` disables on-stack replacement. |
+| `OLANG_BRIDGE_TIER_OFF` | no | `1`: disable the bridge interpreter's bytecode tier. |
+| `OLANG_COLLECTIONS_ON_INTERP` | no | Keep the auto-loaded `collections` on the tree-walker. |
+| `OLANG_DUMP_FN` | no | `<name>`: print the compiled instruction stream for one function. |
+| `OLANG_ODS_TIMING` | no | `1`: per-phase timings from the ods CSV reader and group-by. |
+| `OLANG_FIX_DEBUG` | no | `<dir>`: when `olang fix` leaves a file because its rewrite would read back differently, write the two trees as read back (`before.json`, `after.json`) and the rewrite (`after.ol`) into `dir`. |
+| `OLANG_KEYS_STATS` | no | The checker's `.key` read coverage, on stderr. |
+| `OLANG_ALLOC_STATS`, `OLANG_ALLOC_TRACE` | no | Allocation counts (an `alloc-count` build). |
+| `OLANG_DEBUG_*` | no | Engine tracing for one subsystem each (closures, modules, liveness, higher-order calls, auto-parallelism). |
+| `OLANG_VERIFY_SELFTEST` | no | Make `--verify-tiers` see a divergence, to test what reports one. |
+| `OLANG_WARM_DIR` | no | Where the warm tier profiles live (tests). |
+| `GUI_TRACE` | no | The `gui` platform layer's event trace. |
+| `OLANG`, `OLANG_WASM` | no | `otc bench` and `otc web`: the olang binary and the browser runtime to use instead of the ones found beside `otc`. |
 
-Diagnostic switches, useful when reporting engine issues or reading
-the tier's decisions. These are development aids, not stable
-interfaces:
-
-| Variable | Effect |
-|---|---|
-| `OLANG_TIER_STATS=1` | Machine-readable tier counters on exit. |
-| `OLANG_BOOT_TRACE=1` | Where a program's start goes: a line on stderr at each landmark (the interpreter's thread started, the entry parsed, the program starting, the platform's loop, a window asked for and made, the first frame presented), stamped from the process's start, and at the first frame the modules read (parsed or from the parse cache) and loaded, and the bytecode and native compiles, with their times. |
-| `OLANG_LAZY_COMPILE=0` | Compile every callee with its caller (the eager route) instead of at its first call, for A/B measurement. |
-| `OLANG_PARSE_CACHE=0` | Parse every module instead of reading it back from `~/.olang/state/parsed`. |
-| `OLANG_JIT_DEBUG=1` | JIT compilation decisions: what compiled, what refused, and the instruction or register that refused it. |
-| `OLANG_OSR_DEBUG=1` | On-stack-replacement decisions: regions synthesized, entries, refusals with live-register counts. |
-| `OLANG_OSR_OFF=1` | Disable on-stack replacement. |
-| `OLANG_BRIDGE_TIER_OFF=1` | Disable the bridge interpreter's bytecode tier. |
-| `OLANG_DUMP_FN=<name>` | Print the compiled instruction stream for one function. |
-| `OLANG_ODS_TIMING=1` | Per-phase timings from the ods CSV reader and group-by. |
-| `OLANG_FIX_DEBUG=<dir>` | When `olang fix` leaves a file because its rewrite would read back differently, write the two trees as read back (`before.json`, `after.json`) and the rewrite (`after.ol`) into `dir`. |
+The build reads `OLANG_BUILD_*` and `OLANG_RUNTIME_WASM*`, set by
+olang's own `build.rs`; they are not read at run time.
 
 ## Writing custom tools with `meta`
 
