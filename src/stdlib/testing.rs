@@ -60,10 +60,6 @@ pub fn create_testing_module() -> Value {
         "snapshot_failed".to_string(),
         create_builtin_function("snapshot_failed", 1),
     );
-    module.insert(
-        "run_test".to_string(),
-        create_builtin_function("run_test", 2),
-    );
 
     // Utility functions
     module.insert(
@@ -107,7 +103,6 @@ pub fn call_testing_function(
         "snapshot" => Err("testing.snapshot needs the running program's file".into()),
         "snapshot_dir" => Err("testing.snapshot_dir needs the running program's file".into()),
         "snapshot_failed" => Ok(Value::Unit),
-        "run_test" => run_test(args),
         "test_summary" => test_summary(args),
         "reset_tests" => reset_tests(args),
         _ => Err(format!("Unknown testing function: {}", name).into()),
@@ -291,32 +286,6 @@ fn fail_test(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     Ok(Value::Err(Box::new(Value::String(Arc::new(error_msg)))))
 }
 
-/// Run a test function with a name
-/// Usage: testing.run_test("test_name", test_function) -> Result<String, Error>
-fn run_test(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if args.len() != 2 {
-        return Err(format!("run_test expects 2 arguments, got {}", args.len()).into());
-    }
-
-    let test_name = match &args[0] {
-        Value::String(s) => s.as_ref(),
-        other => {
-            return Err(format!(
-                "run_test: test name must be a string, got {}",
-                other.type_name()
-            )
-            .into());
-        }
-    };
-
-    // Stdlib builtins cannot call back into the interpreter to execute the
-    // test function, so surface that honestly instead of reporting a false pass.
-    Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
-        "run_test: cannot execute test '{}' — use a `test \"{}\" {{ ... }}` block instead",
-        test_name, test_name
-    ))))))
-}
-
 /// The session's assertion tally as a Map:
 /// `#{ "passed": n, "failed": n, "total": n }`. Counts every
 /// `testing.assert_*` outcome on this thread since start (or the last
@@ -494,7 +463,6 @@ mod tests {
                 "snapshot",
                 "snapshot_dir",
                 "snapshot_failed",
-                "run_test",
                 "test_summary",
                 "reset_tests",
             ];
@@ -636,24 +604,6 @@ mod tests {
             assert!(msg.contains("Test failed: Custom failure message"));
         } else {
             panic!("Expected string error message, got: {:?}", error);
-        }
-    }
-
-    #[test]
-    fn test_run_test_basic() {
-        let result = run_test(vec![
-            string_val("my_test"),
-            Value::Unit, // Placeholder for test function
-        ])
-        .unwrap();
-
-        // run_test cannot execute the function from a stdlib builtin, so it
-        // must report an error rather than a false pass
-        let err_msg = assert_err_result(&result);
-        if let Value::String(msg) = err_msg {
-            assert!(msg.contains("cannot execute test 'my_test'"));
-        } else {
-            panic!("Expected string error message, got: {:?}", err_msg);
         }
     }
 

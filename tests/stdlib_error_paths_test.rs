@@ -149,7 +149,7 @@ fn test_base64_error_paths() {
     assert!(result.is_ok() || result.is_err());
 
     // Test validating invalid base64
-    let source = r#"base64.validate("invalid base64 @#$%")"#;
+    let source = r#"base64.is_valid("invalid base64 @#$%")"#;
     let program = parser.parse(source).expect("Failed to parse");
     let result = interpreter.eval_program(program);
 

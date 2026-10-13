@@ -115,10 +115,6 @@ struct Cli {
     #[arg(long, help_heading = "Run options")]
     watch: bool,
 
-    /// Enable parallel evaluation of independent expressions
-    #[arg(long, help_heading = "Run options")]
-    enable_parallel: bool,
-
     /// Set maximum parallelism for OVM/builtins (threads). Also respects the
     /// OVM_PARALLELISM environment variable.
     #[arg(long, value_name = "N", help_heading = "Run options")]
@@ -678,11 +674,6 @@ fn run() -> i32 {
         }
     }
 
-    // Allow enabling/disabling parallel at runtime
-    if cli.enable_parallel {
-        // SAFETY: CLI startup, before any worker thread exists.
-        unsafe { std::env::set_var("OVM_ENABLE_PARALLEL", "1") };
-    }
     if let Some(n) = cli.ovm_parallelism {
         // SAFETY: CLI startup, before any worker thread exists.
         unsafe { std::env::set_var("OVM_PARALLELISM", n.to_string()) };

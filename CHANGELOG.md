@@ -212,6 +212,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   (`false`, `"read"`, `true`; they said `"none"`, `"read"`, `"full"`).
   stdlib.md documents every `fs.scan` and `fs.search` option.
 
+- **Removed before 1.0, unused:** `map_path` (deprecated in 0.88:
+  `map_get_in`), `lazy` and `force` (the identity: olang is eager),
+  `base64.validate` (`base64.is_valid`), `testing.run_test` (it only ever
+  said to write a `test` block), and the `--enable-parallel` flag (it set
+  a variable nothing read). `json.validate` and `toml.validate` are
+  deprecated for `json.is_valid` and `toml.is_valid`; the deprecation
+  table takes module functions, so `olang check` warns at a
+  `re.replace_all(`, `json.validate(` or `toml.validate(` call and `olang
+  fix deprecated` rewrites it. stdlib.md and ods.md give `set_parallel`
+  its real signature, a Bool.
+
 
 ### Added
 

@@ -111,14 +111,14 @@ fn ordinary_code_compiles_and_a_refusal_no_longer_takes_its_callers() {
          fn get_or(m, k, fallback) = if map_has_key(m, k) => map_get(m, k) else => fallback\n\
          share fn uses_attempt(f) = match attempt(f) { Ok(v) => v, Err(e) => \"raised\" }\n\
          share fn uses_drop(xs) = drop(xs, 1)\n\
-         share fn uses_map_path(m) = map_path(m, [\"a\", \"b\"])\n\
+         share fn uses_map_get_in(m) = map_get_in(m, [\"a\", \"b\"])\n\
          share fn in_lambda(xs) = map(xs, (x) => str_of(x))\n\
          fn str_of(v) = if typeof(v) == \"String\" => v else => to_string(v)\n",
     );
     write(
         &ws,
         "main.ol",
-        "use lib.weft { read, uses_attempt, uses_drop, uses_map_path, in_lambda }\n\
+        "use lib.weft { read, uses_attempt, uses_drop, uses_map_get_in, in_lambda }\n\
          fn uncompilable(x) = { let t = spawn { x + 1 }; unwrap(task.join(t)) }\n\
          fn caller(x) = uncompilable(x) * 2\n\
          fn dispatch(n) = a0(n) + a1(n) + a2(n) + a3(n)\n\
@@ -126,7 +126,7 @@ fn ordinary_code_compiles_and_a_refusal_no_longer_takes_its_callers() {
          let m = #{ \"a\": #{ \"b\": 7 }, \"k\": \"v\" }\n\
          let mut acc = 0\n\
          for i in range(0, 60) {\n\
-             acc = acc + len(read(m, \"k\")) + len(uses_drop([1, 2, 3])) + uses_map_path(m) + len(in_lambda([1, 2]))\n\
+             acc = acc + len(read(m, \"k\")) + len(uses_drop([1, 2, 3])) + uses_map_get_in(m) + len(in_lambda([1, 2]))\n\
              if uses_attempt(() => i) != i => { acc = acc - 1000 } else => ()\n\
          }\n\
          println(to_string(acc))\n\
@@ -143,7 +143,7 @@ fn ordinary_code_compiles_and_a_refusal_no_longer_takes_its_callers() {
         "get_or",
         "uses_attempt",
         "uses_drop",
-        "uses_map_path",
+        "uses_map_get_in",
         "in_lambda",
         "caller",
         "dispatch",

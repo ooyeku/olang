@@ -1025,6 +1025,7 @@ pub fn rename_deprecated(source: &str) -> (String, usize) {
     let mut out = String::with_capacity(source.len());
     let mut n = 0;
     let mut i = 0;
+    let mut module_bound: std::collections::HashMap<String, bool> = Default::default();
     let is_ident = |c: char| c.is_alphanumeric() || c == '_';
     while i < chars.len() {
         let c = chars[i];
@@ -1061,6 +1062,29 @@ pub fn rename_deprecated(source: &str) -> (String, usize) {
             let word: String = chars[start..i].iter().collect();
             let after_dot = start > 0 && chars[start - 1] == '.';
             let called = chars[i..].iter().find(|c| !c.is_whitespace()) == Some(&'(');
+            // a module's function: `re.replace_all(` — the module named
+            // just before the dot, a stdlib module the file does not bind
+            let module_before = if after_dot {
+                let mut j = start - 1;
+                while j > 0 && is_ident(chars[j - 1]) {
+                    j -= 1;
+                }
+                let m: String = chars[j..start - 1].iter().collect();
+                (j == 0 || !is_ident(chars[j - 1]) && chars[j - 1] != '.').then_some(m)
+            } else {
+                None
+            };
+            if let Some(module) = module_before
+                && called
+                && !binds_cached(&mut module_bound, source, &module)
+                && let Some((_, now)) = crate::tools::check::DEPRECATED_MODULE_FNS
+                    .iter()
+                    .find(|(old, _)| *old == format!("{module}.{word}"))
+            {
+                out.push_str(now.split_once('.').map(|(_, f)| f).unwrap_or(now));
+                n += 1;
+                continue;
+            }
             match crate::tools::check::DEPRECATED_GLOBALS
                 .iter()
                 .find(|(old, _)| *old == word)
@@ -1079,15 +1103,36 @@ pub fn rename_deprecated(source: &str) -> (String, usize) {
     (out, n)
 }
 
+/// `binds`, asked once a name.
+fn binds_cached(
+    seen: &mut std::collections::HashMap<String, bool>,
+    source: &str,
+    name: &str,
+) -> bool {
+    *seen
+        .entry(name.to_string())
+        .or_insert_with(|| binds(source, name))
+}
+
 /// Whether the file binds `name` itself: declares it, imports it, or
 /// takes it as a parameter or a `let`.
 fn binds(source: &str, name: &str) -> bool {
     let Ok(program) = crate::Parser::new().parse_raw(source) else {
         return true;
     };
-    source.contains(&format!("fn {name}"))
-        || source.contains(&format!("let {name}"))
-        || source.contains(&format!("let mut {name}"))
+    // a declaration of the name itself, not of one it begins
+    let declares = |head: &str| {
+        let pat = format!("{head}{name}");
+        source.match_indices(&pat).any(|(at, _)| {
+            source[at + pat.len()..]
+                .chars()
+                .next()
+                .is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
+        })
+    };
+    declares("fn ")
+        || declares("let ")
+        || declares("let mut ")
         || program.statements.iter().any(|s| match s.unwrapped() {
             crate::ast::Statement::UseDecl(u)
             | crate::ast::Statement::ShareDecl(crate::ast::ShareDecl::Use(u)) => u
@@ -1108,15 +1153,15 @@ mod deprecated_tests {
 
     #[test]
     fn a_deprecated_call_is_renamed_and_nothing_else() {
-        let src = "let v = map_path(m, [\"a\"])\n// map_path(x)\nlet s = \"map_path(m)\"\nlet t = mod.map_path(1)\nlet f = map_path\n";
+        let src = "let v = re.replace_all(\"a\", s, \"b\")\n// re.replace_all(x)\nlet s = \"re.replace_all(m)\"\nlet t = x.re.replace_all(1)\nlet f = re.replace_all\nlet j = json.validate(t)\n";
         let (out, n) = rename_deprecated(src);
-        assert_eq!(n, 1);
+        assert_eq!(n, 2);
         assert_eq!(
             out,
-            "let v = map_get_in(m, [\"a\"])\n// map_path(x)\nlet s = \"map_path(m)\"\nlet t = mod.map_path(1)\nlet f = map_path\n"
+            "let v = re.replace(\"a\", s, \"b\")\n// re.replace_all(x)\nlet s = \"re.replace_all(m)\"\nlet t = x.re.replace_all(1)\nlet f = re.replace_all\nlet j = json.is_valid(t)\n"
         );
-        // A file with its own map_path is left.
-        let (_, n) = rename_deprecated("fn map_path(a, b) = a\nmap_path(1, 2)\n");
+        // A file that binds the module's name means its own thing by it.
+        let (_, n) = rename_deprecated("let re = #{}\nre.replace_all(1, 2, 3)\n");
         assert_eq!(n, 0);
     }
 }

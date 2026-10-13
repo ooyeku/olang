@@ -1792,16 +1792,6 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
                 "map_get(#{ \"a\": 1 }, \"a\")  // 1",
             ),
             (
-                "map_path",
-                "map_path(value, keys)",
-                "Any",
-                "Maps",
-                "Deprecated (0.88): map_get_in under an older name, kept working; olang fix \
-                 deprecated renames the calls. A nested read in one call — the value at the \
-                 end of the key path, or Unit at the first missing hop.",
-                "map_get_in(event, [\"issue\", \"fields\", \"estimate\"])  // write map_get_in",
-            ),
-            (
                 "map_get_in",
                 "map_get_in(value, keys)",
                 "Any",
@@ -1926,22 +1916,6 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
                 "Concurrency",
                 "Turn the parallel-capable builtins' thread pool on or off for this                  process.",
                 "set_parallel(false)",
-            ),
-            (
-                "lazy",
-                "lazy(value)",
-                "Any",
-                "Evaluation",
-                "The identity function. olang is eager — the argument is already evaluated                  when lazy receives it — so this defers nothing; it exists for source                  compatibility and force is its inverse in name only.",
-                "force(lazy(5))  // 5",
-            ),
-            (
-                "force",
-                "force(value)",
-                "Any",
-                "Evaluation",
-                "The identity function, paired with lazy. See lazy for why neither defers                  anything.",
-                "force(lazy(5))  // 5",
             ),
             (
                 "assert_eq",
@@ -2790,11 +2764,19 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
             &[r##"unwrap(toml.stringify(#{ "name": "app", "version": "0.1.0" }))"##],
         );
         self.doc_ex(
+            "toml.is_valid",
+            "toml.is_valid(text)",
+            "Bool",
+            "toml",
+            "does the text parse as TOML?",
+            &[r##"toml.is_valid("key = ")  // false"##],
+        );
+        self.doc_ex(
             "toml.validate",
             "toml.validate(text)",
             "Bool",
             "toml",
-            "does the text parse as TOML?",
+            "deprecated: toml.is_valid under its older name, kept working; olang fix deprecated renames the calls",
             &[r##"toml.validate("key = ")  // false"##],
         );
     }
@@ -9892,7 +9874,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
                 "json.parse(\"invalid json\")  // Err(\"JSON parse error: ...\")".to_string(),
             ],
             category: "JSON".to_string(),
-            see_also: vec!["json.stringify".to_string(), "json.validate".to_string()],
+            see_also: vec!["json.stringify".to_string(), "json.is_valid".to_string()],
         });
 
         self.add_function(FunctionDoc {
@@ -9945,13 +9927,27 @@ For function-specific syntax, use: {}:help <function_name>{}",
                     .to_string(),
             ],
             category: "JSON".to_string(),
-            see_also: vec!["json.prettify".to_string(), "json.validate".to_string()],
+            see_also: vec!["json.prettify".to_string(), "json.is_valid".to_string()],
         });
 
         // Validation and inspection
         self.add_function(FunctionDoc {
+            name: "json.is_valid".to_string(),
+            description: "Check if a string is valid JSON without keeping the parse".to_string(),
+            syntax: "json.is_valid(json_string)".to_string(),
+            parameters: vec!["json_string: String - String to check".to_string()],
+            return_type: "Bool".to_string(),
+            examples: vec![
+                "json.is_valid(\"{\\\"name\\\": \\\"John\\\"}\")  // true".to_string(),
+                "json.is_valid(\"invalid json\")  // false".to_string(),
+            ],
+            category: "JSON".to_string(),
+            see_also: vec!["json.parse".to_string(), "json.get_type".to_string()],
+        });
+
+        self.add_function(FunctionDoc {
             name: "json.validate".to_string(),
-            description: "Check if a string is valid JSON without parsing it".to_string(),
+            description: "Deprecated: json.is_valid under its older name, kept working; olang fix deprecated renames the calls".to_string(),
             syntax: "json.validate(json_string)".to_string(),
             parameters: vec!["json_string: String - String to validate".to_string()],
             return_type: "Bool".to_string(),
@@ -9979,7 +9975,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
                 "json.get_type(\"null\")  // Ok(\"null\")".to_string(),
             ],
             category: "JSON".to_string(),
-            see_also: vec!["json.validate".to_string(), "typeof".to_string()],
+            see_also: vec!["json.is_valid".to_string(), "typeof".to_string()],
         });
 
         // Object operations
@@ -10285,24 +10281,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
                 "if len(results) == 0 => testing.fail(\"no results produced\") else => ()".to_string(),
             ],
             category: "Testing".to_string(),
-            see_also: vec!["testing.run_test".to_string()],
-        });
-
-        self.add_function(FunctionDoc {
-            name: "testing.run_test".to_string(),
-            description: "Run a test function with a descriptive name".to_string(),
-            syntax: "testing.run_test(name, test_function)".to_string(),
-            parameters: vec![
-                "name: String - The name of the test".to_string(),
-                "test_function: Function - The test function to execute".to_string(),
-            ],
-            return_type: "Result<String, Error>".to_string(),
-            examples: vec![
-                "testing.run_test(\"addition\", () => testing.assert_eq(2 + 2, 4))".to_string(),
-                "testing.run_test(\"failing_test\", () => testing.fail(\"oops\"))  // Err(\"Test failed: oops\")".to_string(),
-            ],
-            category: "Testing".to_string(),
-            see_also: vec!["testing.test_summary".to_string(), "testing.fail".to_string()],
+            see_also: vec!["testing.assert".to_string()],
         });
 
         // Utility functions
@@ -10318,10 +10297,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
                 "println(testing.test_summary())  // Print test statistics".to_string(),
             ],
             category: "Testing".to_string(),
-            see_also: vec![
-                "testing.run_test".to_string(),
-                "testing.reset_tests".to_string(),
-            ],
+            see_also: vec!["testing.reset_tests".to_string()],
         });
 
         self.add_function(FunctionDoc {
@@ -10335,10 +10311,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
                 "testing.reset_tests(); testing.test_summary()  // Start fresh".to_string(),
             ],
             category: "Testing".to_string(),
-            see_also: vec![
-                "testing.test_summary".to_string(),
-                "testing.run_test".to_string(),
-            ],
+            see_also: vec!["testing.test_summary".to_string()],
         });
     }
 
@@ -11179,21 +11152,6 @@ For function-specific syntax, use: {}:help <function_name>{}",
 
         // Validation and utility
         self.add_function(FunctionDoc {
-            name: "base64.validate".to_string(),
-            description: "Validate a base64 string, returning decoded value or error details"
-                .to_string(),
-            syntax: "base64.validate(base64_string)".to_string(),
-            parameters: vec!["base64_string: String - The base64 string to validate".to_string()],
-            return_type: "Bool".to_string(),
-            examples: vec![
-                "base64.validate(\"aGVsbG8=\")  // Ok(\"hello\")".to_string(),
-                "base64.validate(\"invalid!!!\")  // Err(\"Invalid base64: ...\")".to_string(),
-            ],
-            category: "Base64".to_string(),
-            see_also: vec!["base64.is_valid".to_string(), "base64.decode".to_string()],
-        });
-
-        self.add_function(FunctionDoc {
             name: "base64.is_valid".to_string(),
             description: "Check if a string is valid base64 without decoding".to_string(),
             syntax: "base64.is_valid(base64_string)".to_string(),
@@ -11204,7 +11162,7 @@ For function-specific syntax, use: {}:help <function_name>{}",
                 "base64.is_valid(\"not-base64!!!\")  // Ok(false)".to_string(),
             ],
             category: "Base64".to_string(),
-            see_also: vec!["base64.validate".to_string()],
+            see_also: vec!["base64.decode".to_string()],
         });
 
         // Encoding with options

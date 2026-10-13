@@ -364,7 +364,7 @@ they write, not the map's size. An identifier key reads as `m.key`
 |---|---|
 | `map_get(m, k)` | value, or `Unit` when absent (and `Unit` when `m` is `()`, as `().k` is) |
 | `map_get_or(m, k, default)` | value, or `default` when absent (or stored Unit) |
-| `map_get_in(m, [k1, k2, …])` | a nested read in one call — the value at the end of the key path, or Unit at the first missing hop; every hop reads like `map_get` (`map_path`, deprecated, is the same function) |
+| `map_get_in(m, [k1, k2, …])` | a nested read in one call — the value at the end of the key path, or Unit at the first missing hop; every hop reads like `map_get` |
 | `map_set_in(m, [k1, k2, …], v)` | new value with the end of the key path set — each level a new value of its own kind, a missing level a new map |
 | `map_update(m, k, f)` | new value with `k` set to `f(m.k)` (`f` is given `()` for an absent key) |
 | `map_has_key(m, k)` | presence test (distinguishes absent from null) |
@@ -422,30 +422,26 @@ println(show(attempt(() => raise("widget: no kind dial"))))   // Err("widget: no
 
 | Function | Description |
 |---|---|
-| `lazy(v)` | identity — olang evaluates eagerly (see note) |
-| `force(v)` | identity — the counterpart of `lazy` |
-| `set_parallel(b)` | enable or disable the parallel machinery — explicit (`par_map`) and automatic alike |
-
-**olang is eager.** A builtin receives its argument already evaluated, so
-`lazy` cannot defer anything — both functions are the identity, kept for
-source compatibility with code written against them.
-
-```olang
-let deferred = lazy([1, 2, 3] |> map((x) => x * 10))
-println(to_string(force(deferred)))
-```
+| `set_parallel(on)` | `true` or `false`: enable or disable the parallel machinery — explicit (`par_map`) and automatic alike (how many threads: `OLANG_PARALLELISM`) |
 
 ### Deprecated names
 
 A function renamed before 1.0 keeps its old name as an alias: a program
 using it runs as before, `olang check` warns at each call, and `olang
-fix deprecated` rewrites the calls ([tooling](tooling.md#olang-fix-deprecated)).
+fix deprecated` rewrites the calls ([tooling](tooling.md#olang-fix-deprecated)),
+a global's and a module's (`re.replace_all(` becomes `re.replace(`) alike.
 An alias is never removed in the release that deprecates it.
 
 | Old name | Use | Since |
 |---|---|---|
-| `map_path(m, keys)` | `map_get_in(m, keys)`, `map_set_in`'s reading half | 0.88 |
 | `re.replace_all(pat, s, rep)` | `re.replace(pat, s, rep)`, which now replaces every match | unreleased |
+| `json.validate(s)` | `json.is_valid(s)` | unreleased |
+| `toml.validate(s)` | `toml.is_valid(s)` | unreleased |
+
+Removed before 1.0, unused: `map_path` (deprecated in 0.88: `map_get_in`),
+`lazy` and `force` (the identity: olang is eager), base64's `validate`
+(`base64.is_valid`), testing's `run_test` (a `test` block), and the
+`--enable-parallel` flag (it set nothing anything read).
 
 ## `str` — strings
 
@@ -809,7 +805,7 @@ do not.
 | `json.stringify(v)` | `Result` of compact JSON text; an object's keys are written sorted |
 | `json.stringify_pairs(pairs)` | `Result` of one JSON object whose keys are in the order of `pairs`, a list of `(key, value)` (each value as `stringify` writes it) |
 | `json.prettify(s)` / `json.minify(s)` | reformat JSON text |
-| `json.validate(s)` | is the text valid JSON? |
+| `json.is_valid(s)` | is the text valid JSON? (`json.validate`, deprecated) |
 | `json.get(s, key)` / `json.set(s, key, v)` | read or replace one top-level key of JSON text: `Result` of the value / of the new text |
 | `json.has_key(s, k)` / `json.remove(s, k)` | text-level operations |
 | `json.get_keys` `json.get_values` `json.get_type` | text-level inspection |
@@ -830,7 +826,7 @@ println(row)                                     // {"id":7,"name":"ada","tags":
 ## `toml` — TOML
 
 The config format olang's own `olang.toml` manifests use, with `json`'s
-core surface: `parse`, `stringify`, `validate`. Both modules bridge
+core surface: `parse`, `stringify`, `is_valid` (`validate`, deprecated). Both modules bridge
 values through the same conversions, so a table parses to the same Map
 shapes JSON objects do — tables become Maps, arrays become Lists,
 datetimes become their string rendering. A TOML document is a table at
@@ -844,7 +840,7 @@ println(show(doc.name) + " on " + show(doc.server.port))
 
 let out = unwrap(toml.stringify(#{ "retries": 3 }))
 println(str.trim(out))
-println(to_string(toml.validate("not [ valid")))
+println(to_string(toml.is_valid("not [ valid")))
 ```
 
 ## `csv` — CSV
@@ -1314,7 +1310,7 @@ arbitrary text may not be valid base64 — `decode` yields text,
 | `base64.decode_bytes(s)` | decode to `Bytes` for non-text payloads |
 | `base64.encode_url_safe` / `decode_url_safe` | URL-safe alphabet |
 | `base64.encode_no_pad` / `decode_no_pad` | without `=` padding |
-| `base64.is_valid(s)` / `base64.validate(s)` | checks |
+| `base64.is_valid(s)` | checks |
 
 ```olang
 let enc = base64.encode("olang")
@@ -2875,7 +2871,6 @@ does.
 | `testing.snapshot(name, value[, #{ update }])` | the snapshot test: `value` (a String as its text, else its display form) against `__snapshots__/<name>.snap` beside the file under test. The first run writes the file; a later run answers `()` when it matches and raises with both texts when it does not. `OLANG_UPDATE_SNAPSHOTS=1`, `UPDATE_SNAPSHOTS=1`, or the caller's `update: true` rewrites the file instead |
 | `testing.snapshot_dir()` / `testing.snapshot_failed(info)` | the `__snapshots__` directory beside the file under test, where a library keeps snapshots of its own kind (Loom's pixels); a library's report that one of its snapshots differs (`info`: `name`, `baseline`, `actual`, `diff`, …), carried by `olang test --format json` and otherwise ignored |
 | `testing.test_summary()` / `testing.reset_tests()` | the session's assertion tally: `#{ "passed", "failed", "total" }` over every `assert_*` outcome on this thread; `reset_tests()` zeroes it |
-| `testing.run_test(name, f)` | deliberately a redirect: a builtin cannot re-enter the interpreter to run `f`, and the error says to use a `test` block instead |
 
 ```olang
 println(to_string(is_ok(testing.assert_eq(2 + 2, 4))))

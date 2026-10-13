@@ -2735,7 +2735,16 @@ struct Checker {
 /// Builtins kept under an older name, with the name they are now: each
 /// still works, `olang check` says so, and `olang fix deprecated`
 /// rewrites the calls (docs/stdlib.md, "Deprecated names").
-pub const DEPRECATED_GLOBALS: &[(&str, &str)] = &[("map_path", "map_get_in")];
+pub const DEPRECATED_GLOBALS: &[(&str, &str)] = &[];
+
+/// Module functions kept under an older name, with the name they are now
+/// (`module.fn`): each still works, `olang check` says so, and `olang fix
+/// deprecated` rewrites the calls.
+pub const DEPRECATED_MODULE_FNS: &[(&str, &str)] = &[
+    ("re.replace_all", "re.replace"),
+    ("json.validate", "json.is_valid"),
+    ("toml.validate", "toml.is_valid"),
+];
 
 /// How many arguments each global builtin takes, as its implementation
 /// counts them (`min`, `max`): a call outside the range raises. Measured
@@ -2761,7 +2770,6 @@ const GLOBAL_ARITY: &[(&str, usize, usize)] = &[
     ("find", 2, 2),
     ("flatten", 1, 1),
     ("fold", 3, 3),
-    ("force", 1, 1),
     ("first", 1, 1),
     ("group_by", 2, 2),
     ("head", 1, 1),
@@ -2770,7 +2778,6 @@ const GLOBAL_ARITY: &[(&str, usize, usize)] = &[
     ("is_ok", 1, 1),
     ("join", 2, 2),
     ("last", 1, 1),
-    ("lazy", 1, 1),
     ("len", 1, 1),
     ("map", 2, 2),
     ("map_clear", 1, 1),
@@ -2782,7 +2789,6 @@ const GLOBAL_ARITY: &[(&str, usize, usize)] = &[
     ("map_keys", 1, 1),
     ("map_len", 1, 1),
     ("map_merge", 2, 2),
-    ("map_path", 2, 2),
     ("map_remove", 2, 2),
     ("map_set", 3, 3),
     ("map_set_in", 3, 3),
@@ -2947,6 +2953,22 @@ impl Checker {
                     name, now
                 ),
             );
+        }
+        if let Expr::FieldAccess { object, field } = callee
+            && let Expr::Identifier(module) = object.as_ref()
+            && !bound(self, module)
+        {
+            let full = format!("{module}.{field}");
+            if let Some((_, now)) = DEPRECATED_MODULE_FNS.iter().find(|(old, _)| *old == full) {
+                self.warn(
+                    span,
+                    format!(
+                        "`{}` is deprecated: it is `{}` under an older name, kept working — \
+`olang fix deprecated` rewrites the call",
+                        full, now
+                    ),
+                );
+            }
         }
         match callee {
             Expr::Identifier(name) if !self.wildcard_use && !bound(self, name) => {

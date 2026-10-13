@@ -1121,3 +1121,44 @@ let ended = unwrap(proc.wait(p))
         ]))
     );
 }
+
+// ── deprecations: module functions too; unused aliases removed ─────────
+
+#[test]
+fn removed_aliases_are_gone_and_module_deprecations_still_work() {
+    for gone in [
+        "map_path(#{}, [])",
+        "lazy(1)",
+        "force(1)",
+        "base64.validate(\"aGk=\")",
+        "testing.run_test(\"t\", () => 1)",
+    ] {
+        assert!(eval(&format!("{gone}\n"), None).is_err(), "{gone} is gone");
+    }
+    assert_eq!(
+        agree_tiered(
+            "[json.is_valid(\"{}\"), json.validate(\"{\"), toml.is_valid(\"a = 1\"), base64.is_valid(\"aGk=\")]\n"
+        ),
+        Ok(l(vec![
+            Value::Boolean(true),
+            Value::Boolean(false),
+            Value::Boolean(true),
+            Value::Boolean(true),
+        ]))
+    );
+    let program = Parser::new()
+        .parse_raw("let x = re.replace_all(\"a\", \"aa\", \"b\")\nlet y = json.validate(\"{}\")\n")
+        .unwrap();
+    let diags = olang::tools::check::check_program(&program);
+    let said: Vec<String> = diags.iter().map(|d| d.message.clone()).collect();
+    assert!(
+        said.iter()
+            .any(|m| m.contains("`re.replace_all` is deprecated")),
+        "{said:?}"
+    );
+    assert!(
+        said.iter()
+            .any(|m| m.contains("`json.validate` is deprecated")),
+        "{said:?}"
+    );
+}

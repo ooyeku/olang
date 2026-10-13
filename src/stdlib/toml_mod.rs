@@ -19,6 +19,10 @@ pub fn create_toml_module() -> Value {
         "validate".to_string(),
         create_builtin_function("validate", 1),
     );
+    module.insert(
+        "is_valid".to_string(),
+        create_builtin_function("is_valid", 1),
+    );
     Value::Struct {
         type_name: "Module".to_string(),
         fields: std::sync::Arc::new(module),
@@ -39,7 +43,8 @@ pub fn call_toml_function(
     match name {
         "parse" => toml_parse(args),
         "stringify" => toml_stringify(args),
-        "validate" => toml_validate(args),
+        // `validate` is `is_valid` under its deprecated name
+        "validate" | "is_valid" => toml_validate(args),
         _ => Err(format!("Unknown toml function: {}", name).into()),
     }
 }

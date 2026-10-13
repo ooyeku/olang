@@ -51,6 +51,10 @@ pub fn create_json_module() -> Value {
         create_builtin_function("validate", 1),
     );
     module.insert(
+        "is_valid".to_string(),
+        create_builtin_function("is_valid", 1),
+    );
+    module.insert(
         "get_type".to_string(),
         create_builtin_function("get_type", 1),
     );
@@ -115,7 +119,8 @@ pub fn call_json_function(
         "stringify_pairs" => json_stringify_pairs(args),
         "prettify" => json_prettify(args),
         "minify" => json_minify(args),
-        "validate" => json_validate(args),
+        // `validate` is `is_valid` under its deprecated name
+        "validate" | "is_valid" => json_validate(args),
         "get_type" => json_get_type(args),
         "has_key" => json_has_key(args),
         "get_keys" => json_get_keys(args),

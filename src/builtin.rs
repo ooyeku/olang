@@ -448,22 +448,6 @@ impl BuiltinFunctions {
             },
         );
 
-        functions.insert(
-            "force".to_string(),
-            BuiltinFunction {
-                name: "force".to_string(),
-                arity: 1,
-            },
-        );
-
-        functions.insert(
-            "lazy".to_string(),
-            BuiltinFunction {
-                name: "lazy".to_string(),
-                arity: 1,
-            },
-        );
-
         // List concatenation function
         functions.insert(
             "concat".to_string(),
@@ -512,13 +496,6 @@ impl BuiltinFunctions {
             BuiltinFunction {
                 name: "map_get_or".to_string(),
                 arity: 3,
-            },
-        );
-        functions.insert(
-            "map_path".to_string(),
-            BuiltinFunction {
-                name: "map_path".to_string(),
-                arity: 2,
             },
         );
         for (name, arity) in [
@@ -1344,16 +1321,13 @@ impl BuiltinFunctions {
             "take" => builtins.take_lazy(arguments, interpreter),
             "skip" => builtins.skip_lazy(arguments, interpreter),
             "drop" => builtins.skip_lazy(arguments, interpreter),
-            "force" => builtins.force_value(arguments, interpreter),
-            "lazy" => builtins.make_lazy(arguments, interpreter),
             "concat" => builtins.concat_lazy(arguments, interpreter),
             "map_filtered" => builtins.map_filtered(arguments, interpreter),
             "show" => builtins.show(arguments),
             "entries" => builtins.entries(arguments),
             "map_get" => builtins.map_get(arguments),
             "map_get_or" => builtins.map_get_or(arguments),
-            "map_path" => builtins.map_path(arguments, "map_path"),
-            "map_get_in" => builtins.map_path(arguments, "map_get_in"),
+            "map_get_in" => builtins.map_get_in(arguments, "map_get_in"),
             "map_set_in" => builtins.map_set_in(arguments),
             "map_update" => builtins.map_update(arguments, interpreter),
             crate::parser::SPREAD_BUILTIN => builtins.spread(arguments),
@@ -1822,7 +1796,6 @@ impl BuiltinFunctions {
         "clamp",
         "map_get",
         "map_get_or",
-        "map_path",
         "map_get_in",
         "map_set_in",
         "map_update",
@@ -3505,42 +3478,6 @@ impl BuiltinFunctions {
         }
     }
 
-    fn force_value(
-        &self,
-        args: Vec<Value>,
-        _interpreter: &mut crate::interpreter::Interpreter,
-    ) -> Result<Value, InterpreterError> {
-        if args.len() != 1 {
-            return Err(InterpreterError::ArityMismatch {
-                expected: 1,
-                got: args.len(),
-            });
-        }
-
-        // olang evaluates eagerly: by the time a builtin sees its argument it
-        // is already a value, so `force` is the identity. Kept for source
-        // compatibility; the book documents this honestly.
-        Ok(args[0].clone())
-    }
-
-    fn make_lazy(
-        &self,
-        args: Vec<Value>,
-        _interpreter: &mut crate::interpreter::Interpreter,
-    ) -> Result<Value, InterpreterError> {
-        if args.len() != 1 {
-            return Err(InterpreterError::ArityMismatch {
-                expected: 1,
-                got: args.len(),
-            });
-        }
-        // A builtin receives its argument already evaluated, so `lazy` cannot
-        // defer anything — it is the identity, and always was (the previous
-        // implementation built a thunk and immediately forced it). Kept for
-        // source compatibility; the book documents this honestly.
-        Ok(args[0].clone())
-    }
-
     fn concat_lazy(
         &self,
         args: Vec<Value>,
@@ -3759,13 +3696,13 @@ impl BuiltinFunctions {
         })
     }
 
-    /// `map_path(m, [k1, k2, ...])` — a nested read in one call: the
+    /// `map_get_in(m, [k1, k2, ...])` — a nested read in one call: the
     /// value at the end of the key path, Unit at the first missing hop.
     /// Every hop reads like `map_get` (maps, objects, structs, parsed
     /// JSON), so `map_get(map_get(map_get(e, "issue"), "fields"),
-    /// "estimate")` is `map_path(e, ["issue", "fields", "estimate"])`,
+    /// "estimate")` is `map_get_in(e, ["issue", "fields", "estimate"])`,
     /// with the same absence-as-Unit safety at each level.
-    fn map_path(&self, args: Vec<Value>, who: &str) -> Result<Value, InterpreterError> {
+    fn map_get_in(&self, args: Vec<Value>, who: &str) -> Result<Value, InterpreterError> {
         if args.len() != 2 {
             return Err(InterpreterError::ArityMismatch {
                 expected: 2,

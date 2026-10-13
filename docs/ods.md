@@ -1395,8 +1395,9 @@ columns against NumPy and 10M-row tables against Polars, are as follows:
 | group-by after parallel dictionary encoding (E9) | 5 ms in the pipeline below | Polars 8 ms | ahead as executed |
 
 Reductions on large columns parallelize automatically under the
-language's standard policy — the same machinery as `par_map`, tuned by
-`set_parallel(n)` — with no change to any result. The practical
+language's standard policy — the same machinery as `par_map`, switched
+off with `set_parallel(false)` and sized by `OLANG_PARALLELISM` — with no
+change to any result. The practical
 guidance is simpler than the table: keep computations in Series and
 Frame operations, cross to lists at the edges, and column size stops
 being something to think about. The end-to-end standing is measured by

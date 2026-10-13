@@ -47,10 +47,6 @@ pub fn create_base64_module() -> Value {
 
     // Validation and utility
     module.insert(
-        "validate".to_string(),
-        create_builtin_function("validate", 1),
-    );
-    module.insert(
         "is_valid".to_string(),
         create_builtin_function("is_valid", 1),
     );
@@ -90,7 +86,6 @@ pub fn call_base64_function(
         "decode_bytes" => base64_decode_bytes(args),
         "encode_url_safe" => base64_encode_url_safe(args),
         "decode_url_safe" => base64_decode_url_safe(args),
-        "validate" => base64_validate(args),
         "is_valid" => base64_is_valid(args),
         "encode_no_pad" => base64_encode_no_pad(args),
         "decode_no_pad" => base64_decode_no_pad(args),
@@ -213,15 +208,15 @@ fn base64_decode_url_safe(args: Vec<Value>) -> Result<Value, Box<dyn std::error:
 
 /// Validate if a string is valid base64
 /// Usage: base64.validate("SGVsbG8sIFdvcmxkIQ==") -> Result<Bool, Error>
-fn base64_validate(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+fn base64_is_valid(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Err(format!("validate expects 1 argument, got {}", args.len()).into());
+        return Err(format!("is_valid expects 1 argument, got {}", args.len()).into());
     }
 
     let input = match &args[0] {
         Value::String(s) => s.as_ref(),
         _ => {
-            return Err("validate: argument must be a string".to_string().into());
+            return Err("is_valid: argument must be a string".to_string().into());
         }
     };
 
@@ -231,9 +226,6 @@ fn base64_validate(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
 
 /// Check if a string is valid base64 (alias for validate)
 /// Usage: base64.is_valid("SGVsbG8sIFdvcmxkIQ==") -> Result<Bool, Error>
-fn base64_is_valid(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    base64_validate(args)
-}
 
 /// Encode a string to base64 without padding
 /// Usage: base64.encode_no_pad("Hello, World!") -> Result<String, Error>
@@ -364,7 +356,6 @@ mod tests {
                 "decode",
                 "encode_url_safe",
                 "decode_url_safe",
-                "validate",
                 "is_valid",
                 "encode_no_pad",
                 "decode_no_pad",
@@ -529,7 +520,7 @@ mod tests {
         ];
 
         for valid_case in valid_cases {
-            let result = base64_validate(vec![string_val(valid_case)]).unwrap();
+            let result = base64_is_valid(vec![string_val(valid_case)]).unwrap();
             let is_valid = assert_ok(&result);
             assert!(
                 extract_bool(is_valid),
@@ -557,7 +548,7 @@ mod tests {
         ];
 
         for invalid_case in invalid_cases {
-            let result = base64_validate(vec![string_val(invalid_case)]).unwrap();
+            let result = base64_is_valid(vec![string_val(invalid_case)]).unwrap();
             let is_valid = assert_ok(&result);
             assert!(
                 !extract_bool(is_valid),
@@ -593,7 +584,7 @@ mod tests {
 
         assert_fails(base64_decode(vec![bool_val(true)]));
 
-        assert_fails(base64_validate(vec![int_val(123)]));
+        assert_fails(base64_is_valid(vec![int_val(123)]));
     }
 
     #[test]
@@ -615,7 +606,7 @@ mod tests {
             let encoded_str = extract_string(encoded);
 
             // Encoded string should be valid base64
-            let validate_result = base64_validate(vec![string_val(encoded_str)]).unwrap();
+            let validate_result = base64_is_valid(vec![string_val(encoded_str)]).unwrap();
             let is_valid = assert_ok(&validate_result);
             assert!(
                 extract_bool(is_valid),
@@ -650,7 +641,7 @@ mod tests {
         assert_eq!(extract_string(decoded), test_data);
 
         // Test validate
-        let result = call_base64_function("validate", vec![string_val(encoded_str)]).unwrap();
+        let result = call_base64_function("is_valid", vec![string_val(encoded_str)]).unwrap();
         let is_valid = assert_ok(&result);
         assert!(extract_bool(is_valid));
 

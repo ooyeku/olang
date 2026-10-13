@@ -1655,7 +1655,6 @@ impl BytecodeVm {
             // list, one call to any of them kept its function, and every
             // function that calls that one by name, on the tree-walker.
             "drop",
-            "map_path",
             "map_get_in",
             "map_set_in",
             "map_update",
@@ -8703,7 +8702,7 @@ impl BytecodeVm {
             // A nested read, hop by hop as map_get reads (Unit at the first
             // missing hop), without converting the map it walks: bridged,
             // a VM map crossed whole for each read.
-            "map_get_in" | "map_path" if args.len() == 2 => {
+            "map_get_in" if args.len() == 2 => {
                 let ValueData::List(keys) = &args[1].data else {
                     return None;
                 };

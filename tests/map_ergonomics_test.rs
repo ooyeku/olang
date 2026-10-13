@@ -466,7 +466,7 @@ fn kinds() = [
     unwrap(json.parse("{\"a\": 1, \"b\": 2}")),
 ]
 fn probe(m) = [
-    map_get(m, "a"), map_get_or(m, "z", 0), map_path(m, ["a"]), map_has_key(m, "b"),
+    map_get(m, "a"), map_get_or(m, "z", 0), map_get_in(m, ["a"]), map_has_key(m, "b"),
     sort(map_keys(m)) |> take(2), len(map_values(m)), len(entries(m)), map_len(m),
     typeof(map_set(m, "z", 3)), map_len(map_remove(m, "a")),
     typeof(map_merge(m, #{ "c": 3 })), map_get(map_merge(m, #{ "a": 9 }), "a"),
@@ -772,7 +772,7 @@ fn nested_reads_are_native_on_the_vm() {
 fn main() = {
     let s = #{ "pp": #{ "cur": 3, "o": { k: [1, 2] } }, "n": 1 }
     [map_get_in(s, ["pp", "cur"]), map_get_in(s, ["pp", "o", "k"]), map_get_in(s, ["pp", "none", "x"]),
-     map_path(s, ["n"]), map_get_in(s, [])]
+     map_get_in(s, ["n"]), map_get_in(s, [])]
 }
 main()
 "#;

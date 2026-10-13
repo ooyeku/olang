@@ -52,7 +52,7 @@ language server has [its own chapter](editors.md).
 | `olang eval SOURCE` | Evaluate one expression and print its value, with the working directory's project libraries in scope |
 | `olang fmt [path]` | Format sources in place; `--check` reports instead of writing |
 | `olang fix maps [path]` | Rewrite `map_get(x, "k")` as `x.k` and `map_get_or(x, "k", d)` as `x.k ?? d`, layout and comments kept; `--check` reports instead of writing |
-| `olang fix deprecated [path]` | Rename every call of a deprecated builtin to its current name (`map_path` → `map_get_in`); `--check` reports instead of writing |
+| `olang fix deprecated [path]` | Rename every call of a deprecated builtin or module function to its current name (`re.replace_all(` → `re.replace(`, `json.validate(` → `json.is_valid(`); `--check` reports instead of writing |
 | `olang test [path]` | Discover and run `test` blocks; `--coverage` reports coverage |
 | `olang build <file>` | Compile to a self-contained executable; `-o OUT` names it; `--app` carries the program's modules, its dependencies', and their assets |
 | `olang inspect <binary>` | Read a built binary's source, manifest, capabilities, provenance |

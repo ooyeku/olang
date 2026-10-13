@@ -297,10 +297,8 @@ additive.
 - `testing.test_summary` / `testing.reset_tests` are real as of 0.50:
   every `testing.assert_*` outcome is tallied per thread, `test_summary()`
   returns `#{ "passed", "failed", "total" }`, and `reset_tests()` zeroes
-  it. `testing.run_test` deliberately remains a redirect to `test`
-  blocks (a builtin cannot re-enter the interpreter to run your
-  function; the error says so).
-- The `--enable-parallel` / `set_parallel` evaluation modes
+  it.
+- `set_parallel`, the switch for the parallel machinery
 - The `cell` module is new as of 0.62: the model (one mutable location,
   confined to its creating thread, refused at `chan.send`, re-entrant
   `cell.update` rejected) is settled and covered by the scope and

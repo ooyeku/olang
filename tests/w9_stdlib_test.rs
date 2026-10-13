@@ -1,5 +1,5 @@
 //! Standard-library rows from roadmap W9, pinned as differentials
-//! against `--no-ovm`: `map_path`, the `col.` mirrors of the global
+//! against `--no-ovm`: `map_get_in`, the `col.` mirrors of the global
 //! collection helpers (`drop`, `col.index_of`, `col.slice`), `max`/`min`
 //! over scalars, `dates.stamp`, and `viz`'s spec-key checking.
 
@@ -37,16 +37,16 @@ fn agree(source: &str) -> (String, i32) {
 }
 
 #[test]
-fn map_path_reads_nested_values_and_stops_at_the_first_missing_hop() {
+fn map_get_in_reads_nested_values_and_stops_at_the_first_missing_hop() {
     let (out, rc) = agree(
         "let e = #{ \"issue\": #{ \"fields\": #{ \"estimate\": 5 }, \"tags\": [\"a\"] } }\n\
-         println(show(map_path(e, [\"issue\", \"fields\", \"estimate\"])))\n\
-         println(show(map_path(e, [\"issue\", \"missing\", \"deep\"])))\n\
-         println(show(map_path(e, [])))\n\
+         println(show(map_get_in(e, [\"issue\", \"fields\", \"estimate\"])))\n\
+         println(show(map_get_in(e, [\"issue\", \"missing\", \"deep\"])))\n\
+         println(show(map_get_in(e, [])))\n\
          let o = { a: { b: 7 } }\n\
-         println(show(map_path(o, [\"a\", \"b\"])))\n\
+         println(show(map_get_in(o, [\"a\", \"b\"])))\n\
          let j = unwrap(json.parse(\"{\\\"x\\\": {\\\"y\\\": [1, 2]}}\"))\n\
-         println(show(map_path(j, [\"x\", \"y\"])))",
+         println(show(map_get_in(j, [\"x\", \"y\"])))",
     );
     assert_eq!(rc, 0, "{out}");
     let lines: Vec<&str> = out.lines().collect();
@@ -56,7 +56,7 @@ fn map_path_reads_nested_values_and_stops_at_the_first_missing_hop() {
     assert_eq!(lines[3], "7");
     assert_eq!(lines[4], "[1, 2]");
     // Reading through a non-map is an error naming the key, not Unit.
-    let (out, rc) = agree("println(show(map_path(#{ \"a\": 3 }, [\"a\", \"b\"])))");
+    let (out, rc) = agree("println(show(map_get_in(#{ \"a\": 3 }, [\"a\", \"b\"])))");
     assert_ne!(rc, 0);
     assert!(out.contains("cannot read key 'b'"), "{out}");
 }
