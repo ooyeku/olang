@@ -1104,3 +1104,104 @@ fn a_capability_manifest_that_cannot_be_honoured_refuses_to_run() {
     assert!(String::from_utf8_lossy(&out.stdout).contains("ran"));
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+/// `olang test` runs a project's tests under the grant the program runs
+/// under: the manifest's, attenuated per dependency.
+#[test]
+fn olang_test_applies_the_manifests_grant() {
+    let ws = workspace("test_grant");
+    write(
+        &ws.join("lib/olang.toml"),
+        "[package]\nname = \"lib\"\nversion = \"1.0.0\"\n",
+    );
+    write(
+        &ws.join("lib/index.ol"),
+        "share fn peek() = fs.read_file(\"/etc/hosts\")\n",
+    );
+    write(
+        &ws.join("app/olang.toml"),
+        "[package]\nname = \"app\"\nversion = \"1.0.0\"\nlock = \"never\"\n\n\
+         [dependencies]\nlib = { path = \"../lib\" }\n\n\
+         [capabilities]\nfs = \"read\"\nnet = false\n\n\
+         [capabilities.dependencies.lib]\nfs = false\n",
+    );
+    write(
+        &ws.join("app/tests/grant_test.ol"),
+        "use lib { peek }\n\
+         test \"the app reads; the dependency may not; nobody nets\" {\n\
+             assert(is_ok(fs.read_file(\"/etc/hosts\")), \"the app's own read\")\n\
+             assert(!is_ok(attempt(() => peek())), \"the dependency's read is denied\")\n\
+             assert(!caps.allowed(\"net\"), \"net is withheld\")\n\
+         }\n",
+    );
+    let home = workspace("test_grant_home");
+    let out = Command::new(olang())
+        .current_dir(ws.join("app"))
+        .env("OLANG_HOME", &home)
+        .arg("test")
+        .output()
+        .unwrap();
+    let text =
+        String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{text}");
+    assert!(text.contains("1 passed, 0 failed"), "{text}");
+    let _ = std::fs::remove_dir_all(&ws);
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+/// A built application keeps the per-dependency attenuation its manifest
+/// declares, with its sources gone.
+#[test]
+fn a_built_application_keeps_its_dependency_attenuation() {
+    let ws = workspace("app_atten");
+    write(
+        &ws.join("lib/olang.toml"),
+        "[package]\nname = \"lib\"\nversion = \"1.0.0\"\n",
+    );
+    write(
+        &ws.join("lib/index.ol"),
+        "share fn peek() = unwrap(fs.read_file(\"/etc/hosts\"))\n",
+    );
+    write(
+        &ws.join("app/olang.toml"),
+        "[package]\nname = \"app\"\nversion = \"1.0.0\"\n\n\
+         [dependencies]\nlib = { path = \"../lib\" }\n\n\
+         [capabilities]\nfs = \"read\"\n\n\
+         [capabilities.dependencies.lib]\nfs = false\n",
+    );
+    write(
+        &ws.join("app/main.ol"),
+        "use lib { peek }\n\
+         println(show(len(unwrap(fs.read_file(\"/etc/hosts\"))) > 0))\n\
+         peek()\n",
+    );
+    let home = workspace("app_atten_home");
+    let bin = std::env::temp_dir().join(format!("olang_caps_app_bin_{}", std::process::id()));
+    let built = Command::new(olang())
+        .current_dir(ws.join("app"))
+        .env("OLANG_HOME", &home)
+        .args(["build", "--app", "main.ol", "-o"])
+        .arg(&bin)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+    let out = Command::new(&bin)
+        .current_dir(std::env::temp_dir())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(stdout.trim(), "true", "{stderr}");
+    assert!(!out.status.success());
+    assert!(
+        stderr.contains("dependency 'lib'") && stderr.contains("fs.read_file"),
+        "{stderr}"
+    );
+    let _ = std::fs::remove_file(&bin);
+    let _ = std::fs::remove_dir_all(&home);
+}

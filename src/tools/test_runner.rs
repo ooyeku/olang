@@ -267,6 +267,10 @@ pub fn run_paths(
             let (root, dirs) = project_scope(package_root.as_deref(), deps_map.as_ref());
             interpreter.set_test_scope(root, dirs);
         }
+        let deny = std::env::var("OLANG_DENY")
+            .ok()
+            .and_then(|list| crate::caps::parse_deny(&list).ok());
+        let mut caps_installed = false;
         if let Some(map) = deps_map {
             let mut map: std::collections::HashMap<_, _> = map.into_iter().collect();
             // A package is known by its own name from within itself, as
@@ -277,7 +281,34 @@ pub fn run_paths(
                 map.entry(m.package.name.clone())
                     .or_insert_with(|| root.to_path_buf());
             }
+            // The manifest's grant, attenuated per dependency, as
+            // `olang <file>` applies it: a test runs under the capabilities
+            // the program runs under (and OLANG_DENY on top).
+            let config = package_root.as_deref().and_then(|root| {
+                crate::pkg::manifest::Manifest::load_for_capabilities(root)
+                    .ok()
+                    .flatten()
+                    .and_then(|m| m.capabilities)
+            });
+            if let Some(config) = config
+                && let Ok(mut table) = crate::caps::CapTable::build(&config, &map)
+            {
+                if let Some(d) = deny {
+                    table.app = table.app.intersect(d);
+                    for entry in &mut table.deps {
+                        entry.2 = entry.2.intersect(d);
+                    }
+                }
+                interpreter.set_capabilities(table);
+                caps_installed = true;
+            }
             interpreter.set_dependency_map(map);
+        }
+        if !caps_installed && let Some(d) = deny {
+            interpreter.set_capabilities(crate::caps::CapTable {
+                app: d,
+                deps: Vec::new(),
+            });
         }
 
         // Run from the file's own directory so relative imports and file

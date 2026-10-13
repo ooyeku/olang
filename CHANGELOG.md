@@ -222,6 +222,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `re.replace_all(`, `json.validate(` or `toml.validate(` call and `olang
   fix deprecated` rewrites it. stdlib.md and ods.md give `set_parallel`
   its real signature, a Bool.
+
 - **A call made wrongly raises in every module** (stdlib.md's rule
   since 0.64): wrong arity, a wrong argument type, and an unknown option
   key now raise in `db`, `proc`, `pty`, the `fs` path functions,
@@ -230,6 +231,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `Err` (or ignored the extra argument or key). What the world says —
   a missing file, a closed connection, a port in use, a folder that is
   not there — is still an `Err`. Correct calls are unchanged.
+
 
 ### Added
 
@@ -252,6 +254,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   test hooks `ods.probe` and `ods.probe_tag` left the `ods` namespace
   (they were never documented; the test suite reaches them under an
   internal name).
+
+- **`olang test` applies the manifest's grant**, attenuated per
+  dependency, as `olang <file>` does (and `OLANG_DENY` on top): a test
+  runs under the capabilities the program runs under. A binary `olang
+  build --app` makes keeps each dependency's attenuation (now pinned by
+  a test), and packages.md says the REPL and the language server run
+  with full capability.
+
 
 ### Fixed
 

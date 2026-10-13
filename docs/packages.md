@@ -605,6 +605,13 @@ fs = false         # this dependency cannot touch the filesystem,
 net = false        # even if a future version tries to
 ```
 
+The grant governs every way the package's code runs: `olang main.ol`,
+`olang test` (a test runs under the capabilities the program runs under,
+`OLANG_DENY` on top), and a binary `olang build --app` makes, whose
+carried manifest keeps each dependency's attenuation with its sources
+gone. The REPL and the language server run code with full capability:
+they are the author's own tools, not the program.
+
 File access that happens *through* another module is confined under `fs`
 too, so `db`, `net`, and `ods` are not latent filesystem capabilities:
 opening a file-backed database (`db.open` on a path, or a `db` query that
