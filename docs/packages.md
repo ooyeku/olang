@@ -235,7 +235,10 @@ library that moves or disappears is noticed at the next install rather
 than silently drifted past (editing a shelved library is normal
 development and reported informationally, never as tampering). The
 shelf itself is one small TOML file at `~/.olang/shelf.toml`
-(`OLANG_SHELF` overrides the location).
+(`OLANG_SHELF` overrides the location). Its first line, `version = 1`, is
+the shelf's format version; every installed toolchain shares the file,
+so one that finds a newer version refuses it by name instead of
+rewriting it without what it does not know.
 
 A fresh shelf arrives stocked with the curated starter libraries —
 `textkit`, `validate`, `markdown` — removable and restorable like
@@ -438,6 +441,14 @@ none, and re-resolves when the manifest's pin no longer allows it.
 Commit it. A lock that names a path this machine does not
 have is not an error: `otc install` says which entry it is re-resolving
 and rewrites the lock.
+
+The lock's first line is its format version (`version = 1`). A lock
+whose version is newer than this olang reads was written by a newer
+toolchain and may hold what this one cannot represent, so it is refused
+by name — `olang.lock is format version 2, written by a newer olang` —
+and left untouched, rather than replayed in part and rewritten without
+what it held. Upgrade olang (`otc update`), or delete the lock to
+resolve afresh.
 
 One dependency that cannot be resolved does not stop the others: a
 program's modules that never import the missing package run, and the

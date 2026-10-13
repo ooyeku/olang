@@ -28,6 +28,11 @@ fn default_version() -> u32 {
     1
 }
 
+/// The newest `olang.lock` format this olang reads. A newer lock is
+/// refused by name — never replayed in part, never rewritten as this
+/// version with what it does not know dropped.
+pub const LOCK_VERSION: u32 = 1;
+
 /// One resolved dependency, pinned exactly.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LockedPackage {
@@ -90,11 +95,27 @@ impl Lockfile {
     }
 
     pub fn from_toml(text: &str) -> Result<Self, String> {
+        // the version first, alone: a newer format may not parse as this one
+        #[derive(serde::Deserialize)]
+        struct Head {
+            #[serde(default = "default_version")]
+            version: u32,
+        }
+        if let Ok(head) = toml::from_str::<Head>(text)
+            && head.version > LOCK_VERSION
+        {
+            return Err(newer_lock(head.version));
+        }
         toml::from_str(text).map_err(|e| e.to_string())
     }
 
     pub fn to_toml(&self) -> String {
         toml::to_string_pretty(self).unwrap_or_default()
+    }
+
+    /// Whether `text` is a lock of a format newer than this olang reads.
+    pub fn is_newer(error: &str) -> bool {
+        error.starts_with("olang.lock is format version")
     }
 
     /// Load `olang.lock` from a directory, or an empty lock if absent.
@@ -110,6 +131,13 @@ impl Lockfile {
     pub fn save(&self, dir: &Path) -> Result<(), String> {
         std::fs::write(dir.join("olang.lock"), self.to_toml()).map_err(|e| e.to_string())
     }
+}
+
+/// The refusal of a lock newer than this olang reads.
+pub fn newer_lock(version: u32) -> String {
+    format!(
+        "olang.lock is format version {version}, written by a newer olang; this olang reads version {LOCK_VERSION}: upgrade olang (otc update), or remove olang.lock to resolve afresh"
+    )
 }
 
 #[cfg(test)]
@@ -166,5 +194,17 @@ mod tests {
         assert!(text.contains("kind = \"shelf\""), "{text}");
         assert!(!text.contains("/Users/"), "{text}");
         assert_eq!(Lockfile::from_toml(&text).unwrap(), lock);
+    }
+
+    #[test]
+    fn a_newer_lock_is_refused_by_name() {
+        let e =
+            Lockfile::from_toml("version = 7\n[package.x]\nsource = { future = 1 }\n").unwrap_err();
+        assert!(Lockfile::is_newer(&e), "{e}");
+        assert!(
+            e.contains("format version 7") && e.contains("reads version 1"),
+            "{e}"
+        );
+        assert!(Lockfile::from_toml("version = 1\n").is_ok());
     }
 }

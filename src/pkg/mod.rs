@@ -81,6 +81,14 @@ pub struct InstallOptions {
 pub fn install(root: &Path, options: &InstallOptions) -> Result<DependencyMap, PkgError> {
     let manifest = Manifest::load(root).map_err(|e| PkgError::Manifest(e.to_string()))?;
 
+    // A lock written by a newer olang is refused by name: neither
+    // replayed in part nor rewritten with what this olang does not know.
+    if let Err(e) = Lockfile::load(root)
+        && Lockfile::is_newer(&e)
+    {
+        return Err(PkgError::Lock(e));
+    }
+
     // A lockfile that still covers the manifest is replayed exactly: the
     // pinned revs are fetched (offline once cached) and the lock is left
     // byte-identical. Only a manifest edit the lock doesn't cover — or an

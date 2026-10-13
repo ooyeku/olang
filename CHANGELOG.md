@@ -262,6 +262,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   a test), and packages.md says the REPL and the language server run
   with full capability.
 
+- `olang.lock` and `shelf.toml` carry a format version, and a newer one
+  is refused by name. A lock with `version = 7` used to replay and then
+  be rewritten as version 1 with its unknown fields gone; now `otc
+  install` (and every implicit install) stops with `olang.lock is format
+  version 7, written by a newer olang` and leaves the file untouched.
+  `shelf.toml`, shared by every installed toolchain, now begins with
+  `version = 1`, and a toolchain that finds a newer shelf refuses it
+  rather than rewriting it without what it does not know.
+
 
 ### Fixed
 

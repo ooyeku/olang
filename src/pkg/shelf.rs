@@ -22,8 +22,19 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+/// The newest shelf.toml format this olang reads and writes. A newer
+/// shelf is refused by name, never rewritten without what it holds.
+pub const SHELF_VERSION: u32 = 1;
+
+fn shelf_version() -> u32 {
+    SHELF_VERSION
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Shelf {
+    /// The format, `version = 1` (a shelf without one is version 1).
+    #[serde(default = "shelf_version")]
+    pub version: u32,
     /// Library name -> absolute path of its directory.
     #[serde(default)]
     pub libraries: BTreeMap<String, PathBuf>,
@@ -32,6 +43,16 @@ pub struct Shelf {
     /// pointer at a checkout that moves; the rest follow their directory.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub revs: BTreeMap<String, String>,
+}
+
+impl Default for Shelf {
+    fn default() -> Self {
+        Shelf {
+            version: SHELF_VERSION,
+            libraries: BTreeMap::new(),
+            revs: BTreeMap::new(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -70,6 +91,22 @@ impl Shelf {
             return Ok(Shelf::default());
         }
         let text = std::fs::read_to_string(&path).map_err(|e| ShelfError::Io(e.to_string()))?;
+        // the version first, alone: a newer format may not parse as this one
+        #[derive(Deserialize)]
+        struct Head {
+            #[serde(default = "shelf_version")]
+            version: u32,
+        }
+        if let Ok(head) = toml::from_str::<Head>(&text)
+            && head.version > SHELF_VERSION
+        {
+            return Err(ShelfError::Io(format!(
+                "{} is format version {}, written by a newer olang; this olang reads version {}: upgrade olang (otc update)",
+                path.display(),
+                head.version,
+                SHELF_VERSION
+            )));
+        }
         toml::from_str(&text).map_err(|e| ShelfError::Parse(e.to_string()))
     }
 

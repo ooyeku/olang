@@ -294,9 +294,9 @@ impl Manifest {
     ) -> Result<(), ManifestError> {
         let path = dir.join("olang.toml");
         let text = std::fs::read_to_string(&path).map_err(ManifestError::Io)?;
-        let mut doc: toml_edit::DocumentMut = text
-            .parse()
-            .map_err(|e: toml_edit::TomlError| ManifestError::Io(std::io::Error::other(e.to_string())))?;
+        let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| {
+            ManifestError::Io(std::io::Error::other(e.to_string()))
+        })?;
         change(&mut doc).map_err(|e| ManifestError::Io(std::io::Error::other(e)))?;
         std::fs::write(&path, doc.to_string()).map_err(ManifestError::Io)
     }
