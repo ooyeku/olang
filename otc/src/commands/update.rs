@@ -23,7 +23,11 @@ const REPO: &str = "ooyeku/olang";
 #[derive(Subcommand)]
 pub enum ToolchainCommand {
     /// List installed toolchains and mark the default
-    List,
+    List {
+        /// `text` (the list) or `json` (the same as data)
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: String,
+    },
     /// Download and install a specific release (e.g. 0.79.0)
     Install { version: String },
     /// Make an installed toolchain the default
@@ -68,7 +72,8 @@ pub fn update(check: bool) -> Result<()> {
 
 pub fn toolchain(cmd: ToolchainCommand) -> Result<()> {
     match cmd {
-        ToolchainCommand::List => {
+        ToolchainCommand::List { format } => {
+            let json = super::json_format("otc toolchain list", &format)?;
             let dir = toolchains_dir()?;
             let default = default_toolchain()?;
             let mut versions: Vec<String> = match std::fs::read_dir(&dir) {
@@ -80,6 +85,32 @@ pub fn toolchain(cmd: ToolchainCommand) -> Result<()> {
                 Err(_) => Vec::new(),
             };
             versions.sort();
+            // `#{ format: 1, kind: "toolchains", dir, default, toolchains }`,
+            // each `#{ version, olang, default }` (`olang` the binary's
+            // absolute path)
+            if json {
+                let rows: Vec<serde_json::Value> = versions
+                    .iter()
+                    .map(|v| {
+                        serde_json::json!({
+                            "version": v,
+                            "olang": dir.join(v).join("bin").join("olang").display().to_string(),
+                            "default": Some(v.as_str()) == default.as_deref(),
+                        })
+                    })
+                    .collect();
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "format": 1,
+                        "kind": "toolchains",
+                        "dir": dir.display().to_string(),
+                        "default": default,
+                        "toolchains": rows,
+                    })
+                );
+                return Ok(());
+            }
             if versions.is_empty() {
                 println!("no toolchains installed under {}", dir.display());
                 println!("(`otc update` installs the latest release)");

@@ -211,10 +211,14 @@ pub fn remove(name: &str) -> anyhow::Result<()> {
 
 /// `otc list` — the project, its dependencies, where each one lives, and
 /// one level of what they pull in.
-pub fn list() -> anyhow::Result<()> {
+pub fn list(json: bool) -> anyhow::Result<()> {
     let root = find_root().ok_or_else(|| anyhow::anyhow!("no olang.toml found"))?;
     let manifest = Manifest::load(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     let lock = Lockfile::load(&root).unwrap_or_default();
+    if json {
+        println!("{}", list_json(&root, &manifest, &lock));
+        return Ok(());
+    }
 
     println!("{} {}", manifest.package.name, manifest.package.version);
     if manifest.dependencies.is_empty() {
@@ -271,6 +275,68 @@ pub fn list() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// `otc list --format json`: `#{ format: 1, kind: "deps", package,
+/// version, root, dependencies }`, each dependency `#{ name, source,
+/// spec, version, dir, rev, dependencies }` — `source` `path`, `shelf`,
+/// `git` or `registry`, `spec` what the manifest says, `dir` the absolute
+/// directory it resolved to (`()` when unresolved), `rev` a git or shelf
+/// pin, `dependencies` its own direct dependencies' names (from the lock).
+fn list_json(root: &Path, manifest: &Manifest, lock: &Lockfile) -> serde_json::Value {
+    use serde_json::{Value, json};
+    let abs = |p: &Path| {
+        std::path::absolute(p)
+            .unwrap_or_else(|_| p.to_path_buf())
+            .display()
+            .to_string()
+    };
+    let shelf = Shelf::load().ok();
+    let deps: Vec<Value> = manifest
+        .dependencies
+        .iter()
+        .map(|(name, dep)| {
+            let locked = lock.package.get(name);
+            let (source, spec) = match dep {
+                Dependency::Path { path } => ("path", path.clone()),
+                Dependency::Shelf { shelf } => ("shelf", shelf.clone()),
+                Dependency::Git { git, .. } => ("git", git.clone()),
+                Dependency::Registry(v) => ("registry", v.clone()),
+                Dependency::RegistryExplicit { version, .. } => ("registry", version.clone()),
+            };
+            let (dir, rev): (Option<String>, Option<String>) =
+                match (dep, locked.map(|p| &p.source)) {
+                    (Dependency::Path { path }, _) => (Some(abs(&root.join(path))), None),
+                    (_, Some(LockedSource::Shelf { shelf: entry, rev })) => (
+                        shelf
+                            .as_ref()
+                            .and_then(|s| s.resolve(entry).cloned())
+                            .map(|d| abs(&d)),
+                        rev.clone(),
+                    ),
+                    (_, Some(LockedSource::Path { path })) => (Some(abs(&root.join(path))), None),
+                    (_, Some(LockedSource::Git { rev, .. })) => (None, Some(rev.clone())),
+                    _ => (None, None),
+                };
+            json!({
+                "name": name,
+                "source": source,
+                "spec": spec,
+                "version": locked.and_then(|p| p.version.clone()),
+                "dir": dir,
+                "rev": rev,
+                "dependencies": locked.map(|p| p.dependencies.clone()).unwrap_or_default(),
+            })
+        })
+        .collect();
+    json!({
+        "format": 1,
+        "kind": "deps",
+        "package": manifest.package.name,
+        "version": manifest.package.version.to_string(),
+        "root": abs(root),
+        "dependencies": deps,
+    })
 }
 
 /// `otc install` — make the lockfile true. `--update` re-resolves

@@ -29,7 +29,11 @@ pub enum LibCommand {
         rev: Option<String>,
     },
     /// List the libraries on your shelf
-    List,
+    List {
+        /// `text` (the table) or `json` (the same as data)
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: String,
+    },
     /// Remove a library from your shelf (projects already depending on
     /// it keep their lockfile pin until their next install)
     Remove {
@@ -48,7 +52,9 @@ impl LibCommand {
     pub fn execute(&self) -> anyhow::Result<()> {
         match self {
             LibCommand::Add { path, name, rev } => add(path, name.as_deref(), rev.as_deref()),
-            LibCommand::List => list(),
+            LibCommand::List { format } => {
+                super::json_format("otc lib list", format).and_then(list)
+            }
             LibCommand::Remove { name } => remove(name),
             LibCommand::Restore { name } => restore(name.as_deref()),
         }
@@ -86,8 +92,44 @@ fn add(path: &str, name: Option<&str>, rev: Option<&str>) -> anyhow::Result<()> 
     Ok(())
 }
 
-fn list() -> anyhow::Result<()> {
+/// `otc lib list --format json`: `#{ format: 1, kind: "shelf", shelf,
+/// libraries }`, each library `#{ name, dir, rev, starter, status }` —
+/// `dir` absolute, `rev` the pin or `()`, `status` `ok`, `missing` (the
+/// directory is gone) or `not-a-library`.
+fn list(json: bool) -> anyhow::Result<()> {
     let shelf = Shelf::load_or_seed().map_err(|e| anyhow::anyhow!("{}", e))?;
+    if json {
+        let libs: Vec<serde_json::Value> = shelf
+            .libraries
+            .iter()
+            .map(|(name, dir)| {
+                let status = if !dir.exists() {
+                    "missing"
+                } else if Manifest::load(dir).is_err() && !dir.join("index.ol").exists() {
+                    "not-a-library"
+                } else {
+                    "ok"
+                };
+                serde_json::json!({
+                    "name": name,
+                    "dir": std::path::absolute(dir).unwrap_or_else(|_| dir.clone()).display().to_string(),
+                    "rev": shelf.rev_of(name),
+                    "starter": shelf.owns(dir) && olang::pkg::starter::get(name).is_some(),
+                    "status": status,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::json!({
+                "format": 1,
+                "kind": "shelf",
+                "shelf": std::path::absolute(Shelf::file()).unwrap_or_else(|_| Shelf::file()).display().to_string(),
+                "libraries": libs,
+            })
+        );
+        return Ok(());
+    }
     if shelf.libraries.is_empty() {
         println!("Your shelf is empty. Register a library:  otc lib add <path>");
         return Ok(());

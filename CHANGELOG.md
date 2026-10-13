@@ -302,6 +302,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and failures, from a run, `check`, `test`, `fmt` and `build`), and
   `olang test --fail-if-none` exits 1 when no test block ran.
 
+- JSON outputs and output flags are uniform (tooling.md, "Output flags
+  and JSON documents"). Every JSON output carries `format` and `kind`:
+  `olang bench --format json`'s `start` event (`kind: "bench"`) and both
+  saved baselines (`bench-baseline`, `otc-bench-baseline`; one saved
+  before has no `format` and reads as 1, a newer one is refused);
+  `olang check --tier --format json` has its own format number, no
+  longer `--ovm-stats`'s. Every path in them is absolute (`olang check
+  --format json`'s `file`, `olang bench`'s `file`, `files`, `against`
+  and `saved` were as given). New `--format json` on `olang inspect`
+  (every check's verdict; with `--caps` the grant), `olang caps`,
+  `otc list`, `otc lib list` and `otc toolchain list`. `olang bench
+  --help` lists all its flags. `-o`/`--output` and `--format`
+  everywhere, the old spellings kept: `olang profile -o` (`--out`), `olang
+  doc --format markdown` (`--markdown`), and `olang doc --format
+  markdown -o FILE` writes the file (it printed to stdout whatever `-o`
+  said).
+
 
 ### Fixed
 

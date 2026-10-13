@@ -139,6 +139,13 @@ pub fn run_json(paths: &[PathBuf]) -> i32 {
             }));
         }
     }
+    // every path in the document absolute, as the other JSON outputs
+    let abs = |p: &Path| {
+        std::path::absolute(p)
+            .unwrap_or_else(|_| p.to_path_buf())
+            .display()
+            .to_string()
+    };
     // a UTF-16 column on `line` of `text` as a 1-based character column
     let char_col = |text: &str, line: u32, utf16: u32| -> usize {
         let l = text.lines().nth(line as usize).unwrap_or("");
@@ -159,7 +166,7 @@ pub fn run_json(paths: &[PathBuf]) -> i32 {
             Err(e) => {
                 errors += 1;
                 rows.push(serde_json::json!({
-                    "file": file.to_string_lossy(), "error": format!("cannot read: {}", e), "diagnostics": [] }));
+                    "file": abs(file), "error": format!("cannot read: {}", e), "diagnostics": [] }));
                 continue;
             }
         };
@@ -202,7 +209,7 @@ pub fn run_json(paths: &[PathBuf]) -> i32 {
                 "range": d.range,
             }));
         }
-        rows.push(serde_json::json!({ "file": file.to_string_lossy(), "diagnostics": out }));
+        rows.push(serde_json::json!({ "file": abs(file), "diagnostics": out }));
     }
     println!(
         "{}",
@@ -2207,6 +2214,10 @@ pub fn promoted_label(d: &CheckDiagnostic) -> Option<&'static str> {
         _ => return None,
     })
 }
+
+/// The format number of `olang check --tier --format json`, its own
+/// (it shared `--ovm-stats`'s until 0.89).
+pub const TIER_CHECK_FORMAT: u32 = 1;
 
 /// What a promoted advisory's message ends with.
 const PROMOTED: &str = " (promoted to an error by [check] promote in olang.toml)";
@@ -4756,7 +4767,7 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
         println!(
             "{}",
             serde_json::json!({
-                "format": crate::tier_stats::FORMAT,
+                "format": TIER_CHECK_FORMAT,
                 "kind": "tier-check",
                 "olang": crate::version::VERSION,
                 "files": file_rows,

@@ -79,3 +79,47 @@ fn the_shelf_says_its_version_and_a_newer_one_is_refused() {
     let _ = std::fs::remove_dir_all(&lib);
     let _ = std::fs::remove_dir_all(&home);
 }
+
+#[test]
+fn the_lists_answer_as_data() {
+    let home = scratch("lists-home");
+    let app = scratch("lists-app");
+    std::fs::create_dir_all(app.join("lib")).unwrap();
+    std::fs::write(app.join("lib/index.ol"), "share fn one() = 1\n").unwrap();
+    std::fs::write(
+        app.join("lib/olang.toml"),
+        "[package]\nname = \"lib\"\nversion = \"1.0.0\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        app.join("olang.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nlib = { path = \"lib\" }\n",
+    )
+    .unwrap();
+    let (ok, out) = otc(&app, &home, &["list", "--format", "json"]);
+    assert!(ok, "{out}");
+    let d: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(d["format"], 1);
+    assert_eq!(d["kind"], "deps");
+    assert_eq!(d["dependencies"][0]["name"], "lib");
+    assert_eq!(d["dependencies"][0]["source"], "path");
+    assert!(
+        d["dependencies"][0]["dir"]
+            .as_str()
+            .unwrap()
+            .starts_with('/')
+    );
+    let (ok, out) = otc(&app, &home, &["lib", "list", "--format", "json"]);
+    assert!(ok, "{out}");
+    let d: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(d["kind"], "shelf");
+    assert!(d["libraries"].is_array());
+    let (ok, out) = otc(&app, &home, &["toolchain", "list", "--format", "json"]);
+    assert!(ok, "{out}");
+    let d: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(d["kind"], "toolchains");
+    let (ok, _) = otc(&app, &home, &["list", "--format", "yaml"]);
+    assert!(!ok);
+    let _ = std::fs::remove_dir_all(&app);
+    let _ = std::fs::remove_dir_all(&home);
+}

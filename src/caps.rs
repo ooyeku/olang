@@ -97,6 +97,37 @@ impl Caps {
     }
 
     /// Human-readable one-line summary ("fs=read net=false proc=false ...").
+    /// The grant as data: `#{ fs, net, proc, db, env }`, `fs` the grant
+    /// word (`true`, `"read"`, `false`, as `caps.level` answers), the rest
+    /// Bools. What `olang caps --format json` and `olang inspect --format
+    /// json` print.
+    pub fn to_json(&self) -> serde_json::Value {
+        let fs = match self.fs {
+            FsCap::Full => serde_json::Value::Bool(true),
+            FsCap::None => serde_json::Value::Bool(false),
+            FsCap::Read => serde_json::Value::String("read".to_string()),
+        };
+        serde_json::json!({ "fs": fs, "net": self.net, "proc": self.proc, "db": self.db, "env": self.env })
+    }
+
+    /// A `[capabilities]` block as data: the package's grant and each
+    /// dependency's, attenuated by it (`#{ error }` for one that does not
+    /// resolve).
+    pub fn config_json(config: &CapsConfig) -> Result<serde_json::Value, String> {
+        let caps = config.base.resolve()?;
+        let mut deps = serde_json::Map::new();
+        for (name, spec) in &config.dependencies {
+            deps.insert(
+                name.clone(),
+                match spec.resolve() {
+                    Ok(d) => d.intersect(caps).to_json(),
+                    Err(e) => serde_json::json!({ "error": e }),
+                },
+            );
+        }
+        Ok(serde_json::json!({ "grant": caps.to_json(), "declared": true, "dependencies": deps }))
+    }
+
     pub fn summary(&self) -> String {
         format!(
             "fs={} net={} proc={} db={} env={}",

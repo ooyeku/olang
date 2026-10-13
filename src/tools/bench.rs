@@ -20,6 +20,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
+/// The format number of `--format json`'s events and of a saved baseline.
+pub const FORMAT: u32 = 1;
+
 const DEFAULT_RUNS: usize = 7;
 const SLOW_RUNS: usize = 3;
 const SLOW_THRESHOLD_S: f64 = 2.0;
@@ -134,9 +137,9 @@ pub fn run(args: &[String]) -> i32 {
     let event = |v: serde_json::Value| println!("{}", v);
     if json {
         event(
-            serde_json::json!({ "event": "start", "olang": env!("CARGO_PKG_VERSION"), "runs": runs, "in_task": in_task,
-            "files": files.iter().map(|f| f.display().to_string()).collect::<Vec<_>>(),
-            "against": against.as_ref().map(|p| p.display().to_string()) }),
+            serde_json::json!({ "event": "start", "format": FORMAT, "kind": "bench", "olang": env!("CARGO_PKG_VERSION"), "runs": runs, "in_task": in_task,
+            "files": files.iter().map(|f| abs(f)).collect::<Vec<_>>(),
+            "against": against.as_deref().map(abs) }),
         );
     }
     if let Some(d) = &profile_dir {
@@ -168,7 +171,7 @@ pub fn run(args: &[String]) -> i32 {
             Err(msg) => {
                 if json {
                     event(
-                        serde_json::json!({ "event": "error", "name": name, "file": file.display().to_string(), "message": msg }),
+                        serde_json::json!({ "event": "error", "name": name, "file": abs(file), "message": msg }),
                     );
                 } else {
                     eprintln!("  {} {}", name.red(), msg);
@@ -209,7 +212,7 @@ pub fn run(args: &[String]) -> i32 {
             }
             let r4 = |x: f64| (x * 1_000_000.0).round() / 1_000_000.0;
             event(serde_json::json!({
-                "event": "result", "name": name, "file": file.display().to_string(),
+                "event": "result", "name": name, "file": abs(file),
                 "median_s": r4(m.median_s), "min_s": r4(m.min_s), "max_s": r4(m.max_s),
                 "cv_pct": (m.cv_pct * 100.0).round() / 100.0, "runs": m.runs,
                 "times_s": m.times_s.iter().map(|t| r4(*t)).collect::<Vec<_>>(),
@@ -275,7 +278,7 @@ pub fn run(args: &[String]) -> i32 {
     if json {
         event(
             serde_json::json!({ "event": "finished", "regressed": regressed, "files": results.len(),
-            "saved": save.as_ref().map(|p| p.display().to_string()) }),
+            "saved": save.as_deref().map(abs) }),
         );
     }
 
@@ -284,6 +287,14 @@ pub fn run(args: &[String]) -> i32 {
 
 /// Files as given; directories contribute their immediate .ol children
 /// (sorted). Not recursive — a benchmark suite is a flat, deliberate set.
+/// A path as the JSON events carry it: absolute.
+fn abs(p: &Path) -> String {
+    std::path::absolute(p)
+        .unwrap_or_else(|_| p.to_path_buf())
+        .display()
+        .to_string()
+}
+
 fn discover(paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
     let mut files = Vec::new();
     for p in paths {
@@ -385,6 +396,11 @@ fn format_secs(s: f64) -> String {
 
 fn save_baseline(path: &Path, results: &BTreeMap<String, f64>) -> Result<(), String> {
     let mut doc = serde_json::Map::new();
+    doc.insert("format".to_string(), serde_json::Value::from(FORMAT));
+    doc.insert(
+        "kind".to_string(),
+        serde_json::Value::String("bench-baseline".to_string()),
+    );
     doc.insert(
         "olang_version".to_string(),
         serde_json::Value::String(env!("CARGO_PKG_VERSION").to_string()),
@@ -407,6 +423,15 @@ fn load_baseline(path: &Path) -> Result<BTreeMap<String, f64>, String> {
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let doc: serde_json::Value = serde_json::from_str(&text)
         .map_err(|e| format!("{} is not valid JSON: {e}", path.display()))?;
+    // a baseline saved before 0.89 has no `format`: read as 1
+    if let Some(f) = doc.get("format").and_then(|f| f.as_u64())
+        && f > FORMAT as u64
+    {
+        return Err(format!(
+            "{} is baseline format {f}, written by a newer olang; this olang reads format {FORMAT}",
+            path.display()
+        ));
+    }
     let benches = doc
         .get("benchmarks")
         .and_then(|b| b.as_object())

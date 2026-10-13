@@ -77,8 +77,24 @@ struct Measurement {
     self_timed: bool,
 }
 
+/// The format number of a saved `otc bench` baseline.
+const BASELINE_FORMAT: u32 = 1;
+
+fn baseline_format() -> u32 {
+    BASELINE_FORMAT
+}
+
+fn baseline_kind() -> String {
+    "otc-bench-baseline".to_string()
+}
+
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct Baseline {
+    /// A baseline saved before 0.89 has none: read as 1.
+    #[serde(default = "baseline_format")]
+    format: u32,
+    #[serde(default = "baseline_kind")]
+    kind: String,
     machine: String,
     /// bench name -> size (0 for unsized) -> measurement
     benches: BTreeMap<String, BTreeMap<u64, Measurement>>,
@@ -381,6 +397,14 @@ pub fn execute(args: BenchArgs) -> anyhow::Result<()> {
                 .map_err(|e| anyhow::anyhow!("cannot read baseline {}: {}", path, e))?;
             let base: Baseline = serde_json::from_str(&text)
                 .map_err(|e| anyhow::anyhow!("baseline {} is not valid: {}", path, e))?;
+            if base.format > BASELINE_FORMAT {
+                anyhow::bail!(
+                    "baseline {} is format {}, written by a newer otc; this otc reads format {}",
+                    path,
+                    base.format,
+                    BASELINE_FORMAT
+                );
+            }
             if base.machine != machine {
                 println!(
                     "note: baseline is from a different machine\n  baseline: {}\n  here:     {}\n  deltas below compare across hardware — read them accordingly",
@@ -412,6 +436,8 @@ pub fn execute(args: BenchArgs) -> anyhow::Result<()> {
         machine, runs, startup_ms
     );
     let mut out_baseline = Baseline {
+        format: BASELINE_FORMAT,
+        kind: baseline_kind(),
         machine,
         benches: BTreeMap::new(),
     };

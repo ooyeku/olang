@@ -150,7 +150,9 @@ fn module_name(path: &Path) -> String {
 }
 
 /// `olang doc [paths] [-o out.html] [--md]`.
-pub fn run(paths: &[PathBuf], output: &Path, markdown: bool) -> i32 {
+/// `output`: the file to write; `None` writes HTML to `doc.html` and
+/// Markdown to stdout.
+pub fn run(paths: &[PathBuf], output: Option<&Path>, markdown: bool) -> i32 {
     let mut files = Vec::new();
     for p in paths {
         files.extend(super::discover_ol_files(p));
@@ -177,10 +179,15 @@ pub fn run(paths: &[PathBuf], output: &Path, markdown: bool) -> i32 {
     }
 
     let item_count: usize = modules.iter().map(|(_, d)| d.items.len()).sum();
-    if markdown {
+    if markdown && output.is_none() {
         print!("{}", render_markdown(&modules));
     } else {
-        let html = render_html(&modules, "olang reference");
+        let output = output.unwrap_or(Path::new("doc.html"));
+        let html = if markdown {
+            render_markdown(&modules)
+        } else {
+            render_html(&modules, "olang reference")
+        };
         if let Err(e) = std::fs::write(output, html) {
             eprintln!("olang doc: cannot write {}: {}", output.display(), e);
             return 1;

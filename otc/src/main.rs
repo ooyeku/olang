@@ -63,7 +63,11 @@ enum Commands {
         name: String,
     },
     /// Show this project's dependencies and where each one lives
-    List,
+    List {
+        /// `text` (the tree) or `json` (the same as data)
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: String,
+    },
     /// Fetch dependencies and write olang.lock
     Install {
         /// Fail if the lockfile would change (for CI)
@@ -151,7 +155,8 @@ fn main() {
             commands::project::add(&spec, path.as_deref(), force)
         }
         Commands::Remove { name } => commands::project::remove(&name),
-        Commands::List => commands::project::list(),
+        Commands::List { format } => commands::json_format("otc list", &format)
+            .and_then(|json| commands::project::list(json)),
         Commands::Install { frozen, update } => {
             commands::project::do_install(frozen, update, verbose)
         }

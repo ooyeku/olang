@@ -182,6 +182,7 @@ otc add ../my-lib            # add a dependency by path
 otc add my-lib               # add a dependency by name, from your shelf
 otc remove my-lib            # drop a dependency
 otc list                     # what this project depends on, and where each lives
+otc list --format json       # the same as data: #{ format, kind: "deps", package, version, root, dependencies }
 otc install                  # fetch dependencies, honoring olang.lock
 otc install --frozen         # fail if resolution would rewrite the lock (CI)
 otc install --update         # re-resolve everything, rewrite the lock
@@ -219,6 +220,7 @@ without remembering where it lives". Register a library once, per user:
 otc lib add ~/code/geometry     # registers under its package name
 otc lib add ~/code/sdk --rev 4f2a91c   # as it stands at that commit; the lock carries the rev
 otc lib list                    # what is shelved, and where each points
+otc lib list --format json      # #{ format, kind: "shelf", shelf, libraries }, each #{ name, dir, rev, starter, status }
 otc lib remove geometry
 ```
 
@@ -299,6 +301,7 @@ Multiple releases install side by side:
 
 ```bash
 otc toolchain list              # installed versions, default marked
+otc toolchain list --format json  # #{ format, kind: "toolchains", dir, default, toolchains }
 otc toolchain install 0.87.0    # add a specific release
 otc toolchain default 0.87.0    # switch the shims
 otc toolchain remove 0.87.0     # remove (the default refuses)
@@ -808,6 +811,7 @@ olang inspect ./tool             # Print a summary: version, checksum, capabilit
 olang inspect ./tool --source    # Print the embedded source.
 olang inspect ./tool --manifest  # Print the embedded olang.toml.
 olang inspect ./tool --caps      # Print the resolved capability grant.
+olang inspect ./tool --format json  # The summary as data, every check's verdict.
 olang inspect ./tool --verify    # Verify the checksum.
 olang inspect ./tool --against . # Compare the binary to a source tree.
 olang inspect ./tool -o dir/     # Extract source, manifest, and lockfile.

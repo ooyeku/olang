@@ -251,7 +251,8 @@ enum Commands {
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         format: String,
         /// With `--format json`: write the document here instead of stdout
-        #[arg(long, value_name = "PATH")]
+        /// (`--out` is the older spelling)
+        #[arg(short, long = "output", visible_alias = "out", value_name = "PATH")]
         out: Option<PathBuf>,
         /// With `--format json`: write a snapshot to DIR/<pid>.json while
         /// the program runs (an editor draws it live)
@@ -385,6 +386,10 @@ enum Commands {
         /// Extract embedded source/manifest/lockfile into DIR
         #[arg(short, long, value_name = "DIR")]
         output: Option<PathBuf>,
+        /// `text` (the summary) or `json` (the same as data, with every
+        /// check's verdict)
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: String,
     },
 
     /// Show the capability grant a program or built binary carries
@@ -392,6 +397,9 @@ enum Commands {
         /// A source file, package directory, or built binary (default: current directory)
         #[arg(value_name = "PATH")]
         path: Option<PathBuf>,
+        /// `text` or `json` (the grant as data)
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: String,
     },
 
     /// Run a program and record its nondeterministic inputs to a .olt trace
@@ -433,7 +441,11 @@ enum Commands {
         /// Output path (default: doc.html)
         #[arg(short, long, value_name = "OUT")]
         output: Option<PathBuf>,
-        /// Emit Markdown instead of HTML
+        /// `html` (the default) or `markdown`
+        #[arg(long, value_name = "FORMAT", default_value = "html")]
+        format: String,
+        /// Emit Markdown instead of HTML (the older spelling of
+        /// `--format markdown`)
         #[arg(long)]
         markdown: bool,
     },
@@ -462,7 +474,10 @@ enum Commands {
         \x20 --runs N            timed runs per benchmark (default 7)\n\
         \x20 --save FILE         store the medians as a baseline\n\
         \x20 --against FILE      compare against a saved baseline\n\
-        \x20 --fail-on-regress   exit non-zero if anything got slower")]
+        \x20 --fail-on-regress   exit non-zero if anything got slower\n\
+        \x20 --in-task           run every benchmark on a spawned task\n\
+        \x20 --format FORMAT     text (the table) or json (line-delimited events)\n\
+        \x20 --profile DIR       profile each file once more, into DIR/<name>.json")]
     Bench {
         /// Arguments forwarded to the benchmark runner
         #[arg(
@@ -1009,19 +1024,39 @@ fn run() -> i32 {
             verify,
             against,
             output,
-        }) => inspect_binary(&InspectArgs {
-            binary,
-            source,
-            manifest,
-            lockfile,
-            caps,
-            verify,
-            against,
-            output,
-        }),
+            format,
+        }) => {
+            let json = match format.as_str() {
+                "text" => false,
+                "json" => true,
+                other => {
+                    eprintln!("olang inspect: --format is `text` or `json`, not `{other}`");
+                    return 2;
+                }
+            };
+            inspect_binary(&InspectArgs {
+                binary,
+                source,
+                manifest,
+                lockfile,
+                caps,
+                verify,
+                against,
+                output,
+                json,
+            })
+        }
 
-        Some(Commands::Caps { path }) => {
-            show_caps(path.unwrap_or_else(|| PathBuf::from(".")).as_path())
+        Some(Commands::Caps { path, format }) => {
+            let json = match format.as_str() {
+                "text" => false,
+                "json" => true,
+                other => {
+                    eprintln!("olang caps: --format is `text` or `json`, not `{other}`");
+                    return 2;
+                }
+            };
+            show_caps(path.unwrap_or_else(|| PathBuf::from(".")).as_path(), json)
         }
 
         Some(Commands::Record { file, output, args }) => {
@@ -1041,13 +1076,21 @@ fn run() -> i32 {
         Some(Commands::Doc {
             mut paths,
             output,
+            format,
             markdown,
         }) => {
+            let markdown = match format.as_str() {
+                "html" => markdown,
+                "markdown" | "md" => true,
+                other => {
+                    eprintln!("olang doc: --format is `html` or `markdown`, not `{other}`");
+                    return 2;
+                }
+            };
             if paths.is_empty() {
                 paths.push(PathBuf::from("."));
             }
-            let output = output.unwrap_or_else(|| PathBuf::from("doc.html"));
-            olang::tools::doc::run(&paths, &output, markdown)
+            olang::tools::doc::run(&paths, output.as_deref(), markdown)
         }
 
         Some(Commands::Expand { file, diff }) => {
@@ -1300,7 +1343,7 @@ fn missing_path(command: &Commands) -> Option<i32> {
         Commands::Replay { trace, .. } if gone(trace) => say("replay", trace),
         Commands::Inspect { binary, .. } if gone(binary) => say("inspect", binary),
         Commands::Doctor { path: Some(p) } if gone(p) => say("doctor", p),
-        Commands::Caps { path: Some(p) } if gone(p) => say("caps", p),
+        Commands::Caps { path: Some(p), .. } if gone(p) => say("caps", p),
         Commands::Check { paths, .. } => {
             paths.iter().find(|p| gone(p)).and_then(|p| say("check", p))
         }
@@ -2419,6 +2462,8 @@ struct InspectArgs {
     verify: bool,
     against: Option<PathBuf>,
     output: Option<PathBuf>,
+    /// `--format json`: the summary (or `--caps`) as one document.
+    json: bool,
 }
 
 fn inspect_binary(args: &InspectArgs) -> i32 {
@@ -2486,6 +2531,38 @@ fn inspect_binary(args: &InspectArgs) -> i32 {
         .and_then(|m| m.manifest.as_deref())
         .and_then(|text| olang::pkg::manifest::Manifest::from_toml(text).ok())
         .and_then(|m| m.capabilities);
+    let abs_binary = std::path::absolute(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .display()
+        .to_string();
+    if show_caps && args.json {
+        let mut doc = match &caps_config {
+            Some(config) => match olang::caps::Caps::config_json(config) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("olang inspect: {}", e);
+                    return 1;
+                }
+            },
+            None => serde_json::json!({
+                "grant": olang::caps::Caps::default().to_json(),
+                "declared": false,
+                "dependencies": {},
+            }),
+        };
+        doc["format"] = 1.into();
+        doc["kind"] = "caps".into();
+        doc["path"] = abs_binary.clone().into();
+        doc["manifest"] = serde_json::Value::Null;
+        doc["package"] = meta
+            .as_ref()
+            .and_then(|m| m.manifest.as_deref())
+            .and_then(|t| olang::pkg::manifest::Manifest::from_toml(t).ok())
+            .map(|m| serde_json::Value::from(m.package.name))
+            .unwrap_or(serde_json::Value::Null);
+        println!("{}", doc);
+        return 0;
+    }
     if show_caps {
         match &caps_config {
             Some(config) => match config.base.resolve() {
@@ -2557,6 +2634,18 @@ fn inspect_binary(args: &InspectArgs) -> i32 {
         }
         println!("extracted {} into {}", wrote.join(", "), dir.display());
         return 0;
+    }
+
+    if args.json {
+        return inspect_json(
+            &abs_binary,
+            &source,
+            meta.as_deref(),
+            ast_bytes,
+            program,
+            caps_config.as_ref(),
+            verify,
+        );
     }
 
     // The default: a human summary. --verify folds in as the verdict.
@@ -2702,6 +2791,85 @@ fn inspect_binary(args: &InspectArgs) -> i32 {
         }
     }
     0
+}
+
+/// `olang inspect --format json`: the summary as one document — `#{
+/// format: 1, kind: "inspect", binary, bundle, olang, source_path,
+/// built_os, built_arch, source_bytes, sha256, digest, checks, manifest,
+/// lockfile, app, capabilities, verified }`. `bundle` is the bundle's own
+/// format number (`()` for a pre-transparency bundle, whose other fields
+/// are `()`); `checks` `#{ sha256, digest, program }`, each `true`,
+/// `false` or `()` (nothing to check); `capabilities` as `olang caps
+/// --format json`'s `grant` (`()` when invalid). With `--verify`, exit 1
+/// when `verified` is false.
+fn inspect_json(
+    binary: &str,
+    source: &str,
+    meta: Option<&BundleMeta>,
+    ast_bytes: &[u8],
+    program: Option<&olang::ast::Program>,
+    caps_config: Option<&olang::caps::CapsConfig>,
+    verify: bool,
+) -> i32 {
+    use serde_json::{Value, json};
+    let Some(m) = meta else {
+        println!(
+            "{}",
+            json!({ "format": 1, "kind": "inspect", "binary": binary, "bundle": Value::Null,
+                "source_bytes": source.len(), "verified": false })
+        );
+        return if verify { 1 } else { 0 };
+    };
+    let sha_ok = sha256_hex(source.as_bytes()) == m.sha256;
+    let digest_ok = if m.digest.is_empty() {
+        None
+    } else if m.format >= 3 {
+        Some(
+            payload_digest(
+                source.as_bytes(),
+                ast_bytes,
+                m.manifest.as_deref(),
+                m.lockfile.as_deref(),
+            ) == m.digest,
+        )
+    } else {
+        Some(
+            payload_digest_v2(
+                source.as_bytes(),
+                m.manifest.as_deref(),
+                m.lockfile.as_deref(),
+            ) == m.digest,
+        )
+    };
+    let faithful = program.map(|p| source_matches_ast(source, p));
+    let verified = sha_ok && digest_ok != Some(false) && faithful != Some(false);
+    let capabilities = match caps_config {
+        Some(c) => c.base.resolve().map(|c| c.to_json()).unwrap_or(Value::Null),
+        None => olang::caps::Caps::default().to_json(),
+    };
+    println!(
+        "{}",
+        json!({
+            "format": 1,
+            "kind": "inspect",
+            "binary": binary,
+            "bundle": m.format,
+            "olang": m.olang_version,
+            "source_path": m.source_path,
+            "built_os": m.built_os,
+            "built_arch": m.built_arch,
+            "source_bytes": source.len(),
+            "sha256": m.sha256,
+            "digest": m.digest,
+            "checks": { "sha256": sha_ok, "digest": digest_ok, "program": faithful },
+            "manifest": m.manifest.is_some(),
+            "lockfile": m.lockfile.is_some(),
+            "app": m.app.is_some(),
+            "capabilities": capabilities,
+            "verified": verified,
+        })
+    );
+    if verify && !verified { 1 } else { 0 }
 }
 
 /// `olang inspect <binary> --against <dir>` — prove the binary was built
@@ -2964,7 +3132,7 @@ fn build_executable(
 /// it actually use". `path` is a package directory or a file inside one
 /// (default: the current directory); for a built binary it defers to
 /// `inspect --caps`.
-fn show_caps(path: &std::path::Path) -> i32 {
+fn show_caps(path: &std::path::Path, json: bool) -> i32 {
     // A built binary carries its own manifest — reuse the inspect reader.
     if path.is_file() && read_bundle(path).is_some() {
         return inspect_binary(&InspectArgs {
@@ -2976,11 +3144,53 @@ fn show_caps(path: &std::path::Path) -> i32 {
             verify: false,
             against: None,
             output: None,
+            json,
         });
     }
 
     let abs = std::fs::canonicalize(path)
         .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(path));
+    if json {
+        // `#{ format: 1, kind: "caps", path, manifest, package, grant,
+        // declared, dependencies }`
+        let root = olang::pkg::manifest::Manifest::find_root(&abs);
+        let manifest = match root
+            .as_ref()
+            .map(|r| olang::pkg::manifest::Manifest::load(r))
+        {
+            Some(Err(e)) => {
+                eprintln!("olang caps: {}", e);
+                return 1;
+            }
+            Some(Ok(m)) => Some(m),
+            None => None,
+        };
+        let mut doc = match manifest.as_ref().and_then(|m| m.capabilities.as_ref()) {
+            Some(config) => match olang::caps::Caps::config_json(config) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("olang caps: {}", e);
+                    return 1;
+                }
+            },
+            None => serde_json::json!({
+                "grant": olang::caps::Caps::default().to_json(),
+                "declared": false,
+                "dependencies": {},
+            }),
+        };
+        doc["format"] = 1.into();
+        doc["kind"] = "caps".into();
+        doc["path"] = abs.display().to_string().into();
+        doc["manifest"] = root
+            .map(|r| serde_json::Value::from(r.join("olang.toml").display().to_string()))
+            .unwrap_or(serde_json::Value::Null);
+        doc["package"] = manifest
+            .map(|m| serde_json::Value::from(m.package.name))
+            .unwrap_or(serde_json::Value::Null);
+        println!("{}", doc);
+        return 0;
+    }
     let full = olang::caps::Caps::default().summary();
     let Some(root) = olang::pkg::manifest::Manifest::find_root(&abs) else {
         println!("{}  (no olang.toml — full capability)", full);

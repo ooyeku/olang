@@ -59,7 +59,7 @@ language server has [its own chapter](editors.md).
 | `olang caps [path]` | Show the capability grant a program or binary carries |
 | `olang record <file>` | Run a program and record its inputs to a `.olt` trace |
 | `olang replay <trace>` | Re-run a recorded `.olt` timeline bit-for-bit |
-| `olang doc [path]` | Generate HTML (or `--markdown` Markdown) API reference |
+| `olang doc [path]` | Generate HTML (or `--format markdown` Markdown) API reference |
 | `olang expand FILE` | Print a file after [macro expansion](macros.md) — the program the runtime actually receives |
 | `olang bench [path]` | Run benchmarks |
 | `olang profile <file>` | Run under the sampling profiler; report time per function and tier |
@@ -87,6 +87,34 @@ arguments, read with `os.args()` — `olang app.ol --version` hands
 (`--ovm-stats=json`, `--ovm-tier=10`): written `--ovm-stats json
 app.ol`, `json` would be the program file. Every command also honors
 the `OLANG_DENY` environment variable.
+
+### Output flags and JSON documents
+
+Every command that writes a file takes `-o`/`--output`, and every
+command with more than one form of output takes `--format` (`text` and
+`json`; `olang doc` `html` and `markdown`); the older spellings,
+`olang profile --out` and `olang doc --markdown`, are kept as aliases.
+Every JSON output carries `format`, its own format number, and `kind`,
+what it is — a line-delimited stream on its first event — and every
+path in it is absolute. A format number changes only when a field
+changes meaning or goes away; fields are added without one, so a
+consumer ignores fields it does not know. The documents:
+
+| Command | `kind` |
+|---|---|
+| `olang check --format json` | `check` |
+| `olang check --tier --format json` | `tier-check` |
+| `olang test --format json` | events, the first `run` |
+| `olang bench --format json` | events, the first `start` with `kind` `bench` |
+| `olang bench --save FILE` | `bench-baseline` (a baseline without `format`, from before 0.89, reads as 1; a newer one is refused) |
+| `olang profile --format json` | `profile` |
+| `olang inspect --format json` | `inspect`; with `--caps`, `caps` |
+| `olang caps --format json` | `caps`: `#{ path, manifest, package, grant, declared, dependencies }`, a grant `#{ fs, net, proc, db, env }` with `fs` `true`, `"read"` or `false` |
+| `--ovm-stats=json` | `ovm-stats` |
+| `otc list --format json` | `deps` |
+| `otc lib list --format json` | `shelf` |
+| `otc toolchain list --format json` | `toolchains` |
+| `otc bench --save FILE` | `otc-bench-baseline` |
 
 ### Exit codes
 
@@ -596,7 +624,8 @@ imported, which a concatenated browser bundle resolves and a native run
 does not. Refusals are advisories unless `[check] promote` names `tier`.
 
 `--format json` prints every function of each file, not only the
-refused ones, for an editor's gutter:
+refused ones, for an editor's gutter (its `format` is its own, not
+`--ovm-stats`'s):
 
 ```json
 {"format":1,"kind":"tier-check","olang":"0.88.0","refused":1,"errors":0,
@@ -1077,12 +1106,12 @@ is missing entirely and its caller shows `native`, inlining is why.
 ### As data, and live
 
 ```bash
-olang profile report.ol --format json --out p.json            # the profile as a document
-olang profile report.ol --format json --out p.json --live live/   # and a snapshot of it every 500 ms
+olang profile report.ol --format json -o p.json            # the profile as a document
+olang profile report.ol --format json -o p.json --live live/   # and a snapshot of it every 500 ms
 olang --profile-live live/ server.ol                           # any run, armed: sampled while live/attach exists
 ```
 
-`--format json` writes one document (to `--out`, else stdout after the
+`--format json` writes one document (to `-o`/`--output` — `--out`, the older spelling, too — else stdout after the
 program's own output), the counts behind the report:
 
 | field | |
@@ -1218,7 +1247,7 @@ Generate an API reference from doc comments:
 ```bash
 olang doc src/                    # → doc.html (themed, browsable)
 olang doc lib/ -o api.html        # choose the output file
-olang doc lib/ --markdown > API.md   # Markdown to stdout instead
+olang doc lib/ --format markdown > API.md   # Markdown to stdout instead (`--markdown`, the older spelling, too)
 ```
 
 The convention is source-level, and every doc comment is already a

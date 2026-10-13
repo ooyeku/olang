@@ -249,14 +249,27 @@ fn check_and_doctor_warn_on_what_the_manifest_holds_that_olang_does_not_read() {
     let all = out + &err;
     assert_eq!(rc, 0, "warnings, not errors: {all}");
     assert!(all.contains("`autors` (did you mean `authors`?)"), "{all}");
-    assert!(all.contains("`[dependancies]` is not a section olang reads (did you mean `[dependencies]`?)"), "{all}");
-    assert!(all.contains("promote names `shapes`, which is not a class this olang knows (did you mean `shape`?)"), "{all}");
+    assert!(
+        all.contains(
+            "`[dependancies]` is not a section olang reads (did you mean `[dependencies]`?)"
+        ),
+        "{all}"
+    );
+    assert!(
+        all.contains(
+            "promote names `shapes`, which is not a class this olang knows (did you mean `shape`?)"
+        ),
+        "{all}"
+    );
     // another tool's section passes
     assert!(!all.contains("bundle"), "{all}");
     assert!(all.contains("3 warnings"), "{all}");
     let (out, err, rc) = olang(&ws, &["doctor"]);
     assert_eq!(rc, 0, "{out}{err}");
-    assert!(out.contains("! olang.toml: [package] has a key olang does not read: `autors`"), "{out}");
+    assert!(
+        out.contains("! olang.toml: [package] has a key olang does not read: `autors`"),
+        "{out}"
+    );
     assert!(out.contains("with 3 warnings"), "{out}");
     let (out, _, _) = olang(&ws, &["check", "--format", "json", "m.ol"]);
     assert!(out.contains("\"code\":\"manifest\""), "{out}");
