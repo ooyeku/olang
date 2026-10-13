@@ -59,10 +59,11 @@ pub struct PackageMeta {
     /// images, data.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub assets: Vec<String>,
-    /// The olang this package is written for: a requirement read as a
-    /// dependency's (`"0.88"` any 0.88.x; `"=0.88.1"`). `otc install`
-    /// records the toolchain that resolved it in olang.lock; an editor
-    /// runs that toolchain for the project (src/pkg/toolchain.rs).
+    /// The oldest olang this package runs on, as `rust-version` is Rust's:
+    /// `"0.88"` is 0.88.0 or newer (1.x included), `"1"` 1.0.0 or newer.
+    /// `otc install` records the toolchain that resolved it in olang.lock;
+    /// an editor runs that toolchain for the project; an older olang
+    /// running it warns (src/pkg/toolchain.rs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub olang: Option<String>,
     /// Who may write this project's `olang.lock`: `"auto"` (the default)
@@ -262,6 +263,19 @@ impl Manifest {
     /// An unknown value reads as `"auto"` (`olang check` warns about it).
     pub fn lock_never(&self) -> bool {
         self.package.lock.as_deref() == Some("never")
+    }
+
+    /// A `[package] olang` that is not a version, with the message
+    /// `olang check` reports.
+    pub fn olang_value_problem(&self) -> Option<String> {
+        let v = self.package.olang.as_deref()?;
+        if crate::pkg::toolchain::minimum(v).is_some() {
+            return None;
+        }
+        Some(format!(
+            "[package] olang = \"{}\" is not a version: it names the oldest olang the package runs on, as \"0.88\" or \"1.0.2\"",
+            v
+        ))
     }
 
     /// A `[package] lock` value olang does not know, with the message

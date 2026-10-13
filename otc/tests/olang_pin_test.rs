@@ -1,4 +1,5 @@
-//! A project pins its olang: `[package] olang = "0.88"` in olang.toml is
+//! A project pins its olang: `[package] olang = "0.88"` in olang.toml (a
+//! minimum: 0.88.0 or newer) is
 //! resolved by `otc install` to the newest installed toolchain that
 //! satisfies it and written to olang.lock (`olang = "0.88.1"`); a lock's
 //! `olang` survives an install when the manifest names none (it was
@@ -70,12 +71,13 @@ fn a_pin_resolves_to_the_newest_installed_toolchain_that_satisfies_it() {
     let dir = scratch("resolve");
     toolchain(&home, "0.87.0");
     toolchain(&home, "0.88.0");
-    let newest = toolchain(&home, "0.88.1");
-    toolchain(&home, "0.89.0");
+    toolchain(&home, "0.88.1");
+    // a pin is a minimum: the newest installed olang at or past it
+    let newest = toolchain(&home, "0.89.0");
     project(&dir, Some("0.88"));
     let (ok, out) = otc(&dir, &home, &["install"]);
     assert!(ok, "{out}");
-    assert!(lock(&dir).contains("olang = \"0.88.1\""), "{}", lock(&dir));
+    assert!(lock(&dir).contains("olang = \"0.89.0\""), "{}", lock(&dir));
     let (ok, out) = otc(&dir, &home, &["toolchain", "which"]);
     assert!(ok, "{out}");
     assert_eq!(PathBuf::from(out.trim()), newest);
@@ -85,10 +87,11 @@ fn a_pin_resolves_to_the_newest_installed_toolchain_that_satisfies_it() {
     assert!(ok, "{out}");
     assert_eq!(lock(&dir), before);
     // the pin moved past the lock's olang: re-resolved
-    project(&dir, Some("=0.88.0"));
+    toolchain(&home, "1.0.0");
+    project(&dir, Some("1"));
     let (ok, out) = otc(&dir, &home, &["install"]);
     assert!(ok, "{out}");
-    assert!(lock(&dir).contains("olang = \"0.88.0\""), "{}", lock(&dir));
+    assert!(lock(&dir).contains("olang = \"1.0.0\""), "{}", lock(&dir));
 }
 
 #[test]

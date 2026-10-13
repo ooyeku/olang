@@ -32,6 +32,7 @@ upgrading; it reports the cases it can find.
   - [Absence and "nothing yet"](#absence-and-nothing-yet)
   - [Dates](#dates)
   - [An assignment answers `()`](#an-assignment-answers-)
+  - [`[package] olang` is a minimum](#package-olang-is-a-minimum)
 - [In 0.88](#in-088)
   - [A missing field of an object is `()`](#a-missing-field-of-an-object-is-)
   - [A module's missing member reads as `()`](#a-modules-missing-member-reads-as-)
@@ -251,6 +252,13 @@ was, and the day in the first ten characters. Search for
 function whose last line is an assignment and whose value something
 reads now answers `()`: add the name after it (`{ count = count + 1;
 count }`). `let y = (x = 5)` and `f(x = 5)` pass `()`.
+
+### `[package] olang` is a minimum
+
+`olang = "0.88"` in olang.toml means 0.88.0 or newer, where it meant
+any 0.88.x. A pin written as a requirement (`"^0.88"`, `"=0.88.1"`,
+`">=0.87, <0.90"`) is now an `olang check` error: write the oldest
+version the project runs on.
 
 ## In 0.88
 

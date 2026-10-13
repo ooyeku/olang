@@ -154,6 +154,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   an assignment and whose value is used ends with the name instead:
   `{ total = total + n; total }`.
 
+- **`[package] olang` names the oldest olang a project runs on**, as
+  Cargo's `rust-version` does: `"0.88"` is 0.88.0 or newer (1.x
+  included; it read as Cargo's caret, which excluded 0.89 and 1.0),
+  `"1"` 1.0.0 or newer. `otc install` and `otc toolchain which` pick the
+  newest installed olang at or past it, an older olang warns as it runs
+  the project, and `olang check` reports a value that is not one to three
+  numbers (`"^0.88"`, `"=0.88.1"` and ranges included).
+
 
 ### Added
 

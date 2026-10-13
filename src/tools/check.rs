@@ -115,6 +115,20 @@ pub fn run_json(paths: &[PathBuf]) -> i32 {
         }
         if let Some(problem) = crate::pkg::manifest::Manifest::load(root)
             .ok()
+            .and_then(|m| m.olang_value_problem())
+        {
+            errors += 1;
+            rows.push(serde_json::json!({
+                "file": root.join("olang.toml").to_string_lossy(),
+                "diagnostics": [{
+                    "severity": "error", "code": "manifest", "message": problem, "tags": [],
+                    "line": 1, "column": 1, "end_line": 1, "end_column": 1,
+                    "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 0 } },
+                }],
+            }));
+        }
+        if let Some(problem) = crate::pkg::manifest::Manifest::load(root)
+            .ok()
             .and_then(|m| m.lock_value_problem())
         {
             warnings += 1;
@@ -239,6 +253,13 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
     for root in &roots {
         if let Err(e) = crate::pkg::manifest::Manifest::load_for_capabilities(root) {
             eprintln!("{}: error: {}", root.join("olang.toml").display(), e);
+            problems += 1;
+        }
+        if let Some(problem) = crate::pkg::manifest::Manifest::load(root)
+            .ok()
+            .and_then(|m| m.olang_value_problem())
+        {
+            eprintln!("{}: error: {}", root.join("olang.toml").display(), problem);
             problems += 1;
         }
         if let Some(problem) = crate::pkg::manifest::Manifest::load(root)

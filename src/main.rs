@@ -3154,6 +3154,15 @@ fn execute_program(
                 if let Some(m) = &manifest {
                     map.entry(m.package.name.clone())
                         .or_insert_with(|| root.clone());
+                    // an olang older than the project's pin runs it, and says so
+                    if let Some(warning) = m
+                        .package
+                        .olang
+                        .as_deref()
+                        .and_then(olang::pkg::toolchain::too_old_warning)
+                    {
+                        eprintln!("{}", warning);
+                    }
                 }
                 // Capabilities: the manifest's grant, attenuated per
                 // dependency, intersected with any --deny/OLANG_DENY.

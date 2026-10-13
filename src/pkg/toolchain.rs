@@ -1,23 +1,26 @@
 //! The olang a project pins, and the installed toolchain that answers it.
 //!
-//! A project names the olang it is written for in its manifest:
+//! A project names the oldest olang it runs on in its manifest, as Cargo's
+//! `rust-version` names the oldest Rust:
 //!
 //! ```toml
 //! [package]
 //! name = "app"
 //! version = "0.1.0"
-//! olang = "0.88"        # a requirement, as a dependency's: ^0.88 (0.88.x)
+//! olang = "0.88"        # 0.88.0 or newer: 0.89 and 1.x satisfy it
 //! ```
 //!
-//! The requirement reads as Cargo's do (`"0.88"` is `^0.88`: any 0.88.x;
-//! `"=0.88.1"` that release only; `">=0.87, <0.90"` a range). `otc
-//! install` writes the toolchain that resolved it to `olang.lock` (its
-//! `olang` key, an exact version) and keeps a lock's `olang` when the
-//! manifest names none. What is installed is `~/.olang/toolchains/
-//! <version>/bin/olang` (`otc update`, `otc toolchain install`; a local
-//! build registered with `otc toolchain link <version> <binary>`), and
-//! the olang running now. Nothing here downloads anything: a pin no
-//! installed olang satisfies is said, with the command that installs one.
+//! A version with one, two or three parts (`"1"` is 1.0.0); nothing else
+//! (`olang check` reports anything else). `otc install` writes the
+//! toolchain that resolved it to `olang.lock` (its `olang` key, an exact
+//! version) and keeps a lock's `olang` when the manifest names none; the
+//! newest installed toolchain satisfying it is the one chosen; an olang
+//! older than it warns as it runs the project. What is installed is
+//! `~/.olang/toolchains/<version>/bin/olang` (`otc update`, `otc
+//! toolchain install`; a local build registered with `otc toolchain link
+//! <version> <binary>`), and the olang running now. Nothing here downloads
+//! anything: a pin no installed olang satisfies is said, with the command
+//! that installs one.
 
 use std::path::{Path, PathBuf};
 
@@ -31,16 +34,47 @@ pub fn lock_pin(root: &Path) -> Option<String> {
     super::lock::Lockfile::load(root).ok()?.olang
 }
 
-/// Whether version `v` satisfies requirement `req` (Cargo's reading; a
-/// leading `v` on either is ignored). A requirement or version that does
-/// not parse satisfies nothing.
-pub fn satisfies(req: &str, v: &str) -> bool {
+/// The oldest version a `[package] olang` value names: `"0.88"` is
+/// 0.88.0, `"1"` 1.0.0, `"0.88.2"` itself (a leading `v` ignored).
+/// `None` for anything that is not one to three numbers.
+pub fn minimum(req: &str) -> Option<semver::Version> {
     let req = req.trim().trim_start_matches('v');
-    let v = v.trim().trim_start_matches('v');
-    match (semver::VersionReq::parse(req), semver::Version::parse(v)) {
-        (Ok(r), Ok(v)) => r.matches(&v),
+    let parts: Vec<&str> = req.split('.').collect();
+    if parts.is_empty() || parts.len() > 3 {
+        return None;
+    }
+    let mut n = [0u64; 3];
+    for (i, p) in parts.iter().enumerate() {
+        if p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        n[i] = p.parse().ok()?;
+    }
+    Some(semver::Version::new(n[0], n[1], n[2]))
+}
+
+/// Whether version `v` satisfies the pin `req`: `v` is `req` or newer. A
+/// pin or version that does not parse satisfies nothing.
+pub fn satisfies(req: &str, v: &str) -> bool {
+    match (
+        minimum(req),
+        semver::Version::parse(v.trim().trim_start_matches('v')),
+    ) {
+        (Some(min), Ok(v)) => v >= min,
         _ => false,
     }
+}
+
+/// The warning an olang older than a project's pin says as it runs it.
+pub fn too_old_warning(req: &str) -> Option<String> {
+    if minimum(req).is_none() || satisfies(req, crate::VERSION) {
+        return None;
+    }
+    Some(format!(
+        "warning: this project needs olang {} or newer (olang.toml's [package] olang); this is {}",
+        req.trim(),
+        crate::VERSION
+    ))
 }
 
 /// The toolchains installed under `~/.olang/toolchains` (or
@@ -118,7 +152,7 @@ pub fn for_project(root: &Path) -> Resolved {
     let req = manifest_pin(root);
     let pin = match (&req, &lock) {
         (Some(r), _) => r.clone(),
-        (None, Some(l)) => format!("={}", l.trim_start_matches('v')),
+        (None, Some(l)) => l.trim_start_matches('v').to_string(),
         (None, None) => return Resolved::Unpinned,
     };
     let shown = req
@@ -171,7 +205,7 @@ pub fn lock_entry(manifest_pin: Option<&str>, previous: Option<&str>) -> Option<
 
 /// The command that installs a toolchain for `pin` (said, never run).
 pub fn install_hint(pin: &str) -> String {
-    let v = pin.trim().trim_start_matches(['=', '^', '~', 'v']);
+    let v = pin.trim().trim_start_matches(['=', '^', '~', '>', 'v']);
     format!("otc toolchain install {}", v)
 }
 
@@ -180,15 +214,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_pin_reads_as_cargo_reads_a_requirement() {
+    fn a_pin_is_a_minimum_version() {
         assert!(satisfies("0.88", "0.88.3"));
-        assert!(!satisfies("0.88", "0.89.0"));
+        assert!(satisfies("0.88", "0.89.0"));
+        assert!(satisfies("0.88", "1.2.0"));
         assert!(!satisfies("0.88", "0.87.9"));
-        assert!(satisfies("=0.88.1", "0.88.1"));
-        assert!(!satisfies("=0.88.1", "0.88.2"));
-        assert!(satisfies(">=0.87, <0.90", "0.89.0"));
+        assert!(satisfies("1", "1.0.0"));
+        assert!(!satisfies("1.0", "0.99.0"));
+        assert!(satisfies("0.88.1", "0.88.1"));
+        assert!(!satisfies("0.88.1", "0.88.0"));
         assert!(satisfies("v0.88", "v0.88.0"));
         assert!(!satisfies("not a version", "0.88.0"));
+        assert!(minimum("^0.88").is_none() && minimum("0.88.1.2").is_none());
+        assert!(minimum("banana").is_none() && minimum("").is_none());
     }
 
     #[test]

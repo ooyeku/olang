@@ -128,9 +128,13 @@ httplib  = { git = "https://github.com/u/httplib", tag = "v1.2.0" }
 json     = "^1.0"                                          # registry version
 ```
 
-**The olang it is written for.** `olang = "0.88"` under `[package]` pins
-the toolchain: a requirement read as a registry dependency's (`"0.88"` is
-`^0.88`, any 0.88.x; `"=0.88.1"` that release; `">=0.87, <0.90"`). `otc
+**The olang it is written for.** `olang = "0.88"` under `[package]` names
+the oldest olang the package runs on, as Cargo's `rust-version` names the
+oldest Rust: `"0.88"` is 0.88.0 or newer (0.89 and every 1.x satisfy it),
+`"1"` and `"1.0"` are 1.0.0 or newer, `"0.88.2"` that release or newer. It
+is a version of one to three numbers and nothing else; `olang check`
+reports any other value. An olang older than the pin still runs the
+project, and says so on standard error first. `otc
 install` resolves it to the newest installed toolchain that satisfies it
 (see [Updating and toolchains](#updating-and-toolchains)) and records that
 version in `olang.lock`; `otc toolchain which` prints the binary a

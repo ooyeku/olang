@@ -362,7 +362,9 @@ message, tags, line, column, end_line, end_column, range }`:
 `severity` `error`, `warning`, `information` or `hint`; `code` the rule
 (`syntax`, `macro`, `scope`, `runtime`, `type`, `advisory`, an
 advisory's class — `shadow`, `exhaustiveness`, `shape`, `keys`,
-`result`, `copy`, `deprecated` — `unused` for a name nothing reads, `manifest` for olang.toml);
+`result`, `copy`, `deprecated` — `unused` for a name nothing reads, `manifest` for olang.toml:
+a `[package] olang` that is not a version is an error, since it names the oldest olang the
+project runs on, see [packages.md](packages.md));
 `tags` `["unnecessary"]` on an unused name (a hint, faded by an editor,
 never a problem); `line`/`column` to `end_line`/`end_column` 1-based in
 characters, and `range` the server's own (0-based, UTF-16). The exit
@@ -742,6 +744,11 @@ script whose own directory has no `olang.toml` falls back to the working
 directory's project for dependency and shelf lookups, so a scratch
 script kept outside the repository can still `use` what the repository
 does.
+
+A project whose `[package] olang` names a newer olang than the one
+running is still run, after a warning on standard error naming both
+versions (`[package] olang` is a minimum, as [packages.md](packages.md)
+says).
 
 ## `olang repl --serve`
 
