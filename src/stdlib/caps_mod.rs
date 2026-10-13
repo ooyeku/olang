@@ -53,13 +53,14 @@ pub fn create_caps_module() -> Value {
     }
 }
 
-/// `fs` is the one capability with a level rather than a yes/no, so it
-/// gets a string everywhere it is reported: "none", "read", or "full".
-fn fs_level(caps: &Caps) -> &'static str {
+/// `fs` is the one capability with a level rather than a yes/no: it is
+/// reported in the grant's own words — `false`, `"read"`, `true` — as a
+/// manifest writes it.
+fn fs_level(caps: &Caps) -> Value {
     match caps.fs {
-        FsCap::None => "none",
-        FsCap::Read => "read",
-        FsCap::Full => "full",
+        FsCap::None => Value::Boolean(false),
+        FsCap::Read => Value::String(Arc::new("read".to_string())),
+        FsCap::Full => Value::Boolean(true),
     }
 }
 
@@ -107,11 +108,9 @@ pub fn call(function: &str, args: Vec<Value>, caps: &Caps) -> Result<Value, Stri
         // can treat the result uniformly.
         "level" => match args.first() {
             Some(Value::String(name)) => match name.as_str() {
-                "fs" => Ok(Value::String(Arc::new(fs_level(caps).to_string()))),
+                "fs" => Ok(fs_level(caps)),
                 other => holds(caps, other)
-                    .map(|held| {
-                        Value::String(Arc::new(if held { "full" } else { "none" }.to_string()))
-                    })
+                    .map(Value::Boolean)
                     .ok_or_else(|| unknown(other)),
             },
             other => Err(format!(
@@ -123,10 +122,7 @@ pub fn call(function: &str, args: Vec<Value>, caps: &Caps) -> Result<Value, Stri
         // on it. `fs` carries its level; the rest are Bool.
         "granted" => {
             let mut map = crate::ast::ValueMap::default();
-            map.insert(
-                "fs".to_string(),
-                Value::String(Arc::new(fs_level(caps).to_string())),
-            );
+            map.insert("fs".to_string(), fs_level(caps));
             for name in &NAMES[1..] {
                 map.insert(
                     (*name).to_string(),

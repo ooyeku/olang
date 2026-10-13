@@ -736,10 +736,13 @@ mod imp {
             Ok(p) => p,
             Err(e) => return Ok(err(e)),
         };
+        // an Int of milliseconds, or #{ timeout_ms } as every wait takes
         let ms = match args.get(1) {
-            Some(Value::Integer(i)) => *i,
             Some(Value::Float(f)) => *f as i64,
-            _ => 0,
+            Some(v) => crate::stdlib::timeout_ms_arg(v)
+                .map(|m| m as i64)
+                .unwrap_or(0),
+            None => 0,
         };
         let until = Instant::now() + Duration::from_millis(ms.max(0) as u64);
         loop {

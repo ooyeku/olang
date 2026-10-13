@@ -384,8 +384,8 @@ pub struct Lens {
     pub id: Value,
 }
 
-/// The lenses of a patch: `#{ line, height, ops, id }` maps, sorted by
-/// line (one lens a line: the last of a line's wins).
+/// The lenses of a patch: `#{ line, height, ops, id }` maps (`line`
+/// 1-based), sorted by line (one lens a line: the last of a line's wins).
 pub fn parse_lenses(v: Option<&Value>) -> Vec<Lens> {
     use super::values::{get, num};
     let Some(Value::List(l)) = v else {
@@ -394,13 +394,14 @@ pub fn parse_lenses(v: Option<&Value>) -> Vec<Lens> {
     let mut out: Vec<Lens> = l
         .iter()
         .filter_map(|x| {
+            // the line a lens sits under, 1-based
             let line = get(x, "line").and_then(num)?;
             let height = get(x, "height").and_then(num)?;
-            if line < 0.0 || height <= 0.0 {
+            if line < 1.0 || height <= 0.0 {
                 return None;
             }
             Some(Lens {
-                line: line as usize,
+                line: line as usize - 1,
                 height,
                 ops: get(x, "ops")
                     .cloned()

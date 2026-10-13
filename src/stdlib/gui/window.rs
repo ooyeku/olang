@@ -1531,7 +1531,7 @@ impl WinState {
                                 "lens",
                                 vec![
                                     ("key", s(&f)),
-                                    ("line", Value::Integer(line as i64)),
+                                    ("line", Value::Integer(line as i64 + 1)),
                                     ("id", s("sticky")),
                                     ("hit", Value::Unit),
                                     ("x", float(tx / self.scale)),
@@ -1549,7 +1549,7 @@ impl WinState {
                                 "lens",
                                 vec![
                                     ("key", s(&f)),
-                                    ("line", Value::Integer(l.line as i64)),
+                                    ("line", Value::Integer(l.line as i64 + 1)),
                                     ("id", l.id.clone()),
                                     ("hit", hit),
                                     ("x", float(lx)),
@@ -2336,14 +2336,7 @@ impl WinState {
             if let Some(r) = self.editors.get_mut(&k).and_then(|e| e.rich_mut()) {
                 r.said_hover = None;
             }
-            out.push(self.ev(
-                "hover",
-                vec![
-                    ("key", s(&k)),
-                    ("line", Value::Integer(-1)),
-                    ("col", Value::Integer(-1)),
-                ],
-            ));
+            out.push(self.ev("hover", hover_left(&k)));
         }
         let Some(k) = target else { return };
         if self.scene.pressed.is_some() {
@@ -2398,9 +2391,12 @@ impl WinState {
                     float(((b.x1 - b.x0) as f32 / sc).max(1.0)),
                     float((b.y1 - b.y0) as f32 / sc),
                 ]));
+                // the gutter beside a line: no column (`col` -2, deprecated)
                 vec![
                     ("key", s(&k)),
-                    ("line", Value::Integer(line as i64)),
+                    ("line", Value::Integer(line as i64 + 1)),
+                    ("column", Value::Unit),
+                    ("gutter", Value::Boolean(true)),
                     ("col", Value::Integer(-2)),
                     ("rect", rect),
                 ]
@@ -2414,18 +2410,17 @@ impl WinState {
                     float(((b.x1 - b.x0) as f32 / sc).max(1.0)),
                     float((b.y1 - b.y0) as f32 / sc),
                 ]));
+                // 1-based, as every line and column olang reports (`col`,
+                // the 0-based offset, deprecated)
                 vec![
                     ("key", s(&k)),
-                    ("line", Value::Integer(line as i64)),
+                    ("line", Value::Integer(line as i64 + 1)),
+                    ("column", Value::Integer(col as i64 + 1)),
                     ("col", Value::Integer(col as i64)),
                     ("rect", rect),
                 ]
             }
-            None => vec![
-                ("key", s(&k)),
-                ("line", Value::Integer(-1)),
-                ("col", Value::Integer(-1)),
-            ],
+            None => hover_left(&k),
         };
         out.push(self.ev("hover", ev));
     }
@@ -3470,4 +3465,14 @@ pub struct DisplayList {
     pub height: u32,
     pub clear: Color,
     pub prims: Vec<Prim>,
+}
+
+/// A hover that left the text: no line or column (`col` -1, deprecated).
+fn hover_left(key: &str) -> Vec<(&'static str, Value)> {
+    vec![
+        ("key", Value::String(Arc::new(key.to_string()))),
+        ("line", Value::Unit),
+        ("column", Value::Unit),
+        ("col", Value::Integer(-1)),
+    ]
 }

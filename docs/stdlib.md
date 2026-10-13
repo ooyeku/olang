@@ -159,6 +159,16 @@ println(to_string(m.a ?? 0))   // 1
 println(to_string(m.z ?? 0))   // 0
 ```
 
+**Keys mean one thing everywhere.** A record's and an option's keys
+are the same words in every module: `line` and `column` are 1-based (a
+search hit, a frame, a hover in a styled field, a lens), a function is
+`function`, a file on disk is `path`, a wait's limit is `timeout_ms`
+(every function that takes a limit as a number takes `#{ timeout_ms }`
+there too), and an environment is `env` (a name given `()` removed) with
+`clear_env`. The names they replace are kept, deprecated, where a record
+said them first: `fs.search`'s `col` and `end` (0-based), a frame's
+`file` and `fn`, a hover's `col`.
+
 **Names follow three rules.** A function that raises on bad input and
 has a legitimate use over data the program does not control gets a
 `try_` twin returning `Result` (`ods.series` / `ods.try_series`,
@@ -990,7 +1000,7 @@ The model is covered in
 | Function | Returns |
 |---|---|
 | `task.join(t)` | `Ok(value)` when the task returned (a value that is itself an `Err` included), `Err(message)` when it raised — blocks until it finishes |
-| `task.join_timeout(t, ms)` | `Ok` of what `task.join` answers (`Ok(Ok(v))`, `Ok(Err(e))`) if it finished within `ms`, else `Err("timed out")` |
+| `task.join_timeout(t, ms)` / `task.join_timeout(t, #{ timeout_ms })` | `Ok` of what `task.join` answers (`Ok(Ok(v))`, `Ok(Err(e))`) if it finished within `ms`, else `Err("timed out")` |
 | `task.watch(t, c)` | the channel dies with the task: when `t` ends, however it ends, `c` is closed, so a `chan.recv` on it returns `Err` instead of waiting forever. Ownership is declared here, not inferred — any task may hold either end of a channel |
 | `task.list()` | every task a live handle still watches: `#{ id, state, elapsed_ms }` |
 | `task.parked()` | threads blocked on unbounded waits: `#{ thread, on, waited_ms }` |
@@ -1091,7 +1101,7 @@ boundary like anything else.
 | `chan.send(c, v)` | `Ok(())`, or `Err` when the channel is closed |
 | `chan.recv(c)` | blocks; `Ok(value)`, or `Err` when closed and drained |
 | `chan.try_recv(c)` | `Ok(value)`; `Ok(())` when nothing is waiting; `Err("channel is closed")` once closed and drained. A channel that carries `()` cannot tell it from empty this way: use `chan.recv_timeout` |
-| `chan.recv_timeout(c, ms)` | like `recv`, plus `Err("timed out")` once `ms` pass — receivers on one channel wait side by side, so the bound is this wait's own, never another waiter's |
+| `chan.recv_timeout(c, ms)` / `chan.recv_timeout(c, #{ timeout_ms })` | like `recv`, plus `Err("timed out")` once `ms` pass — receivers on one channel wait side by side, so the bound is this wait's own, never another waiter's |
 | `chan.ask(service, request)` | the reply pattern in one call: sends `#{ "req": request, "reply": r }` on a fresh reply channel and answers `Ok(reply)` — spinning briefly before it parks, so a service that answers in microseconds costs no thread wake-up |
 | `chan.stat(c)` | a snapshot map: `id`, `queued`, `closed`, `recv_waiting`, `send_waiting` |
 | `chan.close(c)` | closes the sending side (idempotent) |
@@ -1356,11 +1366,33 @@ walked on worker threads (an editor lists a workspace of thousands of
 files with it). `fs.search(root, query, opts)` searches those files (or
 `opts.files`) for a literal or, with `regex: true`, a regular
 expression — `case` and `word` as a find bar has them — in parallel,
-answering `Ok` of `#{ path, line, col, end, text }` by path then line
-(columns in characters; at most `limit` matches, 2,000 by default). With
-`replace` (a template) each match also says `with`, what it becomes — a
-regular expression's groups expanded (`$1`, `${name}`, `$$` a dollar) —
-for a replace across files to preview and apply.
+answering `Ok` of `#{ path, line, column, end_column, text }` by path
+then line (1-based, in characters, `end_column` just past the match;
+`col` and `end`, the 0-based offsets the first versions answered, are
+still there, deprecated). With `replace` (a template) each match also
+says `with`, what it becomes — a regular expression's groups expanded
+(`$1`, `${name}`, `$$` a dollar) — for a replace across files to
+preview and apply. An option either function does not know raises.
+
+| `fs.scan` option | Meaning (default) |
+|---|---|
+| `skip` | folder names left out wherever they are (`[]`) |
+| `exts` | the extensions kept, without the dot (every file) |
+| `hidden` | `true` keeps entries whose name starts with `.` (`false`) |
+| `gitignore` | `false` ignores the `.gitignore`s (`true`) |
+| `limit` | at most this many files (100,000) |
+| `max_depth` | folders deeper than this are not walked (no limit) |
+
+| `fs.search` option | Meaning (default) |
+|---|---|
+| `regex` | the query is a regular expression (`false`: a literal) |
+| `case` | match case (`false`) |
+| `word` | whole words only (`false`) |
+| `limit` | at most this many matches (2,000) |
+| `per_file` | at most this many matches a file (200) |
+| `files` | search these paths (relative to `root`) instead of walking |
+| `replace` | a template each match also answers as `with` |
+| `skip` `exts` `hidden` `gitignore` `max_depth` | as `fs.scan`'s, for the walk |
 
 ```olang no-run
 let text = unwrap(fs.read_file("data.txt"))
@@ -1573,7 +1605,7 @@ that serves its own routes reads the same bytes.
 | `runtime.load_module(path, grant)` | the olang file at `path` loaded into this program as a module, read afresh (its folder's cached modules forgotten), everything under its folder held to `grant` — `#{ name, fs: false \| "read" \| true, fs_roots: [folders], proc: false \| true \| [programs], net, db, env }`, a key left out denied, never the host's builtins (`gui`, `tty`, loading code, the profiler). `Ok(module)`, or `Err(message)` with the grant before it kept (packages.md, "Modules loaded at run time") |
 | `runtime.unload_module(path)` · `runtime.module_grant(path)` · `runtime.module_permits(path, builtin, args)` | forget a loaded module's grant (true when there was one); the grant as it holds (`()` when none); whether its code would be allowed `builtin(args…)` — `Ok(())` or `Err(why)`, the same gate |
 | `runtime.call_budget(f, args, ms)` | `f(args…)` stopped past `ms` (an interrupt on this thread only) and its failure caught: `#{ ok, value, error, frames, over, us }` |
-| `runtime.last_error()` | the error a boundary on this thread caught last (`attempt`, `call_budget`, `load_module`) with its frames, `#{ message, frames: [#{ file, line, fn }] }`, innermost first (line 0: an expression body); `()` when none |
+| `runtime.last_error()` | the error a boundary on this thread caught last (`attempt`, `call_budget`, `load_module`) with its frames, `#{ message, frames: [#{ path, line, function }] }` (`file` and `fn`, their deprecated names, are still there), innermost first (line 0: an expression body); `()` when none |
 | `runtime.shape(value)` | a value's shape as text — kind, a map's sorted keys with theirs, a list's first item's — what a host compares to keep a reloaded module's state |
 
 ```olang no-run
@@ -1627,8 +1659,8 @@ dependency was given. None of the three functions is itself gated
 | Function | Description |
 |---|---|
 | `caps.allowed(name)` | whether the capability is held: `"fs"` (at read level or above), `"net"`, `"proc"`, `"db"`, `"env"`; another name raises |
-| `caps.level(name)` | `"none"`, `"read"` or `"full"` for `"fs"`; `"none"` or `"full"` for the others |
-| `caps.granted()` | the whole grant as a map: `fs` its level, the others a Bool |
+| `caps.level(name)` | the grant's own word for it, as a manifest writes it: `false`, `"read"` or `true` for `"fs"`; `false` or `true` for the others |
+| `caps.granted()` | the whole grant as a map, in the same words: `fs` `false`, `"read"` or `true`, the others a Bool |
 
 ```olang
 let plan = if caps.allowed("fs") => "cache to disk" else => "in memory"
@@ -1659,7 +1691,10 @@ else.
 launched at all (the program was not found, or `cwd` names no
 directory: the error says which). An optional third argument configures
 the child: `#{ "cwd": dir, "stdin": text, "env": #{ name: value },
-"timeout_ms": n }` (any subset). With `timeout_ms` the program runs in a
+"clear_env": true, "timeout_ms": n, "bytes": true }` (any subset; in
+`env` a name given `()` is removed from the child's environment, and
+`clear_env` starts it with none but `env`'s — as `pty.spawn`,
+`proc.spawn` and `proc.pipeline` read them). With `timeout_ms` the program runs in a
 process group of its own; if it has not exited and closed its output
 within `n` ms, the whole group is killed — a shell and everything it
 started — and the answer is `Ok` with `timed_out: true`, `code: ()`, and
@@ -1740,11 +1775,11 @@ deadlocks against a caller reading only one stream. Native-only.
 
 | Group | Functions |
 |---|---|
-| Spawn | `spawn(program, args)` / `spawn(program, args, #{ cwd, env, group, framing, bytes })` → `Ok(Process)`; a `cwd` that names no directory is an `Err` saying so. Output is text, bytes that are not UTF-8 read as U+FFFD; `bytes: true` makes `read_all` and `stderr` answer `Bytes` as written (and `read_line`, which reads text, raise) |
+| Spawn | `spawn(argv)` / `spawn(program, args)` / `spawn(program, args, #{ cwd, env, clear_env, group, framing, bytes })` → `Ok(Process)` (`argv` the program and its arguments as one list, as `pty.spawn` takes them; an `env` name given `()` is removed); a `cwd` that names no directory is an `Err` saying so. Output is text, bytes that are not UTF-8 read as U+FFFD; `bytes: true` makes `read_all` and `stderr` answer `Bytes` as written (and `read_line`, which reads text, raise) |
 | Input | `write(p, s)` · `write_line(p, s)` · `write_frame(p, s)` (one `Content-Length`-framed message) · `close_stdin(p)` (signals EOF) |
 | Output | `read_line(p)` → `Ok(line)` \| `Err("eof")`; `read_all(p)` → the rest of stdout; `stderr(p)` → all stderr (complete after exit) |
-| Lifecycle | `wait(p)` → `Ok({ code, signal })` (the exit code and `()`, or `()` and the signal that ended it) · `kill(p)` / `kill(p, #{ tree: true })` · `pid(p)` |
-| Pipeline | `pipeline(stages)` / `pipeline(stages, #{ cwd, env, stdin, bytes })` — `bytes: true` answers `stdout` and `stderr` as `Bytes` |
+| Lifecycle | `wait(p)` → `Ok({ code, signal })` (the exit code and `()`, or `()` and the signal that ended it) · `kill(p)` (SIGKILL) / `kill(p, signal)` (`"TERM"`, `"INT"`, `"HUP"`, …, or a number: a process asked to end) / `kill(p, #{ tree: true, signal })` · `pid(p)` |
+| Pipeline | `pipeline(stages)` / `pipeline(stages, #{ cwd, env, clear_env, stdin, bytes })` — `bytes: true` answers `stdout` and `stderr` as `Bytes` |
 
 ```olang no-run
 // Stream a filter: feed lines in, read matches back out.
@@ -1817,7 +1852,7 @@ elsewhere: `pty.available()`); capability-gated as `proc`.
 | `pty.write(p, data)` | a String or Bytes (the keys typed), queued for a writer thread (a large paste never blocks) |
 | `pty.resize(p, rows, cols)` | TIOCSWINSZ: the foreground job hears SIGWINCH |
 | `pty.kill(p, sig?)` | `"HUP"` (the default), `"INT"`, `"TERM"`, `"KILL"`, `"QUIT"`, `"CONT"`, `"STOP"` or a number, to the shell's process group and the foreground job's |
-| `pty.wait(p, timeout_ms?)` | `Ok({ code, signal })` once it ended (waiting up to `timeout_ms`, 0), `Ok(())` while it runs |
+| `pty.wait(p, timeout_ms?)` / `pty.wait(p, #{ timeout_ms })` | `Ok({ code, signal })` once it ended (waiting up to `timeout_ms`, 0), `Ok(())` while it runs |
 | `pty.foreground(p)` | the terminal's foreground job `{ pid, name, shell }` (`shell` while the shell is at its prompt), or `()` once it ended — ask before closing a terminal a program runs in |
 | `pty.cwd(p)` | the foreground job's working directory (the shell's at its prompt), or `()` |
 | `pty.pid(p)` · `pty.shell()` · `pty.available()` | the child's pid; the user's login shell (`$SHELL`, the user database's, `/bin/zsh`); whether ptys exist here |
@@ -2016,7 +2051,7 @@ Native-only.
 | `tty.events(h)` | the channel of decoded events (below) |
 | `tty.size()` | `Ok((cols, rows))`, or `Err` when stdout is not a terminal. Needs no `enter` |
 | `tty.write(h, s)` | write a String or Bytes now — after anything `print` left buffered, without waiting for a newline → `Ok(())` / `Err` |
-| `tty.query(h, seq, timeout_ms)` | write a query (`"\u{1b}]11;?\u{1b}\\"` for the background colour, `"\u{1b}[c"` for DA1, `"\u{1b}[?u"` for the kitty flags) → `Ok(reply)` — the reply's raw bytes — or `Err("timeout")` |
+| `tty.query(h, seq, timeout_ms)` / `tty.query(h, seq, #{ timeout_ms })` | write a query (`"\u{1b}]11;?\u{1b}\\"` for the background colour, `"\u{1b}[c"` for DA1, `"\u{1b}[?u"` for the kitty flags) → `Ok(reply)` — the reply's raw bytes — or `Err("timeout")` |
 | `tty.is_tty()` | stdin and stdout are both terminals — what `enter` needs |
 | `tty.suspend(h)` | ctrl+z done right: restore, stop, and on `fg` re-enter and deliver `signal` `cont` and a `resize` |
 
@@ -2328,6 +2363,8 @@ handed back is known as the field's own earlier one by its identity.
 | `"scrolled"` | `key`, `x`, `y` |
 | `"viewport"` | `key`, `top` — a styled field's first line in view moved into another band of 16 lines (the wheel) |
 | `"select"` | `key`, `selection`, `place`, `rev`, `caret`, `top`, `click_mod` — a styled field's selection moved (`report`) |
+| `"hover"` | `key` (a styled field with `hover: true`), `line` and `column` (1-based, the character the pointer rests on; both `()` when it left the text, `column` `()` and `gutter: true` over the gutter), `rect` — `col`, the 0-based column it said first (-1 left, -2 the gutter), is still there, deprecated |
+| `"lens"` | `key`, `line` (1-based: the line the lens sits under), `id`, `hit`, `x`, `y`, `clicks` — a press in a code field's lens (a lens is `#{ line, height, ops, id }`, `line` 1-based) |
 | `"a11y"` | `key`, `action` (`"set_value"`, `"increment"`, `"decrement"`), `value` |
 | `"outside"` | `key` (the modal layer), `x`, `y` — a press outside the topmost modal layer |
 | `"window_focus"` | `on` |

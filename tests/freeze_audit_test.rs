@@ -1074,3 +1074,50 @@ let ww = proc.wait(q)
         ]))
     );
 }
+
+// ── one name for each key ──────────────────────────────────────────────
+
+#[test]
+fn keys_mean_one_thing_in_every_module() {
+    let dir = std::env::temp_dir().join(format!("olang_freeze_keys_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "hello world\nsay hello\n").unwrap();
+    let src = format!(
+        r#"
+let hits = unwrap(fs.search("{}", "hello"))
+let a = attempt(() => unwrap(Err("boom")))
+let frame = runtime.last_error().frames[0]
+let p = unwrap(proc.spawn(["sh", "-c", "echo hi; sleep 5"]))
+let first = unwrap(proc.read_line(p))
+let killed = proc.kill(p, "TERM")
+let ended = unwrap(proc.wait(p))
+[map(hits, (h) => [h.line, h.column, h.end_column, h.col, h.end]),
+ frame.path == frame.file, frame.function == frame.fn,
+ chan.recv_timeout(chan.new(), #{{ "timeout_ms": 1 }}),
+ unwrap(os.exec("sh", ["-c", "echo [$OLANG_FREEZE_X]"], #{{ "env": #{{ "OLANG_FREEZE_X": () }} }})).stdout,
+ first, killed, ended.signal, caps.level("net"), caps.granted().fs]
+"#,
+        dir.display()
+    );
+    let got = agree_tiered(&src);
+    let _ = std::fs::remove_dir_all(&dir);
+    let n = |v: i64| Value::Integer(v);
+    assert_eq!(
+        got,
+        Ok(l(vec![
+            l(vec![
+                l(vec![n(1), n(1), n(6), n(0), n(5)]),
+                l(vec![n(2), n(5), n(10), n(4), n(9)]),
+            ]),
+            Value::Boolean(true),
+            Value::Boolean(true),
+            Value::Err(Box::new(s("timed out"))),
+            s("[]\n"),
+            s("hi"),
+            ok(Value::Unit),
+            n(15),
+            Value::Boolean(true),
+            Value::Boolean(true),
+        ]))
+    );
+}

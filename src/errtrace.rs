@@ -97,21 +97,23 @@ pub fn frames_value(frames: &[Frame]) -> crate::ast::Value {
         .iter()
         .map(|f| {
             let mut m = crate::ast::ValueMap::default();
-            m.insert(
-                "file".to_string(),
-                f.file
-                    .as_ref()
-                    .map(|s| Value::String(Arc::new(s.clone())))
-                    .unwrap_or(Value::Unit),
-            );
+            let path = f
+                .file
+                .as_ref()
+                .map(|s| Value::String(Arc::new(s.clone())))
+                .unwrap_or(Value::Unit);
+            let function = f
+                .function
+                .as_ref()
+                .map(|s| Value::String(Arc::new(s.clone())))
+                .unwrap_or(Value::Unit);
+            // `path` and `function`, as every record names them; `file`
+            // and `fn` the deprecated names they had
+            m.insert("path".to_string(), path.clone());
             m.insert("line".to_string(), Value::Integer(f.line as i64));
-            m.insert(
-                "fn".to_string(),
-                f.function
-                    .as_ref()
-                    .map(|s| Value::String(Arc::new(s.clone())))
-                    .unwrap_or(Value::Unit),
-            );
+            m.insert("function".to_string(), function.clone());
+            m.insert("file".to_string(), path);
+            m.insert("fn".to_string(), function);
             Value::Map(Arc::new(m))
         })
         .collect();

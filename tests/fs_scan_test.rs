@@ -139,7 +139,7 @@ fn search_finds_a_literal_ignoring_case_by_default_with_columns_in_characters() 
     // the binary file is not searched; the é before the match counts one
     assert_eq!(
         got,
-        r#"["app/examples/demo/main.ol:0:13-18", "app/lib/util.ol:0:9-14", "app/lib/util.ol:1:4-9", "app/main.ol:1:31-36", "loose/script.ol:0:11-16", "notes.md:0:2-7"]"#
+        r#"["app/examples/demo/main.ol:1:13-18", "app/lib/util.ol:1:9-14", "app/lib/util.ol:2:4-9", "app/main.ol:2:31-36", "loose/script.ol:1:11-16", "notes.md:1:2-7"]"#
     );
     let text = s(eval(&format!(
         r#"map_get(unwrap(fs.search("{}", "twice", #{{ "files": ["app/lib/util.ol"] }}))[0], "text")"#,
@@ -168,7 +168,7 @@ fn search_matches_case_words_and_regular_expressions_and_stops_at_its_limit() {
     )));
     assert_eq!(
         decls,
-        r#"["app/lib/util.ol:0", "app/main.ol:1", "lib2/index.ol:0"]"#
+        r#"["app/lib/util.ol:1", "app/main.ol:2", "lib2/index.ol:1"]"#
     );
     assert_eq!(
         eval(&format!(

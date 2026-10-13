@@ -616,7 +616,7 @@ fn a_program_can_read_its_own_grant() {
     write(
         &dir.join("main.ol"),
         r#"
-println(show(caps.allowed("fs")) + " " + caps.level("fs"))
+println(show(caps.allowed("fs")) + " " + show(caps.level("fs")))
 println(show(caps.allowed("net")) + " " + show(caps.allowed("proc")))
 "#,
     );
@@ -627,7 +627,7 @@ println(show(caps.allowed("net")) + " " + show(caps.allowed("proc")))
         .unwrap();
     assert_eq!(
         String::from_utf8_lossy(&granted.stdout).trim(),
-        "true full\ntrue true"
+        "true true\ntrue true"
     );
 
     let denied = Command::new(olang())
@@ -637,7 +637,7 @@ println(show(caps.allowed("net")) + " " + show(caps.allowed("proc")))
         .unwrap();
     assert_eq!(
         String::from_utf8_lossy(&denied.stdout).trim(),
-        "false none\nfalse true"
+        "false false\nfalse true"
     );
 }
 
@@ -741,7 +741,7 @@ fn asking_about_a_capability_needs_no_capability() {
         "caps.granted must not itself be gated"
     );
     let text = String::from_utf8_lossy(&out.stdout);
-    assert!(text.contains("\"fs\": \"none\""), "{text}");
+    assert!(text.contains("\"fs\": false"), "{text}");
     assert!(text.contains("\"net\": false"), "{text}");
 }
 

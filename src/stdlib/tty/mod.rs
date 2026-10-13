@@ -709,9 +709,10 @@ fn tty_query(args: Vec<Value>) -> Res {
     arity("tty.query", &args, 3)?;
     let id = id_of("tty.query", args.first())?;
     let seq = bytes_of("tty.query", &args[1])?;
-    let timeout = match &args[2] {
-        Value::Integer(ms) if *ms >= 0 => *ms as u64,
-        other => {
+    let timeout = match crate::stdlib::timeout_ms_arg(&args[2]) {
+        Some(ms) => ms,
+        None => {
+            let other = &args[2];
             return Err(crate::stdlib::misuse::arg_type(
                 "tty.query",
                 "timeout_ms",

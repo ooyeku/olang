@@ -195,6 +195,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   dropped it) or an argument that is not a map or record (it answered
   `Err`). stdlib.md states AES-256-GCM's key and ciphertext formats.
 
+- **Keys mean one thing in every module.** Lines and columns are 1-based
+  where a record or an option says them: `fs.search` answers `line`
+  (it counted from 0), `column` and `end_column` (`col` and `end`, the
+  0-based offsets, stay, deprecated), a styled field's `hover` event
+  `line` and `column` (`()` off the text; `col` stays, deprecated) and a
+  `lens` event's and a lens's `line`. A frame (`runtime.last_error`)
+  names `path` and `function` (`file` and `fn` stay, deprecated). Every
+  function taking a wait's limit as a number takes `#{ timeout_ms }`
+  there too (`chan.recv_timeout`, `task.join_timeout`, `pty.wait`,
+  `tty.query`). `os.exec`, `proc.spawn` and `proc.pipeline` take `env`
+  with `()` to remove a variable and `clear_env`, as `pty.spawn` does;
+  `proc.spawn(argv)` takes the program and its arguments as one list;
+  `proc.kill(p, signal)` sends a signal (`"TERM"`, …; misuse raises).
+  `caps.level` and `caps.granted().fs` answer the grant's own words
+  (`false`, `"read"`, `true`; they said `"none"`, `"read"`, `"full"`).
+  stdlib.md documents every `fs.scan` and `fs.search` option.
+
 
 ### Added
 

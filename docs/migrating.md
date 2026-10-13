@@ -36,6 +36,7 @@ upgrading; it reports the cases it can find.
   - [Maps, objects and JSON objects](#maps-objects-and-json-objects)
   - [Top-level names are read when a function runs](#top-level-names-are-read-when-a-function-runs)
   - [Bytes and repeated names at the boundaries](#bytes-and-repeated-names-at-the-boundaries)
+  - [Keys: lines from 1, one name each](#keys-lines-from-1-one-name-each)
 - [In 0.88](#in-088)
   - [A missing field of an object is `()`](#a-missing-field-of-an-object-is-)
   - [A module's missing member reads as `()`](#a-modules-missing-member-reads-as-)
@@ -286,6 +287,15 @@ a list of Ints was read. A query name given more than once
 once are a list of their values: a reader expecting a string there
 takes `xs[0]` or the last. `http.encode_query` raises on a nested value
 where it dropped it silently.
+
+### Keys: lines from 1, one name each
+
+`fs.search`'s `line` counts from 1 (it counted from 0): subtract one
+where a list of lines is indexed, or read `column`/`end_column` (1-based)
+in place of `col`/`end`, which still answer the 0-based offsets. A styled
+field's `hover` and `lens` events say `line` (and a hover `column`) from
+1, `()` when the pointer left the text, and a lens's `line` is 1-based.
+`caps.level` answers `false`, `"read"` or `true`: compare with those.
 
 ## In 0.88
 

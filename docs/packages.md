@@ -633,7 +633,7 @@ the call. The `caps` module reports it:
 
 ```olang
 let plan = if caps.allowed("fs") => "cache to disk" else => "in memory"
-println(caps.level("fs"))        // one of: none, read, full
+println(caps.level("fs"))        // the grant's word: false, "read" or true
 let all = caps.granted()         // the whole grant, as a map
 println(show(all.net))
 ```

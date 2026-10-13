@@ -2265,7 +2265,7 @@ fn a_code_field_pins_scopes_says_problems_and_hands_over_chords() {
     "##);
     assert_eq!(
         text(&v),
-        r#"[true, "sticky", 0, "alt+up", true, "grip", "under"]"#
+        r#"[true, "sticky", 1, "alt+up", true, "grip", "under"]"#
     );
 }
 

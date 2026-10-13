@@ -99,6 +99,25 @@ pub(crate) fn kill_tree(child: &mut Child) {
     let _ = child.kill();
 }
 
+/// A child's environment as the options say: cleared first
+/// (`clear_env`), then `env`'s variables set and its `()`s removed.
+pub(crate) fn apply_env(
+    command: &mut Command,
+    clear: bool,
+    set: &[(String, String)],
+    removed: &[String],
+) {
+    if clear {
+        command.env_clear();
+    }
+    for (k, v) in set {
+        command.env(k, v);
+    }
+    for k in removed {
+        command.env_remove(k);
+    }
+}
+
 /// A `cwd` option that names no directory: said as such, before the
 /// spawn would blame the program ("failed to start 'sh': No such file
 /// or directory").
@@ -250,6 +269,10 @@ fn as_args(v: &Value, who: &str) -> Result<Vec<String>, Value> {
 struct Opts {
     cwd: Option<String>,
     env: Vec<(String, String)>,
+    /// `env: #{ name: () }`: the variable removed from the child's
+    env_removed: Vec<String>,
+    /// `clear_env: true`: the child starts with no variables but `env`'s
+    clear_env: bool,
     stdin: Option<String>,
     group: bool,
     /// `framing: "content-length"`: stdout is messages framed by
@@ -291,9 +314,10 @@ fn parse_opts(value: &Value, who: &str) -> Result<Opts, Value> {
                 for (k, v) in m.iter() {
                     match v {
                         Value::String(s) => opts.env.push((k.clone(), s.as_ref().clone())),
+                        Value::Unit => opts.env_removed.push(k.clone()),
                         other => {
                             return Err(err(format!(
-                                "{}: env values must be strings, got {}",
+                                "{}: env values must be strings (or () to remove one), got {}",
                                 who,
                                 other.type_name()
                             )));
@@ -301,9 +325,10 @@ fn parse_opts(value: &Value, who: &str) -> Result<Opts, Value> {
                     }
                 }
             }
+            ("clear_env", Value::Boolean(b)) => opts.clear_env = *b,
             (other, _) => {
                 return Err(err(format!(
-                    "{}: unknown or mistyped option '{}' (supported: cwd, env, bytes, {})",
+                    "{}: unknown or mistyped option '{}' (supported: cwd, env, clear_env, bytes, {})",
                     who,
                     other,
                     if pipeline { "stdin" } else { "group, framing" }
@@ -318,11 +343,29 @@ fn parse_opts(value: &Value, who: &str) -> Result<Opts, Value> {
 /// a child with its stdin, stdout, and stderr piped, and return a live
 /// `Process` handle. Both output streams begin draining immediately.
 fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if args.len() != 2 && args.len() != 3 {
+    if args.is_empty() || args.len() > 3 {
         return Ok(err(
-            "spawn expects (program, args) or (program, args, opts)",
+            "spawn expects (argv), (program, args) or (program, args, opts)",
         ));
     }
+    // `proc.spawn(argv)` / `proc.spawn(argv, opts)`: the program and its
+    // arguments as one list, as `pty.spawn` and a pipeline stage take them
+    let args: Vec<Value> = match args.first() {
+        Some(Value::List(argv)) if args.len() <= 2 => {
+            let Some(first) = argv.first() else {
+                return Ok(err("spawn: argv is empty"));
+            };
+            let mut out = vec![first.clone(), Value::List(Arc::new(argv[1..].to_vec()))];
+            out.extend(args.into_iter().skip(1));
+            out
+        }
+        _ if args.len() < 2 => {
+            return Ok(err(
+                "spawn expects (argv), (program, args) or (program, args, opts)",
+            ));
+        }
+        _ => args,
+    };
     let program = match as_program(&args[0], "spawn") {
         Ok(p) => p,
         Err(e) => return Ok(e),
@@ -334,6 +377,8 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let Opts {
         cwd,
         env,
+        env_removed,
+        clear_env,
         group,
         framed,
         bytes,
@@ -358,9 +403,7 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if let Some(dir) = &cwd {
         command.current_dir(dir);
     }
-    for (k, v) in &env {
-        command.env(k, v);
-    }
+    apply_env(&mut command, clear_env, &env, &env_removed);
     if group {
         set_own_group(&mut command);
     }
@@ -666,30 +709,102 @@ fn proc_wait(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// ends everything the child started too: the child must have been
 /// spawned with `#{ group: true }`, and its whole process group is
 /// killed (`taskkill /T` on Windows).
+/// A signal as `proc.kill` and `pty.kill` take one: a name (`"TERM"`,
+/// `"SIGTERM"`, …) or a number.
+pub(crate) fn signal_of(v: &Value, who: &str) -> Result<i32, String> {
+    #[cfg(unix)]
+    let named = |n: &str| -> Option<i32> {
+        Some(match n {
+            "HUP" => libc::SIGHUP,
+            "INT" => libc::SIGINT,
+            "TERM" => libc::SIGTERM,
+            "KILL" => libc::SIGKILL,
+            "QUIT" => libc::SIGQUIT,
+            "CONT" => libc::SIGCONT,
+            "STOP" => libc::SIGSTOP,
+            "USR1" => libc::SIGUSR1,
+            "USR2" => libc::SIGUSR2,
+            _ => return None,
+        })
+    };
+    #[cfg(not(unix))]
+    let named = |n: &str| -> Option<i32> { (n == "KILL").then_some(9) };
+    match v {
+        Value::String(t) => {
+            let n = t.trim_start_matches("SIG").to_ascii_uppercase();
+            named(&n).ok_or_else(|| {
+                format!("{who}: unknown signal '{n}' (HUP, INT, TERM, KILL, QUIT, CONT, STOP, USR1, USR2)")
+            })
+        }
+        Value::Integer(i) if *i > 0 && *i < 65 => Ok(*i as i32),
+        other => Err(format!(
+            "{who}: a signal is a name (\"TERM\") or a number, got {}",
+            other.type_name()
+        )),
+    }
+}
+
 fn proc_kill(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.is_empty() || args.len() > 2 {
-        return Ok(err("kill expects (process) or (process, #{ tree: Bool })"));
+        return Err(
+            "proc.kill expects (process), (process, signal) or (process, #{ tree, signal })".into(),
+        );
     }
     let p = proc_of(&args[0])?;
     let mut tree = false;
+    // KILL unless a signal is named: `proc.kill(p, "TERM")` asks it to end
+    let mut signal: Option<i32> = None;
     if let Some(opts) = args.get(1) {
         let fields = match opts {
             Value::Map(m) => m.as_ref().clone(),
             Value::Struct { fields, .. } => fields.as_ref().clone(),
-            _ => return Ok(err("kill: options must be a map or object")),
+            sig @ (Value::String(_) | Value::Integer(_)) => {
+                let mut f = crate::ast::ValueMap::default();
+                f.insert("signal".to_string(), sig.clone());
+                f
+            }
+            other => {
+                return Err(format!(
+                    "proc.kill: takes a signal or #{{ tree, signal }}, got {}",
+                    other.type_name()
+                )
+                .into());
+            }
         };
         for (key, val) in &fields {
             match (key.as_str(), val) {
                 ("tree", Value::Boolean(b)) => tree = *b,
+                ("signal", v) => signal = Some(signal_of(v, "proc.kill")?),
                 (other, _) => {
-                    return Ok(err(format!(
-                        "kill: unknown or mistyped option '{}' (supported: tree)",
+                    return Err(format!(
+                        "proc.kill: unknown or mistyped option '{}' (supported: tree, signal)",
                         other
-                    )));
+                    )
+                    .into());
                 }
             }
         }
     }
+    #[cfg(unix)]
+    if let Some(sig) = signal {
+        if tree && !p.group {
+            return Ok(err(
+                "kill: a tree kill needs a process spawned with #{ group: true } \
+                 (proc.spawn(program, args, #{ group: true }))",
+            ));
+        }
+        let pid = p.pid as i32;
+        if pid > 0 {
+            // SAFETY: kill(2) touches no memory of ours; a negative pid
+            // signals the process group.
+            unsafe {
+                libc::kill(if tree { -pid } else { pid }, sig);
+            }
+        }
+        return Ok(unit_ok());
+    }
+    #[cfg(not(unix))]
+    let _ = signal;
     if tree && !p.group {
         return Ok(err(
             "kill: a tree kill needs a process spawned with #{ group: true } \
@@ -767,6 +882,8 @@ fn proc_pipeline(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     let Opts {
         cwd,
         env,
+        env_removed,
+        clear_env,
         stdin: mut stdin_data,
         bytes,
         ..
@@ -794,9 +911,7 @@ fn proc_pipeline(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         if let Some(dir) = &cwd {
             command.current_dir(dir);
         }
-        for (k, v) in &env {
-            command.env(k, v);
-        }
+        apply_env(&mut command, clear_env, &env, &env_removed);
         if i == 0 {
             command.stdin(if stdin_data.is_some() {
                 Stdio::piped()

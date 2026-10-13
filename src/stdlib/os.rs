@@ -579,6 +579,8 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let mut timeout_ms: Option<u64> = None;
     let mut stdin_data: Option<String> = None;
     let mut bytes = false;
+    let mut clear_env = false;
+    let mut env_removed: Vec<String> = Vec::new();
     let mut env_vars: Vec<(String, String)> = Vec::new();
     if let Some(options) = args.get(2) {
         let fields = match options {
@@ -595,6 +597,7 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                 ("cwd", Value::String(s)) => cwd = Some(s.as_ref().clone()),
                 ("stdin", Value::String(s)) => stdin_data = Some(s.as_ref().clone()),
                 ("bytes", Value::Boolean(b)) => bytes = *b,
+                ("clear_env", Value::Boolean(b)) => clear_env = *b,
                 ("timeout_ms", Value::Integer(n)) if *n >= 0 => timeout_ms = Some(*n as u64),
                 ("timeout_ms", other) => {
                     return Err(format!(
@@ -607,9 +610,10 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                     for (k, v) in m.iter() {
                         match v {
                             Value::String(s) => env_vars.push((k.clone(), s.as_ref().clone())),
+                            Value::Unit => env_removed.push(k.clone()),
                             other => {
                                 return Err(format!(
-                                    "os.exec: env values must be strings, got {}",
+                                    "os.exec: env values must be strings (or () to remove one), got {}",
                                     other.type_name()
                                 )
                                 .into());
@@ -619,7 +623,7 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
                 }
                 (other_key, _) => {
                     return Err(format!(
-                        "os.exec: unknown or mistyped option '{}' (supported: cwd, stdin, env, timeout_ms, bytes)",
+                        "os.exec: unknown or mistyped option '{}' (supported: cwd, stdin, env, clear_env, timeout_ms, bytes)",
                         other_key
                     )
                     .into());
@@ -637,9 +641,7 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if let Some(dir) = &cwd {
         command.current_dir(dir);
     }
-    for (k, v) in &env_vars {
-        command.env(k, v);
-    }
+    crate::stdlib::proc::apply_env(&mut command, clear_env, &env_vars, &env_removed);
 
     let outcome = match timeout_ms {
         Some(ms) => exec_bounded(command, stdin_data, ms),

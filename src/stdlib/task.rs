@@ -239,14 +239,15 @@ fn task_join(args: Vec<Value>) -> Result<Value, InterpreterError> {
 
 fn task_join_timeout(args: Vec<Value>) -> Result<Value, InterpreterError> {
     let ms = match args.as_slice() {
-        [_, Value::Integer(ms)] if *ms >= 0 => *ms as u64,
-        _ => {
-            return Err(raise(
-                "task.join_timeout expects a task and a non-negative Int of milliseconds"
-                    .to_string(),
-            ));
-        }
-    };
+        [_, limit] => crate::stdlib::timeout_ms_arg(limit),
+        _ => None,
+    }
+    .ok_or_else(|| {
+        raise(
+            "task.join_timeout expects a task and a non-negative Int of milliseconds (or #{ timeout_ms })"
+                .to_string(),
+        )
+    })?;
     let id = task_id(&args[0]).map_err(raise)?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
     match spawn_registry::join_until(id, deadline) {
