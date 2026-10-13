@@ -655,7 +655,9 @@ impl BytecodeTier {
         file: String,
         scope: Arc<im::HashMap<String, crate::ast::Value>>,
     ) {
-        self.vm.note_module_scope(file, scope);
+        if self.vm.note_module_scope(file, scope) {
+            self.compiled.clear();
+        }
     }
 
     pub fn set_entry_file(&mut self, file: Option<String>) {
@@ -667,8 +669,18 @@ impl BytecodeTier {
     /// tiers spend from the one shared budget (see `set_depth_base`).
     /// The owning program's top-level bindings, for the bridge interpreter
     /// (an O(1) Arc clone; the VM reseeds only when the pointer moves).
-    pub fn set_host_globals(&mut self, globals: std::sync::Arc<im::HashMap<String, Value>>) {
-        self.vm.set_host_globals(globals);
+    /// `file` is the file whose top-level scope they are (`None` the
+    /// program's): when compiled code took a constant from that scope that
+    /// has since changed, everything compiled is forgotten and compiles
+    /// again (a function reads a top-level name's binding when it runs).
+    pub fn set_host_globals(
+        &mut self,
+        globals: std::sync::Arc<im::HashMap<String, Value>>,
+        file: Option<&str>,
+    ) {
+        if self.vm.set_host_globals(globals, file) {
+            self.compiled.clear();
+        }
     }
 
     pub fn try_call_at_depth(

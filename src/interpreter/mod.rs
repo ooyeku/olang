@@ -938,8 +938,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             return None;
         }
         let globals = self.global_bindings();
+        let root_file = self.current_module_path.clone();
         let mut tier = self.bytecode_tier.take()?;
-        tier.set_host_globals(globals);
+        tier.set_host_globals(globals, root_file.as_deref());
         let out = tier.try_hof_range(name, f, start, end, inclusive, init);
         self.bytecode_tier = Some(tier);
         match out? {
@@ -970,8 +971,9 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             return None;
         }
         let globals = self.global_bindings();
+        let root_file = self.current_module_path.clone();
         let mut tier = self.bytecode_tier.take()?;
-        tier.set_host_globals(globals);
+        tier.set_host_globals(globals, root_file.as_deref());
         let out = tier.try_hof(name, f, items, init);
         self.bytecode_tier = Some(tier);
         match out? {
@@ -1691,6 +1693,16 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                     &func_decl.body,
                 ))))
             }
+        };
+
+        // A top-level function reads a top-level name's binding as it is
+        // when the function runs (language.md, "Top-level names"): its
+        // closure holds nothing, and every name it does not bind itself
+        // resolves through its file's live scope at the call.
+        let closure = if early_root || self.environment.parent.is_none() {
+            Self::empty_closure()
+        } else {
+            closure
         };
 
         // Resolve identifiers to frame slots once, at declaration — the
@@ -2677,9 +2689,14 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// `olang check --tier`: compile every declared function now and
     /// answer the refusals among those declared in `file`.
     pub fn tier_compile_ahead(&mut self, file: Option<&str>) -> Vec<(String, String)> {
+        let globals = self.global_bindings();
+        let root_file = self.current_module_path.clone();
         self.bytecode_tier
             .as_mut()
-            .map(|t| t.compile_ahead(file))
+            .map(|t| {
+                t.set_host_globals(globals, root_file.as_deref());
+                t.compile_ahead(file)
+            })
             .unwrap_or_default()
     }
 
@@ -3384,6 +3401,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 && !self.budgeted()
             {
                 let globals = self.global_bindings();
+                let root_file = self.current_module_path.clone();
                 let mut tier = self.bytecode_tier.take();
                 // The interpreter's frames (this one included) count
                 // against the same budget the VM spends from.
@@ -3391,7 +3409,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 let outcome = tier
                     .as_mut()
                     .map(|t| {
-                        t.set_host_globals(globals);
+                        t.set_host_globals(globals, root_file.as_deref());
                         t.try_call_at_depth(func, &mut arguments, depth)
                     })
                     .unwrap_or(crate::ovm::tier::TierOutcome::Fallback);
@@ -3498,6 +3516,16 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 // entries) on every single call.
                 if !func.closure.is_empty() {
                     new_env.variables = func.closure.clone();
+                } else if let Some(scope) = new_env
+                    .owner
+                    .as_deref()
+                    .and_then(|owner| self.module_scopes.get(owner))
+                {
+                    // A module's top-level function captures nothing: its
+                    // frame reads the module's scope as it is now (the
+                    // finished table), as the program's functions read
+                    // the program's root.
+                    new_env.variables = scope.clone();
                 }
 
                 // If this is a named function, add it to its own scope for recursion
@@ -3695,11 +3723,6 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         if let Some(value) = self.environment.get_lexical(name, false) {
             return Some(value);
         }
-        // A sibling declared earlier in the running function's run: what
-        // its declaration-time snapshot would have held (`ast::FnRun`).
-        if let Some(value) = self.environment.run.get(name) {
-            return Some(value);
-        }
         if let Some(owner) = self.environment.owner.as_deref()
             && let Some(scope) = self.module_scopes.get(owner)
             && let Some(value) = scope.get(name)
@@ -3713,6 +3736,11 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             return Some(Value::Function(function.clone()));
         }
         if let Some(value) = self.environment.root().get_here(name) {
+            return Some(value);
+        }
+        // A sibling declared earlier in the running function's run
+        // (`ast::FnRun`), where the scope a lookup reached has none.
+        if let Some(value) = self.environment.run.get(name) {
             return Some(value);
         }
         if let Some(value) = self
@@ -3935,6 +3963,14 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 }
                 for (name, func) in t.known_functions() {
                     tier.note_function(name, func);
+                }
+                // Every loaded module's table, and which file is the
+                // program: a module's functions read their module's names
+                // through it (they capture none), on a worker as on the
+                // main thread.
+                tier.set_entry_file(self.entry_file.clone());
+                for (file, scope) in &self.module_scopes {
+                    tier.note_module_scope(file.clone(), scope.clone());
                 }
                 if t.is_verbose() {
                     eprintln!(
@@ -4829,32 +4865,24 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// made every closure pin the whole scope it was born in. A name the
     /// body mentions that is not bound yet (a function declared further
     /// down) resolves at call time, as it always has.
+    /// The one empty closure every top-level function shares.
+    fn empty_closure() -> Arc<ImHashMap<String, Value>> {
+        static EMPTY: std::sync::OnceLock<Arc<ImHashMap<String, Value>>> =
+            std::sync::OnceLock::new();
+        EMPTY.get_or_init(|| Arc::new(ImHashMap::new())).clone()
+    }
+
     fn collect_captures(&self, mentioned: &[String]) -> ImHashMap<String, Value> {
-        let skip_root = self
-            .environment
-            .owner
-            .as_deref()
-            .is_some_and(|owner| self.module_scopes.contains_key(owner));
         let chain = self.environment.lexical_chain();
         let mut captured = ImHashMap::new();
         for name in mentioned {
             for env in &chain {
-                if env.parent.is_none() && !std::ptr::eq(*env, &self.environment) {
-                    // A module's code does not capture the program's root:
-                    // the root belongs to the entry file, and a name it
-                    // binds — an import of some other module's
-                    // `compute_here` — must never be what a lambda in this
-                    // module means by that name (the module's own table
-                    // answers at lookup instead; while the module is still
-                    // loading, the root in the chain IS the module's
-                    // environment and is captured from as ever). And the
-                    // root's binding is not what this code means by a name
-                    // the running function has an earlier sibling for
-                    // (`ast::FnRun`): left out, it resolves through the
-                    // run at lookup.
-                    if skip_root || self.environment.run.get(name).is_some() {
-                        break;
-                    }
+                // A top-level name is never captured: a function reads its
+                // binding as it is when the function runs, through the
+                // file's live scope (the program's root, or a module's
+                // table) — never a value frozen when the closure was made.
+                if env.parent.is_none() {
+                    break;
                 }
                 if let Some(value) = env.get_here(name) {
                     captured.insert(name.clone(), value);
@@ -5135,11 +5163,12 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         args.extend(live_values);
 
         let globals = self.global_bindings();
+        let root_file = self.current_module_path.clone();
         let mut tier = self.bytecode_tier.take();
         let outcome = tier
             .as_mut()
             .map(|t| {
-                t.set_host_globals(globals);
+                t.set_host_globals(globals, root_file.as_deref());
                 t.try_call_function_value(&func, &mut args)
             })
             .unwrap_or(crate::ovm::tier::TierOutcome::Fallback);

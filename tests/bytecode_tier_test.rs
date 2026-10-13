@@ -329,27 +329,26 @@ offset(1) + offset(2) + offset(3)
 }
 
 #[test]
-fn baked_globals_are_declaration_time_snapshots() {
-    // The whole baking design rests on closures being snapshots: a global
-    // mutated after the function's declaration must NOT be seen — by either
-    // tier. Pin the exact value, not just agreement.
+fn a_global_reassigned_after_declaration_is_read_live() {
+    // A function reads a top-level name's binding as it is when it runs
+    // (language.md): the reassignment after its declaration is seen — by
+    // every tier. Pin the exact value, not just agreement.
     let src = r#"
 let mut base = 100
 fn offset(n) = n + base
 base = 200
 offset(1) + offset(2) + offset(3)
 "#;
-    assert_eq!(eval(src, None).unwrap(), Value::Integer(306));
-    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(306));
+    assert_eq!(eval(src, None).unwrap(), Value::Integer(606));
+    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(606));
     assert_tier_transparent(src);
 }
 
 #[test]
-fn baked_function_values_survive_redefinition_of_the_name() {
-    // `go` bakes the helper *value* from its own closure. Redefining the
-    // name afterwards must not change what go calls — in either tier —
-    // because go's closure still holds the original.
-    // A file declares a function once; the REPL redefines across inputs.
+fn a_redefined_function_is_what_a_caller_calls_next() {
+    // `go` reads `helper` when it runs: redefining the name (the REPL
+    // redefines across inputs; a file declares a function once) changes
+    // what go calls next — on every tier, compiled code forgotten.
     let first = r#"
 fn helper(x) = x + 1
 fn go(xs) = xs |> map(helper) |> sum
@@ -359,7 +358,11 @@ let before = go(xs) + go(xs)
     let second = "fn helper(x) = x + 1000\nbefore + go(xs)\n";
     assert_eq!(
         eval_session(&[first, second], None).unwrap(),
-        eval_session(&[first, second], Some(2)).unwrap()
+        Value::Integer(3186)
+    );
+    assert_eq!(
+        eval_session(&[first, second], Some(2)).unwrap(),
+        Value::Integer(3186)
     );
 }
 
@@ -1412,16 +1415,15 @@ sum(scale([1, 2, 3])) + sum(scale([4, 5]))
 
 #[test]
 fn global_mutation_after_declaration_agrees() {
-    // Both tiers must see the declaration-time snapshot: the interpreter
-    // layers the closure over the call-site chain, so the reassigned value
-    // never wins inside `scale` either way.
+    // Both tiers read the binding as it is at the call: the reassigned
+    // value wins inside `scale`, its lambda included.
     let src = r#"
 let mut factor = 7
 fn scale(xs) = map(xs, (x) => x * factor)
 factor = 100
 sum(scale([1, 2, 3]))
 "#;
-    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(42));
+    assert_eq!(eval(src, Some(1)).unwrap(), Value::Integer(600));
     assert_tier_transparent(src);
 }
 

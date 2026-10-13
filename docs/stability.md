@@ -138,7 +138,11 @@ therefore identical on every tier:
 makes it livable: assigning to a binding *captured* from an enclosing
 scope is an error (the write could only reach the closure's snapshot),
 and [`cell`](stdlib.md#cell--mutable-locations) is the one mutable
-location, confined to the thread that created it.
+location, confined to the thread that created it. A closure captures the
+local bindings it names by value; a top-level name is never captured —
+every function reads its binding as it is when the function runs, on
+every tier (settled before 1.0; language.md, "Closures capture by
+value").
 
 **The stdlib conventions settled in 0.64.0.** One rule decides what
 every function returns, so its shape follows from what it does: an

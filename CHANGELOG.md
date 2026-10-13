@@ -170,6 +170,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   "b" }` is one key `"1"` (the literal kept `"1.0"` while `map_get(m,
   1.0)` read `"1"`).
 
+- **A function reads a top-level name when it runs.** A top-level name
+  is no longer captured: every function, wherever it is declared (a
+  lambda made at the top level, a module's functions), reads the
+  binding as it is at the call, on every tier. A top-level `let mut` the
+  program reassigns after declaring a function that reads it, or a name
+  a later top-level `let` binds again, is now seen changed (it was seen
+  as it stood at the declaration). Local bindings are still captured by
+  value. Compiled code that took a top-level binding as a constant is
+  forgotten when the program rebinds it, and a function reading a
+  rebound name runs on the interpreter.
+
 
 ### Added
 

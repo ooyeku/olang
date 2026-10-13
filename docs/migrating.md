@@ -34,6 +34,7 @@ upgrading; it reports the cases it can find.
   - [An assignment answers `()`](#an-assignment-answers-)
   - [`[package] olang` is a minimum](#package-olang-is-a-minimum)
   - [Maps, objects and JSON objects](#maps-objects-and-json-objects)
+  - [Top-level names are read when a function runs](#top-level-names-are-read-when-a-function-runs)
 - [In 0.88](#in-088)
   - [A missing field of an object is `()`](#a-missing-field-of-an-object-is-)
   - [A module's missing member reads as `()`](#a-modules-missing-member-reads-as-)
@@ -267,6 +268,14 @@ A record pattern now matches a Map too, so a `match` whose `{ … }` arm
 came after an arm meant for maps may take maps sooner: order the arms
 from the most specific. A map literal with a whole Float key (`#{ 2.0:
 x }`) has the key `"2"` where it had `"2.0"`.
+
+### Top-level names are read when a function runs
+
+A function that reads a top-level `let mut` sees the value it has at the
+call, where it saw the value it had when the function was declared; a
+top-level name bound again by a later `let` is seen rebound. A program
+that relied on the old snapshot binds the value it wants under a name of
+its own (`let base0 = base`, then read `base0`) or passes it in.
 
 ## In 0.88
 

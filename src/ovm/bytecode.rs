@@ -85,6 +85,8 @@ pub struct BytecodeVm {
     /// — including a `let` declared after the closure was created, which
     /// the closure's own snapshot cannot hold.
     host_globals: Option<std::sync::Arc<im::HashMap<String, crate::ast::Value>>>,
+    /// The file whose top-level scope `host_globals` is ("" the program's).
+    host_root_file: Option<String>,
     /// Every loaded module's complete top-level table, by file (see
     /// `Interpreter::module_scopes`); seeded into the bridge.
     module_scopes: HashMap<String, std::sync::Arc<im::HashMap<String, crate::ast::Value>>>,
@@ -323,6 +325,23 @@ pub enum LazyEvent {
 }
 
 /// Bytecode compiler that transforms AST to bytecode
+/// Whether a top-level binding is still the value compiled code took.
+fn same_binding(now: Option<&Value>, then: &Value) -> bool {
+    let Some(now) = now else {
+        return false;
+    };
+    match (now, then) {
+        (Value::Function(a), Value::Function(b)) => Arc::ptr_eq(a, b),
+        (Value::List(a), Value::List(b)) if Arc::ptr_eq(a, b) => true,
+        (Value::Map(a), Value::Map(b)) if Arc::ptr_eq(a, b) => true,
+        (Value::String(a), Value::String(b)) if Arc::ptr_eq(a, b) => true,
+        (Value::Struct { fields: a, .. }, Value::Struct { fields: b, .. }) if Arc::ptr_eq(a, b) => {
+            true
+        }
+        _ => now == then,
+    }
+}
+
 pub struct BytecodeCompiler {
     /// Set by a block for a statement whose value nothing reads: an
     /// assignment there skips loading the `()` it answers. Read (and
@@ -409,6 +428,24 @@ pub struct BytecodeCompiler {
     /// private helper written below it) resolves here, as it does on the
     /// interpreter since 0.84.
     module_scope: Option<std::sync::Arc<im::HashMap<String, Value>>>,
+    /// The live top-level scope of the file the function being compiled
+    /// belongs to, when no finished module table answers for it (the
+    /// program's root, or a module while it loads): a top-level function
+    /// captures nothing, so its top-level names resolve here, as the
+    /// interpreter resolves them at the call.
+    host_root: Option<std::sync::Arc<im::HashMap<String, Value>>>,
+    /// Which file `host_root` is the scope of ("" the program's).
+    host_root_key: String,
+    /// The top-level bindings compiled code took as constants from a
+    /// `host_root`, by (file, name): checked whenever that scope moves,
+    /// and every compiled function forgotten when one has changed (a
+    /// function reads a top-level name's binding as it is when it runs).
+    host_bakes: std::cell::RefCell<HashMap<(String, String), Value>>,
+    /// Top-level names a program rebinds after code took them as
+    /// constants: a function reading one stays on the interpreter.
+    volatile_globals: std::collections::HashSet<(String, String)>,
+    /// The volatile name the compile in progress met, if any.
+    hit_volatile: std::cell::RefCell<Option<String>>,
     /// The run of sibling declarations the function being compiled belongs
     /// to: the earlier siblings its shared closure leaves out
     /// (`ast::FnRun`). Consulted right after the closure, as the
@@ -1651,6 +1688,7 @@ impl BytecodeVm {
             builtins: BuiltinFunctions::new(),
             builtin_interpreter: None,
             host_globals: None,
+            host_root_file: None,
             module_scopes: HashMap::new(),
             seeded_globals: None,
             bridge_landscape_version: 0,
@@ -1754,7 +1792,11 @@ impl BytecodeVm {
         &mut self,
         file: String,
         scope: std::sync::Arc<im::HashMap<String, crate::ast::Value>>,
-    ) {
+    ) -> bool {
+        // what code compiled while the module loaded took from its scope,
+        // held to the module's finished table
+        let key = self.host_key(Some(&file));
+        let stale = self.check_host_bakes(&key, &scope);
         if !self
             .module_scopes
             .get(&file)
@@ -1764,6 +1806,7 @@ impl BytecodeVm {
         }
         self.module_scopes.insert(file, scope);
         self.bridge_landscape_version += 1;
+        stale
     }
 
     pub fn note_function_value(
@@ -2180,10 +2223,15 @@ impl BytecodeVm {
                     self.compiler.module_scope = def_file
                         .as_deref()
                         .and_then(|f| self.module_scopes.get(f).cloned());
+                    self.set_host_root();
                     self.compiler.enclosing_run = run.clone();
                     self.compiler.set_current_def_file();
                 }
-                if let Some(group) = self.cached_group(entry, func_id, &closure) {
+                let group = self.cached_group(entry, func_id, &closure);
+                if self.compiler.hit_volatile.borrow_mut().take().is_some() {
+                    continue;
+                }
+                if let Some(group) = group {
                     // the lambdas first, as a compile installs them
                     let mut group = group.into_iter();
                     let main = group.next();
@@ -2568,12 +2616,14 @@ impl BytecodeVm {
             .pending_def_file
             .as_deref()
             .and_then(|f| self.module_scopes.get(f).cloned());
+        self.set_host_root();
         self.compiler.enclosing_closure = closure;
         self.compiler.enclosing_run = run;
 
         self.compiler.pending_lambdas.clear();
         self.compiler.note_segment(0, func_id);
         let bytecode = self.compiler.compile_function(func_id, func)?;
+        self.refuse_volatile()?;
         let mut member = 0usize;
 
         // Compile the runtime-capture lambdas this function created, each
@@ -2620,6 +2670,7 @@ impl BytecodeVm {
                 let compiled = self.compiler.compile_function(lambda_id, &decl);
                 self.compiler.self_call = None;
                 let lambda_bytecode = Arc::new(compiled?);
+                self.refuse_volatile()?;
                 // callees still unregistered: the lambda's code is only
                 // the search for them, and is dropped with its function's
                 if !self.compiler.unresolved.is_empty() {
@@ -7372,12 +7423,99 @@ impl BytecodeVm {
         }
     }
 
-    /// Record the owning program's globals for the bridge (see the field).
+    /// Record the owning program's globals for the bridge (see the field),
+    /// and the file whose top-level scope they are (`None` the program's).
+    /// Answers whether compiled code took a constant from that scope that
+    /// has since changed: every compiled function is then forgotten (and
+    /// the caller drops its own record of them), and the name stays off
+    /// the tier for the rest of the run.
     pub fn set_host_globals(
         &mut self,
         globals: std::sync::Arc<im::HashMap<String, crate::ast::Value>>,
-    ) {
-        self.host_globals = Some(globals);
+        file: Option<&str>,
+    ) -> bool {
+        let key = self.host_key(file);
+        let moved = !(self.host_root_file.as_deref() == Some(key.as_str())
+            && self
+                .host_globals
+                .as_ref()
+                .is_some_and(|g| std::sync::Arc::ptr_eq(g, &globals)));
+        self.host_globals = Some(globals.clone());
+        self.host_root_file = Some(key.clone());
+        moved && self.check_host_bakes(&key, &globals)
+    }
+
+    /// The key of a file's top-level scope: "" for the program's own (no
+    /// file, or the entry file), else the file.
+    fn host_key(&self, file: Option<&str>) -> String {
+        match file {
+            None => String::new(),
+            Some(f) if self.entry_file.as_deref() == Some(f) => String::new(),
+            Some(f) => f.to_string(),
+        }
+    }
+
+    /// Point the compile in progress at its file's live top-level scope,
+    /// when no finished module table answers for the file.
+    fn set_host_root(&mut self) {
+        let key = self.host_key(self.compiler.pending_def_file.as_deref());
+        self.compiler.host_root = if self.compiler.module_scope.is_none()
+            && self.host_root_file.as_deref() == Some(key.as_str())
+        {
+            self.host_globals.clone()
+        } else {
+            None
+        };
+        self.compiler.host_root_key = key;
+        *self.compiler.hit_volatile.borrow_mut() = None;
+    }
+
+    /// A compile that met a top-level name the program rebinds fails: the
+    /// function stays on the interpreter, which reads the binding live.
+    fn refuse_volatile(&mut self) -> Result<(), BytecodeError> {
+        match self.compiler.hit_volatile.borrow_mut().take() {
+            Some(name) => Err(BytecodeError::CompilationFailed(format!(
+                "reads the top-level '{}', which the program rebinds after code read it",
+                name
+            ))),
+            None => Ok(()),
+        }
+    }
+
+    /// Whether a constant compiled code took from `file`'s top-level
+    /// scope differs from `scope` now; if so, every compiled function is
+    /// forgotten and the changed names marked volatile.
+    fn check_host_bakes(
+        &mut self,
+        file: &str,
+        scope: &std::sync::Arc<im::HashMap<String, crate::ast::Value>>,
+    ) -> bool {
+        let stale: Vec<String> = self
+            .compiler
+            .host_bakes
+            .borrow()
+            .iter()
+            .filter(|((f, name), v)| f == file && !same_binding(scope.get(name.as_str()), v))
+            .map(|((_, name), _)| name.clone())
+            .collect();
+        if stale.is_empty() {
+            return false;
+        }
+        for name in stale {
+            self.compiler
+                .volatile_globals
+                .insert((file.to_string(), name));
+        }
+        self.forget_compiled();
+        true
+    }
+
+    /// Forget every compiled function: callers resolve their callees
+    /// again and compile afresh against the scope as it is now.
+    pub fn forget_compiled(&mut self) {
+        self.function_registry.clear();
+        self.compiler.host_bakes.borrow_mut().clear();
+        self.hof_epoch += 1;
     }
 
     fn ensure_bridge_interpreter(&mut self) {
@@ -10248,6 +10386,11 @@ impl BytecodeCompiler {
             type_aliases: HashMap::new(),
             bridged_callees: std::collections::HashSet::new(),
             module_scope: None,
+            host_root: None,
+            host_root_key: String::new(),
+            host_bakes: std::cell::RefCell::new(HashMap::new()),
+            volatile_globals: std::collections::HashSet::new(),
+            hit_volatile: std::cell::RefCell::new(None),
             enclosing_run: Default::default(),
             known_function_values: HashMap::new(),
             self_call: None,
@@ -10295,6 +10438,12 @@ impl BytecodeCompiler {
         self.enclosing_closure
             .get(name)
             .cloned()
+            .or_else(|| {
+                self.module_scope
+                    .as_ref()
+                    .and_then(|m| m.get(name).cloned())
+            })
+            .or_else(|| self.host_value(name))
             .or_else(|| self.enclosing_run.get(name))
     }
 

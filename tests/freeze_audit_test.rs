@@ -987,3 +987,50 @@ let j = unwrap(json.parse("{\"kind\": \"a\"}"))
     let err = eval("fn take(m: Map) = 1\ntake([1])\n", None).unwrap_err();
     assert!(err.contains("expects Map, got List"), "{err}");
 }
+
+// ── top-level names resolve when the function runs ─────────────────────
+
+#[test]
+fn top_level_names_resolve_at_call_time_on_every_tier() {
+    let src = r#"
+let mut limit = 1
+fn over(x) = x > limit
+let a = over(5)
+limit = 10
+let b = over(5)
+let later = () => uses_late()
+fn uses_late() = LATE
+let LATE = "late"
+let d = later()
+fn hot(n) = { let mut i = 0; let mut k = 0; while i < n { if over(i) => { k = k + 1 } else => (); i = i + 1 }; k }
+let e = hot(3000)
+limit = 2000
+let f = hot(3000)
+let g = map([1, 2, 3], (x) => x + limit)
+let base = 1
+fn get_base() = base
+let h1 = get_base()
+let base = 2
+let h2 = get_base()
+fn local_capture() = { let n = 1; let get = () => n; let n = 2; get() }
+[a, b, d, e, f, g, h1, h2, local_capture()]
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(l(vec![
+            Value::Boolean(true),
+            Value::Boolean(false),
+            s("late"),
+            Value::Integer(2989),
+            Value::Integer(999),
+            l(vec![
+                Value::Integer(2001),
+                Value::Integer(2002),
+                Value::Integer(2003)
+            ]),
+            Value::Integer(1),
+            Value::Integer(2),
+            Value::Integer(1),
+        ]))
+    );
+}

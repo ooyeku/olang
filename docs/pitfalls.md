@@ -197,16 +197,23 @@ treats an int element and a float element as different).
 
 ## Closures capture by value, at creation
 
-A lambda snapshots the *values* of the variables it uses when it is
-created. Reassigning one of those variables afterward does **not** change
-what the closure sees — it kept its own copy.
+A lambda snapshots the *values* of the local variables it uses when it
+is created. Reassigning one of those variables afterward does **not**
+change what the closure sees — it kept its own copy.
 
 ```olang
-let mut n = 1
-let get = () => n
-n = 99
-println(show(get()))    // 1, not 99 — the closure captured n's value
+fn counter_view() = {
+    let mut n = 1
+    let get = () => n
+    n = 99
+    get()
+}
+println(show(counter_view()))    // 1, not 99 — the closure captured n's value
 ```
+
+A top-level name is not captured: a function reads it when it runs, so
+a top-level `let mut` the program reassigns is seen as it is at the
+call ([language.md](language.md#closures-capture-by-value)).
 
 This is load-bearing — it is what makes modules, safe parallelism, and
 tier promotion sound. So *assigning* to a captured binding from inside a

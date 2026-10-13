@@ -468,21 +468,46 @@ println(serve(page_head))                // Ok("app 1")
 
 ### Closures capture by value
 
-A lambda (or nested `fn`) closes over the bindings it references, and it
-captures them **by value**: the closure carries a snapshot of the environment
-as it was at the moment the closure was created. Two rules follow from this,
-and both affect how olang programs are structured.
+A lambda (or nested `fn`) closes over the local bindings it references,
+and it captures them **by value**: the closure carries a snapshot of
+those bindings as they were at the moment the closure was created. A
+**top-level** name is different: it is never captured. Every function,
+wherever it was declared, reads a top-level name's binding as it is
+when the function runs. Three rules follow, and they affect how olang
+programs are structured.
 
-**Rule one: later rebinding does not reach into a closure.**
+**Rule one: later rebinding of a local does not reach into a closure.**
 
 ```olang
-let base = 10
-let add_base = (n) => n + base
-let base = 99                 // rebinding does not affect the closure
-println(to_string(add_base(5)))   // 15
+fn make_adder() = {
+    let base = 10
+    let add_base = (n) => n + base
+    let base = 99             // rebinding does not affect the closure
+    add_base
+}
+println(to_string(make_adder()(5)))   // 15
 ```
 
-**Rule two: a closure cannot assign to a binding it captured.** Since
+**Rule two: a top-level name is read when the function runs.** A
+top-level `let mut` the program reassigns, or a name a later top-level
+`let` binds again, is seen as it stands at each call — by a function
+declared above it, a lambda made at the top level, a module's functions
+reading their module's names — on every tier:
+
+```olang
+let mut limit = 1
+fn over(x) = x > limit
+println(to_string(over(5)))   // true
+limit = 10
+println(to_string(over(5)))   // false: the binding as it is now
+```
+
+A task (`spawn`) and an `http.serve` worker run on a copy of the
+program's top-level scope taken when they start: a binding the main
+program changes afterwards is not seen on that thread.
+
+**Rule three: a closure cannot assign to a binding it captured**, nor a
+function to a top-level binding. Since
 the write could only ever reach the closure's own snapshot, it is
 rejected rather than performed:
 
@@ -512,13 +537,12 @@ pieces of the language rest on it:
   `par for` hand closures to other threads. Because a closure owns an
   immutable snapshot, no thread can see another's writes — there is
   nothing shared to race on, and no locks exist in the language.
-- **Modules are self-contained.** An exported function closes over its
-  module's complete scope at load time; nothing a caller does can
-  reach in and alter what the module's functions see.
-- **The execution tiers can optimize.** A snapshot fixed at creation
-  time is a compile-time constant to the bytecode compiler and the
-  JIT; capture-by-reference would forbid most of what makes tiered
-  execution fast.
+- **Modules are self-contained.** A module's functions read its own
+  scope; nothing a caller does can reach in and alter what they see.
+- **The execution tiers can optimize.** A captured snapshot is a
+  compile-time constant to the bytecode compiler and the JIT, and so is
+  a top-level binding the program never rebinds; a function that reads
+  one the program does rebind is run where the binding is read live.
 
 **Programming without shared mutable state.** The idiom that replaces
 "mutate an outer variable from inside a callback" is: *make the data

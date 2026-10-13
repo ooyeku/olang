@@ -348,15 +348,39 @@ impl BytecodeCompiler {
 
     /// A free identifier: the closure, then the run, the module's
     /// finished scope, then the known function (unless ambiguous).
+    /// A top-level binding of the file being compiled, from its live scope
+    /// (`host_root`), recorded as taken (`host_bakes`) — or nothing for a
+    /// name the program rebinds (`volatile_globals`), which fails the
+    /// compile.
+    pub(super) fn host_value(&self, name: &str) -> Option<Value> {
+        let v = self.host_root.as_ref()?.get(name)?;
+        if self
+            .volatile_globals
+            .contains(&(self.host_root_key.clone(), name.to_string()))
+        {
+            *self.hit_volatile.borrow_mut() = Some(name.to_string());
+            return None;
+        }
+        self.host_bakes
+            .borrow_mut()
+            .insert((self.host_root_key.clone(), name.to_string()), v.clone());
+        Some(v.clone())
+    }
+
     pub(super) fn ident_value(&self, name: &str) -> Option<Value> {
         if let Some(v) = self.enclosing_closure.get(name) {
             return Some(v.clone());
         }
-        if let Some(v) = self.enclosing_run.get(name) {
-            return Some(v);
-        }
         if let Some(v) = self.module_scope.as_ref().and_then(|m| m.get(name)) {
             return Some(v.clone());
+        }
+        // the file's live top-level scope before the run's siblings, as the
+        // interpreter reads them: a name rebound since is read as it is now
+        if let Some(v) = self.host_value(name) {
+            return Some(v);
+        }
+        if let Some(v) = self.enclosing_run.get(name) {
+            return Some(v);
         }
         (!self.ambiguous_names.contains(name))
             .then(|| self.known_function_values.get(name))
@@ -371,10 +395,21 @@ impl BytecodeCompiler {
                 .module_scope
                 .as_ref()
                 .is_some_and(|m| m.contains_key(name))
+            || self.host_value(name).is_some()
     }
 
     fn module_builtin(&self, module: &str, field: &str) -> Option<String> {
-        match self.enclosing_closure.get(module) {
+        let held = self
+            .enclosing_closure
+            .get(module)
+            .cloned()
+            .or_else(|| {
+                self.module_scope
+                    .as_ref()
+                    .and_then(|m| m.get(module).cloned())
+            })
+            .or_else(|| self.host_value(module));
+        match held.as_ref() {
             Some(Value::Struct { type_name, fields }) if type_name == "Module" => {
                 match fields.get(field) {
                     Some(Value::Builtin(b)) => Some(b.name.clone()),
@@ -391,11 +426,16 @@ impl BytecodeCompiler {
         if let Some(v) = self.enclosing_closure.get(name) {
             return Some(v.clone());
         }
-        if let Some(v) = self.enclosing_run.get(name) {
-            return Some(v);
-        }
         if let Some(v) = self.module_scope.as_ref().and_then(|m| m.get(name)) {
             return Some(v.clone());
+        }
+        // the file's live top-level scope before the run's siblings, as the
+        // interpreter reads them: a name rebound since is read as it is now
+        if let Some(v) = self.host_value(name) {
+            return Some(v);
+        }
+        if let Some(v) = self.enclosing_run.get(name) {
+            return Some(v);
         }
         self.known_function_values
             .get(name)

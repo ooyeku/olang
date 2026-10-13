@@ -265,12 +265,15 @@ Conventions the code relies on:
 - **Struct-likeness**: anything with named fields is a `Struct` under the
   hood — which is why `map_get` and friends read objects, structs, and JSON
   uniformly.
-- **Closures capture by value**: a `Function` carries a snapshot of its
-  environment's flat map (O(1), shared, persistent). This one
-  representation choice simultaneously gives the language its
-  [capture semantics](language.md#closures-capture-by-value), makes
-  `spawn`/`par_map` safe without locks, and lets the bytecode compiler
-  bake closure lookups as constants.
+- **Closures capture by value**: a `Function` carries a snapshot of the
+  local bindings it names (a persistent map, O(1) to share); a
+  top-level function captures nothing, and its top-level names resolve
+  through the file's live scope when it runs. This gives the language
+  its [capture semantics](language.md#closures-capture-by-value) and
+  makes `spawn`/`par_map` safe without locks; the bytecode compiler
+  bakes captures as constants, and a top-level binding too, until the
+  program rebinds it (then everything compiled is forgotten and a
+  function reading that name stays on the interpreter).
 - **Control flow as signals**: `break`/`continue`/`?` unwind via dedicated
   `InterpreterError` variants (`BreakSignal`, `ContinueSignal`,
   `ErrPropagation`) that the loop evaluators and the function-call boundary
