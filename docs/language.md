@@ -825,11 +825,14 @@ The precise rules:
   `to_int`) when a cross-type comparison is meant.
 - **A `Result` compares structurally**: `Ok(1) == Ok(1)` is `true`,
   `Ok(1) == Err(1)` `false`.
-- **Functions, builtins and ranges have no equality.** `f == g` raises,
-  and so does comparing a list, tuple, map, record, enum value or
-  `Result` that holds one, at any depth (`[f] == [f]`); compare the
-  parts that hold data. One collection compared with itself is equal
-  without being walked.
+- **Functions, builtins and ranges have no equality.** `f == g` raises.
+  Two lists, tuples, maps, records, enum values or `Result`s that differ
+  somewhere are unequal; two that agree everywhere except where one
+  holds a function, builtin or range have no answer, and `==` raises
+  (`[f] == [g]`, at any depth) — while `[1, f] == [2, f]` is `false`,
+  since the data already differs. Compare the parts that hold data. One
+  collection compared with itself is equal without being walked, and a
+  comparison stops at the first difference.
 - **One relation, at the top and inside containers**: what `==` answers
   about two values it answers about them as elements, but for the
   strict number kinds above. Within a structural comparison, a kind

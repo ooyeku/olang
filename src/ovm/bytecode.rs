@@ -6439,7 +6439,7 @@ impl BytecodeVm {
                 return Ok(OvmValue::new_boolean(matches!(op, BinaryOp::NotEqual)));
             }
             // A container holding a function, a builtin or a range has no
-            // equality, as on the interpreter (`ops::uncomparable_error`);
+            // equality, as on the interpreter (`ops::watch_uncomparable`);
             // a Result compares as its payload does; an Int and a Float
             // are equal only exactly.
             let container = |d: &ValueData| {
@@ -6459,17 +6459,20 @@ impl BytecodeVm {
                     (ValueData::AstList(x), ValueData::AstList(y)) => Arc::ptr_eq(x, y),
                     _ => false,
                 };
-                if !same && let Some(kind) = left.uncomparable().or_else(|| right.uncomparable()) {
-                    return Err(BytecodeError::TypeError(format!(
-                        "cannot compare with ==: a {} has no equality, and a list, map or \
-                         record holding one has none either; compare the parts that hold data",
-                        kind
-                    )));
-                }
-                if let (ValueData::Result(_), ValueData::Result(_)) = (&left.data, &right.data) {
-                    let eq = left.structural_eq(right);
-                    return Ok(OvmValue::new_boolean(eq == matches!(op, BinaryOp::Equal)));
-                }
+                // one walk, as on the interpreter: a difference answers;
+                // a function, builtin or range met where everything else
+                // agreed raises
+                let eq = same || {
+                    let (eq, met) =
+                        crate::interpreter::ops::watch_uncomparable(|| left.structural_eq(right));
+                    if let (true, Some(kind)) = (eq, met) {
+                        return Err(BytecodeError::TypeError(
+                            crate::interpreter::ops::uncomparable_message(kind),
+                        ));
+                    }
+                    eq
+                };
+                return Ok(OvmValue::new_boolean(eq == matches!(op, BinaryOp::Equal)));
             }
             let int_float = match (&left.data, &right.data) {
                 (ValueData::Integer(i), ValueData::Float(f))

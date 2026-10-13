@@ -210,9 +210,12 @@ impl Interpreter {
                 Ok(Value::Boolean(*a == *b))
             }
             (Value::Boolean(a), BinaryOp::Equal, Value::Boolean(b)) => Ok(Value::Boolean(a == b)),
-            // A container holding a function, a builtin or a range has no
-            // equality, as they have none at the top level; a Result
-            // compares as its payload does.
+            // Containers compare structurally, in one walk: lists and
+            // tuples element by element, the map kinds (a map, an object,
+            // a parsed JSON object) by contents with one another, an enum
+            // value by variant and payload, a Result by kind and payload.
+            // A difference answers; a function, builtin or range met where
+            // everything else agreed has no equality and raises.
             (
                 ref left @ (Value::Enum(_)
                 | Value::List(_)
@@ -221,7 +224,7 @@ impl Interpreter {
                 | Value::Struct { .. }
                 | Value::Ok(_)
                 | Value::Err(_)),
-                BinaryOp::Equal | BinaryOp::NotEqual,
+                ref which @ (BinaryOp::Equal | BinaryOp::NotEqual),
                 ref right @ (Value::Enum(_)
                 | Value::List(_)
                 | Value::Tuple(_)
@@ -229,58 +232,20 @@ impl Interpreter {
                 | Value::Struct { .. }
                 | Value::Ok(_)
                 | Value::Err(_)),
-            ) if !same_collection(left, right)
-                && let Some(message) = uncomparable_error(left, right) =>
-            {
-                Err(InterpreterError::TypeError { message })
+            ) => {
+                // one walk: a difference answers; a function, builtin or
+                // range met where everything else agreed raises
+                let eq = same_collection(left, right) || {
+                    let (eq, met) = watch_uncomparable(|| loose_eq(left, right));
+                    if let (true, Some(kind)) = (eq, met) {
+                        return Err(InterpreterError::TypeError {
+                            message: uncomparable_message(kind),
+                        });
+                    }
+                    eq
+                };
+                Ok(Value::Boolean(eq == matches!(which, BinaryOp::Equal)))
             }
-            // Enum values compare structurally: same variant and payloads.
-            (left @ Value::Enum(_), BinaryOp::Equal, right @ Value::Enum(_)) => {
-                Ok(Value::Boolean(loose_eq(&left, &right)))
-            }
-            (left @ Value::Enum(_), BinaryOp::NotEqual, right @ Value::Enum(_)) => {
-                Ok(Value::Boolean(!loose_eq(&left, &right)))
-            }
-            // A Result compares structurally, its kind and payload.
-            (
-                left @ (Value::Ok(_) | Value::Err(_)),
-                BinaryOp::Equal,
-                right @ (Value::Ok(_) | Value::Err(_)),
-            ) => Ok(Value::Boolean(loose_eq(&left, &right))),
-            (
-                left @ (Value::Ok(_) | Value::Err(_)),
-                BinaryOp::NotEqual,
-                right @ (Value::Ok(_) | Value::Err(_)),
-            ) => Ok(Value::Boolean(!loose_eq(&left, &right))),
-            // Collections and structs compare structurally, like enums:
-            // same shape, equal elements. Value's derived PartialEq is the
-            // natural recursive equality.
-            (left @ Value::List(_), BinaryOp::Equal, right @ Value::List(_)) => {
-                Ok(Value::Boolean(loose_eq(&left, &right)))
-            }
-            (left @ Value::List(_), BinaryOp::NotEqual, right @ Value::List(_)) => {
-                Ok(Value::Boolean(!loose_eq(&left, &right)))
-            }
-            (left @ Value::Tuple(_), BinaryOp::Equal, right @ Value::Tuple(_)) => {
-                Ok(Value::Boolean(loose_eq(&left, &right)))
-            }
-            (left @ Value::Tuple(_), BinaryOp::NotEqual, right @ Value::Tuple(_)) => {
-                Ok(Value::Boolean(!loose_eq(&left, &right)))
-            }
-            // The map kinds compare by contents with one another: a parsed
-            // JSON object, an anonymous record, and a `#{}` map holding the
-            // same keys and values are equal, as every map function already
-            // treats them alike. `typeof` keeps telling them apart.
-            (
-                left @ (Value::Map(_) | Value::Struct { .. }),
-                BinaryOp::Equal,
-                right @ (Value::Map(_) | Value::Struct { .. }),
-            ) => Ok(Value::Boolean(loose_eq(&left, &right))),
-            (
-                left @ (Value::Map(_) | Value::Struct { .. }),
-                BinaryOp::NotEqual,
-                right @ (Value::Map(_) | Value::Struct { .. }),
-            ) => Ok(Value::Boolean(!loose_eq(&left, &right))),
             (Value::Unit, BinaryOp::Equal, Value::Unit) => Ok(Value::Boolean(true)),
             (Value::Unit, BinaryOp::NotEqual, Value::Unit) => Ok(Value::Boolean(false)),
             (Value::Integer(a), BinaryOp::NotEqual, Value::Integer(b)) => {
@@ -628,36 +593,60 @@ pub fn condition_error(type_name: &str) -> String {
     )
 }
 
-/// The first value `==` cannot compare that `v` holds, at any depth: a
-/// function, a builtin or a range compares with nothing at the top
-/// level, and a container holding one does not compare either.
-pub fn uncomparable(v: &Value) -> Option<&'static str> {
+thread_local! {
+    /// While `==` walks two containers: `Some(first kind met)` — the walk
+    /// treats a function, builtin or range position as agreeing and
+    /// records it, so the answer is known in one walk.
+    static UNCOMPARABLE_MET: std::cell::Cell<Option<Option<&'static str>>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// The kind of a value `==` has no equality for: a function, a builtin, a
+/// range.
+pub fn uncomparable_kind(v: &Value) -> Option<&'static str> {
     match v {
         Value::Function(_) => Some("Function"),
         Value::Builtin(_) => Some("Builtin"),
         Value::Range { .. } => Some("Range"),
-        Value::List(items) | Value::Tuple(items) => items.iter().find_map(uncomparable),
-        Value::Map(m) => m.values().find_map(uncomparable),
-        Value::Struct { fields, .. } => fields.values().find_map(uncomparable),
-        Value::Enum(e) => match &e.variant_data {
-            crate::ast::EnumVariantData::Unit => None,
-            crate::ast::EnumVariantData::Tuple(items) => items.iter().find_map(uncomparable),
-            crate::ast::EnumVariantData::Struct(fields) => fields.values().find_map(uncomparable),
-        },
-        Value::Ok(inner) | Value::Err(inner) => uncomparable(inner),
         _ => None,
     }
 }
 
-/// The error `==` raises on a pair holding a value it cannot compare.
-pub fn uncomparable_error(a: &Value, b: &Value) -> Option<String> {
-    uncomparable(a).or_else(|| uncomparable(b)).map(|kind| {
-        format!(
-            "cannot compare with ==: a {} has no equality, and a list, map or record \
-             holding one has none either; compare the parts that hold data",
-            kind
-        )
+/// Inside a `watch_uncomparable` walk, whether `kind` is one `==` cannot
+/// compare: recorded (the first) and answered true, so the walk goes on.
+pub fn note_uncomparable(kind: Option<&'static str>) -> bool {
+    let Some(kind) = kind else { return false };
+    UNCOMPARABLE_MET.with(|m| match m.get() {
+        Some(None) => {
+            m.set(Some(Some(kind)));
+            true
+        }
+        Some(Some(_)) => true,
+        None => false,
     })
+}
+
+/// Run an equality walk with uncomparable positions watched: its answer,
+/// and the first function, builtin or range it met. Two containers that
+/// differ somewhere are unequal; two that agree everywhere except where
+/// one holds a value with no equality have no answer, and `==` raises —
+/// so `[f] == [g]` raises and `[1, f] == [2, f]` is false, the same in
+/// any walk order and on every tier.
+pub fn watch_uncomparable(walk: impl FnOnce() -> bool) -> (bool, Option<&'static str>) {
+    let outer = UNCOMPARABLE_MET.with(|m| m.replace(Some(None)));
+    let eq = walk();
+    let met = UNCOMPARABLE_MET.with(|m| m.replace(outer)).flatten();
+    (eq, met)
+}
+
+/// The error `==` raises on two containers that agree except where one
+/// holds a value with no equality.
+pub fn uncomparable_message(kind: &str) -> String {
+    format!(
+        "cannot compare with ==: a {} has no equality, and a list, map or record \
+         holding one has none either; compare the parts that hold data",
+        kind
+    )
 }
 
 /// `a == b` as the operator answers it, for a builtin that searches
@@ -672,9 +661,15 @@ pub fn search_eq(a: &Value, b: &Value) -> Result<bool, String> {
         (Value::Unit, other) | (other, Value::Unit) => return Ok(matches!(other, Value::Unit)),
         _ => {}
     }
-    match uncomparable_error(a, b) {
-        Some(message) => Err(message),
-        None => Ok(loose_eq(a, b)),
+    if let Some(kind) = uncomparable_kind(a).or_else(|| uncomparable_kind(b)) {
+        return Err(uncomparable_message(kind));
+    }
+    if same_collection(a, b) {
+        return Ok(true);
+    }
+    match watch_uncomparable(|| loose_eq(a, b)) {
+        (true, Some(kind)) => Err(uncomparable_message(kind)),
+        (eq, _) => Ok(eq),
     }
 }
 
@@ -699,6 +694,11 @@ fn same_collection(a: &Value, b: &Value) -> bool {
 }
 
 pub fn loose_eq(a: &Value, b: &Value) -> bool {
+    // Under `==`'s watch, a position holding a function, builtin or range
+    // agrees and is recorded (`watch_uncomparable`).
+    if note_uncomparable(uncomparable_kind(a).or_else(|| uncomparable_kind(b))) {
+        return true;
+    }
     // A collection is equal to itself without a walk.
     match (a, b) {
         (Value::List(x), Value::List(y)) | (Value::Tuple(x), Value::Tuple(y))
@@ -749,6 +749,14 @@ pub fn loose_eq(a: &Value, b: &Value) -> bool {
                         crate::ast::EnumVariantData::Tuple(p),
                         crate::ast::EnumVariantData::Tuple(q),
                     ) => p.len() == q.len() && p.iter().zip(q.iter()).all(|(v, w)| loose_eq(v, w)),
+                    (
+                        crate::ast::EnumVariantData::Struct(p),
+                        crate::ast::EnumVariantData::Struct(q),
+                    ) => {
+                        p.len() == q.len()
+                            && p.iter()
+                                .all(|(k, v)| q.get(k).is_some_and(|w| loose_eq(v, w)))
+                    }
                     (p, q) => p == q,
                 }
         }

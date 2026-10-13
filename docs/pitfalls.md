@@ -178,9 +178,10 @@ match str.parse_float("3.14") {
 ## Functions can't be compared with `==`, even inside a list
 
 A function, a builtin and a range have no equality: `f == g` raises, and
-so does comparing two lists, maps, records or `Result`s that hold one
-(`[f] == [f]`), since the comparison would have to answer for the
-function. Compare the parts that hold data. A `Result` compares
+so does comparing two lists, maps, records or `Result`s that agree
+everywhere except where they hold one (`[f] == [g]`), since the answer
+would rest on the function. Two that differ in their data are simply
+unequal (`[1, f] == [2, f]` is `false`). Compare the parts that hold data. A `Result` compares
 structurally (`Ok(1) == Ok(1)` is `true`).
 
 ```olang

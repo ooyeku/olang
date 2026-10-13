@@ -525,6 +525,42 @@ main()
         let err = agree_tiered(src).expect_err(src);
         assert!(err.contains("cannot compare"), "{src}: {err}");
     }
+    // a difference answers in one walk, whatever else the values hold:
+    // the function's position has no answer, the data's does
+    let src = r#"
+fn g() = 1
+fn main() = [[1, g] == [2, g], [g, 1] != [g, 2], #{ "a": 1, "f": g } == #{ "a": 2, "f": g },
+  Ok([g, 1]) == Ok([g, 3]), [1, g] == [1, 2, g]]
+main()
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(l(vec![
+            Value::Boolean(false),
+            Value::Boolean(true),
+            Value::Boolean(false),
+            Value::Boolean(false),
+            Value::Boolean(false),
+        ]))
+    );
+    // a large value compared with one that differs early is not walked
+    // whole first (a model of 200,000 rows against its next frame's)
+    let big = r#"
+fn rows(n, k) = map(0..n, (i) => #{ "id": i, "name": "row " + to_string(i), "k": k })
+fn main() = {
+    let a = #{ "rows": rows(200000, 0), "sel": 1 }
+    let b = #{ "rows": a.rows, "sel": 2 }
+    let t0 = time.monotonic()
+    let mut same = 0
+    for i in 0..200 { if a == b => { same = same + 1 } }
+    [same, time.monotonic() - t0 < 500.0]
+}
+main()
+"#;
+    assert_eq!(
+        agree_tiered(big),
+        Ok(l(vec![Value::Integer(0), Value::Boolean(true)]))
+    );
 }
 
 #[test]

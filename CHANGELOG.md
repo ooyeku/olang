@@ -418,6 +418,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `OLANG_PARALLELISM`, …) hold across 1.x; the diagnostic ones are
   stated unsupported, free to change in any release.
 
+- `==` on two containers is one walk again. The equality ruling of this
+  release first scanned both sides whole for a function, builtin or range
+  before comparing, so comparing a large model with the next frame's
+  walked all of it (open-track desktop's keypress at 100,000 rows went
+  from about 2 ms to 85 ms). Now a difference answers at once, and a
+  function, builtin or range met where everything else agreed raises:
+  `[f] == [g]` and `Ok(f) == Ok(f)` raise as before, `[1, f] == [2, f]`
+  is `false` (it raised), the same on every tier and in any walk order.
+
 ## [0.88.0] - 2026-10-12
 
 ### Upgrading
