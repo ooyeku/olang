@@ -4538,7 +4538,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             let key_str = match key {
                 Value::String(ref s) => s.as_ref().clone(),
                 Value::Integer(i) => i.to_string(),
-                Value::Float(f) => crate::ast::format_float(f),
+                Value::Float(f) => crate::ast::float_key_text(f),
                 Value::Boolean(b) => b.to_string(),
                 _ => {
                     return Err(InterpreterError::TypeError {

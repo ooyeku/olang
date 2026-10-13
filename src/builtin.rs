@@ -3789,7 +3789,7 @@ impl BuiltinFunctions {
             let key_text = match key {
                 Value::String(s) => s.as_ref().clone(),
                 Value::Integer(n) => n.to_string(),
-                Value::Float(f) => f.to_string(),
+                Value::Float(f) => crate::ast::float_key_text(*f),
                 Value::Boolean(b) => b.to_string(),
                 other => {
                     return Err(InterpreterError::TypeError {
@@ -3842,7 +3842,7 @@ impl BuiltinFunctions {
         Ok(match key {
             Value::String(s) => s.as_ref().clone(),
             Value::Integer(n) => n.to_string(),
-            Value::Float(f) => f.to_string(),
+            Value::Float(f) => crate::ast::float_key_text(*f),
             Value::Boolean(b) => b.to_string(),
             other => {
                 return Err(InterpreterError::TypeError {
@@ -4075,7 +4075,7 @@ impl BuiltinFunctions {
         let key = match &args[1] {
             Value::String(s) => s.as_ref().clone(),
             Value::Integer(i) => i.to_string(),
-            Value::Float(f) => f.to_string(),
+            Value::Float(f) => crate::ast::float_key_text(*f),
             Value::Boolean(b) => b.to_string(),
             _ => {
                 return Err(InterpreterError::TypeError {
@@ -4208,7 +4208,7 @@ impl BuiltinFunctions {
         let key = match &args[1] {
             Value::String(s) => s.as_ref().clone(),
             Value::Integer(i) => i.to_string(),
-            Value::Float(f) => f.to_string(),
+            Value::Float(f) => crate::ast::float_key_text(*f),
             Value::Boolean(b) => b.to_string(),
             _ => {
                 return Err(InterpreterError::TypeError {

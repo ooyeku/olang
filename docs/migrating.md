@@ -33,6 +33,7 @@ upgrading; it reports the cases it can find.
   - [Dates](#dates)
   - [An assignment answers `()`](#an-assignment-answers-)
   - [`[package] olang` is a minimum](#package-olang-is-a-minimum)
+  - [Maps, objects and JSON objects](#maps-objects-and-json-objects)
 - [In 0.88](#in-088)
   - [A missing field of an object is `()`](#a-missing-field-of-an-object-is-)
   - [A module's missing member reads as `()`](#a-modules-missing-member-reads-as-)
@@ -259,6 +260,13 @@ count }`). `let y = (x = 5)` and `f(x = 5)` pass `()`.
 any 0.88.x. A pin written as a requirement (`"^0.88"`, `"=0.88.1"`,
 `">=0.87, <0.90"`) is now an `olang check` error: write the oldest
 version the project runs on.
+
+### Maps, objects and JSON objects
+
+A record pattern now matches a Map too, so a `match` whose `{ … }` arm
+came after an arm meant for maps may take maps sooner: order the arms
+from the most specific. A map literal with a whole Float key (`#{ 2.0:
+x }`) has the key `"2"` where it had `"2.0"`.
 
 ## In 0.88
 

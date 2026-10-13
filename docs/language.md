@@ -97,6 +97,7 @@ olang is dynamically typed at runtime. Every value has a type name that
 | `(1, 2)` | `Tuple` |
 | `#{ "k": 1 }` | `Map` |
 | `{ x: 1 }` | `Object` (anonymous) or the struct's type name |
+| `json.parse("{}")`'s object | `JsonObject` |
 | `1..5` | `Range` |
 | `() => 1` | `Function` |
 | `Ok(1)` / `Err("e")` | `Result` |
@@ -106,6 +107,16 @@ olang is dynamically typed at runtime. Every value has a type name that
 println(typeof(42) + " " + typeof(3.14) + " " + typeof("hi") + " " + typeof(true))
 println(typeof([1]) + " " + typeof((1, 2)) + " " + typeof(#{ "k": 1 }))
 ```
+
+A map, an object and a parsed JSON object are three kinds that `typeof`
+tells apart, and one kind everywhere else: they read alike with `.`
+and `map_get`, compare with `==`, match the same record pattern
+(`{ kind: "a" }` matches all three) and satisfy the same annotation
+(`m: Map` accepts all three). A map's keys are strings: an Int, a Float
+or a Bool key is its text, and because `1 == 1.0`, a whole Float is the
+Int's text — `#{ 1: "a", 1.0: "b" }` is one key, `"1"`, holding `"b"`
+(the later entry wins), and `map_get(m, 1.0)` finds `m`'s `"1"`. Any
+other Float is its printed form (`#{ 1.5: x }` has the key `"1.5"`).
 
 olang is gradually typed: [type annotations](#type-annotations) are
 optional, and every annotation you write is enforced at runtime.

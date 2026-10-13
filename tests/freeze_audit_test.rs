@@ -954,3 +954,36 @@ main()
         ]))
     );
 }
+
+// ── maps, objects and JSON objects: one kind for patterns and annotations ─
+
+#[test]
+fn the_map_like_kinds_match_one_pattern_and_one_annotation() {
+    let src = r#"
+fn kind_of(v) = match v { { kind: "a" } => "a", _ => "other" }
+fn take(m: Map) = len(map_keys(m))
+let j = unwrap(json.parse("{\"kind\": \"a\"}"))
+[kind_of({ kind: "a" }), kind_of(#{ "kind": "a" }), kind_of(j), kind_of(#{ "k": 1 }),
+ take(#{ "a": 1 }), take({ a: 1 }), take(j), typeof(j),
+ map_keys(#{ 1: "i", 1.0: "f" }), map_get(#{ 1: "i" }, 1.0), map_keys(map_set(#{}, 2.0, 1)), map_keys(#{ 1.5: 1 })]
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(l(vec![
+            s("a"),
+            s("a"),
+            s("a"),
+            s("other"),
+            Value::Integer(1),
+            Value::Integer(1),
+            Value::Integer(1),
+            s("JsonObject"),
+            l(vec![s("1")]),
+            s("i"),
+            l(vec![s("2")]),
+            l(vec![s("1.5")]),
+        ]))
+    );
+    let err = eval("fn take(m: Map) = 1\ntake([1])\n", None).unwrap_err();
+    assert!(err.contains("expects Map, got List"), "{err}");
+}

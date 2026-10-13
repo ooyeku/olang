@@ -883,13 +883,15 @@ pub enum Instruction {
         value: Register,
         index: usize,
     },
-    /// True when the value is a struct carrying the named field. Never
-    /// errors: a non-struct value is simply `false`, as in the
-    /// interpreter's pattern matcher.
+    /// True when the value is a struct carrying the named field — or,
+    /// for a record pattern (`records`), a map carrying the key. Never
+    /// errors: anything else is simply `false`, as in the interpreter's
+    /// pattern matcher.
     PatternTestStructField {
         dst: Register,
         value: Register,
         field_name: String,
+        records: bool,
     },
     /// Build a runtime closure: clone the template ClosureObject stored at
     /// `template_const` and fill its `captured` values from the given
@@ -4890,7 +4892,7 @@ impl BytecodeVm {
                             &key_owned
                         }
                         ValueData::Float(f) => {
-                            key_owned = crate::ast::format_float(*f);
+                            key_owned = crate::ast::float_key_text(*f);
                             &key_owned
                         }
                         ValueData::Boolean(b) => {
@@ -5488,7 +5490,7 @@ impl BytecodeVm {
                         let key = match &self.execution_state.register_ref(*key_reg)?.data {
                             ValueData::String(s) => s.as_ref().clone(),
                             ValueData::Integer(i) => i.to_string(),
-                            ValueData::Float(f) => crate::ast::format_float(*f),
+                            ValueData::Float(f) => crate::ast::float_key_text(*f),
                             ValueData::Boolean(b) => b.to_string(),
                             _ => {
                                 return Err(BytecodeError::TypeError(
@@ -5749,11 +5751,16 @@ impl BytecodeVm {
                     dst,
                     value,
                     field_name,
+                    records,
                 } => {
                     use crate::ovm::value::ValueData;
                     let has = match &self.execution_state.register_ref(*value)?.data {
                         ValueData::Struct(s) => s.shape.field_index(field_name).is_some(),
                         ValueData::AstStruct(m, _) => m.contains_key(field_name.as_str()),
+                        // a record pattern matches a map, an object and a
+                        // parsed JSON object alike
+                        ValueData::Map(m) if *records => m.contains_key(field_name.as_str()),
+                        ValueData::AstMap(m) if *records => m.contains_key(field_name.as_str()),
                         _ => false,
                     };
                     self.execution_state
@@ -7682,7 +7689,7 @@ impl BytecodeVm {
                 &key_string
             }
             ValueData::Float(f) => {
-                key_string = f.to_string();
+                key_string = crate::ast::float_key_text(*f);
                 &key_string
             }
             ValueData::Boolean(b) => {
@@ -7741,7 +7748,7 @@ impl BytecodeVm {
                 &key_string
             }
             ValueData::Float(f) => {
-                key_string = f.to_string();
+                key_string = crate::ast::float_key_text(*f);
                 &key_string
             }
             ValueData::Boolean(b) => {
@@ -8593,7 +8600,7 @@ impl BytecodeVm {
                 let key = match &args[1].data {
                     ValueData::String(st) => st.as_ref().clone(),
                     ValueData::Integer(i) => i.to_string(),
-                    ValueData::Float(f) => f.to_string(),
+                    ValueData::Float(f) => crate::ast::float_key_text(*f),
                     ValueData::Boolean(b) => b.to_string(),
                     _ => {
                         return Err(BytecodeError::TypeError(
@@ -8655,7 +8662,7 @@ impl BytecodeVm {
                 let key = match &args[1].data {
                     ValueData::String(st) => st.as_ref().clone(),
                     ValueData::Integer(i) => i.to_string(),
-                    ValueData::Float(f) => crate::ast::format_float(*f),
+                    ValueData::Float(f) => crate::ast::float_key_text(*f),
                     ValueData::Boolean(b) => b.to_string(),
                     _ => {
                         return Err(BytecodeError::TypeError(
@@ -9101,7 +9108,7 @@ impl BytecodeVm {
         let key = match &args[1].data {
             ValueData::String(st) => st.as_ref().clone(),
             ValueData::Integer(i) => i.to_string(),
-            ValueData::Float(f) => crate::ast::format_float(*f),
+            ValueData::Float(f) => crate::ast::float_key_text(*f),
             ValueData::Boolean(b) => b.to_string(),
             _ => return None,
         };
@@ -9141,7 +9148,7 @@ impl BytecodeVm {
         Some(match &key.data {
             ValueData::String(st) => st.as_ref().clone(),
             ValueData::Integer(i) => i.to_string(),
-            ValueData::Float(f) => f.to_string(),
+            ValueData::Float(f) => crate::ast::float_key_text(*f),
             ValueData::Boolean(b) => b.to_string(),
             _ => return None,
         })
@@ -12490,6 +12497,7 @@ impl BytecodeCompiler {
             // extra fields in the value; so does this.
             Pattern::Struct { field_patterns, .. }
             | Pattern::AnonymousStruct { field_patterns } => {
+                let records = matches!(pattern, Pattern::AnonymousStruct { .. });
                 for (field_name, sub) in field_patterns {
                     let test_reg = self.register_allocator.allocate_register();
                     self.emitter
@@ -12498,6 +12506,7 @@ impl BytecodeCompiler {
                             dst: test_reg,
                             value: value_reg,
                             field_name: field_name.clone(),
+                            records,
                         });
                     self.emitter.emit_branch_if_false(test_reg, fail_label);
 

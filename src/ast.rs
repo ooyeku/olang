@@ -562,6 +562,19 @@ pub fn reads_absent_as_unit(value: &Value) -> bool {
 
 /// `m.go(1)` on a map with no key `go` and no method of that name: the
 /// message every tier raises.
+/// A Float map key's text. A map's keys are strings; an Int, a Float or a
+/// Bool key is its text, and since `1 == 1.0`, a whole Float is the Int's
+/// text (`#{ 1.0: a }` and `#{ 1: a }` are one key, `"1"`); any other
+/// Float is its printed form (`1.5`).
+pub fn float_key_text(f: f64) -> String {
+    if f.fract() == 0.0 && (-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&f)
+    {
+        (f as i64).to_string()
+    } else {
+        format_float(f)
+    }
+}
+
 pub fn no_key_or_method(type_name: &str, key: &str) -> String {
     format!("{type_name} has no key or method '{key}': `.{key}` reads `()`, which cannot be called")
 }
@@ -1304,6 +1317,13 @@ impl FieldTypeCheck {
             // A bare custom name is a declared struct or enum — unless it is
             // one of this type's generic parameters, which has no runtime
             // identity to check against.
+            // `Map` alone is the map-like kinds' one name: a map, an
+            // object, a parsed JSON object.
+            TypeAnnotation::Custom(name)
+                if name == "Map" && !type_params.iter().any(|p| p == name) =>
+            {
+                Some(Self::Map)
+            }
             TypeAnnotation::Custom(name) if !type_params.iter().any(|p| p == name) => {
                 Some(Self::Named(name.clone()))
             }
@@ -1413,6 +1433,8 @@ impl FieldTypeCheck {
             // A name alone can never prove a VALUE; value-aware checking
             // happens in check_value, and static discharge must refuse.
             Self::Literal(_) => false,
+            // Map, Object and JsonObject are one kind for an annotation
+            Self::Map => matches!(actual, "Map" | "Object" | "JsonObject"),
             other => other.expected_name() == actual,
         }
     }

@@ -162,6 +162,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   the project, and `olang check` reports a value that is not one to three
   numbers (`"^0.88"`, `"=0.88.1"` and ranges included).
 
+- **A map, an object and a parsed JSON object are one kind for patterns
+  and annotations.** A record pattern (`{ kind: "a" }`) matches a Map as
+  it matched the other two, and `m: Map` accepts an object and a
+  `JsonObject` (it refused them, saying "unknown type 'Map'"). A whole
+  Float map key is the Int's text, as `1 == 1.0` says: `#{ 1: "a", 1.0:
+  "b" }` is one key `"1"` (the literal kept `"1.0"` while `map_get(m,
+  1.0)` read `"1"`).
+
 
 ### Added
 

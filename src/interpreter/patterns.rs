@@ -176,8 +176,10 @@ impl Interpreter {
                 }
                 Ok(true)
             }
-            // Anonymous struct patterns
-            (Pattern::AnonymousStruct { field_patterns }, Value::Struct { fields, .. }) => {
+            // A record pattern matches a map, an object and a parsed JSON
+            // object alike (and a struct by its fields)
+            (Pattern::AnonymousStruct { field_patterns }, Value::Struct { fields, .. })
+            | (Pattern::AnonymousStruct { field_patterns }, Value::Map(fields)) => {
                 for (field_name, pattern) in field_patterns {
                     if let Some(field_value) = fields.get(field_name) {
                         if !self.pattern_matches_bind(pattern, field_value, bindings)? {
