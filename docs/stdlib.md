@@ -172,8 +172,10 @@ said them first: `fs.search`'s `col` and `end` (0-based), a frame's
 **Names follow three rules.** A function that raises on bad input and
 has a legitimate use over data the program does not control gets a
 `try_` twin returning `Result` (`ods.series` / `ods.try_series`,
-`ods.frame_from_records` / `ods.try_frame_from_records`, `chan.recv` /
-`chan.try_recv`); a function that already returns `Result` gets no twin.
+`ods.frame_from_records` / `ods.try_frame_from_records`); a function that
+already returns `Result` gets no twin. (`chan.try_recv` is not such a
+twin: `chan.recv` already answers a `Result`, and `try_recv` is the
+form that does not wait.)
 A precision or unit variant carries its unit as a suffix
 (`dates.stamp` / `dates.stamp_ms`, `time.sleep` in milliseconds,
 `_bytes` for the binary form of a text function). And a name lives in

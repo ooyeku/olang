@@ -319,6 +319,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   markdown -o FILE` writes the file (it printed to stdout whatever `-o`
   said).
 
+- stability.md agrees with the book and the binary, and its tiers are
+  real. A union alias (`type Id = Int | String`) is no longer listed as
+  reserved — it parses and is enforced; only `A & B` is. The error model
+  names `attempt` and `runtime.call_budget` as the boundaries that catch
+  a runtime error (a whole call, never mid-expression). The `typeof`
+  table (language.md) lists `Builtin`, `Bytes`, `Cell`, `Channel`,
+  `Task`, `Module` and an enum value's type name. `http.serve` is
+  described with its `bind` option, not as localhost-only; stdlib.md no
+  longer cites `chan.recv`/`chan.try_recv` as a raise/`try_` pair.
+- The Experimental tier means something: an Experimental surface may
+  change in a minor release, with a CHANGELOG note under Changed, and
+  Versioning says so. Every module stdlib.md documents sits in one tier:
+  `cell` and `testing` (the `assert_*` family, `snapshot`,
+  `test_summary`, `reset_tests`) are Stable, as are `bytes`, `compress`,
+  `bigint`, `vec` and `http`'s client; `runtime`, `asset` and
+  `collections` are Stable in behaviour; capabilities and `caps`,
+  `http.serve`, `dom`, `gui`, `tty`, `pty` and `vt` are Experimental.
+- stability.md states that runtime error text and stdlib `Err` payloads
+  are not contract — only `raise`'s message, handed back exactly, and the
+  three sentinels are — and gains a "Tools and file formats" section
+  tiering command names and flags, exit codes, the JSON envelopes and
+  documents, `repl --serve`, olang.toml, olang.lock, shelf.toml, `.olt`,
+  the public environment variables, the bundle format and the caches.
+  `olang fmt`'s output changes only in a minor release, recorded in the
+  CHANGELOG.
+
 
 ### Fixed
 

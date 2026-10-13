@@ -1162,3 +1162,45 @@ fn removed_aliases_are_gone_and_module_deprecations_still_work() {
         "{said:?}"
     );
 }
+
+// ── stability.md agrees with the binary ────────────────────────────────
+
+#[test]
+fn the_contract_agrees_with_the_binary() {
+    // the typeof table, a union alias enforced (not reserved), attempt
+    // catching a runtime error at a call boundary with raise's message
+    // exactly, and `A & B` still reserved
+    let src = r#"
+type Shape = enum { Circle(Float), Sq(Float) }
+type Id = Int | String
+fn ident(x: Id) = x
+fn main() = [typeof(unwrap(json.parse("{\"a\":1}"))), typeof(len), typeof(str.trim),
+  typeof(cell.new(0)), typeof(chan.new()), typeof(Circle(1.0)), typeof(math),
+  typeof(bytes.from_string("a")), ident(3), attempt(() => ident(1.5)) |> is_err,
+  attempt(() => raise("exactly this"))]
+main()
+"#;
+    assert_eq!(
+        agree_tiered(src),
+        Ok(l(vec![
+            s("JsonObject"),
+            s("Builtin"),
+            s("Builtin"),
+            s("Cell"),
+            s("Channel"),
+            s("Shape"),
+            s("Module"),
+            s("Bytes"),
+            Value::Integer(3),
+            Value::Boolean(true),
+            Value::Err(Box::new(s("exactly this"))),
+        ]))
+    );
+    let task = r#"
+fn work() = 1
+fn main() = typeof(spawn work())
+main()
+"#;
+    assert_eq!(agree_tiered(task), Ok(s("Task")));
+    assert!(eval("type X = Int & String\n1", None).is_err());
+}

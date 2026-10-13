@@ -32,6 +32,7 @@ could ever change them and at what cost.
 - [Platforms](#platforms)
 - [Settled before 1.0](#settled-before-10)
 - [What each surface guarantees](#what-each-surface-guarantees)
+- [Tools and file formats](#tools-and-file-formats)
 - [Versioning](#versioning)
 - [How this is enforced](#how-this-is-enforced)
 
@@ -98,10 +99,16 @@ to say which carries which. Four tiers, from the frozen core outward:
 
 | Tier | What you can rely on | Examples |
 |---|---|---|
-| **Stable** | Syntax and behavior are frozen. A documented program keeps parsing and keeps giving the same result, under the semver contract above. | the core language, macros, the listed stdlib modules |
-| **Stable in behavior, evolving in scope** | Every documented function behaves as written, permanently. The *set* of functions grows additively; nothing existing changes. | concurrency, the OVM/JIT tiers, the data stack, gradual typing |
-| **Experimental** | The model is settled and tested, but the surface may still gain fields or grow. Build on it; expect additions, not removals. | capabilities, `http.serve`, `dom`, `cell`, `testing` session state |
-| **Reserved** | Not accepted at all. Writing one is a parse error, and if it ever gains meaning that will be purely additive. | intersection annotations, union *declarations* |
+| **Stable** | Syntax and behavior are frozen. A documented program keeps parsing and keeps giving the same result, under the semver contract above. | the core language, macros, the listed stdlib modules, `cell`, `testing` |
+| **Stable in behavior, evolving in scope** | Every documented function behaves as written, permanently. The *set* of functions grows additively; nothing existing changes. | concurrency, the OVM/JIT tiers, the data stack, gradual typing, `runtime`, `asset`, `collections` |
+| **Experimental** | The model is settled and tested, but the surface may still change: a minor release may change or remove an Experimental function, option or field, with a CHANGELOG note saying what to change ([Versioning](#versioning)). Build on it knowing that. | capabilities and `caps`, `http.serve`, `dom`, `gui`, `tty`, `pty`, `vt` |
+| **Reserved** | Not accepted at all. Writing one is a parse error, and if it ever gains meaning that will be purely additive. | intersection annotations (`A & B`) |
+
+Every module stdlib.md documents sits in exactly one tier. A name the
+reference calls internal — the `collections` layouts, `gui.flatten`,
+the `gui.flat_` family and `gui.roles` (Loom's layout internals), the
+`ods` probes — is in none: it is outside the contract and may change in
+any release.
 
 The rest of this section is the detail behind each tier.
 
@@ -116,9 +123,18 @@ declarations, traits and impls, `Result` + `?`, modules (`use`/`share`
 in all documented forms), `test` blocks, and the standard-library
 modules `str`, `col`, `math`, `json`, `toml`, `csv`, `re`, `dates`,
 `time`, `base64`, `fs`, `os`, `db`, `random`, `crypto`, `chan`, `task`,
-`cell`, `proc`, `meta`, `caps`, and the global builtins. The
-embedded olang modules (`colx`, `mathx`) and packages (`cli`, `term`, `ui`,
-`viz`, `dash`) follow the same append-mostly rule.
+`cell`, `proc`, `meta`, `bytes`, `compress`, `bigint`, `vec`, `http`'s
+client (`http.get`, `http.post`, `http.request` and the URL and query
+helpers), `testing` (the `assert_*` family, `snapshot` and its helpers,
+`test_summary` and `reset_tests`), `set_parallel`, and the global
+builtins. The embedded olang modules (`colx`, `mathx`) and packages
+(`cli`, `term`, `ui`, `viz`, `dash`) follow the same append-mostly rule.
+`cell` and `testing`'s session state (`test_summary`, `reset_tests`),
+Experimental before, are promoted: `cell`'s model — one mutable
+location, confined to its creating thread, refused at `chan.send`,
+re-entrant `cell.update` rejected — is the scope and mutability
+commitment below, and every program in the corpus that mutates shared
+state is built on it.
 
 **Scope and mutability settled in 0.61.0**, as the second deliberate
 breaking change before 1.0 (recorded in the CHANGELOG with a migration
@@ -156,12 +172,15 @@ identifiers and made `fs.join` variadic.
 
 **The error model settled in 0.65.0.** `Result` with `?` carries
 expected failure. A runtime error is a bug and stops the program: there
-is no construct that catches one mid-expression, and `try`/`catch` —
+is no construct that catches one *mid-expression*, and `try`/`catch` —
 which never did, despite looking like it — was removed. Recovery is
-*structural*, at the boundaries that already isolate a failing unit: a
-spawned task's failure becomes `Err(e)` from `task.join`, and an
-`http.serve` handler's becomes a logged 500 with the server still
-serving. `try` and `catch` are ordinary identifiers, as is `Promise`.
+*structural*, at the boundaries that already isolate a failing unit, and
+each boundary is a whole call: `attempt(f)` answers `Err(message)` when
+a runtime error ended `f()`, `runtime.call_budget(f, args, ms)` reports
+the error (or the time running out) that ended its call, a spawned
+task's failure becomes `Err(e)` from `task.join`, and an `http.serve`
+handler's becomes a logged 500 with the server still serving. Nothing
+resumes inside the call that failed. `try` and `catch` are ordinary identifiers, as is `Promise`.
 The reserved-word list is fixed at 1.0: twenty-one
 words, six of them (`await`, `yield`, `async`, `defer`, `const`, `pub`)
 reserved for forms the language may add. It will not grow after 1.0 —
@@ -176,9 +195,18 @@ nothing has arrived yet, it answers `()` (or `Ok(())` from a function
 that answers a `Result`). Three error strings are named and are
 contract: `"eof"` (a stream ended), `"timed out"` (a wait's time ran
 out) and `"channel is closed"` (a channel closed and drained); a
-program may match them, and they will not change in 1.x. Every other
-`Err` payload's text, like a runtime error's, is for people and may
-change ([stdlib.md](stdlib.md#absence-is-unit) lists the three).
+program may match them, and they will not change in 1.x
+([stdlib.md](stdlib.md#absence-is-unit) lists the three).
+
+**Error text is not contract.** The text of a runtime error — what
+`attempt` hands back, what a failed run prints, what `runtime.last_error`
+reports — and the text of a stdlib `Err` payload are written for people
+and may change in any release, including a patch; the tiers may word
+one failure differently. Two things are contract: the message a
+program gives `raise(message)`, which `attempt` and `task.join` hand
+back exactly as given, and the three sentinels above. A program that
+must tell one failure from another matches a sentinel, or raises its
+own message, never another error's wording.
 
 **Number semantics are read-back-clean.** Integers are 64-bit signed
 and overflow is a runtime error pointing at `bigint`, never a silent
@@ -252,6 +280,15 @@ additive.
 - **The OVM and JIT tiers** — which functions get promoted or compiled
   to native code, and how fast they run, changes freely; results never
   do.
+- **`runtime`** — the introspection module (memory, frames, the last
+  error, `call_budget`, `load_module`): each documented function behaves
+  as written; what the reports carry grows (a field added, never one
+  taken away or renamed without a deprecated alias), and the numbers in
+  them are measurements, not promises.
+- **`asset`** and **`collections`** — `asset.read` and its siblings, and
+  the auto-loaded `collections` (heap, deque, table, …), behave as
+  documented; their sets grow. The collections' internal layouts are
+  not part of the contract.
 - **The data stack (`ods`, `stats`, `plot`)** — the documented functions
   behave as the stdlib chapters state, pinned by doc tests, engine
   property tests, and scipy/NumPy reference constants; the *scope* grows
@@ -275,51 +312,70 @@ additive.
   CHANGELOG); reserved annotation forms below remain unenforced until
   their semantics land.
 
-### Experimental — may change or be completed
+### Experimental — may change in a minor release
+
+An Experimental surface may change in a **minor** release — a function,
+option or field changed or removed — and every such change is recorded
+in the CHANGELOG under Changed with what to change. A patch release
+does not change one. Each graduates to a Stable tier by a CHANGELOG
+entry saying so; nothing graduates silently.
 
 - **Capabilities and the transparent binary.** The `[capabilities]`
-  manifest, per-dependency attenuation, `--deny`, and `olang inspect`
-  are new: the model (opt-in restriction, shrink-only attenuation,
-  gate at the effectful-module boundary, source-carrying binaries) is
-  settled, but the gated surface may grow (new modules), the bundle
-  format may gain fields. Enforcement runs on every tier, so a restricted
+  manifest, per-dependency attenuation, `--deny`, the `caps` module that
+  reports a grant, `olang inspect`, and the bundle format a built binary
+  carries. The model (opt-in restriction, shrink-only attenuation, gate
+  at the effectful-module boundary, source-carrying binaries) is
+  settled, but the gated surface may grow (new modules) and the bundle
+  format may change. Enforcement runs on every tier, so a restricted
   run keeps full speed: the grant a program is given is independent of
   how fast its code happens to be running.
-
-- `http.serve` — the request/response API (the `HttpRequest` fields, string
-  and response-struct returns) is settled and integration-tested; the
-  *execution model* (bounded worker pool, blocking caller, localhost-only)
-  may grow further without changing existing handlers.
-- The `dom` module — browser-only, and young: the function surface may
-  grow (and payload conventions may gain fields) as frontend programs
+- **`http.serve`** — the request/response API (the `HttpRequest`
+  fields, string and response-struct returns) is integration-tested; the
+  execution model (a bounded worker pool, a blocking caller, listening
+  on `127.0.0.1` unless the `bind` option names another address) and
+  its options may still change.
+- **The `dom` module** — browser-only, and young: the function surface
+  may grow and its payload conventions change as frontend programs
   demand more; the element-handle model and the stateless pattern it
-  supports are the stable core.
-- `testing.test_summary` / `testing.reset_tests` are real as of 0.50:
-  every `testing.assert_*` outcome is tallied per thread, `test_summary()`
-  returns `#{ "passed", "failed", "total" }`, and `reset_tests()` zeroes
-  it.
-- `set_parallel`, the switch for the parallel machinery
-- The `cell` module is new as of 0.62: the model (one mutable location,
-  confined to its creating thread, refused at `chan.send`, re-entrant
-  `cell.update` rejected) is settled and covered by the scope and
-  mutability commitment above, but it is the newest surface in the
-  language and the least exercised by real programs.
+  supports are its core.
+- **`gui`, `tty`, `pty` and `vt`** — the desktop and terminal engines
+  Loom, Studio, Heddle and heddle-sql are built on. Their surface still
+  grows with the engines (the roadmap's desktop rows), so a node's
+  fields, an event's payload or an option may change in a minor release.
+  The libraries built on them (Loom, Heddle) are where a program meets
+  them, and they absorb those changes.
 
 ### Reserved — not accepted, and additive if they ever are
 
-Two type-level forms are named in the grammar's design but rejected by
-the parser today. Writing either is a parse error, not a construct
-waiting for semantics:
+One type-level form is named in the grammar's design but rejected by
+the parser: an intersection type annotation (`A & B`). Writing one is a
+parse error, not a construct waiting for semantics, and if it is ever
+accepted it will be additive, since no program can contain one now.
+A union *alias*, `type Id = Int | String`, is not reserved: it parses
+and is enforced as the union annotation it names (language.md, "Type
+annotations"), as union and literal-type annotations have been since
+0.50.
 
-- Intersection type annotations (`A & B`)
-- Union type *declarations* (`type X = A | B`). Union and literal-type
-  *annotations* are a different thing and do have semantics — they
-  gained them in 0.50 and are covered by the gradual-typing bullet
-  above.
 
-Both are safe to avoid entirely, which is the only option. If either is
-ever accepted it will be additive, since no program can contain one now.
+## Tools and file formats
 
+Studio, CI scripts and editors drive the tools, so the tools have a
+contract too, tiered as the language is:
+
+| Surface | Tier | What holds |
+|---|---|---|
+| Command names and documented flags (`olang --help`, tooling.md) | Stable | A command or flag keeps its name and meaning; a renamed one keeps the old spelling as an alias. A new command may take a word an extensionless script used: run such a script as `olang ./name`. |
+| Exit codes ([the table](tooling.md#exit-codes)) | Stable | `0`, `1`, `2`, `3` and `102` keep their meanings. |
+| The JSON envelopes: `format`, `kind`, the line-delimited event names ([the documents](tooling.md#output-flags-and-json-documents)) | Stable | A document's `format` number changes only when a field changes meaning or goes away. |
+| The JSON documents' fields | Stable, additive | Fields are added in minor releases without a new `format`; a consumer ignores fields it does not know. |
+| `repl --serve`'s protocol | Stable, additive | Its `protocol` number changes only when a request or reply changes shape; new requests, fields and `features` are added under it. |
+| `olang.toml` and `olang.lock` | Stable | The documented keys keep their meanings. The lock's `version` changes only when its meaning does, and an olang refuses a newer one by name. `[check] promote`'s class names are contract; `all` is every class the running olang knows. |
+| `shelf.toml` | Stable | Its `version` is checked as the lock's is. |
+| `.olt` traces | Stable | The trace format is versioned: a later olang reads an earlier trace, and refuses a newer one by name. |
+| Public environment variables ([the table](tooling.md#environment-variables)) | Stable | The variables marked public keep their names and meanings. |
+| `olang fmt`'s output | Stable within a minor | The formatter's output changes only in a minor release, and each change is recorded in the CHANGELOG, so `olang fmt --check` in CI changes verdict only when olang's minor version does. |
+| The bundle format of `olang build`, the registry protocol, `olang profile`'s internals beyond its documented fields | Experimental | May change in a minor release, recorded in the CHANGELOG. |
+| `~/.olang/state` (parse and compile caches, warm profiles), `meta.encode` images, diagnostic and error text, the internal environment variables | Not contract | May change in any release; a cache from another version is ignored, never misread. |
 
 ## Versioning
 
@@ -333,14 +389,22 @@ number means exactly this:
   Everything in [the commitment](#the-10-commitment) still holds.
 - **Major** (`1.0 → 2.0`) — the only version that may break a documented
   program, and the bar is deliberately high: a change that would break a
-  documented example is a 2.0 change, not a 1.x one, no matter how small.
-  The intent is that 2.0 never needs to happen; it exists so the promise
-  above can be absolute rather than hedged.
+  documented example of a Stable surface is a 2.0 change, not a 1.x one,
+  no matter how small. The intent is that 2.0 never needs to happen; it
+  exists so the promise above can be absolute rather than hedged.
+
+**Experimental surfaces are the exception, and the only one.** A
+surface the [Experimental tier](#experimental--may-change-in-a-minor-release)
+lists may change in a minor release, with a CHANGELOG entry under
+Changed that names the surface and says what to change; its documented
+examples change with it. A patch release changes none of them.
 
 **What "breaking" means, precisely.** A change breaks compatibility if a
 program written against this book — its syntax, its documented behavior,
 its stdlib signatures and `Result` conventions — stops parsing, stops
-running, or produces a different result. This is not a matter of judgment:
+running, or produces a different result. Error and diagnostic text is
+not behavior in this sense ([above](#stable)), and neither is an
+Experimental surface's change in a minor release. This is not a matter of judgment:
 every documented example is executed in CI (`doc_examples_test`), so a
 breaking change is a *failing test*, and shipping it in anything below a
 major version is a release bug.

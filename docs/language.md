@@ -99,8 +99,15 @@ olang is dynamically typed at runtime. Every value has a type name that
 | `{ x: 1 }` | `Object` (anonymous) or the struct's type name |
 | `json.parse("{}")`'s object | `JsonObject` |
 | `1..5` | `Range` |
+| an enum's value (`Circle(1.0)`) | the enum's type name (`Shape`) |
 | `() => 1` | `Function` |
+| a builtin (`len`, `str.trim`) | `Builtin` |
 | `Ok(1)` / `Err("e")` | `Result` |
+| `bytes.from_string("a")` | `Bytes` |
+| `cell.new(0)` | `Cell` |
+| `chan.new()` | `Channel` |
+| a task handle (`spawn f()`) | `Task` |
+| a module (`math`) | `Module` |
 | unit / JSON `null` / missing | `Unit` |
 
 ```olang
