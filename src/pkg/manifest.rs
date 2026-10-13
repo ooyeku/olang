@@ -506,6 +506,36 @@ impl Manifest {
     }
 }
 
+/// A dependency as the value a manifest writes for it: a version string,
+/// or an inline table (`{ path = "../lib" }`).
+fn dependency_value(dep: &Dependency) -> Result<toml_edit::Value, String> {
+    let as_toml = toml::Value::try_from(dep).map_err(|e| e.to_string())?;
+    fn convert(v: &toml::Value) -> toml_edit::Value {
+        match v {
+            toml::Value::String(s) => s.as_str().into(),
+            toml::Value::Integer(i) => (*i).into(),
+            toml::Value::Float(f) => (*f).into(),
+            toml::Value::Boolean(b) => (*b).into(),
+            toml::Value::Array(xs) => {
+                let mut a = toml_edit::Array::new();
+                for x in xs {
+                    a.push(convert(x));
+                }
+                toml_edit::Value::Array(a)
+            }
+            toml::Value::Table(t) => {
+                let mut it = toml_edit::InlineTable::new();
+                for (k, x) in t {
+                    it.insert(k, convert(x));
+                }
+                toml_edit::Value::InlineTable(it)
+            }
+            toml::Value::Datetime(d) => d.to_string().into(),
+        }
+    }
+    Ok(convert(&as_toml))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -558,34 +588,4 @@ lib = "2.0.0"
         let reparsed = Manifest::from_toml(&m.to_toml()).unwrap();
         assert_eq!(m, reparsed);
     }
-}
-
-/// A dependency as the value a manifest writes for it: a version string,
-/// or an inline table (`{ path = "../lib" }`).
-fn dependency_value(dep: &Dependency) -> Result<toml_edit::Value, String> {
-    let as_toml = toml::Value::try_from(dep).map_err(|e| e.to_string())?;
-    fn convert(v: &toml::Value) -> toml_edit::Value {
-        match v {
-            toml::Value::String(s) => s.as_str().into(),
-            toml::Value::Integer(i) => (*i).into(),
-            toml::Value::Float(f) => (*f).into(),
-            toml::Value::Boolean(b) => (*b).into(),
-            toml::Value::Array(xs) => {
-                let mut a = toml_edit::Array::new();
-                for x in xs {
-                    a.push(convert(x));
-                }
-                toml_edit::Value::Array(a)
-            }
-            toml::Value::Table(t) => {
-                let mut it = toml_edit::InlineTable::new();
-                for (k, x) in t {
-                    it.insert(k, convert(x));
-                }
-                toml_edit::Value::InlineTable(it)
-            }
-            toml::Value::Datetime(d) => d.to_string().into(),
-        }
-    }
-    Ok(convert(&as_toml))
 }

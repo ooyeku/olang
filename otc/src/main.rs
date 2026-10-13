@@ -155,8 +155,9 @@ fn main() {
             commands::project::add(&spec, path.as_deref(), force)
         }
         Commands::Remove { name } => commands::project::remove(&name),
-        Commands::List { format } => commands::json_format("otc list", &format)
-            .and_then(|json| commands::project::list(json)),
+        Commands::List { format } => {
+            commands::json_format("otc list", &format).and_then(commands::project::list)
+        }
         Commands::Install { frozen, update } => {
             commands::project::do_install(frozen, update, verbose)
         }

@@ -5312,6 +5312,146 @@ impl ErrorSuggestionEngine {
     }
 }
 
+/// One step of `Parser::rename_identifiers`: `pair` sits under `parent`,
+/// is its `index`-th identifier child, and `offset` places a nested
+/// parse (a template interpolation) in the whole source.
+fn rename_walk(
+    pair: Pair<Rule>,
+    parent: Option<Rule>,
+    index: usize,
+    in_type_body: bool,
+    offset: usize,
+    renames: &std::collections::HashMap<String, String>,
+    edits: &mut Vec<(usize, usize, String)>,
+) -> Result<(), String> {
+    let rule = pair.as_rule();
+    if rule == Rule::identifier {
+        let keyed_first = matches!(
+            parent,
+            Some(Rule::named_arg | Rule::field_value | Rule::struct_pattern_field)
+        ) && index == 0;
+        let not_a_value = matches!(
+            parent,
+            Some(
+                Rule::call_expr
+                    | Rule::index_target
+                    | Rule::struct_field
+                    | Rule::type_decl
+                    | Rule::custom_type
+                    | Rule::generic_type
+                    | Rule::type_param
+                    | Rule::enum_variant
+                    | Rule::enum_variant_pattern
+                    | Rule::struct_pattern
+                    | Rule::struct_literal
+                    | Rule::type_name_upper
+                    | Rule::error_type_decl
+                    | Rule::error_variant
+                    | Rule::trait_decl
+                    | Rule::trait_method
+                    | Rule::impl_decl
+                    | Rule::use_path
+                    | Rule::use_item
+                    | Rule::use_alias
+            )
+        );
+        let method_name = in_type_body && parent == Some(Rule::function_decl) && index == 0;
+        if !keyed_first
+            && !not_a_value
+            && !method_name
+            && let Some(new) = renames.get(pair.as_str())
+        {
+            let span = pair.as_span();
+            edits.push((offset + span.start(), offset + span.end(), new.clone()));
+        }
+        return Ok(());
+    }
+    if rule == Rule::template_raw_content {
+        let content = pair.as_str();
+        let base = offset + pair.as_span().start();
+        for (start, end) in template_interpolations(content) {
+            let segment = &content[start..end];
+            let lead = segment.len() - segment.trim_start().len();
+            let trimmed = segment.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let inner = <OlangParser as PestParser<Rule>>::parse(Rule::expr, trimmed)
+                .map_err(|e| e.to_string())?;
+            for p in inner {
+                rename_walk(p, None, 0, false, base + start + lead, renames, edits)?;
+            }
+        }
+        return Ok(());
+    }
+    let in_type_body = in_type_body || matches!(rule, Rule::impl_decl | Rule::trait_decl);
+    let mut ident_index = 0;
+    for child in pair.into_inner() {
+        let is_ident = child.as_rule() == Rule::identifier;
+        rename_walk(
+            child,
+            Some(rule),
+            ident_index,
+            // A method's own name stays; inside its body, names are values.
+            in_type_body && (rule != Rule::function_decl || is_ident),
+            offset,
+            renames,
+            edits,
+        )?;
+        if is_ident {
+            ident_index += 1;
+        }
+    }
+    Ok(())
+}
+
+/// The byte ranges of a template's `${…}` interpolations, inside
+/// `content` (the text between the backticks), as `parse_template_content`
+/// finds them.
+fn template_interpolations(content: &str) -> Vec<(usize, usize)> {
+    let bytes = content.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            b'$' if bytes.get(i + 1) == Some(&b'{') => {
+                let start = i + 2;
+                let mut depth = 1;
+                let mut j = start;
+                let mut in_string = false;
+                let mut escaped = false;
+                while j < bytes.len() {
+                    let c = bytes[j];
+                    if in_string {
+                        if escaped {
+                            escaped = false;
+                        } else if c == b'\\' {
+                            escaped = true;
+                        } else if c == b'"' {
+                            in_string = false;
+                        }
+                    } else if c == b'"' {
+                        in_string = true;
+                    } else if c == b'{' {
+                        depth += 1;
+                    } else if c == b'}' {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    j += 1;
+                }
+                out.push((start, j.min(bytes.len())));
+                i = j + 1;
+            }
+            _ => i += 1,
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5620,144 +5760,4 @@ mod tests {
             "multi-parameter lambda should still parse"
         );
     }
-}
-
-/// One step of `Parser::rename_identifiers`: `pair` sits under `parent`,
-/// is its `index`-th identifier child, and `offset` places a nested
-/// parse (a template interpolation) in the whole source.
-fn rename_walk(
-    pair: Pair<Rule>,
-    parent: Option<Rule>,
-    index: usize,
-    in_type_body: bool,
-    offset: usize,
-    renames: &std::collections::HashMap<String, String>,
-    edits: &mut Vec<(usize, usize, String)>,
-) -> Result<(), String> {
-    let rule = pair.as_rule();
-    if rule == Rule::identifier {
-        let keyed_first = matches!(
-            parent,
-            Some(Rule::named_arg | Rule::field_value | Rule::struct_pattern_field)
-        ) && index == 0;
-        let not_a_value = matches!(
-            parent,
-            Some(
-                Rule::call_expr
-                    | Rule::index_target
-                    | Rule::struct_field
-                    | Rule::type_decl
-                    | Rule::custom_type
-                    | Rule::generic_type
-                    | Rule::type_param
-                    | Rule::enum_variant
-                    | Rule::enum_variant_pattern
-                    | Rule::struct_pattern
-                    | Rule::struct_literal
-                    | Rule::type_name_upper
-                    | Rule::error_type_decl
-                    | Rule::error_variant
-                    | Rule::trait_decl
-                    | Rule::trait_method
-                    | Rule::impl_decl
-                    | Rule::use_path
-                    | Rule::use_item
-                    | Rule::use_alias
-            )
-        );
-        let method_name = in_type_body && parent == Some(Rule::function_decl) && index == 0;
-        if !keyed_first
-            && !not_a_value
-            && !method_name
-            && let Some(new) = renames.get(pair.as_str())
-        {
-            let span = pair.as_span();
-            edits.push((offset + span.start(), offset + span.end(), new.clone()));
-        }
-        return Ok(());
-    }
-    if rule == Rule::template_raw_content {
-        let content = pair.as_str();
-        let base = offset + pair.as_span().start();
-        for (start, end) in template_interpolations(content) {
-            let segment = &content[start..end];
-            let lead = segment.len() - segment.trim_start().len();
-            let trimmed = segment.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            let inner = <OlangParser as PestParser<Rule>>::parse(Rule::expr, trimmed)
-                .map_err(|e| e.to_string())?;
-            for p in inner {
-                rename_walk(p, None, 0, false, base + start + lead, renames, edits)?;
-            }
-        }
-        return Ok(());
-    }
-    let in_type_body = in_type_body || matches!(rule, Rule::impl_decl | Rule::trait_decl);
-    let mut ident_index = 0;
-    for child in pair.into_inner() {
-        let is_ident = child.as_rule() == Rule::identifier;
-        rename_walk(
-            child,
-            Some(rule),
-            ident_index,
-            // A method's own name stays; inside its body, names are values.
-            in_type_body && (rule != Rule::function_decl || is_ident),
-            offset,
-            renames,
-            edits,
-        )?;
-        if is_ident {
-            ident_index += 1;
-        }
-    }
-    Ok(())
-}
-
-/// The byte ranges of a template's `${…}` interpolations, inside
-/// `content` (the text between the backticks), as `parse_template_content`
-/// finds them.
-fn template_interpolations(content: &str) -> Vec<(usize, usize)> {
-    let bytes = content.as_bytes();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' => i += 2,
-            b'$' if bytes.get(i + 1) == Some(&b'{') => {
-                let start = i + 2;
-                let mut depth = 1;
-                let mut j = start;
-                let mut in_string = false;
-                let mut escaped = false;
-                while j < bytes.len() {
-                    let c = bytes[j];
-                    if in_string {
-                        if escaped {
-                            escaped = false;
-                        } else if c == b'\\' {
-                            escaped = true;
-                        } else if c == b'"' {
-                            in_string = false;
-                        }
-                    } else if c == b'"' {
-                        in_string = true;
-                    } else if c == b'{' {
-                        depth += 1;
-                    } else if c == b'}' {
-                        depth -= 1;
-                        if depth == 0 {
-                            break;
-                        }
-                    }
-                    j += 1;
-                }
-                out.push((start, j.min(bytes.len())));
-                i = j + 1;
-            }
-            _ => i += 1,
-        }
-    }
-    out
 }

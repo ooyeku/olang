@@ -224,9 +224,6 @@ fn base64_is_valid(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>
     Ok(Value::Boolean(is_valid))
 }
 
-/// Check if a string is valid base64 (alias for validate)
-/// Usage: base64.is_valid("SGVsbG8sIFdvcmxkIQ==") -> Result<Bool, Error>
-
 /// Encode a string to base64 without padding
 /// Usage: base64.encode_no_pad("Hello, World!") -> Result<String, Error>
 fn base64_encode_no_pad(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {

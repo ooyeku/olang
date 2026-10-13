@@ -390,10 +390,7 @@ fn path_join(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
 /// `fs.dirname(path)` — the parent directory ("" when there is none).
 fn path_dirname(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    let path = match one_path_arg("dirname", &args) {
-        Ok(p) => p,
-        Err(e) => return Err(e),
-    };
+    let path = one_path_arg("dirname", &args)?;
     let parent = std::path::Path::new(path)
         .parent()
         .map(|p| p.to_string_lossy().into_owned())
@@ -403,10 +400,7 @@ fn path_dirname(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 
 /// `fs.basename(path)` — the final component ("" for paths like "/").
 fn path_basename(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    let path = match one_path_arg("basename", &args) {
-        Ok(p) => p,
-        Err(e) => return Err(e),
-    };
+    let path = one_path_arg("basename", &args)?;
     let name = std::path::Path::new(path)
         .file_name()
         .map(|p| p.to_string_lossy().into_owned())
@@ -416,10 +410,7 @@ fn path_basename(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
 
 /// `fs.ext(path)` — the extension without its dot ("" when none).
 fn path_ext(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    let path = match one_path_arg("ext", &args) {
-        Ok(p) => p,
-        Err(e) => return Err(e),
-    };
+    let path = one_path_arg("ext", &args)?;
     let ext = std::path::Path::new(path)
         .extension()
         .map(|p| p.to_string_lossy().into_owned())
@@ -430,10 +421,7 @@ fn path_ext(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// `fs.abs_path(path)` — the path made absolute against the current
 /// directory, `.` and `..` resolved lexically (the file need not exist).
 fn path_abs(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    let path = match one_path_arg("abs_path", &args) {
-        Ok(p) => p,
-        Err(e) => return Err(e),
-    };
+    let path = one_path_arg("abs_path", &args)?;
     match std::path::absolute(path) {
         Ok(p) => {
             // std::path::absolute leaves `..` components in place; resolve
@@ -464,10 +452,7 @@ fn path_abs(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// does not exist yet, its nearest existing folder made real and the rest
 /// kept — the same answer the capability gate checks a path by.
 fn path_real(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    let path = match one_path_arg("real_path", &args) {
-        Ok(p) => p,
-        Err(e) => return Err(e),
-    };
+    let path = one_path_arg("real_path", &args)?;
     Ok(Value::Ok(Box::new(Value::String(Arc::new(
         crate::caps::gate_path(path).to_string_lossy().into_owned(),
     )))))
