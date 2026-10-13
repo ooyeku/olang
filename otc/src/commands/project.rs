@@ -141,8 +141,9 @@ pub fn add(spec: &str, path_flag: Option<&str>, force: bool) -> anyhow::Result<(
             describe_dependency(existing)
         );
     }
+    // edited in place: the manifest's comments and unknown keys stay
+    Manifest::write_dependency(&root, &name, &dep).map_err(|e| anyhow::anyhow!("{}", e))?;
     manifest.dependencies.insert(name.clone(), dep);
-    manifest.save(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     // Resolve immediately: `add` means "usable now", not "usable after a
     // second command you may not know about".
@@ -195,7 +196,7 @@ pub fn remove(name: &str) -> anyhow::Result<()> {
             }
         );
     }
-    manifest.save(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
+    Manifest::remove_dependency(&root, name).map_err(|e| anyhow::anyhow!("{}", e))?;
     // Re-resolve so the lock drops the entry too.
     let opts = InstallOptions {
         registry: registry_from_env(),

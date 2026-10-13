@@ -259,6 +259,48 @@ impl Manifest {
         std::fs::write(dir.join("olang.toml"), self.to_toml()).map_err(ManifestError::Io)
     }
 
+    /// Set (or replace) the dependency `name` in `dir/olang.toml`, editing
+    /// the file in place: its comments, its order and any keys olang does
+    /// not know stay as they were.
+    pub fn write_dependency(dir: &Path, name: &str, dep: &Dependency) -> Result<(), ManifestError> {
+        Self::edit(dir, |doc| {
+            let deps = doc
+                .entry("dependencies")
+                .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+            let Some(table) = deps.as_table_like_mut() else {
+                return Err("[dependencies] is not a table".to_string());
+            };
+            table.insert(name, toml_edit::Item::Value(dependency_value(dep)?));
+            Ok(())
+        })
+    }
+
+    /// Remove the dependency `name` from `dir/olang.toml`, in place.
+    pub fn remove_dependency(dir: &Path, name: &str) -> Result<(), ManifestError> {
+        Self::edit(dir, |doc| {
+            if let Some(table) = doc
+                .get_mut("dependencies")
+                .and_then(|d| d.as_table_like_mut())
+            {
+                table.remove(name);
+            }
+            Ok(())
+        })
+    }
+
+    fn edit(
+        dir: &Path,
+        change: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<(), String>,
+    ) -> Result<(), ManifestError> {
+        let path = dir.join("olang.toml");
+        let text = std::fs::read_to_string(&path).map_err(ManifestError::Io)?;
+        let mut doc: toml_edit::DocumentMut = text
+            .parse()
+            .map_err(|e: toml_edit::TomlError| ManifestError::Io(std::io::Error::other(e.to_string())))?;
+        change(&mut doc).map_err(|e| ManifestError::Io(std::io::Error::other(e)))?;
+        std::fs::write(&path, doc.to_string()).map_err(ManifestError::Io)
+    }
+
     /// `[package] lock = "never"`: no incidental install writes the lock.
     /// An unknown value reads as `"auto"` (`olang check` warns about it).
     pub fn lock_never(&self) -> bool {
@@ -362,4 +404,34 @@ lib = "2.0.0"
         let reparsed = Manifest::from_toml(&m.to_toml()).unwrap();
         assert_eq!(m, reparsed);
     }
+}
+
+/// A dependency as the value a manifest writes for it: a version string,
+/// or an inline table (`{ path = "../lib" }`).
+fn dependency_value(dep: &Dependency) -> Result<toml_edit::Value, String> {
+    let as_toml = toml::Value::try_from(dep).map_err(|e| e.to_string())?;
+    fn convert(v: &toml::Value) -> toml_edit::Value {
+        match v {
+            toml::Value::String(s) => s.as_str().into(),
+            toml::Value::Integer(i) => (*i).into(),
+            toml::Value::Float(f) => (*f).into(),
+            toml::Value::Boolean(b) => (*b).into(),
+            toml::Value::Array(xs) => {
+                let mut a = toml_edit::Array::new();
+                for x in xs {
+                    a.push(convert(x));
+                }
+                toml_edit::Value::Array(a)
+            }
+            toml::Value::Table(t) => {
+                let mut it = toml_edit::InlineTable::new();
+                for (k, x) in t {
+                    it.insert(k, convert(x));
+                }
+                toml_edit::Value::InlineTable(it)
+            }
+            toml::Value::Datetime(d) => d.to_string().into(),
+        }
+    }
+    Ok(convert(&as_toml))
 }
