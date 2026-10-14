@@ -37,6 +37,7 @@ upgrading; it reports the cases it can find.
   - [Top-level names are read when a function runs](#top-level-names-are-read-when-a-function-runs)
   - [Bytes and repeated names at the boundaries](#bytes-and-repeated-names-at-the-boundaries)
   - [Keys: lines from 1, one name each](#keys-lines-from-1-one-name-each)
+  - [Moving to the 1.0 idioms](#moving-to-the-10-idioms)
 - [In 0.88](#in-088)
   - [A missing field of an object is `()`](#a-missing-field-of-an-object-is-)
   - [A module's missing member reads as `()`](#a-modules-missing-member-reads-as-)
@@ -158,8 +159,10 @@ true).
 
 `s.pp.cur` with `s.pp` absent, `().k`, and `map_get((), k)` answer `()`
 where they raised. Guards written only to avoid that raise
-(`if x == () => () else => x.f`) still work and may be dropped. `r?.f` is
-a parse error; write `(r?).f`.
+(`if x == () => () else => x.f`) still work and may be dropped: `olang
+fix guards` drops the ones it can prove changed nothing ([Moving to the
+1.0 idioms](#moving-to-the-10-idioms)). `r?.f` is a parse error; write
+`(r?).f`.
 
 ### A negative index raises
 
@@ -167,7 +170,8 @@ a parse error; write `(r?).f`.
 and so do `xs[-1] = v`, a string's, a tuple's, Bytes' and a Series'
 negative index, and `col.set`/`col.swap` with one. Read the ends with
 `last(xs)` and `first(xs)` (both `()` when empty), or write
-`xs[len(xs) - 1]`. `str.substring`, `col.slice`, `bytes.slice` and
+`xs[len(xs) - 1]` (`olang fix first-last` turns a length-guarded one
+into `last(xs)`). `str.substring`, `col.slice`, `bytes.slice` and
 `str.char_at` raise on a negative position where they clamped or
 counted from the end.
 
@@ -213,7 +217,7 @@ is as it was; a rounded value printed or compared by its text alone
 changes (`3`, not `3.0`). A Float too large for an Int (`1e300`) raises
 where it answered itself, and `math.pow(2, -1)` raises: write
 `math.pow(2.0, -1)`. A `to_int(…)` around a rounding is now redundant
-and harmless.
+and harmless; `olang fix units` takes it off.
 
 ### Stdlib records
 
@@ -296,6 +300,33 @@ in place of `col`/`end`, which still answer the 0-based offsets. A styled
 field's `hover` and `lens` events say `line` (and a hover `column`) from
 1, `()` when the pointer left the text, and a lens's `line` is 1-based.
 `caps.level` answers `false`, `"read"` or `true`: compare with those.
+
+### Moving to the 1.0 idioms
+
+Nothing here needs to change; four rewrites make a program use what
+1.0 gives it, each exact — the rewritten program answers what it
+answered, for every input — and each run with `--dry-run` first to see
+what it would change and what it leaves, and why:
+
+```bash
+olang fix guards --dry-run .     # if x == () => () else => x.f   →  x.f
+olang fix defaults --dry-run .   # if x == () => d else => x      →  x ?? d
+olang fix first-last --dry-run . # if len(xs) == 0 => () else => xs[len(xs) - 1]  →  last(xs)
+olang fix units --dry-run .      # to_int(math.floor(e))          →  math.floor(e)
+```
+
+`guards` rests on a field of `()` being `()`: a guard that answered `()`
+for an absent record is the read itself. `x != () && x.f == v` becomes
+`x.f == v` when `v` is a literal (`() == v` is false, as the guard was),
+and `x == () || x.f != v` becomes `x.f != v`; `x != () && x.f` is left,
+since `&&` needs a Bool and `()` is not one. `defaults` rests on `??`
+evaluating its right side only when the left is `()`, as the `if` did.
+`first-last` rests on `first` and `last` answering `()` for an empty
+list: it rewrites a read whose emptiness the code already tests, and
+only of a list, tuple or string it can see made — `len` and `[i]` take
+Bytes, which `first` and `last` refuse. `units` rests on the roundings
+answering an Int. [The tooling chapter](tooling.md#olang-fix-guards-defaults-first-last-units)
+lists every form each rewrites and every reason it leaves one.
 
 ## In 0.88
 

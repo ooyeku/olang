@@ -285,9 +285,15 @@ enum Commands {
     /// becomes `x.k` and `map_get_or(x, "k", d)` becomes `x.k ?? d`, layout
     /// and comments kept; a default that may have an effect is flagged, not
     /// rewritten. `olang fix deprecated`: a deprecated builtin's calls
-    /// renamed to its current name
+    /// renamed to its current name. `olang fix guards`: `if x == () => ()
+    /// else => x.f` becomes `x.f`, and `x != () && x.f == v` becomes
+    /// `x.f == v`. `olang fix defaults`: `if x == () => d else => x` becomes
+    /// `x ?? d`. `olang fix first-last`: a length-guarded `xs[len(xs) - 1]`
+    /// or `xs[0]` becomes `last(xs)` or `first(xs)`. `olang fix units`:
+    /// `to_int(math.floor(e))` becomes `math.floor(e)`
     Fix {
-        /// What to fix: `maps`, `deprecated`
+        /// What to fix: `maps`, `deprecated`, `guards`, `defaults`,
+        /// `first-last`, `units`
         #[arg(value_name = "WHAT")]
         what: String,
         /// Files or directories (default: current directory)
@@ -296,6 +302,10 @@ enum Commands {
         /// Report what would change and exit non-zero; write nothing
         #[arg(long)]
         check: bool,
+        /// Print what would change and every candidate left, with why;
+        /// write nothing (guards, defaults, first-last, units)
+        #[arg(long)]
+        dry_run: bool,
         /// A file or directory to leave untouched (repeatable)
         #[arg(long, value_name = "PATH")]
         skip: Vec<PathBuf>,
@@ -972,22 +982,32 @@ fn run() -> i32 {
             what,
             mut paths,
             check,
+            dry_run,
             skip,
         }) => {
             if paths.is_empty() {
                 paths.push(PathBuf::from("."));
             }
             match what.as_str() {
-                "maps" => std::process::exit(olang::tools::fix::run_maps(&paths, check, &skip)),
-                "deprecated" => {
-                    std::process::exit(olang::tools::fix::run_deprecated(&paths, check, &skip))
+                "maps" => {
+                    std::process::exit(olang::tools::fix::run_maps(&paths, check || dry_run, &skip))
                 }
-                other => {
-                    eprintln!(
-                        "olang fix: nothing called '{other}' to fix (there are: maps, deprecated)"
-                    );
-                    std::process::exit(2)
-                }
+                "deprecated" => std::process::exit(olang::tools::fix::run_deprecated(
+                    &paths,
+                    check || dry_run,
+                    &skip,
+                )),
+                other => match olang::tools::fix_idioms::Target::from_name(other) {
+                    Some(target) => std::process::exit(olang::tools::fix_idioms::run(
+                        target, &paths, check, dry_run, &skip,
+                    )),
+                    None => {
+                        eprintln!(
+                            "olang fix: nothing called '{other}' to fix (there are: maps, deprecated, guards, defaults, first-last, units)"
+                        );
+                        std::process::exit(2)
+                    }
+                },
             }
         }
 

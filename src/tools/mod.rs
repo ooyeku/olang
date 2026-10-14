@@ -9,6 +9,7 @@ pub mod doc; // `olang doc` — API reference from /// comments
 #[cfg(feature = "native")]
 pub mod doctor; // `olang doctor` — audit a project
 pub mod fix; // `olang fix maps` — the migration to `.` and `??`
+pub mod fix_idioms; // `olang fix guards / defaults / first-last / units` — the 1.0 idioms
 pub mod fmt;
 pub mod keys; // the checker's key analysis: a `.key` read no construction has
 #[cfg(feature = "native")]

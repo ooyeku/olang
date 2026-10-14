@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`olang fix guards`, `defaults`, `first-last` and `units`**: four
+  rewrites to what 1.0.0-rc.1 gives a program, built as `olang fix maps`
+  is (the places from the grammar's parse tree, the text changed only
+  there, parentheses only where precedence needs them, a file whose
+  rewrite reads back as a different program left and reported, run to
+  the fixed point). Each is exact — the rewritten program answers what
+  the original did for every input, on every tier — and what cannot be
+  proven so is left and counted by reason; `--dry-run` lists each.
+  `guards`: `if x == () => () else => x.f…` → `x.f…` (a field of `()` is
+  `()`), `x != () && x.f == v` → `x.f == v` for a literal `v` that is not
+  `()`, `x == () || x.f != v` → `x.f != v`; a read used as a Bool, or
+  compared with what may be `()`, is left. `defaults`: `if x == () => d
+  else => x` → `x ?? d` (`??` evaluates `d` only when needed, as the `if`
+  did). `first-last`: a length-guarded `xs[len(xs) - 1]` → `last(xs)` and
+  `xs[0]` → `first(xs)`, whole `if len(xs) == 0 => () else => …` forms
+  included, where `xs` is a name bound to a value that is never Bytes
+  (`len` and `[i]` take Bytes; `first` and `last` refuse it). `units`:
+  `to_int(math.floor(e))` → `math.floor(e)`, and `ceil`, `round`,
+  `trunc`. docs/tooling.md, docs/migrating.md; `tools/fix_idioms.rs`,
+  tests/fix_idioms_test.rs (every form against `()`, empty and ordinary
+  inputs on the interpreter, the VM and the tiered run) and the
+  fixtures in tests/fixtures/fix/.
+
 ## [1.0.0-rc.1] - 2026-10-13
 
 The release candidate for 1.0: the freeze pass. What 1.0 commits to is

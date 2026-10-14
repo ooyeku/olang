@@ -21,6 +21,7 @@ language server has [its own chapter](editors.md).
 - [`olang fmt`](#olang-fmt)
 - [`olang fix maps`](#olang-fix-maps)
 - [`olang fix deprecated`](#olang-fix-deprecated)
+- [`olang fix guards`, `defaults`, `first-last`, `units`](#olang-fix-guards-defaults-first-last-units)
 - [`olang check`](#olang-check)
 - [`olang eval`](#olang-eval)
 - [`olang repl --serve`](#olang-repl---serve)
@@ -53,6 +54,10 @@ language server has [its own chapter](editors.md).
 | `olang fmt [path]` | Format sources in place; `--check` reports instead of writing |
 | `olang fix maps [path]` | Rewrite `map_get(x, "k")` as `x.k` and `map_get_or(x, "k", d)` as `x.k ?? d`, layout and comments kept; `--check` reports instead of writing |
 | `olang fix deprecated [path]` | Rename every call of a deprecated builtin or module function to its current name (`re.replace_all(` → `re.replace(`, `json.validate(` → `json.is_valid(`); `--check` reports instead of writing |
+| `olang fix guards [path]` | Drop a guard that only kept a field read off `()`: `if x == () => () else => x.f` → `x.f`, `x != () && x.f == v` → `x.f == v`; `--dry-run` prints what would change and what is left, and why |
+| `olang fix defaults [path]` | Rewrite `if x == () => d else => x` as `x ?? d` |
+| `olang fix first-last [path]` | Rewrite a length-guarded `xs[len(xs) - 1]` as `last(xs)` and `xs[0]` as `first(xs)` |
+| `olang fix units [path]` | Rewrite `to_int(math.floor(e))` (and `ceil`, `round`, `trunc`) as `math.floor(e)` |
 | `olang test [path]` | Discover and run `test` blocks; `--coverage` reports coverage |
 | `olang build <file>` | Compile to a self-contained executable; `-o OUT` names it; `--app` carries the program's modules, its dependencies', and their assets |
 | `olang inspect <binary>` | Read a built binary's source, manifest, capabilities, provenance |
@@ -392,6 +397,89 @@ struck through). `olang fix deprecated [path] [--check] [--skip path]`
 renames the calls in the source text: a name after a `.`, inside a
 string, template or comment, or that the file binds itself is left, and
 a file is written only when it still parses.
+
+## `olang fix guards`, `defaults`, `first-last`, `units`
+
+Four rewrites to what 1.0 gives a program, built as `olang fix maps`
+is: the places come from the grammar's parse tree, the text is changed
+only there (layout and comments stay byte for byte), parentheses are
+added only where precedence needs them, and a file whose rewrite would
+read back as a different program is left untouched and reported. Each
+runs to its fixed point, so a second run changes nothing.
+
+```bash
+olang fix guards --dry-run src/   # what would change, and each form left with why
+olang fix guards src/             # in place
+olang fix defaults --check .      # non-zero exit when something would change
+olang fix first-last . --skip vendor/
+```
+
+Every rewrite is **exact**: the new program answers what the old one
+answered for every input — `()`, an empty list, a value of the wrong
+kind (a raise stays a raise) — on every tier. A form that cannot be
+proven so is left and counted, with its reason, in the summary (and
+listed one by one under `--dry-run`).
+
+**`guards`** — a guard that only kept a field read off `()`. A field of
+`()` is `()`, so:
+
+| Before | After | Why |
+|---|---|---|
+| `if x == () => () else => x.f.g` | `x.f.g` | when `x` is `()` both answer `()` |
+| `if x == () \|\| x.f == () => () else => x.f.g` | `x.f.g` | each tested path is a prefix of the read |
+| `if x != () => x.f` (or `else => ()`) | `x.f` | the same, turned round |
+| `x != () && x.f == v` | `x.f == v` | `v` a literal that is not `()`: `() == v` is false, as the guard was |
+| `x != () && x.f != ()` | `x.f != ()` | `() != ()` is false |
+| `x == () \|\| x.f != v` | `x.f != v` | `() != v` is true, as the guard was |
+| `x == () \|\| x.f == ()` | `x.f == ()` | |
+
+Left: a read used as a Bool (`x != () && x.f` — `&&` needs a Bool, and
+`()` is not one), a comparison with a value that may itself be `()`
+(`x.f == y`), a comparison `()` answers differently (`x.f > 3`, `x != ()
+&& x.f == ()`), a call or an index on the guarded path (`x.f(1)`,
+`x.xs[0]`), and a comment the rewrite would drop.
+
+**`defaults`** — `if x == () => d else => x` and `if x != () => x else
+=> d` become `x ?? d`. `??` evaluates `d` only when `x` is `()`, as the
+`if` did, so `d` may be anything — a call, a `raise` — and `x`, a name
+or a field chain, is read once where it was read twice, which changes
+nothing. An `else if` default is kept whole: `if a != () => a else if b
+!= () => b else => 0` is `a ?? (b ?? 0)`. Left: a default that is a
+block, or a `return`, `break`, `continue`, loop or assignment; a default
+of `()` (`olang fix guards` drops that test); a comment the rewrite
+would drop.
+
+**`first-last`** — `first(xs)` and `last(xs)` answer `()` for an empty
+list, where `xs[0]` and `xs[len(xs) - 1]` raise, so only a read whose
+emptiness the code tests is rewritten:
+
+| Before | After |
+|---|---|
+| `if len(xs) == 0 => () else => xs[len(xs) - 1]` | `last(xs)` |
+| `if len(xs) > 0 => xs[0] else => ()` (or no else) | `first(xs)` |
+| `len(xs) > 0 && xs[len(xs) - 1] == v` | `len(xs) > 0 && last(xs) == v` |
+| `if len(xs) == 0 \|\| c => d else => xs[0]` | `… else => first(xs)` |
+
+A read is guarded in the branch a length test proves non-empty (`len(xs)
+> 0`, `!= 0`, `>= 1`, either way round, a conjunct of the `if`'s
+condition or of the `&&` before it; `len(xs) == 0` in the `else`, or
+before an `||`), not inside a lambda written there (it may run later),
+and not where `xs` is bound again. `len` and `[i]` also take Bytes,
+which `first` and `last` refuse, so `xs` must be a name bound to a value
+that is never Bytes: a list or string literal, a `+` with one, the
+result of `split`, `map`, `filter`, `sort`, `str.split` and the other
+list and string makers, or a parameter annotated `[T]` or `String` —
+and never assigned anything else. Left: an unguarded `xs[len(xs) - 1]`
+(it raises on `[]`), a list not proven never Bytes, and a file or
+function that binds `len`, `first` or `last` itself.
+
+**`units`** — `to_int(math.floor(e))` becomes `math.floor(e)`, and the
+same for `ceil`, `round` and `trunc`: they answer an Int (or raise
+before `to_int` is reached), and `to_int` of an Int is that Int. Left:
+a file or function that binds `to_int` or `math` itself.
+
+`OLANG_FIX_DEBUG=<dir>` writes the two trees as read back when a file is
+left, as for `olang fix maps`.
 
 ## `olang check`
 

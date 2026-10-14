@@ -729,7 +729,7 @@ fn receiver_is_atomic(expr: &Pair<'_, Rule>) -> Option<bool> {
 /// Whether `x.k ?? d` needs `d` in parentheses: an operator at or below
 /// `??`'s level would take `x.k ?? d`'s left as its own (`a == b`), and
 /// an `if`, `match`, lambda or block runs on to the end of the line.
-fn default_needs_parens(expr: &Pair<'_, Rule>) -> bool {
+pub(crate) fn default_needs_parens(expr: &Pair<'_, Rule>) -> bool {
     let Some(binary) = expr.clone().into_inner().next() else {
         return true;
     };
