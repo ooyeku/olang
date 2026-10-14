@@ -1770,7 +1770,9 @@ fn a_canvas_hears_the_wheel_the_pinch_and_says_what_is_under_the_pointer() {
         let pinches = filter(got, (e) => map_get(e, "kind") == "pinch")
         let scrolled = filter(got, (e) => map_get(e, "kind") == "scrolled")
         let cv = filter(gui.read(w, "a11y"), (n) => map_get(n, "key") == "cv")[0]
-        [map_get(moves[0], "hit"), len(wheels), map_get(wheels[0], "key"), map_get(wheels[0], "dx"), map_get(wheels[0], "mod"), map_get(wheels[1], "mod"),
+        // the move this test made is the last pointer event: one a test
+        // before it left behind can still arrive after the drain above
+        [map_get(moves[len(moves) - 1], "hit"), len(wheels), map_get(wheels[0], "key"), map_get(wheels[0], "dx"), map_get(wheels[0], "mod"), map_get(wheels[1], "mod"),
          map_get(pinches[0], "delta"), map_get(pinches[0], "key"), len(scrolled), map_get(cv, "active")]
     "##);
     assert_eq!(
