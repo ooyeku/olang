@@ -431,6 +431,23 @@ is tagged final. docs/migrating.md walks each change.
   `[f] == [g]` and `Ok(f) == Ok(f)` raise as before, `[1, f] == [2, f]`
   is `false` (it raised), the same on every tier and in any walk order.
 
+- A browser bundle keeps each module's scope, as native modules do. The
+  bundle was one namespace with only private names renamed, so two
+  modules sharing a name collided: Foundry's dashboard refused to boot
+  with "function 'code' is already declared" (the web SDK's `code`
+  element against Shuttle's `code` field) once the duplicate-`fn` rule
+  reached the browser. Now every top-level `fn` and `let` a module
+  declares, shared or not, takes a name only that module has, and every
+  name it imports from another module of the bundle takes that module's
+  name for it: a module reaches only what it imports, an import whose
+  `use` path cannot tell two sharing modules apart is a bundling error
+  naming both, and macros expand before the renaming so their output is
+  scoped where it lands. `bundle_clients_in` takes the client paths
+  (`serve` passes them); the hot list names functions by their bundle
+  names. tests/browser_agreement_test.rs runs a program of every freeze
+  ruling in the browser runtime (playground/run_harness.mjs) and
+  natively and compares them, and bundles two modules sharing `code`.
+
 ## [0.88.0] - 2026-10-12
 
 ### Upgrading

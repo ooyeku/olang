@@ -238,9 +238,9 @@ fn the_checker_reports_what_every_run_would_refuse() {
 
 #[test]
 fn a_name_used_and_never_imported_is_an_error() {
-    // It resolves in a browser bundle, which is one namespace, from
-    // whichever module is spliced beside the file — and is an undefined
-    // variable natively. A bare `use` brings every name of its module, a
+    // It is an undefined variable natively, and in a browser bundle too,
+    // which keeps each module's scope (it once resolved such a name from
+    // whichever module was spliced beside the file). A bare `use` brings every name of its module, a
     // type brings its variants, and a module is its own namespace; none of
     // those is reported.
     let ws = workspace("unimported");

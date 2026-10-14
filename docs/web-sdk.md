@@ -437,12 +437,19 @@ bundled in order, so browser helpers live in tested lib modules that
 server code can import too.
 
 Each module keeps its own scope in the bundle, as it has when it runs
-natively. Its private top-level names — the `fn`s and `let`s it does not
-`share` — are renamed to names only that module has (`meta.rename`), so
-two modules' like-named helpers stay two, and a module that uses a
-neighbor's private helper without importing it fails in the browser as
-it would natively. What a module shares is one name across the bundle,
-as an import makes it. `serve` checks each client module on its own
+natively. Every top-level `fn` and `let` a module declares, shared or
+not, is renamed to a name only that module has (`meta.rename`), and
+every name it imports from another module of the bundle to that
+module's name for it — so two modules' like-named functions stay two
+(the SDK's `code` element and an app's own `code`), and a module reaches
+only what it imports: a name it uses without importing fails in the
+browser as it would natively. An import finds its module by the name it
+shares, told apart by the `use` path when several modules share it
+(`use lib.fields { code }` is lib/fields.ol's, `use web { code }` the
+SDK's); one the path cannot tell apart is a bundling error naming both.
+A name imported from two modules is the later import's, as natively.
+Macros expand before the renaming, so a macro's output is scoped as the
+module it lands in. `serve` checks each client module on its own
 before splicing (`meta.unresolved`) and prints one `WARNING:` line per
 module that uses a name it neither defines nor imports, naming them;
 `leaked_names(paths, sources)` answers the same lines for a build

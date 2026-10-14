@@ -1697,7 +1697,7 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
         });
         self.add_function(FunctionDoc {
             name: "meta.unresolved".to_string(),
-            description: "Every name a program uses that nothing in it defines or imports and the language does not provide, in order of first use, as Ok(list) — Err when the source does not parse. A module spliced into a larger program (a browser bundle) resolves such a name by accident of its neighbors; this is how the splicer finds out.".to_string(),
+            description: "Every name a program uses that nothing in it defines or imports and the language does not provide, in order of first use, as Ok(list) — Err when the source does not parse. A browser bundle keeps each module's scope, so such a name is undefined there as natively; the bundler warns with it.".to_string(),
             syntax: "meta.unresolved(source)".to_string(),
             parameters: vec!["source: String - a program's text".to_string()],
             return_type: "Result<List<String>, String>".to_string(),

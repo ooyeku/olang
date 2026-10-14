@@ -75,9 +75,8 @@ pub fn call_meta_function(
 
 /// `meta.unresolved(source)` → Ok(list of names) | Err(message): every
 /// name the program uses that nothing in it defines or imports and the
-/// language does not provide, in order of first use. A module that is
-/// spliced into a larger program — a browser bundle — resolves such a
-/// name by accident of its neighbors; this is how the splicer finds out.
+/// language does not provide, in order of first use: names undefined
+/// when the module runs, in a browser bundle as natively.
 fn meta_unresolved(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let source = match args.first() {
         Some(Value::String(s)) => s.as_str().to_string(),

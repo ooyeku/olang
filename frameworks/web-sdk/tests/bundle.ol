@@ -21,11 +21,12 @@ test "the demo's real bundle parses and is module-free" {
     assert_eq(len(filter(lines, (l) => str.starts_with(str.trim(l), "use lib."))), 0)
     assert_eq(len(filter(lines, (l) => str.starts_with(str.trim(l), "use web"))), 0)
     assert_eq(len(filter(lines, (l) => str.starts_with(str.trim(l), "share "))), 0)
-    // The SDK's browser layer and the app both arrived: a shared name as
-    // written, a module's private one renamed to that module's own.
-    assert_eq(str.contains(b, "fn mount("), true)
-    assert_eq(str.contains(b, "fn unwrap_envelope("), true)
+    // The SDK's browser layer and the app both arrived, each module's
+    // names its own, shared or not.
+    assert_eq(str.contains(b, "_mount("), true)
+    assert_eq(str.contains(b, "_unwrap_envelope("), true)
     assert_eq(str.contains(b, "_view("), true)
+    assert_eq(str.contains(b, "fn mount("), false)
     assert_eq(str.contains(b, "fn view("), false)
     // Test blocks never ship to the browser.
     assert_eq(len(filter(lines, (l) => str.starts_with(l, "test "))), 0)

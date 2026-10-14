@@ -237,8 +237,7 @@ fn sdk_file(rel) = unwrap(fs.read_file(sdk_dir() + "/" + rel))
 
 /// The SDK's browser-side modules, in dependency order. `share ` and
 /// intra-SDK `use lib.*` lines are stripped: the bundle is one program,
-/// so a shared name resolves by concatenation, and each module's private
-/// names are renamed to its own (`module_scoped`).
+/// and each module keeps its scope by renaming (`bundle_units`).
 fn browser_modules() = ["lib/html.ol", "lib/forms.ol", "lib/ui.ol",
                         "lib/state.ol", "lib/view.ol", "lib/api.ol",
                         "lib/store.ol"]
@@ -312,11 +311,9 @@ fn strip_module_lines(source) = {
     join(out, "\n")
 }
 
-/// The names each client module uses without importing or defining them.
-/// The bundle is one namespace, so such a name resolves in the browser —
-/// by accident of whichever module is spliced beside it — and is
-/// undefined the moment the module runs natively or the neighbor renames
-/// it. One line per module that has any; a module that does not parse
+/// The names each client module uses without importing or defining them:
+/// each is undefined when the module runs, in the browser as natively
+/// (the bundle keeps each module's scope, `bundle_units`). One line per module that has any; a module that does not parse
 /// on its own is left to the bundle's own check. Capitalized names are
 /// left out: a variant constructor arrives with the import of its enum,
 /// which a check of the module's text alone cannot see, and a warning
@@ -331,9 +328,8 @@ share fn leaked_names(paths, sources) = {
                 if len(names) > 0 => {
                     out = out + [paths[i] + " uses " + join(map(names, (n) => "`" + n + "`"), ", ") +
                         " without importing or defining " + (if len(names) == 1 => "it" else => "them") +
-                        ": the bundle is one namespace, so the browser resolves " +
+                        ": a module reaches only what it imports, in the browser as natively — import " +
                         (if len(names) == 1 => "it" else => "them") +
-                        " from another module — import " + (if len(names) == 1 => "it" else => "them") +
                         " where " + (if len(names) == 1 => "it is" else => "they are") + " used"]
                 }
             },
@@ -355,44 +351,161 @@ test "a client module that uses a neighbor's name without importing it is named"
     assert_eq(leaked_names(["c.ol"], [typed]), [])
 }
 
-/// A module's private top-level names (its `fn`s and `let`s without
-/// `share`), each mapped to a name only the `n`th module of a bundle has:
-/// spliced into one program, a module keeps its own scope, so two
-/// modules' like-named helpers stay two, and a neighbor's private name
-/// is not reachable by accident.
-fn private_names(source, n) = match meta.parse(source) {
-    Err(e) => #{},
-    Ok(nodes) => fold(nodes, #{}, (acc, node) =>
-        if node.kind == "fn" && !node.shared => map_set(acc, node.name, private_name(n, node.name))
-        else if node.kind == "let" && !node.shared && node.pattern.form == "ident" =>
-            map_set(acc, node.name, private_name(n, node.name))
-        else => acc)
+// ── module scope in the bundle ───────────────────────────────────────
+// The bundle splices every module into one program, so each module's
+// names are given back their scope by renaming: every top-level `fn`
+// and plain `let` a module declares, shared or not, takes a name only
+// that module has, and every name it imports from another module of the
+// bundle takes that module's name for it. Two modules' like-named
+// functions stay two (the web SDK's `code` element and an app's `code`
+// field), and a module reaches only what it imports, as natively. A
+// name imported from two modules is the later import's, as natively.
+
+fn scoped_name(n, name) = "__m" + to_string(n) + "_" + name
+
+/// The top-level values `nodes` declare: `#{ name: shared }`.
+fn declared(nodes) = fold(nodes, #{}, (acc, node) =>
+    if node.kind == "fn" => map_set(acc, node.name, node.shared)
+    else if node.kind == "let" && node.pattern.form == "ident" => map_set(acc, node.name, node.shared ?? false)
+    else => acc)
+
+/// A module of the bundle: its index, path, source, and what it declares
+/// and imports (from its own text, before expansion).
+fn bundle_unit(n, path, source) = match meta.parse(source) {
+    Ok(nodes) => #{ "n": n, "path": path, "source": source, "decl": declared(nodes),
+                    "uses": filter(nodes, (x) => x.kind == "use") },
+    Err(e) => #{ "n": n, "path": path, "source": source, "decl": #{}, "uses": [] }
 }
 
-fn private_name(n, name) = "__m" + to_string(n) + "_" + name
+/// Whether module `u` offers `name` to an import: shared in its text, or
+/// declared by a macro's output there (`generated`).
+fn bundle_offers(u, name, generated) =
+    map_get(u.decl, name) == true || (!map_has_key(u.decl, name) && contains(generated[u.n], name))
 
-/// `source` with its private names made its own (`private_names`). A
-/// module that does not parse is left as it is; the bundle's own parse
-/// reports it.
-fn module_scoped(source, n) = {
-    let names = private_names(source, n)
-    if len(map_keys(names)) == 0 => source
-    else => match meta.rename(source, names) {
-        Ok(text) => text,
-        Err(e) => source
+/// The module of `units` (other than `i`) that `use use_path { name }`
+/// reaches: the one that shares `name`, told apart by the import's path
+/// when several do. `()` when no module of the bundle has it (the
+/// browser's own modules, a type, a server-only name).
+fn bundle_source_of(units, i, use_path, name, generated) = {
+    let root = str.split(use_path, ".")[0]
+    if browser_resolves(root) => return ()
+    let cands = filter(units, (u) => u.n != i && bundle_offers(u, name, generated))
+    if len(cands) == 0 => return ()
+    if len(cands) == 1 => return cands[0].n
+    let tail = str.replace(use_path, ".", "/") + ".ol"
+    let by_tail = filter(cands, (u) => str.ends_with(u.path, tail))
+    let narrowed = if len(by_tail) > 0 => by_tail
+        else if root == "web" => filter(cands, (u) => str.starts_with(u.path, "web:"))
+        else => filter(cands, (u) => str.contains(u.path, "/" + root + "/"))
+    if len(narrowed) == 1 => return narrowed[0].n
+    let named = if len(narrowed) > 0 => narrowed else => cands
+    raise("client bundle: `" + name + "` is shared by " + join(map(named, (u) => u.path), " and ") +
+        ", and `use " + use_path + "` in " + units[i].path + " does not say which")
+}
+
+/// The renaming that gives module `i` its scope: its imports first (a
+/// later `use` of a name wins), then its own declarations, as its
+/// expanded text declares them.
+fn bundle_renames(units, i, own, generated) = {
+    let mut names = #{}
+    for u in units[i].uses {
+        for item in u.items {
+            if item != "*" => {
+                let parts = str.split(item, " as ")
+                let name = str.trim(parts[0])
+                let local = if len(parts) > 1 => str.trim(parts[1]) else => name
+                let from = bundle_source_of(units, i, u.path, name, generated)
+                if from != () => { names = map_set(names, local, scoped_name(from, name)) }
+            }
+        }
+    }
+    for name in map_keys(own) { names = map_set(names, name, scoped_name(i, name)) }
+    names
+}
+
+fn bundle_marker(n) = "// ── bundle module " + to_string(n) + " ──"
+
+/// The bundle: each module stripped (its `use` lines, `share`, its test
+/// blocks), the whole expanded once (a macro reaches the helpers of the
+/// module that declares it, and its output lands in the module that
+/// used it), then each module renamed to its own scope.
+fn bundle_units(units) = {
+    let marked = join(map(units, (u) => bundle_marker(u.n) + "\n" + strip_module_lines(u.source)), "\n\n")
+    // Expanded here, once, so the browser parses the bundle exactly once:
+    // a bundle carrying `meta fn` declarations and `@` sites otherwise
+    // costs the wasm parser several complete passes at boot.
+    let expanded = match meta.expand(marked) {
+        Err(e) => raise("client bundle does not expand: " + e),
+        Ok(text) => text
+    }
+    // each module's expanded text, from its marker to the next
+    let mut parts = []
+    for u in units {
+        let m = bundle_marker(u.n)
+        let at = str.index_of(expanded, m)
+        let from = if at == () => str.length(expanded) else => at + str.length(m)
+        let next = if u.n + 1 < len(units) => str.index_of(expanded, bundle_marker(u.n + 1)) else => ()
+        let to = if next == () => str.length(expanded) else => next
+        parts = parts + [str.substring(expanded, from, to)]
+    }
+    let own = map(parts, (text) => match meta.parse(text) { Ok(nodes) => declared(nodes), Err(e) => #{} })
+    let generated = map(units, (u) => filter(map_keys(own[u.n]), (k) => !map_has_key(u.decl, k)))
+    let scoped = map(units, (u) => {
+        let names = bundle_renames(units, u.n, own[u.n], generated)
+        if len(map_keys(names)) == 0 => parts[u.n]
+        else => match meta.rename(parts[u.n], names) {
+            Ok(text) => text,
+            Err(e) => raise("client bundle: " + u.path + " does not rename: " + e)
+        }
+    })
+    let bundled = join(scoped, "\n\n")
+    match meta.parse(bundled) {
+        Err(e) => raise("client bundle does not parse: " + e),
+        Ok(tree) => bundled
     }
 }
 
-test "each module's private names stay its own in the bundle" {
-    let a = "fn helper() = \"a\"\nshare fn from_a() = helper()\n"
-    let b = "fn helper() = \"b\"\nshare fn from_b() = helper()\nlet label = { helper: 1 }.helper\n"
-    let scoped_a = module_scoped(a, 0)
-    let scoped_b = module_scoped(b, 1)
-    assert_eq(str.contains(scoped_a, "fn __m0_helper() = \"a\""), true)
-    assert_eq(str.contains(scoped_a, "share fn from_a() = __m0_helper()"), true)
-    assert_eq(str.contains(scoped_b, "{ helper: 1 }.helper"), true)
-    let program = strip_module_lines(scoped_a) + "\n" + strip_module_lines(scoped_b) + "\n[from_a(), from_b()]"
-    assert_eq(meta.eval(program), Ok(["a", "b"]))
+/// The modules of a bundle: the SDK's browser modules (`web:lib/…`), then
+/// the client files, by their absolute paths when given.
+fn bundle_inputs(dir, client_sources, client_paths) = {
+    let sdk = map(browser_modules(), (m) => ["web:" + m, unwrap(fs.read_file(dir + "/" + m))])
+    let clients = map(range(0, len(client_sources)), (i) => [
+        if i < len(client_paths) => unwrap_or(fs.abs_path(client_paths[i]), client_paths[i])
+        else => "client " + to_string(i + 1),
+        client_sources[i]])
+    let all = sdk + clients
+    map(range(0, len(all)), (n) => bundle_unit(n, all[n][0], all[n][1]))
+}
+
+test "each module's names stay its own in the bundle, shared or not" {
+    let a = "share fn code() = \"a\"\nfn helper() = \"a\"\nshare fn from_a() = helper() + code()\n"
+    let b = "use lib.a { from_a }\nshare fn code() = \"b\"\nfn helper() = \"b\"\nshare fn from_b() = helper() + code() + from_a()\nlet label = { helper: 1 }.helper\n"
+    let program = bundle_units([bundle_unit(0, "/p/lib/a.ol", a), bundle_unit(1, "/p/lib/b.ol", b)])
+    assert_eq(str.contains(program, "fn __m0_code()"), true)
+    assert_eq(str.contains(program, "fn __m1_code()"), true)
+    assert_eq(str.contains(program, "{ helper: 1 }.helper"), true)
+    assert_eq(meta.eval(program + "\n[__m0_from_a(), __m1_from_b()]"), Ok(["aa", "bbaa"]))
+}
+
+test "a module reaches only what it imports, and an import says which module" {
+    let a = "share fn pick() = \"a\"\n"
+    let b = "share fn pick() = \"b\"\n"
+    let c = "use lib.b { pick }\nshare fn chosen() = pick()\n"
+    let units = [bundle_unit(0, "/p/lib/a.ol", a), bundle_unit(1, "/p/lib/b.ol", b), bundle_unit(2, "/p/lib/c.ol", c)]
+    assert_eq(meta.eval(bundle_units(units) + "\n__m2_chosen()"), Ok("b"))
+    let d = "use other { pick }\nshare fn chosen() = pick()\n"
+    let amb = [bundle_unit(0, "/p/lib/a.ol", a), bundle_unit(1, "/p/lib/b.ol", b), bundle_unit(2, "/p/lib/d.ol", d)]
+    let r = attempt(() => bundle_units(amb))
+    assert_eq(is_err(r), true)
+    let message = match r { Err(m) => m, Ok(v) => "" }
+    assert_eq(str.contains(message, "`pick` is shared by /p/lib/a.ol and /p/lib/b.ol"), true)
+}
+
+test "a macro's output is scoped as the module it lands in" {
+    let lib = "share fn twice_of(x) = x * 2\nmeta fn twice(e) = `twice_of(${e})`\n"
+    let app = "use lib.m { twice, twice_of }\nshare fn run() = @twice(21)\n"
+    let units = [bundle_unit(0, "/p/lib/m.ol", lib), bundle_unit(1, "/p/app.ol", app)]
+    assert_eq(meta.eval(bundle_units(units) + "\n__m1_run()"), Ok(42))
 }
 
 /// The client program the browser actually loads: the SDK's browser
@@ -410,34 +523,12 @@ share fn bundle_clients(client_sources) = bundle_clients_in(sdk_dir(), client_so
 
 /// `bundle_clients` with the SDK read from `dir` — what `serve` uses when
 /// its config names an `"sdk_dir"`.
-share fn bundle_clients_in(dir, client_sources) = {
-    let sdk_sources = map(browser_modules(), (m) => unwrap(fs.read_file(dir + "/" + m)))
-    let n_sdk = len(sdk_sources)
-    let sdk = range(0, n_sdk)
-        |> map((i) => strip_module_lines(module_scoped(sdk_sources[i], i)))
-        |> join("\n\n")
-    let app_src = range(0, len(client_sources))
-        |> map((i) => strip_module_lines(module_scoped(client_sources[i], n_sdk + i)))
-        |> join("\n\n// ── module ──\n")
-    let bundled = sdk + "\n\n// ── application ──\n" + app_src
-    // Expanded here, once, so the browser parses the bundle exactly once:
-    // a bundle carrying `meta fn` declarations and `@` sites otherwise
-    // costs the wasm parser several complete passes at boot — parsing
-    // was the whole of a 4.5 s session start once the download was
-    // solved.
-    let expanded = match meta.expand(bundled) {
-        Err(e) => raise("client bundle does not expand: " + e),
-        Ok(text) => text
-    }
-    match meta.parse(expanded) {
-        Err(e) => raise("client bundle does not parse: " + e),
-        Ok(tree) => expanded
-    }
-}
+share fn bundle_clients_in(dir, client_sources, client_paths = []) =
+    bundle_units(bundle_inputs(dir, client_sources, client_paths))
 
 /// The names of the functions the app's client files declare at their
 /// top level, as the bundle names them (a private one renamed to its
-/// module's own, `module_scoped`) — the default hot list an image
+/// module's own, `bundle_units`) — the default hot list an image
 /// carries. A file that does not parse contributes nothing here; the
 /// bundler reports it.
 share fn client_fn_names(client_sources) = {
@@ -458,16 +549,19 @@ share fn client_fn_names(client_sources) = {
 }
 
 /// What the bundle calls a name the `i`th client file declares.
-fn bundle_name(client_sources, i, name, shared) =
-    if shared => name else => private_name(len(browser_modules()) + i, name)
+fn bundle_name(client_sources, i, name, shared) = scoped_name(len(browser_modules()) + i, name)
 
 /// A hot list as configured, by the names the client files declare,
 /// in the bundle's names.
 fn bundle_hot(client_sources, names) = map(names, (name) => {
     let mut found = name
     for i in range(0, len(client_sources)) {
-        let privates = private_names(client_sources[i], len(browser_modules()) + i)
-        if map_has_key(privates, name) => { found = map_get(privates, name) }
+        match meta.parse(client_sources[i]) {
+            Ok(nodes) => {
+                if map_has_key(declared(nodes), name) => { found = scoped_name(len(browser_modules()) + i, name) }
+            },
+            Err(e) => ()
+        }
     }
     found
 })
@@ -475,7 +569,8 @@ fn bundle_hot(client_sources, names) = map(names, (name) => {
 test "the hot list is the client files' own functions, by their bundle names" {
     let src = "use web { mount }\nfn view(s) = \"x\"\nlet n = 1\nshare fn update(s, a) = s"
     let names = client_fn_names([src])
-    assert_eq(names, [private_name(len(browser_modules()), "view"), "update"])
+    let n = len(browser_modules())
+    assert_eq(names, [scoped_name(n, "view"), scoped_name(n, "update")])
     assert_eq(client_fn_names(["fn ("]), [])
     assert_eq(bundle_hot([src], ["view", "update"]), names)
 }
@@ -662,7 +757,7 @@ share fn serve(config) = {
     let client_sources = map(client_paths, (p) => unwrap(fs.read_file(p)))
     for line in leaked_names(client_paths, client_sources) { println("WARNING: " + line) }
     let bundle = if len(client_paths) == 0 => ""
-        else => bundle_clients_in(sdk, client_sources)
+        else => bundle_clients_in(sdk, client_sources, client_paths)
     let hot = if hot_config == () => client_fn_names(client_sources)
         else => bundle_hot(client_sources, hot_config)
     // The program image: the bundle parsed here, once, and handed to the

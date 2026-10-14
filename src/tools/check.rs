@@ -737,8 +737,7 @@ fn unimported_names(
                 line,
                 column,
                 message: format!(
-                    "Undefined variable: {name} — nothing in this file defines or imports it \
-                     (in a browser bundle it would resolve from a neighboring module, by accident)"
+                    "Undefined variable: {name} — nothing in this file defines or imports it"
                 ),
                 runtime: true,
                 warning: false,

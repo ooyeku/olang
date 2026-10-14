@@ -464,9 +464,9 @@ lambda, or the right of `&&`/`||` may stand behind a guard and says
 nothing, as does a local that takes a builtin's name.
 
 A name a file uses and nothing in it defines or imports is an error:
-natively it is an undefined variable the moment that line runs, though
-a browser bundle — one namespace — resolves it from whichever module is
-spliced beside the file, which is how such a name survives for months.
+natively it is an undefined variable the moment that line runs, and in
+a browser bundle too, which keeps each module's scope (it once resolved
+such a name from whichever module was spliced beside the file).
 A bare `use m` brings every name of `m`, an imported type brings its
 variants, and a module is its own namespace; when a bare `use` cannot be
 resolved, what it brings is unknown and nothing is reported.
