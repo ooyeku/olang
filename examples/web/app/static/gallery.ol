@@ -188,7 +188,7 @@ dom.on_frame((f) => {
         "sy": 165.0 * (1.0 + 0.1 * math.cos(tt * 0.8)),
         "tx": 560.0, "ty": 190.0 })
     dom.set_text(big_hud, "50,000 points · " +
-        show(to_int(math.round(1000.0 / math.max(f.delta, 1.0)))) + " fps")
+        show(math.round(1000.0 / math.max(f.delta, 1.0))) + " fps")
 })
 
 // ── the live piece: rose curves morphing, one draw-list per frame ────

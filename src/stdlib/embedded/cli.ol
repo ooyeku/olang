@@ -190,7 +190,7 @@ share fn parse(spec, argv) = {
             else => {
                 let matches = filter(cmds, (c) => c.name == head)
                 if len(matches) == 0 => Err("unknown command: " + head)
-                else => match parse_core(matches[0], skip(argv, 1)) {
+                else => match parse_core(first(matches), skip(argv, 1)) {
                     Err(e) => Err(e),
                     Ok(sub) => Ok(map_set(sub, "command", head))
                 }

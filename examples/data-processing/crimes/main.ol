@@ -56,7 +56,7 @@ fn spark(vals) = {
     let hi = fold(vals, vals[0], (a, v) => if v > a => v else => a)
     let ticks = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
     str.join(map(vals, (v) =>
-        ticks[to_int(math.round((v - lo) / math.max(0.000001, hi - lo) * 7.0))]), "")
+        ticks[math.round((v - lo) / math.max(0.000001, hi - lo) * 7.0)]), "")
 }
 
 println("")
@@ -145,7 +145,7 @@ let tt_names = ods.to_list(top_types["Primary Type"])
 let tt_ns = ods.to_list(top_types["n"])
 let tt_rates = ods.to_list(top_types["arrest_rate"])
 let ci_frame = ods.frame_from_records(map(0..12, (r) => {
-    let ci = wilson_ci(to_int(math.round(tt_rates[r] * to_float(tt_ns[r]))), tt_ns[r])
+    let ci = wilson_ci(math.round(tt_rates[r] * to_float(tt_ns[r])), tt_ns[r])
     #{ "primary type": tt_names[r], "incidents": tt_ns[r],
        "arrest rate": math.round(tt_rates[r] * 1000.0) / 10.0,
        "95% CI": `${math.round(ci[0] * 1000.0) / 10.0}—${math.round(ci[1] * 1000.0) / 10.0}` }
@@ -300,7 +300,7 @@ let losses = model.loss_curve
 stage("models", `logistic ${t_log} ms, naive bayes ${t_gnb} ms, tree ${t_tree} ms (${len(tree.feat)} nodes)`)
 
 // ── 12. evaluation: AUC with intervals, F1-optimal operating points ──
-let n_pos = to_int(math.round(ods.mean(ods.series(test_y)) * to_float(len(test_y))))
+let n_pos = math.round(ods.mean(ods.series(test_y)) * to_float(len(test_y)))
 let n_neg = len(test_y) - n_pos
 fn eval_model(ps, ys) = {
     let a = auc(ps, ys)

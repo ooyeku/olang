@@ -23,7 +23,7 @@ fn sel_status() = {
 }
 
 fn pct(a, b) = if b == 0 => "0%"
-    else => show(to_int(math.round(to_float(a) * 100.0 / to_float(b)))) + "%"
+    else => show(math.round(to_float(a) * 100.0 / to_float(b))) + "%"
 
 fn render(items) = {
     let sel = sel_status()
@@ -42,7 +42,7 @@ fn render(items) = {
         dash.stat("done", show(done_n), pct(done_n, len(items)) + " complete", "#8b7ae0"),
         dash.stat("points", show(total_pts),
             if len(picked) == 0 => "—"
-            else => "avg " + show(to_int(math.round(to_float(total_pts) / to_float(len(picked))))),
+            else => "avg " + show(math.round(to_float(total_pts) / to_float(len(picked)))),
             "#f4b84c"),
         dash.half("by status", "<div id=\"b-status\"></div>"),
         dash.half("priority mix", "<div id=\"b-mix\"></div>"),

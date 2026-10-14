@@ -140,7 +140,7 @@ fn dispatch_in(routes, req, log, hop) = {
     else =>
         error_response(404, "not_found", "no route for " + req.method + " " + req.path)
     let ms = time.monotonic_ms() - started
-    let level = if log == () => "all" else => log
+    let level = log ?? "all"
     // A deferred answer has no status yet: the ticket passes through and
     // the line, when one is wanted, is the responder's to write.
     if typeof(response) == "HttpDeferred" => ()
@@ -164,8 +164,7 @@ share fn sdk_dir() = {
         Ok(dir) => dir,
         Err(e) => {
             let from_lock = locked_web_dir()
-            if from_lock != () => from_lock
-            else => sdk_dir_from_machine()
+            from_lock ?? sdk_dir_from_machine()
         }
     }
 }
@@ -180,8 +179,8 @@ fn locked_web_dir() = {
             Err(e2) => (),
             Ok(lock) => {
                 let packages = lock.package
-                let entry = if packages == () => () else => packages.web
-                let source = if entry == () => () else => entry.source
+                let entry = packages.web
+                let source = entry.source
                 if source == () => ()
                 else if source.kind == "path" => {
                     let p = source.path
@@ -224,11 +223,10 @@ fn shelf_dir(name) = {
 
 fn sdk_dir_from_machine() = {
     let from_shelf = shelf_dir("web")
-    if from_shelf != () => from_shelf
-    else if fs.exists("frameworks/web-sdk/olang.toml") => "frameworks/web-sdk"
+    from_shelf ?? (if fs.exists("frameworks/web-sdk/olang.toml") => "frameworks/web-sdk"
     else if fs.exists("lib/html.ol") => "."
     else if fs.exists("../lib/html.ol") => ".."
-    else => "."
+    else => ".")
 }
 
 fn sdk_file(rel) = unwrap(fs.read_file(sdk_dir() + "/" + rel))
@@ -445,7 +443,7 @@ fn bundle_units(units) = {
         let at = str.index_of(expanded, m)
         let from = if at == () => str.length(expanded) else => at + str.length(m)
         let next = if u.n + 1 < len(units) => str.index_of(expanded, bundle_marker(u.n + 1)) else => ()
-        let to = if next == () => str.length(expanded) else => next
+        let to = next ?? str.length(expanded)
         parts = parts + [str.substring(expanded, from, to)]
     }
     let own = map(parts, (text) => match meta.parse(text) { Ok(nodes) => declared(nodes), Err(e) => #{} })
@@ -730,7 +728,7 @@ share fn serve(config) = {
     // the default line.
     let log = if map_has_key(config, "log") => {
         let given = config.log
-        if given == () => "off" else => given
+        given ?? "off"
     } else => access_level()
     let view_fn = get_or(config, "view", ())
     let initial = get_or(config, "initial", ())

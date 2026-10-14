@@ -240,7 +240,7 @@ fn resolve_confirm(name) =
 /// click"` names the events explicitly and overrides the default.
 fn event_fires(ev, data) = {
     let ty = ev.type
-    let on = if data == () => () else => data.on
+    let on = data.on
     if on != () => {
         let wanted = " " + on + " "
         let name = if ty == "keydown" => "enter" else => ty
@@ -248,7 +248,7 @@ fn event_fires(ev, data) = {
     }
     else if ty == "change" && ev.tag == "input" => {
         let kind = ev.input_type
-        !contains(["", "text", "search", "email", "url", "tel", "password"], if kind == () => "" else => kind)
+        !contains(["", "text", "search", "email", "url", "tel", "password"], kind ?? "")
     }
     else => true
 }
@@ -273,7 +273,7 @@ fn dispatch_action(ev) = {
     let raw_name = if data == () || click_on_form_control(ev) || is_repeat_of_enter(ev)
         || !event_fires(ev, data) => "" else => {
         let a = data.action
-        if a == () => "" else => a
+        a ?? ""
     }
     let name = if raw_name == "" => "" else => resolve_confirm(raw_name)
     if ev.type == "keydown" && ev.id != () && ev.id != "" => {
@@ -337,7 +337,7 @@ share fn action_arg(ev) = {
     let data = ev.data
     let name = if data == () => "" else => {
         let a = data.action
-        if a == () => "" else => a
+        a ?? ""
     }
     let bare = if str.starts_with(name, "confirm:") =>
         str.substring(name, 8, str.length(name)) else => name
