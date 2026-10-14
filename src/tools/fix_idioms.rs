@@ -234,9 +234,28 @@ fn pass(src: &str, target: Target) -> Result<(String, Report), String> {
         noted: Vec::new(),
     };
     // Each top-level statement on its own: a function that binds one of
-    // the names (a `let last`, a parameter `first`) leaves its reads.
+    // the names (a `let last`, a parameter `first`) leaves its reads. The
+    // file's script — its top-level code outside functions — is one
+    // scope to `olang check`, so a name bound in any of it (inside a
+    // block too) leaves the reads in all of it.
+    let is_fn = |st: &Pair<'_, Rule>| {
+        st.clone().into_inner().any(|k| {
+            matches!(
+                k.as_rule(),
+                Rule::function_decl
+                    | Rule::share_decl
+                    | Rule::decorated_decl
+                    | Rule::meta_fn_decl
+                    | Rule::test_decl
+            )
+        })
+    };
+    let script = statements
+        .iter()
+        .filter(|st| !is_fn(st))
+        .any(|st| called.iter().any(|n| rebinds(st, n)));
     for st in statements {
-        a.shadowed = top || called.iter().any(|n| rebinds(&st, n));
+        a.shadowed = top || called.iter().any(|n| rebinds(&st, n)) || (script && !is_fn(&st));
         if tracking {
             a.scopes.assigned_here.clear();
             assigned_unproven(st.clone(), &mut a.scopes.assigned_here);
