@@ -155,6 +155,8 @@ jobs:
         with:
           name: ${{ github.ref_name }}
           draft: false
+          # a version with a suffix (v1.0.0-rc.1) is a prerelease
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             assets/*.tar.gz
             assets/*.wasm
@@ -170,6 +172,9 @@ jobs:
   homebrew:
     name: Update Homebrew tap
     needs: release
+    # a prerelease does not move the tap: `brew install` stays on the
+    # last release
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
 
     steps:

@@ -69,15 +69,17 @@ fn lock(dir: &Path) -> String {
 fn a_pin_resolves_to_the_newest_installed_toolchain_that_satisfies_it() {
     let home = scratch("resolve-home");
     let dir = scratch("resolve");
-    toolchain(&home, "0.87.0");
-    toolchain(&home, "0.88.0");
-    toolchain(&home, "0.88.1");
+    toolchain(&home, "40.87.0");
+    toolchain(&home, "40.88.0");
+    toolchain(&home, "40.88.1");
+    // versions far past any real olang, so the running one is never the
+    // newest that satisfies the pin
     // a pin is a minimum: the newest installed olang at or past it
-    let newest = toolchain(&home, "0.89.0");
-    project(&dir, Some("0.88"));
+    let newest = toolchain(&home, "40.89.0");
+    project(&dir, Some("40.88"));
     let (ok, out) = otc(&dir, &home, &["install"]);
     assert!(ok, "{out}");
-    assert!(lock(&dir).contains("olang = \"0.89.0\""), "{}", lock(&dir));
+    assert!(lock(&dir).contains("olang = \"40.89.0\""), "{}", lock(&dir));
     let (ok, out) = otc(&dir, &home, &["toolchain", "which"]);
     assert!(ok, "{out}");
     assert_eq!(PathBuf::from(out.trim()), newest);
@@ -87,11 +89,11 @@ fn a_pin_resolves_to_the_newest_installed_toolchain_that_satisfies_it() {
     assert!(ok, "{out}");
     assert_eq!(lock(&dir), before);
     // the pin moved past the lock's olang: re-resolved
-    toolchain(&home, "1.0.0");
-    project(&dir, Some("1"));
+    toolchain(&home, "41.0.0");
+    project(&dir, Some("41"));
     let (ok, out) = otc(&dir, &home, &["install"]);
     assert!(ok, "{out}");
-    assert!(lock(&dir).contains("olang = \"1.0.0\""), "{}", lock(&dir));
+    assert!(lock(&dir).contains("olang = \"41.0.0\""), "{}", lock(&dir));
 }
 
 #[test]

@@ -458,9 +458,9 @@ fn json_esc(s) = show(s)
 
 fn row_html(n) = {{
     let id = show(map_get(n, "id"))
-    "<div class=\"row\"><span class=\"date\">" + esc(map_get(n, "created_at"))
-        + "</span><span class=\"text\">" + esc(map_get(n, "text"))
-        + "</span><button class=\"del\" id=\"del-" + id + "\">×</button></div>"
+    "<div class=\"row\"><span class=\"date\">" + esc(map_get(n, "created_at")) +
+        "</span><span class=\"text\">" + esc(map_get(n, "text")) +
+        "</span><button class=\"del\" id=\"del-" + id + "\">×</button></div>"
 }}
 
 fn render(items) =

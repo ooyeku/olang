@@ -19,6 +19,14 @@ impl<T> SeqParIter for [T] {
         self.iter()
     }
 }
+#[cfg(not(feature = "native"))]
+trait SeqFindAny: Iterator + Sized {
+    fn find_any<P: FnMut(&Self::Item) -> bool>(mut self, p: P) -> Option<Self::Item> {
+        self.find(p)
+    }
+}
+#[cfg(not(feature = "native"))]
+impl<I: Iterator> SeqFindAny for I {}
 use std::collections::HashMap;
 
 pub struct BuiltinFunctions {
