@@ -34,9 +34,7 @@ meta fn when(cond, node) = `if ${cond} => ${node} else => text("")`
 
 /// A text node — always escaped at render. Non-strings stringify
 /// (numbers, booleans); strings pass through as themselves.
-share fn text(s) = #{ "text": as_text(s) }
-
-fn as_text(v) = if typeof(v) == "String" => v else => to_string(v)
+share fn text(s) = #{ "text": to_string(s) }
 
 /// Trusted, pre-rendered markup — the explicit escaping opt-out.
 share fn raw(s) = #{ "raw": s }
@@ -114,7 +112,7 @@ share fn volatile(key, build) = {
 /// move, only the rows whose own inputs changed are rebuilt, and the
 /// rest are kept where they stand (or moved, when the order changed).
 share fn memo_list(key, items, key_of, inputs_of, row) = {
-    let row_keys = map(items, (it) => key + ":" + as_text(key_of(it)))
+    let row_keys = map(items, (it) => key + ":" + to_string(key_of(it)))
     if !dom.available() =>
         map(range(0, len(items)), (i) => keyed(row(items[i]), row_keys[i]))
     else => {
@@ -227,7 +225,7 @@ share fn textarea(attrs, children) = el("textarea", attrs, children)
 
 /// Escape text for HTML element content.
 share fn escape(s) =
-    str.replace(str.replace(str.replace(as_text(s), "&", "&amp;"), "<", "&lt;"), ">", "&gt;")
+    str.replace(str.replace(str.replace(to_string(s), "&", "&amp;"), "<", "&lt;"), ">", "&gt;")
 
 /// Escape a value for a double-quoted attribute.
 share fn escape_attr(s) = str.replace(escape(s), "\"", "&quot;")
