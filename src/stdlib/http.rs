@@ -1322,6 +1322,7 @@ fn serve_connection(
                 let fs_grant = interpreter.effective_fs();
                 let conn_id = CONN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 CURRENT_CONN.with(|c| c.set(conn_id));
+                crate::errtrace::begin();
                 let outcome = interpreter.call_function(handler.clone(), vec![request_value]);
                 CURRENT_CONN.with(|c| c.set(0));
                 // A deferred answer: the connection parks under its ticket
@@ -1341,11 +1342,29 @@ fn serve_connection(
                 let rendered = match outcome {
                     Ok(result) => render_handler_response(&result, keep_alive, fs_grant),
                     Err(error) => {
+                        // where it failed: the innermost frame the error
+                        // left (kept for runtime.last_error on this thread)
+                        let frames = crate::errtrace::caught(&error.to_string());
+                        let at = frames
+                            .iter()
+                            .find(|f| f.file.is_some())
+                            .map(|f| {
+                                format!(
+                                    " (at {}:{}{})",
+                                    f.file.as_deref().unwrap_or("?"),
+                                    f.line,
+                                    f.function
+                                        .as_deref()
+                                        .map(|n| format!(" in {}", n))
+                                        .unwrap_or_default()
+                                )
+                            })
+                            .unwrap_or_default();
                         crate::log::get_logger().error(
                             "http",
                             &format!(
-                                "handler failed remote_addr={} method={} path={}: {}",
-                                remote_addr, req.method, req.path, error
+                                "handler failed remote_addr={} method={} path={}: {}{}",
+                                remote_addr, req.method, req.path, error, at
                             ),
                         );
                         Rendered {

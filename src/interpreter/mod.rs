@@ -937,7 +937,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         {
             return None;
         }
-        let globals = self.global_bindings();
+        let globals = self.host_bindings();
         let root_file = self.current_module_path.clone();
         let mut tier = self.bytecode_tier.take()?;
         tier.set_host_globals(globals, root_file.as_deref());
@@ -970,7 +970,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         {
             return None;
         }
-        let globals = self.global_bindings();
+        let globals = self.host_bindings();
         let root_file = self.current_module_path.clone();
         let mut tier = self.bytecode_tier.take()?;
         tier.set_host_globals(globals, root_file.as_deref());
@@ -2689,7 +2689,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
     /// `olang check --tier`: compile every declared function now and
     /// answer the refusals among those declared in `file`.
     pub fn tier_compile_ahead(&mut self, file: Option<&str>) -> Vec<(String, String)> {
-        let globals = self.global_bindings();
+        let globals = self.host_bindings();
         let root_file = self.current_module_path.clone();
         self.bytecode_tier
             .as_mut()
@@ -3400,7 +3400,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
                 && arguments.len() == func.parameters.len()
                 && !self.budgeted()
             {
-                let globals = self.global_bindings();
+                let globals = self.host_bindings();
                 let root_file = self.current_module_path.clone();
                 let mut tier = self.bytecode_tier.take();
                 // The interpreter's frames (this one included) count
@@ -3832,6 +3832,20 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         let owner: Arc<str> = Arc::from(file);
         self.owners.insert(file.to_string(), owner.clone());
         Some(owner)
+    }
+
+    /// The top-level bindings this interpreter hands its tier as the
+    /// program's: its root, or — for a bridge interpreter, whose root is
+    /// only what it was seeded with — the host's root it falls back to.
+    /// A bridge's own tier (a bridge runs a function value, which calls
+    /// into compiled code) then reads the program's names as the host
+    /// does: it once read the bridge's root, and a main-file function
+    /// reached that way on a worker missed every imported name.
+    fn host_bindings(&self) -> Arc<ImHashMap<String, Value>> {
+        match &self.fallback_globals {
+            Some(host) => host.clone(),
+            None => self.global_bindings(),
+        }
     }
 
     fn global_bindings(&self) -> Arc<ImHashMap<String, Value>> {
@@ -5162,7 +5176,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         }
         args.extend(live_values);
 
-        let globals = self.global_bindings();
+        let globals = self.host_bindings();
         let root_file = self.current_module_path.clone();
         let mut tier = self.bytecode_tier.take();
         let outcome = tier

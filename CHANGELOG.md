@@ -448,6 +448,15 @@ is tagged final. docs/migrating.md walks each change.
   ruling in the browser runtime (playground/run_harness.mjs) and
   natively and compares them, and bundles two modules sharing `code`.
 
+- A main-file function reached through two bridge interpreters reads the
+  program's imported names again. Top-level functions capture nothing in
+  this release, and a bridge's own tier was handed the bridge's root as
+  the program's, so the next bridge down missed every name the program
+  imported: open-track's served pages failed with "Undefined variable:
+  as_str" in a state shaper called from a route. A bridge now hands its
+  tier the host's root it falls back to. A failed http handler's log
+  line names where it failed (`at path:line in function`).
+
 ## [0.88.0] - 2026-10-12
 
 ### Upgrading
