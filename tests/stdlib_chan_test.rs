@@ -100,7 +100,7 @@ fn recv_timeout_times_out_on_a_quiet_channel() {
     let v = eval(
         r#"
 let c = chan.new()
-match chan.recv_timeout(c, 30) {
+match chan.recv_timeout(c, #{ "timeout_ms": 30 }) {
     Ok(v) => "value",
     Err(e) => e
 }

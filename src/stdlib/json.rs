@@ -47,10 +47,6 @@ pub fn create_json_module() -> Value {
 
     // Validation and inspection
     module.insert(
-        "validate".to_string(),
-        create_builtin_function("validate", 1),
-    );
-    module.insert(
         "is_valid".to_string(),
         create_builtin_function("is_valid", 1),
     );
@@ -119,8 +115,7 @@ pub fn call_json_function(
         "stringify_pairs" => json_stringify_pairs(args),
         "prettify" => json_prettify(args),
         "minify" => json_minify(args),
-        // `validate` is `is_valid` under its deprecated name
-        "validate" | "is_valid" => json_validate(args),
+        "is_valid" => json_is_valid(args),
         "get_type" => json_get_type(args),
         "has_key" => json_has_key(args),
         "get_keys" => json_get_keys(args),
@@ -390,15 +385,15 @@ fn json_minify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 }
 
 /// Validate if a string is valid JSON
-/// Usage: json.validate("{\"name\": \"John\"}") -> Bool
-fn json_validate(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+/// Usage: json.is_valid("{\"name\": \"John\"}") -> Bool
+fn json_is_valid(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
-        return Err(format!("validate expects 1 argument, got {}", args.len()).into());
+        return Err(format!("json.is_valid expects 1 argument, got {}", args.len()).into());
     }
 
     let json_str = match &args[0] {
         Value::String(s) => s.as_ref(),
-        _ => return Err("validate: argument must be a string".into()),
+        _ => return Err("json.is_valid: argument must be a string".into()),
     };
 
     let is_valid = serde_json::from_str::<serde_json::Value>(json_str).is_ok();

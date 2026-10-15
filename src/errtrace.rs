@@ -107,13 +107,10 @@ pub fn frames_value(frames: &[Frame]) -> crate::ast::Value {
                 .as_ref()
                 .map(|s| Value::String(Arc::new(s.clone())))
                 .unwrap_or(Value::Unit);
-            // `path` and `function`, as every record names them; `file`
-            // and `fn` the deprecated names they had
-            m.insert("path".to_string(), path.clone());
+            // `path` and `function`, as every record names them
+            m.insert("path".to_string(), path);
             m.insert("line".to_string(), Value::Integer(f.line as i64));
-            m.insert("function".to_string(), function.clone());
-            m.insert("file".to_string(), path);
-            m.insert("fn".to_string(), function);
+            m.insert("function".to_string(), function);
             Value::Map(Arc::new(m))
         })
         .collect();

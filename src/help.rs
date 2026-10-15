@@ -1797,7 +1797,7 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
                 "Any",
                 "Maps",
                 "The value at the end of a key path, or Unit at the first missing hop — \
-                 map_set_in's reading half (map_path, deprecated, is the same function).",
+                 map_set_in's reading half.",
                 "map_get_in(#{ \"pp\": #{ \"cur\": 3 } }, [\"pp\", \"cur\"])  // 3",
             ),
             (
@@ -2215,11 +2215,11 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
         );
         self.doc_ex(
             "pty.wait",
-            "pty.wait(p, timeout_ms?)",
+            "pty.wait(p, #{ timeout_ms }?)",
             "Result",
             "pty",
             "How the child ended, Ok({ code, signal }) — waiting up to timeout_ms (0 by default) — or Ok(()) while it runs.",
-            &[r##"let e = unwrap(pty.wait(p, 1000))"##],
+            &[r##"let e = unwrap(pty.wait(p, #{ "timeout_ms": 1000 }))"##],
         );
         self.doc_ex(
             "pty.pid",
@@ -2435,11 +2435,11 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
         );
         self.doc_ex(
             "tty.query",
-            "tty.query(h, seq, timeout_ms)",
+            "tty.query(h, seq, #{ timeout_ms })",
             "Result",
             "tty",
             "Ask the terminal something (OSC 11 for the background colour, DA1, the kitty keyboard flags) and answer Ok(reply) — the raw reply bytes as a String — or Err(\"timeout\"). The reply is taken out of the input stream: it never reaches tty.events, even when it arrives late. Needs raw mode. Unix only for now (Err on Windows).",
-            &[r##"let bg = tty.query(h, "\u{1b}]11;?\u{1b}\\", 100)"##],
+            &[r##"let bg = tty.query(h, "\u{1b}]11;?\u{1b}\\", #{ "timeout_ms": 100 })"##],
         );
         self.doc_ex(
             "tty.is_tty",
@@ -2463,11 +2463,11 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
         // --- proc ---
         self.doc_ex(
             "proc.spawn",
-            "proc.spawn(program, args, opts?)",
+            "proc.spawn(argv, opts?)",
             "Result",
             "proc",
             "start a child with piped stdin/stdout/stderr and return a live Process handle; opts: cwd, env, group (true: its own process group, for kill's tree), framing (\"content-length\": stdout read a message at a time, as the language server protocol frames them)",
-            &[r##"let p = unwrap(proc.spawn("sort", ["-n"]))"##],
+            &[r##"let p = unwrap(proc.spawn(["sort", "-n"]))"##],
         );
         self.doc_ex(
             "proc.write",
@@ -2570,11 +2570,11 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
         );
         self.doc_ex(
             "task.join_timeout",
-            "task.join_timeout(t, ms)",
+            "task.join_timeout(t, #{ timeout_ms })",
             "Result",
             "task",
-            "Ok(what task.join answers) if it finished within ms, else Err(\"timed out\") — the task keeps running",
-            &[r##"task.join_timeout(t, 2000)  // Err("timed out") leaves it running"##],
+            "Ok(what task.join answers) if it finished within timeout_ms, else Err(\"timed out\") — the task keeps running",
+            &[r##"task.join_timeout(t, #{ "timeout_ms": 2000 })  // Err("timed out") leaves it running"##],
         );
         self.doc_ex(
             "task.watch",
@@ -2687,11 +2687,11 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
         );
         self.doc_ex(
             "chan.recv_timeout",
-            "chan.recv_timeout(c, ms)",
+            "chan.recv_timeout(c, #{ timeout_ms })",
             "Result",
             "chan",
-            "like recv, plus Err(\"timed out\") after ms milliseconds",
-            &[r##"chan.recv_timeout(c, 500)  // Err("timed out") after 500 ms"##],
+            "like recv, plus Err(\"timed out\") after timeout_ms milliseconds",
+            &[r##"chan.recv_timeout(c, #{ "timeout_ms": 500 })  // Err("timed out") after 500 ms"##],
         );
         self.doc_ex(
             "chan.stat",
@@ -2770,14 +2770,6 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
             "toml",
             "does the text parse as TOML?",
             &[r##"toml.is_valid("key = ")  // false"##],
-        );
-        self.doc_ex(
-            "toml.validate",
-            "toml.validate(text)",
-            "Bool",
-            "toml",
-            "deprecated: toml.is_valid under its older name, kept working; olang fix deprecated renames the calls",
-            &[r##"toml.validate("key = ")  // false"##],
         );
     }
 
@@ -6056,16 +6048,6 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             examples: vec![
                 "re.replace_first(\"[0-9]\", \"a1b1\", \"X\")  // Ok(\"aXb1\")".to_string(),
             ],
-            category: "Regex".to_string(),
-            see_also: vec!["re.replace".to_string()],
-        });
-        self.add_function(FunctionDoc {
-            name: "re.replace_all".to_string(),
-            description: "Deprecated: re.replace, which replaces every match.".to_string(),
-            syntax: "re.replace_all(pattern, text, rep)".to_string(),
-            parameters: vec![],
-            return_type: "Result".to_string(),
-            examples: vec!["re.replace_all(\" +\", \"a  b\", \"_\")".to_string()],
             category: "Regex".to_string(),
             see_also: vec!["re.replace".to_string()],
         });
@@ -9940,21 +9922,6 @@ For function-specific syntax, use: {}:help <function_name>{}",
             examples: vec![
                 "json.is_valid(\"{\\\"name\\\": \\\"John\\\"}\")  // true".to_string(),
                 "json.is_valid(\"invalid json\")  // false".to_string(),
-            ],
-            category: "JSON".to_string(),
-            see_also: vec!["json.parse".to_string(), "json.get_type".to_string()],
-        });
-
-        self.add_function(FunctionDoc {
-            name: "json.validate".to_string(),
-            description: "Deprecated: json.is_valid under its older name, kept working; olang fix deprecated renames the calls".to_string(),
-            syntax: "json.validate(json_string)".to_string(),
-            parameters: vec!["json_string: String - String to validate".to_string()],
-            return_type: "Bool".to_string(),
-            examples: vec![
-                "json.validate(\"{\\\"name\\\": \\\"John\\\"}\")  // true".to_string(),
-                "json.validate(\"invalid json\")  // false".to_string(),
-                "json.validate(\"null\")  // true".to_string(),
             ],
             category: "JSON".to_string(),
             see_also: vec!["json.parse".to_string(), "json.get_type".to_string()],

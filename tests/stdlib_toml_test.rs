@@ -39,10 +39,10 @@ fn stringify_round_trips_and_rejects_non_tables() {
 }
 
 #[test]
-fn validate_answers_without_erroring() {
-    assert_eq!(eval("toml.validate(\"a = 1\")"), Value::Boolean(true));
+fn is_valid_answers_without_erroring() {
+    assert_eq!(eval("toml.is_valid(\"a = 1\")"), Value::Boolean(true));
     assert_eq!(
-        eval("toml.validate(\"not [ valid\")"),
+        eval("toml.is_valid(\"not [ valid\")"),
         Value::Boolean(false)
     );
     // Malformed input is a clean Err from parse, never a crash.

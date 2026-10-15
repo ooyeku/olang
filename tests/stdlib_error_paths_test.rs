@@ -512,7 +512,7 @@ fn test_concurrent_error_paths() {
     // A negative timeout budget is rejected rather than silently clamped.
     let mut interpreter = Interpreter::new();
     let program = parser
-        .parse("fn one() = 1\ntask.join_timeout(spawn one(), -1)\n")
+        .parse("fn one() = 1\ntask.join_timeout(spawn one(), #{ \"timeout_ms\": -1 })\n")
         .expect("Failed to parse");
     let err = interpreter
         .eval_program(program)

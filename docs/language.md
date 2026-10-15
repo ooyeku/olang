@@ -2131,7 +2131,7 @@ println(to_string(results))   // [0, -1, 20]
 
 ### Bounding the wait
 
-`task.join_timeout(t, ms)` returns `Ok` of what `task.join` would answer
+`task.join_timeout(t, #{ timeout_ms })` returns `Ok` of what `task.join` would answer
 if the task finished within the budget (`Ok(Ok(v))`, or `Ok(Err(e))`
 when it raised) and `Err("timed out")` otherwise.
 
@@ -2145,8 +2145,8 @@ handle:
 ```olang
 fn slow(n) = { time.sleep(80); n }
 let t = spawn slow(7)
-println(show(task.join_timeout(t, 5)))      // Err("timed out")
-println(show(task.join_timeout(t, 5000)))   // Ok(Ok(7)) — it kept running
+println(show(task.join_timeout(t, #{ "timeout_ms": 5 })))      // Err("timed out")
+println(show(task.join_timeout(t, #{ "timeout_ms": 5000 })))   // Ok(Ok(7)) — it kept running
 ```
 
 When you need work that genuinely stops early, give the task something

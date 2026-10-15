@@ -59,7 +59,7 @@ fn echo_on_a_pty_says_its_words_and_ends() {
             r#"{READ_UNTIL}
 let p = unwrap(pty.spawn(["/bin/echo", "hello", "pty"], #{{ "rows": 10, "cols": 40 }}))
 let out = read_until(p, "hello pty")
-let ended = unwrap(pty.wait(p, 2000))
+let ended = unwrap(pty.wait(p, #{{ "timeout_ms": 2000 }}))
 let eof = match pty.read(p, #{{ "timeout_ms": 200 }}) {{ Ok(b) => b == (), Err(e) => e == "eof" }}
 pty.close(p)
 [str.contains(out, "hello pty\r\n"), ended.code == 0, eof, is_err(pty.write(p, "x"))]
@@ -79,7 +79,7 @@ unwrap(pty.write(p, "ping\r"))
 let out = read_until(p, "ping\r\nping\r\n")
 let fg = pty.foreground(p)
 unwrap(pty.write(p, "\u{{4}}"))
-let ended = unwrap(pty.wait(p, 2000))
+let ended = unwrap(pty.wait(p, #{{ "timeout_ms": 2000 }}))
 pty.close(p)
 [str.contains(out, "ping\r\nping\r\n"), fg.name == "cat", fg.shell, ended.code == 0]
 "#
@@ -104,7 +104,7 @@ let dir = pty.cwd(p)
 unwrap(pty.write(p, "exit 3\r"))
 // a terminal closing waits for what it wrote to be read (macOS)
 let bye = read_until(p, "never")
-let ended = unwrap(pty.wait(p, 2000))
+let ended = unwrap(pty.wait(p, #{{ "timeout_ms": 2000 }}))
 pty.close(p)
 [str.contains(b, "24 80"), str.contains(c, "33 101"), dir == "/tmp" || dir == "/private/tmp", ended.code == 3]
 "#
@@ -119,9 +119,9 @@ fn kill_hangs_up_a_running_job_and_close_reaps_it() {
         &format!(
             r#"{READ_UNTIL}
 let p = unwrap(pty.spawn(["/bin/sh", "-c", "sleep 30"], #{{ "rows": 24, "cols": 80 }}))
-let still = unwrap(pty.wait(p, 100))
+let still = unwrap(pty.wait(p, #{{ "timeout_ms": 100 }}))
 unwrap(pty.kill(p))
-let ended = unwrap(pty.wait(p, 3000))
+let ended = unwrap(pty.wait(p, #{{ "timeout_ms": 3000 }}))
 pty.close(p)
 let gone = is_err(pty.write(p, "x"))
 [still == (), ended != (), ended.signal == 1 || ended.code != 0, gone]
@@ -171,7 +171,7 @@ fn close_reaps_an_interactive_shell_whose_output_nobody_read() {
 let p = unwrap(pty.spawn(["/bin/zsh", "-f", "-i"], #{ "rows": 24, "cols": 80 }))
 let _w = pty.write(p, "sleep 30\r")
 let mut n = 0
-while n < 100 && (pty.foreground(p) == () || pty.foreground(p).name != "sleep") { n = n + 1; let _x = pty.wait(p, 20) }
+while n < 100 && (pty.foreground(p) == () || pty.foreground(p).name != "sleep") { n = n + 1; let _x = pty.wait(p, #{ "timeout_ms": 20 }) }
 let job = pty.foreground(p).pid
 let pid = pty.pid(p)
 pty.close(p)

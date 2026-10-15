@@ -445,8 +445,7 @@ fn search_file(
 /// `fs.search(root, query, opts = #{})`: every line under `root` holding
 /// `query`, searched on worker threads: `Ok([#{ path, line, column,
 /// end_column, text }])` (`path` relative to `root`; `line`, `column` and
-/// `end_column` 1-based, in characters, `end_column` just past the match;
-/// `col` and `end` the deprecated 0-based offsets),
+/// `end_column` 1-based, in characters, `end_column` just past the match),
 /// `text` the line), by path then line. The files are walked as `fs.scan`
 /// walks them, or are `opts.files` (paths relative to `root`). `opts`:
 /// `regex`, `case` (match case; default false), `word` (whole words),
@@ -584,10 +583,6 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             m.insert("line".to_string(), Value::Integer(line as i64 + 1));
             m.insert("column".to_string(), Value::Integer(a as i64 + 1));
             m.insert("end_column".to_string(), Value::Integer(b as i64 + 1));
-            // deprecated: the 0-based character offsets `column` and
-            // `end_column` replace
-            m.insert("col".to_string(), Value::Integer(a as i64));
-            m.insert("end".to_string(), Value::Integer(b as i64));
             m.insert("text".to_string(), Value::String(Arc::new(text)));
             if let Some(w) = with {
                 m.insert("with".to_string(), Value::String(Arc::new(w)));

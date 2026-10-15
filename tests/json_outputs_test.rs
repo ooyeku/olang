@@ -137,7 +137,7 @@ fn the_bench_events_and_baseline_are_versioned() {
 }
 
 #[test]
-fn output_and_format_flags_keep_their_old_spellings() {
+fn output_and_format_flags_have_one_spelling_each() {
     let ws = workspace("flags");
     let (out, code) = olang(
         &ws,
@@ -149,10 +149,14 @@ fn output_and_format_flags_keep_their_old_spellings() {
             .unwrap()
             .contains("one")
     );
-    let (out, code) = olang(&ws, &["doc", "a.ol", "--markdown", "-o", "api2.md"]);
-    assert_eq!(code, 0, "{out}");
-    assert!(ws.join("api2.md").exists());
-    for flag in ["--output", "--out", "-o"] {
+    let (_, code) = olang(&ws, &["doc", "a.ol", "--markdown", "-o", "api2.md"]);
+    assert_ne!(code, 0, "--markdown is --format markdown");
+    let (_, code) = olang(
+        &ws,
+        &["profile", "--format", "json", "--out", "p.json", "a.ol"],
+    );
+    assert_ne!(code, 0, "--out is --output");
+    for flag in ["--output", "-o"] {
         let path = format!("p{}.json", flag.len());
         let (out, code) = olang(&ws, &["profile", "a.ol", "--format", "json", flag, &path]);
         assert_eq!(code, 0, "{flag}: {out}");

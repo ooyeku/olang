@@ -67,7 +67,7 @@ itself and embedded in the binary: the modules `colx` and `mathx` and
 the packages `cli`, `term`, `ui`, `viz`, and `dash` are imported with a
 bare `use colx` / `use term`. The one embedded module that needs no
 `use` is [`collections`](#collections-in-olang), which loads on first
-touch. A `use str` still works, and keeps a file's import list
+touch. A `use str` is accepted, and keeps a file's import list
 explicit, but is never required for the native modules.
 
 **One environment note:** `fs`, `os`, `proc`, `pty`, `tty`, `gui`,
@@ -163,11 +163,9 @@ println(to_string(m.z ?? 0))   // 0
 are the same words in every module: `line` and `column` are 1-based (a
 search hit, a frame, a hover in a styled field, a lens), a function is
 `function`, a file on disk is `path`, a wait's limit is `timeout_ms`
-(every function that takes a limit as a number takes `#{ timeout_ms }`
-there too), and an environment is `env` (a name given `()` removed) with
-`clear_env`. The names they replace are kept, deprecated, where a record
-said them first: `fs.search`'s `col` and `end` (0-based), a frame's
-`file` and `fn`, a hover's `col`.
+(every function that waits with a limit takes it as `#{ timeout_ms }`),
+and an environment is `env` (a name given `()` removed) with
+`clear_env`.
 
 **Names follow three rules.** A function that raises on bad input and
 has a legitimate use over data the program does not control gets a
@@ -425,25 +423,6 @@ println(show(attempt(() => raise("widget: no kind dial"))))   // Err("widget: no
 | Function | Description |
 |---|---|
 | `set_parallel(on)` | `true` or `false`: enable or disable the parallel machinery — explicit (`par_map`) and automatic alike (how many threads: `OLANG_PARALLELISM`) |
-
-### Deprecated names
-
-A function renamed before 1.0 keeps its old name as an alias: a program
-using it runs as before, `olang check` warns at each call, and `olang
-fix deprecated` rewrites the calls ([tooling](tooling.md#olang-fix-deprecated)),
-a global's and a module's (`re.replace_all(` becomes `re.replace(`) alike.
-An alias is never removed in the release that deprecates it.
-
-| Old name | Use | Since |
-|---|---|---|
-| `re.replace_all(pat, s, rep)` | `re.replace(pat, s, rep)`, which now replaces every match | unreleased |
-| `json.validate(s)` | `json.is_valid(s)` | unreleased |
-| `toml.validate(s)` | `toml.is_valid(s)` | unreleased |
-
-Removed before 1.0, unused: `map_path` (deprecated in 0.88: `map_get_in`),
-`lazy` and `force` (the identity: olang is eager), base64's `validate`
-(`base64.is_valid`), testing's `run_test` (a `test` block), and the
-`--enable-parallel` flag (it set nothing anything read).
 
 ## `str` — strings
 
@@ -807,7 +786,7 @@ do not.
 | `json.stringify(v)` | `Result` of compact JSON text; an object's keys are written sorted |
 | `json.stringify_pairs(pairs)` | `Result` of one JSON object whose keys are in the order of `pairs`, a list of `(key, value)` (each value as `stringify` writes it) |
 | `json.prettify(s)` / `json.minify(s)` | reformat JSON text |
-| `json.is_valid(s)` | is the text valid JSON? (`json.validate`, deprecated) |
+| `json.is_valid(s)` | is the text valid JSON? |
 | `json.get(s, key)` / `json.set(s, key, v)` | read or replace one top-level key of JSON text: `Result` of the value / of the new text |
 | `json.has_key(s, k)` / `json.remove(s, k)` | text-level operations |
 | `json.get_keys` `json.get_values` `json.get_type` | text-level inspection |
@@ -828,7 +807,7 @@ println(row)                                     // {"id":7,"name":"ada","tags":
 ## `toml` — TOML
 
 The config format olang's own `olang.toml` manifests use, with `json`'s
-core surface: `parse`, `stringify`, `is_valid` (`validate`, deprecated). Both modules bridge
+core surface: `parse`, `stringify`, `is_valid`. Both modules bridge
 values through the same conversions, so a table parses to the same Map
 shapes JSON objects do — tables become Maps, arrays become Lists,
 datetimes become their string rendering. A TOML document is a table at
@@ -998,7 +977,7 @@ The model is covered in
 | Function | Returns |
 |---|---|
 | `task.join(t)` | `Ok(value)` when the task returned (a value that is itself an `Err` included), `Err(message)` when it raised — blocks until it finishes |
-| `task.join_timeout(t, ms)` / `task.join_timeout(t, #{ timeout_ms })` | `Ok` of what `task.join` answers (`Ok(Ok(v))`, `Ok(Err(e))`) if it finished within `ms`, else `Err("timed out")` |
+| `task.join_timeout(t, #{ timeout_ms })` | `Ok` of what `task.join` answers (`Ok(Ok(v))`, `Ok(Err(e))`) if it finished within `timeout_ms`, else `Err("timed out")` |
 | `task.watch(t, c)` | the channel dies with the task: when `t` ends, however it ends, `c` is closed, so a `chan.recv` on it returns `Err` instead of waiting forever. Ownership is declared here, not inferred — any task may hold either end of a channel |
 | `task.list()` | every task a live handle still watches: `#{ id, state, elapsed_ms }` |
 | `task.parked()` | threads blocked on unbounded waits: `#{ thread, on, waited_ms }` |
@@ -1099,7 +1078,7 @@ boundary like anything else.
 | `chan.send(c, v)` | `Ok(())`, or `Err` when the channel is closed |
 | `chan.recv(c)` | blocks; `Ok(value)`, or `Err` when closed and drained |
 | `chan.try_recv(c)` | `Ok(value)`; `Ok(())` when nothing is waiting; `Err("channel is closed")` once closed and drained. A channel that carries `()` cannot tell it from empty this way: use `chan.recv_timeout` |
-| `chan.recv_timeout(c, ms)` / `chan.recv_timeout(c, #{ timeout_ms })` | like `recv`, plus `Err("timed out")` once `ms` pass — receivers on one channel wait side by side, so the bound is this wait's own, never another waiter's |
+| `chan.recv_timeout(c, #{ timeout_ms })` | like `recv`, plus `Err("timed out")` once `timeout_ms` pass — receivers on one channel wait side by side, so the bound is this wait's own, never another waiter's |
 | `chan.ask(service, request)` | the reply pattern in one call: sends `#{ "req": request, "reply": r }` on a fresh reply channel and answers `Ok(reply)` — spinning briefly before it parks, so a service that answers in microseconds costs no thread wake-up |
 | `chan.stat(c)` | a snapshot map: `id`, `queued`, `closed`, `recv_waiting`, `send_waiting` |
 | `chan.close(c)` | closes the sending side (idempotent) |
@@ -1365,9 +1344,8 @@ files with it). `fs.search(root, query, opts)` searches those files (or
 `opts.files`) for a literal or, with `regex: true`, a regular
 expression — `case` and `word` as a find bar has them — in parallel,
 answering `Ok` of `#{ path, line, column, end_column, text }` by path
-then line (1-based, in characters, `end_column` just past the match;
-`col` and `end`, the 0-based offsets the first versions answered, are
-still there, deprecated). With `replace` (a template) each match also
+then line (1-based, in characters, `end_column` just past the match).
+With `replace` (a template) each match also
 says `with`, what it becomes — a regular expression's groups expanded
 (`$1`, `${name}`, `$$` a dollar) — for a replace across files to
 preview and apply. An option either function does not know raises.
@@ -1603,7 +1581,7 @@ that serves its own routes reads the same bytes.
 | `runtime.load_module(path, grant)` | the olang file at `path` loaded into this program as a module, read afresh (its folder's cached modules forgotten), everything under its folder held to `grant` — `#{ name, fs: false \| "read" \| true, fs_roots: [folders], proc: false \| true \| [programs], net, db, env }`, a key left out denied, never the host's builtins (`gui`, `tty`, loading code, the profiler). `Ok(module)`, or `Err(message)` with the grant before it kept (packages.md, "Modules loaded at run time") |
 | `runtime.unload_module(path)` · `runtime.module_grant(path)` · `runtime.module_permits(path, builtin, args)` | forget a loaded module's grant (true when there was one); the grant as it holds (`()` when none); whether its code would be allowed `builtin(args…)` — `Ok(())` or `Err(why)`, the same gate |
 | `runtime.call_budget(f, args, ms)` | `f(args…)` stopped past `ms` (an interrupt on this thread only) and its failure caught: `#{ ok, value, error, frames, over, us }` |
-| `runtime.last_error()` | the error a boundary on this thread caught last (`attempt`, `call_budget`, `load_module`) with its frames, `#{ message, frames: [#{ path, line, function }] }` (`file` and `fn`, their deprecated names, are still there), innermost first (line 0: an expression body); `()` when none |
+| `runtime.last_error()` | the error a boundary on this thread caught last (`attempt`, `call_budget`, `load_module`) with its frames, `#{ message, frames: [#{ path, line, function }] }`, innermost first (line 0: an expression body); `()` when none |
 | `runtime.shape(value)` | a value's shape as text — kind, a map's sorted keys with theirs, a list's first item's — what a host compares to keep a reloaded module's state |
 
 ```olang no-run
@@ -1773,7 +1751,7 @@ deadlocks against a caller reading only one stream. Native-only.
 
 | Group | Functions |
 |---|---|
-| Spawn | `spawn(argv)` / `spawn(program, args)` / `spawn(program, args, #{ cwd, env, clear_env, group, framing, bytes })` → `Ok(Process)` (`argv` the program and its arguments as one list, as `pty.spawn` takes them; an `env` name given `()` is removed); a `cwd` that names no directory is an `Err` saying so. Output is text, bytes that are not UTF-8 read as U+FFFD; `bytes: true` makes `read_all` and `stderr` answer `Bytes` as written (and `read_line`, which reads text, raise) |
+| Spawn | `spawn(argv)` / `spawn(argv, #{ cwd, env, clear_env, group, framing, bytes })` → `Ok(Process)` (`argv` the program and its arguments as one list, as `pty.spawn` and a pipeline stage take them; an `env` name given `()` is removed); a `cwd` that names no directory is an `Err` saying so. Output is text, bytes that are not UTF-8 read as U+FFFD; `bytes: true` makes `read_all` and `stderr` answer `Bytes` as written (and `read_line`, which reads text, raise) |
 | Input | `write(p, s)` · `write_line(p, s)` · `write_frame(p, s)` (one `Content-Length`-framed message) · `close_stdin(p)` (signals EOF) |
 | Output | `read_line(p)` → `Ok(line)` \| `Err("eof")`; `read_all(p)` → the rest of stdout; `stderr(p)` → all stderr (complete after exit) |
 | Lifecycle | `wait(p)` → `Ok({ code, signal })` (the exit code and `()`, or `()` and the signal that ended it) · `kill(p)` (SIGKILL) / `kill(p, signal)` (`"TERM"`, `"INT"`, `"HUP"`, …, or a number: a process asked to end) / `kill(p, #{ tree: true, signal })` · `pid(p)` |
@@ -1781,7 +1759,7 @@ deadlocks against a caller reading only one stream. Native-only.
 
 ```olang no-run
 // Stream a filter: feed lines in, read matches back out.
-let p = unwrap(proc.spawn("grep", ["olang"]))
+let p = unwrap(proc.spawn(["grep", "olang"]))
 proc.write_line(p, "olang rules")
 proc.write_line(p, "nope")
 proc.close_stdin(p)
@@ -1795,7 +1773,7 @@ break). Spawn it with `#{ "framing": "content-length" }` and each
 `read_line` is one whole message body; `write_frame` sends one framed.
 
 ```olang no-run
-let p = unwrap(proc.spawn("olang", ["lsp"], #{ "framing": "content-length" }))
+let p = unwrap(proc.spawn(["olang", "lsp"], #{ "framing": "content-length" }))
 unwrap(proc.write_frame(p, unwrap(json.stringify(#{ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": #{} }))))
 println(unwrap(proc.read_line(p)))     // the initialize result, whole
 ```
@@ -1809,7 +1787,7 @@ it with `proc.kill(p, #{ "tree": true })`, which kills the whole group
 Ctrl-C with the program; that is the point, and the reason it is opt-in.
 
 ```olang no-run
-let p = unwrap(proc.spawn("sh", ["-c", "make test"], #{ "group": true }))
+let p = unwrap(proc.spawn(["sh", "-c", "make test"], #{ "group": true }))
 // … the deadline passes …
 unwrap(proc.kill(p, #{ "tree": true }))   // make, and everything it ran
 ```
@@ -1850,7 +1828,7 @@ elsewhere: `pty.available()`); capability-gated as `proc`.
 | `pty.write(p, data)` | a String or Bytes (the keys typed), queued for a writer thread (a large paste never blocks) |
 | `pty.resize(p, rows, cols)` | TIOCSWINSZ: the foreground job hears SIGWINCH |
 | `pty.kill(p, sig?)` | `"HUP"` (the default), `"INT"`, `"TERM"`, `"KILL"`, `"QUIT"`, `"CONT"`, `"STOP"` or a number, to the shell's process group and the foreground job's |
-| `pty.wait(p, timeout_ms?)` / `pty.wait(p, #{ timeout_ms })` | `Ok({ code, signal })` once it ended (waiting up to `timeout_ms`, 0), `Ok(())` while it runs |
+| `pty.wait(p, #{ timeout_ms }?)` | `Ok({ code, signal })` once it ended (waiting up to `timeout_ms`, 0), `Ok(())` while it runs |
 | `pty.foreground(p)` | the terminal's foreground job `{ pid, name, shell }` (`shell` while the shell is at its prompt), or `()` once it ended — ask before closing a terminal a program runs in |
 | `pty.cwd(p)` | the foreground job's working directory (the shell's at its prompt), or `()` |
 | `pty.pid(p)` · `pty.shell()` · `pty.available()` | the child's pid; the user's login shell (`$SHELL`, the user database's, `/bin/zsh`); whether ptys exist here |
@@ -2049,7 +2027,7 @@ Native-only.
 | `tty.events(h)` | the channel of decoded events (below) |
 | `tty.size()` | `Ok((cols, rows))`, or `Err` when stdout is not a terminal. Needs no `enter` |
 | `tty.write(h, s)` | write a String or Bytes now — after anything `print` left buffered, without waiting for a newline → `Ok(())` / `Err` |
-| `tty.query(h, seq, timeout_ms)` / `tty.query(h, seq, #{ timeout_ms })` | write a query (`"\u{1b}]11;?\u{1b}\\"` for the background colour, `"\u{1b}[c"` for DA1, `"\u{1b}[?u"` for the kitty flags) → `Ok(reply)` — the reply's raw bytes — or `Err("timeout")` |
+| `tty.query(h, seq, #{ timeout_ms })` | write a query (`"\u{1b}]11;?\u{1b}\\"` for the background colour, `"\u{1b}[c"` for DA1, `"\u{1b}[?u"` for the kitty flags) → `Ok(reply)` — the reply's raw bytes — or `Err("timeout")` |
 | `tty.is_tty()` | stdin and stdout are both terminals — what `enter` needs |
 | `tty.suspend(h)` | ctrl+z done right: restore, stop, and on `fg` re-enter and deliver `signal` `cont` and a `resize` |
 
@@ -2259,8 +2237,8 @@ keyboard as it is (a terminal): Tab is its own rather than the focus's,
 and the input method is allowed while it has the focus — its composed
 text arrives as `preedit` events and its committed text as `text`
 events, the candidates placed at `ime_area` `(x, y, w, h)` (its own
-pixels: the cursor's cell). An older engine refuses both keys: ask
-`gui.platform().terminal` first.
+pixels: the cursor's cell). Ask `gui.platform().terminal` before
+using either key.
 
 **Pictures.** An `image` node's source is a file's path or its Bytes:
 PNG, JPEG (turned as its EXIF orientation says), WebP, GIF, or SVG
@@ -2361,7 +2339,7 @@ handed back is known as the field's own earlier one by its identity.
 | `"scrolled"` | `key`, `x`, `y` |
 | `"viewport"` | `key`, `top` — a styled field's first line in view moved into another band of 16 lines (the wheel) |
 | `"select"` | `key`, `selection`, `place`, `rev`, `caret`, `top`, `click_mod` — a styled field's selection moved (`report`) |
-| `"hover"` | `key` (a styled field with `hover: true`), `line` and `column` (1-based, the character the pointer rests on; both `()` when it left the text, `column` `()` and `gutter: true` over the gutter), `rect` — `col`, the 0-based column it said first (-1 left, -2 the gutter), is still there, deprecated |
+| `"hover"` | `key` (a styled field with `hover: true`), `line` and `column` (1-based, the character the pointer rests on; both `()` when it left the text, `column` `()` and `gutter: true` over the gutter), `rect` |
 | `"lens"` | `key`, `line` (1-based: the line the lens sits under), `id`, `hit`, `x`, `y`, `clicks` — a press in a code field's lens (a lens is `#{ line, height, ops, id }`, `line` 1-based) |
 | `"a11y"` | `key`, `action` (`"set_value"`, `"increment"`, `"decrement"`), `value` |
 | `"outside"` | `key` (the modal layer), `x`, `y` — a press outside the topmost modal layer |

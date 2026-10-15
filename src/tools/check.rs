@@ -193,13 +193,8 @@ pub fn run_json(paths: &[PathBuf]) -> i32 {
                 .tags
                 .iter()
                 .flatten()
-                .map(|t| {
-                    if *t == T::UNNECESSARY {
-                        "unnecessary"
-                    } else {
-                        "deprecated"
-                    }
-                })
+                .filter(|t| **t == T::UNNECESSARY)
+                .map(|_| "unnecessary")
                 .collect();
             let (s, e) = (d.range.start, d.range.end);
             out.push(serde_json::json!({
@@ -1814,7 +1809,7 @@ pub struct CheckDiagnostic {
     pub scope: bool,
     /// The advisory's class, which `[check] promote` names and
     /// `--format json` reports as its `code`: `exhaustiveness`, `shape`,
-    /// `keys`, `result`, `copy`, `deprecated`, `shadow`. Set where the
+    /// `keys`, `result`, `copy`, `shadow`. Set where the
     /// finding is made, never read back from its wording.
     pub class: Option<&'static str>,
 }
@@ -2722,20 +2717,6 @@ struct Checker {
     out: Vec<CheckDiagnostic>,
 }
 
-/// Builtins kept under an older name, with the name they are now: each
-/// still works, `olang check` says so, and `olang fix deprecated`
-/// rewrites the calls (docs/stdlib.md, "Deprecated names").
-pub const DEPRECATED_GLOBALS: &[(&str, &str)] = &[];
-
-/// Module functions kept under an older name, with the name they are now
-/// (`module.fn`): each still works, `olang check` says so, and `olang fix
-/// deprecated` rewrites the calls.
-pub const DEPRECATED_MODULE_FNS: &[(&str, &str)] = &[
-    ("re.replace_all", "re.replace"),
-    ("json.validate", "json.is_valid"),
-    ("toml.validate", "toml.is_valid"),
-];
-
 /// How many arguments each global builtin takes, as its implementation
 /// counts them (`min`, `max`): a call outside the range raises. Measured
 /// against the runtime and pinned by `builtin_arity_table_agrees_with_the_runtime`.
@@ -2931,37 +2912,6 @@ impl Checker {
                 || me.scopes.iter().any(|scope| scope.contains_key(n))
         };
         let got = arguments.len();
-        if let Expr::Identifier(name) = callee
-            && !bound(self, name)
-            && let Some((_, now)) = DEPRECATED_GLOBALS.iter().find(|(old, _)| old == name)
-        {
-            self.advise(
-                "deprecated",
-                span,
-                format!(
-                    "`{}` is deprecated: it is `{}` under an older name, kept working — \
-`olang fix deprecated` rewrites the call",
-                    name, now
-                ),
-            );
-        }
-        if let Expr::FieldAccess { object, field } = callee
-            && let Expr::Identifier(module) = object.as_ref()
-            && !bound(self, module)
-        {
-            let full = format!("{module}.{field}");
-            if let Some((_, now)) = DEPRECATED_MODULE_FNS.iter().find(|(old, _)| *old == full) {
-                self.advise(
-                    "deprecated",
-                    span,
-                    format!(
-                        "`{}` is deprecated: it is `{}` under an older name, kept working — \
-`olang fix deprecated` rewrites the call",
-                        full, now
-                    ),
-                );
-            }
-        }
         match callee {
             Expr::Identifier(name) if !self.wildcard_use && !bound(self, name) => {
                 let Some(&(_, min, max)) = GLOBAL_ARITY.iter().find(|(n, _, _)| n == name) else {

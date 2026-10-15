@@ -42,7 +42,7 @@ mod mac {
           gui.set(w, #{ "title": "olang teardown " + to_string(i), "edited": true })
           let t0 = time.monotonic()
           while time.monotonic() - t0 < 400.0 {
-            let _e = chan.recv_timeout(ev, 50)
+            let _e = chan.recv_timeout(ev, #{ "timeout_ms": 50 })
           }
           gui.set(w, #{ "edited": false })
           gui.close(w)

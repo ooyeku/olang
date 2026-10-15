@@ -133,9 +133,9 @@ fn a_short_timed_recv_does_not_wait_behind_a_long_one() {
     // Foundry's runner: a 3000 ms timed wait and a 100 ms one on the same
     // channel. The short one is bounded by its own timeout.
     let (code, text) = run("let stop = chan.new()\n\
-         let long = spawn { let r = chan.recv_timeout(stop, 3000) ; \"done\" }\n\
+         let long = spawn { let r = chan.recv_timeout(stop, #{ \"timeout_ms\": 3000 }) ; \"done\" }\n\
          time.sleep(50)\n\
-         let short = spawn { let t0 = time.monotonic_ms() ; let r = chan.recv_timeout(stop, 100) ; time.monotonic_ms() - t0 }\n\
+         let short = spawn { let t0 = time.monotonic_ms() ; let r = chan.recv_timeout(stop, #{ \"timeout_ms\": 100 }) ; time.monotonic_ms() - t0 }\n\
          println(`short ${unwrap(task.join(short))}`)\n\
          chan.close(stop)\n\
          println(unwrap(task.join(long)))");
@@ -161,7 +161,7 @@ fn timed_receivers_on_one_channel_wait_side_by_side() {
              let t0 = time.monotonic_ms()\n\
              let mut n = 0\n\
              while time.monotonic_ms() - t0 < 1000 {\n\
-                 let r = chan.recv_timeout(ch, 100)\n\
+                 let r = chan.recv_timeout(ch, #{ \"timeout_ms\": 100 })\n\
                  n = n + 1\n\
              }\n\
              n\n\
@@ -186,7 +186,7 @@ fn a_timed_recv_does_not_wait_behind_a_blocking_recv() {
          let blocked = spawn chan.recv(c)\n\
          time.sleep(50)\n\
          let t0 = time.monotonic_ms()\n\
-         let r = chan.recv_timeout(c, 100)\n\
+         let r = chan.recv_timeout(c, #{ \"timeout_ms\": 100 })\n\
          println(`took ${time.monotonic_ms() - t0}`)\n\
          unwrap(chan.send(c, 7))\n\
          println(unwrap(unwrap(task.join(blocked))))");

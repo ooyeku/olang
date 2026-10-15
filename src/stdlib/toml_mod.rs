@@ -1,6 +1,6 @@
 //! `toml` — parse and emit TOML, the config format olang's own
 //! `olang.toml` manifests use. The module mirrors `json`'s core surface
-//! (`parse` / `stringify` / `validate`) and produces the same value
+//! (`parse` / `stringify` / `is_valid`) and produces the same value
 //! shapes: tables become Maps, arrays become Lists, datetimes become
 //! their string rendering. Bridging runs through serde, so the two
 //! modules cannot drift on how values convert.
@@ -14,10 +14,6 @@ pub fn create_toml_module() -> Value {
     module.insert(
         "stringify".to_string(),
         create_builtin_function("stringify", 1),
-    );
-    module.insert(
-        "validate".to_string(),
-        create_builtin_function("validate", 1),
     );
     module.insert(
         "is_valid".to_string(),
@@ -43,8 +39,7 @@ pub fn call_toml_function(
     match name {
         "parse" => toml_parse(args),
         "stringify" => toml_stringify(args),
-        // `validate` is `is_valid` under its deprecated name
-        "validate" | "is_valid" => toml_validate(args),
+        "is_valid" => toml_is_valid(args),
         _ => Err(format!("Unknown toml function: {}", name).into()),
     }
 }
@@ -183,8 +178,8 @@ fn toml_stringify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
     }
 }
 
-/// `toml.validate(text)` — does the text parse as TOML?
-fn toml_validate(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
+/// `toml.is_valid(text)` — does the text parse as TOML?
+fn toml_is_valid(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let text = one_string_arg("is_valid", &args)?;
     Ok(Value::Boolean(text.parse::<toml::Value>().is_ok()))
 }

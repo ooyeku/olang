@@ -222,7 +222,7 @@ all demonstrated in [`examples/`](examples/).
 What is young is not the engine but its surroundings. The third-party
 package ecosystem is small, so programs rely chiefly on the standard
 library, and the project is pre-1.0: 0.88 is the last release before 1.0, and every
-planned breaking change has shipped (see [Migrating](docs/migrating.md)).
+planned breaking change has shipped.
 What remains is in the [roadmap](docs/roadmap.md). The
 authoritative statement of what is stable today is
 [Stability and compatibility](docs/stability.md).

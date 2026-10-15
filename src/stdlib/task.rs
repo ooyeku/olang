@@ -244,7 +244,7 @@ fn task_join_timeout(args: Vec<Value>) -> Result<Value, InterpreterError> {
     }
     .ok_or_else(|| {
         raise(
-            "task.join_timeout expects a task and a non-negative Int of milliseconds (or #{ timeout_ms })"
+            "task.join_timeout expects a task and #{ timeout_ms } (a non-negative Int of milliseconds)"
                 .to_string(),
         )
     })?;

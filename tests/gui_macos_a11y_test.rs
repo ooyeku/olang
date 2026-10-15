@@ -62,7 +62,7 @@ mod mac {
         let mut done = false
         while !done && tries < 150 {
           tries = tries + 1
-          match chan.recv_timeout(ev, 200) {
+          match chan.recv_timeout(ev, #{ "timeout_ms": 200 }) {
             Ok(e) => {
               if map_get(e, "kind") == "appearance" && map_get(e, "why") == "settings" => { notices = notices + 1 } else => ()
               if map_get(e, "kind") == "a11y" && map_get(e, "action") == "custom" => {

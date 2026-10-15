@@ -187,7 +187,7 @@ pub fn run(args: &[String]) -> i32 {
                 c.arg("--in-task");
             }
             let ok = c
-                .args(["profile", "--format", "json", "--out"])
+                .args(["profile", "--format", "json", "--output"])
                 .arg(&out)
                 .arg(file)
                 .stdout(std::process::Stdio::null())

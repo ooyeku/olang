@@ -1,13 +1,12 @@
 # What's new in 0.88
 
-Part of [the olang book](README.md) · [Migrating](migrating.md#in-088) ·
+Part of [the olang book](README.md) ·
 [Stability and compatibility](stability.md)
 
 This chapter summarises what olang 0.88 adds and changes, for a reader
 who knows 0.87. It is the last release before 1.0: what it settles is
 what 1.0 freezes. The complete record, with the evidence behind each
-change, is in [CHANGELOG.md](../CHANGELOG.md); what a program may need
-to change is in [Migrating](migrating.md#in-088).
+change, is in [CHANGELOG.md](../CHANGELOG.md).
 
 ## Table of contents
 
@@ -81,8 +80,6 @@ println(attempt(() => check(-1)))                   // Err("check: n must not be
 - `testing.snapshot` keeps a String as its text, and takes the caller's
   update flag: `testing.snapshot(name, value, #{ "update": true })`.
 - A `db` connection no value holds any more is closed.
-- `map_path` is deprecated in favour of `map_get_in`
-  ([Deprecated names](stdlib.md#deprecated-names)).
 
 ## The checker and the tools
 
@@ -93,11 +90,9 @@ findings) reports, before a program runs:
 - a `.key` read that no construction of the value has;
 - a field read that a declared struct never has;
 - a parameter or a pattern binding that shadows a stdlib module and is
-  then read as that module;
-- a call of a deprecated name.
+  then read as that module.
 
-`olang check --format json` prints every problem as data. `olang fix
-deprecated` renames deprecated calls. A path dependency's own path
+`olang check --format json` prints every problem as data. A path dependency's own path
 dependencies are followed by every command that installs. The REPL's
 `:env`, `:search` and `:tutorial` print the same on every run.
 

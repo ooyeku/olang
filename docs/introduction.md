@@ -107,8 +107,7 @@ tiers are verified against each other on every change.
 Two considerations apply before 1.0. The third-party package ecosystem is
 small, so programs rely chiefly on the standard library. The language surface
 is closed: the breaking releases (0.48, 0.61 through 0.65, 0.68, and 0.88)
-have shipped, and 0.88 is the last release before 1.0.
-[Migrating](migrating.md) covers the final changes. The 1.0
+have shipped, and 0.88 is the last release before 1.0. The 1.0
 compatibility promise applies to macOS; Linux and Windows are unsupported
 previews. [Stability and compatibility](stability.md) is the authoritative
 statement of what is stable, including the [platforms](stability.md#platforms)

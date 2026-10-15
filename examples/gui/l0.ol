@@ -153,7 +153,7 @@ if headless_png != "" => {
 let started = time.monotonic()
 let mut running = true
 while running {
-    match chan.recv_timeout(events, 100) {
+    match chan.recv_timeout(events, #{ "timeout_ms": 100 }) {
         Ok(e) => {
             if e.kind == "close_requested" => { running = false }
             let before = m.people

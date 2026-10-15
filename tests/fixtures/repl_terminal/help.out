@@ -155,7 +155,7 @@ Usage: :search <query> [filters]
    [35mSyntax:[0m [36mmap_get(map, key)[0m
 
 [2m8. FUZZY[0m [34mmap_get_in[0m [2m(Maps)[0m
-   [32mThe value at the end of a key path, or Unit at the first missing hop — map_set_in's reading half (map_path, deprecated, is the same function).[0m
+   [32mThe value at the end of a key path, or Unit at the first missing hop — map_set_in's reading half.[0m
    [35mSyntax:[0m [36mmap_get_in(value, keys)[0m
 
 [2m9. FUZZY[0m [34mmap_get_or[0m [2m(Maps)[0m

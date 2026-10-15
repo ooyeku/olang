@@ -234,13 +234,12 @@ pub mod error_utils {
     }
 }
 
-/// A wait's limit, where a function takes one: a non-negative Int of
-/// milliseconds, or the options form every timeout shares,
-/// `#{ "timeout_ms": n }` (its only key). `None` for anything else.
+/// A wait's limit, where a function takes one: the options form every
+/// timeout shares, `#{ "timeout_ms": n }` (its only key), `n` a
+/// non-negative Int of milliseconds. `None` for anything else.
 pub(crate) fn timeout_ms_arg(v: &crate::ast::Value) -> Option<u64> {
     use crate::ast::Value;
     let fields = match v {
-        Value::Integer(ms) if *ms >= 0 => return Some(*ms as u64),
         Value::Map(m) => m.as_ref(),
         Value::Struct { fields, .. } => fields.as_ref(),
         _ => return None,

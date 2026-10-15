@@ -20,7 +20,6 @@ language server has [its own chapter](editors.md).
 - [`olang test`](#olang-test)
 - [`olang fmt`](#olang-fmt)
 - [`olang fix maps`](#olang-fix-maps)
-- [`olang fix deprecated`](#olang-fix-deprecated)
 - [`olang fix guards`, `defaults`, `first-last`, `units`](#olang-fix-guards-defaults-first-last-units)
 - [`olang check`](#olang-check)
 - [`olang eval`](#olang-eval)
@@ -53,7 +52,6 @@ language server has [its own chapter](editors.md).
 | `olang eval SOURCE` | Evaluate one expression and print its value, with the working directory's project libraries in scope |
 | `olang fmt [path]` | Format sources in place; `--check` reports instead of writing |
 | `olang fix maps [path]` | Rewrite `map_get(x, "k")` as `x.k` and `map_get_or(x, "k", d)` as `x.k ?? d`, layout and comments kept; `--check` reports instead of writing |
-| `olang fix deprecated [path]` | Rename every call of a deprecated builtin or module function to its current name (`re.replace_all(` → `re.replace(`, `json.validate(` → `json.is_valid(`); `--check` reports instead of writing |
 | `olang fix guards [path]` | Drop a guard that only kept a field read off `()`: `if x == () => () else => x.f` → `x.f`, `x != () && x.f == v` → `x.f == v`; `--dry-run` prints what would change and what is left, and why |
 | `olang fix defaults [path]` | Rewrite `if x == () => d else => x` as `x ?? d` |
 | `olang fix first-last [path]` | Rewrite a length-guarded `xs[len(xs) - 1]` as `last(xs)` and `xs[0]` as `first(xs)` |
@@ -97,8 +95,7 @@ the `OLANG_DENY` environment variable.
 
 Every command that writes a file takes `-o`/`--output`, and every
 command with more than one form of output takes `--format` (`text` and
-`json`; `olang doc` `html` and `markdown`); the older spellings,
-`olang profile --out` and `olang doc --markdown`, are kept as aliases.
+`json`; `olang doc` `html` and `markdown`).
 Every JSON output carries `format`, its own format number, and `kind`,
 what it is — a line-delimited stream on its first event — and every
 path in it is absolute. A format number changes only when a field
@@ -353,7 +350,7 @@ Formatting is idempotent: a formatted tree passes `--check`.
 
 ## `olang fix maps`
 
-The migration to [`.` and `??`](language.md#maps): every
+Rewrites map reads into [`.` and `??`](language.md#maps): every
 `map_get(chain, "ident")` becomes `chain.ident`, and every
 `map_get_or(x, "k", d)` becomes `x.k ?? d`.
 
@@ -388,20 +385,10 @@ the original's tree once both are read back the same way (each `a.k`
 as `map_get(a, "k")`, each `a.k ?? d` as `map_get_or(a, "k", d)`), or
 the file is left untouched and reported. A second run changes nothing.
 
-## `olang fix deprecated`
-
-A builtin kept under an older name (the [deprecated
-names](stdlib.md#deprecated-names)) still works, and `olang check`
-warns at each call (advisory class `deprecated`; an editor shows it
-struck through). `olang fix deprecated [path] [--check] [--skip path]`
-renames the calls in the source text: a name after a `.`, inside a
-string, template or comment, or that the file binds itself is left, and
-a file is written only when it still parses.
-
 ## `olang fix guards`, `defaults`, `first-last`, `units`
 
-Four rewrites to what 1.0 gives a program, built as `olang fix maps`
-is: the places come from the grammar's parse tree, the text is changed
+Four rewrites into the language's current idioms, built as `olang fix
+maps` is: the places come from the grammar's parse tree, the text is changed
 only there (layout and comments stay byte for byte), parentheses are
 added only where precedence needs them, and a file whose rewrite would
 read back as a different program is left untouched and reported. Each
@@ -503,7 +490,7 @@ message, tags, line, column, end_line, end_column, range }`:
 `severity` `error`, `warning`, `information` or `hint`; `code` the rule
 (`syntax`, `macro`, `scope`, `runtime`, `type`, `advisory`, an
 advisory's class — `shadow`, `exhaustiveness`, `shape`, `keys`,
-`result`, `copy`, `deprecated` — `unused` for a name nothing reads, `manifest` for olang.toml:
+`result`, `copy` — `unused` for a name nothing reads, `manifest` for olang.toml:
 a `[package] olang` that is not a version is an error, since it names the oldest olang the
 project runs on, see [packages.md](packages.md));
 `tags` `["unnecessary"]` on an unused name (a hint, faded by an editor,
@@ -833,8 +820,7 @@ pattern binding of a module's name that its scope then reads as the
 module: `fn table_sort(rows, col) = col.sort_by(…)`), `copy` (a loop that copies the collection it is
 building on every pass: a temporary read again after the rebind, or a
 prepend — see [the rebind forms](performance.md#the-rebind-forms)),
-`deprecated` (a name kept working under an older spelling, which
-`olang fix deprecated` rewrites), `tier` (a function `olang check --tier`
+`tier` (a function `olang check --tier`
 finds the bytecode tier refuses), and `all`. A
 promoted finding fails `olang check` and shows as an error in the
 editor, and its message says which block promoted it.
@@ -844,8 +830,8 @@ A class is a field of the finding, set where the checker makes it — the
 class names are the contract: a message may be reworded in any release,
 its class does not change. `all` means every class the running olang
 knows: a later olang may add a class, or a class such as `keys` or
-`shape` may learn to find more, so a project that promotes `all` (or
-`deprecated`) can see a new failure when it moves to a newer olang —
+`shape` may learn to find more, so a project that promotes `all` can
+see a new failure when it moves to a newer olang —
 name the classes instead to fix the set. `unused`, the class of the
 hint for a name nothing reads, is a hint and never promoted. A name
 `promote` does not know is warned about, with the nearest class, by
@@ -1199,7 +1185,7 @@ olang profile report.ol --format json -o p.json --live live/   # and a snapshot 
 olang --profile-live live/ server.ol                           # any run, armed: sampled while live/attach exists
 ```
 
-`--format json` writes one document (to `-o`/`--output` — `--out`, the older spelling, too — else stdout after the
+`--format json` writes one document (to `-o`/`--output`, else stdout after the
 program's own output), the counts behind the report:
 
 | field | |
@@ -1335,7 +1321,7 @@ Generate an API reference from doc comments:
 ```bash
 olang doc src/                    # → doc.html (themed, browsable)
 olang doc lib/ -o api.html        # choose the output file
-olang doc lib/ --format markdown > API.md   # Markdown to stdout instead (`--markdown`, the older spelling, too)
+olang doc lib/ --format markdown > API.md   # Markdown to stdout instead
 ```
 
 The convention is source-level, and every doc comment is already a
@@ -1616,7 +1602,6 @@ nothing should depend on them.
 | `OLANG_LOCK_READONLY` | yes | `1`: resolve as usual but never write `olang.lock`. |
 | `OLANG_DENY` | yes | Deny capabilities for the run, as `--deny`: a comma list of `fs`, `fs-write`, `net`, `proc`, `db`, `env`. |
 | `OLANG_PARALLELISM` | yes | Thread count for `par_map`/`par for` and other parallel work (also `--ovm-parallelism N`). |
-| `OVM_PARALLELISM` | yes | The older name of `OLANG_PARALLELISM`, kept as an alias; `OLANG_PARALLELISM` wins when both are set. |
 | `OLANG_HTTP_WORKERS` | yes | Default worker count for `http.serve` when the options map does not set one. |
 | `OLANG_ODS_WORKERS` | yes | Worker count for the ods data stack's parallel operations. |
 | `OLANG_STALL_ABORT` | yes | `0` disables the deadlock abort: an all-threads-parked program hangs instead of exiting with the stall report. |

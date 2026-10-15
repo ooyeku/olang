@@ -37,8 +37,8 @@ share fn valid_callsign(s) = unwrap(re.is_match("^[A-Z]{4}-\\d{3}$", s))
 // Slugify a vessel name for filenames: "MV Iron Duke" -> "mv-iron-duke".
 share fn slugify(title) = {
     let lower = str.to_lower(str.trim(title))
-    let hyphenated = unwrap(re.replace_all("[^a-z0-9]+", lower, "-"))
-    unwrap(re.replace_all("^-|-$", hyphenated, ""))
+    let hyphenated = unwrap(re.replace("[^a-z0-9]+", lower, "-"))
+    unwrap(re.replace("^-|-$", hyphenated, ""))
 }
 
 // ── Generation from the seeded stream ───────────────────────────────

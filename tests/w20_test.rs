@@ -289,12 +289,10 @@ fn a_finding_carries_its_class_and_promote_reads_it() {
         &ws,
         "m.ol",
         "type Shape = enum { Circle(Float), Rect(Float, Float) }\n\
-         fn area(s: Shape) = match s { Circle(r) => 1.0 }\n\
-         let s = re.replace_all(\"a\", \"a\", \"b\")\n",
+         fn area(s: Shape) = match s { Circle(r) => 1.0 }\n",
     );
     let (out, _, rc) = olang(&ws, &["check", "--format", "json", "m.ol"]);
     assert_eq!(rc, 1, "{out}");
     assert!(out.contains("\"code\":\"exhaustiveness\""), "{out}");
-    assert!(out.contains("\"code\":\"deprecated\""), "{out}");
-    assert!(out.contains("\"errors\":2"), "{out}");
+    assert!(out.contains("\"errors\":1"), "{out}");
 }

@@ -11,17 +11,15 @@ correct.
 The language surface is **closed**. The syntax and behavior documented in
 [the language reference](language.md) and [the stdlib reference](stdlib.md)
 are a commitment, not a snapshot. The deliberate breaking changes before
-1.0 have shipped, each recorded in the CHANGELOG with what to change:
+1.0 have shipped, each recorded in the CHANGELOG:
 gradual-typing enforcement in 0.48; the scope, mutability,
 stdlib-convention and error-model changes across 0.61–0.65; operator
 precedence in 0.68; and, in 0.88, the last release before 1.0, the
 settling of records (a missing field of an object reads as `()`), of
 modules (a missing member reads as `()`), and of how a lambda stage in a
-pipeline ends ([Settled before 1.0](#settled-before-10); [Migrating to
-0.88](migrating.md)). Earlier editions of this chapter called 0.61 and
-then 0.68 the final deliberate break; 0.88's changes were made because
-1.0 freezes what it ships, and each is small, found by `olang check`,
-and listed in the migration guide. What remains before the 1.0 tag is
+pipeline ends ([Settled before 1.0](#settled-before-10)). Earlier
+editions of this chapter called 0.61 and then 0.68 the final deliberate
+break; 0.88's changes were made because 1.0 freezes what it ships. What remains before the 1.0 tag is
 the release itself. The guarantees below hold now and are what 1.0
 commits to permanently; the [semver contract](#versioning) states what
 could ever change them and at what cost.
@@ -48,7 +46,7 @@ could ever change them and at what cost.
 3. **The stdlib API is append-mostly.** Functions may be added; existing
    signatures and return conventions (which functions return `Result`)
    stay. Renames, if ever needed, keep the old name as an alias for at
-   least one minor release with a deprecation note.
+   least one minor release ([Deprecation](#versioning)).
 4. **The execution tiers agree.** Any observable difference between
    `--no-ovm` and the default tiered execution — bytecode or JIT — is a
    bug. Optimization work must be invisible.
@@ -137,8 +135,8 @@ commitment below, and every program in the corpus that mutates shared
 state is built on it.
 
 **Scope and mutability settled in 0.61.0**, as the second deliberate
-breaking change before 1.0 (recorded in the CHANGELOG with a migration
-guide; the later ones are listed at the top of this chapter). Three rules that were advisory warnings in 0.50–0.60
+breaking change before 1.0 (recorded in the CHANGELOG; the later ones
+are listed at the top of this chapter). Three rules that were advisory warnings in 0.50–0.60
 became enforced errors, checked statically before a program runs and
 therefore identical on every tier:
 
@@ -409,10 +407,10 @@ every documented example is executed in CI (`doc_examples_test`), so a
 breaking change is a *failing test*, and shipping it in anything below a
 major version is a release bug.
 
-**Deprecation.** If a stdlib function ever has to be renamed, the old name
-stays as an alias for at least one minor release, with a deprecation note
-in its documentation and the CHANGELOG. A name is never removed in the
-same release it is deprecated.
+**Deprecation.** After 1.0, a stdlib function that has to be renamed
+keeps its old name as an alias for at least one minor release, the
+rename noted in its documentation and the CHANGELOG; the old name is
+never removed in the release that renames it.
 
 **Bug fixes are not breaking changes.** Behavior that changed because it
 was a *bug* — `&&` not short-circuiting, `?` aborting instead of

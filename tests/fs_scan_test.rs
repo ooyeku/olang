@@ -133,13 +133,13 @@ fn search_finds_a_literal_ignoring_case_by_default_with_columns_in_characters() 
     let d = tree();
     let r = root_of(&d);
     let got = s(eval(&format!(
-        r#"show(map(unwrap(fs.search("{}", "TWICE", #{{ "skip": ["target"] }})), (h) => map_get(h, "path") + ":" + to_string(map_get(h, "line")) + ":" + to_string(map_get(h, "col")) + "-" + to_string(map_get(h, "end"))))"#,
+        r#"show(map(unwrap(fs.search("{}", "TWICE", #{{ "skip": ["target"] }})), (h) => map_get(h, "path") + ":" + to_string(map_get(h, "line")) + ":" + to_string(map_get(h, "column")) + "-" + to_string(map_get(h, "end_column"))))"#,
         r
     )));
     // the binary file is not searched; the é before the match counts one
     assert_eq!(
         got,
-        r#"["app/examples/demo/main.ol:1:13-18", "app/lib/util.ol:1:9-14", "app/lib/util.ol:2:4-9", "app/main.ol:2:31-36", "loose/script.ol:1:11-16", "notes.md:1:2-7"]"#
+        r#"["app/examples/demo/main.ol:1:14-19", "app/lib/util.ol:1:10-15", "app/lib/util.ol:2:5-10", "app/main.ol:2:32-37", "loose/script.ol:1:12-17", "notes.md:1:3-8"]"#
     );
     let text = s(eval(&format!(
         r#"map_get(unwrap(fs.search("{}", "twice", #{{ "files": ["app/lib/util.ol"] }}))[0], "text")"#,

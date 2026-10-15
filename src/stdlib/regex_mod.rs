@@ -40,12 +40,6 @@ pub fn create_regex_module() -> Value {
         "replace_first".to_string(),
         create_builtin_function("replace_first", 3),
     );
-    // Deprecated: `re.replace` replaces every match, as `str.replace`
-    // does; `replace_all` is the same function under its old name.
-    module.insert(
-        "replace_all".to_string(),
-        create_builtin_function("replace_all", 3),
-    );
 
     Value::Struct {
         type_name: "Module".to_string(),
@@ -75,7 +69,6 @@ pub fn call_regex_function(
         "split" => re_split(args),
         "replace" => re_replace(args, "replace", true),
         "replace_first" => re_replace(args, "replace_first", false),
-        "replace_all" => re_replace(args, "replace_all", true),
         _ => Err(format!("Unknown re function: {}", name).into()),
     }
 }

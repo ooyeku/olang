@@ -24,7 +24,7 @@ for i in 0..n {
     gui.set(w, #{ "title": "churn " + to_string(i) + " — edited", "edited": true })
     let t0 = time.monotonic()
     while time.monotonic() - t0 < 250.0 {
-        let _e = chan.recv_timeout(ev, 50)
+        let _e = chan.recv_timeout(ev, #{ "timeout_ms": 50 })
     }
     gui.set(w, #{ "edited": false })
     gui.close(w)

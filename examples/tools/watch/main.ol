@@ -46,7 +46,7 @@ fn header(run, interval) =
 // arrives, and return the exit code. This is the streaming path: we read
 // the child a line at a time rather than waiting for all of its output.
 fn stream_once(argv) = {
-    match proc.spawn(argv[0], skip(argv, 1)) {
+    match proc.spawn(argv) {
         Err(e) => { println(term.red("watch: ") + e); -1 },
         Ok(p) => {
             let _ = proc.close_stdin(p)   // nothing to write; a close failure is moot

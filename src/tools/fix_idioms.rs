@@ -1,6 +1,6 @@
 //! `olang fix guards | defaults | first-last | units` — the 1.0 idioms.
 //!
-//! Four rewrites that 1.0.0-rc.1's rules make exact, built as `olang fix
+//! Four rewrites that the language's rules make exact, built as `olang fix
 //! maps` is (see `fix.rs`): the places come from the grammar's own parse
 //! tree, the rewrite is made in the source text so layout and comments
 //! stay byte for byte, parentheses are added only where precedence needs

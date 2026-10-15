@@ -339,17 +339,12 @@ fn parse_opts(value: &Value, who: &str) -> Result<Opts, Value> {
     Ok(opts)
 }
 
-/// `proc.spawn(program, args)` / `proc.spawn(program, args, opts)` — start
-/// a child with its stdin, stdout, and stderr piped, and return a live
-/// `Process` handle. Both output streams begin draining immediately.
+/// `proc.spawn(argv)` / `proc.spawn(argv, opts)` — start a child with
+/// its stdin, stdout, and stderr piped, and return a live `Process`
+/// handle. Both output streams begin draining immediately.
 fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if args.is_empty() || args.len() > 3 {
-        return Err(misuse(
-            "spawn expects (argv), (program, args) or (program, args, opts)",
-        ));
-    }
-    // `proc.spawn(argv)` / `proc.spawn(argv, opts)`: the program and its
-    // arguments as one list, as `pty.spawn` and a pipeline stage take them
+    // the program and its arguments as one list, as `pty.spawn` and a
+    // pipeline stage take them
     let args: Vec<Value> = match args.first() {
         Some(Value::List(argv)) if args.len() <= 2 => {
             let Some(first) = argv.first() else {
@@ -359,12 +354,11 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             out.extend(args.into_iter().skip(1));
             out
         }
-        _ if args.len() < 2 => {
+        _ => {
             return Err(misuse(
-                "spawn expects (argv), (program, args) or (program, args, opts)",
+                "spawn expects (argv) or (argv, opts): the program and its arguments as one list",
             ));
         }
-        _ => args,
     };
     let program = match as_program(&args[0], "spawn") {
         Ok(p) => p,
@@ -812,7 +806,7 @@ fn proc_kill(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         if tree && !p.group {
             return Err(misuse(
                 "kill: a tree kill needs a process spawned with #{ group: true } \
-                 (proc.spawn(program, args, #{ group: true }))",
+                 (proc.spawn(argv, #{ group: true }))",
             ));
         }
         let pid = p.pid as i32;
@@ -830,7 +824,7 @@ fn proc_kill(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if tree && !p.group {
         return Err(misuse(
             "kill: a tree kill needs a process spawned with #{ group: true } \
-             (proc.spawn(program, args, #{ group: true }))",
+             (proc.spawn(argv, #{ group: true }))",
         ));
     }
     let mut child = p.child.lock().unwrap();

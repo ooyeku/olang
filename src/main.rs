@@ -116,8 +116,7 @@ struct Cli {
     watch: bool,
 
     /// Set maximum parallelism for OVM/builtins (threads). Also respects the
-    /// OLANG_PARALLELISM environment variable (OVM_PARALLELISM, its older
-    /// name, too).
+    /// OLANG_PARALLELISM environment variable.
     #[arg(long, value_name = "N", help_heading = "Run options")]
     ovm_parallelism: Option<usize>,
 
@@ -252,8 +251,7 @@ enum Commands {
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         format: String,
         /// With `--format json`: write the document here instead of stdout
-        /// (`--out` is the older spelling)
-        #[arg(short, long = "output", visible_alias = "out", value_name = "PATH")]
+        #[arg(short, long = "output", value_name = "PATH")]
         out: Option<PathBuf>,
         /// With `--format json`: write a snapshot to DIR/<pid>.json while
         /// the program runs (an editor draws it live)
@@ -284,16 +282,15 @@ enum Commands {
     /// Rewrite programs to a newer idiom. `olang fix maps`: `map_get(x, "k")`
     /// becomes `x.k` and `map_get_or(x, "k", d)` becomes `x.k ?? d`, layout
     /// and comments kept; a default that may have an effect is flagged, not
-    /// rewritten. `olang fix deprecated`: a deprecated builtin's calls
-    /// renamed to its current name. `olang fix guards`: `if x == () => ()
+    /// rewritten. `olang fix guards`: `if x == () => ()
     /// else => x.f` becomes `x.f`, and `x != () && x.f == v` becomes
     /// `x.f == v`. `olang fix defaults`: `if x == () => d else => x` becomes
     /// `x ?? d`. `olang fix first-last`: a length-guarded `xs[len(xs) - 1]`
     /// or `xs[0]` becomes `last(xs)` or `first(xs)`. `olang fix units`:
     /// `to_int(math.floor(e))` becomes `math.floor(e)`
     Fix {
-        /// What to fix: `maps`, `deprecated`, `guards`, `defaults`,
-        /// `first-last`, `units`
+        /// What to fix: `maps`, `guards`, `defaults`, `first-last`,
+        /// `units`
         #[arg(value_name = "WHAT")]
         what: String,
         /// Files or directories (default: current directory)
@@ -455,10 +452,6 @@ enum Commands {
         /// `html` (the default) or `markdown`
         #[arg(long, value_name = "FORMAT", default_value = "html")]
         format: String,
-        /// Emit Markdown instead of HTML (the older spelling of
-        /// `--format markdown`)
-        #[arg(long)]
-        markdown: bool,
     },
 
     /// Show a file after macro expansion (docs/macros.md)
@@ -992,18 +985,13 @@ fn run() -> i32 {
                 "maps" => {
                     std::process::exit(olang::tools::fix::run_maps(&paths, check || dry_run, &skip))
                 }
-                "deprecated" => std::process::exit(olang::tools::fix::run_deprecated(
-                    &paths,
-                    check || dry_run,
-                    &skip,
-                )),
                 other => match olang::tools::fix_idioms::Target::from_name(other) {
                     Some(target) => std::process::exit(olang::tools::fix_idioms::run(
                         target, &paths, check, dry_run, &skip,
                     )),
                     None => {
                         eprintln!(
-                            "olang fix: nothing called '{other}' to fix (there are: maps, deprecated, guards, defaults, first-last, units)"
+                            "olang fix: nothing called '{other}' to fix (there are: maps, guards, defaults, first-last, units)"
                         );
                         std::process::exit(2)
                     }
@@ -1102,10 +1090,9 @@ fn run() -> i32 {
             mut paths,
             output,
             format,
-            markdown,
         }) => {
             let markdown = match format.as_str() {
-                "html" => markdown,
+                "html" => false,
                 "markdown" | "md" => true,
                 other => {
                     eprintln!("olang doc: --format is `html` or `markdown`, not `{other}`");

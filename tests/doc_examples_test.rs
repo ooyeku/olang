@@ -209,7 +209,6 @@ fn tooling_chapter_examples_work() {
 }
 
 #[test]
-fn whats_new_and_migration_examples_work() {
+fn whats_new_examples_work() {
     run_doc_file("docs/whats-new.md", include_str!("../docs/whats-new.md"));
-    run_doc_file("docs/migrating.md", include_str!("../docs/migrating.md"));
 }

@@ -130,8 +130,8 @@ fn join_timeout_reports_a_timeout_without_stopping_the_task() {
     // let us lie about: the task keeps running and stays collectible.
     let out = run("fn slow(n) = { time.sleep(120); n }\n\
                    let t = spawn slow(9)\n\
-                   let first = task.join_timeout(t, 5)\n\
-                   let later = task.join_timeout(t, 5000)\n\
+                   let first = task.join_timeout(t, #{ \"timeout_ms\": 5 })\n\
+                   let later = task.join_timeout(t, #{ \"timeout_ms\": 5000 })\n\
                    show(first) + \" then \" + show(later)\n")
     .unwrap();
     assert_eq!(out, "Err(\"timed out\") then Ok(Ok(9))");
@@ -142,13 +142,13 @@ fn join_timeout_wraps_success_so_failure_is_distinguishable() {
     // `Ok(Err(e))` is "the task failed"; `Err("timed out")` is "we gave
     // up waiting". Collapsing them would lose the difference.
     let out =
-        run("fn boom(n) = n + \"nope\"\nshow(task.join_timeout(spawn boom(1), 5000))\n").unwrap();
+        run("fn boom(n) = n + \"nope\"\nshow(task.join_timeout(spawn boom(1), #{ \"timeout_ms\": 5000 }))\n").unwrap();
     assert!(out.starts_with("Ok(Err("), "{out}");
 }
 
 #[test]
 fn join_timeout_rejects_a_negative_budget() {
-    let e = err("fn one() = 1\ntask.join_timeout(spawn one(), -5)\n");
+    let e = err("fn one() = 1\ntask.join_timeout(spawn one(), #{ \"timeout_ms\": -5 })\n");
     assert!(e.contains("non-negative"), "{e}");
 }
 
@@ -156,7 +156,10 @@ fn join_timeout_rejects_a_negative_budget() {
 
 #[test]
 fn task_operations_reject_values_that_are_not_tasks() {
-    for source in ["task.join(5)", "task.join_timeout([1], 10)"] {
+    for source in [
+        "task.join(5)",
+        "task.join_timeout([1], #{ \"timeout_ms\": 10 })",
+    ] {
         let e = err(source);
         assert!(e.contains("expected a task"), "{source}: {e}");
     }

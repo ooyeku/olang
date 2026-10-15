@@ -79,7 +79,7 @@ fn a_json_profile_names_frames_with_their_place_and_each_frame_s_tier() {
             "main.ol",
             "--format",
             "json",
-            "--out",
+            "--output",
             "p.json",
             "--interval",
             "200",
@@ -153,7 +153,7 @@ fn a_live_profile_writes_snapshots_while_it_runs() {
             "main.ol",
             "--format",
             "json",
-            "--out",
+            "--output",
             "p.json",
             "--live",
             "live",
@@ -477,7 +477,9 @@ fn a_live_profile_of_its_own_is_refused_in_an_armed_run() {
     // inside `olang profile`, the program's stop leaves the profile whole
     let (code2, _, err2) = olang(
         &dir,
-        &["profile", "main.ol", "--format", "json", "--out", "p.json"],
+        &[
+            "profile", "main.ol", "--format", "json", "--output", "p.json",
+        ],
     );
     assert_eq!(code2, 0, "{err2}");
     assert_eq!(read(&dir.join("p.json"))["kind"], "profile");
@@ -533,7 +535,9 @@ fn a_gui_program_ending_with_os_exit_is_profiled_to_its_end() {
     let dir = project("gui-exit", GUI_EXIT);
     let (code, out, err) = olang(
         &dir,
-        &["profile", "main.ol", "--format", "json", "--out", "p.json"],
+        &[
+            "profile", "main.ol", "--format", "json", "--output", "p.json",
+        ],
     );
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("true"), "{out}");

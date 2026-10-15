@@ -166,23 +166,23 @@ conventions (a function returns its value, a `Result` when it can fail
 for a reason the caller can handle, and raises when called wrongly; a
 lookup's absence is `()`; the subject is the first argument, so a call
 pipes). One case was clear-cut and changed in 0.88; the rest are open
-for the owner's decision. A rename keeps the old name as a deprecated
-alias (`olang check` flags it, `olang fix deprecated` rewrites it), so
-it breaks no program and may come in any 1.x release (stability.md
-allows a deprecation in a minor). The three rows whose other option
+for the owner's decision. Before 1.0 a rename is made outright, the
+workspace's code rewritten in the same change; after 1.0 one keeps the
+old name as an alias for a minor release (stability.md, Deprecation).
+The three rows whose other option
 changed behaviour (`find`, `reduce`, `re.replace`) were decided on
 2026-10-12 and changed in the freeze pass.
 
 | Finding | Names | Kind | Status | 1.0 |
 |---|---|---|---|---|
-| Two names, one function | `map_path` / `map_get_in` | duplicate | changed: `map_path` removed (deprecated in 0.88, unused) | — |
+| Two names, one function | `map_path` / `map_get_in` | duplicate | changed: `map_path` removed | — |
 | Two names, one function | `skip` / `drop` (and `col.skip` / `col.drop`) | duplicate | debatable: `drop` is documented as the name most languages pair with `take`; deprecate one, or keep both as stated | after |
 | Two names, one function | `fold` / `reduce` | duplicate | changed: `reduce(xs, f)` takes no initial value, `fold` unchanged | — |
 | Two names, one rendering | `show` / `to_string` | duplicate | debatable: both render the same text (stdlib.md's table said `to_string` quotes strings; it does not); keep one as the documented spelling | after |
 | Identity functions | `lazy`, `force` | vestigial | changed: removed before 1.0 (unused) | — |
 | A lookup that is a `Result` | `find(xs, pred)` answered `Ok`/`Err` | convention | changed: `find` answers the element or `()` | — |
 | The subject is not first | `re.find(pattern, text)` and every `re.*`; `str.*` take the text first | argument order | debatable: `text \|> re.find(p)` does not pipe; a reordering needs new names (`re.find_in(text, pattern)`) | after |
-| One verb, two meanings | `re.replace` replaced the first match | naming | changed: `re.replace` replaces every match, `re.replace_first` one, `re.replace_all` deprecated | — |
+| One verb, two meanings | `re.replace` replaced the first match | naming | changed: `re.replace` replaces every match, `re.replace_first` one; `re.replace_all` removed | — |
 | Text-level JSON helpers | `json.get_keys`, `json.get_values`, `json.get_type`, `json.array_length`, `json.get`, `json.set` on JSON text, beside `map_keys`, `typeof`, `len` on parsed values | overlap | debatable: they predate `json.parse` returning dot-readable values; deprecate the text-level set | after |
 | Module-prefixed names inside a module | `random.randint`, `random.randbool`, `random.randstr*` | naming | debatable: `random.int`, `random.bool`, `random.string` read better under the module name | after |
 | Hex both ways, twice | `crypto.hex_encode` / `crypto.hex_decode` (strings) and `bytes.to_hex` / `bytes.from_hex` | overlap | debatable: one pair could serve both, the String form converting through bytes | after |

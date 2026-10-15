@@ -43,7 +43,7 @@ fn every_command_has_its_own_help() {
         ("inspect", &["--against", "--caps", "--verify"]),
         ("build", &["--output"]),
         ("check", &["--rules"]),
-        ("doc", &["--markdown"]),
+        ("doc", &["--format"]),
     ];
     for (cmd, flags) in checks {
         let out = olang().arg(cmd).arg("--help").output().expect("run");

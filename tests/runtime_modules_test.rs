@@ -312,12 +312,12 @@ fn a_caught_error_keeps_its_frames_with_their_lines() {
 }
 let m = unwrap(runtime.load_module("plug/t/plugin.ol", #{}))
 let r = runtime.call_budget(m.deeper, [()], 1000)
-for f in map_get(r, "frames") { println(fs.basename(show(map_get(f, "file"))) + ":" + show(map_get(f, "line")) + " " + show(map_get(f, "fn"))) }
+for f in map_get(r, "frames") { println(fs.basename(show(map_get(f, "path"))) + ":" + show(map_get(f, "line")) + " " + show(map_get(f, "function"))) }
 println("--")
 let a = attempt(() => outer(m))
 let le = runtime.last_error()
 println(map_get(le, "message"))
-for f in map_get(le, "frames") { println(fs.basename(show(map_get(f, "file"))) + ":" + show(map_get(f, "line")) + " " + show(map_get(f, "fn"))) }
+for f in map_get(le, "frames") { println(fs.basename(show(map_get(f, "path"))) + ":" + show(map_get(f, "line")) + " " + show(map_get(f, "function"))) }
 println(runtime.shape(#{ "n": 1, "items": ["a"], "s": Ok(#{ "k": 2.0 }) }))
 "#,
     );

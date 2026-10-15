@@ -2391,13 +2391,12 @@ impl WinState {
                     float(((b.x1 - b.x0) as f32 / sc).max(1.0)),
                     float((b.y1 - b.y0) as f32 / sc),
                 ]));
-                // the gutter beside a line: no column (`col` -2, deprecated)
+                // the gutter beside a line: no column
                 vec![
                     ("key", s(&k)),
                     ("line", Value::Integer(line as i64 + 1)),
                     ("column", Value::Unit),
                     ("gutter", Value::Boolean(true)),
-                    ("col", Value::Integer(-2)),
                     ("rect", rect),
                 ]
             }
@@ -2410,13 +2409,11 @@ impl WinState {
                     float(((b.x1 - b.x0) as f32 / sc).max(1.0)),
                     float((b.y1 - b.y0) as f32 / sc),
                 ]));
-                // 1-based, as every line and column olang reports (`col`,
-                // the 0-based offset, deprecated)
+                // 1-based, as every line and column olang reports
                 vec![
                     ("key", s(&k)),
                     ("line", Value::Integer(line as i64 + 1)),
                     ("column", Value::Integer(col as i64 + 1)),
-                    ("col", Value::Integer(col as i64)),
                     ("rect", rect),
                 ]
             }
@@ -3467,12 +3464,11 @@ pub struct DisplayList {
     pub prims: Vec<Prim>,
 }
 
-/// A hover that left the text: no line or column (`col` -1, deprecated).
+/// A hover that left the text: no line or column.
 fn hover_left(key: &str) -> Vec<(&'static str, Value)> {
     vec![
         ("key", Value::String(Arc::new(key.to_string()))),
         ("line", Value::Unit),
         ("column", Value::Unit),
-        ("col", Value::Integer(-1)),
     ]
 }

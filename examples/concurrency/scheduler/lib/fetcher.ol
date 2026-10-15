@@ -19,7 +19,7 @@ share fn start(name, ms) = spawn fetch(name, ms)
 // `join_timeout` rather than `race` is the point.
 share fn with_timeout(name, ms, limit) = {
     let t = start(name, ms)
-    match task.join_timeout(t, limit) {
+    match task.join_timeout(t, #{ "timeout_ms": limit }) {
         Ok(Ok(r)) => r
         Ok(Err(e)) => raise(e)
         Err(e) => { name: "TIMEOUT", ms: limit }

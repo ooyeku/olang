@@ -329,15 +329,11 @@ fn re_replace_replaces_every_match_and_replace_first_one() {
     let src = r#"
 fn main() = [
     unwrap(re.replace("[0-9]", "a1b1", "X")),
-    unwrap(re.replace_first("[0-9]", "a1b1", "X")),
-    unwrap(re.replace_all("[0-9]", "a1b1", "X"))
+    unwrap(re.replace_first("[0-9]", "a1b1", "X"))
 ]
 main()
 "#;
-    assert_eq!(
-        agree_tiered(src),
-        Ok(l(vec![s("aXbX"), s("aXb1"), s("aXbX")]))
-    );
+    assert_eq!(agree_tiered(src), Ok(l(vec![s("aXbX"), s("aXb1")])));
 }
 
 // ── Language rulings ───────────────────────────────────────────────────
@@ -770,9 +766,9 @@ fn task_join_tells_a_raise_from_a_returned_err() {
 let ok = spawn 7
 let bad = spawn Err("bad")
 let raised = spawn unwrap(Err("boom"))
-let timed = task.join_timeout(spawn { time.sleep(300); 1 }, 10)
+let timed = task.join_timeout(spawn { time.sleep(300); 1 }, #{ "timeout_ms": 10 })
 [task.join(ok), task.join(bad), match task.join(raised) { Err(e) => str.contains(e, "boom"), Ok(v) => false },
- task.join_timeout(ok, 1000), timed]
+ task.join_timeout(ok, #{ "timeout_ms": 1000 }), timed]
 "#;
     assert_eq!(
         agree_tiered(src),
@@ -858,7 +854,7 @@ fn vec_sum_of_ints_is_an_int() {
 fn stdlib_records_are_maps_or_plain_objects() {
     let src = r#"
 let x = unwrap(os.exec("sh", ["-c", "exit 3"]))
-let w = unwrap(proc.wait(unwrap(proc.spawn("sh", ["-c", "kill -9 $$"]))))
+let w = unwrap(proc.wait(unwrap(proc.spawn(["sh", "-c", "kill -9 $$"]))))
 let u = unwrap(http.parse_url("http://a.example/x"))
 let r = http.response(404, "no")
 [typeof(http.decode_query("a=1")), http.decode_query("a=1").b ?? "d", typeof(os.list_env()),
@@ -901,7 +897,7 @@ let c = chan.new()
 let empty = chan.try_recv(c)
 chan.close(c)
 [re.find("z+", "abc"), re.captures("z", "abc"), re.captures("(x)?b", "b"), str.char_at("ab", 2),
- empty, chan.try_recv(c), chan.recv_timeout(chan.new(), 1), os.env("OLANG_FREEZE_SURELY_UNSET"),
+ empty, chan.try_recv(c), chan.recv_timeout(chan.new(), #{ "timeout_ms": 1 }), os.env("OLANG_FREEZE_SURELY_UNSET"),
  is_err(os.get_env("OLANG_FREEZE_SURELY_UNSET"))]
 "#;
     assert_eq!(
@@ -1078,10 +1074,10 @@ fn bytes_and_repeated_names_at_the_boundaries() {
     let src = r#"
 let bin = unwrap(os.exec("printf", ["\\377A"], #{ "bytes": true }))
 let text = unwrap(os.exec("printf", ["\\377A"]))
-let p = unwrap(proc.spawn("printf", ["\\377B"], #{ "bytes": true }))
+let p = unwrap(proc.spawn(["printf", "\\377B"], #{ "bytes": true }))
 let all = unwrap(proc.read_all(p))
 let w = proc.wait(p)
-let q = unwrap(proc.spawn("printf", ["one\\n\\377two\\nthree"]))
+let q = unwrap(proc.spawn(["printf", "one\\n\\377two\\nthree"]))
 let lines = [unwrap(proc.read_line(q)), unwrap(proc.read_line(q)), unwrap(proc.read_line(q))]
 let ww = proc.wait(q)
 [typeof(bin.stdout), len(bin.stdout), bin.stdout[0], text.stdout, typeof(all), len(all), lines,
@@ -1127,8 +1123,9 @@ let p = unwrap(proc.spawn(["sh", "-c", "echo hi; sleep 5"]))
 let first = unwrap(proc.read_line(p))
 let killed = proc.kill(p, "TERM")
 let ended = unwrap(proc.wait(p))
-[map(hits, (h) => [h.line, h.column, h.end_column, h.col, h.end]),
- frame.path == frame.file, frame.function == frame.fn,
+[map(hits, (h) => [h.line, h.column, h.end_column, map_has_key(h, "col"), map_has_key(h, "end")]),
+ map_has_key(frame, "path") && map_has_key(frame, "function"),
+ !map_has_key(frame, "file") && !map_has_key(frame, "fn"),
  chan.recv_timeout(chan.new(), #{{ "timeout_ms": 1 }}),
  unwrap(os.exec("sh", ["-c", "echo [$OLANG_FREEZE_X]"], #{{ "env": #{{ "OLANG_FREEZE_X": () }} }})).stdout,
  first, killed, ended.signal, caps.level("net"), caps.granted().fs]
@@ -1142,8 +1139,20 @@ let ended = unwrap(proc.wait(p))
         got,
         Ok(l(vec![
             l(vec![
-                l(vec![n(1), n(1), n(6), n(0), n(5)]),
-                l(vec![n(2), n(5), n(10), n(4), n(9)]),
+                l(vec![
+                    n(1),
+                    n(1),
+                    n(6),
+                    Value::Boolean(false),
+                    Value::Boolean(false)
+                ]),
+                l(vec![
+                    n(2),
+                    n(5),
+                    n(10),
+                    Value::Boolean(false),
+                    Value::Boolean(false)
+                ]),
             ]),
             Value::Boolean(true),
             Value::Boolean(true),
@@ -1158,22 +1167,44 @@ let ended = unwrap(proc.wait(p))
     );
 }
 
-// ── deprecations: module functions too; unused aliases removed ─────────
+#[test]
+fn a_wait_takes_its_limit_as_options_and_a_spawn_its_argv() {
+    for refused in [
+        "chan.recv_timeout(chan.new(), 1)",
+        "task.join_timeout(spawn { 1 }, 1000)",
+        "proc.spawn(\"sh\", [\"-c\", \"true\"])",
+        "proc.spawn(\"sh\", [\"-c\", \"true\"], #{})",
+    ] {
+        assert!(
+            eval(&format!("{refused}\n"), None).is_err(),
+            "{refused} is refused"
+        );
+    }
+    assert_eq!(
+        agree_tiered("unwrap(task.join_timeout(spawn { 7 }, #{ \"timeout_ms\": 5000 }))\n"),
+        Ok(ok(Value::Integer(7)))
+    );
+}
+
+// ── removed names stay removed ──────────────────────────────────────────
 
 #[test]
-fn removed_aliases_are_gone_and_module_deprecations_still_work() {
+fn removed_names_are_gone() {
     for gone in [
         "map_path(#{}, [])",
         "lazy(1)",
         "force(1)",
         "base64.validate(\"aGk=\")",
         "testing.run_test(\"t\", () => 1)",
+        "re.replace_all(\"a\", \"aa\", \"b\")",
+        "json.validate(\"{}\")",
+        "toml.validate(\"a = 1\")",
     ] {
         assert!(eval(&format!("{gone}\n"), None).is_err(), "{gone} is gone");
     }
     assert_eq!(
         agree_tiered(
-            "[json.is_valid(\"{}\"), json.validate(\"{\"), toml.is_valid(\"a = 1\"), base64.is_valid(\"aGk=\")]\n"
+            "[json.is_valid(\"{}\"), json.is_valid(\"{\"), toml.is_valid(\"a = 1\"), base64.is_valid(\"aGk=\")]\n"
         ),
         Ok(l(vec![
             Value::Boolean(true),
@@ -1181,21 +1212,6 @@ fn removed_aliases_are_gone_and_module_deprecations_still_work() {
             Value::Boolean(true),
             Value::Boolean(true),
         ]))
-    );
-    let program = Parser::new()
-        .parse_raw("let x = re.replace_all(\"a\", \"aa\", \"b\")\nlet y = json.validate(\"{}\")\n")
-        .unwrap();
-    let diags = olang::tools::check::check_program(&program);
-    let said: Vec<String> = diags.iter().map(|d| d.message.clone()).collect();
-    assert!(
-        said.iter()
-            .any(|m| m.contains("`re.replace_all` is deprecated")),
-        "{said:?}"
-    );
-    assert!(
-        said.iter()
-            .any(|m| m.contains("`json.validate` is deprecated")),
-        "{said:?}"
     );
 }
 

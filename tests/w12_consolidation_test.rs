@@ -133,13 +133,13 @@ fn a_watched_channel_closes_when_its_task_dies() {
         "let inbox = chan.new()\n\
          let service = spawn { unwrap(Err(\"the builder died\")) }\n\
          task.watch(service, inbox)\n\
-         println(show(chan.recv_timeout(inbox, 2000)))\n\
+         println(show(chan.recv_timeout(inbox, #{ \"timeout_ms\": 2000 })))\n\
          // A task that already ended closes at once.\n\
          let done = spawn { 1 }\n\
          let x = unwrap(task.join(done))\n\
          let late = chan.new()\n\
          task.watch(done, late)\n\
-         println(show(chan.recv_timeout(late, 2000)))\n",
+         println(show(chan.recv_timeout(late, #{ \"timeout_ms\": 2000 })))\n",
     );
     let (out, err, rc) = olang(&ws, &["run", "w.ol"]);
     assert_eq!(rc, 0, "{out}{err}");

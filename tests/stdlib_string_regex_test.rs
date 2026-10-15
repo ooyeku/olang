@@ -98,7 +98,7 @@ fn re_find_all_and_split() {
         other => panic!("expected list, got {:?}", other),
     }
     assert_eq!(
-        s(eval(r#"unwrap(re.replace_all("\\s+", "a  b   c", "_"))"#)),
+        s(eval(r#"unwrap(re.replace("\\s+", "a  b   c", "_"))"#)),
         "a_b_c"
     );
 }
