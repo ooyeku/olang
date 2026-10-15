@@ -41,12 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and `toml.validate` (`is_valid`); `fs.search`'s `col` and `end`
   (`column` and `end_column`), a styled field's hover `col` (`column`,
   and `gutter: true` over the gutter), a frame's `file` and `fn`
-  (`path` and `function`); a wait's limit as a bare number
-  (`chan.recv_timeout`, `task.join_timeout`, `pty.wait` and `tty.query`
-  take `#{ timeout_ms }`); `proc.spawn(program, args)`
+  (`path` and `function`); `proc.spawn(program, args)`
   (`proc.spawn(argv)`); `OVM_PARALLELISM` (`OLANG_PARALLELISM`); and
   the flags `olang profile --out` (`-o`/`--output`) and `olang doc
   --markdown` (`--format markdown`).
+- A wait's limit is a number of milliseconds or `#{ timeout_ms }`
+  (`chan.recv_timeout`, `task.join_timeout`, `pty.wait`, `tty.query`).
 - **No deprecation machinery**: `olang check` has no deprecated-name
   warnings and no `deprecated` class (`[check] promote` does not take
   it), `olang fix deprecated` is gone, and the language server sends no

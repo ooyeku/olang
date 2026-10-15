@@ -130,7 +130,7 @@ fn join_timeout_reports_a_timeout_without_stopping_the_task() {
     // let us lie about: the task keeps running and stays collectible.
     let out = run("fn slow(n) = { time.sleep(120); n }\n\
                    let t = spawn slow(9)\n\
-                   let first = task.join_timeout(t, #{ \"timeout_ms\": 5 })\n\
+                   let first = task.join_timeout(t, 5)\n\
                    let later = task.join_timeout(t, #{ \"timeout_ms\": 5000 })\n\
                    show(first) + \" then \" + show(later)\n")
     .unwrap();

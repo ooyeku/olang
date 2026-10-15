@@ -716,7 +716,7 @@ fn tty_query(args: Vec<Value>) -> Res {
             return Err(crate::stdlib::misuse::arg_type(
                 "tty.query",
                 "the limit",
-                "#{ timeout_ms } (a non-negative Int of milliseconds)",
+                "a non-negative number of milliseconds, or #{ timeout_ms }",
                 other,
             ));
         }

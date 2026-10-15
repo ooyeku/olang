@@ -119,15 +119,20 @@ fn kill_hangs_up_a_running_job_and_close_reaps_it() {
         &format!(
             r#"{READ_UNTIL}
 let p = unwrap(pty.spawn(["/bin/sh", "-c", "sleep 30"], #{{ "rows": 24, "cols": 80 }}))
-let still = unwrap(pty.wait(p, #{{ "timeout_ms": 100 }}))
+// a wait's limit: a number of milliseconds, or #{{ timeout_ms }}; a bad one raises
+let still = unwrap(pty.wait(p, 100))
+let still2 = unwrap(pty.wait(p, #{{ "timeout_ms": 50 }}))
+let now = unwrap(pty.wait(p))
+let bad = [-1, "100", #{{ "timeout_ms": -1 }}, #{{ "ms": 100 }}]
+let refused = len(filter(bad, (b) => is_err(attempt(() => pty.wait(p, b))))) == 4
 unwrap(pty.kill(p))
-let ended = unwrap(pty.wait(p, #{{ "timeout_ms": 3000 }}))
+let ended = unwrap(pty.wait(p, 3000))
 pty.close(p)
 let gone = is_err(pty.write(p, "x"))
-[still == (), ended != (), ended.signal == 1 || ended.code != 0, gone]
+[still == (), still2 == (), now == (), refused, ended != (), ended.signal == 1 || ended.code != 0, gone]
 "#
         ),
-        4,
+        7,
     );
 }
 

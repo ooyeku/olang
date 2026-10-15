@@ -1168,10 +1168,62 @@ let ended = unwrap(proc.wait(p))
 }
 
 #[test]
-fn a_wait_takes_its_limit_as_options_and_a_spawn_its_argv() {
+fn a_wait_takes_its_limit_as_a_number_or_options() {
+    // a number of milliseconds, or #{ timeout_ms }, on the interpreter and
+    // the tiered run (the bytecode tier with the interpreter's modules)
+    let n = |v: i64| Value::Integer(v);
+    let src = r#"
+fn main() = {
+    let c = chan.new()
+    chan.send(c, 1)
+    chan.send(c, 2)
+    [chan.recv_timeout(c, 50), chan.recv_timeout(c, #{ "timeout_ms": 50 }),
+     chan.recv_timeout(c, 1), chan.recv_timeout(c, #{ "timeout_ms": 1 }), chan.recv_timeout(c, 1.5)]
+}
+main()
+"#;
+    let timed_out = Value::Err(Box::new(s("timed out")));
+    assert_eq!(
+        agree_tiered(src),
+        Ok(l(vec![
+            ok(n(1)),
+            ok(n(2)),
+            timed_out.clone(),
+            timed_out.clone(),
+            timed_out
+        ]))
+    );
+    assert_eq!(
+        agree_tiered(
+            "[task.join_timeout(spawn { 7 }, 5000), task.join_timeout(spawn { 8 }, #{ \"timeout_ms\": 5000 })]\n"
+        ),
+        Ok(l(vec![ok(ok(n(7))), ok(ok(n(8)))]))
+    );
+    // a bad limit raises: not a number, negative, or an options map
+    // without timeout_ms alone
+    for bad in [
+        "-1",
+        "\"10\"",
+        "#{ \"timeout_ms\": -1 }",
+        "#{ \"ms\": 10 }",
+        "()",
+    ] {
+        for call in [
+            format!("chan.recv_timeout(chan.new(), {bad})"),
+            format!("task.join_timeout(spawn {{ 1 }}, {bad})"),
+        ] {
+            assert!(eval(&format!("{call}\n"), None).is_err(), "{call} raises");
+            assert!(
+                eval(&format!("{call}\n"), Some(1)).is_err(),
+                "{call} raises tiered"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_spawn_takes_its_argv() {
     for refused in [
-        "chan.recv_timeout(chan.new(), 1)",
-        "task.join_timeout(spawn { 1 }, 1000)",
         "proc.spawn(\"sh\", [\"-c\", \"true\"])",
         "proc.spawn(\"sh\", [\"-c\", \"true\"], #{})",
     ] {
@@ -1180,10 +1232,6 @@ fn a_wait_takes_its_limit_as_options_and_a_spawn_its_argv() {
             "{refused} is refused"
         );
     }
-    assert_eq!(
-        agree_tiered("unwrap(task.join_timeout(spawn { 7 }, #{ \"timeout_ms\": 5000 }))\n"),
-        Ok(ok(Value::Integer(7)))
-    );
     // the checker counts a spawn's argv as its one required argument
     let program = Parser::new()
         .parse_raw(

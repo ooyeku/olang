@@ -163,7 +163,8 @@ println(to_string(m.z ?? 0))   // 0
 are the same words in every module: `line` and `column` are 1-based (a
 search hit, a frame, a hover in a styled field, a lens), a function is
 `function`, a file on disk is `path`, a wait's limit is `timeout_ms`
-(every function that waits with a limit takes it as `#{ timeout_ms }`),
+(every function that waits with a limit takes it as a number of
+milliseconds or as `#{ timeout_ms }`),
 and an environment is `env` (a name given `()` removed) with
 `clear_env`.
 
@@ -977,7 +978,7 @@ The model is covered in
 | Function | Returns |
 |---|---|
 | `task.join(t)` | `Ok(value)` when the task returned (a value that is itself an `Err` included), `Err(message)` when it raised — blocks until it finishes |
-| `task.join_timeout(t, #{ timeout_ms })` | `Ok` of what `task.join` answers (`Ok(Ok(v))`, `Ok(Err(e))`) if it finished within `timeout_ms`, else `Err("timed out")` |
+| `task.join_timeout(t, ms)` / `task.join_timeout(t, #{ timeout_ms })` | `Ok` of what `task.join` answers (`Ok(Ok(v))`, `Ok(Err(e))`) if it finished within `ms`, else `Err("timed out")` |
 | `task.watch(t, c)` | the channel dies with the task: when `t` ends, however it ends, `c` is closed, so a `chan.recv` on it returns `Err` instead of waiting forever. Ownership is declared here, not inferred — any task may hold either end of a channel |
 | `task.list()` | every task a live handle still watches: `#{ id, state, elapsed_ms }` |
 | `task.parked()` | threads blocked on unbounded waits: `#{ thread, on, waited_ms }` |
@@ -1078,7 +1079,7 @@ boundary like anything else.
 | `chan.send(c, v)` | `Ok(())`, or `Err` when the channel is closed |
 | `chan.recv(c)` | blocks; `Ok(value)`, or `Err` when closed and drained |
 | `chan.try_recv(c)` | `Ok(value)`; `Ok(())` when nothing is waiting; `Err("channel is closed")` once closed and drained. A channel that carries `()` cannot tell it from empty this way: use `chan.recv_timeout` |
-| `chan.recv_timeout(c, #{ timeout_ms })` | like `recv`, plus `Err("timed out")` once `timeout_ms` pass — receivers on one channel wait side by side, so the bound is this wait's own, never another waiter's |
+| `chan.recv_timeout(c, ms)` / `chan.recv_timeout(c, #{ timeout_ms })` | like `recv`, plus `Err("timed out")` once `ms` pass — receivers on one channel wait side by side, so the bound is this wait's own, never another waiter's |
 | `chan.ask(service, request)` | the reply pattern in one call: sends `#{ "req": request, "reply": r }` on a fresh reply channel and answers `Ok(reply)` — spinning briefly before it parks, so a service that answers in microseconds costs no thread wake-up |
 | `chan.stat(c)` | a snapshot map: `id`, `queued`, `closed`, `recv_waiting`, `send_waiting` |
 | `chan.close(c)` | closes the sending side (idempotent) |
@@ -1828,7 +1829,7 @@ elsewhere: `pty.available()`); capability-gated as `proc`.
 | `pty.write(p, data)` | a String or Bytes (the keys typed), queued for a writer thread (a large paste never blocks) |
 | `pty.resize(p, rows, cols)` | TIOCSWINSZ: the foreground job hears SIGWINCH |
 | `pty.kill(p, sig?)` | `"HUP"` (the default), `"INT"`, `"TERM"`, `"KILL"`, `"QUIT"`, `"CONT"`, `"STOP"` or a number, to the shell's process group and the foreground job's |
-| `pty.wait(p, #{ timeout_ms }?)` | `Ok({ code, signal })` once it ended (waiting up to `timeout_ms`, 0), `Ok(())` while it runs |
+| `pty.wait(p, ms?)` / `pty.wait(p, #{ timeout_ms })` | `Ok({ code, signal })` once it ended (waiting up to `ms`, 0), `Ok(())` while it runs |
 | `pty.foreground(p)` | the terminal's foreground job `{ pid, name, shell }` (`shell` while the shell is at its prompt), or `()` once it ended — ask before closing a terminal a program runs in |
 | `pty.cwd(p)` | the foreground job's working directory (the shell's at its prompt), or `()` |
 | `pty.pid(p)` · `pty.shell()` · `pty.available()` | the child's pid; the user's login shell (`$SHELL`, the user database's, `/bin/zsh`); whether ptys exist here |
@@ -2027,7 +2028,7 @@ Native-only.
 | `tty.events(h)` | the channel of decoded events (below) |
 | `tty.size()` | `Ok((cols, rows))`, or `Err` when stdout is not a terminal. Needs no `enter` |
 | `tty.write(h, s)` | write a String or Bytes now — after anything `print` left buffered, without waiting for a newline → `Ok(())` / `Err` |
-| `tty.query(h, seq, #{ timeout_ms })` | write a query (`"\u{1b}]11;?\u{1b}\\"` for the background colour, `"\u{1b}[c"` for DA1, `"\u{1b}[?u"` for the kitty flags) → `Ok(reply)` — the reply's raw bytes — or `Err("timeout")` |
+| `tty.query(h, seq, ms)` / `tty.query(h, seq, #{ timeout_ms })` | write a query (`"\u{1b}]11;?\u{1b}\\"` for the background colour, `"\u{1b}[c"` for DA1, `"\u{1b}[?u"` for the kitty flags) → `Ok(reply)` — the reply's raw bytes — or `Err("timeout")` |
 | `tty.is_tty()` | stdin and stdout are both terminals — what `enter` needs |
 | `tty.suspend(h)` | ctrl+z done right: restore, stop, and on `fg` re-enter and deliver `signal` `cont` and a `resize` |
 

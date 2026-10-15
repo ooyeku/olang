@@ -772,21 +772,21 @@ mod imp {
         )
     }
 
-    /// `pty.wait(p, #{ timeout_ms }?)`: `#{ code, signal }` once the
-    /// child ended (waiting up to `timeout_ms`, default 0), `()` while it
-    /// runs.
+    /// `pty.wait(p, ms?)`: `#{ code, signal }` once the child ended
+    /// (waiting up to `ms`, default 0, or `#{ timeout_ms }`), `()` while
+    /// it runs.
     fn wait(args: Vec<Value>) -> Res {
         let p = match pty_of(args.first().unwrap_or(&Value::Unit)) {
             Ok(p) => p,
             Err(e) => return pty_fail(e),
         };
-        // #{ timeout_ms }, as every wait takes its limit
+        // a number of milliseconds, or #{ timeout_ms }, as every wait takes its limit
         let ms = match args.get(1) {
             Some(v) => crate::stdlib::timeout_ms_arg(v).ok_or_else(|| {
                 crate::stdlib::misuse::arg_type(
                     "pty.wait",
                     "the limit",
-                    "#{ timeout_ms } (a non-negative Int of milliseconds)",
+                    "a non-negative number of milliseconds, or #{ timeout_ms }",
                     v,
                 )
             })?,

@@ -2131,9 +2131,10 @@ println(to_string(results))   // [0, -1, 20]
 
 ### Bounding the wait
 
-`task.join_timeout(t, #{ timeout_ms })` returns `Ok` of what `task.join` would answer
-if the task finished within the budget (`Ok(Ok(v))`, or `Ok(Err(e))`
-when it raised) and `Err("timed out")` otherwise.
+`task.join_timeout(t, ms)` returns `Ok` of what `task.join` would answer
+if the task finished within `ms` milliseconds (`Ok(Ok(v))`, or
+`Ok(Err(e))` when it raised) and `Err("timed out")` otherwise. The
+budget can also be given as `#{ timeout_ms }`.
 
 Be precise about what that means: it bounds how long you *wait*, not
 how long the task *works*. An OS thread cannot be cancelled from
@@ -2145,7 +2146,7 @@ handle:
 ```olang
 fn slow(n) = { time.sleep(80); n }
 let t = spawn slow(7)
-println(show(task.join_timeout(t, #{ "timeout_ms": 5 })))      // Err("timed out")
+println(show(task.join_timeout(t, 5)))                      // Err("timed out")
 println(show(task.join_timeout(t, #{ "timeout_ms": 5000 })))   // Ok(Ok(7)) — it kept running
 ```
 

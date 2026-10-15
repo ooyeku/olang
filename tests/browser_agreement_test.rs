@@ -61,6 +61,9 @@ println([attempt(() => [1, 2][-1]), attempt(() => "ab"[-1]), first([]), last([3,
 // task.join and join_timeout
 fn work() = 21 * 2
 fn boom() = raise("bad")
+// a wait's limit: a number of milliseconds, or #{ timeout_ms }; a bad one
+// raises (the wait itself has no clock in the browser runtime)
+println(map([-1, "10", #{ "timeout_ms": -1 }, #{ "ms": 10 }], (b) => attempt(() => chan.recv_timeout(chan.new(), b))))
 // records as Maps / objects
 println(typeof(json.parse("{\"a\":1}") |> unwrap))
 println(csv.parse_with_headers("a,b\n1,2") |> unwrap)

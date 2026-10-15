@@ -2215,11 +2215,14 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
         );
         self.doc_ex(
             "pty.wait",
-            "pty.wait(p, #{ timeout_ms }?)",
+            "pty.wait(p, ms?)",
             "Result",
             "pty",
-            "How the child ended, Ok({ code, signal }) — waiting up to timeout_ms (0 by default) — or Ok(()) while it runs.",
-            &[r##"let e = unwrap(pty.wait(p, #{ "timeout_ms": 1000 }))"##],
+            "How the child ended, Ok({ code, signal }) — waiting up to ms milliseconds (0 by default; #{ timeout_ms } also takes it) — or Ok(()) while it runs.",
+            &[
+                r##"let e = unwrap(pty.wait(p, 1000))"##,
+                r##"let e = unwrap(pty.wait(p, #{ "timeout_ms": 1000 }))"##,
+            ],
         );
         self.doc_ex(
             "pty.pid",
@@ -2435,11 +2438,14 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
         );
         self.doc_ex(
             "tty.query",
-            "tty.query(h, seq, #{ timeout_ms })",
+            "tty.query(h, seq, ms)",
             "Result",
             "tty",
-            "Ask the terminal something (OSC 11 for the background colour, DA1, the kitty keyboard flags) and answer Ok(reply) — the raw reply bytes as a String — or Err(\"timeout\"). The reply is taken out of the input stream: it never reaches tty.events, even when it arrives late. Needs raw mode. Unix only for now (Err on Windows).",
-            &[r##"let bg = tty.query(h, "\u{1b}]11;?\u{1b}\\", #{ "timeout_ms": 100 })"##],
+            "Ask the terminal something (OSC 11 for the background colour, DA1, the kitty keyboard flags) and answer Ok(reply) — the raw reply bytes as a String — or Err(\"timeout\"). The reply is taken out of the input stream: it never reaches tty.events, even when it arrives late. Waits up to ms milliseconds (#{ timeout_ms } also takes it). Needs raw mode. Unix only for now (Err on Windows).",
+            &[
+                r##"let bg = tty.query(h, "\u{1b}]11;?\u{1b}\\", 100)"##,
+                r##"let bg = tty.query(h, "\u{1b}]11;?\u{1b}\\", #{ "timeout_ms": 100 })"##,
+            ],
         );
         self.doc_ex(
             "tty.is_tty",
@@ -2570,11 +2576,14 @@ bytes.to_string(bytes.slice(image, 0, 4))  // Ok("olb1")"#.to_string(),
         );
         self.doc_ex(
             "task.join_timeout",
-            "task.join_timeout(t, #{ timeout_ms })",
+            "task.join_timeout(t, ms)",
             "Result",
             "task",
-            "Ok(what task.join answers) if it finished within timeout_ms, else Err(\"timed out\") — the task keeps running",
-            &[r##"task.join_timeout(t, #{ "timeout_ms": 2000 })  // Err("timed out") leaves it running"##],
+            "Ok(what task.join answers) if it finished within ms milliseconds (or #{ timeout_ms }), else Err(\"timed out\") — the task keeps running",
+            &[
+                r##"task.join_timeout(t, 2000)  // Err("timed out") leaves it running"##,
+                r##"task.join_timeout(t, #{ "timeout_ms": 2000 })"##,
+            ],
         );
         self.doc_ex(
             "task.watch",
@@ -2687,11 +2696,14 @@ task.watch(service, inbox)   // a dead service is an Err at the next recv, not a
         );
         self.doc_ex(
             "chan.recv_timeout",
-            "chan.recv_timeout(c, #{ timeout_ms })",
+            "chan.recv_timeout(c, ms)",
             "Result",
             "chan",
-            "like recv, plus Err(\"timed out\") after timeout_ms milliseconds",
-            &[r##"chan.recv_timeout(c, #{ "timeout_ms": 500 })  // Err("timed out") after 500 ms"##],
+            "like recv, plus Err(\"timed out\") after ms milliseconds (or #{ timeout_ms })",
+            &[
+                r##"chan.recv_timeout(c, 500)  // Err("timed out") after 500 ms"##,
+                r##"chan.recv_timeout(c, #{ "timeout_ms": 500 })"##,
+            ],
         );
         self.doc_ex(
             "chan.stat",

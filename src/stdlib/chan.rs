@@ -645,7 +645,7 @@ fn chan_recv_timeout(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Erro
         [_, limit] => crate::stdlib::timeout_ms_arg(limit),
         _ => None,
     }
-    .ok_or("chan.recv_timeout expects a channel and #{ timeout_ms } (a non-negative Int of milliseconds)")?;
+    .ok_or("chan.recv_timeout expects a channel and a non-negative number of milliseconds (or #{ timeout_ms })")?;
     let chan = chan_of(&args[0])?;
     let _parked = crate::profile::blocked();
     let rx = &chan.rx;

@@ -901,7 +901,7 @@ fn query_replies_come_back_and_never_leak_into_events() {
 let h = unwrap(tty.enter(#{ "alt_screen": true, "mouse": true, "paste": true }))
 let events = tty.events(h)
 tty.write(h, "READY\r\n")
-let r = tty.query(h, "\u{1b}[c", #{ "timeout_ms": 5000 })
+let r = tty.query(h, "\u{1b}[c", 5000)
 tty.write(h, "REPLY " + show(unwrap_or(r, "") == "\u{1b}[?62;22c") + "\r\n")
 let t = tty.query(h, "\u{1b}]11;?\u{1b}\\", #{ "timeout_ms": 200 })
 tty.write(h, "TIMEOUT " + show(t) + "\r\n")
