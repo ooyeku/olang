@@ -100,6 +100,8 @@ println(read_count())
 // patterns
 println(match 1.0 { 1 => "int", _ => "other" })
 println(attempt(() => match 5 { 1 => "one" }))
+fn record(v) = match v { {} => "record", _ => "other" }
+println(map([[1], "s", (), 3, 2.5, #{}, { a: 1 }, P { x: 1, y: 2 }, json.parse("{}") |> unwrap], record))
 // sort stability, strings
 println([col.sort_by([[1, "b"], [0, "x"], [1, "a"]], (p) => p[0]), split("ab", ""), "\x41", str.substring("abc", 1, 99)])
 "#;

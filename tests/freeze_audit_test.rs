@@ -1186,6 +1186,70 @@ fn a_wait_takes_its_limit_as_options_and_a_spawn_its_argv() {
     );
 }
 
+// ── the empty record pattern ───────────────────────────────────────────
+
+#[test]
+fn the_empty_record_pattern_matches_a_record_and_nothing_else() {
+    // `{}` names no key: a Map, an object, a parsed JSON object and a
+    // struct are records; a List, a String, `()`, a number, a Result and
+    // an enum value are not, on every tier (the bytecode tier matched
+    // them all).
+    let src = r#"
+type P = struct { x: Int }
+type Shape = enum { Circle(Float) }
+fn record(v) = match v { {} => true, _ => false }
+fn named(v) = match v { { x } => x, {} => 0, _ => -1 }
+fn main() = [
+    record(#{}), record(#{ "a": 1 }), record({ a: 1 }), record(P { x: 1 }),
+    record(unwrap(json.parse("{}"))),
+    record([1]), record([]), record("s"), record(()), record(3), record(2.5),
+    record(Ok(1)), record(Circle(1.0)), record(true),
+    named(#{ "x": 5 }), named(#{}), named([1])
+]
+main()
+"#;
+    let t = Value::Boolean(true);
+    let f = Value::Boolean(false);
+    assert_eq!(
+        agree_tiered(src),
+        Ok(l(vec![
+            t.clone(),
+            t.clone(),
+            t.clone(),
+            t.clone(),
+            t.clone(),
+            f.clone(),
+            f.clone(),
+            f.clone(),
+            f.clone(),
+            f.clone(),
+            f.clone(),
+            f.clone(),
+            f.clone(),
+            f,
+            Value::Integer(5),
+            Value::Integer(0),
+            Value::Integer(-1),
+        ]))
+    );
+    // and on the VM, with no interpreter environment to fall back on
+    let vm_src = r#"
+fn record(v) = match v { {} => true, _ => false }
+fn main() = [record(#{ "a": 1 }), record([1]), record("s"), record(()), record(3)]
+main()
+"#;
+    assert_eq!(
+        agree(vm_src),
+        Ok(l(vec![
+            Value::Boolean(true),
+            Value::Boolean(false),
+            Value::Boolean(false),
+            Value::Boolean(false),
+            Value::Boolean(false),
+        ]))
+    );
+}
+
 // ── removed names stay removed ──────────────────────────────────────────
 
 #[test]

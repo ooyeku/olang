@@ -1445,7 +1445,7 @@ println(describe(0) + ", " + describe(2) + ", " + describe(7) + ", " + describe(
 | Enum variant | `Some(v)`, `Node(l, r)` | that variant, binding payloads |
 | Result | `Ok(v)`, `Err(e)` | result values |
 | Struct | `Point { x, y }` | struct fields (shorthand or `field: pat`) |
-| Anonymous struct | `{ kind: k }` | object fields |
+| Record | `{ kind: k }`, `{}` | a record — a map, an object, a parsed JSON object or a struct — having those keys; `{}` names none and matches any record, never a List, a String, `()` or a number |
 | Guard | `pat if cond` | pattern plus condition |
 
 ```olang

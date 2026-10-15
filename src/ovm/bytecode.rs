@@ -930,6 +930,13 @@ pub enum Instruction {
         field_name: String,
         records: bool,
     },
+    /// True when the value is a record: a map, an object or a parsed
+    /// JSON object — what the empty record pattern `{}` matches. Never
+    /// errors: anything else is `false`.
+    PatternTestRecord {
+        dst: Register,
+        value: Register,
+    },
     /// Build a runtime closure: clone the template ClosureObject stored at
     /// `template_const` and fill its `captured` values from the given
     /// registers, read at this instant — the interpreter's capture-by-value
@@ -5815,6 +5822,19 @@ impl BytecodeVm {
                     };
                     self.execution_state
                         .set_register(*dst, OvmValue::new_boolean(has))?;
+                }
+
+                Instruction::PatternTestRecord { dst, value } => {
+                    use crate::ovm::value::ValueData;
+                    let record = matches!(
+                        &self.execution_state.register_ref(*value)?.data,
+                        ValueData::Struct(_)
+                            | ValueData::AstStruct(..)
+                            | ValueData::Map(_)
+                            | ValueData::AstMap(_)
+                    );
+                    self.execution_state
+                        .set_register(*dst, OvmValue::new_boolean(record))?;
                 }
 
                 Instruction::MakeClosure {
@@ -12649,6 +12669,17 @@ impl BytecodeCompiler {
             Pattern::Struct { field_patterns, .. }
             | Pattern::AnonymousStruct { field_patterns } => {
                 let records = matches!(pattern, Pattern::AnonymousStruct { .. });
+                // `{}` names no field: it still asks for a record
+                if records && field_patterns.is_empty() {
+                    let test_reg = self.register_allocator.allocate_register();
+                    self.emitter
+                        .instructions
+                        .push(Instruction::PatternTestRecord {
+                            dst: test_reg,
+                            value: value_reg,
+                        });
+                    self.emitter.emit_branch_if_false(test_reg, fail_label);
+                }
                 for (field_name, sub) in field_patterns {
                     let test_reg = self.register_allocator.allocate_register();
                     self.emitter
@@ -14747,6 +14778,7 @@ impl BytecodeOptimizer {
             | I::PatternTestList { dst, value, .. }
             | I::PatternTestEnum { dst, value, .. }
             | I::PatternTestStructField { dst, value, .. }
+            | I::PatternTestRecord { dst, value }
             | I::PatternInRange { dst, value, .. } => {
                 uses.push(value.0);
                 defs.push(dst.0);
