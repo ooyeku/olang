@@ -45,7 +45,7 @@ prepush:
 	cargo fmt --all -- --check
 	@touch src/lib.rs otc/src/main.rs olang-ods/src/lib.rs playground/src/lib.rs
 	cargo clippy --workspace --all-targets -- -D warnings
-	cargo test --workspace
+	cargo test --workspace --profile fasttest
 	cargo build --release
 	cd examples && ../target/release/olang run run_all.ol
 

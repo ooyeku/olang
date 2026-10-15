@@ -331,6 +331,16 @@ lto = true
 codegen-units = 1
 panic = "abort"
 
+# Tests: optimized as release is (budgets and timings stay meaningful),
+# without its whole-program LTO, which re-optimizes all of olang for
+# each of the ~170 test binaries. `cargo test --profile fasttest`.
+[profile.fasttest]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+panic = "unwind"
+
 [profile.dev]
 opt-level = 0
 debug = true 

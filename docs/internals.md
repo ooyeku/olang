@@ -396,6 +396,12 @@ Gates for every change: `cargo test --workspace`, `cargo clippy
 for anything user-visible — verify through the installed binary, in both
 tiers.
 
+Run the full suite as `cargo test --workspace --profile fasttest`
+(about six minutes on an M-class Mac: four to build, two to run). The
+profile is release's optimization without its whole-program LTO, which
+would re-optimize all of olang once for each of the ~170 test binaries —
+hours, and tens of gigabytes. Never `cargo test --release`.
+
 `--workspace` is the load-bearing part. The repository root is both a
 package and the workspace root, so a bare `cargo test` builds and tests
 `olang` alone: the engine crate's property tests under `olang-ods/`, and

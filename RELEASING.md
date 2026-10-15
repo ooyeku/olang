@@ -17,7 +17,7 @@ Nothing else carries the version; `Cargo.lock` is not committed.
 ## 2. Gates (all green before the release commit)
 
 ```bash
-cargo test --workspace                 # full suite, including the
+cargo test --workspace --profile fasttest  # full suite (~6 min), including the
                                        # bytecode differential + tier suites
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
