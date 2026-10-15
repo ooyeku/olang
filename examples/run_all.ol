@@ -106,7 +106,7 @@ let mut failed = 0
 for t in targets {
     // Each program runs from its own directory (the exec cwd option), so
     // relative imports and file reads resolve.
-    match os.exec(olang, concat([t.file], args_for(t.label)), #{ "cwd": t.dir }) {
+    match os.exec([olang, t.file] + args_for(t.label), #{ "cwd": t.dir }) {
         Ok(r) => if r.code == 0 => {
             passed = passed + 1
             println("  ✓ pass   " + t.label)

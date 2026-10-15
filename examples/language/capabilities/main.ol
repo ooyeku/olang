@@ -29,7 +29,7 @@ let root = unwrap(os.cwd())
 
 fn run_variant(name) = {
     let dir = root + "/" + name
-    unwrap(os.exec(olang, ["main.ol"], #{ "cwd": dir }))
+    unwrap(os.exec([olang, "main.ol"], #{ "cwd": dir }))
 }
 
 fn rule(title) = {

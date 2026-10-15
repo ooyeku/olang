@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   (`proc.spawn(argv)`); `OVM_PARALLELISM` (`OLANG_PARALLELISM`); and
   the flags `olang profile --out` (`-o`/`--output`) and `olang doc
   --markdown` (`--format markdown`).
+- **`os.exec` takes `argv`**, as `proc.spawn` does: `os.exec(argv,
+  opts?)`, the program and its arguments as one list.
 - A wait's limit is a number of milliseconds or `#{ timeout_ms }`
   (`chan.recv_timeout`, `task.join_timeout`, `pty.wait`, `tty.query`).
 - **No deprecation machinery**: `olang check` has no deprecated-name

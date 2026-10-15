@@ -135,7 +135,7 @@ fn gone(pid) = {
     let mut left = 40
     let mut alive = true
     while alive && left > 0 {
-        alive = unwrap(os.exec("kill", ["-0", pid])).code == 0
+        alive = unwrap(os.exec(["kill", "-0", pid])).code == 0
         if alive => time.sleep(50) else => ()
         left = left - 1
     }
@@ -185,7 +185,7 @@ fn a_missing_cwd_is_named_not_the_program() {
         r#"
 let s = match proc.spawn(["sh"], #{ "cwd": "/nonexistent/olang-dir" }) { Ok(p) => "", Err(e) => e }
 let pl = match proc.pipeline([["sh"]], #{ "cwd": "/nonexistent/olang-dir" }) { Ok(p) => "", Err(e) => e }
-let ex = match os.exec("sh", [], #{ "cwd": "/nonexistent/olang-dir" }) { Ok(p) => "", Err(e) => e }
+let ex = match os.exec(["sh"], #{ "cwd": "/nonexistent/olang-dir" }) { Ok(p) => "", Err(e) => e }
 [ str.contains(s, "cwd '/nonexistent/olang-dir' does not exist"), !str.contains(s, "'sh'"),
   str.contains(pl, "/nonexistent/olang-dir"), str.contains(ex, "cwd '/nonexistent/olang-dir' does not exist") ]
 "#,
@@ -201,7 +201,7 @@ fn exec_with_a_timeout_kills_the_tree_and_says_so() {
             "{GONE}{}",
             r#"
 let t0 = time.monotonic_ms()
-let r = unwrap(os.exec("sh", ["-c", "sleep 7 & echo $!; sleep 7"], #{ "timeout_ms": 300 }))
+let r = unwrap(os.exec(["sh", "-c", "sleep 7 & echo $!; sleep 7"], #{ "timeout_ms": 300 }))
 let took = time.monotonic_ms() - t0
 [ r.timed_out, r.code == (), took >= 290, took < 3000, gone(str.trim(r.stdout)) ]
 "#
@@ -214,9 +214,9 @@ let took = time.monotonic_ms() - t0
 fn exec_within_its_timeout_answers_as_without_one() {
     assert_all_true(
         r#"
-let r = unwrap(os.exec("sh", ["-c", "echo out; echo err >&2; exit 3"], #{ "timeout_ms": 10000 }))
-let fed = unwrap(os.exec("cat", [], #{ "timeout_ms": 10000, "stdin": "fed" }))
-let plain = unwrap(os.exec("sh", ["-c", "exit 0"]))
+let r = unwrap(os.exec(["sh", "-c", "echo out; echo err >&2; exit 3"], #{ "timeout_ms": 10000 }))
+let fed = unwrap(os.exec(["cat"], #{ "timeout_ms": 10000, "stdin": "fed" }))
+let plain = unwrap(os.exec(["sh", "-c", "exit 0"]))
 [ r.timed_out == false, r.code == 3, str.trim(r.stdout) == "out", str.trim(r.stderr) == "err",
   fed.stdout == "fed", plain.timed_out == false ]
 "#,

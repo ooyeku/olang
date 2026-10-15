@@ -1655,7 +1655,7 @@ else.
 
 | Group | Functions |
 |---|---|
-| Process | `args` `exit(code)` `pid` `exe_path` `exec(program, args)` |
+| Process | `args` `exit(code)` `pid` `exe_path` `exec(argv)` |
 | Terminal | `is_tty()` — is stdout a terminal? (`Bool`); `stdin_is_tty()` — is stdin? (`Bool`: `false` reading a pipe or a file); `color_enabled()` — will ANSI styling render? (`CLICOLOR_FORCE` set, or a terminal with `NO_COLOR` unset; decided once, re-decided after the program's own `set_env`/`remove_env`); `flush()` — flush buffered stdout, for progress bars |
 | Input | `read_line()` — one line from stdin as `Ok(line)`, `Err("eof")` at end; `stdin()` — everything to end-of-file as one string; `stdin_lines()` — everything as a list of lines, endings stripped. The stdin pair is what makes olang pipe-friendly: `cat access.log \| olang analyze.ol` |
 | Environment | `get_env` (`Err` when unset) `env` (the value or `()`) `set_env` `remove_env` `has_env`; `list_env()` — every variable as a map, `#{ "PATH": "…", … }` |
@@ -1663,10 +1663,12 @@ else.
 | System | `hostname` `username` `os_type` `arch` `family` `path_separator` |
 | Signals | `on_interrupt()` — trap Ctrl-C (SIGINT) instead of terminating (`Result`: installing the handler can fail); `interrupted()` — has it been pressed? (`Bool`); `reset_interrupt()` — clear the flag; `on_shutdown(handler)` — run `handler("shutdown")` on SIGINT or SIGTERM (below) |
 
-`os.exec` runs an external program to completion and returns
+`os.exec(argv)` runs an external program to completion — `argv` is
+the program and its arguments as one list, `["git", "status"]`, as
+`proc.spawn` and `pty.spawn` take it — and returns
 `Ok({ code, signal, stdout, stderr, timed_out })` — or `Err` if it could not be
 launched at all (the program was not found, or `cwd` names no
-directory: the error says which). An optional third argument configures
+directory: the error says which). An optional second argument configures
 the child: `#{ "cwd": dir, "stdin": text, "env": #{ name: value },
 "clear_env": true, "timeout_ms": n, "bytes": true }` (any subset; in
 `env` a name given `()` is removed from the child's environment, and
@@ -1698,7 +1700,7 @@ The ones that keep `Result` are the ones that genuinely can fail:
 let args = os.args()
 let target = if len(args) > 1 => args[1] else => "."
 
-let r = unwrap(os.exec("git", ["status", "--short"], #{ "cwd": target }))
+let r = unwrap(os.exec(["git", "status", "--short"], #{ "cwd": target }))
 if r.code == 0 => print(r.stdout)
 else => println("git failed: " + r.stderr)
 ```

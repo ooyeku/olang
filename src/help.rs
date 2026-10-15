@@ -4631,8 +4631,8 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             "one line from stdin as Ok(line), or Err(\"eof\") at end-of-input",
             &[r##"match os.read_line() { Ok(line) => process(line), Err(e) => () }"##],
         );
-        self.doc_ex("os.exec", "os.exec(program, args, opts?)", "Result", "os", "run a program to completion, returning Ok({ code, signal, stdout, stderr, timed_out }) (code () when it did not exit by itself); opts sets cwd/stdin/env/timeout_ms (past it the program's process group is killed and timed_out is true)",
-            &[r##"unwrap(os.exec("git", ["status", "--short"]))  // { code, signal, stdout, stderr, timed_out }"##],
+        self.doc_ex("os.exec", "os.exec(argv, opts?)", "Result", "os", "run a program to completion — argv is the program and its arguments as one list — returning Ok({ code, signal, stdout, stderr, timed_out }) (code () when it did not exit by itself); opts sets cwd/stdin/env/timeout_ms (past it the program's process group is killed and timed_out is true)",
+            &[r##"unwrap(os.exec(["git", "status", "--short"]))  // { code, signal, stdout, stderr, timed_out }"##],
         );
         self.doc_ex(
             "os.is_tty",

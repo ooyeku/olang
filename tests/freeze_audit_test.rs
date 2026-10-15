@@ -853,7 +853,7 @@ fn vec_sum_of_ints_is_an_int() {
 #[test]
 fn stdlib_records_are_maps_or_plain_objects() {
     let src = r#"
-let x = unwrap(os.exec("sh", ["-c", "exit 3"]))
+let x = unwrap(os.exec(["sh", "-c", "exit 3"]))
 let w = unwrap(proc.wait(unwrap(proc.spawn(["sh", "-c", "kill -9 $$"]))))
 let u = unwrap(http.parse_url("http://a.example/x"))
 let r = http.response(404, "no")
@@ -1072,8 +1072,8 @@ fn local_capture() = { let n = 1; let get = () => n; let n = 2; get() }
 #[test]
 fn bytes_and_repeated_names_at_the_boundaries() {
     let src = r#"
-let bin = unwrap(os.exec("printf", ["\\377A"], #{ "bytes": true }))
-let text = unwrap(os.exec("printf", ["\\377A"]))
+let bin = unwrap(os.exec(["printf", "\\377A"], #{ "bytes": true }))
+let text = unwrap(os.exec(["printf", "\\377A"]))
 let p = unwrap(proc.spawn(["printf", "\\377B"], #{ "bytes": true }))
 let all = unwrap(proc.read_all(p))
 let w = proc.wait(p)
@@ -1127,7 +1127,7 @@ let ended = unwrap(proc.wait(p))
  map_has_key(frame, "path") && map_has_key(frame, "function"),
  !map_has_key(frame, "file") && !map_has_key(frame, "fn"),
  chan.recv_timeout(chan.new(), #{{ "timeout_ms": 1 }}),
- unwrap(os.exec("sh", ["-c", "echo [$OLANG_FREEZE_X]"], #{{ "env": #{{ "OLANG_FREEZE_X": () }} }})).stdout,
+ unwrap(os.exec(["sh", "-c", "echo [$OLANG_FREEZE_X]"], #{{ "env": #{{ "OLANG_FREEZE_X": () }} }})).stdout,
  first, killed, ended.signal, caps.level("net"), caps.granted().fs]
 "#,
         dir.display()

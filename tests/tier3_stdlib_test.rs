@@ -75,7 +75,7 @@ show(len(hits) > 5) + "/" + show(contains(hits, "examples/language/regex/main.ol
 #[test]
 fn exec_cwd_option_sets_the_working_directory() {
     let src = r#"
-let r = unwrap(os.exec("pwd", [], #{ "cwd": "/" }))
+let r = unwrap(os.exec(["pwd"], #{ "cwd": "/" }))
 str.trim(r.stdout)
 "#;
     assert_eq!(s(eval(src)), "/");
@@ -84,7 +84,7 @@ str.trim(r.stdout)
 #[test]
 fn exec_stdin_and_env_options() {
     let src = r#"
-let r = unwrap(os.exec("sh", ["-c", "cat; printf %s \"$T3\""],
+let r = unwrap(os.exec(["sh", "-c", "cat; printf %s \"$T3\""],
     #{ "stdin": "in:", "env": #{ "T3": "env" } }))
 r.stdout
 "#;
@@ -93,7 +93,7 @@ r.stdout
 
 #[test]
 fn exec_two_argument_form_is_unchanged() {
-    let src = r#"str.trim(unwrap(os.exec("echo", ["plain"])).stdout)"#;
+    let src = r#"str.trim(unwrap(os.exec(["echo", "plain"])).stdout)"#;
     assert_eq!(s(eval(src)), "plain");
 }
 
@@ -102,7 +102,7 @@ fn exec_rejects_unknown_options() {
     // A mistyped option key is misuse: 0.64 raises, so the typo cannot be
     // swallowed by an `unwrap_or` and silently ignored.
     let program = olang::Parser::new()
-        .parse(r#"os.exec("echo", [], #{ "typo": 1 })"#)
+        .parse(r#"os.exec(["echo"], #{ "typo": 1 })"#)
         .expect("parses");
     let err = olang::Interpreter::new()
         .eval_program(program)

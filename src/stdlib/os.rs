@@ -96,7 +96,7 @@ pub fn create_os_module() -> Value {
     module.insert("exit".to_string(), create_builtin_function("exit", 1));
 
     // Run an external program and capture its result
-    module.insert("exec".to_string(), create_builtin_function("exec", 2));
+    module.insert("exec".to_string(), create_builtin_function("exec", 1));
     module.insert(
         "read_line".to_string(),
         create_builtin_function("read_line", 0),
@@ -521,8 +521,10 @@ fn os_chdir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 }
 
 /// Run an external program to completion, capturing its output.
-/// Usage: os.exec("olang", ["script.ol", "arg"])
+/// Usage: os.exec(["olang", "script.ol", "arg"])
 ///   -> Result<{ code: Int, stdout: String, stderr: String, timed_out: Bool }, Error>
+/// `argv` is the program and its arguments as one list, as `proc.spawn`,
+/// `pty.spawn` and a pipeline stage take them.
 /// The program's exit code is captured (or -1 if it was killed by a signal);
 /// stdout/stderr are returned as strings. An Err is returned only when the
 /// program could not be started at all (e.g. it was not found, or `cwd`
@@ -533,47 +535,35 @@ fn os_chdir(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
 /// output, the whole group is killed and the answer says `timed_out:
 /// true`, with code -1 and whatever output arrived before the kill.
 fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
-    if args.len() != 2 && args.len() != 3 {
-        return Err(format!(
-            "os.exec expects 2 or 3 arguments (program, args, options?), got {}",
-            args.len()
-        )
-        .into());
-    }
-
-    let program = match &args[0] {
-        Value::String(s) => s.as_ref().clone(),
+    let argv = match args.as_slice() {
+        [Value::List(argv)] | [Value::List(argv), _] => argv,
         _ => {
-            return Err("os.exec: first argument (program) must be a string"
-                .to_string()
-                .into());
+            return Err(
+                "os.exec expects (argv) or (argv, opts): the program and its arguments as one list"
+                    .into(),
+            );
         }
     };
-
-    let arg_list = match &args[1] {
-        Value::List(items) => items,
-        _ => {
-            return Err("os.exec: second argument (args) must be a list of strings"
-                .to_string()
-                .into());
-        }
-    };
-
-    let mut cmd_args: Vec<String> = Vec::with_capacity(arg_list.len());
-    for item in arg_list.iter() {
+    let mut words: Vec<String> = Vec::with_capacity(argv.len());
+    for item in argv.iter() {
         match item {
-            Value::String(s) => cmd_args.push(s.as_ref().clone()),
+            Value::String(s) => words.push(s.as_ref().clone()),
             other => {
                 return Err(format!(
-                    "os.exec: argument list must contain only strings, found {}",
+                    "os.exec: argv must contain only strings, found {}",
                     other.type_name()
                 )
                 .into());
             }
         }
     }
+    if words.is_empty() {
+        return Err("os.exec: argv is empty".into());
+    }
+    let program = words.remove(0);
+    let cmd_args = words;
 
-    // Optional third argument: #{ "cwd": ..., "stdin": ..., "env": #{...},
+    // Optional second argument: #{ "cwd": ..., "stdin": ..., "env": #{...},
     // "timeout_ms": n }.
     let mut cwd: Option<String> = None;
     let mut timeout_ms: Option<u64> = None;
@@ -582,7 +572,7 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     let mut clear_env = false;
     let mut env_removed: Vec<String> = Vec::new();
     let mut env_vars: Vec<(String, String)> = Vec::new();
-    if let Some(options) = args.get(2) {
+    if let Some(options) = args.get(1) {
         let fields = match options {
             Value::Map(m) => m.as_ref().clone(),
             Value::Struct { fields, .. } => fields.as_ref().clone(),

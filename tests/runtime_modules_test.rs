@@ -122,7 +122,7 @@ fn a_module_is_held_to_its_folders_its_programs_and_never_the_host() {
         &ws.join("plug/p/plugin.ol"),
         r#"share fn read(p) = fs.read_file(p)
 share fn write(p) = fs.write_file(p, "x")
-share fn run(prog) = os.exec(prog, ["hi"])
+share fn run(prog) = os.exec([prog, "hi"])
 share fn net() = http.get("http://127.0.0.1:9/")
 share fn window() = gui.available()
 share fn load() = runtime.load_module("plugin.ol", #{ "fs": true })

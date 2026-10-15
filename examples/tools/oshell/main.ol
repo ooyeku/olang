@@ -33,7 +33,7 @@ fn run_stage(state, argv, input) = {
     if len(argv) == 0 => { state: state, out: input, code: 0 }
     else => if is_builtin(argv[0]) => run(state, argv, input)
     else => {
-        match os.exec(argv[0], tail(argv), #{ "stdin": input }) {
+        match os.exec(argv, #{ "stdin": input }) {
             Ok(r) => {
                 if r.stderr != "" => { print(r.stderr) }
                 { state: state, out: r.stdout, code: r.code }
