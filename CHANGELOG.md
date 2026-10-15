@@ -7,10 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0-rc.2] - 2026-10-14
+
 ### Added
 
 - **`olang fix guards`, `defaults`, `first-last` and `units`**: four
-  rewrites to what 1.0.0-rc.1 gives a program, built as `olang fix maps`
+  rewrites into the language's current idioms, built as `olang fix maps`
   is (the places from the grammar's parse tree, the text changed only
   there, parentheses only where precedence needs them, a file whose
   rewrite reads back as a different program left and reported, run to
@@ -27,242 +29,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   included, where `xs` is a name bound to a value that is never Bytes
   (`len` and `[i]` take Bytes; `first` and `last` refuse it). `units`:
   `to_int(math.floor(e))` → `math.floor(e)`, and `ceil`, `round`,
-  `trunc`. docs/tooling.md, docs/migrating.md; `tools/fix_idioms.rs`,
+  `trunc`. docs/tooling.md; `tools/fix_idioms.rs`,
   tests/fix_idioms_test.rs (every form against `()`, empty and ordinary
   inputs on the interpreter, the VM and the tiered run) and the
   fixtures in tests/fixtures/fix/.
+
+### Changed
+
+- **The compatibility names are gone**, and the workspace's code uses
+  the current ones: `re.replace_all` (`re.replace`), `json.validate`
+  and `toml.validate` (`is_valid`); `fs.search`'s `col` and `end`
+  (`column` and `end_column`), a styled field's hover `col` (`column`,
+  and `gutter: true` over the gutter), a frame's `file` and `fn`
+  (`path` and `function`); a wait's limit as a bare number
+  (`chan.recv_timeout`, `task.join_timeout`, `pty.wait` and `tty.query`
+  take `#{ timeout_ms }`); `proc.spawn(program, args)`
+  (`proc.spawn(argv)`); `OVM_PARALLELISM` (`OLANG_PARALLELISM`); and
+  the flags `olang profile --out` (`-o`/`--output`) and `olang doc
+  --markdown` (`--format markdown`).
+- **No deprecation machinery**: `olang check` has no deprecated-name
+  warnings and no `deprecated` class (`[check] promote` does not take
+  it), `olang fix deprecated` is gone, and the language server sends no
+  deprecated tag. docs/migrating.md is removed.
+
+### Fixed
+
+- **The empty record pattern `{}` matches only a record** — a map, an
+  object, a parsed JSON object or a struct — on every tier. Compiled to
+  bytecode it matched every value (a List, a String, `()`, an Int);
+  `{ a }` already refused a non-record.
 
 ## [1.0.0-rc.1] - 2026-10-13
 
 The release candidate for 1.0: the freeze pass. What 1.0 commits to is
 docs/stability.md; this candidate is that contract, to be used before it
-is tagged final. docs/migrating.md walks each change.
-
-### Upgrading
-
-- **`find(xs, pred)` answers the element, or `()`** when none matches
-  (it answered `Ok(element)` or `Err("NotFound")`); drop the `unwrap`,
-  or default with `??`.
-- **`reduce(xs, f)` takes no initial value**: it combines the elements
-  from the first, and an empty list answers `()`. A three-argument
-  `reduce` is `fold`, unchanged; `olang check` reports the arity.
-- **`re.replace` replaces every match**, as `str.replace` does;
-  `re.replace_first` replaces one. `re.replace_all` is deprecated and
-  keeps working.
-- **A top-level function declared twice in one file is an error**, from
-  `olang check` and before the file runs (the second used to win
-  silently). The REPL still lets a later input redefine a name.
-- **The bitwise operators take Rust's order**: shifts below `+`/`-`,
-  then `&`, `^`, `|`, all above the comparisons. `1 + 2 << 3` is 24
-  (was 17), `1 << 4 * 2` is 256 (was 32).
-- **A line that starts with `-` or `+` starts a new statement**; it
-  used to continue the line above (`let t = base` over `-d` was
-  `base - d`). `|>`, `&&`, `||`, `??`, `*`, `/`, the bitwise operators
-  and the comparisons still continue a line. Move a leading `+` or `-`
-  to the end of the line above; `olang check` reports each line that
-  no longer parses.
-- **A block ending in `let` or `;` is `()`**, and `fn f() = {}` answers
-  `()` (it answered an empty object). `{ let a = 1 }` was 1.
-- **Comparisons do not chain**: `a == b == c` and `a < b < c` are parse
-  errors (they compared a Bool with the third operand).
-- **Equality is one relation.** A `Result` compares structurally (`Ok(1)
-  == Ok(1)` raised); a function, builtin or range has no equality inside
-  a container either (`[f] == [f]` was true); an Int and a Float are
-  equal only exactly (`9007199254740993 == 9007199254740992.0` was
-  true); `contains` and `col.index_of` find by `==` (`contains([1, 2],
-  1.0)` is now true).
-- **Named arguments to a builtin are refused** with an error naming the
-  argument (`str.pad_start("x", 3, bogus: "0")` read `bogus` as the
-  third argument).
-- **Pattern rules**: a name bound twice in one pattern, and an
-  or-pattern whose alternatives bind different names, are errors before
-  the program runs; a character range matches only a one-character
-  String (`'a'..='z'` matched "zebra"); an enum variant with named fields
-  (`C { n: Int }`) is a parse error (it built only as `C(1)`).
-- **Annotations**: `()` is enforced (`fn f(x: ())` took 1, so `Int | ()`
-  took a String), a lambda's return annotation is enforced, and a tuple
-  annotation checks its length.
-- **Numbers**: `to_int` of a Float outside the Int range raises (it
-  answered the largest Int), and a `<<` that loses a bit raises as
-  integer overflow does (`3 << 63` dropped bits).
-- **`meta.parse`**: a literal with spreads is a `spread_literal` node and
-  `xs[i] = v` an `index_assign` node (they read as calls of the hidden
-  builtins `__spread` and `__index_set`); every node kind and field is
-  listed in stdlib.md.
-
-- **A field of `()` reads as `()`**: `s.pp.cur` when `s.pp` is absent,
-  `().k ?? 5`, and `map_get((), k)` (it raised "Cannot access field on
-  non-struct value"); a field of another non-record (`5.k`) and a
-  declared struct's missing field still raise. `r?.f` is now a parse
-  error, reserved for optional chaining: write `(r?).f`.
-- **A negative index raises**, as any index outside the list does
-  (`xs[-1]` read the last element): reading a list, tuple, string,
-  Bytes or Series, `xs[i] = v`, `col.set` and `col.swap`. The slices
-  share one rule: `str.substring`, `col.slice`, `bytes.slice` and
-  `str.char_at` raise on a negative position, and a position past the
-  end stops at the end. `first(xs)` and `last(xs)` are new.
-- **A condition is a Bool**: `if`, `while` and a `match` guard raise "a
-  condition must be a Bool" on any other value, as `&&`, `||` and `!`
-  do; an empty list, `0`, `""` and `()` were false.
-
-- **Values print as olang source**: `print`, `show`, `to_string` and a
-  template's `${…}` write a string inside a container quoted and escaped
-  (`["a\"b"]`), a map `#{"k": 1}`, an object or parsed JSON object
-  `{ a: 1 }`, a struct `P { x: 1 }` in its declaration's order (it was
-  `<struct: P>{x: 1}`, fields sorted), and an enum value as its
-  constructor (`Circle(2.0)`, was `Shape.Circle(2.0)`). A String at the
-  top level still prints as its text. The float rule (plain in [1e-4,
-  1e16), exponent form outside it, `-0.0`) is documented.
-
-- **Six words are reserved** for forms the language may add: `await`,
-  `yield`, `async`, `defer`, `const` and `pub` are refused as a name
-  with an error that says so (a member after `.`, `http.defer()`, and a
-  key are not names). The reserved list is fixed at 1.0 (stability.md).
-  `spawn`, `assert`, `assert_eq` and `assert_ne` are documented as the
-  statement-position keywords they are.
-
-- **`task.join` always answers a `Result`**: `Ok(value)` when the task
-  returned, `Err(message)` when it raised. A task that returned
-  `Err(e)` joins to `Ok(Err(e))`, so a raise and a returned `Err` are
-  told apart (both joined to `Err` before, and success joined bare).
-  `task.join_timeout` answers `Ok` of that (`Ok(Ok(v))`, `Ok(Err(msg))`)
-  or `Err("timed out")`. Unwrap a join (`unwrap(task.join(t))`), and
-  match `Ok(v)` where a bare `v` arm took the value.
-
-- **`math.floor`, `ceil`, `round` and `trunc` answer an Int** (they
-  answered a Float: `math.round(2.6)` was `3.0`, now 3); a Float outside
-  the Int range raises. `math.pow` of two Ints is an Int (an overflow or
-  a negative exponent raises), `math.min`/`math.max` behave as the
-  global `min`/`max` for numbers (one list, or two or more numbers; an
-  Int stays an Int: `math.min(1, 2.5)` is 1, was 1.0), and `vec.sum` of
-  Ints is an Int as `sum` is. `math.round` rounds a half away from zero
-  and `str.fixed` a half to even, now documented. Arithmetic mixes Int
-  and Float, so `math.round(x * 100.0) / 100.0` is unchanged; what
-  changes is a rounded value printed alone (`3` where it was `3.0`).
-  `to_int(math.round(x))` keeps working.
-
-- **Stdlib records are Maps or plain objects.** What is keyed by data
-  is a Map: `http.decode_query`, `os.list_env()`, the rows of
-  `csv.parse_with_headers`, and an `HttpResponse`'s `headers` (so
-  `.missing ?? d` answers `d` where it raised). What reports a result
-  is a plain object with one field set: `os.exec`'s `{ code, signal,
-  stdout, stderr, timed_out }`, `proc.wait`'s and `pty.wait`'s `{ code,
-  signal }`, `proc.pipeline`'s, `fs.file_info`'s and `http.parse_url`'s.
-  `typeof` says `Map` or `Object` where it said `QueryParams`,
-  `EnvironmentVariables`, `CsvRow`, `Headers`, `ExecResult`, `Exit`,
-  `Pipeline`, `FileInfo` or `UrlInfo`. `code` is `()` when a process did
-  not exit by itself (a timeout, or a signal, which `signal` names); it
-  was -1 for both. `http.parse_url` answers `()` for a port, query or
-  fragment the URL does not name (it answered 0 and `""`), and
-  `http.response` has the client response's `success`.
-
-- **Absence is `()`, and "nothing yet" is `Ok(())`.** `re.find` with no
-  match answers `Ok(())` (was `Ok("")`), `re.captures` with no match
-  `Ok(())` (was `Ok([])`) and a group that took no part `()` (was
-  `""`); `str.char_at` past the end is `()` (was `""`); `chan.try_recv`
-  with nothing waiting is `Ok(())` (was `Err("channel is empty")`), so a
-  drain loop matches `Ok(())` before `Ok(v)`. `"eof"`, `"timed out"` and
-  `"channel is closed"` are named as contract in stdlib.md and
-  stability.md. `os.env(name)` is new: the value or `()`;
-  `os.get_env` keeps its `Err`.
-
-- **Dates write RFC 3339 with the offset and read their own output.**
-  `dates.datetime`, `from_timestamp` and `parse_datetime` answer
-  `2026-01-02T03:04:05+00:00` (they answered `2026-01-02 03:04:05`,
-  which `parse_datetime` refused), fractional seconds only when the
-  moment has them; `parse_datetime` keeps an offset it is given and
-  reads text without one as UTC. **`dates.timestamp` answers
-  milliseconds and `dates.from_timestamp` takes them**, the unit of
-  every other clock; `timestamp_s` and `from_timestamp_s` are the
-  seconds forms. The clock functions (`now`, `utc_now`, `today`,
-  `stamp`) answer text and `date`/`parse` a `Date`, as before, now
-  stated; `weekday`'s numbering (0 Sunday) and `diff_days`'s sign (`a`
-  minus `b`) are documented.
-
-- **An assignment answers `()`** on every tier (it answered the value
-  assigned: `println(a = 3)` printed 3, and a block ending in
-  `x = x + 1` answered the new `x`). A function or branch that ends in
-  an assignment and whose value is used ends with the name instead:
-  `{ total = total + n; total }`.
-
-- **`[package] olang` names the oldest olang a project runs on**, as
-  Cargo's `rust-version` does: `"0.88"` is 0.88.0 or newer (1.x
-  included; it read as Cargo's caret, which excluded 0.89 and 1.0),
-  `"1"` 1.0.0 or newer. `otc install` and `otc toolchain which` pick the
-  newest installed olang at or past it, an older olang warns as it runs
-  the project, and `olang check` reports a value that is not one to three
-  numbers (`"^0.88"`, `"=0.88.1"` and ranges included).
-
-- **A map, an object and a parsed JSON object are one kind for patterns
-  and annotations.** A record pattern (`{ kind: "a" }`) matches a Map as
-  it matched the other two, and `m: Map` accepts an object and a
-  `JsonObject` (it refused them, saying "unknown type 'Map'"). A whole
-  Float map key is the Int's text, as `1 == 1.0` says: `#{ 1: "a", 1.0:
-  "b" }` is one key `"1"` (the literal kept `"1.0"` while `map_get(m,
-  1.0)` read `"1"`).
-
-- **A function reads a top-level name when it runs.** A top-level name
-  is no longer captured: every function, wherever it is declared (a
-  lambda made at the top level, a module's functions), reads the
-  binding as it is at the call, on every tier. A top-level `let mut` the
-  program reassigns after declaring a function that reads it, or a name
-  a later top-level `let` binds again, is now seen changed (it was seen
-  as it stood at the declaration). Local bindings are still captured by
-  value. Compiled code that took a top-level binding as a constant is
-  forgotten when the program rebinds it, and a function reading a
-  rebound name runs on the interpreter.
-
-- **Bytes at the boundaries.** `http.serve` requests carry
-  `req.body_bytes` (the body as sent) beside `req.body`; `os.exec`,
-  `proc.spawn` and `proc.pipeline` take `bytes: true` for stdout and
-  stderr as Bytes (text stays the default, and bytes that are not UTF-8
-  read as U+FFFD — a process's stdout no longer stops at the first such
-  line); `crypto.random_bytes` answers Bytes (it answered a list of
-  Ints). `http.decode_query` and `req.query` keep every value of a name
-  given more than once, as a list (`t=a&t=b` is `#{ "t": ["a", "b"] }`;
-  the last one won), and a client response's `headers` every value of a
-  repeated header (`set-cookie`; the first won). `http.encode_query`
-  writes a list as the name repeated and raises on a nested value (it
-  dropped it) or an argument that is not a map or record (it answered
-  `Err`). stdlib.md states AES-256-GCM's key and ciphertext formats.
-
-- **Keys mean one thing in every module.** Lines and columns are 1-based
-  where a record or an option says them: `fs.search` answers `line`
-  (it counted from 0), `column` and `end_column` (`col` and `end`, the
-  0-based offsets, stay, deprecated), a styled field's `hover` event
-  `line` and `column` (`()` off the text; `col` stays, deprecated) and a
-  `lens` event's and a lens's `line`. A frame (`runtime.last_error`)
-  names `path` and `function` (`file` and `fn` stay, deprecated). Every
-  function taking a wait's limit as a number takes `#{ timeout_ms }`
-  there too (`chan.recv_timeout`, `task.join_timeout`, `pty.wait`,
-  `tty.query`). `os.exec`, `proc.spawn` and `proc.pipeline` take `env`
-  with `()` to remove a variable and `clear_env`, as `pty.spawn` does;
-  `proc.spawn(argv)` takes the program and its arguments as one list;
-  `proc.kill(p, signal)` sends a signal (`"TERM"`, …; misuse raises).
-  `caps.level` and `caps.granted().fs` answer the grant's own words
-  (`false`, `"read"`, `true`; they said `"none"`, `"read"`, `"full"`).
-  stdlib.md documents every `fs.scan` and `fs.search` option.
-
-- **Removed before 1.0, unused:** `map_path` (deprecated in 0.88:
-  `map_get_in`), `lazy` and `force` (the identity: olang is eager),
-  `base64.validate` (`base64.is_valid`), `testing.run_test` (it only ever
-  said to write a `test` block), and the `--enable-parallel` flag (it set
-  a variable nothing read). `json.validate` and `toml.validate` are
-  deprecated for `json.is_valid` and `toml.is_valid`; the deprecation
-  table takes module functions, so `olang check` warns at a
-  `re.replace_all(`, `json.validate(` or `toml.validate(` call and `olang
-  fix deprecated` rewrites it. stdlib.md and ods.md give `set_parallel`
-  its real signature, a Bool.
-
-- **A call made wrongly raises in every module** (stdlib.md's rule
-  since 0.64): wrong arity, a wrong argument type, and an unknown option
-  key now raise in `db`, `proc`, `pty`, the `fs` path functions,
-  `fs.scan`/`fs.search`, `asset`, `toml`, `vt`, `runtime`, `caps`,
-  `testing`, `http.serve` and `http.shutdown`, where they answered
-  `Err` (or ignored the extra argument or key). What the world says —
-  a missing file, a closed connection, a port in use, a folder that is
-  not there — is still an `Err`. Correct calls are unchanged.
-
+is tagged final.
 
 ### Added
 
@@ -279,6 +80,82 @@ is tagged final. docs/migrating.md walks each change.
 
 
 ### Changed
+
+- `find(xs, pred)` answers the element, or `()` when none matches (it
+  answered `Ok(element)` or `Err("NotFound")`).
+- `reduce(xs, f)` takes no initial value: it combines the elements from
+  the first, and an empty list answers `()`; `fold` is the
+  three-argument form.
+- `re.replace` replaces every match, as `str.replace` does;
+  `re.replace_first` replaces one.
+- A top-level function declared twice in one file is an error.
+- The bitwise operators take Rust's order: shifts below `+`/`-`, then
+  `&`, `^`, `|`, all above the comparisons (`1 + 2 << 3` is 24).
+- A line that starts with `-` or `+` starts a new statement.
+- A block ending in `let` or `;` is `()`, and `fn f() = {}` answers `()`.
+- Comparisons do not chain: `a == b == c` is a parse error.
+- Equality is one relation: a `Result` compares structurally, a
+  function, builtin or range has no equality inside a container either,
+  an Int and a Float are equal only exactly, and `contains` and
+  `col.index_of` find by `==`.
+- Named arguments to a builtin are refused.
+- Patterns: a name bound twice in one pattern, and an or-pattern whose
+  alternatives bind different names, are errors; a character range
+  matches only a one-character String; an enum variant with named
+  fields is a parse error.
+- Annotations: `()` and a lambda's return annotation are enforced, and a
+  tuple annotation checks its length.
+- `to_int` of a Float outside the Int range raises, and so does a `<<`
+  that loses a bit.
+- `meta.parse` has `spread_literal` and `index_assign` nodes; every
+  node kind and field is listed in stdlib.md.
+- A field of `()` reads as `()` (`().k ?? 5`); a field of another
+  non-record and a declared struct's missing field raise. `r?.f` is
+  reserved for optional chaining.
+- A negative index raises, as any index outside the list does, and the
+  slices share one rule (a negative position raises, one past the end
+  stops there). `first(xs)` and `last(xs)` are new.
+- A condition (`if`, `while`, a `match` guard) is a Bool.
+- Values print as olang source: a string inside a container quoted, a
+  map `#{"k": 1}`, an object `{ a: 1 }`, a struct `P { x: 1 }` in its
+  declaration's order, an enum value as its constructor.
+- `await`, `yield`, `async`, `defer`, `const` and `pub` are reserved.
+- `task.join` always answers a `Result` (`Ok(value)`, or `Err(message)`
+  when the task raised), and `task.join_timeout` `Ok` of that or
+  `Err("timed out")`.
+- `math.floor`, `ceil`, `round` and `trunc` answer an Int; `math.pow` of
+  two Ints is an Int; `math.min` and `math.max` behave as `min` and
+  `max`.
+- Stdlib records are Maps where they are keyed by data
+  (`http.decode_query`, `os.list_env()`, CSV rows, response headers)
+  and plain objects where they report a result (`os.exec`, `proc.wait`,
+  `pty.wait`, `proc.pipeline`, `fs.file_info`, `http.parse_url`); a
+  process's `code` is `()` when it did not exit by itself.
+- Absence is `()`, and "nothing yet" is `Ok(())`: `re.find`,
+  `re.captures`, `str.char_at` and `chan.try_recv`. `os.env(name)` is
+  new.
+- Dates write RFC 3339 with the offset and read their own output;
+  `dates.timestamp` answers milliseconds and `dates.from_timestamp` takes
+  them (`timestamp_s` and `from_timestamp_s` are the seconds forms).
+- An assignment answers `()` on every tier.
+- `[package] olang` names the oldest olang a project runs on, as Cargo's
+  `rust-version` does.
+- A map, an object and a parsed JSON object are one kind for patterns
+  and annotations, and a whole Float map key is the Int's text.
+- A function reads a top-level name when it runs, on every tier.
+- Bytes at the boundaries: `req.body_bytes`, `bytes: true` for a
+  process's output, `crypto.random_bytes` answers Bytes, and a query
+  name or header given more than once keeps every value.
+- Keys mean one thing in every module: lines and columns are 1-based
+  (`fs.search`'s `line`, `column` and `end_column`, a hover's `line` and
+  `column`, a lens's `line`), a frame names `path` and `function`, a
+  wait's limit is `#{ timeout_ms }`, `env` removes a variable given `()`
+  beside `clear_env`, `proc.spawn` takes `argv`, `proc.kill` a signal,
+  and `caps.level` answers the grant's own words.
+- Removed: `map_path`, `lazy`, `force`, `base64.validate`,
+  `testing.run_test` and the `--enable-parallel` flag.
+- A call made wrongly raises in every module (wrong arity, argument type
+  or option key); what the world says is still an `Err`.
 
 - **`ods.version()` answers the plain version** (the release, as
   `runtime.version()` does) instead of `"0.88.0 (phase 4)"`. The seam's
@@ -313,10 +190,10 @@ is tagged final. docs/migrating.md walks each change.
   where the checker makes it — the `code` in `--format json` — not
   matched from its message, so rewording a message cannot change what a
   project promotes. The class names are the contract: `exhaustiveness`,
-  `shape`, `keys`, `result`, `copy`, `shadow`, `deprecated`, `tier`.
+  `shape`, `keys`, `result`, `copy`, `shadow`, `tier`.
   `all` is every class the running olang knows, stated as such: a later
-  olang's new class, or `deprecated` meeting a new deprecation, can fail
-  a project promoting `all`, so name classes to fix the set. `unused` is
+  olang's new class can fail a project promoting `all`, so name classes
+  to fix the set. `unused` is
   a hint's class and never promoted.
 
 - The command line's traps. A word that is no file and is close to a
@@ -345,9 +222,8 @@ is tagged final. docs/migrating.md walks each change.
   (every check's verdict; with `--caps` the grant), `olang caps`,
   `otc list`, `otc lib list` and `otc toolchain list`. `olang bench
   --help` lists all its flags. `-o`/`--output` and `--format`
-  everywhere, the old spellings kept: `olang profile -o` (`--out`), `olang
-  doc --format markdown` (`--markdown`), and `olang doc --format
-  markdown -o FILE` writes the file (it printed to stdout whatever `-o`
+  everywhere (`olang profile -o`, `olang doc --format markdown`), and
+  `olang doc --format markdown -o FILE` writes the file (it printed to stdout whatever `-o`
   said).
 
 - stability.md agrees with the book and the binary, and its tiers are
@@ -441,9 +317,8 @@ is tagged final. docs/migrating.md walks each change.
   stable.
 
 - `OLANG_PARALLELISM` sets the thread count for `par_map`, `par for`
-  and the other parallel work, as ods.md and stdlib.md already said;
-  `OVM_PARALLELISM`, the old name, is kept as an alias. Neither was read
-  before: only `--ovm-parallelism N` took effect.
+  and the other parallel work, as ods.md and stdlib.md already said. It
+  was not read before: only `--ovm-parallelism N` took effect.
 - Environment variables have one table in tooling.md with a public
   column: the public ones (`OLANG_HOME`, `OLANG_SHELF`, `OLANG_DENY`,
   `OLANG_PARALLELISM`, …) hold across 1.x; the diagnostic ones are
