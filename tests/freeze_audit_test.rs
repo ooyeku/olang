@@ -1184,6 +1184,17 @@ fn a_wait_takes_its_limit_as_options_and_a_spawn_its_argv() {
         agree_tiered("unwrap(task.join_timeout(spawn { 7 }, #{ \"timeout_ms\": 5000 }))\n"),
         Ok(ok(Value::Integer(7)))
     );
+    // the checker counts a spawn's argv as its one required argument
+    let program = Parser::new()
+        .parse_raw(
+            "let p = proc.spawn([\"ls\"])\nlet q = proc.spawn([\"ls\"], #{ \"cwd\": \"/\" })\n",
+        )
+        .unwrap();
+    let said: Vec<String> = olang::tools::check::check_program(&program)
+        .iter()
+        .map(|d| d.message.clone())
+        .collect();
+    assert!(said.is_empty(), "{said:?}");
 }
 
 // ── the empty record pattern ───────────────────────────────────────────

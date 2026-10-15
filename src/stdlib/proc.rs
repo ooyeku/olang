@@ -146,7 +146,7 @@ pub fn create_proc_module() -> Value {
     // their handler, which validates its own argument count (so `spawn`
     // and `pipeline` each accept an optional trailing options map).
     for (name, arity) in [
-        ("spawn", 2),
+        ("spawn", 1),
         ("write", 2),
         ("write_line", 2),
         ("write_frame", 2),
