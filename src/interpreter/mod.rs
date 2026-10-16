@@ -6058,6 +6058,21 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         }
     }
 
+    /// The capability table in force, if any: what a caller that narrows
+    /// the grant for a while (the REPL's `:run` of a notebook) puts back
+    /// with `restore_capabilities`.
+    pub fn capability_table(&self) -> Option<std::sync::Arc<crate::caps::CapTable>> {
+        self.caps.clone()
+    }
+
+    /// Put back a table `capability_table` answered (None: no table).
+    pub fn restore_capabilities(&mut self, table: Option<std::sync::Arc<crate::caps::CapTable>>) {
+        self.caps = table;
+        if let Some(tier) = self.bytecode_tier.as_mut() {
+            tier.set_capabilities(self.caps.clone());
+        }
+    }
+
     /// Turn on `--trace-caps` profiling. Runs on the interpreter tier so
     /// every effect passes the dispatch choke point (a promoted function
     /// bridges some builtins past it), exactly like the gate and coverage.

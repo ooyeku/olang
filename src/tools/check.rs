@@ -86,7 +86,7 @@ pub fn run_json(paths: &[PathBuf]) -> i32 {
             eprintln!("olang check: path not found: {}", path.display());
             return 2;
         }
-        files.extend(super::discover_ol_files(path));
+        files.extend(super::discover_sources(path));
     }
     let (mut errors, mut warnings) = (0usize, 0usize);
     let mut rows: Vec<serde_json::Value> = Vec::new();
@@ -161,8 +161,14 @@ pub fn run_json(paths: &[PathBuf]) -> i32 {
         chars + 1
     };
     for file in &files {
-        let text = match std::fs::read_to_string(file) {
-            Ok(t) => t,
+        // A notebook is checked as its program (`notebook::Mode::Check`:
+        // its cells, `no-run` ones too, on the file's own lines), its own
+        // problems first.
+        let (text, notebook, front) = match crate::notebook::read(
+            file,
+            crate::notebook::Mode::Check,
+        ) {
+            Ok(p) => (p.source, p.diagnostics, p.front_matter),
             Err(e) => {
                 errors += 1;
                 rows.push(serde_json::json!({
@@ -170,8 +176,27 @@ pub fn run_json(paths: &[PathBuf]) -> i32 {
                 continue;
             }
         };
-        let found = crate::tools::lsp::file_diagnostics(&text, file.parent());
-        let mut out = Vec::with_capacity(found.len());
+        let mut found = crate::tools::lsp::file_diagnostics(&text, file.parent());
+        // a notebook's params are bound on its front matter's lines, and
+        // a param no cell reads is no unused name
+        if let Some((open, close)) = front {
+            found.retain(|d| {
+                let line = d.range.start.line + 1;
+                !(line > open
+                    && line < close
+                    && matches!(&d.code, Some(NumberOrString::String(c)) if c == "unused"))
+            });
+        }
+        let mut out = Vec::with_capacity(found.len() + notebook.len());
+        for d in notebook {
+            errors += 1;
+            let (l, c) = (d.line, d.column);
+            out.push(serde_json::json!({
+                "severity": "error", "code": "notebook", "message": d.message, "tags": [],
+                "line": l, "column": c, "end_line": l, "end_column": c,
+                "range": { "start": { "line": l - 1, "character": c - 1 }, "end": { "line": l - 1, "character": c - 1 } },
+            }));
+        }
         for d in found {
             let severity = match d.severity {
                 Some(S::ERROR) | None => "error",
@@ -229,7 +254,7 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
             eprintln!("olang check: path not found: {}", path.display());
             return 2;
         }
-        files.extend(super::discover_ol_files(path));
+        files.extend(super::discover_sources(path));
     }
     if files.is_empty() {
         println!("olang check: no .ol files found");
@@ -272,8 +297,31 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
     }
     let parser = crate::parser::Parser::new();
     for file in &files {
-        let source = match std::fs::read_to_string(file) {
-            Ok(s) => s,
+        let (source, shown) = match std::fs::read_to_string(file) {
+            // A notebook: its program checked (`no-run` cells too), its
+            // own problems said first, every line the file's.
+            Ok(text) if crate::notebook::is_notebook(file) => {
+                let program = crate::notebook::program(&text, crate::notebook::Mode::Check);
+                for d in &program.diagnostics {
+                    problems += 1;
+                    let offset = byte_offset_of(&text, d.line as usize, d.column as usize);
+                    let report = miette::Report::new(
+                        miette::MietteDiagnostic::new(d.message.clone()).with_label(
+                            miette::LabeledSpan::at_offset(
+                                offset,
+                                "the notebook is refused before it runs",
+                            ),
+                        ),
+                    )
+                    .with_source_code(miette::NamedSource::new(
+                        file.display().to_string(),
+                        text.clone(),
+                    ));
+                    eprintln!("{:?}", report);
+                }
+                (program.source, Some(text))
+            }
+            Ok(s) => (s, None),
             Err(e) => {
                 eprintln!("olang check: cannot read {}: {}", file.display(), e);
                 problems += 1;
@@ -317,7 +365,11 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
             } else {
                 problems += 1;
             }
-            let offset = byte_offset_of(&source, d.line as usize, d.column as usize);
+            let offset = byte_offset_of(
+                shown.as_deref().unwrap_or(&source),
+                d.line as usize,
+                d.column as usize,
+            );
             let label = if d.warning {
                 "advisory — the program still runs"
             } else if d.scope {
@@ -334,9 +386,13 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
             if d.warning {
                 diagnostic = diagnostic.with_severity(miette::Severity::Warning);
             }
-            let report = miette::Report::new(diagnostic).with_source_code(
-                miette::NamedSource::new(file.display().to_string(), source.clone()),
-            );
+            // a notebook's own text around it: the program's lines are
+            // the file's, its prose made empty
+            let report =
+                miette::Report::new(diagnostic).with_source_code(miette::NamedSource::new(
+                    file.display().to_string(),
+                    shown.clone().unwrap_or_else(|| source.clone()),
+                ));
             eprintln!("{:?}", report);
         }
     }
@@ -456,7 +512,8 @@ fn run_rules(rules_path: &Path, files: &[PathBuf]) -> usize {
         if file_canon == rules_canon {
             continue;
         }
-        let Ok(src) = std::fs::read_to_string(file) else {
+        let Ok(src) = crate::notebook::read(file, crate::notebook::Mode::Check).map(|p| p.source)
+        else {
             continue;
         };
         // Parse to the meta AST; a file that doesn't parse is already
@@ -4516,7 +4573,8 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
     let mut promoted_errors = 0usize;
     let mut file_rows: Vec<serde_json::Value> = Vec::new();
     for file in &files {
-        let Ok(source) = std::fs::read_to_string(file) else {
+        let Ok(source) = crate::notebook::read(file, crate::notebook::Mode::Run).map(|p| p.source)
+        else {
             continue;
         };
         // the path as a run names it (absolute, not resolved through

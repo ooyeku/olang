@@ -1,0 +1,17 @@
+# Tests in a notebook
+
+```olang
+fn add(a, b) = a + b
+```
+
+Prose between the cells.
+
+```olang
+test "adds" {
+    assert_eq(add(1, 2), 3)
+}
+
+test "fails on its line" {
+    assert_eq(add(2, 2), 5)
+}
+```

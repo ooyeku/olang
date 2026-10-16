@@ -1,0 +1,15 @@
+# Resolution
+
+A notebook's `use` resolves as a `.ol` file beside it would: a sibling
+module, the project's own `lib/`, and the project's dependencies.
+
+```olang
+use local { triple }
+use lib.helper { double }
+use greet { hello }
+```
+
+```olang
+println(hello("notebook"))
+println(double(triple(7)))
+```

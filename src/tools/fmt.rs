@@ -511,6 +511,38 @@ pub fn format_source(source: &str) -> String {
     out.join("\n")
 }
 
+/// Why a notebook is left as it is.
+enum NotebookFmt {
+    /// A fence never closed, or its program does not parse.
+    Unparsed(String),
+    /// The formatted cells would read as a different program.
+    Changed,
+}
+
+/// `olang fmt` on a notebook: each cell's code formatted, the prose,
+/// fences and front matter byte for byte (`notebook::format`). The same
+/// gate as a file's: the program before and after must parse to the
+/// same tree, `no-run` cells included. None when nothing changes.
+fn format_notebook(parser: &Parser, original: &str) -> Result<Option<String>, NotebookFmt> {
+    use crate::notebook::{Mode, program_with};
+    let before = program_with(original, Mode::Check, &[]);
+    let before = parser
+        .parse_raw(&before.source)
+        .map_err(|e| NotebookFmt::Unparsed(e.to_string()))?;
+    let Some(formatted) = crate::notebook::format(original) else {
+        return Err(NotebookFmt::Unparsed(
+            "a fence is never closed (olang check says where)".to_string(),
+        ));
+    };
+    if formatted == original {
+        return Ok(None);
+    }
+    match parser.parse_raw(&program_with(&formatted, Mode::Check, &[]).source) {
+        Ok(after) if before == after => Ok(Some(formatted)),
+        _ => Err(NotebookFmt::Changed),
+    }
+}
+
 /// Format files under the given paths. Returns the process exit code.
 pub fn run(paths: &[std::path::PathBuf], check: bool) -> i32 {
     // A named path that doesn't exist is a mistake, not "nothing to format".
@@ -528,12 +560,33 @@ pub fn run(paths: &[std::path::PathBuf], check: bool) -> i32 {
     let mut scanned = 0usize;
 
     for path in paths {
-        for file in super::discover_ol_files(path) {
+        for file in super::discover_sources(path) {
             scanned += 1;
             let original = match std::fs::read_to_string(&file) {
                 Ok(s) => s,
                 Err(_) => continue,
             };
+            if crate::notebook::is_notebook(&file) {
+                match format_notebook(&parser, &original) {
+                    Ok(None) => {}
+                    Ok(Some(formatted)) => {
+                        changed.push(file.display().to_string());
+                        if !check && std::fs::write(&file, &formatted).is_err() {
+                            eprintln!("  could not write {}", file.display());
+                        }
+                    }
+                    Err(NotebookFmt::Unparsed(e)) => {
+                        parse_errors += 1;
+                        println!("  {} {} (does not parse)", "✗".red().bold(), file.display());
+                        println!("      {}", e.red());
+                    }
+                    Err(NotebookFmt::Changed) => skipped.push(format!(
+                        "{} (formatting would change the AST)",
+                        file.display()
+                    )),
+                }
+                continue;
+            }
             // Parse up front: a file that doesn't parse is a real problem
             // fmt must surface (and fail on), not silently report as
             // "all formatted".

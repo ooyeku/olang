@@ -1871,8 +1871,23 @@ impl Repl {
             ":run" => {
                 if parts.len() > 1 {
                     let filename = parts[1];
-                    match std::fs::read_to_string(filename) {
-                        Ok(content) => {
+                    // a notebook runs as its program (its cells, its params)
+                    let read = crate::notebook::read(
+                        std::path::Path::new(filename),
+                        crate::notebook::Mode::Run,
+                    )
+                    .and_then(|p| {
+                        if p.diagnostics.is_empty() {
+                            Ok((p.source, p.capabilities))
+                        } else {
+                            Err(std::io::Error::other(crate::notebook::report(
+                                std::path::Path::new(filename),
+                                &p.diagnostics,
+                            )))
+                        }
+                    });
+                    match read {
+                        Ok((content, grant)) => {
                             // Set the file context for proper module resolution
                             let file_path = std::path::Path::new(filename);
                             let absolute_path = if file_path.is_absolute() {
@@ -1881,6 +1896,29 @@ impl Repl {
                                 std::env::current_dir().unwrap_or_default().join(file_path)
                             };
                             self.interpreter.set_current_file(&absolute_path);
+                            // A notebook runs in its own folder under its
+                            // front matter's grant (narrowing any the REPL
+                            // has), as `olang run` runs it; both put back
+                            // after.
+                            let notebook = crate::notebook::is_notebook(file_path);
+                            let prior_cwd = std::env::current_dir().ok();
+                            let prior_caps = self.interpreter.capability_table();
+                            if notebook && let Some(dir) = absolute_path.parent() {
+                                let _ = std::env::set_current_dir(dir);
+                            }
+                            if let Some(grant) = grant {
+                                let mut table = prior_caps.as_deref().cloned().unwrap_or(
+                                    crate::caps::CapTable {
+                                        app: crate::caps::Caps::default(),
+                                        deps: Vec::new(),
+                                    },
+                                );
+                                table.app = table.app.intersect(grant);
+                                for entry in &mut table.deps {
+                                    entry.2 = entry.2.intersect(grant);
+                                }
+                                self.interpreter.set_capabilities(table);
+                            }
                             // The file's own argv, exactly as `olang run`
                             // would install it: argv[0] is the script path
                             // (run_all.ol resolves its whole target set
@@ -1909,6 +1947,12 @@ impl Repl {
                             // Clear file context after execution
                             self.interpreter.clear_current_file();
                             crate::stdlib::os::restore_script_args(prior_args);
+                            if notebook {
+                                self.interpreter.restore_capabilities(prior_caps);
+                                if let Some(cwd) = prior_cwd {
+                                    let _ = std::env::set_current_dir(cwd);
+                                }
+                            }
 
                             // Aggressive cleanup after script execution
                             // 1. Clear user environment to free variables

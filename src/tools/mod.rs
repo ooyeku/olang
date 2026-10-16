@@ -21,10 +21,21 @@ pub mod test_runner;
 
 use std::path::{Path, PathBuf};
 
+/// Every program olang reads at or below `path`: `.ol` files and `.olmd`
+/// notebooks, sorted, skipping what `discover_ol_files` skips. A file
+/// path returns just itself. What `olang test`, `check` and `fmt` walk.
+pub fn discover_sources(path: &Path) -> Vec<PathBuf> {
+    discover(path, true)
+}
+
 /// Every `.ol` file at or below `path`, sorted, skipping VCS/build dirs and
 /// hidden directories. A file path returns just itself. Public: the CLI's
 /// watch mode polls it from the binary crate.
 pub fn discover_ol_files(path: &Path) -> Vec<PathBuf> {
+    discover(path, false)
+}
+
+fn discover(path: &Path, notebooks: bool) -> Vec<PathBuf> {
     let mut found = Vec::new();
     if path.is_file() {
         found.push(path.to_path_buf());
@@ -43,7 +54,7 @@ pub fn discover_ol_files(path: &Path) -> Vec<PathBuf> {
                 if !name.starts_with('.') && name != "target" && name != "node_modules" {
                     stack.push(p);
                 }
-            } else if name.ends_with(".ol") {
+            } else if name.ends_with(".ol") || (notebooks && name.ends_with(".olmd")) {
                 found.push(p);
             }
         }

@@ -1,0 +1,23 @@
+---
+title: Params
+params:
+  n: 2
+  name: "east"
+  tags: [a, b]
+  limits: {low: 1, high: 2.5}
+  missing: ~
+owner: someone   # any other key is allowed and ignored
+---
+
+Each param is a top-level `let`, its type from its YAML value.
+
+```olang
+println(`${typeof(n)} ${typeof(name)} ${typeof(tags)} ${typeof(limits)}`)
+println(`${n + 1} ${name} ${len(tags)} ${limits.high} ${missing == ()}`)
+```
+
+```olang
+test "a param is in scope in a test" {
+    assert_eq(n * 2, 4)
+}
+```

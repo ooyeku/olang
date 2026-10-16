@@ -64,6 +64,24 @@ fn abs_name(file: &Path) -> String {
         .to_string()
 }
 
+/// A file's program parsed for the runner. The file's directory anchors
+/// its macro expansion: a nested package's file resolves its own `use
+/// lib.x` against its package, not the project the runner was started
+/// from. A notebook's own problems (`notebook::Program::diagnostics`)
+/// fail it as a parse error does.
+fn parse_program(
+    parser: &Parser,
+    file: &Path,
+    program: crate::notebook::Program,
+) -> Result<crate::ast::Program, String> {
+    if !program.diagnostics.is_empty() {
+        return Err(crate::notebook::report(file, &program.diagnostics));
+    }
+    parser
+        .parse_with_dir(&program.source, file.parent())
+        .map_err(|e| e.to_string())
+}
+
 pub fn run(path: &Path, coverage: bool, show_missing: bool) -> i32 {
     run_with(path, coverage, show_missing, &Options::default())
 }
@@ -100,9 +118,9 @@ pub fn run_paths(
         eprintln!("error: path not found: {}", missing.display());
         return 2;
     }
-    let mut files = super::discover_ol_files(path);
+    let mut files = super::discover_sources(path);
     for more in paths.iter().skip(1) {
-        for f in super::discover_ol_files(more) {
+        for f in super::discover_sources(more) {
             let c = f.canonicalize().ok();
             if !files
                 .iter()
@@ -147,12 +165,10 @@ pub fn run_paths(
         let mut with_tests = Vec::new();
         let mut count = 0usize;
         for file in &files {
-            let Ok(source) = std::fs::read_to_string(file) else {
+            let Ok(source) = crate::notebook::read(file, crate::notebook::Mode::Run) else {
                 continue;
             };
-            let program = parser
-                .parse_with_dir(&source, file.parent())
-                .map_err(|e| e.to_string());
+            let program = parse_program(&parser, file, source);
             if let Ok(p) = &program {
                 let blocks = p
                     .statements
@@ -188,16 +204,11 @@ pub fn run_paths(
         let program = if let Some(p) = pre {
             p
         } else {
-            let source = match std::fs::read_to_string(file) {
+            let source = match crate::notebook::read(file, crate::notebook::Mode::Run) {
                 Ok(s) => s,
                 Err(_) => continue,
             };
-            // The file's directory anchors its macro expansion: a nested
-            // package's file resolves its own `use lib.x` against its package,
-            // not the project the runner was started from.
-            parser
-                .parse_with_dir(&source, file.parent())
-                .map_err(|e| e.to_string())
+            parse_program(&parser, file, source)
         };
         let program = match program {
             Ok(p) => p,
@@ -274,6 +285,16 @@ pub fn run_paths(
         let deny = std::env::var("OLANG_DENY")
             .ok()
             .and_then(|list| crate::caps::parse_deny(&list).ok());
+        // A notebook's front matter grant, taken with OLANG_DENY's: both
+        // only remove, and the manifest's applies below.
+        let notebook_caps = crate::notebook::is_notebook(file)
+            .then(|| crate::notebook::read(file, crate::notebook::Mode::Run).ok())
+            .flatten()
+            .and_then(|p| p.capabilities);
+        let deny = match (deny, notebook_caps) {
+            (Some(d), Some(c)) => Some(d.intersect(c)),
+            (d, c) => d.or(c),
+        };
         let mut caps_installed = false;
         if let Some(map) = deps_map {
             let mut map: std::collections::HashMap<_, _> = map.into_iter().collect();
@@ -447,9 +468,10 @@ pub fn run_paths(
     println!("{}", "─".repeat(40));
     if test_files == 0 {
         println!(
-            "  no test blocks found under {} ({} .ol files scanned)",
+            "  no test blocks found under {} ({} file{} scanned)",
             path.display(),
-            files.len()
+            files.len(),
+            if files.len() == 1 { "" } else { "s" }
         );
         // Unparseable files still make the run fail, even with no test blocks.
         return if parse_errors > 0 || none_ran { 1 } else { 0 };

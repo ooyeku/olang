@@ -1,0 +1,28 @@
+---
+title: Sales by region
+params:
+  region: "east"
+  since: "2026-01-01"
+capabilities:
+  fs: "read"
+  net: false
+---
+
+# Sales by region
+
+Revenue for **${region}** since ${since}: ${fmt_money(total)}.
+
+```olang {name: load}
+let sales = unwrap(ods.read_csv_file("data/sales.csv"))
+```
+
+```olang
+let mine = sales |> ods.filter(sales["region"] == region)
+let total = ods.sum(mine["amount"])
+println(`${region} since ${since}: ${total}`)
+```
+
+```olang {name: chart, hide: code}
+let chart = plot.bar(mine["month"], mine["amount"], #{ "title": "Sales" })
+println(len(chart) > 0)
+```

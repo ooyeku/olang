@@ -1,0 +1,18 @@
+---
+params:
+  region: east
+---
+
+Prose at the top.
+
+```olang {name: a}
+fn area(r: Float) -> Float = r * r * 3.14
+```
+
+```olang {nmae: b}
+let x = area("wide")
+```
+
+```olang
+let region = "west"
+```

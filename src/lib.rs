@@ -32,6 +32,7 @@ pub mod interrupt; // Stopping a running evaluation (`olang repl --serve`)
 pub mod log;
 pub mod memory; // The accounting behind `runtime.memory()`
 pub mod native;
+pub mod notebook; // A `.olmd` file read as a program
 pub mod ods;
 pub mod olb; // The program image: a parsed Program as bytes
 pub mod output;

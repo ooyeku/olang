@@ -1,0 +1,29 @@
+---
+title: Where errors point
+params:
+  limit: 3
+---
+
+# Errors point at the file's lines
+
+Some prose that is not code, and a `sql` block that is prose too:
+
+```sql
+select * from nowhere
+```
+
+```olang {name: setup}
+fn checked(n) = {
+    if n > limit => raise(`${n} is past ${limit}`)
+    n
+}
+```
+
+```olang no-run
+raise("a no-run cell never runs")
+```
+
+```olang
+println(checked(2))
+println(checked(5))
+```

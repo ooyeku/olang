@@ -1,0 +1,7 @@
+[package]
+name = "nbproj"
+version = "0.1.0"
+lock = "never"
+
+[dependencies]
+greet = { path = "../greet" }

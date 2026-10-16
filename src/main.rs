@@ -132,6 +132,17 @@ struct Cli {
     #[arg(long, value_name = "CAPS", help_heading = "Run options")]
     deny: Option<String>,
 
+    /// A notebook's param (`.olmd`): NAME=VALUE overrides the default its
+    /// front matter gives, VALUE read as an olang literal when it is one
+    /// and as a String otherwise. Repeatable; also after the notebook
+    /// (`olang run x.olmd --param region=west`)
+    #[arg(
+        long = "param",
+        value_name = "NAME=VALUE",
+        help_heading = "Run options"
+    )]
+    param: Vec<String>,
+
     /// Record this run's nondeterministic inputs to a portable .olt trace.
     /// Replay it bit-for-bit later with `olang replay <trace>`.
     #[arg(long, value_name = "TRACE.olt", help_heading = "Run options")]
@@ -223,6 +234,10 @@ enum Commands {
         /// (docs/tooling.md)
         #[arg(long, value_name = "text|json", default_value = "text")]
         format: String,
+        /// A notebook's param (`.olmd`) as NAME=VALUE, overriding its
+        /// front matter's default (repeatable)
+        #[arg(long = "param", value_name = "NAME=VALUE")]
+        params: Vec<String>,
     },
 
     /// Evaluate source text and print its value — a one-liner probe
@@ -346,6 +361,10 @@ enum Commands {
         /// matched none) instead of passing over nothing
         #[arg(long)]
         fail_if_none: bool,
+        /// A notebook's param (`.olmd`) as NAME=VALUE, overriding its
+        /// front matter's default (repeatable)
+        #[arg(long = "param", value_name = "NAME=VALUE")]
+        params: Vec<String>,
     },
 
     /// Compile a program to a self-contained executable
@@ -781,7 +800,11 @@ fn run() -> i32 {
             format,
             record_args,
             fail_if_none,
+            params,
         }) => {
+            if let Err(code) = notebook_params(&params) {
+                return code;
+            }
             if format != "text" && format != "json" {
                 eprintln!("olang test: --format is `text` or `json`, not `{}`", format);
                 return 2;
@@ -934,7 +957,11 @@ fn run() -> i32 {
             fix,
             tier,
             format,
+            params,
         }) => {
+            if let Err(code) = notebook_params(&params) {
+                return code;
+            }
             if paths.is_empty() {
                 paths.push(PathBuf::from("."));
             }
@@ -1106,7 +1133,16 @@ fn run() -> i32 {
         }
 
         Some(Commands::Expand { file, diff }) => {
-            let code = match std::fs::read_to_string(&file) {
+            // A notebook expands as the program it runs as (its cells on
+            // the file's lines, its params bound).
+            let read = match olang::notebook::read(&file, olang::notebook::Mode::Run) {
+                Ok(p) if !p.diagnostics.is_empty() => {
+                    eprintln!("{}", olang::notebook::report(&file, &p.diagnostics));
+                    std::process::exit(1)
+                }
+                other => other.map(|p| p.source),
+            };
+            let code = match read {
                 // Resolve `use`-imported macro libraries against the file's
                 // own directory, exactly as `olang run`, `olang check`, and
                 // the LSP do — `olang expand` is the command whose whole
@@ -1210,9 +1246,27 @@ fn run_eval(cli: &Cli, source: &str) -> i32 {
     }
 }
 
+/// `--param NAME=VALUE`s, read and kept for every notebook this process
+/// reads. A malformed one is misuse (exit 2).
+fn notebook_params(params: &[String]) -> Result<(), i32> {
+    let mut parsed = Vec::with_capacity(params.len());
+    for p in params {
+        match olang::notebook::parse_param_flag(p) {
+            Ok(kv) => parsed.push(kv),
+            Err(e) => {
+                eprintln!("olang: {}", e);
+                return Err(2);
+            }
+        }
+    }
+    olang::notebook::set_param_overrides(parsed);
+    Ok(())
+}
+
 /// The run options that take a value as the next argument (`--deny net`);
 /// `--ovm-stats` and `--ovm-tier` take theirs only after `=`.
 const RUN_OPTIONS_WITH_VALUE: &[&str] = &[
+    "--param",
     "--profile-live",
     "--verify-tiers",
     "--ovm-parallelism",
@@ -1381,6 +1435,39 @@ fn run_program(
         return watch_loop(&file_path, cli.deny.as_deref(), &args);
     }
     IN_TASK.store(cli.in_task, std::sync::atomic::Ordering::Relaxed);
+    // A notebook's params: `--param` before the file, and after it (a
+    // notebook's own arguments are its params, not os.args()'s).
+    let mut args = args;
+    let mut params = cli.param.clone();
+    if olang::notebook::is_notebook(&file_path) {
+        let mut rest = Vec::new();
+        let mut it = std::mem::take(&mut args).into_iter();
+        while let Some(a) = it.next() {
+            if a == "--param" {
+                match it.next() {
+                    Some(v) => params.push(v),
+                    None => {
+                        eprintln!("olang: --param expects NAME=VALUE");
+                        return 2;
+                    }
+                }
+            } else if let Some(v) = a.strip_prefix("--param=") {
+                params.push(v.to_string());
+            } else {
+                rest.push(a);
+            }
+        }
+        args = rest;
+    } else if !params.is_empty() {
+        eprintln!(
+            "olang: --param sets a notebook's param; {} is no notebook (.olmd)",
+            file_path.display()
+        );
+        return 2;
+    }
+    if let Err(code) = notebook_params(&params) {
+        return code;
+    }
     // Program's argv: the script path, then everything after it. Read via
     // os.args() inside the program.
     let mut argv = vec![file_path.to_string_lossy().to_string()];
@@ -1420,18 +1507,20 @@ fn run_program(
     // Recording builds a timeline over the program source (from `--record`
     // or the `olang record` command).
     let timeline = match &record {
-        Some(out) => match std::fs::read_to_string(&file_path) {
-            Ok(src) => Some(olang::timeline::Timeline::record(
-                PathBuf::from(out),
-                file_path.to_string_lossy().to_string(),
-                src.clone(),
-                sha256_hex(src.as_bytes()),
-            )),
-            Err(e) => {
-                eprintln!("olang --record: cannot read {}: {}", file_path.display(), e);
-                return 1;
+        Some(out) => {
+            match olang::notebook::read(&file_path, olang::notebook::Mode::Run).map(|p| p.source) {
+                Ok(src) => Some(olang::timeline::Timeline::record(
+                    PathBuf::from(out),
+                    file_path.to_string_lossy().to_string(),
+                    src.clone(),
+                    sha256_hex(src.as_bytes()),
+                )),
+                Err(e) => {
+                    eprintln!("olang --record: cannot read {}: {}", file_path.display(), e);
+                    return 1;
+                }
             }
-        },
+        }
         None => None,
     };
 
@@ -1479,7 +1568,7 @@ fn watch_loop(script: &std::path::Path, deny: Option<&str>, script_args: &[Strin
         .to_path_buf();
     let latest_mtime = || -> SystemTime {
         let mut newest = SystemTime::UNIX_EPOCH;
-        for f in olang::tools::discover_ol_files(&dir) {
+        for f in olang::tools::discover_sources(&dir) {
             if let Ok(meta) = std::fs::metadata(&f)
                 && let Ok(m) = meta.modified()
                 && m > newest
@@ -1529,7 +1618,7 @@ fn watch_argv(dir: &std::path::Path, argv: &[String]) -> i32 {
     };
     let latest_mtime = || -> SystemTime {
         let mut newest = SystemTime::UNIX_EPOCH;
-        for f in olang::tools::discover_ol_files(dir) {
+        for f in olang::tools::discover_sources(dir) {
             if let Ok(meta) = std::fs::metadata(&f)
                 && let Ok(m) = meta.modified()
                 && m > newest
@@ -2440,11 +2529,11 @@ fn run_embedded(bundle: Bundle, logger: &Logger) -> i32 {
             };
             execute_program(
                 *program, &source, &path, false, false, false, None, None, effective, None, None,
-                logger, None,
+                logger, None, None,
             )
         }
         Bundle::Source(source) => execute_source(
-            &source, &path, false, false, false, None, None, deny, None, None, logger,
+            &source, &path, false, false, false, None, None, deny, None, None, logger, None,
         ),
     };
     match result {
@@ -3299,11 +3388,44 @@ fn execute_file(
     trace_caps: Option<bool>,
     logger: &Logger,
 ) -> anyhow::Result<()> {
-    let source = std::fs::read_to_string(file_path)
+    let text = std::fs::read_to_string(file_path)
         .map_err(|e| anyhow::anyhow!("cannot read '{}': {}", file_path.display(), e))?;
+    if !olang::notebook::is_notebook(file_path) {
+        return execute_source(
+            &text, file_path, verbose, no_ovm, ovm_stats, ovm_tier, max_depth, deny, timeline,
+            trace_caps, logger, None,
+        );
+    }
+    // A notebook runs as its program: the cells' code on the file's own
+    // lines, the params bound, under its front matter's grant (taken
+    // with --deny's: both only remove, and the manifest's applies below).
+    let program = olang::notebook::program(&text, olang::notebook::Mode::Run);
+    if !program.diagnostics.is_empty() {
+        eprintln!(
+            "{}",
+            olang::notebook::report(file_path, &program.diagnostics)
+        );
+        return Err(anyhow::anyhow!(
+            "the notebook has problems; refusing to run it"
+        ));
+    }
+    let deny = match (deny, program.capabilities) {
+        (Some(d), Some(c)) => Some(d.intersect(c)),
+        (d, c) => d.or(c),
+    };
     execute_source(
-        &source, file_path, verbose, no_ovm, ovm_stats, ovm_tier, max_depth, deny, timeline,
-        trace_caps, logger,
+        &program.source,
+        file_path,
+        verbose,
+        no_ovm,
+        ovm_stats,
+        ovm_tier,
+        max_depth,
+        deny,
+        timeline,
+        trace_caps,
+        logger,
+        Some(&text),
     )
 }
 
@@ -3352,6 +3474,9 @@ fn execute_source(
     timeline: Option<olang::timeline::Timeline>,
     trace_caps: Option<bool>,
     logger: &Logger,
+    // A notebook's text: shown around an error in place of the program,
+    // whose lines are the file's but with the prose made empty.
+    shown: Option<&str>,
 ) -> anyhow::Result<()> {
     // Macro-bearing programs run as their *expanded* text, so every span
     // a runtime error carries points into text we can actually show.
@@ -3392,7 +3517,7 @@ fn execute_source(
     let program = match parsed {
         Ok(program) => program,
         Err(e) => {
-            show_file_parse_error(&e, file_path, source);
+            show_file_parse_error(&e, file_path, shown.unwrap_or(source));
             if did_expand {
                 eprintln!(
                     "note: this program contains macros — line numbers and code context \
@@ -3421,6 +3546,7 @@ fn execute_source(
         trace_caps,
         logger,
         line_map.as_deref().map(|m| (original_source, m)),
+        shown,
     )
 }
 
@@ -3450,6 +3576,8 @@ fn execute_program(
     // and the expansion's line map, so a runtime error can point into
     // the file the author wrote instead of the text the runtime ran.
     expansion: Option<(&str, &[olang::expand::LineOrigin])>,
+    // A notebook's text, shown around an error (`execute_source`).
+    shown: Option<&str>,
 ) -> anyhow::Result<()> {
     // Get absolute path for module resolution
     let absolute_path = if file_path.is_absolute() {
@@ -3457,6 +3585,15 @@ fn execute_program(
     } else {
         std::env::current_dir().unwrap_or_default().join(file_path)
     };
+    // A notebook (`shown` is its text) runs in its own folder, as `olang
+    // test` runs every file: `data/sales.csv` in a cell is the notebook's,
+    // wherever it is run from.
+    if shown.is_some()
+        && let Some(dir) = absolute_path.parent()
+        && let Err(e) = std::env::set_current_dir(dir)
+    {
+        return Err(anyhow::anyhow!("cannot enter {}: {}", dir.display(), e));
+    }
 
     // One execution model: the interpreter with the bytecode tier enabled,
     // promoting eligible functions on their first call. --no-ovm disables
@@ -3726,7 +3863,7 @@ fn execute_program(
             }
             report_caps(&mut interpreter);
             let mut location = interpreter.take_error_location();
-            let mut display_source = source;
+            let mut display_source = shown.unwrap_or(source);
             // Source-map the error through the expansion, when there is
             // one: a line of untouched source points at its original
             // line (identical content, exact column); a generated line
@@ -3738,7 +3875,7 @@ fn execute_program(
                 match map.get(loc.line as usize - 1) {
                     Some(olang::expand::LineOrigin::Original(m)) => {
                         loc.line = *m as u32;
-                        display_source = original;
+                        display_source = shown.unwrap_or(original);
                     }
                     Some(olang::expand::LineOrigin::Generated {
                         macro_name,
@@ -3758,7 +3895,7 @@ fn execute_program(
                             Some(h) => format!("{note}\n{h}"),
                             None => note,
                         });
-                        display_source = original;
+                        display_source = shown.unwrap_or(original);
                     }
                     None => {}
                 }
@@ -3819,6 +3956,7 @@ fn run_replay(trace_path: &std::path::Path, args: &[String], logger: &Logger) ->
         Some(timeline),
         None,
         logger,
+        None,
         None,
     ) {
         Ok(()) if olang::timeline::any_thread_diverged() => {

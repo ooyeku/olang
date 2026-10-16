@@ -1,0 +1,5 @@
+# A bad option
+
+```olang {name: first, hide: everything}
+println(1)
+```
