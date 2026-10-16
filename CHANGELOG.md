@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Notebooks: olang reads `.olmd` files as programs** (docs/notebooks.md).
+  A notebook is markdown whose `olang` fenced blocks are code cells; its
+  program is the cells' code with every other line empty, so every
+  diagnostic, error frame and test location is the file's own line and
+  column. `olang run`, `test` (a folder's notebooks found beside its
+  `.ol` files), `check` (`--format json` too), `fmt` (each cell
+  formatted, the prose, fences and front matter byte for byte) and
+  `expand` take one, and the REPL's `:run`. A cell's options (`{name,
+  hide, run, pin, as}`) are validated; a `no-run` cell is checked, never
+  run. The front matter's `params` are top-level `let`s that `--param
+  NAME=VALUE` overrides, and its `capabilities` the run's grant,
+  intersected with `olang.toml`'s and `--deny`'s and fail-closed. A
+  notebook runs in its own folder.
 - **`gui`: overlay scroll bars.** Every scrolling node and styled field
   draws a thin bar over its right edge while it scrolls (faded after,
   widened under the pointer), its thumb dragged and its track pressed to

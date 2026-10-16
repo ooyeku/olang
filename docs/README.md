@@ -45,6 +45,7 @@ For the conventions used throughout the book, see the
 | [The library shelf](shelf.md) | olang's local package registry: register a library once, import it from any project by name; the starter libraries every shelf ships with — textkit, validate, markdown — and how pinning notices drift. |
 | [The web SDK](web-sdk.md) | The foundation layer for full-stack web applications: one route table driving server and browser, views as plain data, the JSON envelope, forms declared once, the client bundle, and the opinionated design system. |
 | [Command-line tooling](tooling.md) | The `olang` command line: running, testing, formatting, checking, building standalone executables, generating documentation, benchmarking, and recording and replaying runs. |
+| [Notebooks](notebooks.md) | The `.olmd` format: markdown with olang cells read as one program, cell options, front matter params and capabilities, the YAML subset, and what each command does with a notebook. |
 | [Writing fast olang](performance.md) | The program shapes the execution tiers optimize: functions as the unit of compilation, the rebind forms, typed lists, what declines the fast path, reading the tier's decisions, and verifying a hot program. |
 | [olang in the browser](wasm.md) | The WebAssembly build, the `dom` module, structured events, canvas draw-lists, the `ui` view layer, routing and storage, and Web Workers. |
 | [Openness](openness.md) | Open code (`meta`), open artifacts (`olang inspect` and capabilities), and open execution (record and replay), described mechanically. |

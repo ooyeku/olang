@@ -28,6 +28,7 @@ language server has [its own chapter](editors.md).
 - [`olang profile`](#olang-profile)
 - [`olang build`](#olang-build)
 - [`olang doc`](#olang-doc)
+- [Notebooks: `.olmd`](#notebooks-olmd)
 - [The REPL](#the-repl)
 - [`olang --watch`](#olang---watch)
 - [`olang record` and `olang replay` — the Open Timeline](#olang-record-and-olang-replay--the-open-timeline)
@@ -64,6 +65,7 @@ language server has [its own chapter](editors.md).
 | `olang replay <trace>` | Re-run a recorded `.olt` timeline bit-for-bit |
 | `olang doc [path]` | Generate HTML (or `--format markdown` Markdown) API reference |
 | `olang expand FILE` | Print a file after [macro expansion](macros.md) — the program the runtime actually receives |
+| `olang <notebook.olmd>` | Run a [notebook](#notebooks-olmd): markdown whose `olang` blocks are the program; `run`, `test`, `check`, `fmt` and `expand` take one |
 | `olang bench [path]` | Run benchmarks |
 | `olang profile <file>` | Run under the sampling profiler; report time per function and tier |
 | `olang lsp` | Start the language server (LSP over stdio) |
@@ -1342,6 +1344,47 @@ The embedded packages carry these comments, so `olang doc
 src/stdlib/embedded/cli.ol src/stdlib/embedded/term.ol` regenerates
 their reference from source rather than by hand.
 
+## Notebooks: `.olmd`
+
+A notebook is a markdown file whose name ends `.olmd`; its fenced blocks
+whose info string begins with `olang` are code cells, and the rest is
+prose. The commands read it as a program: the cells' code with every
+other line made empty, so every diagnostic, error frame and test
+location is a line and column of the notebook itself. The format — cells
+and their options, front matter, params, capabilities, the YAML subset —
+is [its own chapter](notebooks.md).
+
+```bash
+olang sales.olmd                          # run it (or `olang run sales.olmd`)
+olang run sales.olmd --param region=west  # override a front matter param
+olang test notes/                         # .olmd files are found beside .ol files
+olang check sales.olmd --format json      # the file's lines; the notebook's own problems coded `notebook`
+olang fmt sales.olmd                      # each cell formatted; prose byte for byte
+olang expand sales.olmd                   # the program the runtime receives
+```
+
+- **Params.** The front matter's `params` are top-level `let`s placed on
+  the front matter's own lines. `--param NAME=VALUE` (repeatable, on
+  `run`, `test` and `check`; for `run` before the notebook or after it)
+  overrides one; the value is olang source when it parses as a literal
+  and a String otherwise. A `--param` the notebook does not declare is
+  an error, as is a cell that defines a param's name again.
+- **Capabilities.** The front matter's `capabilities` is the run's grant
+  in `[capabilities]` vocabulary, intersected with the enclosing
+  project's `olang.toml` grant and with `--deny`/`OLANG_DENY`. An
+  unknown key or value refuses to run, with its line.
+- **Where it runs.** A notebook runs in its own folder (its working
+  directory is the notebook's), and `use` resolves as for a `.ol` file
+  beside it, the enclosing project's dependencies included.
+- **`no-run` cells** are checked by `olang check` and formatted by
+  `olang fmt`, and left out of a run and of `olang test`.
+- **Refusals.** A fence never closed, a bad cell option and front
+  matter outside the subset are diagnostics: a run and `olang test`
+  print them as `file:line:column: error: …` and refuse the notebook,
+  and `olang check` counts them.
+- **The REPL.** `:run x.olmd` runs a notebook in its folder, under its
+  grant.
+
 ## The REPL
 
 Bare `olang` (or `olang repl`) starts the interactive REPL. The doc
@@ -1392,7 +1435,7 @@ one program. This is the mode for pasting several statements at once.
 The edit-run loop as a flag:
 
 ```bash
-olang --watch script.ol       # rerun whenever any .ol file nearby changes
+olang --watch script.ol       # rerun whenever any .ol or .olmd file nearby changes
 ```
 
 Each run is a child process, so a crash or an `os.exit` ends the run,

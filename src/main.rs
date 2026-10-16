@@ -110,7 +110,7 @@ struct Cli {
     #[arg(long, value_name = "RATE", help_heading = "Run options")]
     verify_tiers: Option<f64>,
 
-    /// Re-run the file whenever any .ol file in its directory changes
+    /// Re-run the file whenever any .ol or .olmd file in its directory changes
     /// (place before the file: `olang --watch script.ol`)
     #[arg(long, help_heading = "Run options")]
     watch: bool,
@@ -334,7 +334,7 @@ enum Commands {
         /// Report coverage and list each file's uncovered lines (implies --coverage)
         #[arg(long)]
         coverage_lines: bool,
-        /// Re-run the tests whenever a .ol file under the target changes
+        /// Re-run the tests whenever a .ol or .olmd file under the target changes
         #[arg(long)]
         watch: bool,
         /// Run only the test blocks whose name contains this text

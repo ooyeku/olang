@@ -1,0 +1,262 @@
+# Notebooks
+
+Part of [the olang book](README.md) · [Command-line tooling](tooling.md)
+
+A notebook is olang code in cells between prose: a markdown file whose
+name ends `.olmd`. olang reads it as a program, so `olang run`, `test`,
+`check`, `fmt` and `expand` take a notebook as they take a `.ol` file,
+and every location they report is a line of the notebook itself. This
+chapter is the reference for the file format and for how olang reads it.
+The notebook pane, its outputs and its reactive runs are olang Studio's,
+specified in its own notebook design (studio/docs/notebooks.md).
+
+## Table of contents
+
+- [An example](#an-example)
+- [Cells](#cells)
+- [Cell options](#cell-options)
+- [The program](#the-program)
+- [Front matter](#front-matter)
+- [Params](#params)
+- [Capabilities](#capabilities)
+- [The YAML subset](#the-yaml-subset)
+- [Commands](#commands)
+- [Diagnostics](#diagnostics)
+
+## An example
+
+````markdown
+---
+title: Sales by region
+params:
+  region: "east"
+  since: "2026-01-01"
+capabilities:
+  fs: "read"
+  net: false
+---
+
+# Sales by region
+
+Revenue for **${region}** since ${since}.
+
+```olang {name: load}
+let sales = unwrap(ods.read_csv_file("data/sales.csv"))
+```
+
+```olang
+let mine = sales |> ods.filter(sales["region"] == region)
+let total = ods.sum(mine["amount"])
+```
+
+```olang {name: chart, hide: code}
+plot.bar(mine["month"], mine["amount"], #{ "title": "Sales" })
+```
+````
+
+`olang run sales.olmd` runs the three cells top to bottom with `region`
+and `since` bound, reading files but never writing them and with no
+network. `olang run sales.olmd --param region=west` runs it for another
+region.
+
+## Cells
+
+A fenced code block whose info string begins with the word `olang` is a
+code cell; everything else in the file is prose. Fences follow
+CommonMark:
+
+- a fence is three or more backticks or three or more tildes, indented
+  by at most three spaces;
+- a backtick fence's info string has no backtick in it;
+- a block closes at a line of the same character, at least as many of
+  it as opened the block, and nothing else but spaces;
+- four or more spaces of indentation make an indented code block, which
+  is prose.
+
+| Info string | The block is |
+|---|---|
+| `olang` | a code cell |
+| `olang {options}` | a code cell with [options](#cell-options) |
+| `olang no-run`, `olang no-run {options}` | a cell that is shown and checked but never run |
+| `output {cell: name}` | a cell's pinned output (olang Studio's); prose to olang |
+| anything else (`sql`, `json`, `olangx`, none) | prose |
+
+A fence inside a list item or a block quote is not read as a cell. A
+fence that is never closed is a [diagnostic](#diagnostics), not a block
+that runs to the end of the file as CommonMark would have it.
+
+## Cell options
+
+A cell's options follow `olang` in the info string as a record,
+`{key: value, …}`. A value is a bare word, a double-quoted string (`\"`
+and `\\` escape), `true` or `false`.
+
+| Option | Values | Meaning |
+|---|---|---|
+| `name` | a word or a string | the cell's id for links and runs; two cells may not share one |
+| `hide` | `code`, `output`, `all` | what is hidden when the notebook is drawn or exported |
+| `run` | `auto`, `manual` | `manual` makes a pure cell wait to be run (Studio) |
+| `pin` | `true`, `false` | keep the cell's last output in the file, in an `output` block under it |
+| `as` | `markdown` | a String result is drawn as markdown |
+
+olang reads and validates the options and keeps them for the tools that
+draw a notebook; a run does not depend on them. An option olang does not
+know, a value outside its list, a key given twice and a malformed record
+are each a diagnostic at the cell's line and the option's column.
+
+## The program
+
+A notebook's program is its file with every line that is not a cell's
+code made empty: prose, fences, the front matter and `output` blocks
+become empty lines, and the cells' lines stay as they are. Line *N* of
+the program is line *N* of the file and a cell's columns are the
+file's, so every diagnostic, error frame, test location and coverage
+line points into the notebook as written. `olang expand x.olmd` prints
+the program.
+
+The cells form one module. A name a cell defines is visible to the cells
+below it, a function declared in two cells is the same error as a
+function declared twice in a file, and `test` blocks in any cell are the
+notebook's tests.
+
+A `no-run` cell is part of the program `olang check` and `olang fmt`
+read, so it must parse and is held to the checker's rules; `olang run`
+and `olang test` leave it out. A later cell should not use a name only a
+`no-run` cell defines: the check sees the name, the run does not.
+
+A notebook runs in its own folder: its working directory is the folder
+the notebook is in, wherever `olang` is started, so a relative path in a
+cell (`data/sales.csv`) is the notebook's. `use` resolves as it would
+for a `.ol` file beside the notebook: a sibling module, the enclosing
+project's own modules, and the dependencies of the project whose
+`olang.toml` is above it.
+
+## Front matter
+
+Front matter is optional: YAML between a line `---` at the very top of
+the file and the next line `---` (or `...`). olang reads three keys and
+leaves every other alone.
+
+| Key | Value |
+|---|---|
+| `title` | a string |
+| `params` | a map of each param's name to its default ([Params](#params)) |
+| `capabilities` | the run's grant ([Capabilities](#capabilities)) |
+
+Front matter that is opened and never closed is a diagnostic.
+
+## Params
+
+Each entry of `params` is bound as a top-level `let` before the first
+cell, as if declared there. The `let` is placed on the front matter line
+of the param's key, so the program keeps the file's lines. The value's
+type is its YAML value's:
+
+| YAML | olang |
+|---|---|
+| `~`, `null`, nothing | `()` |
+| `true`, `false` | `Bool` |
+| `42`, `-7` | `Int` |
+| `2.5`, `1e3` | `Float` |
+| `east`, `"east"`, `'east'` | `String` |
+| `[a, b]`, a block list | `List` |
+| `{low: 1}`, a block map | `Map` with String keys (`limits.low`) |
+
+`--param NAME=VALUE` overrides one param's default for a run, a test run
+or a check; it is repeatable. The value is olang source when it parses
+as a literal (`5`, `2.5`, `true`, `"east"`, `[1, 2]`, `#{ "a": 1 }`,
+`()`) and a String otherwise, so `--param since=2026-02-01` is the
+String `"2026-02-01"`. `olang run` takes `--param` before the notebook
+or after it: a notebook's arguments after its name are its params, and
+the rest are `os.args()`'s.
+
+```bash
+olang run sales.olmd --param region=west --param since=2026-02-01
+olang test analysis/ --param sample=100
+olang check sales.olmd --param region=west
+```
+
+A `--param` that names no param the notebook declares is an error at the
+line of `params:` (or line 1), and the notebook does not run. A param's
+name must be one a `let` can bind: an identifier that is not a keyword.
+A cell that defines a param's name again — a top-level `let`, `fn` or
+`type` — is an error at that cell's line: a cell reads a param but does
+not replace it.
+
+## Capabilities
+
+`capabilities` is the grant the notebook runs under, in the vocabulary
+of `olang.toml`'s `[capabilities]` ([Packages](packages.md)):
+
+| Key | Values |
+|---|---|
+| `fs` | `true`, `false`, `read` |
+| `net`, `proc`, `db`, `env` | `true`, `false` |
+
+A capability the block does not name stays allowed, as in the manifest.
+The grant is intersected with the `[capabilities]` of the project whose
+`olang.toml` encloses the notebook (its own grant and each dependency's
+attenuation) and with `--deny` and `OLANG_DENY`: each can only remove.
+`olang test` runs a notebook's tests under the same grant.
+
+The block is fail-closed. A key outside the five, a value outside its
+list (`fs: write`, `net: "no"`), and a `capabilities` that is not a map
+are each a diagnostic at their line, and the notebook refuses to run
+rather than run with a grant it cannot honour.
+
+## The YAML subset
+
+olang reads front matter in a strict subset of YAML, and anything
+outside it is a diagnostic with its line, never a guess:
+
+- block maps (`key: value`) and block lists (`- item`), nested by
+  indentation in spaces, a list item that is itself a map
+  (`- name: x`);
+- flow lists `[a, b]` and flow maps `{a: 1, b: 2}`, each on one line;
+- plain scalars, resolved as in the table above (any other plain text is
+  a String, so `title: Sales, by region` is one String);
+- double-quoted strings with the escapes `\"`, `\\`, `\/`, `\n`, `\t`,
+  `\r`, `\0`, `\b`, `\f`, `\xHH`, `\uHHHH`, `\UHHHHHHHH`, and
+  single-quoted strings in which `''` is a quote;
+- `#` comments, at a line's start or after a space.
+
+Not in the subset: anchors and aliases (`&a`, `*a`), tags (`!!str`),
+block scalars (`|`, `>`), flow collections over several lines, a second
+document, and tabs as indentation. A key given twice is an error.
+
+## Commands
+
+| Command | On a notebook |
+|---|---|
+| `olang x.olmd`, `olang run x.olmd` | runs the program; refuses on any diagnostic |
+| `olang test x.olmd` | runs its `test` blocks; `olang test DIR` finds `.olmd` files beside `.ol` files |
+| `olang check x.olmd` | checks its cells as one module, with the checker's advisories; `--format json` gives the file's lines, the notebook's own problems with the code `notebook` |
+| `olang fmt x.olmd` | formats each cell's code, `no-run` cells too, and leaves prose, fences, front matter and `output` blocks byte for byte; `--check` reports instead |
+| `olang expand x.olmd` | prints the program |
+| `:run x.olmd` in the REPL | runs it in its folder, under its grant |
+
+`olang check DIR` and `olang fmt DIR` take a folder's notebooks with its
+`.ol` files; `--watch` re-runs when a notebook changes. `olang fmt`
+formats each cell as a file of its own and holds the result to the same
+safety gate as a `.ol` file: the program before and after must parse to
+the same tree, or the notebook is left as it is and reported. A notebook
+with a fence that is never closed is not formatted.
+
+## Diagnostics
+
+A notebook's own problems are reported at the file's line and column,
+in the form `file:line:column: error: message` by a run and `olang test`,
+and with the file's text around them by `olang check`:
+
+- a fence or front matter that is never closed;
+- a cell's info string with something after `olang` other than `no-run`
+  and an options record;
+- an option olang does not know, a bad value, a key given twice, a
+  malformed record, two cells with one name;
+- front matter outside the [YAML subset](#the-yaml-subset), a `params`
+  or `capabilities` that is not a map, a param that is no name, an
+  unknown capability or value;
+- a `--param` the notebook does not declare, a cell defining a param.
+
+Each is an error: `olang run` and `olang test` refuse the notebook, and
+`olang check` counts it as a problem (exit 1).
