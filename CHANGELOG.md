@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   NAME=VALUE` overrides, and its `capabilities` the run's grant,
   intersected with `olang.toml`'s and `--deny`'s and fail-closed. A
   notebook runs in its own folder.
+- **An SVG picture's text is drawn.** `gui`'s image draws an SVG's
+  `<text>` in the system's fonts (loaded once, when an SVG is first
+  drawn; sans-serif the platform's interface face), so a `plot` chart
+  shown as a picture keeps its title, ticks and labels.
 - **The REPL protocol draws data as data.** An `ods` Frame or Series is
   a `frame` or `series` value with its typed columns, row count and first
   rows (each cell its text, a float to six significant digits, or

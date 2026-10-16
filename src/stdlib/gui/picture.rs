@@ -267,10 +267,29 @@ fn exif_orientation(t: &[u8]) -> Option<u8> {
     None
 }
 
-/// An SVG parsed: text is not drawn (no fonts are loaded for it).
+/// An SVG parsed, its text set in the system's fonts (a chart's labels:
+/// `plot`'s SVG names system-ui, then sans-serif).
 fn svg_tree(b: &[u8]) -> Res<resvg::usvg::Tree> {
-    resvg::usvg::Tree::from_data(b, &resvg::usvg::Options::default())
+    resvg::usvg::Tree::from_data(b, svg_options())
         .map_err(|e| format!("image: not an SVG this can draw ({e})"))
+}
+
+/// The options SVGs are read with: the system's fonts, loaded once a
+/// process (only when an SVG is first drawn), sans-serif the platform's
+/// interface face.
+fn svg_options() -> &'static resvg::usvg::Options<'static> {
+    static OPTS: OnceLock<resvg::usvg::Options<'static>> = OnceLock::new();
+    OPTS.get_or_init(|| {
+        let mut db = resvg::usvg::fontdb::Database::new();
+        db.load_system_fonts();
+        if cfg!(target_os = "macos") {
+            db.set_sans_serif_family("Helvetica Neue");
+        }
+        resvg::usvg::Options {
+            fontdb: Arc::new(db),
+            ..resvg::usvg::Options::default()
+        }
+    })
 }
 
 fn check_size(w: u32, h: u32) -> Res<()> {
@@ -1205,6 +1224,25 @@ mod tests {
             animated: false,
         };
         assert_eq!(bucket(svg, Some((48.0, 48.0))), 64);
+    }
+
+    #[test]
+    fn an_svgs_text_is_drawn_in_the_systems_fonts() {
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40"><rect width="120" height="40" fill="#ffffff"/><text x="4" y="30" font-family="system-ui, -apple-system, sans-serif" font-size="28" fill="#000000">Hello</text></svg>"##;
+        let info = Info {
+            width: 120,
+            height: 40,
+            format: Format::Svg,
+            animated: false,
+        };
+        let p = make(svg, info, 0).unwrap();
+        // the words are dark pixels on the white
+        let dark = p
+            .rgba
+            .chunks(4)
+            .filter(|px| px[3] > 0 && px[0] < 100)
+            .count();
+        assert!(dark > 50, "the text drew {dark} dark pixels");
     }
 
     #[test]
