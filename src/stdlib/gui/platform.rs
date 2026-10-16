@@ -238,6 +238,8 @@ pub fn available() -> bool {
 /// - `terminal`: a terminal can be built: the `pty` and `vt` modules, a
 ///   canvas's `ime` (the input method's text as `text` and `preedit`
 ///   events while it has the focus) and a canvas text's `italic`.
+/// - `group_hover`: a style's `hover` look shown over an ancestor too;
+///   `scroll_bars`: scrollers draw overlay bars (bars.rs).
 ///
 /// A program (Loom) asks before it uses what an older engine refuses.
 pub fn capabilities() -> Value {
@@ -258,6 +260,10 @@ pub fn capabilities() -> Value {
         ("open_documents", b(mac)),
         ("context_menu", b(mac)),
         ("terminal", b(cfg!(unix))),
+        // a style's `group_hover`, and the overlay scroll bars (a code
+        // field's `track` and `past_end`)
+        ("group_hover", b(true)),
+        ("scroll_bars", b(true)),
     ])
 }
 

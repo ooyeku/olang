@@ -210,6 +210,13 @@ pub struct WinState {
     /// The presses of the click that moved a field's selection (2: a
     /// double click), said on its `select` as `clicks` (0: not a press).
     click_count: u32,
+    /// Each scroller's overlay bar (bars.rs), by its key.
+    pub bars: HashMap<String, super::bars::Bar>,
+    /// The bars the last frame drew, in the order drawn (the pointer
+    /// finds the last first).
+    bar_hits: Vec<super::bars::Hit>,
+    /// The scroller whose thumb is being dragged.
+    bar_drag: Option<String>,
 }
 
 /// An animated picture's playing: since when, and where it stopped.
@@ -355,6 +362,9 @@ impl WinState {
             swallow_up: false,
             click_mod: false,
             click_count: 0,
+            bars: HashMap::new(),
+            bar_hits: Vec::new(),
+            bar_drag: None,
         }
     }
 
@@ -381,7 +391,7 @@ impl WinState {
     pub fn set_clock(&mut self, ms: f64) {
         if self.test_clock != Some(ms) {
             self.test_clock = Some(ms);
-            if !self.shown_anims.is_empty() {
+            if !self.shown_anims.is_empty() || self.bars_moving() {
                 self.dirty = true;
             }
         }
@@ -496,6 +506,8 @@ impl WinState {
                         r.set_nowrap(!props.wrap);
                         r.readonly = props.readonly;
                         r.band = props.band.unwrap_or(16).max(1);
+                        r.track = super::rich::parse_track(props.track.as_ref());
+                        r.past_end = props.past_end;
                         if let Some((line, seq)) = props.scroll_to
                             && seq != r.scroll_seq
                             && current
@@ -570,6 +582,8 @@ impl WinState {
                         r.set_nowrap(!props.wrap);
                         r.readonly = props.readonly;
                         r.band = props.band.unwrap_or(16).max(1);
+                        r.track = super::rich::parse_track(props.track.as_ref());
+                        r.past_end = props.past_end;
                         if let Some((a, f, seq)) = props.select {
                             r.select_seq = seq;
                             r.select_chars(a.max(0) as usize, f.max(0) as usize);
@@ -1371,6 +1385,9 @@ impl WinState {
             self.swallow_up = true;
             return;
         }
+        if self.bar_pointer(action, x, y, button, hit.as_deref(), out) {
+            return;
+        }
         if action == PointerAction::Up && self.swallow_up {
             self.swallow_up = false;
             return;
@@ -1644,6 +1661,8 @@ impl WinState {
             && let Some(r) = self.editors.get_mut(&k).and_then(|e| e.rich_mut())
             && (r.wheel_x(dx) | r.wheel(dy, &mut ts))
         {
+            let now = self.test_clock.unwrap_or_else(|| self.born.elapsed().as_secs_f64() * 1000.0);
+            self.bars.entry(k.clone()).or_default().moved_at = Some(now);
             // the first line in view, said when it moves a band of lines
             // (a program asks for what the band shows; not every wheel)
             let top = r.top_line(&mut ts);
@@ -1706,6 +1725,9 @@ impl WinState {
             if after != before {
                 self.dirty = true;
                 self.a11y_dirty = true;
+                if after.1 != before.1 {
+                    self.bar_moved(&k);
+                }
                 out.push(self.ev(
                     "scrolled",
                     vec![("key", s(&k)), ("x", float(after.0)), ("y", float(after.1))],
@@ -1804,6 +1826,7 @@ impl WinState {
         self.caret = None;
         self.shown_anims.clear();
         self.next_frame = None;
+        self.bar_hits.clear();
         let Some(root) = self.scene.root.clone() else {
             return dl;
         };
@@ -1918,6 +1941,7 @@ impl WinState {
             *border_width = 0.0;
         }
         let text = node.text.clone();
+        let (scrollable, is_edit) = (node.scrollable, node.edit.is_some());
         let (children, offset, rect) = (node.children.clone(), node.offset, node.rect);
         let (draw, image, fit) = (node.draw.clone(), node.image.clone(), node.fit.clone());
         if let Some(ops) = &draw
@@ -2099,6 +2123,16 @@ impl WinState {
         let (cx, cy) = (ox + rect[0] - offset.0, oy + rect[1] - offset.1);
         for c in children {
             self.paint(&c, cx, cy, inner_clip, opacity, ts, dl, rings);
+        }
+        // a scroll region's bar, over what it scrolls
+        if scrollable && !is_edit {
+            let n = &self.scene.nodes[key];
+            let (_, ch) = self.scene.content_size(n);
+            let view = rect[3];
+            let max = (ch - view).max(0.0);
+            if max > 0.5 {
+                self.paint_bar(key, false, [x, y, w, h], inner_clip, view, ch, offset.1, max, &[], opacity, dl);
+            }
         }
         if late_border && let Some(b) = st.border {
             dl.prims.push(Prim::Rect {
@@ -2569,37 +2603,52 @@ impl WinState {
             }
         }
         if focused {
+            // the selection as one shape, as a Mac's text views draw it:
+            // each row it covers whole, top to bottom of the row (no gap
+            // between rows), and a row it goes on past (a line break
+            // selected, a wrapped line's earlier rows) out to the right
+            // edge; only its last row ends where the selection does
+            let right_edge = content[0] + content[2];
             for i in shown.clone() {
                 let Some((a, b, more)) = r.para_selection(i) else {
                     continue;
                 };
                 let (py, _, ph) = r.para(i);
                 let boxes = r.range_boxes(i, a, b);
-                let mut end_x = 0.0f32;
-                for bx in &boxes {
-                    dl.prims.push(solid(
-                        ox + bx.x0 as f32,
-                        oy + py + bx.y0 as f32,
-                        (bx.x1 - bx.x0) as f32,
-                        (bx.y1 - bx.y0) as f32,
-                        fade(st.selection),
-                        clip,
-                    ));
-                    end_x = bx.x1 as f32;
+                let bands = r.row_bands(i);
+                // a row's band, the paragraph's first row from its top and
+                // its last to its bottom (the leading between lines is
+                // the selection's too)
+                let nb = bands.len();
+                let band_of = |y0: f32, y1: f32| -> (f32, f32) {
+                    let mid = (y0 + y1) / 2.0;
+                    let k = bands
+                        .iter()
+                        .position(|(t, b)| mid >= *t && mid <= *b);
+                    match k {
+                        Some(k) => (
+                            if k == 0 { 0.0 } else { bands[k].0 },
+                            if k + 1 == nb { ph } else { bands[k].1 },
+                        ),
+                        None => (y0, y1),
+                    }
+                };
+                let n = boxes.len();
+                for (k, bx) in boxes.iter().enumerate() {
+                    let (t, bt) = band_of(bx.y0 as f32, bx.y1 as f32);
+                    let x0 = ox + bx.x0 as f32;
+                    let goes_on = more || k + 1 < n;
+                    let x1 = if goes_on { right_edge.max(ox + bx.x1 as f32) } else { ox + bx.x1 as f32 };
+                    // whole device pixels: rows that meet leave no seam
+                    let (y0, y1) = ((oy + py + t).round(), (oy + py + bt).round());
+                    let (x0, x1) = (x0.round(), x1.round());
+                    dl.prims.push(solid(x0, y0, x1 - x0, y1 - y0, fade(st.selection), clip));
                 }
-                if more {
-                    // the line break is selected too
-                    let last = boxes.last().map(|b| (b.y0 as f32, (b.y1 - b.y0) as f32));
-                    let (y0, h) =
-                        last.unwrap_or((ph - st.font.size * s * 1.2, st.font.size * s * 1.2));
-                    dl.prims.push(solid(
-                        ox + end_x,
-                        oy + py + y0,
-                        st.font.size * s * 0.4,
-                        h,
-                        fade(st.selection),
-                        clip,
-                    ));
+                if boxes.is_empty() && more {
+                    // an empty line inside the selection: its row whole
+                    let (t, bt) = (0.0, ph);
+                    let (x0, y0, y1) = (ox.round(), (oy + py + t).round(), (oy + py + bt).round());
+                    dl.prims.push(solid(x0, y0, right_edge.round() - x0, y1 - y0, fade(st.selection), clip));
                 }
             }
         }
@@ -2769,14 +2818,29 @@ impl WinState {
             let c = fade(look.color.unwrap_or(st.color));
             for bx in r.range_boxes(i, ba, bb.max(ba + 1)) {
                 let w = ((bx.x1 - bx.x0) as f32).max(4.0 * s);
-                dl.prims.push(solid(
-                    ox + bx.x0 as f32,
-                    (oy + py + bx.y1 as f32 - 1.5 * s).round(),
-                    w,
-                    (1.5 * s).max(1.0),
-                    c,
-                    clip,
-                ));
+                if look.wavy {
+                    // a problem's wave: 2 high, a period of 4 (logical),
+                    // a pixel square a device pixel along it
+                    let base = (oy + py + bx.y1 as f32 - 2.5 * s).round();
+                    let x0 = ox + bx.x0 as f32;
+                    let step = s.max(1.0);
+                    let mut dx = 0.0f32;
+                    while dx < w {
+                        let phase = (dx / s) * std::f32::consts::PI / 2.0;
+                        let yy = base + (1.0 - phase.sin()) * s;
+                        dl.prims.push(solid(x0 + dx, yy, step, (1.2 * s).max(1.0), c, clip));
+                        dx += step;
+                    }
+                } else {
+                    dl.prims.push(solid(
+                        ox + bx.x0 as f32,
+                        (oy + py + bx.y1 as f32 - 1.5 * s).round(),
+                        w,
+                        (1.5 * s).max(1.0),
+                        c,
+                        clip,
+                    ));
+                }
             }
         }
         // a code editor's gutter, in the left padding: the line numbers
@@ -2926,6 +2990,9 @@ impl WinState {
             for p in dl.prims[first_prim..].iter_mut() {
                 let hidden = match p {
                     Prim::Glyph { y, .. } => half.iter().any(|(a, b)| *y >= *a && *y <= *b),
+                    // a row's own band (its selection, a highlight) goes
+                    // with its glyphs, not a strip of colour left alone
+                    Prim::Rect { y, h, .. } => half.iter().any(|(a, b)| *y >= *a - 0.5 && *y + *h <= *b + 0.5),
                     _ => false,
                 };
                 let c = match p {
@@ -3012,31 +3079,34 @@ impl WinState {
                 }
             }
         }
-        // a scroll mark when the text is longer than its box
+        // the scroll bar over the field's right edge, drawn last: the
+        // view, the whole, the marks on its track (the caret's line, the
+        // program's) by where their lines lie in the text
         let total = r.content_height(ts);
-        if total > content[3] + 1.0 && content[3] > 0.0 {
-            let track = content[3];
-            let h = (track * track / total).max(24.0 * s).min(track);
-            let y = content[1] + (track - h) * (r.scroll_y / (total - track).max(1.0));
-            let mut c = st.placeholder;
-            c[3] = (c[3] as f32 * 0.45) as u8;
-            dl.prims.push(Prim::Rect {
-                x: content[0] + content[2] + 2.0 * s,
-                y,
-                w: 3.0 * s,
-                h,
-                fill: fade(c),
-                border: [0, 0, 0, 0],
-                border_width: 0.0,
-                radii: [1.5 * s; 4],
-                clip: clip.intersect(Clip::rect(
-                    content[0],
-                    content[1],
-                    content[0] + content[2] + 6.0 * s,
-                    content[1] + content[3],
-                )),
-            });
-        }
+        let max = r.max_scroll(content[3], ts);
+        let bar_job = if content[3] > 0.0 && max > 0.5 * s {
+            let n = r.para_count();
+            let mut marks: Vec<(f32, Color, bool)> = r
+                .track
+                .clone()
+                .into_iter()
+                .filter(|(l, _)| *l < n)
+                .map(|(l, c)| (r.line_top(l, ts) / s, c, false))
+                .collect();
+            if r.gutter.is_some() {
+                let fi = r.focus_para();
+                marks.push((r.line_top(fi, ts) / s, st.color, true));
+            }
+            let node_box = [
+                content[0] - st.pad[3] * s,
+                content[1] - st.pad[0] * s,
+                content[2] + (st.pad[1] + st.pad[3]) * s,
+                content[3] + (st.pad[0] + st.pad[2]) * s,
+            ];
+            Some((node_box, content[3] / s, total / s, r.scroll_y / s, max / s, marks))
+        } else {
+            None
+        };
         // what lies under the pinned rows is hidden by them
         let clip = if sticky_bottom > 0.0 {
             clip.intersect(Clip::rect(
@@ -3118,6 +3188,312 @@ impl WinState {
             }
             dl.prims.push(solid(cx, cy, cw, ch, fade(st.caret), clip));
         }
+        if let Some((node_box, view, total, off, max, marks)) = bar_job {
+            self.paint_bar(key, true, node_box, outer_clip, view, total, off, max, &marks, opacity, dl);
+        }
+    }
+
+    /// A scroller's overlay bar (bars.rs): over the right edge of `bx`
+    /// (device pixels), a view `view` long of `total` scrolled `off` of
+    /// `max` (logical pixels); the marks on its track (`(y, colour,
+    /// caret)`, `y` in the whole) drawn whether or not the thumb shows.
+    /// Kept for the pointer (`bar_hits`); the fade asks for its frames.
+    #[allow(clippy::too_many_arguments)]
+    fn paint_bar(
+        &mut self,
+        key: &str,
+        rich: bool,
+        bx: [f32; 4],
+        clip: Clip,
+        view: f32,
+        total: f32,
+        off: f32,
+        max: f32,
+        marks: &[(f32, Color, bool)],
+        opacity: f32,
+        dl: &mut DisplayList,
+    ) {
+        use super::bars;
+        let s = self.scale;
+        let (l, t, wl, hl) = (bx[0] / s, bx[1] / s, bx[2] / s, bx[3] / s);
+        if wl < bars::ZONE * 2.0 || hl < bars::MIN_THUMB + 2.0 * bars::INSET {
+            return;
+        }
+        let right = l + wl;
+        let track = (t + bars::INSET, hl - 2.0 * bars::INSET);
+        // the zone the pointer finds the bar in: the right edge, as much
+        // of it as shows
+        let z = Clip::rect((right - bars::ZONE) * s, t * s, right * s, (t + hl) * s).intersect(clip);
+        let hit = bars::Hit {
+            key: key.to_string(),
+            zone: [z.x0 / s, z.y0 / s, z.x1 / s, z.y1 / s],
+            track,
+            view,
+            total,
+            off,
+            max,
+            rich,
+        };
+        let (ty, th) = hit.thumb();
+        self.bar_hits.push(hit);
+        let now = self.clock_ms();
+        let b = self.bars.get(key).copied().unwrap_or_default();
+        let a = bars::alpha(&b, now, self.settings.reduce_motion) * opacity;
+        if let Some(d) = bars::due(&b, now) {
+            self.next_frame = Some(self.next_frame.map_or(d, |n| n.min(d)));
+        }
+        let clip = clip.intersect(Clip::rect(l * s, t * s, right * s, (t + hl) * s));
+        let wide = b.hover || b.drag.is_some();
+        let bw = if wide { bars::WIDE } else { bars::THIN };
+        let x0 = right - bars::INSET - bw;
+        let bg = self.bg_under(key);
+        if a > 0.0 {
+            if wide {
+                // the track under the pointer: a quiet well its length
+                dl.prims.push(Prim::Rect {
+                    x: (x0 - 1.0) * s,
+                    y: track.0 * s,
+                    w: (bw + 2.0) * s,
+                    h: track.1 * s,
+                    fill: bars::ink(bg, 0.06 * a),
+                    border: [0, 0, 0, 0],
+                    border_width: 0.0,
+                    radii: [(bw / 2.0 + 1.0) * s; 4],
+                    clip,
+                });
+            }
+            let strength = if b.drag.is_some() {
+                0.55
+            } else if wide {
+                0.45
+            } else {
+                0.32
+            };
+            dl.prims.push(Prim::Rect {
+                x: x0 * s,
+                y: ty * s,
+                w: bw * s,
+                h: th * s,
+                fill: bars::ink(bg, strength * a),
+                border: [0, 0, 0, 0],
+                border_width: 0.0,
+                radii: [bw / 2.0 * s; 4],
+                clip,
+            });
+        }
+        // the marks, after the thumb so it never hides them: a line's
+        // place in the whole text, 2 high (the caret's a hairline across)
+        let fade = |c: Color| -> Color { [c[0], c[1], c[2], (c[3] as f32 * opacity).round() as u8] };
+        let shown_marks = marks.iter().any(|m| !m.2) || a > 0.0;
+        if shown_marks {
+            for &(my, c, caret) in marks {
+                let y = bars::mark_y(track.0, track.1, my, total.max(1.0));
+                if caret {
+                    let mut ink = bars::ink(bg, 0.7);
+                    ink = fade(ink);
+                    dl.prims.push(solid(
+                        (right - bars::INSET - bars::WIDE) * s,
+                        (y * s).round(),
+                        bars::WIDE * s,
+                        (1.0 * s).max(1.0),
+                        ink,
+                        clip,
+                    ));
+                } else {
+                    dl.prims.push(Prim::Rect {
+                        x: (right - bars::INSET - bars::THIN) * s,
+                        y: ((y - 1.0) * s).round(),
+                        w: bars::THIN * s,
+                        h: 2.0 * s,
+                        fill: fade(c),
+                        border: [0, 0, 0, 0],
+                        border_width: 0.0,
+                        radii: [0.5 * s; 4],
+                        clip,
+                    });
+                }
+            }
+        }
+    }
+
+    /// The background `key` is drawn on: its own, else the nearest
+    /// ancestor's that is opaque, else the window's.
+    fn bg_under(&self, key: &str) -> Color {
+        let mut at = Some(key.to_string());
+        while let Some(k) = at {
+            let Some(n) = self.scene.nodes.get(&k) else { break };
+            if let Some(c) = self.scene.effective_style(n).bg
+                && c[3] > 200
+            {
+                return c;
+            }
+            at = n.parent.clone();
+        }
+        self.clear
+    }
+
+    /// Whether a bar is fading now (a headless clock moved: draw again).
+    fn bars_moving(&self) -> bool {
+        let now = self.clock_ms();
+        self.bars.values().any(|b| super::bars::due(b, now).is_some())
+    }
+
+    /// A scroller moved: its bar shows (and fades from now).
+    fn bar_moved(&mut self, key: &str) {
+        let now = self.clock_ms();
+        self.bars.entry(key.to_string()).or_default().moved_at = Some(now);
+    }
+
+    /// The bar under the pointer, if the scroller it belongs to is what
+    /// the pointer is over (not a layer above it): the last drawn first.
+    ///
+    /// A styled field's bar lies in its own right padding: the pointer
+    /// there finds it always. A region's lies over its content (a row's
+    /// button at its end): it is found only while it shows, as the Mac's
+    /// overlay scrollers are, so a press on the content is the content's.
+    fn bar_at(&self, x: f32, y: f32, hit: Option<&str>) -> Option<super::bars::Hit> {
+        let h = hit?;
+        let now = self.clock_ms();
+        self.bar_hits
+            .iter()
+            .rev()
+            .find(|b| {
+                b.contains(x, y)
+                    && (b.key == h || self.scene.is_ancestor(&b.key, h))
+                    && (b.rich
+                        || self.bars.get(&b.key).is_some_and(|bar| {
+                            super::bars::alpha(bar, now, false) > 0.0
+                        }))
+            })
+            .cloned()
+    }
+
+    /// A scroller put at `off` (logical pixels) by its bar: a region says
+    /// `scrolled`, a styled field its first line (`viewport`) as the
+    /// wheel's do.
+    fn bar_scroll(&mut self, key: &str, rich: bool, off: f32, out: &mut Vec<Value>) {
+        if rich {
+            let s = self.scale;
+            let Ok(mut ts) = text::system().lock() else {
+                return;
+            };
+            let Some(r) = self.editors.get_mut(key).and_then(|e| e.rich_mut()) else {
+                return;
+            };
+            if r.scroll_set(off * s, &mut ts) {
+                let top = r.top_line(&mut ts);
+                let band = r.band.max(1);
+                if r.said_top.map(|t| t / band) != Some(top / band) {
+                    r.said_top = Some(top);
+                    drop(ts);
+                    out.push(self.ev(
+                        "viewport",
+                        vec![("key", super::values::s(key)), ("top", Value::Integer(top as i64))],
+                    ));
+                }
+                self.dirty = true;
+            }
+        } else {
+            let Some(n) = self.scene.nodes.get_mut(key) else {
+                return;
+            };
+            let before = n.offset;
+            n.offset.1 = off;
+            self.scene.clamp_scroll(key);
+            let after = self.scene.nodes[key].offset;
+            if after != before {
+                self.dirty = true;
+                self.a11y_dirty = true;
+                out.push(self.ev(
+                    "scrolled",
+                    vec![("key", super::values::s(key)), ("x", float(after.0)), ("y", float(after.1))],
+                ));
+            }
+        }
+        self.bar_moved(key);
+    }
+
+    /// The pointer and the scroll bars: a drag goes on and ends, a press
+    /// on a bar takes its thumb or pages, the pointer over an edge shows
+    /// its bar wide. Answers whether the bar took the event (the program
+    /// hears nothing of it).
+    fn bar_pointer(
+        &mut self,
+        action: PointerAction,
+        x: f32,
+        y: f32,
+        button: &str,
+        hit: Option<&str>,
+        out: &mut Vec<Value>,
+    ) -> bool {
+        // a headless window draws when read: the bars the pointer finds
+        // are the ones it would show now
+        if self.headless && (self.dirty || self.bar_hits.is_empty()) && action != PointerAction::Leave {
+            let _ = self.display_list();
+        }
+        let now = self.clock_ms();
+        if let Some(k) = self.bar_drag.clone() {
+            match action {
+                PointerAction::Move => {
+                    let grab = self.bars.get(&k).and_then(|b| b.drag).unwrap_or(0.0);
+                    if let Some(h) = self.bar_hits.iter().find(|b| b.key == k).cloned() {
+                        self.bar_scroll(&k, h.rich, h.offset_for(y - grab), out);
+                    }
+                    return true;
+                }
+                PointerAction::Up | PointerAction::Leave => {
+                    self.bar_drag = None;
+                    if let Some(b) = self.bars.get_mut(&k) {
+                        b.drag = None;
+                        b.moved_at = Some(now);
+                    }
+                    self.dirty = true;
+                    return action == PointerAction::Up;
+                }
+                _ => return true,
+            }
+        }
+        let over = if action == PointerAction::Leave { None } else { self.bar_at(x, y, hit) };
+        // the pointer over an edge: that bar wide, any other back to its fade
+        let over_key = over.as_ref().map(|h| h.key.clone());
+        for (k, b) in self.bars.iter_mut() {
+            let on = over_key.as_deref() == Some(k.as_str());
+            if b.hover != on {
+                b.hover = on;
+                if !on {
+                    b.moved_at = Some(now);
+                }
+                self.dirty = true;
+            }
+        }
+        if let Some(k) = &over_key
+            && !self.bars.contains_key(k)
+        {
+            self.bars.insert(
+                k.clone(),
+                super::bars::Bar { moved_at: None, hover: true, drag: None },
+            );
+            self.dirty = true;
+        }
+        if action == PointerAction::Down
+            && button == "left"
+            && let Some(h) = over
+        {
+            let (t, len) = h.thumb();
+            if y >= t && y < t + len {
+                if let Some(b) = self.bars.get_mut(&h.key) {
+                    b.drag = Some(y - t);
+                }
+                self.bar_drag = Some(h.key.clone());
+                self.dirty = true;
+            } else {
+                let to = h.page_toward(y);
+                self.bar_scroll(&h.key, h.rich, to, out);
+            }
+            self.swallow_up = true;
+            return true;
+        }
+        false
     }
 
     #[allow(clippy::too_many_arguments)]

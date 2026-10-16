@@ -39,6 +39,11 @@ pub struct SpanStyle {
     pub bg: Option<Color>,
     /// Drawn behind the whole line, edge to edge (a code block).
     pub line_bg: Option<Color>,
+    /// The underline drawn as a wave (a problem's), not a line.
+    pub wavy: bool,
+    /// The font's ligatures off in this span (`false`: a string or a
+    /// comment says each character as typed) or on; `None` the field's.
+    pub ligatures: Option<bool>,
 }
 
 impl SpanStyle {
@@ -59,6 +64,11 @@ impl SpanStyle {
             strike: b("strike"),
             bg: get(v, "bg").and_then(parse_color),
             line_bg: get(v, "line_bg").and_then(parse_color),
+            wavy: b("wavy"),
+            ligatures: match get(v, "ligatures") {
+                Some(Value::Boolean(l)) => Some(*l),
+                _ => None,
+            },
         }
     }
 
@@ -88,6 +98,15 @@ impl SpanStyle {
         }
         if let Some(c) = self.color {
             out.push(StyleProperty::Brush(c));
+        }
+        match self.ligatures {
+            Some(false) => out.push(StyleProperty::FontFeatures(parley::FontFeatures::Source(
+                "\"liga\" 0, \"calt\" 0, \"clig\" 0".into(),
+            ))),
+            Some(true) => out.push(StyleProperty::FontFeatures(parley::FontFeatures::Source(
+                "\"liga\" 1, \"calt\" 1".into(),
+            ))),
+            None => {}
         }
         out
     }
@@ -250,6 +269,10 @@ pub struct RichEditor {
     pub nowrap: bool,
     /// Read, selected and copied, never edited (a preview).
     pub readonly: bool,
+    /// Marks on the scroll bar's track: `(line, colour)`.
+    pub track: Vec<(usize, Color)>,
+    /// How far past its last line the text scrolls, a share of the view.
+    pub past_end: f32,
     /// The first line in view is said when it moves this many lines (16;
     /// 1 for a view kept beside it line for line).
     pub band: usize,
@@ -324,6 +347,25 @@ pub fn parse_carets(v: Option<&Value>) -> Vec<(usize, usize)> {
             (a >= 0.0 && b >= 0.0).then_some((a as usize, b as usize))
         })
         .collect()
+}
+
+/// The scroll bar's marks of a patch: `(line, colour)` tuples, by line.
+pub fn parse_track(v: Option<&Value>) -> Vec<(usize, Color)> {
+    use super::values::{num, parse_color};
+    let Some(Value::List(l)) = v else {
+        return Vec::new();
+    };
+    let mut out: Vec<(usize, Color)> = l
+        .iter()
+        .filter_map(|x| {
+            let Value::Tuple(t) = x else { return None };
+            let line = t.first().and_then(num)?;
+            let c = t.get(1).and_then(parse_color)?;
+            (line >= 0.0).then_some((line as usize, c))
+        })
+        .collect();
+    out.sort_by_key(|e| e.0);
+    out
 }
 
 /// The end-of-line texts of a patch: `(line, text, colour)` tuples.
@@ -582,6 +624,8 @@ impl RichEditor {
             ruler_color: None,
             nowrap: false,
             readonly: false,
+            track: Vec::new(),
+            past_end: 0.0,
             band: 16,
             scroll_x: 0.0,
             widest: 0.0,
@@ -1787,9 +1831,31 @@ impl RichEditor {
         (self.ys[i], self.paras[i].h)
     }
 
-    pub fn wheel(&mut self, dy: f32, ts: &mut TextSystem) -> bool {
+    /// The most the text scrolls in a view `h` high (device pixels): to
+    /// its last line at the bottom, and `past_end` of a view further once
+    /// it is longer than the view.
+    pub fn max_scroll(&mut self, h: f32, ts: &mut TextSystem) -> f32 {
         let total = self.content_height(ts);
-        let max = (total - self.view_h).max(0.0);
+        let over = total - h;
+        if over <= 0.0 {
+            0.0
+        } else {
+            over + h * self.past_end
+        }
+    }
+
+    /// Scroll to `y` (device pixels), within the text's reach: whether it
+    /// moved.
+    pub fn scroll_set(&mut self, y: f32, ts: &mut TextSystem) -> bool {
+        let max = self.max_scroll(self.view_h, ts);
+        let before = self.scroll_y;
+        self.scroll_y = y.clamp(0.0, max);
+        self.follow = false;
+        (self.scroll_y - before).abs() > 0.01
+    }
+
+    pub fn wheel(&mut self, dy: f32, ts: &mut TextSystem) -> bool {
+        let max = self.max_scroll(self.view_h, ts);
         let before = self.scroll_y;
         self.scroll_y = (self.scroll_y - dy * self.scale).clamp(0.0, max);
         (self.scroll_y - before).abs() > 0.01
@@ -1875,8 +1941,7 @@ impl RichEditor {
             }
             self.follow = false;
         }
-        let total = self.content_height(ts);
-        let max = (total - h).max(0.0);
+        let max = self.max_scroll(h, ts);
         self.scroll_y = self.scroll_y.clamp(0.0, max);
     }
 
@@ -1928,8 +1993,7 @@ impl RichEditor {
         let i = line.min(self.paras.len().saturating_sub(1));
         self.ensure(i, ts);
         self.refresh(ts);
-        let total = *self.ys.last().unwrap_or(&0.0);
-        let max = (total - self.view_h).max(0.0);
+        let max = self.max_scroll(self.view_h, ts);
         self.scroll_y = if self.view_h > 0.0 {
             self.ys[i].min(max)
         } else {
@@ -2004,6 +2068,13 @@ impl RichEditor {
         let mut out = Vec::new();
         sel.geometry_with(layout, |bb, _| out.push(bb));
         out
+    }
+
+    /// The top of line `i` in the whole text (device pixels, no scroll):
+    /// measured where it has been laid out, estimated elsewhere.
+    pub fn line_top(&mut self, i: usize, ts: &mut TextSystem) -> f32 {
+        self.refresh(ts);
+        self.ys[i.min(self.paras.len().saturating_sub(1))]
     }
 
     /// Paragraph `i`'s top and height (device pixels), when laid out.

@@ -38,6 +38,9 @@ pub struct Style {
     /// A focus ring drawn by the engine when the node has focus and no
     /// `focus` variant of its own; `None` turns it off.
     pub focus_ring: Option<Color>,
+    /// The `hover` look applies while the pointer is over an ancestor too
+    /// (a tab's close button shown while the pointer is over its tab).
+    pub group_hover: bool,
 }
 
 pub const DEFAULT_FG: Color = [24, 24, 27, 255];
@@ -63,6 +66,7 @@ impl Default for Style {
             selection: [37, 99, 235, 64],
             placeholder: [113, 113, 122, 255],
             focus_ring: Some(DEFAULT_ACCENT),
+            group_hover: false,
         }
     }
 }
@@ -91,6 +95,7 @@ const STYLE_KEYS: &[&str] = &[
     "selection",
     "placeholder_color",
     "focus_ring",
+    "group_hover",
     "hover",
     "pressed",
     "focus",
@@ -182,6 +187,9 @@ impl Style {
         if let Some(p) = get_sides(m, "pad", what)? {
             self.pad = p;
         }
+        if let Some(b) = get_bool(m, "group_hover", what)? {
+            self.group_hover = b;
+        }
         if let Some(b) = get_bool(m, "clip", what)? {
             self.clip = b;
         }
@@ -260,6 +268,12 @@ pub struct EditProps {
     pub readonly: bool,
     /// How many lines the first line in view moves before it is said.
     pub band: Option<usize>,
+    /// Marks on the scroll bar's track: `(line, colour)` (a problem, a
+    /// find's match).
+    pub track: Option<Value>,
+    /// How far past its last line the text scrolls, a share of the view
+    /// (0: the last line at the bottom).
+    pub past_end: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -624,6 +638,8 @@ impl Scene {
                 rulers: get(e, "rulers").cloned(),
                 wrap: get_bool(e, "wrap", what)?.unwrap_or(true),
                 readonly: get_bool(e, "readonly", what)?.unwrap_or(false),
+                track: get(e, "track").cloned(),
+                past_end: get_num(e, "past_end", what)?.unwrap_or(0.0).clamp(0.0, 1.0) as f32,
                 band: get(e, "band").and_then(|v| match v {
                     Value::Integer(i) if *i > 0 => Some(*i as usize),
                     _ => None,
@@ -762,7 +778,7 @@ impl Scene {
         Ok(())
     }
 
-    fn is_ancestor(&self, maybe: &str, of: &str) -> bool {
+    pub fn is_ancestor(&self, maybe: &str, of: &str) -> bool {
         let mut at = self.nodes.get(of).and_then(|n| n.parent.clone());
         while let Some(k) = at {
             if k == maybe {
@@ -824,8 +840,11 @@ impl Scene {
     pub fn effective_style(&self, node: &Node) -> Style {
         let mut st = node.style.clone();
         let k = Some(node.key.as_str());
+        let hovered = self.hover.as_deref() == k
+            || (node.style.group_hover
+                && self.hover.as_deref().is_some_and(|h| self.is_ancestor(h, &node.key)));
         let states = [
-            self.hover.as_deref() == k && !node.disabled,
+            hovered && !node.disabled,
             self.pressed.as_deref() == k && !node.disabled,
             self.focus.as_deref() == k && (self.focus_visible || node.edit.is_some()),
         ];
@@ -873,7 +892,7 @@ impl Scene {
     }
 
     /// The extent of a node's children, for clamping its scroll.
-    fn content_size(&self, node: &Node) -> (f32, f32) {
+    pub fn content_size(&self, node: &Node) -> (f32, f32) {
         let (mut w, mut h) = node.content.unwrap_or((0.0, 0.0));
         for c in &node.children {
             if let Some(cn) = self.nodes.get(c) {

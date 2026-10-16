@@ -2284,7 +2284,22 @@ top-left first), `color`, `font` (`"body"`, `"mono"`, or a family list),
 the border, following its corners), `opacity`, `caret`, `selection`,
 `placeholder_color`, `focus_ring` (a colour, or `false`), and the
 variants `hover`, `pressed`, `focus` — style maps the engine applies as
-the pointer and focus move, with no turn of the program. Colours are
+the pointer and focus move, with no turn of the program. `group_hover:
+true` applies a node's `hover` look while the pointer is over an
+ancestor too (a tab's close button shown while the pointer is on the
+tab).
+
+**Scroll bars.** Whatever scrolls further than it shows (a scrolling
+node, a styled field) has an overlay bar at its right edge, as the Mac's:
+a thin thumb shown while the view moves and for a moment after, faded
+(at once under Reduce Motion); the pointer over it while it shows
+widens it on a quiet track; the thumb drags the view, a press on the
+track pages it (neither reaches the program, which hears `scrolled` or
+`viewport` as from the wheel). A styled field's bar lies in its right
+padding and the pointer there finds it whenever it scrolls; a scrolling
+node's lies over its content and is found only while it shows. Its
+colour is black or white over the background under it.
+`gui.platform()` says `scroll_bars` and `group_hover`. Colours are
 `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"`, or `(r, g, b[, a])`. A focusable
 node with no `focus` variant gets a focus ring drawn by the engine.
 
@@ -2303,7 +2318,9 @@ program catching up, not a reset. Send back the `rev` of the last
 **A styled field** (`rich: true`, a `textarea`) is laid out a paragraph
 (a hard line) at a time: `spans` a list a line of `(start, end, style)`,
 `styles` the looks (`weight`, `italic`, `font`, `size`, `color`,
-`underline`, `strike`, `bg`, `line_bg`), `select` `(anchor, focus, seq)`
+`underline` (`wavy` a problem's wave), `strike`, `bg`, `line_bg`,
+`ligatures` (`false`: the font's ligatures off in the span, a string's
+`->` said as typed)), `select` `(anchor, focus, seq)`
 the program's selection, `undo: false` (⌘Z is the program's), `report`
 (it says `select` as the selection moves). Only the paragraphs shown,
 and the caret's, are laid out (the rest are estimated until they show),
@@ -2314,8 +2331,12 @@ glyph, colour)` drawn in the field's left padding, the caret's line
 behind in `line_bg` — `decorations` `[(line, start, end, style)]`
 (characters within a line: a style's `bg` behind, its `underline` under,
 without restyling the text: a matching bracket, the find's matches, a
-problem), and `scroll_to` `(line, seq)` (that line first in view, when
-`seq` is new). Its `changed` adds `delta` `#{ first, removed, lines, at,
+problem), `scroll_to` `(line, seq)` (that line first in view, when
+`seq` is new), `track` `[(line, colour)]` (marks on its scroll bar's
+track, shown whether or not the thumb is, with the caret's line), and
+`past_end` (the share of a view it scrolls past its last line). A
+selection over lines is drawn as one shape: each row it covers whole,
+out to the right edge. Its `changed` adds `delta` `#{ first, removed, lines, at,
 old_len, inserted }` (what changed by line and by character), `caret`,
 `top` (the first line in view) and `place` `(anchor line, column, focus
 line, column)` (the selection by line, characters within it); `select`

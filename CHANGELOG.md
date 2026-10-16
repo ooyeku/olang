@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`gui`: overlay scroll bars.** Every scrolling node and styled field
+  draws a thin bar over its right edge while it scrolls (faded after,
+  widened under the pointer), its thumb dragged and its track pressed to
+  page; a code field puts marks on the track (`track`: problems, a
+  find's matches) and its caret's line, and scrolls past its last line
+  by `past_end` of a view. `gui.platform()` says `scroll_bars`.
+- **`gui`: a selection over lines is one shape** (each row whole, out to
+  the right edge, no gap between rows); a span's `ligatures: false`
+  draws a string's or a comment's characters as typed; an underline may
+  be `wavy`; a style's `group_hover` shows its hover look over an
+  ancestor's hover (`gui.platform().group_hover`).
+
 ## [1.0.0-rc.2] - 2026-10-14
 
 ### Added
