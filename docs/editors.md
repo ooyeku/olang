@@ -49,6 +49,9 @@ pipelines, and the module names), bracket/indent behavior, and a thin
 client that launches `olang lsp`. The client probes the binary before
 starting: a missing or wrong `olang.serverPath` produces an actionable
 error with a button to the setting, instead of silently doing nothing.
+A [notebook](notebooks.md) (`.olmd`) opens as markdown, its ```` ```olang ````
+cells highlighted with the olang grammar; the language server does not
+read notebooks yet.
 
 To install from the repo:
 

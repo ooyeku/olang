@@ -49,6 +49,12 @@
           ".ol"
         ],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "markdown",
+        "extensions": [
+          ".olmd"
+        ]
       }
     ],
     "grammars": [
@@ -56,6 +62,16 @@
         "language": "olang",
         "scopeName": "source.olang",
         "path": "./syntaxes/olang.tmLanguage.json"
+      },
+      {
+        "scopeName": "markdown.olang.codeblock",
+        "path": "./syntaxes/olang.markdown.json",
+        "injectTo": [
+          "text.html.markdown"
+        ],
+        "embeddedLanguages": {
+          "meta.embedded.block.olang": "olang"
+        }
       }
     ],
     "configuration": {

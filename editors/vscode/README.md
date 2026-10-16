@@ -1,7 +1,8 @@
 # olang for VS Code
 
 Language support for [olang](https://github.com/ooyeku/olang): syntax
-highlighting for `.ol` files plus diagnostics, completions, hover, go to
+highlighting for `.ol` files (and the `olang` cells of `.olmd`
+notebooks, opened as markdown) plus diagnostics, completions, hover, go to
 definition, and formatting via the language server built into the olang
 binary (`olang lsp`).
 
