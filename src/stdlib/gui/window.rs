@@ -3319,15 +3319,16 @@ impl WinState {
     /// The background `key` is drawn on: its own, else the nearest
     /// ancestor's that is opaque, else the window's.
     fn bg_under(&self, key: &str) -> Color {
-        let mut at = Some(key.to_string());
-        while let Some(k) = at {
-            let Some(n) = self.scene.nodes.get(&k) else { break };
-            if let Some(c) = self.scene.effective_style(n).bg
+        let mut at = self.scene.nodes.get(key);
+        while let Some(n) = at {
+            // the node's own look (a hover's fill is not what the bar
+            // stands on)
+            if let Some(c) = n.style.bg
                 && c[3] > 200
             {
                 return c;
             }
-            at = n.parent.clone();
+            at = n.parent.as_ref().and_then(|p| self.scene.nodes.get(p));
         }
         self.clear
     }
@@ -3426,9 +3427,10 @@ impl WinState {
         hit: Option<&str>,
         out: &mut Vec<Value>,
     ) -> bool {
-        // a headless window draws when read: the bars the pointer finds
-        // are the ones it would show now
-        if self.headless && (self.dirty || self.bar_hits.is_empty()) && action != PointerAction::Leave {
+        // a headless window draws when read: a press finds the bars it
+        // would show now (a dirty one was drawn for the press above); one
+        // never drawn draws once
+        if self.headless && self.bar_hits.is_empty() && action == PointerAction::Down {
             let _ = self.display_list();
         }
         let now = self.clock_ms();

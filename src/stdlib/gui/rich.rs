@@ -1999,7 +1999,9 @@ impl RichEditor {
         } else {
             self.ys[i]
         };
-        self.follow = false;
+        // the caret's own line asked for: the caret shown, wherever it is
+        // in a line taller than the view (a long line wrapped)
+        self.follow = self.locate(self.focus).0 == i;
     }
 
     /// Characters `a..b` of paragraph `i` as its local bytes.
