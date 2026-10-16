@@ -1196,6 +1196,7 @@ impl Session {
         // a parameter of the function the snippet stands in, not bound
         // here: the REPL evaluates code as written (SPEC §18.1 is open)
         let mut within: Option<(String, u32, Vec<String>)> = None;
+        let in_notebook = file.is_some_and(|f| self.notebook.as_ref().is_some_and(|n| n.path == f));
         if let (InterpreterError::UndefinedVariable { name }, Some(f)) = (e, file)
             && let Some(ix) = self.file_index(f)
         {
@@ -1206,10 +1207,19 @@ impl Session {
                 kind = "unbound";
                 within = Some((fname.clone(), *a, ps.clone()));
             } else if let Some((_, l)) = ix.skipped.iter().find(|(n, _)| n == name) {
-                message = format!(
-                    "`{}` is a top-level binding that runs code — evaluate its line ({}) first",
-                    name, l
-                );
+                let l = *l;
+                // a kernel's: the cell that defines it is to be run
+                message = if in_notebook {
+                    format!(
+                        "`{}` is defined at line {}, in a cell not run yet — run that cell first",
+                        name, l
+                    )
+                } else {
+                    format!(
+                        "`{}` is a top-level binding that runs code — evaluate its line ({}) first",
+                        name, l
+                    )
+                };
                 kind = "unbound";
             }
         }

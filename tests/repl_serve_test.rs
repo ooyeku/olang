@@ -574,6 +574,15 @@ fn a_cells_errors_and_frames_name_the_notebooks_lines() {
     let dir = tempfile::tempdir().unwrap();
     let nb = notebook(dir.path());
     let (mut r, _) = Repl::start_with(dir.path(), &["--notebook", "nbs/sales.olmd"]);
+    // a name a cell not run yet defines: that cell named
+    let early = r.ask(json!({ "op": "eval", "cell": "c2", "code": "x + 1", "line": 16 }));
+    assert!(
+        early["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("`x` is defined at line 12, in a cell not run yet"),
+        "{early}"
+    );
     let e = r.ask(json!({ "op": "eval", "cell": "c3", "code": "fn boom() = raise(\"no\")\nboom()", "line": 20 }));
     assert_eq!(e["ok"], json!(false), "{e}");
     let err = &e["error"];
