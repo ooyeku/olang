@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   NAME=VALUE` overrides, and its `capabilities` the run's grant,
   intersected with `olang.toml`'s and `--deny`'s and fail-closed. A
   notebook runs in its own folder.
+- **A notebook's kernel and rules.** `olang repl --serve --notebook
+  x.olmd` serves one notebook: its folder the working directory, its
+  params bound, its grant applied (the project's and `OLANG_DENY` with
+  it; one it cannot read is none), every evaluation in its scope, and the
+  handshake says it (`notebook`). An `eval` with `cell` is a cell's: what
+  it defines is the cell's, dropped before the cell is evaluated again
+  (the feature `cell`). `olang check` holds an `.olmd` to "one name, one
+  cell" (a name defined in two cells, an error at both) and "top to
+  bottom" (a cell using a name a later cell defines, functions included).
 - **`gui`: overlay scroll bars.** Every scrolling node and styled field
   draws a thin bar over its right edge while it scrolls (faded after,
   widened under the pointer), its thumb dragged and its track pressed to

@@ -492,3 +492,88 @@ fn the_repl_runs_a_notebook() {
     // the REPL's own folder is back after the notebook ran in its own
     assert!(text.contains("executed successfully\ntrue"), "{}", text);
 }
+
+#[test]
+fn check_holds_a_notebook_to_one_name_one_cell_and_top_to_bottom() {
+    let ws = workspace("rules");
+    let text = "# Rules\n\n```olang\nlet total = 1\nprintln(later(2))\n```\n\n```olang\nlet total = 2\nfn later(x) = x * 2\n```\n\n```olang\nlet both = total + scale\n```\n\n```olang\nlet scale = 3\n```\n";
+    write(&ws.join("r.olmd"), text);
+    let out = run_in(&ws, &["check", "r.olmd", "--format", "json"]);
+    assert_eq!(out.status.code(), Some(1));
+    let doc: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("one JSON document");
+    let diags: Vec<&serde_json::Value> = doc["files"][0]["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| d["code"] == "notebook")
+        .collect();
+    let at = |line: u64, column: u64, says: &str| {
+        diags.iter().any(|d| {
+            d["line"] == line
+                && d["column"] == column
+                && d["message"].as_str().unwrap().contains(says)
+        })
+    };
+    // one name, one cell: at both places, each naming the other
+    assert!(
+        at(4, 1, "`total` is defined in two cells, here and at line 9"),
+        "{:#?}",
+        diags
+    );
+    assert!(
+        at(9, 1, "`total` is defined in two cells, here and at line 4"),
+        "{:#?}",
+        diags
+    );
+    // top to bottom: a function a later cell declares, and a let
+    assert!(
+        at(5, 9, "`later` is defined below, in a later cell (line 10)"),
+        "{:#?}",
+        diags
+    );
+    assert!(
+        at(
+            14,
+            20,
+            "`scale` is defined below, in a later cell (line 18)"
+        ),
+        "{:#?}",
+        diags
+    );
+    assert_eq!(diags.len(), 4, "{:#?}", diags);
+    // the text form names the file's lines
+    let out = run_in(&ws, &["check", "r.olmd"]);
+    assert!(
+        stderr(&out).contains("defined in two cells"),
+        "{}",
+        stderr(&out)
+    );
+    // the rules are a notebook's: the same program in a .ol file keeps the
+    // language's (shadowing, functions hoisted)
+    write(
+        &ws.join("same.ol"),
+        "let total = 1\nprintln(later(2))\nlet total = 2\nfn later(x) = x * 2\nprintln(total)\n",
+    );
+    let out = run_in(&ws, &["check", "same.ol"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    // a run reads the program as the language does: not refused for them
+    write(
+        &ws.join("twice.olmd"),
+        "```olang\nlet x = 1\n```\n\n```olang\nlet x = 2\nprintln(x)\n```\n",
+    );
+    let out = run_in(&ws, &["twice.olmd"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "2\n");
+    let out = run_in(&ws, &["check", "twice.olmd"]);
+    assert_eq!(out.status.code(), Some(1));
+    // a `use` of one name in two cells is no clash; a name read inside a
+    // function the cell itself declares later is no use of a later cell's
+    write(
+        &ws.join("fine.olmd"),
+        "```olang\nuse lib.tools { twice }\nfn a() = b()\nfn b() = twice(1)\n```\n\n```olang\nuse lib.tools { twice }\nprintln(a() + twice(2))\n```\n",
+    );
+    write(&ws.join("lib/tools.ol"), "share fn twice(x) = x * 2\n");
+    let out = run_in(&ws, &["check", "fine.olmd"]);
+    assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
+    let _ = std::fs::remove_dir_all(&ws);
+}

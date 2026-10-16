@@ -46,6 +46,13 @@
 //!   then sent as text and styled lines with what it found besides
 //!   (src/repl_commands.rs has the registry, completion, styled runs).
 //!
+//! - **A notebook's kernel.** `--notebook x.olmd` makes the session the
+//!   notebook's: its folder the working directory, its front matter's
+//!   params bound and grant applied (with the project's and `OLANG_DENY`,
+//!   as `olang run` takes them), and every evaluation in the notebook's
+//!   scope. An `eval` with `cell` is that cell's: what it defines is the
+//!   cell's, and evaluating the cell again drops those definitions first.
+//!
 //! What a program prints while the session serves is collected and sent
 //! with the evaluation that printed it; the protocol keeps stdout to
 //! itself (fd 1 is pointed at stderr for anything else).
@@ -92,8 +99,31 @@ impl Out {
 }
 
 /// Run the protocol on stdio until stdin closes or `shutdown`. Returns
-/// the process's exit code.
-pub fn serve(no_ovm: bool) -> i32 {
+/// the process's exit code. `notebook`: the session is that notebook's
+/// kernel (its folder the working directory).
+pub fn serve(no_ovm: bool, notebook: Option<PathBuf>) -> i32 {
+    // a notebook's kernel runs in the notebook's folder, as `olang run`
+    // runs a notebook: its project is the folder's
+    let notebook = match notebook {
+        None => None,
+        Some(p) => {
+            let abs = std::path::absolute(&p).unwrap_or(p);
+            if !abs.is_file() || !crate::notebook::is_notebook(&abs) {
+                eprintln!(
+                    "olang repl --serve --notebook: {} is no notebook (an .olmd file)",
+                    abs.display()
+                );
+                return 2;
+            }
+            if let Some(dir) = abs.parent()
+                && let Err(e) = std::env::set_current_dir(dir)
+            {
+                eprintln!("olang repl --serve: cannot enter {}: {}", dir.display(), e);
+                return 2;
+            }
+            Some(abs)
+        }
+    };
     // The protocol's own stdout: fd 1 kept aside, then pointed at stderr
     // so a child process or a stray write cannot break a reply.
     let out: Box<dyn Write + Send> = {
@@ -159,6 +189,9 @@ pub fn serve(no_ovm: bool) -> i32 {
     }
 
     let mut session = Session::new(no_ovm, Some(out.clone()));
+    if let Some(nb) = &notebook {
+        session.open_notebook(nb);
+    }
     out.send(&session.hello(None));
     for msg in rx {
         let op = msg
@@ -183,6 +216,19 @@ struct FileIndex {
     fns: Vec<(String, u32, u32, Vec<String>)>,
     /// Top-level `let`s left unloaded (they call something): name, line.
     skipped: Vec<(String, u32)>,
+}
+
+/// The notebook a kernel serves (`--notebook`).
+struct NotebookInfo {
+    path: PathBuf,
+    title: Option<String>,
+    /// (name, its value as olang source, its front matter line)
+    params: Vec<(String, String, u32)>,
+    /// The notebook's own problems as olang reads it (a bad option, front
+    /// matter outside the subset): said in `hello`, the session served.
+    problems: Vec<crate::notebook::Diagnostic>,
+    /// Its grant could not be read: the session runs under none.
+    refused: bool,
 }
 
 struct Scope {
@@ -213,6 +259,15 @@ struct Session {
     /// Whether the bytecode and native tiers are on (a reload starts
     /// them afresh: compiled code links its callees directly).
     tiers: bool,
+    /// The project's dependencies (name → folder), for a notebook's grant.
+    deps: HashMap<String, PathBuf>,
+    /// The notebook this session is the kernel of, if any.
+    notebook: Option<NotebookInfo>,
+    /// What each cell defined when it was last evaluated, by its scope and
+    /// its id: dropped before the cell is evaluated again.
+    cells: HashMap<(String, String), Vec<String>>,
+    /// Where a cell's function is declared (its file and line), for frames.
+    declared: HashMap<String, (PathBuf, u32)>,
 }
 
 impl Session {
@@ -226,6 +281,7 @@ impl Session {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let root = crate::pkg::manifest::Manifest::find_root(&cwd).unwrap_or(cwd.clone());
         interp.set_current_file(&root.join("olang.toml"));
+        let mut deps = HashMap::new();
         if crate::pkg::manifest::Manifest::find_root(&cwd).is_some() {
             let opts = crate::pkg::InstallOptions {
                 registry: std::env::var("OLANG_REGISTRY").ok().map(PathBuf::from),
@@ -237,6 +293,7 @@ impl Session {
             if let Ok(m) = crate::pkg::manifest::Manifest::load(&root) {
                 map.entry(m.package.name.clone()).or_insert(root.clone());
             }
+            deps = map.clone();
             interp.set_dependency_map(map);
         }
         Session {
@@ -254,7 +311,81 @@ impl Session {
             loom: None,
             tiers: !no_ovm,
             library: None,
+            deps,
+            notebook: None,
+            cells: HashMap::new(),
+            declared: HashMap::new(),
         }
+    }
+
+    /// The session made `path`'s kernel: its params kept (bound as its
+    /// scope is made), its grant applied — the front matter's, intersected
+    /// with the enclosing project's (and each dependency's attenuation) and
+    /// `OLANG_DENY`'s, as `olang run` takes them; a grant that cannot be
+    /// read, under no capability at all.
+    fn open_notebook(&mut self, path: &Path) {
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        let nb = crate::notebook::parse(&text);
+        let deny = std::env::var("OLANG_DENY")
+            .ok()
+            .map(|d| crate::caps::parse_deny(&d).unwrap_or_else(|_| crate::caps::Caps::none()));
+        let grant = if nb.capabilities_refused {
+            Some(crate::caps::Caps::none())
+        } else {
+            nb.capabilities
+        };
+        let restrict = match (grant, deny) {
+            (Some(a), Some(b)) => Some(a.intersect(b)),
+            (a, b) => a.or(b),
+        };
+        let table = match crate::pkg::manifest::Manifest::load_for_capabilities(&self.root) {
+            Ok(m) => match m.and_then(|m| m.capabilities.clone()) {
+                Some(config) => Some(match crate::caps::CapTable::build(&config, &self.deps) {
+                    Ok(mut t) => {
+                        if let Some(r) = restrict {
+                            t.app = t.app.intersect(r);
+                            for e in &mut t.deps {
+                                e.2 = e.2.intersect(r);
+                            }
+                        }
+                        t
+                    }
+                    // the project's grant cannot be honoured: none
+                    Err(_) => crate::caps::CapTable {
+                        app: crate::caps::Caps::none(),
+                        deps: Vec::new(),
+                    },
+                }),
+                None => restrict.map(|r| crate::caps::CapTable {
+                    app: r,
+                    deps: Vec::new(),
+                }),
+            },
+            Err(_) => Some(crate::caps::CapTable {
+                app: crate::caps::Caps::none(),
+                deps: Vec::new(),
+            }),
+        };
+        if let Some(t) = table {
+            self.cmd.interpreter.set_capabilities(t);
+        }
+        self.cmd.interpreter.set_current_file(path);
+        self.notebook = Some(NotebookInfo {
+            path: path.to_path_buf(),
+            title: nb.title.clone(),
+            params: nb
+                .params
+                .iter()
+                .map(|p| (p.name.clone(), p.value.clone(), p.line))
+                .collect(),
+            problems: nb.diagnostics.clone(),
+            refused: nb.capabilities_refused,
+        });
+    }
+
+    /// The notebook's path, when this session is a kernel.
+    fn notebook_path(&self) -> Option<PathBuf> {
+        self.notebook.as_ref().map(|n| n.path.clone())
     }
 
     fn hello(&self, id: Option<&J>) -> J {
@@ -262,8 +393,17 @@ impl Session {
             "event": "hello", "protocol": PROTOCOL, "olang": crate::version::VERSION,
             "root": self.root.to_string_lossy(), "pid": std::process::id(),
             "ops": ["hello", "eval", "command", "commands", "complete", "expand", "release", "interrupt", "ping", "reload", "render", "reset", "shutdown", "stats"],
-            "features": ["bind", "pure"],
+            "features": ["bind", "pure", "cell"],
         });
+        if let Some(nb) = &self.notebook {
+            v["notebook"] = json!({
+                "path": nb.path.to_string_lossy(),
+                "title": nb.title,
+                "params": nb.params.iter().map(|p| p.0.clone()).collect::<Vec<_>>(),
+                "problems": nb.problems.iter().map(|d| json!({ "line": d.line, "column": d.column, "message": d.message })).collect::<Vec<_>>(),
+                "refused": nb.refused,
+            });
+        }
         if let Some(id) = id {
             v["id"] = id.clone();
             v["ok"] = J::Bool(true);
@@ -283,7 +423,7 @@ impl Session {
                     .and_then(|c| c.as_str())
                     .unwrap_or("")
                     .trim();
-                if msg.get("file").is_none() && is_command_line(code) {
+                if msg.get("file").is_none() && msg.get("cell").is_none() && is_command_line(code) {
                     let code = code.to_string();
                     self.command(&code, &id, running)
                 } else {
@@ -312,6 +452,8 @@ impl Session {
             "render" => self.render(msg, running),
             "reset" => {
                 self.scopes.clear();
+                self.cells.clear();
+                self.declared.clear();
                 self.handles.clear();
                 self.evals.clear();
                 self.sorts.clear();
@@ -335,11 +477,18 @@ impl Session {
     // ── scopes ──────────────────────────────────────────────────────
 
     fn take_scope(&mut self, file: Option<&Path>) -> (String, Scope, Vec<String>) {
+        // a kernel's own scope is its notebook's
+        let nb = self.notebook_path();
+        let file = file.or(nb.as_deref());
         let key = file
             .map(|f| f.to_string_lossy().into_owned())
             .unwrap_or_default();
         if let Some(s) = self.scopes.remove(&key) {
             return (key, s, Vec::new());
+        }
+        if file.is_some() && file == nb.as_deref() {
+            let (scope, notes) = self.notebook_scope();
+            return (key, scope, notes);
         }
         let mut scope = Scope {
             scope: self.cmd.interpreter.new_repl_scope(file),
@@ -350,6 +499,42 @@ impl Session {
             notes = self.load_declarations(&mut scope, f);
         }
         (key, scope, notes)
+    }
+
+    /// The notebook's scope, made: its params bound, each a `let` on its
+    /// front matter line (an error there names the line). Notes say what
+    /// could not be bound.
+    fn notebook_scope(&mut self) -> (Scope, Vec<String>) {
+        let nb = self.notebook.as_ref().expect("a kernel's notebook");
+        let path = nb.path.clone();
+        let params = nb.params.clone();
+        let mut scope = Scope {
+            scope: self.cmd.interpreter.new_repl_scope(Some(&path)),
+            uses: Vec::new(),
+        };
+        let mut notes = Vec::new();
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        for (name, value, line) in params {
+            let code = format!("{}let {} = {}", "\n".repeat(line as usize - 1), name, value);
+            let outcome = match self.parser.parse(&code) {
+                Ok(p) => self.cmd.interpreter.eval_program(p),
+                Err(e) => Err(InterpreterError::RuntimeError {
+                    message: parse_message(&e),
+                }),
+            };
+            if let Err(e) = outcome {
+                let _ = self.cmd.interpreter.take_error_location();
+                notes.push(format!(
+                    "{}:{}: the param `{}` is not bound: {}",
+                    short(&self.root, &path),
+                    line,
+                    name,
+                    plain_message(&e)
+                ));
+            }
+        }
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        (scope, notes)
     }
 
     /// A file's declarations evaluated in its scope (from disk). Notes
@@ -460,7 +645,10 @@ impl Session {
             .map(|f| f.stamp == file_stamp(file))
             .unwrap_or(false);
         if !fresh {
-            let src = std::fs::read_to_string(file).ok()?;
+            // a notebook's program: its cells on the file's own lines
+            let src = crate::notebook::read(file, crate::notebook::Mode::Check)
+                .ok()?
+                .source;
             let program = self.parser.parse(&src).ok()?;
             self.index_file(file, &src, &program.statements);
         }
@@ -486,10 +674,19 @@ impl Session {
             })
             .unwrap_or_default();
         let pure = msg.get("pure").and_then(|p| p.as_bool()).unwrap_or(false);
+        // a cell's evaluation: what it defines is the cell's (its id a
+        // string or a number)
+        let cell = msg.get("cell").map(|c| match c.as_str() {
+            Some(s) => s.to_string(),
+            None => c.to_string(),
+        });
+        let asked_file = msg.get("file").is_some();
+        // a kernel's evaluations are its notebook's (lines are its lines)
         let file = msg
             .get("file")
             .and_then(|f| f.as_str())
-            .map(|f| self.resolve(f));
+            .map(|f| self.resolve(f))
+            .or_else(|| self.notebook_path());
         let line = msg.get("line").and_then(|l| l.as_u64()).unwrap_or(1).max(1) as usize;
         let t0 = Instant::now();
         let (key, mut scope, notes) = self.take_scope(file.as_deref());
@@ -522,9 +719,29 @@ impl Session {
         };
         let stats0 = self.cmd.interpreter.bytecode_tier_stats();
         self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        // a cell evaluated again: what it defined before is dropped first,
+        // and what it defines now is the cell's (kept whatever happens: a
+        // failure halfway may have defined some of it)
+        if let Some(c) = &cell {
+            let slot = (key.clone(), c.clone());
+            for name in self.cells.remove(&slot).unwrap_or_default() {
+                self.cmd.interpreter.forget_top_level(&name);
+            }
+            let mut names = Vec::new();
+            for st in &program.statements {
+                names.extend(crate::notebook::defined_names(st, true));
+                if let (Statement::FunctionDecl(f), Some(fp)) = (st.unwrapped(), file.as_ref()) {
+                    self.declared
+                        .insert(f.name.clone(), (fp.clone(), stmt_line(st)));
+                }
+            }
+            names.sort();
+            names.dedup();
+            self.cells.insert(slot, names);
+        }
         // the prompt's inputs are the session's history (`:history`, `:!n`),
         // and its watched variables are watched
-        let prompt = file.is_none();
+        let prompt = !asked_file && cell.is_none();
         let watching = prompt && self.cmd.watch_before();
         if prompt {
             self.cmd.command_history.push(code.clone());
@@ -1023,6 +1240,10 @@ impl Session {
     /// function value's own file.
     fn locate_fn(&mut self, name: &str, near: Option<&Path>) -> Option<(PathBuf, u32)> {
         let bare = name.rsplit('.').next().unwrap_or(name).to_string();
+        // a cell's function, where the cell last declared it
+        if let Some(at) = self.declared.get(&bare) {
+            return Some(at.clone());
+        }
         if let Some(f) = near
             && let Some(ix) = self.file_index(f)
             && let Some((_, l, ..)) = ix.fns.iter().find(|(n, ..)| *n == bare)

@@ -115,9 +115,22 @@ line points into the notebook as written. `olang expand x.olmd` prints
 the program.
 
 The cells form one module. A name a cell defines is visible to the cells
-below it, a function declared in two cells is the same error as a
-function declared twice in a file, and `test` blocks in any cell are the
-notebook's tests.
+below it, and `test` blocks in any cell are the notebook's tests.
+`olang check` holds a notebook to two rules of its own besides the
+language's (a `.ol` file keeps only the language's):
+
+- **One name, one cell.** A top-level name — a `let`, a function, a type,
+  a trait, an error type — defined in two cells is an error at each,
+  naming the other's line. (A `let` may shadow another in one cell, as in
+  a file; a `use` of one name in two cells is no clash: each cell imports
+  what it needs.)
+- **Top to bottom.** A cell uses only the names defined above it: one
+  that reads a name a later cell defines is an error at the use, naming
+  that line — a function included, which the language would hoist.
+  Reading order is the program's order.
+
+A run reads the program as the language does, so the rules are the
+check's (and the editor's), not a reason for `olang run` to refuse.
 
 A `no-run` cell is part of the program `olang check` and `olang fmt`
 read, so it must parse and is held to the checker's rules; `olang run`
@@ -234,6 +247,7 @@ document, and tabs as indentation. A key given twice is an error.
 | `olang fmt x.olmd` | formats each cell's code, `no-run` cells too, and leaves prose, fences, front matter and `output` blocks byte for byte; `--check` reports instead |
 | `olang expand x.olmd` | prints the program |
 | `:run x.olmd` in the REPL | runs it in its folder, under its grant |
+| `olang repl --serve --notebook x.olmd` | the notebook's kernel: its params bound, its grant, its folder, `eval` by cell ([the protocol](tooling.md#olang-repl---serve)) |
 
 `olang check DIR` and `olang fmt DIR` take a folder's notebooks with its
 `.ol` files; `--watch` re-runs when a notebook changes. `olang fmt`
@@ -256,7 +270,9 @@ and with the file's text around them by `olang check`:
 - front matter outside the [YAML subset](#the-yaml-subset), a `params`
   or `capabilities` that is not a map, a param that is no name, an
   unknown capability or value;
-- a `--param` the notebook does not declare, a cell defining a param.
+- a `--param` the notebook does not declare, a cell defining a param;
+- for `olang check`: a name defined in two cells, a cell using a name a
+  later cell defines ([the program](#the-program)).
 
 Each is an error: `olang run` and `olang test` refuse the notebook, and
 `olang check` counts it as a problem (exit 1).

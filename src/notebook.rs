@@ -125,6 +125,10 @@ pub struct Notebook {
     /// A fence that is never closed: the structure past it is unknown, so
     /// `olang fmt` leaves the file alone.
     pub unclosed: bool,
+    /// The front matter's grant could not be read (a bad `capabilities`,
+    /// or front matter that is no YAML of the subset): whatever runs the
+    /// notebook anyway (the REPL's kernel) runs it under no capability.
+    pub capabilities_refused: bool,
 }
 
 /// A notebook made into a program.
@@ -140,6 +144,8 @@ pub struct Program {
     /// The lines of the front matter's `---`s, where the params' `let`s
     /// are: a param no cell reads is no unused name.
     pub front_matter: Option<(u32, u32)>,
+    /// The front matter's grant could not be read (`Notebook`'s).
+    pub capabilities_refused: bool,
 }
 
 // ── --param ─────────────────────────────────────────────────────────
@@ -529,6 +535,7 @@ pub fn parse(text: &str) -> Notebook {
                     1,
                     "the front matter opened here is never closed: it ends at a line `---`",
                 ));
+                nb.capabilities_refused = true;
                 i = 1;
             }
         }
@@ -592,6 +599,7 @@ fn read_front_matter(lines: &[&str], first_line: u32, nb: &mut Notebook) {
         Ok(doc) => doc,
         Err(d) => {
             nb.diagnostics.push(d);
+            nb.capabilities_refused = true;
             return;
         }
     };
@@ -607,6 +615,7 @@ fn read_front_matter(lines: &[&str], first_line: u32, nb: &mut Notebook) {
                 node.column,
                 "the front matter is a map of keys (title, params, capabilities)",
             ));
+            nb.capabilities_refused = true;
             return;
         }
     };
@@ -623,7 +632,10 @@ fn read_front_matter(lines: &[&str], first_line: u32, nb: &mut Notebook) {
             }
             "capabilities" => match read_capabilities(&entry.value) {
                 Ok(caps) => nb.capabilities = Some(caps),
-                Err(d) => nb.diagnostics.push(d),
+                Err(d) => {
+                    nb.diagnostics.push(d);
+                    nb.capabilities_refused = true;
+                }
             },
             _ => {}
         }
@@ -804,12 +816,214 @@ pub fn program_with(text: &str, mode: Mode, overrides: &[(String, String)]) -> P
     if !params.is_empty() {
         diagnostics.extend(param_conflicts(&source, &params, nb.front_matter));
     }
+    // a notebook's own rules, held by the check (a run reads the program
+    // as the language does)
+    if mode == Mode::Check {
+        diagnostics.extend(rules(&nb, &lines, &source));
+    }
     Program {
         source,
         capabilities: nb.capabilities,
         diagnostics,
         front_matter: nb.front_matter,
+        capabilities_refused: nb.capabilities_refused,
     }
+}
+
+// ── one name, one cell; top to bottom ───────────────────────────────
+
+/// The top-level names a statement defines: a `let`'s bound names, a
+/// function's, a type's (an enum's variants with it), an error type's, a
+/// trait's; with `uses`, the names a `use` binds (each item, or the
+/// module's last segment).
+pub fn defined_names(st: &crate::ast::Statement, uses: bool) -> Vec<String> {
+    use crate::ast::{ShareDecl, Statement, TypeDefinition, UseItem};
+    let mut out = Vec::new();
+    let use_names = |u: &crate::ast::UseDecl, out: &mut Vec<String>| {
+        if u.items.is_empty()
+            && let Some(last) = u.path.last()
+        {
+            out.push(last.clone());
+        }
+        for item in &u.items {
+            match item {
+                UseItem::Specific(n) => out.push(n.clone()),
+                UseItem::Aliased { alias, .. } => out.push(alias.clone()),
+                UseItem::Wildcard => {}
+            }
+        }
+    };
+    let type_names = |t: &crate::ast::TypeDecl, out: &mut Vec<String>| {
+        out.push(t.name.clone());
+        if let TypeDefinition::Enum { variants } = &t.definition {
+            out.extend(variants.iter().map(|v| v.name.clone()));
+        }
+    };
+    match st.unwrapped() {
+        Statement::LetDecl(d) | Statement::ShareDecl(ShareDecl::Let(d)) => {
+            pattern_names(&d.pattern, &mut out)
+        }
+        Statement::FunctionDecl(f) | Statement::ShareDecl(ShareDecl::Function(f)) => {
+            out.push(f.name.clone())
+        }
+        Statement::TypeDecl(t) | Statement::ShareDecl(ShareDecl::Type(t)) => {
+            type_names(t, &mut out)
+        }
+        Statement::ErrorTypeDecl(e) => out.push(e.name.clone()),
+        Statement::TraitDecl(t) | Statement::ShareDecl(ShareDecl::Trait(t)) => {
+            out.push(t.name.clone())
+        }
+        Statement::UseDecl(u) | Statement::ShareDecl(ShareDecl::Use(u)) if uses => {
+            use_names(u, &mut out)
+        }
+        _ => {}
+    }
+    out
+}
+
+/// A notebook's rules, which `olang check` holds an `.olmd` to (a `.ol`
+/// file keeps the language's own): **one name, one cell** — a top-level
+/// name defined in two cells is an error at each, naming the other — and
+/// **top to bottom** — a cell that uses a name a later cell defines
+/// (functions included, which the language hoists) is an error at the
+/// use, naming the later cell's line. A program that does not parse is
+/// left to the checker's parse error.
+fn rules(nb: &Notebook, lines: &[&str], source: &str) -> Vec<Diagnostic> {
+    use crate::ast::Statement;
+    let parser = crate::parser::Parser::new();
+    let Ok(program) = parser.parse_raw(source) else {
+        return Vec::new();
+    };
+    let cell_of = |line: u32| nb.cells.iter().position(|c| c.code_lines().contains(&line));
+    // (name, cell, line, column, by a `use`)
+    let mut defs: Vec<(String, usize, u32, u32, bool)> = Vec::new();
+    for s in &program.statements {
+        let (line, column) = match s {
+            Statement::Located { line, column, .. } => (*line, *column),
+            _ => continue,
+        };
+        let Some(cell) = cell_of(line) else { continue };
+        let all = defined_names(s, true);
+        let own = defined_names(s, false);
+        for name in all {
+            let by_use = !own.contains(&name);
+            defs.push((name, cell, line, column, by_use));
+        }
+    }
+    let mut out = Vec::new();
+    // one name, one cell (a `use` of the same name in two cells is no clash:
+    // each cell imports what it needs)
+    for (name, cell, line, column, by_use) in &defs {
+        if *by_use {
+            continue;
+        }
+        if let Some((_, _, other, ..)) = defs
+            .iter()
+            .find(|(n, c, _, _, u)| n == name && c != cell && !u)
+        {
+            out.push(Diagnostic::at(
+                *line,
+                *column,
+                format!(
+                    "`{}` is defined in two cells, here and at line {}: a name has one cell in a notebook",
+                    name, other
+                ),
+            ));
+        }
+    }
+    // top to bottom: each cell's uses (the names it reads that no earlier
+    // statement of its own defines), against the names later cells define
+    for (i, cell) in nb.cells.iter().enumerate() {
+        let range = cell.code_lines();
+        let cell_source: String = (1..=lines.len() as u32)
+            .map(|l| {
+                if range.contains(&l) {
+                    lines[l as usize - 1]
+                } else {
+                    ""
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let Ok(cell_program) = parser.parse_raw(&cell_source) else {
+            continue;
+        };
+        let mut analyzer = crate::analyze::Analyzer::new();
+        let _ = analyzer.analyze_program(&cell_program);
+        for name in analyzer.get_undefined_variables() {
+            // defined above (or in this cell): no matter here
+            if defs.iter().any(|(n, c, ..)| *n == name && *c <= i) {
+                continue;
+            }
+            let Some((_, _, later, ..)) = defs.iter().find(|(n, c, ..)| *n == name && *c > i)
+            else {
+                continue;
+            };
+            let (line, column) =
+                first_use(lines, range.clone(), &name).unwrap_or((*range.start(), 1));
+            out.push(Diagnostic::at(
+                line,
+                column,
+                format!(
+                    "`{}` is defined below, in a later cell (line {}): a cell uses only the names defined above it",
+                    name, later
+                ),
+            ));
+        }
+    }
+    out.sort_by_key(|d| (d.line, d.column));
+    out
+}
+
+/// Where `name` is first read in `lines` (1-based, inclusive range): the
+/// first time it stands as a word of its own outside a string or a
+/// comment, not a member (`x.name`) nor a key (`name:`).
+fn first_use(
+    lines: &[&str],
+    range: std::ops::RangeInclusive<u32>,
+    name: &str,
+) -> Option<(u32, u32)> {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    for l in range {
+        let Some(text) = lines.get(l as usize - 1) else {
+            break;
+        };
+        let chars: Vec<char> = text.chars().collect();
+        let target: Vec<char> = name.chars().collect();
+        let mut in_str: Option<char> = None;
+        let mut k = 0;
+        while k < chars.len() {
+            let c = chars[k];
+            if let Some(q) = in_str {
+                if c == '\\' {
+                    k += 2;
+                    continue;
+                }
+                if c == q {
+                    in_str = None;
+                }
+                k += 1;
+                continue;
+            }
+            if c == '"' || c == '`' {
+                in_str = Some(c);
+                k += 1;
+                continue;
+            }
+            if c == '/' && chars.get(k + 1) == Some(&'/') {
+                break;
+            }
+            if chars[k..].starts_with(&target)
+                && (k == 0 || !word(chars[k - 1]))
+                && chars.get(k + target.len()).is_none_or(|n| !word(*n))
+                && (k == 0 || chars[k - 1] != '.')
+            {
+                return Some((l, k as u32 + 1));
+            }
+            k += 1;
+        }
+    }
+    None
 }
 
 /// A cell that defines a param's name again (a top-level `let`, `fn` or

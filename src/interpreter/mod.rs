@@ -4804,6 +4804,16 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         self.environment.remove_variable(name);
     }
 
+    /// A top-level definition forgotten (`olang repl --serve`: a cell
+    /// evaluated again drops what it defined before): its binding, what the
+    /// scope rules know of it, and a function hoisted or declared early.
+    pub fn forget_top_level(&mut self, name: &str) {
+        self.environment.remove_variable(name);
+        self.scope_bindings.remove(name);
+        self.pending_top_level.remove(name);
+        self.declared_early.remove(name);
+    }
+
     /// Perform safepoint poll for GC coordination
     /// This should be called periodically during evaluation
     pub fn safepoint_poll(&self) -> Result<(), InterpreterError> {

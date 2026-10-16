@@ -4,8 +4,10 @@
 //! frames), what a program prints, interrupting a tight loop on every
 //! tier without losing the session, a module reloaded (and a reload that
 //! fails keeping the old one), a Loom view rendered headless, a
-//! function's parameters bound for one evaluation (`bind`), and an
-//! evaluation under no capability (`pure`) refused when it reaches out.
+//! function's parameters bound for one evaluation (`bind`), an
+//! evaluation under no capability (`pure`) refused when it reaches out,
+//! and a notebook's kernel (`--notebook`): its params, its grant, its
+//! folder, its cells' definitions replaced, its lines in every error.
 
 use serde_json::{Value as J, json};
 use std::io::{BufRead, BufReader, Write};
@@ -22,9 +24,15 @@ struct Repl {
 
 impl Repl {
     fn start(dir: &Path) -> (Repl, J) {
+        Repl::start_with(dir, &[])
+    }
+
+    fn start_with(dir: &Path, more: &[&str]) -> (Repl, J) {
         let mut child = Command::new(env!("CARGO_BIN_EXE_olang"))
             .args(["repl", "--serve"])
+            .args(more)
             .current_dir(dir)
+            .env_remove("OLANG_DENY")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -275,7 +283,7 @@ fn a_file_scope_has_its_declarations_and_names_what_is_not_bound() {
 fn a_functions_parameters_are_named_then_bound_for_one_evaluation() {
     let dir = project();
     let (mut r, hello) = Repl::start(dir.path());
-    assert_eq!(hello["features"], json!(["bind", "pure"]));
+    assert_eq!(hello["features"], json!(["bind", "pure", "cell"]));
     let f = calc(dir.path());
     // refused: the function and its parameters said
     let p = r.eval_at(&f, 7, "let y = x * RATE");
@@ -472,4 +480,143 @@ fn shutdown_ends_the_child() {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+/// A notebook for a kernel, in a folder of its own inside `dir`:
+/// a param, a grant that reads files and writes none, three cells.
+fn notebook(dir: &Path) -> PathBuf {
+    let nb = dir.join("nbs/sales.olmd");
+    std::fs::create_dir_all(nb.parent().unwrap()).unwrap();
+    std::fs::write(
+        &nb,
+        "---\ntitle: Kernel\nparams:\n  n: 2\ncapabilities:\n  fs: read\n---\n\n# A kernel\n\n```olang\nlet x = n * 10\n```\n\n```olang\nx + 1\n```\n\n```olang\nfn boom() = raise(\"no\")\nboom()\n```\n",
+    )
+    .unwrap();
+    std::fs::write(nb.parent().unwrap().join("data.txt"), "beside it").unwrap();
+    nb
+}
+
+#[test]
+fn a_notebooks_kernel_binds_its_params_under_its_grant_in_its_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let nb = notebook(dir.path());
+    // started from elsewhere: the notebook's folder is its working directory
+    let (mut r, hello) = Repl::start_with(dir.path(), &["--notebook", "nbs/sales.olmd"]);
+    assert!(
+        hello["features"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("cell")),
+        "{hello}"
+    );
+    let said = std::fs::canonicalize(hello["notebook"]["path"].as_str().unwrap()).unwrap();
+    assert_eq!(said, std::fs::canonicalize(&nb).unwrap());
+    assert_eq!(hello["notebook"]["title"], json!("Kernel"));
+    assert_eq!(hello["notebook"]["params"], json!(["n"]));
+    assert_eq!(hello["notebook"]["problems"], json!([]));
+    // a cell reads the param; a later one reads the cell's name
+    let a = r.ask(json!({ "op": "eval", "cell": "c1", "code": "let x = n * 10", "line": 12 }));
+    assert_eq!(a["binding"], json!("x"), "{a}");
+    assert_eq!(a["value"]["s"], json!("20"));
+    let b = r.ask(json!({ "op": "eval", "cell": "c2", "code": "x + 1", "line": 16 }));
+    assert_eq!(b["value"]["s"], json!("21"), "{b}");
+    // a relative path is the notebook's folder's; the grant reads, never writes
+    let read =
+        r.ask(json!({ "op": "eval", "cell": "c4", "code": "unwrap(fs.read_file(\"data.txt\"))" }));
+    assert_eq!(read["value"]["s"], json!("beside it"), "{read}");
+    let wrote =
+        r.ask(json!({ "op": "eval", "cell": "c4", "code": "fs.write_file(\"out.txt\", \"x\")" }));
+    assert_eq!(wrote["ok"], json!(false), "{wrote}");
+    assert!(
+        wrote["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("capability 'fs' denied"),
+        "{wrote}"
+    );
+    assert!(!nb.parent().unwrap().join("out.txt").exists());
+    // the prompt (no cell, no file) is the notebook's scope too
+    let p = r.eval("x * 2");
+    assert_eq!(p["value"]["s"], json!("40"), "{p}");
+}
+
+#[test]
+fn a_cell_evaluated_again_replaces_what_it_defined() {
+    let dir = tempfile::tempdir().unwrap();
+    notebook(dir.path());
+    let (mut r, _) = Repl::start_with(dir.path(), &["--notebook", "nbs/sales.olmd"]);
+    let a =
+        r.ask(json!({ "op": "eval", "cell": "c1", "code": "let x = 1\nfn f() = 2", "line": 12 }));
+    assert_eq!(a["ok"], json!(true), "{a}");
+    assert_eq!(r.eval("x + f()")["value"]["s"], json!("3"));
+    // the same cell now defines y: x and f are gone
+    let again = r.ask(json!({ "op": "eval", "cell": "c1", "code": "let y = 5", "line": 12 }));
+    assert_eq!(again["ok"], json!(true), "{again}");
+    let gone = r.eval("x");
+    assert_eq!(gone["ok"], json!(false), "{gone}");
+    assert!(r.eval("f()")["ok"] == json!(false));
+    assert_eq!(r.eval("y")["value"]["s"], json!("5"));
+    // a cell id may be a number; another cell's names stay
+    let other = r.ask(json!({ "op": "eval", "cell": 7, "code": "let z = y + 1", "line": 16 }));
+    assert_eq!(other["value"]["s"], json!("6"), "{other}");
+    let c1 = r.ask(json!({ "op": "eval", "cell": "c1", "code": "let y = 50", "line": 12 }));
+    assert_eq!(c1["ok"], json!(true));
+    assert_eq!(r.eval("z")["value"]["s"], json!("6"));
+    // a cell that does not parse keeps what it defined
+    let bad = r.ask(json!({ "op": "eval", "cell": "c1", "code": "let = ", "line": 12 }));
+    assert_eq!(bad["error"]["kind"], json!("parse"));
+    assert_eq!(bad["error"]["line"], json!(12), "{bad}");
+    assert_eq!(r.eval("y")["value"]["s"], json!("50"));
+}
+
+#[test]
+fn a_cells_errors_and_frames_name_the_notebooks_lines() {
+    let dir = tempfile::tempdir().unwrap();
+    let nb = notebook(dir.path());
+    let (mut r, _) = Repl::start_with(dir.path(), &["--notebook", "nbs/sales.olmd"]);
+    let e = r.ask(json!({ "op": "eval", "cell": "c3", "code": "fn boom() = raise(\"no\")\nboom()", "line": 20 }));
+    assert_eq!(e["ok"], json!(false), "{e}");
+    let err = &e["error"];
+    let file = std::fs::canonicalize(err["file"].as_str().unwrap()).unwrap();
+    assert_eq!(file, std::fs::canonicalize(&nb).unwrap(), "{e}");
+    // the call that failed is on the cell's second line, the file's 21
+    assert_eq!(err["line"], json!(21), "{e}");
+    let frame = &err["stack"][0];
+    assert_eq!(frame["name"], json!("boom"), "{e}");
+    assert_eq!(frame["line"], json!(20), "{e}");
+    let ff = std::fs::canonicalize(frame["file"].as_str().unwrap()).unwrap();
+    assert_eq!(ff, std::fs::canonicalize(&nb).unwrap());
+    // a parse error on the cell's second line is the file's line 21
+    let p = r.ask(json!({ "op": "eval", "cell": "c3", "code": "1\nlet = 2", "line": 20 }));
+    assert_eq!(p["error"]["line"], json!(21), "{p}");
+}
+
+#[test]
+fn a_notebooks_kernel_refuses_what_is_no_notebook_and_a_grant_it_cannot_read() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("plain.ol"), "1\n").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_olang"))
+        .args(["repl", "--serve", "--notebook", "plain.ol"])
+        .current_dir(dir.path())
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("is no notebook"));
+    // a capability the subset does not know: served, under no capability at all
+    std::fs::write(
+        dir.path().join("bad.olmd"),
+        "---\ncapabilities:\n  gpu: true\n---\n\n```olang\n1\n```\n",
+    )
+    .unwrap();
+    let (mut r, hello) = Repl::start_with(dir.path(), &["--notebook", "bad.olmd"]);
+    assert_eq!(hello["notebook"]["refused"], json!(true), "{hello}");
+    assert_eq!(
+        hello["notebook"]["problems"][0]["line"],
+        json!(3),
+        "{hello}"
+    );
+    let env = r.ask(json!({ "op": "eval", "cell": "a", "code": "os.get_env(\"HOME\")" }));
+    assert_eq!(env["ok"], json!(false), "{env}");
+    assert_eq!(r.eval("1 + 1")["value"]["s"], json!("2"));
 }

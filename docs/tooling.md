@@ -910,8 +910,9 @@ What a program prints while the session serves is collected and sent with
 the evaluation that printed it (`out`); stdout belongs to the protocol.
 
 **Handshake.** On start the server says
-`{"event":"hello","protocol":1,"olang":"0.88.0","root":…,"pid":…,"ops":[…],"features":["bind","pure"]}`
-(`features`: what an `eval` takes beyond the protocol's first version).
+`{"event":"hello","protocol":1,"olang":"0.88.0","root":…,"pid":…,"ops":[…],"features":["bind","pure","cell"]}`
+(`features`: what an `eval` takes beyond the protocol's first version;
+a notebook's kernel says `notebook` too, below).
 A client that does not know the protocol's version stops there. `{"op":"hello"}`
 asks again.
 
@@ -955,7 +956,46 @@ capabilities and pass.
 | `{"op":"command","id":10,"line":":type xs"}` | a `:` command, run as the terminal REPL runs it (below) |
 | `{"op":"commands","id":11,"prefix":":t"?}` | `{"ok":true,"commands":[{"name","aliases","usage","summary","arg","group","client","words"?}…]}` — every command, for completion and help |
 | `{"op":"complete","id":12,"line":":cd sr","pos":6}` | `{"ok":true,"start":4,"items":[{"label","kind","detail"}…],"command":{"name","usage","summary","client"}?}` — completion of a prompt line at `pos` (characters); `items` replace `line[start..pos]` |
-| `{"op":"reset"}`, `{"op":"shutdown"}` | the scopes forgotten; the server ends |
+| `{"op":"eval","id":13,"cell":"c3","code":"let t = total(xs)","line":21}` | as any `eval`; what the code defines is cell `c3`'s, and an evaluation of `c3` again drops it first |
+| `{"op":"reset"}`, `{"op":"shutdown"}` | the scopes forgotten (and what each cell defined); the server ends |
+
+**A notebook's kernel.** `olang repl --serve --notebook x.olmd` serves
+one notebook (olang Studio starts one per notebook it shows). The
+notebook is read with olang's notebook reader ([Notebooks](notebooks.md)):
+
+- its folder is the working directory, wherever the server is started,
+  and its project the folder's (`use`, the dependencies);
+- its front matter's params are bound in its scope, each on its own
+  line, as `olang run` binds them;
+- its front matter's grant is the session's, intersected with the
+  enclosing project's `[capabilities]` (each dependency's attenuation
+  too) and `OLANG_DENY`, as `olang run` takes them; a grant olang cannot
+  read (an unknown capability, front matter outside the subset) is no
+  capability at all, never a session wide open;
+- every evaluation is in the notebook's scope: one with no `file` (a
+  cell's, a prompt's) and a `:` command alike, and an error's `file` is
+  the notebook. A cell's code is sent with its first line (`line`), so
+  every line an error or a frame names is the file's.
+
+The handshake says the notebook:
+`"notebook":{"path":…,"title":"Sales","params":["region"],"problems":[{"line","column","message"}…],"refused":false}`
+— `problems` are the notebook's own as olang reads it (a bad option, an
+unclosed fence), `refused` that its grant could not be read. The
+notebook is read once, as the server starts: a notebook whose front
+matter changed is served by a kernel started again.
+
+**Cells.** An `eval` with `cell` (any id: a string or a number) is that
+cell's evaluation, in any session. Its top-level definitions — `let`s,
+functions, types (an enum's variants with them), traits, error types and
+the names a `use` binds — are the cell's, and an evaluation of the same
+cell drops them before it runs, so a cell edited and run again replaces
+what it defined rather than adding to it (a name it no longer defines is
+gone). What a cell defines is kept whether its evaluation succeeds or
+fails halfway; a cell that does not parse changes nothing. A frame in a
+cell's function names the line the cell declared it on. Whether one cell
+may define what another does, or use what a later one does, is the
+notebook's rules, which `olang check` holds (the kernel runs cells in
+the order it is asked).
 
 **Commands.** Every command of the interactive REPL (`:help`, `:type`,
 `:time`, `:sh`, … — `commands` lists them) runs through `command`, in the
@@ -1384,6 +1424,11 @@ olang expand sales.olmd                   # the program the runtime receives
   and `olang check` counts them.
 - **The REPL.** `:run x.olmd` runs a notebook in its folder, under its
   grant.
+- **A kernel.** `olang repl --serve --notebook x.olmd` serves the
+  notebook to an editor (olang Studio's notebook pane): its params bound,
+  its grant, its folder, and `eval` by cell ([the protocol](#olang-repl---serve)).
+- **The notebook's rules.** `olang check` holds an `.olmd` to "one name,
+  one cell" and "top to bottom" ([Notebooks](notebooks.md#the-program)).
 
 ## The REPL
 

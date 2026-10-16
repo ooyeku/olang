@@ -201,6 +201,11 @@ enum Commands {
         /// Loom view) — docs/tooling.md
         #[arg(long)]
         serve: bool,
+        /// With --serve: the session is this notebook's kernel — its params
+        /// bound, its front matter's grant applied, its folder the working
+        /// directory, and an `eval` with `cell` a cell's (docs/tooling.md)
+        #[arg(long, value_name = "NOTEBOOK", requires = "serve")]
+        notebook: Option<PathBuf>,
     },
 
     /// Audit a project: the manifest, its dependencies, the lock, the
@@ -612,7 +617,7 @@ fn run() -> i32 {
     // kept from here to exit, written by `main` as the process ends (or
     // by `os.exit`). Not in the REPL's protocol mode, which answers them
     // to `stats` instead.
-    let serving = matches!(cli.command, Some(Commands::Repl { serve: true }));
+    let serving = matches!(cli.command, Some(Commands::Repl { serve: true, .. }));
     // An armed live profile (`--profile-live DIR`, `OLANG_PROFILE_LIVE`):
     // vital signs from the start, stacks while DIR/attach exists. Not for
     // `olang profile`, which runs its own.
@@ -767,8 +772,11 @@ fn run() -> i32 {
             clap_complete::generate(shell, &mut Cli::command(), "olang", &mut std::io::stdout());
             0
         }
-        Some(Commands::Repl { serve: true }) => olang::repl_serve::serve(cli.no_ovm),
-        None | Some(Commands::Repl { serve: false }) => {
+        Some(Commands::Repl {
+            serve: true,
+            notebook,
+        }) => olang::repl_serve::serve(cli.no_ovm, notebook.clone()),
+        None | Some(Commands::Repl { serve: false, .. }) => {
             if let Err(e) = start_repl(cli.verbose, cli.no_ovm, logger) {
                 logger.error("main", &format!("REPL error: {}", e));
                 return 1;
