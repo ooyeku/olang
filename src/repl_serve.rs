@@ -1565,8 +1565,15 @@ impl Session {
             )
         };
         let h = self.hold(v, held);
-        json!({ "k": if frame { "frame" } else { "series" }, "t": v.type_name(), "n": n, "h": h, "s": s,
-                "table": { "cols": names, "types": types }, "rows": rows })
+        let mut r = json!({ "k": if frame { "frame" } else { "series" }, "t": v.type_name(), "n": n, "h": h, "s": s,
+                "table": { "cols": names, "types": types }, "rows": rows });
+        if !frame
+            && let Some((_, col)) = cols.first()
+            && let Some(st) = numeric_summary(col)
+        {
+            r["stats"] = st;
+        }
+        r
     }
 
     /// A string that names a picture on disk: its absolute path.
@@ -2166,6 +2173,44 @@ fn ods_columns(v: &Value) -> Option<Vec<(String, &olang_ods::Series)>> {
         return Some(f.names().iter().cloned().zip(f.columns().iter()).collect());
     }
     crate::ods::series_of(v).map(|s| vec![("value".to_string(), s)])
+}
+
+/// Bins of a numeric Series' histogram.
+const HIST_BINS: usize = 24;
+
+/// A numeric Series' summary: its values' count, nulls, mean, least and
+/// most, and a histogram of HIST_BINS bins over that range.
+fn numeric_summary(col: &olang_ods::Series) -> Option<J> {
+    use olang_ods::Scalar;
+    let n = col.len();
+    let mut xs: Vec<f64> = Vec::with_capacity(n);
+    for i in 0..n {
+        match col.scalar_at(i) {
+            Scalar::F64(x) if x.is_finite() => xs.push(x),
+            Scalar::I64(x) => xs.push(x as f64),
+            Scalar::F64(_) | Scalar::Null => {}
+            _ => return None,
+        }
+    }
+    if xs.is_empty() {
+        return None;
+    }
+    let lo = xs.iter().cloned().fold(f64::INFINITY, f64::min);
+    let hi = xs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let mean = xs.iter().sum::<f64>() / xs.len() as f64;
+    let mut bins = vec![0u64; HIST_BINS];
+    let span = hi - lo;
+    for x in &xs {
+        let b = if span > 0.0 {
+            (((x - lo) / span) * HIST_BINS as f64) as usize
+        } else {
+            0
+        };
+        bins[b.min(HIST_BINS - 1)] += 1;
+    }
+    Some(
+        json!({ "count": xs.len(), "nulls": n - xs.len(), "mean": mean, "min": lo, "max": hi, "hist": bins }),
+    )
 }
 
 /// Row `i` of a table of columns: `{"i", "c": [text or null…]}`.

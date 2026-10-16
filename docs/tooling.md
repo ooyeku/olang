@@ -1055,8 +1055,10 @@ A prompt's evaluations (no `file`) are the session's history (`:history`,
   named `value`): `n` rows, `h`, `table: {cols, types}` (each column's
   name and its type: `Int`, `Float`, `Bool`, `String`) and the first 20
   `rows` (`{"i", "c": [cell…]}`, a cell its text — a float to six
-  significant digits — or `null`); `expand` with `table` reads the rest
-  by range, sorted by a column (its nulls last either way);
+  significant digits — or `null`); a numeric Series also `stats: {count,
+  nulls, mean, min, max, hist}` (`hist` 24 bins over min … max); `expand`
+  with `table` reads the rest by range, sorted by a column (its nulls last
+  either way);
 - `bytes`: `n`, `h`, and for a picture `img: {format, w, h}` and the
   picture itself (`png`, base64);
 - `view`: a Loom view node (`#{ role, key, props, children }`) — `role`

@@ -690,6 +690,22 @@ fn a_frame_and_a_series_are_tables_with_typed_columns_read_by_range_and_sorted()
         json!({ "cols": ["value"], "types": ["Float"] })
     );
     assert_eq!(s["value"]["rows"][1]["c"], json!(["2.5"]));
+    // a numeric Series says its summary and a histogram
+    let st = &s["value"]["stats"];
+    assert_eq!(st["count"], json!(2));
+    assert_eq!(st["mean"], json!(2.0));
+    assert_eq!(
+        (st["min"].clone(), st["max"].clone()),
+        (json!(1.5), json!(2.5))
+    );
+    assert_eq!(st["hist"].as_array().unwrap().len(), 24);
+    assert_eq!(st["hist"][0], json!(1));
+    assert_eq!(st["hist"][23], json!(1));
+    assert!(
+        r.eval("ods.series([\"a\"])")["value"]
+            .get("stats")
+            .is_none()
+    );
 }
 
 #[test]
