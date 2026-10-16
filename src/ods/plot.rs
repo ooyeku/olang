@@ -53,6 +53,15 @@ fn parse_options(value: &Value) -> Result<PlotOptions, String> {
         }
     };
     let mut opts = PlotOptions::default();
+    // a host's appearance (an editor's notebook kernel): the theme a chart
+    // takes when the call names none
+    if let Ok(t) = std::env::var("OLANG_PLOT_THEME") {
+        match t.as_str() {
+            "dark" => opts.theme = Theme::Dark,
+            "light" => opts.theme = Theme::Light,
+            _ => {}
+        }
+    }
     for (key, v) in map.iter() {
         match (key.as_str(), v) {
             ("title", Value::String(s)) => opts.title = s.as_ref().clone(),

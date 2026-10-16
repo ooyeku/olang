@@ -95,6 +95,19 @@ fn shorten_float(x: f64) -> Option<String> {
     Some(text)
 }
 
+/// A cell's text as a host shows it (the REPL protocol's table rows): a
+/// float to the table's significant digits, nothing cut; `None` for a
+/// null, which a host draws its own quiet way.
+pub fn scalar_text(scalar: Scalar) -> Option<String> {
+    Some(match scalar {
+        Scalar::F64(x) => shorten_float(x).unwrap_or_else(|| crate::ast::format_float(x)),
+        Scalar::I64(x) => x.to_string(),
+        Scalar::Bool(b) => b.to_string(),
+        Scalar::Str(s) => s.to_string(),
+        Scalar::Null => return None,
+    })
+}
+
 fn cell(scalar: Scalar, shortened: &mut bool) -> String {
     truncate(&match scalar {
         // Floats go through the language's own formatter so a Frame and a

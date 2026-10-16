@@ -719,6 +719,8 @@ impl Session {
         };
         let stats0 = self.cmd.interpreter.bytecode_tier_stats();
         self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        // what a cell defines, in the order it does (said with its reply)
+        let mut defines: Vec<String> = Vec::new();
         // a cell evaluated again: what it defined before is dropped first,
         // and what it defines now is the cell's (kept whatever happens: a
         // failure halfway may have defined some of it)
@@ -729,7 +731,12 @@ impl Session {
             }
             let mut names = Vec::new();
             for st in &program.statements {
-                names.extend(crate::notebook::defined_names(st, true));
+                for name in crate::notebook::defined_names(st, true) {
+                    if !defines.contains(&name) {
+                        defines.push(name.clone());
+                    }
+                    names.push(name);
+                }
                 if let (Statement::FunctionDecl(f), Some(fp)) = (st.unwrapped(), file.as_ref()) {
                     self.declared
                         .insert(f.name.clone(), (fp.clone(), stmt_line(st)));
@@ -808,8 +815,10 @@ impl Session {
         } else {
             None
         };
-        // a `let`'s value is its binding's
+        // a `let`'s value is its binding's at the prompt and in a file; a
+        // cell's value is the language's: `()` unless an expression ends it
         let bound = match (&outcome, &last) {
+            _ if cell.is_some() => None,
             (Ok(_), Some(Statement::LetDecl(l)))
             | (Ok(_), Some(Statement::ShareDecl(ShareDecl::Let(l)))) => match &l.pattern {
                 crate::ast::Pattern::Identifier(n) => Some(n.clone()),
@@ -861,6 +870,10 @@ impl Session {
                 let seq = self.eval_seq;
                 let mut held = Vec::new();
                 let shown = match (&last, bound_value) {
+                    (Some(Statement::Expression(_)), _) if cell.is_some() => {
+                        self.encode(&value, 0, &mut held)
+                    }
+                    _ if cell.is_some() => json!({ "k": "unit", "t": "Unit", "s": "()" }),
                     (_, Some(v)) => self.encode(&v, 0, &mut held),
                     (Some(Statement::FunctionDecl(f)), _)
                     | (Some(Statement::ShareDecl(ShareDecl::Function(f))), _) => json!({
@@ -880,6 +893,9 @@ impl Session {
                 let mut r = json!({ "ok": true, "eval": seq, "value": shown });
                 if let Some(n) = bound {
                     r["binding"] = J::String(n);
+                }
+                if !defines.is_empty() {
+                    r["defines"] = json!(defines);
                 }
                 r
             }
@@ -1420,6 +1436,9 @@ impl Session {
                 if let Some(p) = self.image_path(s) {
                     r["img"] = J::String(p);
                 }
+                if let Some(svg) = svg_of(s) {
+                    r["svg"] = svg;
+                }
                 r
             }
             Value::Ok(inner) | Value::Err(inner) => {
@@ -1506,6 +1525,7 @@ impl Session {
             Value::EnumConstructor(_) | Value::TypeInfo(_) => {
                 json!({ "k": "fn", "t": t, "s": preview(v) })
             }
+            Value::Native(_) if ods_columns(v).is_some() => self.encode_ods(v, held),
             Value::Native(_) => match crate::stdlib::bytes::bytes_of(v) {
                 Ok(b) => {
                     let h = self.hold(v, held);
@@ -1522,6 +1542,31 @@ impl Session {
                 Err(_) => json!({ "k": "native", "t": t, "s": preview(v) }),
             },
         }
+    }
+
+    /// A Frame or a Series as a table (docs/tooling.md, "Values"): its
+    /// columns' names and types, its rows' count, and its first rows'
+    /// cells as text (a null as `null`); `expand` with `table` reads the
+    /// rest by range, sorted.
+    fn encode_ods(&mut self, v: &Value, held: &mut Vec<u64>) -> J {
+        let cols = ods_columns(v).unwrap_or_default();
+        let frame = crate::ods::frame_of(v).is_some();
+        let n = cols.first().map(|(_, c)| c.len()).unwrap_or(0);
+        let names: Vec<&str> = cols.iter().map(|(name, _)| name.as_str()).collect();
+        let types: Vec<String> = cols.iter().map(|(_, c)| c.dtype().to_string()).collect();
+        let rows: Vec<J> = (0..n.min(FIRST_ITEMS)).map(|i| ods_row(&cols, i)).collect();
+        let s = if frame {
+            format!("Frame[{} x {}]", n, cols.len())
+        } else {
+            format!(
+                "Series[{}] of {}",
+                n,
+                types.first().map(String::as_str).unwrap_or("Float")
+            )
+        };
+        let h = self.hold(v, held);
+        json!({ "k": if frame { "frame" } else { "series" }, "t": v.type_name(), "n": n, "h": h, "s": s,
+                "table": { "cols": names, "types": types }, "rows": rows })
     }
 
     /// A string that names a picture on disk: its absolute path.
@@ -1617,6 +1662,29 @@ impl Session {
                     .collect();
                 json!({ "ok": true, "n": n, "entries": out })
             }
+            Value::Native(_) if ods_columns(&v).is_some() => {
+                let cols = ods_columns(&v).unwrap_or_default();
+                let n = cols.first().map(|(_, c)| c.len()).unwrap_or(0);
+                let order = match msg
+                    .get("sort")
+                    .and_then(|s| s.get("col"))
+                    .and_then(|c| c.as_u64())
+                {
+                    Some(c) => {
+                        let desc = msg["sort"]
+                            .get("desc")
+                            .and_then(|d| d.as_bool())
+                            .unwrap_or(false);
+                        Some(self.sorted_ods(h, &cols, c as usize, desc))
+                    }
+                    None => None,
+                };
+                let rows: Vec<J> = (start..(start + count).min(n))
+                    .map(|i| ods_row(&cols, order.as_ref().map(|o| o[i]).unwrap_or(i)))
+                    .collect();
+                let names: Vec<&str> = cols.iter().map(|(name, _)| name.as_str()).collect();
+                json!({ "ok": true, "n": n, "cols": names, "rows": rows })
+            }
             Value::Native(_) => match crate::stdlib::bytes::bytes_of(&v) {
                 Ok(b) => {
                     json!({ "ok": true, "n": b.len(), "b64": base64::engine::general_purpose::STANDARD.encode(b) })
@@ -1640,6 +1708,44 @@ impl Session {
             }
         }
         reply
+    }
+
+    /// A Frame's (or a Series') rows ordered by column `c`, its nulls last
+    /// either way (cached by handle).
+    fn sorted_ods(
+        &mut self,
+        h: u64,
+        cols: &[(String, &olang_ods::Series)],
+        c: usize,
+        desc: bool,
+    ) -> Arc<Vec<usize>> {
+        use olang_ods::Scalar;
+        use std::cmp::Ordering;
+        if let Some(o) = self.sorts.get(&(h, c, desc)) {
+            return o.clone();
+        }
+        let n = cols.first().map(|(_, s)| s.len()).unwrap_or(0);
+        let mut order: Vec<usize> = (0..n).collect();
+        if let Some((_, col)) = cols.get(c) {
+            let keys: Vec<Scalar> = (0..n).map(|i| col.scalar_at(i)).collect();
+            order.sort_by(|a, b| {
+                let (x, y) = (&keys[*a], &keys[*b]);
+                let o = match (x, y) {
+                    (Scalar::Null, Scalar::Null) => return Ordering::Equal,
+                    (Scalar::Null, _) => return Ordering::Greater,
+                    (_, Scalar::Null) => return Ordering::Less,
+                    (Scalar::F64(p), Scalar::F64(q)) => p.total_cmp(q),
+                    (Scalar::I64(p), Scalar::I64(q)) => p.cmp(q),
+                    (Scalar::Bool(p), Scalar::Bool(q)) => p.cmp(q),
+                    (Scalar::Str(p), Scalar::Str(q)) => p.cmp(q),
+                    _ => Ordering::Equal,
+                };
+                if desc { o.reverse() } else { o }
+            });
+        }
+        let o = Arc::new(order);
+        self.sorts.insert((h, c, desc), o.clone());
+        o
     }
 
     /// A table's rows ordered by column `c` (cached by handle).
@@ -2051,6 +2157,66 @@ fn series_of(items: &[Value]) -> Option<J> {
         out
     };
     Some(json!({ "lo": lo, "hi": hi, "pts": pts, "dated": matches!(items[0], Value::Tuple(_)) }))
+}
+
+/// A Frame's columns (or a Series as one column, `value`): each name and
+/// its series.
+fn ods_columns(v: &Value) -> Option<Vec<(String, &olang_ods::Series)>> {
+    if let Some(f) = crate::ods::frame_of(v) {
+        return Some(f.names().iter().cloned().zip(f.columns().iter()).collect());
+    }
+    crate::ods::series_of(v).map(|s| vec![("value".to_string(), s)])
+}
+
+/// Row `i` of a table of columns: `{"i", "c": [text or null…]}`.
+fn ods_row(cols: &[(String, &olang_ods::Series)], i: usize) -> J {
+    let cells: Vec<J> = cols
+        .iter()
+        .map(|(_, c)| match crate::ods::scalar_text(c.scalar_at(i)) {
+            Some(t) => J::String(t),
+            None => J::Null,
+        })
+        .collect();
+    json!({ "i": i, "c": cells })
+}
+
+/// A string that is an SVG document (what `plot` answers): its size (the
+/// `width` and `height` of its root, else its `viewBox`'s), its
+/// background (the fill of a first `rect` as wide as it), and its text.
+fn svg_of(s: &str) -> Option<J> {
+    let t = s.trim_start();
+    if !t.starts_with("<svg") || !s.trim_end().ends_with("</svg>") || s.len() > 8 * 1024 * 1024 {
+        return None;
+    }
+    let open = &t[..t.find('>')?];
+    let attr = |tag: &str, name: &str| -> Option<String> {
+        let at = tag.find(&format!(" {}=\"", name))? + name.len() + 3;
+        let end = tag[at..].find('"')?;
+        Some(tag[at..at + end].to_string())
+    };
+    let num = |x: Option<String>| x.and_then(|v| v.trim_end_matches("px").parse::<f64>().ok());
+    let vb: Vec<f64> = attr(open, "viewBox")
+        .map(|v| {
+            v.split_whitespace()
+                .filter_map(|x| x.parse().ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    let w = num(attr(open, "width")).or_else(|| vb.get(2).copied())?;
+    let h = num(attr(open, "height")).or_else(|| vb.get(3).copied())?;
+    let mut r = json!({ "w": w, "h": h, "text": s });
+    let rest = &t[open.len()..];
+    if let Some(at) = rest.find("<rect")
+        && rest[..at].trim_start_matches('>').trim().is_empty()
+    {
+        let tag = &rest[at..at + rest[at..].find('>').unwrap_or(0)];
+        if num(attr(tag, "width")) == Some(w)
+            && let Some(fill) = attr(tag, "fill")
+        {
+            r["bg"] = J::String(fill);
+        }
+    }
+    Some(r)
 }
 
 /// A picture's format and size, from its first bytes.

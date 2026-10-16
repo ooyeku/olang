@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   NAME=VALUE` overrides, and its `capabilities` the run's grant,
   intersected with `olang.toml`'s and `--deny`'s and fail-closed. A
   notebook runs in its own folder.
+- **The REPL protocol draws data as data.** An `ods` Frame or Series is
+  a `frame` or `series` value with its typed columns, row count and first
+  rows (each cell its text, a float to six significant digits, or
+  `null`), read further by range and sorted with `expand` (nulls last);
+  a string that is an SVG document (a `plot` chart) says `svg` with its
+  size, background and text; a notebook cell's value is the language's
+  (`()` when it ends in a `let` or a declaration) and its reply says what
+  it `defines`. `OLANG_PLOT_THEME` (`dark`, `light`) is the theme a chart
+  takes when its options name none.
 - **A notebook's kernel and rules.** `olang repl --serve --notebook
   x.olmd` serves one notebook: its folder the working directory, its
   params bound, its grant applied (the project's and `OLANG_DENY` with

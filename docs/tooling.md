@@ -956,7 +956,7 @@ capabilities and pass.
 | `{"op":"command","id":10,"line":":type xs"}` | a `:` command, run as the terminal REPL runs it (below) |
 | `{"op":"commands","id":11,"prefix":":t"?}` | `{"ok":true,"commands":[{"name","aliases","usage","summary","arg","group","client","words"?}…]}` — every command, for completion and help |
 | `{"op":"complete","id":12,"line":":cd sr","pos":6}` | `{"ok":true,"start":4,"items":[{"label","kind","detail"}…],"command":{"name","usage","summary","client"}?}` — completion of a prompt line at `pos` (characters); `items` replace `line[start..pos]` |
-| `{"op":"eval","id":13,"cell":"c3","code":"let t = total(xs)","line":21}` | as any `eval`; what the code defines is cell `c3`'s, and an evaluation of `c3` again drops it first |
+| `{"op":"eval","id":13,"cell":"c3","code":"let t = total(xs)","line":21}` | as any `eval`, with `defines` (the names the cell defines, in order); what the code defines is cell `c3`'s, and an evaluation of `c3` again drops it first |
 | `{"op":"reset"}`, `{"op":"shutdown"}` | the scopes forgotten (and what each cell defined); the server ends |
 
 **A notebook's kernel.** `olang repl --serve --notebook x.olmd` serves
@@ -991,7 +991,11 @@ the names a `use` binds — are the cell's, and an evaluation of the same
 cell drops them before it runs, so a cell edited and run again replaces
 what it defined rather than adding to it (a name it no longer defines is
 gone). What a cell defines is kept whether its evaluation succeeds or
-fails halfway; a cell that does not parse changes nothing. A frame in a
+fails halfway; a cell that does not parse changes nothing. A cell's
+value is the language's: its last expression's, `()` when it ends in a
+`let`, a function or any other declaration (no `binding`; the prompt's
+`let x = …` still answers `x`'s value with `binding`), and its reply
+says what it defined (`"defines":["fmt_money","pct"]`). A frame in a
 cell's function names the line the cell declared it on. Whether one cell
 may define what another does, or use what a later one does, is the
 notebook's rules, which `olang check` holds (the kernel runs cells in
@@ -1037,13 +1041,22 @@ A prompt's evaluations (no `file`) are the session's history (`:history`,
 
 - `int`, `float`, `bool`, `unit`, `str` (`n` characters; a handle `h`
   past 2,000; `img`, the absolute path, when the string names a picture
-  that exists), `enum`, `fn`, `decl` (a declaration evaluated);
+  that exists; `svg: {w, h, bg?, text}` when the string is an SVG
+  document, as `plot` answers: its size, the background a first `rect`
+  as wide as it paints, and its whole text), `enum`, `fn`, `decl` (a
+  declaration evaluated at the prompt or in a file);
 - `result`: `ok` and the inner value `v`;
 - `list` and `tuple`: `n`, a handle `h`, the first 20 `items`; a list of
   maps or records also says `table: {cols}`, and a list of numbers (or of
   `(x, number)` pairs) `series: {lo, hi, pts}` (at most 512 points: past
   that, each bucket's least and most);
 - `map` and `record`: `n`, `h`, the first 20 `entries`, sorted by key;
+- `frame` (an `ods` Frame) and `series` (an `ods` Series, one column
+  named `value`): `n` rows, `h`, `table: {cols, types}` (each column's
+  name and its type: `Int`, `Float`, `Bool`, `String`) and the first 20
+  `rows` (`{"i", "c": [cell…]}`, a cell its text — a float to six
+  significant digits — or `null`); `expand` with `table` reads the rest
+  by range, sorted by a column (its nulls last either way);
 - `bytes`: `n`, `h`, and for a picture `img: {format, w, h}` and the
   picture itself (`png`, base64);
 - `view`: a Loom view node (`#{ role, key, props, children }`) — `role`
@@ -1691,6 +1704,7 @@ nothing should depend on them.
 | `OLANG_DENY` | yes | Deny capabilities for the run, as `--deny`: a comma list of `fs`, `fs-write`, `net`, `proc`, `db`, `env`. |
 | `OLANG_PARALLELISM` | yes | Thread count for `par_map`/`par for` and other parallel work (also `--ovm-parallelism N`). |
 | `OLANG_HTTP_WORKERS` | yes | Default worker count for `http.serve` when the options map does not set one. |
+| `OLANG_PLOT_THEME` | yes | `dark` or `light`: the theme a `plot` chart takes when its options name none (an editor's notebook kernel follows its appearance). |
 | `OLANG_ODS_WORKERS` | yes | Worker count for the ods data stack's parallel operations. |
 | `OLANG_STALL_ABORT` | yes | `0` disables the deadlock abort: an all-threads-parked program hangs instead of exiting with the stall report. |
 | `OLANG_VERIFY_TIERS` | yes | The `--verify-tiers` sampling rate (`0`–`1`). |

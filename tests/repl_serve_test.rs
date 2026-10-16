@@ -516,8 +516,10 @@ fn a_notebooks_kernel_binds_its_params_under_its_grant_in_its_folder() {
     assert_eq!(hello["notebook"]["problems"], json!([]));
     // a cell reads the param; a later one reads the cell's name
     let a = r.ask(json!({ "op": "eval", "cell": "c1", "code": "let x = n * 10", "line": 12 }));
-    assert_eq!(a["binding"], json!("x"), "{a}");
-    assert_eq!(a["value"]["s"], json!("20"));
+    // a cell ending in a let is `()`, and says what it defined
+    assert_eq!(a["value"]["k"], json!("unit"), "{a}");
+    assert_eq!(a["defines"], json!(["x"]), "{a}");
+    assert_eq!(r.eval("x")["value"]["s"], json!("20"));
     let b = r.ask(json!({ "op": "eval", "cell": "c2", "code": "x + 1", "line": 16 }));
     assert_eq!(b["value"]["s"], json!("21"), "{b}");
     // a relative path is the notebook's folder's; the grant reads, never writes
@@ -558,7 +560,8 @@ fn a_cell_evaluated_again_replaces_what_it_defined() {
     assert_eq!(r.eval("y")["value"]["s"], json!("5"));
     // a cell id may be a number; another cell's names stay
     let other = r.ask(json!({ "op": "eval", "cell": 7, "code": "let z = y + 1", "line": 16 }));
-    assert_eq!(other["value"]["s"], json!("6"), "{other}");
+    assert_eq!(other["ok"], json!(true), "{other}");
+    assert_eq!(r.eval("z")["value"]["s"], json!("6"));
     let c1 = r.ask(json!({ "op": "eval", "cell": "c1", "code": "let y = 50", "line": 12 }));
     assert_eq!(c1["ok"], json!(true));
     assert_eq!(r.eval("z")["value"]["s"], json!("6"));
@@ -628,4 +631,103 @@ fn a_notebooks_kernel_refuses_what_is_no_notebook_and_a_grant_it_cannot_read() {
     let env = r.ask(json!({ "op": "eval", "cell": "a", "code": "os.get_env(\"HOME\")" }));
     assert_eq!(env["ok"], json!(false), "{env}");
     assert_eq!(r.eval("1 + 1")["value"]["s"], json!("2"));
+}
+
+#[test]
+fn a_cells_value_is_its_last_expression_and_it_says_what_it_defines() {
+    let dir = tempfile::tempdir().unwrap();
+    notebook(dir.path());
+    let (mut r, _) = Repl::start_with(dir.path(), &["--notebook", "nbs/sales.olmd"]);
+    let defs = r.ask(json!({ "op": "eval", "cell": "c1", "code": "fn fmt(x) = to_string(x)\nfn pct(x) = x * 100.0", "line": 12 }));
+    assert_eq!(defs["value"]["k"], json!("unit"), "{defs}");
+    assert_eq!(defs["defines"], json!(["fmt", "pct"]), "{defs}");
+    let lets = r.ask(json!({ "op": "eval", "cell": "c2", "code": "let a = 1\nlet share = 0.2900157511888042", "line": 16 }));
+    assert_eq!(lets["value"]["k"], json!("unit"), "{lets}");
+    assert!(lets.get("binding").is_none(), "{lets}");
+    assert_eq!(lets["defines"], json!(["a", "share"]));
+    let expr =
+        r.ask(json!({ "op": "eval", "cell": "c3", "code": "let b = a + 1\nb * 2", "line": 20 }));
+    assert_eq!(expr["value"]["s"], json!("4"), "{expr}");
+    assert_eq!(expr["defines"], json!(["b"]));
+    // the prompt keeps its binding
+    let p = r.eval("let c = 3");
+    assert_eq!(p["binding"], json!("c"));
+}
+
+#[test]
+fn a_frame_and_a_series_are_tables_with_typed_columns_read_by_range_and_sorted() {
+    let dir = project();
+    let (mut r, _) = Repl::start(dir.path());
+    let f = r.eval(
+        "ods.frame([[\"name\", ods.series([\"b\", \"a\", \"c\"])], [\"qty\", ods.series([3, (), 1])], [\"price\", ods.series([0.2900157511888042, 2.5, 10.0])]])",
+    );
+    assert_eq!(f["ok"], json!(true), "{f}");
+    let v = &f["value"];
+    assert_eq!(v["k"], json!("frame"));
+    assert_eq!(v["t"], json!("Frame"));
+    assert_eq!(v["n"], json!(3));
+    assert_eq!(v["s"], json!("Frame[3 x 3]"));
+    assert_eq!(v["table"]["cols"], json!(["name", "qty", "price"]));
+    assert_eq!(v["table"]["types"], json!(["String", "Int", "Float"]));
+    assert_eq!(v["rows"][0]["c"], json!(["b", "3", "0.290016"]));
+    assert_eq!(v["rows"][1]["c"][1], J::Null);
+    let h = v["h"].as_u64().unwrap();
+    let page = r.ask(json!({ "op": "expand", "h": h, "table": true, "start": 1, "count": 5 }));
+    assert_eq!(page["n"], json!(3));
+    assert_eq!(page["rows"][1]["c"], json!(["c", "1", "10.0"]));
+    // sorted by qty, the null last either way
+    let up = r.ask(json!({ "op": "expand", "h": h, "table": true, "start": 0, "count": 3, "sort": { "col": 1 } }));
+    assert_eq!(up["rows"][0]["c"][0], json!("c"));
+    assert_eq!(up["rows"][2]["c"][1], J::Null);
+    let down = r.ask(json!({ "op": "expand", "h": h, "table": true, "start": 0, "count": 3, "sort": { "col": 1, "desc": true } }));
+    assert_eq!(down["rows"][0]["c"][0], json!("b"));
+    assert_eq!(down["rows"][2]["c"][1], J::Null);
+    // a Series: one column, named value
+    let s = r.eval("ods.series([1.5, 2.5])");
+    assert_eq!(s["value"]["k"], json!("series"), "{s}");
+    assert_eq!(
+        s["value"]["table"],
+        json!({ "cols": ["value"], "types": ["Float"] })
+    );
+    assert_eq!(s["value"]["rows"][1]["c"], json!(["2.5"]));
+}
+
+#[test]
+fn a_chart_says_it_is_svg_with_its_size_and_background() {
+    let dir = project();
+    let (mut r, _) = Repl::start(dir.path());
+    let c = r.eval("plot.bar([\"a\", \"b\"], ods.series([1.0, 2.0]), #{ \"title\": \"t\" })");
+    assert_eq!(c["ok"], json!(true), "{c}");
+    let svg = &c["value"]["svg"];
+    assert_eq!(svg["w"], json!(720.0), "{c}");
+    assert_eq!(svg["h"], json!(440.0));
+    assert_eq!(svg["bg"], json!("#fcfcfb"));
+    assert!(svg["text"].as_str().unwrap().ends_with("</svg>"));
+    // a string that is no SVG says nothing of it
+    assert!(r.eval("\"<svg\"")["value"].get("svg").is_none());
+}
+
+#[test]
+fn a_hosts_plot_theme_is_a_charts_when_it_names_none() {
+    let dir = project();
+    let run = |theme: Option<&str>, code: &str| {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_olang"));
+        c.args(["eval", code]).current_dir(dir.path());
+        match theme {
+            Some(t) => c.env("OLANG_PLOT_THEME", t),
+            None => c.env_remove("OLANG_PLOT_THEME"),
+        };
+        String::from_utf8_lossy(&c.output().unwrap().stdout).into_owned()
+    };
+    let chart = "plot.bar([\"a\"], ods.series([1.0]), #{})";
+    assert!(run(None, chart).contains("#fcfcfb"));
+    assert!(run(Some("dark"), chart).contains("#101720"));
+    // a chart that names its theme keeps it
+    assert!(
+        run(
+            Some("dark"),
+            "plot.bar([\"a\"], ods.series([1.0]), #{ \"theme\": \"light\" })"
+        )
+        .contains("#fcfcfb")
+    );
 }
