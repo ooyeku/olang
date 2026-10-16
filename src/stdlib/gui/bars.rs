@@ -60,7 +60,14 @@ impl Hit {
 
     /// The thumb: its top and length on the track.
     pub fn thumb(&self) -> (f32, f32) {
-        thumb(self.track.0, self.track.1, self.view, self.total, self.off, self.max)
+        thumb(
+            self.track.0,
+            self.track.1,
+            self.view,
+            self.total,
+            self.off,
+            self.max,
+        )
     }
 
     /// The offset that puts the thumb's top at `top`.
@@ -171,7 +178,10 @@ mod tests {
         assert_eq!(thumb(0.0, 100.0, 100.0, 400.0, 0.0, 300.0), (0.0, 25.0));
         assert_eq!(thumb(0.0, 100.0, 100.0, 400.0, 300.0, 300.0), (75.0, 25.0));
         // a long text: the thumb keeps a length a pointer can take
-        assert_eq!(thumb(0.0, 100.0, 100.0, 100_000.0, 0.0, 99_900.0).1, MIN_THUMB);
+        assert_eq!(
+            thumb(0.0, 100.0, 100.0, 100_000.0, 0.0, 99_900.0).1,
+            MIN_THUMB
+        );
         // nothing to scroll: the whole track
         assert_eq!(thumb(0.0, 100.0, 100.0, 100.0, 0.0, 0.0), (0.0, 100.0));
     }

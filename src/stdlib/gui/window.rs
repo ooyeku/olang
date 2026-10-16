@@ -1661,7 +1661,9 @@ impl WinState {
             && let Some(r) = self.editors.get_mut(&k).and_then(|e| e.rich_mut())
             && (r.wheel_x(dx) | r.wheel(dy, &mut ts))
         {
-            let now = self.test_clock.unwrap_or_else(|| self.born.elapsed().as_secs_f64() * 1000.0);
+            let now = self
+                .test_clock
+                .unwrap_or_else(|| self.born.elapsed().as_secs_f64() * 1000.0);
             self.bars.entry(k.clone()).or_default().moved_at = Some(now);
             // the first line in view, said when it moves a band of lines
             // (a program asks for what the band shows; not every wheel)
@@ -2131,7 +2133,19 @@ impl WinState {
             let view = rect[3];
             let max = (ch - view).max(0.0);
             if max > 0.5 {
-                self.paint_bar(key, false, [x, y, w, h], inner_clip, view, ch, offset.1, max, &[], opacity, dl);
+                self.paint_bar(
+                    key,
+                    false,
+                    [x, y, w, h],
+                    inner_clip,
+                    view,
+                    ch,
+                    offset.1,
+                    max,
+                    &[],
+                    opacity,
+                    dl,
+                );
             }
         }
         if late_border && let Some(b) = st.border {
@@ -2622,9 +2636,7 @@ impl WinState {
                 let nb = bands.len();
                 let band_of = |y0: f32, y1: f32| -> (f32, f32) {
                     let mid = (y0 + y1) / 2.0;
-                    let k = bands
-                        .iter()
-                        .position(|(t, b)| mid >= *t && mid <= *b);
+                    let k = bands.iter().position(|(t, b)| mid >= *t && mid <= *b);
                     match k {
                         Some(k) => (
                             if k == 0 { 0.0 } else { bands[k].0 },
@@ -2638,17 +2650,29 @@ impl WinState {
                     let (t, bt) = band_of(bx.y0 as f32, bx.y1 as f32);
                     let x0 = ox + bx.x0 as f32;
                     let goes_on = more || k + 1 < n;
-                    let x1 = if goes_on { right_edge.max(ox + bx.x1 as f32) } else { ox + bx.x1 as f32 };
+                    let x1 = if goes_on {
+                        right_edge.max(ox + bx.x1 as f32)
+                    } else {
+                        ox + bx.x1 as f32
+                    };
                     // whole device pixels: rows that meet leave no seam
                     let (y0, y1) = ((oy + py + t).round(), (oy + py + bt).round());
                     let (x0, x1) = (x0.round(), x1.round());
-                    dl.prims.push(solid(x0, y0, x1 - x0, y1 - y0, fade(st.selection), clip));
+                    dl.prims
+                        .push(solid(x0, y0, x1 - x0, y1 - y0, fade(st.selection), clip));
                 }
                 if boxes.is_empty() && more {
                     // an empty line inside the selection: its row whole
                     let (t, bt) = (0.0, ph);
                     let (x0, y0, y1) = (ox.round(), (oy + py + t).round(), (oy + py + bt).round());
-                    dl.prims.push(solid(x0, y0, right_edge.round() - x0, y1 - y0, fade(st.selection), clip));
+                    dl.prims.push(solid(
+                        x0,
+                        y0,
+                        right_edge.round() - x0,
+                        y1 - y0,
+                        fade(st.selection),
+                        clip,
+                    ));
                 }
             }
         }
@@ -2828,7 +2852,8 @@ impl WinState {
                     while dx < w {
                         let phase = (dx / s) * std::f32::consts::PI / 2.0;
                         let yy = base + (1.0 - phase.sin()) * s;
-                        dl.prims.push(solid(x0 + dx, yy, step, (1.2 * s).max(1.0), c, clip));
+                        dl.prims
+                            .push(solid(x0 + dx, yy, step, (1.2 * s).max(1.0), c, clip));
                         dx += step;
                     }
                 } else {
@@ -2992,7 +3017,9 @@ impl WinState {
                     Prim::Glyph { y, .. } => half.iter().any(|(a, b)| *y >= *a && *y <= *b),
                     // a row's own band (its selection, a highlight) goes
                     // with its glyphs, not a strip of colour left alone
-                    Prim::Rect { y, h, .. } => half.iter().any(|(a, b)| *y >= *a - 0.5 && *y + *h <= *b + 0.5),
+                    Prim::Rect { y, h, .. } => half
+                        .iter()
+                        .any(|(a, b)| *y >= *a - 0.5 && *y + *h <= *b + 0.5),
                     _ => false,
                 };
                 let c = match p {
@@ -3103,7 +3130,14 @@ impl WinState {
                 content[2] + (st.pad[1] + st.pad[3]) * s,
                 content[3] + (st.pad[0] + st.pad[2]) * s,
             ];
-            Some((node_box, content[3] / s, total / s, r.scroll_y / s, max / s, marks))
+            Some((
+                node_box,
+                content[3] / s,
+                total / s,
+                r.scroll_y / s,
+                max / s,
+                marks,
+            ))
         } else {
             None
         };
@@ -3189,7 +3223,9 @@ impl WinState {
             dl.prims.push(solid(cx, cy, cw, ch, fade(st.caret), clip));
         }
         if let Some((node_box, view, total, off, max, marks)) = bar_job {
-            self.paint_bar(key, true, node_box, outer_clip, view, total, off, max, &marks, opacity, dl);
+            self.paint_bar(
+                key, true, node_box, outer_clip, view, total, off, max, &marks, opacity, dl,
+            );
         }
     }
 
@@ -3223,7 +3259,8 @@ impl WinState {
         let track = (t + bars::INSET, hl - 2.0 * bars::INSET);
         // the zone the pointer finds the bar in: the right edge, as much
         // of it as shows
-        let z = Clip::rect((right - bars::ZONE) * s, t * s, right * s, (t + hl) * s).intersect(clip);
+        let z =
+            Clip::rect((right - bars::ZONE) * s, t * s, right * s, (t + hl) * s).intersect(clip);
         let hit = bars::Hit {
             key: key.to_string(),
             zone: [z.x0 / s, z.y0 / s, z.x1 / s, z.y1 / s],
@@ -3283,7 +3320,8 @@ impl WinState {
         }
         // the marks, after the thumb so it never hides them: a line's
         // place in the whole text, 2 high (the caret's a hairline across)
-        let fade = |c: Color| -> Color { [c[0], c[1], c[2], (c[3] as f32 * opacity).round() as u8] };
+        let fade =
+            |c: Color| -> Color { [c[0], c[1], c[2], (c[3] as f32 * opacity).round() as u8] };
         let shown_marks = marks.iter().any(|m| !m.2) || a > 0.0;
         if shown_marks {
             for &(my, c, caret) in marks {
@@ -3336,7 +3374,9 @@ impl WinState {
     /// Whether a bar is fading now (a headless clock moved: draw again).
     fn bars_moving(&self) -> bool {
         let now = self.clock_ms();
-        self.bars.values().any(|b| super::bars::due(b, now).is_some())
+        self.bars
+            .values()
+            .any(|b| super::bars::due(b, now).is_some())
     }
 
     /// A scroller moved: its bar shows (and fades from now).
@@ -3362,9 +3402,10 @@ impl WinState {
                 b.contains(x, y)
                     && (b.key == h || self.scene.is_ancestor(&b.key, h))
                     && (b.rich
-                        || self.bars.get(&b.key).is_some_and(|bar| {
-                            super::bars::alpha(bar, now, false) > 0.0
-                        }))
+                        || self
+                            .bars
+                            .get(&b.key)
+                            .is_some_and(|bar| super::bars::alpha(bar, now, false) > 0.0))
             })
             .cloned()
     }
@@ -3389,7 +3430,10 @@ impl WinState {
                     drop(ts);
                     out.push(self.ev(
                         "viewport",
-                        vec![("key", super::values::s(key)), ("top", Value::Integer(top as i64))],
+                        vec![
+                            ("key", super::values::s(key)),
+                            ("top", Value::Integer(top as i64)),
+                        ],
                     ));
                 }
                 self.dirty = true;
@@ -3407,7 +3451,11 @@ impl WinState {
                 self.a11y_dirty = true;
                 out.push(self.ev(
                     "scrolled",
-                    vec![("key", super::values::s(key)), ("x", float(after.0)), ("y", float(after.1))],
+                    vec![
+                        ("key", super::values::s(key)),
+                        ("x", float(after.0)),
+                        ("y", float(after.1)),
+                    ],
                 ));
             }
         }
@@ -3455,7 +3503,11 @@ impl WinState {
                 _ => return true,
             }
         }
-        let over = if action == PointerAction::Leave { None } else { self.bar_at(x, y, hit) };
+        let over = if action == PointerAction::Leave {
+            None
+        } else {
+            self.bar_at(x, y, hit)
+        };
         // the pointer over an edge: that bar wide, any other back to its fade
         let over_key = over.as_ref().map(|h| h.key.clone());
         for (k, b) in self.bars.iter_mut() {
@@ -3473,7 +3525,11 @@ impl WinState {
         {
             self.bars.insert(
                 k.clone(),
-                super::bars::Bar { moved_at: None, hover: true, drag: None },
+                super::bars::Bar {
+                    moved_at: None,
+                    hover: true,
+                    drag: None,
+                },
             );
             self.dirty = true;
         }

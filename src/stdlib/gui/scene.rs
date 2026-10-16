@@ -842,7 +842,10 @@ impl Scene {
         let k = Some(node.key.as_str());
         let hovered = self.hover.as_deref() == k
             || (node.style.group_hover
-                && self.hover.as_deref().is_some_and(|h| self.is_ancestor(h, &node.key)));
+                && self
+                    .hover
+                    .as_deref()
+                    .is_some_and(|h| self.is_ancestor(h, &node.key)));
         let states = [
             hovered && !node.disabled,
             self.pressed.as_deref() == k && !node.disabled,
