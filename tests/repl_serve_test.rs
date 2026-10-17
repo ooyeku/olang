@@ -1207,3 +1207,31 @@ fn a_cells_control_is_said_set_by_the_host_and_kept_while_it_fits() {
         json!("protocol")
     );
 }
+
+#[test]
+fn a_param_that_is_a_controls_spec_binds_its_value_and_is_read_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let nb = dir.path().join("p.olmd");
+    let text = |v: u32| {
+        format!(
+            "---\nparams:\n  top_n: {{value: {}, min: 1, max: 10, step: 1}}\n  since: {{value: \"30 days ago\", options: [\"7 days ago\", \"30 days ago\"]}}\n---\n\n```olang\nlet t = top_n\n```\n",
+            v
+        )
+    };
+    std::fs::write(&nb, text(3)).unwrap();
+    let (mut r, hello) = Repl::start_with(dir.path(), &["--notebook", "p.olmd"]);
+    assert_eq!(hello["notebook"]["problems"], json!([]), "{hello}");
+    assert_eq!(r.eval("top_n")["value"]["s"], json!("3"));
+    assert_eq!(r.eval("since")["value"]["s"], json!("30 days ago"));
+    let again = r.ask(json!({ "op": "reread", "text": text(7) }));
+    assert_eq!(again["params"], json!(["top_n"]), "{again}");
+    assert_eq!(r.eval("top_n")["value"]["s"], json!("7"));
+    let out = r.ask(json!({ "op": "reread", "text": text(12) }));
+    assert!(
+        out["problems"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("outside its range"),
+        "{out}"
+    );
+}

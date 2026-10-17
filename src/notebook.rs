@@ -106,6 +106,129 @@ pub struct Param {
     pub name: String,
     pub value: String,
     pub line: u32,
+    /// A control's spec, when the param is one (`{value, options}`,
+    /// `{value, min, max, step}`): what a `--param` is held to.
+    pub control: Option<ParamControl>,
+}
+
+/// A param that is a control: its options (as olang source), or its
+/// bounds and step.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ParamControl {
+    pub options: Option<Vec<String>>,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub step: Option<f64>,
+}
+
+/// A literal's number, when it is one (`3`, `-2.5`).
+fn literal_number(src: &str) -> Option<f64> {
+    let t = src.trim();
+    if t.starts_with('"') {
+        return None;
+    }
+    t.parse::<f64>().ok()
+}
+
+/// Two literals' sources that say one value (`3` is `3.0`).
+fn same_literal(a: &str, b: &str) -> bool {
+    match (literal_number(a), literal_number(b)) {
+        (Some(x), Some(y)) => x == y,
+        _ => a.trim() == b.trim(),
+    }
+}
+
+impl ParamControl {
+    /// Whether `source` (an olang literal) is a value the control holds:
+    /// one of its options, or a number within its bounds.
+    pub fn check(&self, source: &str) -> Result<(), String> {
+        if let Some(options) = &self.options
+            && !options.iter().any(|o| same_literal(o, source))
+        {
+            return Err(format!(
+                "{} is not one of its options ({})",
+                source,
+                options.join(", ")
+            ));
+        }
+        if self.min.is_some() || self.max.is_some() {
+            let Some(x) = literal_number(source) else {
+                return Err(format!("{} is no number (the param has a range)", source));
+            };
+            if self.min.is_some_and(|lo| x < lo) || self.max.is_some_and(|hi| x > hi) {
+                return Err(format!(
+                    "{} is outside its range [{}, {}]",
+                    source,
+                    self.min
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "…".into()),
+                    self.max
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "…".into())
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A param's YAML value read as a control's spec: a map whose keys are
+/// `value` and any of `options`, `min`, `max`, `step` — and no other. None
+/// for any other value (a Map param stays one).
+fn control_spec(node: &yaml::Node) -> Option<Result<(String, ParamControl), Diagnostic>> {
+    let yaml::Value::Map(entries) = &node.value else {
+        return None;
+    };
+    let keys = ["value", "options", "min", "max", "step"];
+    if !entries.iter().any(|e| e.key == "value")
+        || entries.iter().any(|e| !keys.contains(&e.key.as_str()))
+        || entries.len() < 2
+    {
+        return None;
+    }
+    let get = |k: &str| entries.iter().find(|e| e.key == k);
+    let value = get("value").expect("checked");
+    let source = yaml::to_olang(&value.value.value);
+    let num = |e: &yaml::Entry| match e.value.value {
+        yaml::Value::Int(i) => Ok(i as f64),
+        yaml::Value::Float(f) => Ok(f),
+        _ => Err(Diagnostic::at(
+            e.value.line,
+            e.value.column,
+            format!("a control param's `{}` is a number", e.key),
+        )),
+    };
+    let mut ctl = ParamControl::default();
+    if let Some(o) = get("options") {
+        let yaml::Value::List(items) = &o.value.value else {
+            return Some(Err(Diagnostic::at(
+                o.value.line,
+                o.value.column,
+                "a control param's `options` is a list",
+            )));
+        };
+        ctl.options = Some(items.iter().map(|n| yaml::to_olang(&n.value)).collect());
+    }
+    for (k, slot) in [
+        ("min", &mut ctl.min),
+        ("max", &mut ctl.max),
+        ("step", &mut ctl.step),
+    ] {
+        if let Some(e) = get(k) {
+            match num(e) {
+                Ok(x) => *slot = Some(x),
+                Err(d) => return Some(Err(d)),
+            }
+        }
+    }
+    if let Err(m) = ctl.check(&source) {
+        return Some(Err(Diagnostic::at(
+            value.value.line,
+            value.value.column,
+            format!("the param's value {}", m),
+        )));
+    }
+    Some(Ok((source, ctl)))
 }
 
 /// A notebook's structure: its cells, its front matter, and what is wrong
@@ -685,10 +808,20 @@ fn read_params(entry: &yaml::Entry, nb: &mut Notebook) {
             ));
             continue;
         }
+        // a control's spec binds its value (held to its options or range)
+        let (value, control) = match control_spec(&p.value) {
+            None => (yaml::to_olang(&p.value.value), None),
+            Some(Ok((v, c))) => (v, Some(c)),
+            Some(Err(d)) => {
+                nb.diagnostics.push(d);
+                continue;
+            }
+        };
         nb.params.push(Param {
             name: p.key.clone(),
-            value: yaml::to_olang(&p.value.value),
+            value,
             line: p.line,
+            control,
         });
     }
 }
@@ -783,7 +916,17 @@ pub fn program_with(text: &str, mode: Mode, overrides: &[(String, String)]) -> P
     let mut params = nb.params.clone();
     for (name, value) in overrides {
         match params.iter_mut().find(|p| &p.name == name) {
-            Some(p) => p.value = param_value_source(value),
+            Some(p) => {
+                let v = param_value_source(value);
+                match p.control.as_ref().map(|c| c.check(&v)) {
+                    Some(Err(m)) => diagnostics.push(Diagnostic::at(
+                        p.line,
+                        1,
+                        format!("--param {}: {}", name, m),
+                    )),
+                    _ => p.value = v,
+                }
+            }
             None => {
                 let declared: Vec<&str> = nb.params.iter().map(|p| p.name.as_str()).collect();
                 diagnostics.push(Diagnostic::at(
@@ -1981,5 +2124,74 @@ mod tests {
         );
         assert_eq!(p.diagnostics.len(), 1);
         assert_eq!(p.diagnostics[0].line, 6);
+    }
+
+    #[test]
+    fn a_param_may_be_a_controls_spec() {
+        let text = "---\nparams:\n  since: {value: \"30 days ago\", options: [\"7 days ago\", \"30 days ago\", \"90 days ago\"]}\n  top_n: {value: 3, min: 1, max: 10, step: 1}\n  limits: {low: 1, value: 2}\n  only: {value: 5}\n---\n```olang\nlet a = [since, top_n, limits, only]\n```\n";
+        let nb = parse(text);
+        assert!(nb.diagnostics.is_empty(), "{:?}", nb.diagnostics);
+        assert_eq!(nb.params[0].value, "\"30 days ago\"");
+        assert_eq!(
+            nb.params[0]
+                .control
+                .as_ref()
+                .unwrap()
+                .options
+                .as_ref()
+                .unwrap()
+                .len(),
+            3
+        );
+        assert_eq!(nb.params[1].value, "3");
+        assert_eq!(nb.params[1].control.as_ref().unwrap().max, Some(10.0));
+        // any other map stays a Map param, a lone value too
+        assert!(nb.params[2].control.is_none() && nb.params[2].value.starts_with("#{"));
+        assert!(nb.params[3].control.is_none());
+        // --param is held to the control
+        let ok = program_with(
+            text,
+            Mode::Run,
+            &[
+                ("top_n".into(), "7".into()),
+                ("since".into(), "7 days ago".into()),
+            ],
+        );
+        assert!(ok.diagnostics.is_empty(), "{:?}", ok.diagnostics);
+        assert!(
+            ok.source.contains("let top_n = 7") && ok.source.contains("let since = \"7 days ago\"")
+        );
+        let bad = program_with(
+            text,
+            Mode::Run,
+            &[
+                ("top_n".into(), "11".into()),
+                ("since".into(), "a year ago".into()),
+            ],
+        );
+        assert_eq!(bad.diagnostics.len(), 2, "{:?}", bad.diagnostics);
+        assert!(
+            bad.diagnostics.iter().any(|d| d
+                .message
+                .contains("--param top_n: 11 is outside its range [1, 10]")),
+            "{:?}",
+            bad.diagnostics
+        );
+        assert!(bad.diagnostics.iter().any(|d| {
+            d.message
+                .contains("--param since: \"a year ago\" is not one of its options")
+        }));
+        // a value outside its own spec is a diagnostic at the value
+        let wrong = parse(
+            "---\nparams:\n  n: {value: 12, min: 1, max: 10}\n  r: {value: north, options: [east, west]}\n---\n",
+        );
+        assert_eq!(wrong.diagnostics.len(), 2, "{:?}", wrong.diagnostics);
+        assert!(
+            wrong.diagnostics[0]
+                .message
+                .contains("the param's value 12 is outside its range")
+        );
+        assert_eq!(wrong.diagnostics[0].line, 3);
+        assert!(wrong.params.is_empty());
     }
 }

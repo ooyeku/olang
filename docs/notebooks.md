@@ -190,6 +190,21 @@ olang test analysis/ --param sample=100
 olang check sales.olmd --param region=west
 ```
 
+A param may be a control's spec: a map whose keys are `value` and any of
+`options` (a list), `min`, `max` and `step` (numbers) — and no other
+key. Its `value` is what the param binds; a value that is not one of its
+`options`, or a number outside `min` … `max`, is a diagnostic at the
+value, as other front matter problems are. Any other map stays a Map
+param. A `--param` is held to the spec the same way (an error at the
+param's line), and `reread` reads it too. olang Studio draws such a
+param as its control.
+
+```yaml
+params:
+  since: {value: "30 days ago", options: ["7 days ago", "30 days ago", "90 days ago"]}
+  top_n: {value: 3, min: 1, max: 10, step: 1}
+```
+
 A `--param` that names no param the notebook declares is an error at the
 line of `params:` (or line 1), and the notebook does not run. A param's
 name must be one a `let` can bind: an identifier that is not a keyword.

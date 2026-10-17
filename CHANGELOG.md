@@ -69,6 +69,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   value, default, range, options, a brush's chart), and `set` gives it a
   value: validated, bound to the cell's name in place, kept when the cell
   runs again; `drop` and `reset` forget it.
+- **A notebook's param may be a control.** A front matter param that is a
+  map of `value` and any of `options`, `min`, `max`, `step` binds its
+  `value`, held to its options or range (a diagnostic otherwise);
+  `--param` is held to it the same way, and `reread` reads it too.
 - **An SVG picture's text is drawn.** `gui`'s image draws an SVG's
   `<text>` in the system's fonts (loaded once, when an SVG is first
   drawn; sans-serif the platform's interface face), so a `plot` chart
