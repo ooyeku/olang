@@ -963,7 +963,8 @@ capabilities and pass.
 | `{"op":"drop","id":15,"cell":"c3"}` | `{"ok":true,"dropped":["t"]}` — what the cell defined, forgotten (a cell deleted) |
 | `{"op":"vars","id":16}` | `{"ok":true,"eval":9,"vars":[{"name":"sales","cell":"c3","v":V,"bytes":27411},{"name":"region","param":true,…}…]}` — a kernel's names (below) |
 | `{"op":"reread","id":17,"text":"…"?}` | `{"ok":true,"params":["region"],"removed":[],"grant":false,"problems":[…]}` — a kernel's front matter read again (below) |
-| `{"op":"reset"}`, `{"op":"shutdown"}` | the scopes forgotten (and what each cell defined); the server ends |
+| `{"op":"set","id":18,"cell":"c5","value":"0.12"}` | `{"ok":true,"eval":10,"name":"lift","value":V}` — the value an editor chose for a cell's control (below) |
+| `{"op":"reset"}`, `{"op":"shutdown"}` | the scopes forgotten (and what each cell defined, and every control's value set); the server ends |
 
 **A notebook's kernel.** `olang repl --serve --notebook x.olmd` serves
 one notebook (olang Studio starts one per notebook it shows). The
@@ -1041,6 +1042,36 @@ names the params that changed (`params`), those gone (`removed`), and
 whether the grant changed (`grant`); what cells defined stays, so an
 editor runs again only what reads a changed param.
 
+**A cell's control.** A cell whose evaluation binds a control (`ui.slider`,
+`ui.select`, `ui.date`, `ui.text`, `ui.toggle`, `ui.brush`: each
+answers `runtime.bind`) says it in its reply:
+
+`"control":{"kind":"slider","name":"lift","value":V,"default":V,"min":0.0,"max":0.3,"step":0.01}`
+
+— `kind` one of `slider`, `select`, `date`, `text`, `toggle`, `brush`;
+`name` the one name the cell defines (the names a `use` binds aside);
+`value` what the control answered and `default` what the cell gave, as
+values are encoded; `min`, `max` and `step` a slider's (numbers, `step`
+absent when it has none), `options` a select's (each a V), `chart` a
+brush's chart (C). Only the fields that apply are there. A cell binding
+several controls, or defining several names, says its first control
+without `name`: an editor draws it read-only, and `set` refuses it.
+
+`set` gives a cell's control a value: `value` an olang literal as text
+(`0.12`, `"west"`, `true`, `[2.0, 5.5]`, `()`), evaluated under no
+capability, then held to the control — a slider's within [min, max] (an
+Int slider's an Int; out of range is refused, never clamped), a select's
+one of its options, a date a `"YYYY-MM-DD"` String, a text a String, a
+toggle a Bool, a brush `()` or `[x0, x1]` with x0 ≤ x1 (read as Floats).
+The cell's name is bound to it in the notebook's scope in place (as
+`reread` binds a param), and the value is kept as the cell's: when the
+cell runs again its control answers it while it still fits — the same
+kind and default as when it was set, within the range or options the
+cell gives now — and forgets it otherwise. `drop` of the cell forgets
+it; `reset` forgets all. Errors: `kind` `protocol` (no cell, no value, a
+cell that bound no control) or `invalid` (a value the control cannot
+hold, one that does not parse or fails, a control with no one name).
+
 **Commands.** Every command of the interactive REPL (`:help`, `:type`,
 `:time`, `:sh`, … — `commands` lists them) runs through `command`, in the
 session's own scope, by the very code the terminal REPL runs: what it
@@ -1097,7 +1128,7 @@ A prompt's evaluations (no `file`) are the session's history (`:history`,
   named `value`): `n` rows, `h`, `table: {cols, types}` (each column's
   name and its type: `Int`, `Float`, `Bool`, `String`) and the first 20
   `rows` (`{"i", "c": [cell…]}`, a cell its text — a float to six
-  significant digits — or `null`); `table.sum`, each column's summary
+  significant digits — or `null`); `sum` in `table`, each column's summary
   (below); a numeric Series also `stats: {count, nulls, mean, min, max,
   hist}` (`hist` 24 bins over min … max); `expand` with `table` reads
   the rest by range, filtered and sorted (below);
@@ -1106,7 +1137,7 @@ A prompt's evaluations (no `file`) are the session's history (`:history`,
 - `view`: a Loom view node (`#{ role, key, props, children }`) — `role`
   and `h`, for `render`.
 
-**A column's summary.** `table.sum` is a list aligned with `table.cols`,
+**A column's summary.** A table's `sum` is a list aligned with its `cols`,
 one summary a column, computed by the data stack over the column's
 first 1,000,000 rows (a longer one says `"sampled": 1000000` on `table`,
 so a ten-million-row Frame stays cheap; a million rows of four columns
@@ -1138,7 +1169,7 @@ A `sort` (nulls last, as ever) orders what the filters keep. `n` is the
 view's rows, `total` the table's; each row's `i` its index in the whole
 table, so `ods.take` reads it. The view's order is cached by handle,
 filters and sort, and let go with the handle. `"summary": true` adds
-`sum`, the view's column summaries as `table.sum` has them (`sampled`
+`sum`, the view's column summaries as a table's `sum` has them (`sampled`
 past a million rows). Without `filters` a view is the table, as before.
 
 **A chart (C).** A chart's description, as `plot.describe` answers it

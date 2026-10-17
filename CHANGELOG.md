@@ -59,6 +59,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   chart's value carries its description (`chart`, each xy series
   decimated to 1,500 points, always held), and `expand` with `chart`
   reads a range of x again for zooming.
+- **Controls a host binds.** `ui.control(kind, value, spec)` makes a
+  control as a node (`ui.html` renders a real HTML control), and
+  `ui.slider`, `ui.select`, `ui.date`, `ui.text`, `ui.toggle` and
+  `ui.brush` (a range of a chart's x) check their value and answer
+  `runtime.bind(node, value)`: the value with no host; in a notebook's
+  kernel, the value the editor set for the cell's control while it still
+  fits. The kernel's eval reply says a cell's `control` (its kind, name,
+  value, default, range, options, a brush's chart), and `set` gives it a
+  value: validated, bound to the cell's name in place, kept when the cell
+  runs again; `drop` and `reset` forget it.
 - **An SVG picture's text is drawn.** `gui`'s image draws an SVG's
   `<text>` in the system's fonts (loaded once, when an SVG is first
   drawn; sans-serif the platform's interface face), so a `plot` chart

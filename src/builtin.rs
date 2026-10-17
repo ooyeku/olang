@@ -958,6 +958,10 @@ impl BuiltinFunctions {
             return crate::stdlib::os::call_os_function(os_function, arguments)
                 .map_err(|e| InterpreterError::runtime(e.to_string()));
         }
+        // a control a host binds, in every build (src/controls.rs)
+        if name == "runtime.bind" {
+            return crate::controls::bind(arguments).map_err(InterpreterError::runtime);
+        }
         #[cfg(feature = "native")]
         if let Some(runtime_function) = name.strip_prefix("runtime.") {
             if let Some(result) =

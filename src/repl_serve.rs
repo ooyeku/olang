@@ -281,6 +281,18 @@ struct Session {
     cells: HashMap<(String, String), Vec<String>>,
     /// Where a cell's function is declared (its file and line), for frames.
     declared: HashMap<String, (PathBuf, u32)>,
+    /// The control each cell bound when it was last evaluated (one bound
+    /// alone), and the name it binds when the cell defines one alone.
+    controls: HashMap<String, CellControl>,
+}
+
+/// A cell's control, as `set` validates a value for it.
+struct CellControl {
+    kind: String,
+    default: Value,
+    spec: Value,
+    /// The cell's one name (none: several controls or names).
+    name: Option<String>,
 }
 
 impl Session {
@@ -332,6 +344,7 @@ impl Session {
             notebook: None,
             cells: HashMap::new(),
             declared: HashMap::new(),
+            controls: HashMap::new(),
         }
     }
 
@@ -515,6 +528,9 @@ impl Session {
             .map(|f| self.resolve(f))
             .or_else(|| self.notebook_path());
         let (key, mut scope, _) = self.take_scope(file.as_deref());
+        // its control's host value forgotten with it
+        crate::controls::forget(&c);
+        self.controls.remove(&c);
         let names = self.cells.remove(&(key.clone(), c)).unwrap_or_default();
         self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
         for name in &names {
@@ -585,6 +601,153 @@ impl Session {
         json!({ "ok": true, "eval": seq, "vars": vars })
     }
 
+    /// A bound control as an eval's reply says it: its kind, the cell's
+    /// name (when it binds one alone), its value and default as values are
+    /// encoded, and what its kind has of min, max, step, options and a
+    /// brush's chart (its description, decimated).
+    fn control_json(
+        &mut self,
+        b: &crate::controls::Bound,
+        name: Option<&str>,
+        held: &mut Vec<u64>,
+    ) -> J {
+        let mut o = json!({ "kind": b.kind });
+        if let Some(n) = name {
+            o["name"] = J::String(n.to_string());
+        }
+        o["value"] = self.encode(&b.value, 1, held);
+        o["default"] = self.encode(&b.default, 1, held);
+        if let Value::Map(m) = &b.spec {
+            for k in ["min", "max", "step"] {
+                match m.get(k) {
+                    Some(Value::Integer(i)) => o[k] = json!(i),
+                    Some(Value::Float(f)) => o[k] = json!(f),
+                    _ => {}
+                }
+            }
+            if let Some(Value::List(opts)) = m.get("options") {
+                let enc: Vec<J> = opts.iter().map(|x| self.encode(x, 1, held)).collect();
+                o["options"] = J::Array(enc);
+            }
+            if let Some(Value::String(svg)) = m.get("chart")
+                && let Some(mut c) = chart_of(svg)
+            {
+                decimate_chart(&mut c, None);
+                o["chart"] = c;
+            }
+        }
+        o
+    }
+
+    /// `set`: the value an editor chose for a cell's control (`value`, an
+    /// olang literal, evaluated under no capability), validated against the
+    /// control, bound to the cell's name in place and kept as the cell's
+    /// host value, so running the cell again keeps it.
+    fn set_control(&mut self, msg: &J) -> J {
+        let fail =
+            |kind: &str, m: String| json!({ "ok": false, "error": { "kind": kind, "message": m } });
+        let Some(c) = msg.get("cell").map(|c| match c.as_str() {
+            Some(s) => s.to_string(),
+            None => c.to_string(),
+        }) else {
+            return fail("protocol", "set needs a cell".to_string());
+        };
+        let Some(src) = msg
+            .get("value")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+        else {
+            return fail(
+                "protocol",
+                "set needs a value (an olang literal, as text)".to_string(),
+            );
+        };
+        let Some(ctl) = self.controls.get(&c) else {
+            return fail(
+                "protocol",
+                format!("the cell {} bound no control when it last ran", c),
+            );
+        };
+        let Some(name) = ctl.name.clone() else {
+            return fail(
+                "invalid",
+                format!(
+                    "the cell {}'s control binds no one name (the cell binds several controls or defines several names)",
+                    c
+                ),
+            );
+        };
+        let (kind, default, spec) = (ctl.kind.clone(), ctl.default.clone(), ctl.spec.clone());
+        let program = match self.parser.parse(&src) {
+            Ok(p)
+                if p.statements.len() == 1
+                    && matches!(p.statements[0].unwrapped(), Statement::Expression(_)) =>
+            {
+                p
+            }
+            Ok(_) => return fail("invalid", format!("`{}` is no value (one expression)", src)),
+            Err(e) => {
+                return fail(
+                    "invalid",
+                    format!("`{}` does not parse: {}", src, parse_message(&e)),
+                );
+            }
+        };
+        let file = self.notebook_path();
+        let (key, mut scope, _) = self.take_scope(file.as_deref());
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        // evaluated purely: a value, reaching nothing
+        let kept =
+            self.cmd
+                .interpreter
+                .replace_capabilities(Some(Arc::new(crate::caps::CapTable {
+                    app: crate::caps::Caps::none(),
+                    deps: Vec::new(),
+                })));
+        let value = self.cmd.interpreter.eval_program(program);
+        self.cmd.interpreter.replace_capabilities(kept);
+        let outcome = match value {
+            Ok(v) => {
+                crate::controls::validate(&kind, &default, &spec, &v).map_err(|m| ("invalid", m))
+            }
+            Err(e) => {
+                let _ = self.cmd.interpreter.take_error_location();
+                Err(("invalid", format!("`{}` fails: {}", src, plain_message(&e))))
+            }
+        };
+        if let Ok(v) = &outcome {
+            self.cmd
+                .interpreter
+                .define_variable(name.clone(), v.clone());
+        }
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        self.scopes.insert(key, scope);
+        let _ = crate::output::take_collected();
+        match outcome {
+            Ok(v) => {
+                crate::controls::set_value(
+                    &c,
+                    crate::controls::HostValue {
+                        kind,
+                        default,
+                        value: v.clone(),
+                    },
+                );
+                self.eval_seq += 1;
+                let seq = self.eval_seq;
+                let mut held = Vec::new();
+                let enc = self.encode(&v, 0, &mut held);
+                self.evals.push_back((seq, held));
+                while self.evals.len() > KEEP_EVALS {
+                    let (old, _) = self.evals[0];
+                    self.drop_eval(old);
+                }
+                json!({ "ok": true, "eval": seq, "name": name, "value": enc })
+            }
+            Err((k, m)) => fail(k, m),
+        }
+    }
+
     /// The notebook's path, when this session is a kernel.
     fn notebook_path(&self) -> Option<PathBuf> {
         self.notebook.as_ref().map(|n| n.path.clone())
@@ -594,7 +757,7 @@ impl Session {
         let mut v = json!({
             "event": "hello", "protocol": PROTOCOL, "olang": crate::version::VERSION,
             "root": self.root.to_string_lossy(), "pid": std::process::id(),
-            "ops": ["hello", "eval", "command", "commands", "complete", "deps", "drop", "expand", "release", "interrupt", "ping", "reload", "reread", "render", "reset", "shutdown", "stats", "vars"],
+            "ops": ["hello", "eval", "command", "commands", "complete", "deps", "drop", "expand", "release", "interrupt", "ping", "reload", "reread", "render", "reset", "set", "shutdown", "stats", "vars"],
             "features": ["bind", "pure", "cell", "caps"],
         });
         if let Some(nb) = &self.notebook {
@@ -647,6 +810,7 @@ impl Session {
             "drop" => self.drop_cell(msg),
             "vars" => self.vars(),
             "reread" => self.reread(msg),
+            "set" => self.set_control(msg),
             "expand" => self.expand(msg),
             "release" => {
                 if let Some(e) = msg.get("eval").and_then(|e| e.as_u64()) {
@@ -660,6 +824,8 @@ impl Session {
                 self.scopes.clear();
                 self.cells.clear();
                 self.declared.clear();
+                self.controls.clear();
+                crate::controls::forget_all();
                 self.handles.clear();
                 self.evals.clear();
                 self.sorts.clear();
@@ -928,6 +1094,8 @@ impl Session {
         self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
         // what a cell defines, in the order it does (said with its reply)
         let mut defines: Vec<String> = Vec::new();
+        // what it defines that no `use` binds: a control cell's one name
+        let mut own: Vec<String> = Vec::new();
         // a cell evaluated again: what it defined before is dropped first,
         // and what it defines now is the cell's (kept whatever happens: a
         // failure halfway may have defined some of it)
@@ -938,6 +1106,11 @@ impl Session {
             }
             let mut names = Vec::new();
             for st in &program.statements {
+                for name in crate::notebook::defined_names(st, false) {
+                    if !own.contains(&name) {
+                        own.push(name);
+                    }
+                }
                 for name in crate::notebook::defined_names(st, true) {
                     if !defines.contains(&name) {
                         defines.push(name.clone());
@@ -1001,6 +1174,10 @@ impl Session {
             }
         }
         let _ = self.cmd.interpreter.drain_caps_trace();
+        // a cell's controls are recorded as it binds them (src/controls.rs)
+        if let Some(c) = &cell {
+            crate::controls::begin_cell(c);
+        }
         let started = Instant::now();
         crate::profile::stats_sample_begin(crate::tier_stats::INTERVAL_US);
         let outcome = match bind_failed.take() {
@@ -1014,6 +1191,11 @@ impl Session {
             None => self.cmd.interpreter.eval_program(program),
         };
         crate::profile::stats_sample_end();
+        let bound_controls = if cell.is_some() {
+            crate::controls::end_cell()
+        } else {
+            Vec::new()
+        };
         let ms = started.elapsed().as_secs_f64() * 1000.0;
         running.store(false, Ordering::SeqCst);
         // what it reached: what the gate let through, and what it refused
@@ -1119,6 +1301,32 @@ impl Session {
                 }
                 if !defines.is_empty() {
                     r["defines"] = json!(defines);
+                }
+                // the control the cell bound: what an editor draws and `set`s
+                if let Some(c) = &cell {
+                    match bound_controls.first() {
+                        None => {
+                            self.controls.remove(c);
+                        }
+                        Some(b) => {
+                            let name = (bound_controls.len() == 1 && own.len() == 1)
+                                .then(|| own[0].clone());
+                            let mut held = Vec::new();
+                            r["control"] = self.control_json(b, name.as_deref(), &mut held);
+                            if let Some(entry) = self.evals.back_mut() {
+                                entry.1.extend(held);
+                            }
+                            self.controls.insert(
+                                c.clone(),
+                                CellControl {
+                                    kind: b.kind.clone(),
+                                    default: b.default.clone(),
+                                    spec: b.spec.clone(),
+                                    name,
+                                },
+                            );
+                        }
+                    }
                 }
                 r
             }

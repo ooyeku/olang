@@ -70,3 +70,83 @@ esc("<script>\"&\"</script>")
         )
     );
 }
+
+fn eval_err(src: &str) -> String {
+    let program = Parser::new().parse(src).expect("parse");
+    Interpreter::new()
+        .eval_program(program)
+        .expect_err("must raise")
+        .to_string()
+}
+
+#[test]
+fn a_control_is_a_node_that_renders_a_real_html_control() {
+    let v = eval(
+        r#"
+use ui
+let s = ui.control("slider", 3, #{ "min": 1, "max": 10, "step": 1 })
+[ui.html(s), s.control,
+ ui.html(ui.control("select", "b", #{ "options": ["a", "b"] })),
+ ui.html(ui.control("date", "2026-10-16", #{})),
+ ui.html(ui.control("text", "a <b>", #{})),
+ ui.html(ui.control("toggle", true, #{}))]
+"#,
+    );
+    let shown: Vec<String> = match &v {
+        Value::List(items) => items
+            .iter()
+            .map(|i| match i {
+                Value::String(t) => t.to_string(),
+                other => other.to_string(),
+            })
+            .collect(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        shown,
+        vec![
+            "<input max=\"10\" min=\"1\" step=\"1\" type=\"range\" value=\"3\" />",
+            "slider",
+            "<select><option value=\"a\">a</option><option selected=\"selected\" value=\"b\">b</option></select>",
+            "<input type=\"date\" value=\"2026-10-16\" />",
+            "<input type=\"text\" value=\"a &lt;b&gt;\" />",
+            "<input checked=\"checked\" type=\"checkbox\" />",
+        ]
+    );
+}
+
+#[test]
+fn with_no_host_a_control_is_its_value() {
+    let v = eval(
+        r#"
+use ui
+let chart = plot.line(ods.series([1, 2]), ods.series([3, 4]), #{})
+[ui.slider(0.08, 0.0, 0.3, 0.01), ui.slider(3, 1, 10), ui.select("west", ["east", "west"]),
+ ui.date("2026-10-16"), ui.text("hi"), ui.toggle(false), ui.brush(chart), ui.brush(chart, [1, 2])]
+"#,
+    );
+    assert_eq!(
+        v.to_string(),
+        "[0.08, 3, \"west\", \"2026-10-16\", \"hi\", false, (), [1.0, 2.0]]"
+    );
+}
+
+#[test]
+fn a_control_refuses_a_value_it_cannot_hold() {
+    for (src, says) in [
+        ("ui.slider(0.5, 0.0, 0.3)", "outside [0.0, 0.3]"),
+        ("ui.slider(1, 2, 1)", "is above max"),
+        ("ui.slider(\"a\", 0, 1)", "are numbers"),
+        ("ui.slider(1, 0, 2, 0)", "step is a positive number"),
+        ("ui.select(\"north\", [\"east\"])", "not one of the options"),
+        ("ui.select(\"a\", [])", "non-empty list"),
+        ("ui.date(\"16/10/2026\")", "YYYY-MM-DD"),
+        ("ui.text(3)", "is a String"),
+        ("ui.toggle(1)", "is a Bool"),
+        ("ui.brush(\"<svg></svg>\")", "carries its description"),
+        ("ui.control(\"knob\", 1, #{})", "no control is a knob"),
+    ] {
+        let err = eval_err(&format!("use ui\n{}", src));
+        assert!(err.contains(says), "{src}: {err}");
+    }
+}

@@ -19,6 +19,7 @@ specified in its own notebook design (studio/docs/notebooks.md).
 - [Front matter](#front-matter)
 - [Params](#params)
 - [Capabilities](#capabilities)
+- [Controls](#controls)
 - [The YAML subset](#the-yaml-subset)
 - [Commands](#commands)
 - [Diagnostics](#diagnostics)
@@ -217,6 +218,31 @@ list (`fs: write`, `net: "no"`), and a `capabilities` that is not a map
 are each a diagnostic at their line, and the notebook refuses to run
 rather than run with a grant it cannot honour.
 
+## Controls
+
+A cell that binds a control makes the notebook a small app. `ui`'s
+controls — `ui.slider`, `ui.select`, `ui.date`, `ui.text`, `ui.toggle`
+and `ui.brush` over a chart — each answer their value:
+
+```olang
+use ui
+let lift = ui.slider(0.08, 0.0, 0.3, 0.01)
+```
+
+Run as a program (`olang run`, `test`, `check`), `lift` is `0.08`. In a
+notebook's kernel the cell's reply says its control (`control`: its
+kind, the name the cell binds, its value, its default, its range or
+options, a brush's chart), and the editor draws it; a value the editor
+sets (`set`) is bound to `lift` at once, and kept as the cell's: running
+the cell again keeps it while it still fits — the same kind, the same
+default as when it was set, within the range or the options the cell
+gives now. A default changed in the code, or a cell deleted, forgets it.
+A control cell binds one control and defines one name (the names a
+`use` binds aside); a cell binding several controls or defining several
+names says its first control without a name, read-only. Binding reaches
+no capability: a control cell is pure, so the cells reading it run again
+on their own.
+
 ## The YAML subset
 
 olang reads front matter in a strict subset of YAML, and anything
@@ -247,7 +273,7 @@ document, and tabs as indentation. A key given twice is an error.
 | `olang fmt x.olmd` | formats each cell's code, `no-run` cells too, and leaves prose, fences, front matter and `output` blocks byte for byte; `--check` reports instead |
 | `olang expand x.olmd` | prints the program |
 | `:run x.olmd` in the REPL | runs it in its folder, under its grant |
-| `olang repl --serve --notebook x.olmd` | the notebook's kernel: its params bound, its grant, its folder, `eval` by cell (each saying the capabilities it reached), a cell's names read without running it (`deps`), its names and values (`vars`), its front matter read again (`reread`); a Frame's column summaries and its views filtered and sorted by handle, a chart's description as data ([the protocol](tooling.md#olang-repl---serve)) |
+| `olang repl --serve --notebook x.olmd` | the notebook's kernel: its params bound, its grant, its folder, `eval` by cell (each saying the capabilities it reached), a cell's names read without running it (`deps`), its names and values (`vars`), its front matter read again (`reread`), a cell's control and the value an editor sets for it (`set`); a Frame's column summaries and its views filtered and sorted by handle, a chart's description as data ([the protocol](tooling.md#olang-repl---serve)) |
 
 `olang check DIR` and `olang fmt DIR` take a folder's notebooks with its
 `.ol` files; `--watch` re-runs when a notebook changes. `olang fmt`

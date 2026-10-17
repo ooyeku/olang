@@ -80,6 +80,9 @@ pub fn get_stdlib() -> crate::ast::ValueMap {
     stdlib.insert("os".to_string(), os::create_os_module());
     #[cfg(feature = "native")]
     stdlib.insert("runtime".to_string(), runtime::create_runtime_module());
+    // the browser's: `bind` alone, so `ui`'s controls work there
+    #[cfg(not(feature = "native"))]
+    stdlib.insert("runtime".to_string(), crate::controls::bind_only_module());
     #[cfg(feature = "native")]
     stdlib.insert("proc".to_string(), proc::create_proc_module());
     #[cfg(feature = "native")]

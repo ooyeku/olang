@@ -22,6 +22,7 @@ pub mod builtin;
 pub mod caps;
 pub mod clock;
 pub mod compile_cache; // Compiled bytecode kept between runs
+pub mod controls; // Controls a host binds: `runtime.bind`, `ui.slider` and its kin
 pub mod effects;
 pub mod errtrace; // Where a caught error went: its frames, file and line each
 pub mod expand;

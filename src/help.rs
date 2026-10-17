@@ -4535,6 +4535,62 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             &[r##"ui.html(ui.h("p", #{}, ["hi"]))  // "<p>hi</p>""##],
         );
         self.doc_ex(
+            "ui.control",
+            "ui.control(kind, value, spec)",
+            "Map",
+            "ui",
+            "A control as a node: an HTML control (`input` range, date, text, checkbox; `select` with its options; a brush's `div`) that also says its `control` kind and its `spec` (min, max, step, options, chart).",
+            &[r##"ui.html(ui.control("slider", 3, #{ "min": 1, "max": 10, "step": 1 }))"##],
+        );
+        self.doc_ex(
+            "ui.slider",
+            "ui.slider(value, min, max, step = ())",
+            "Number",
+            "ui",
+            "A number between min and max a host binds; an Int slider when the value and the bounds are Ints. Raises on a value outside the range. With no host, the value.",
+            &[r##"let lift = ui.slider(0.08, 0.0, 0.3, 0.01)"##],
+        );
+        self.doc_ex(
+            "ui.select",
+            "ui.select(value, options)",
+            "Any",
+            "ui",
+            "One of a list of options a host binds; raises when the value is not one of them. With no host, the value.",
+            &[r##"let region = ui.select("west", ["east", "west"])"##],
+        );
+        self.doc_ex(
+            "ui.date",
+            "ui.date(value)",
+            "String",
+            "ui",
+            "A day, a YYYY-MM-DD String, a host binds. With no host, the value.",
+            &[r##"let since = ui.date("2026-10-01")"##],
+        );
+        self.doc_ex(
+            "ui.text",
+            "ui.text(value)",
+            "String",
+            "ui",
+            "A line of text a host binds. With no host, the value.",
+            &[r##"let query = ui.text("gad")"##],
+        );
+        self.doc_ex(
+            "ui.toggle",
+            "ui.toggle(value)",
+            "Bool",
+            "ui",
+            "On or off, a host binds. With no host, the value.",
+            &[r##"let log_scale = ui.toggle(false)"##],
+        );
+        self.doc_ex(
+            "ui.brush",
+            "ui.brush(chart, value = ())",
+            "Any",
+            "ui",
+            "A range of a plot chart's x a host binds: () for none, or [x0, x1] (Floats). With no host, the value.",
+            &[r##"let span = ui.brush(chart)"##],
+        );
+        self.doc_ex(
             "ui.render",
             "ui.render(el, children)",
             "Unit",
@@ -6479,6 +6535,14 @@ for f in map_get(runtime.last_error(), "frames") { println(show(map_get(f, "file
             "runtime",
             "A value's shape as text: its kind, a map's keys (sorted) with theirs, a list's first item's, a struct's fields'. Two values of one shape can stand for each other — what a host compares to keep a reloaded module's state.",
             &[r##"runtime.shape(#{ "n": 1, "items": ["a"] })   // "{items:[String],n:Int}""##],
+        );
+        self.doc_ex(
+            "runtime.bind",
+            "runtime.bind(node, value)",
+            "Any",
+            "runtime",
+            "A control a host binds (what ui.slider and its kin answer): `value` with no host; in a notebook's kernel, the value the editor set for the evaluating cell's control while it still fits (the same kind and default, within its range or options now). `node` is ui.control's.",
+            &[r##"runtime.bind(ui.control("toggle", true, #{}), true)  // true, with no host"##],
         );
         self.doc_ex(
             "runtime.build",

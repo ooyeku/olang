@@ -53,6 +53,93 @@ share fn html(node) = {
     }
 }
 
+// ── controls a host binds ──────────────────────────────────────────────
+// A control is a node like any other — `html` renders a real HTML
+// control — that also says its kind (`control`) and its spec. Each
+// `ui.slider` and its kin validates, then answers `runtime.bind(node,
+// value)`: the value itself with no host, and in a notebook's kernel the
+// value an editor set for the cell's control, while it still fits.
+
+fn is_num(v) = typeof(v) == "Int" || typeof(v) == "Float"
+
+fn label_of(v) = if typeof(v) == "String" => v else => show(v)
+
+share fn control(kind, value, spec) = {
+    let node = if kind == "slider" => {
+        let mut attrs = #{ "type": "range", "min": spec.min, "max": spec.max, "value": value }
+        if map_has_key(spec, "step") && spec.step != () => { attrs = map_set(attrs, "step", spec.step) }
+        h("input", attrs, [])
+    } else if kind == "select" => h("select", #{}, map(spec.options, (o) =>
+        h("option", if o == value => #{ "value": label_of(o), "selected": "selected" }
+            else => #{ "value": label_of(o) }, [label_of(o)])))
+    else if kind == "date" => h("input", #{ "type": "date", "value": value }, [])
+    else if kind == "text" => h("input", #{ "type": "text", "value": value }, [])
+    else if kind == "toggle" => h("input",
+        if value == true => #{ "type": "checkbox", "checked": "checked" }
+        else => #{ "type": "checkbox" }, [])
+    else if kind == "brush" => h("div",
+        if value == () => #{ "class": "brush" }
+        else => #{ "class": "brush", "data-x0": value[0], "data-x1": value[1] }, [])
+    else => raise("ui.control: no control is a " + label_of(kind) +
+        " (slider, select, date, text, toggle, brush)")
+    map_set(map_set(node, "control", kind), "spec", spec)
+}
+
+/// A number chosen between `min` and `max` (by `step`, when given): an
+/// Int slider when the value and both bounds are Ints.
+share fn slider(value, min, max, step = ()) = {
+    if !is_num(value) || !is_num(min) || !is_num(max) =>
+        raise("ui.slider: the value, min and max are numbers")
+    if min > max => raise("ui.slider: min " + show(min) + " is above max " + show(max))
+    if value < min || value > max =>
+        raise("ui.slider: " + show(value) + " is outside [" + show(min) + ", " + show(max) + "]")
+    if step != () && (!is_num(step) || step <= 0) => raise("ui.slider: step is a positive number")
+    runtime.bind(control("slider", value, #{ "min": min, "max": max, "step": step }), value)
+}
+
+/// One of `options` (a non-empty list).
+share fn select(value, options) = {
+    if typeof(options) != "List" || len(options) == 0 => raise("ui.select: options is a non-empty list")
+    if !contains(options, value) =>
+        raise("ui.select: " + show(value) + " is not one of the options")
+    runtime.bind(control("select", value, #{ "options": options }), value)
+}
+
+fn date_like(s) = typeof(s) == "String" && len(s) == 10 &&
+    str.substring(s, 4, 5) == "-" && str.substring(s, 7, 8) == "-" &&
+    is_ok(str.parse_int(str.substring(s, 0, 4))) && is_ok(str.parse_int(str.substring(s, 5, 7))) &&
+    is_ok(str.parse_int(str.substring(s, 8, 10)))
+
+/// A day, as a "YYYY-MM-DD" String.
+share fn date(value) = {
+    if !date_like(value) => raise("ui.date: the value is a \"YYYY-MM-DD\" String, got " + show(value))
+    runtime.bind(control("date", value, #{}), value)
+}
+
+/// A line of text.
+share fn text(value) = {
+    if typeof(value) != "String" => raise("ui.text: the value is a String, got " + typeof(value))
+    runtime.bind(control("text", value, #{}), value)
+}
+
+/// On or off.
+share fn toggle(value) = {
+    if typeof(value) != "Bool" => raise("ui.toggle: the value is a Bool, got " + typeof(value))
+    runtime.bind(control("toggle", value, #{}), value)
+}
+
+/// A range of a chart's x (`chart` a plot chart's SVG): `()` for none,
+/// or `[x0, x1]`.
+share fn brush(chart, value = ()) = {
+    if typeof(chart) != "String" || is_err(plot.describe(chart)) =>
+        raise("ui.brush: the chart is a plot chart's SVG (one that carries its description)")
+    if value != () && !(typeof(value) == "List" && len(value) == 2 && is_num(value[0]) &&
+        is_num(value[1]) && value[0] <= value[1]) =>
+        raise("ui.brush: the value is () or [x0, x1], x0 <= x1")
+    let range = if value == () => () else => [to_float(value[0]), to_float(value[1])]
+    runtime.bind(control("brush", range, #{ "chart": chart }), range)
+}
+
 // ── mounting with keyed reconciliation ─────────────────────────────────
 
 fn wrapper_id(mount, key) = "ui-" + mount + "-" + key

@@ -1584,6 +1584,7 @@ that serves its own routes reads the same bytes.
 | `runtime.call_budget(f, args, ms)` | `f(args…)` stopped past `ms` (an interrupt on this thread only) and its failure caught: `#{ ok, value, error, frames, over, us }` |
 | `runtime.last_error()` | the error a boundary on this thread caught last (`attempt`, `call_budget`, `load_module`) with its frames, `#{ message, frames: [#{ path, line, function }] }`, innermost first (line 0: an expression body); `()` when none |
 | `runtime.shape(value)` | a value's shape as text — kind, a map's sorted keys with theirs, a list's first item's — what a host compares to keep a reloaded module's state |
+| `runtime.bind(node, value)` | a control a host binds (what `ui.slider` and its kin answer): `value` with no host; in a notebook's kernel the value the editor set for the evaluating cell's control while it still fits. Also in the browser build, where `runtime` has nothing else |
 
 ```olang no-run
 let rt = unwrap(runtime.wasm())
@@ -1997,6 +1998,11 @@ with `dom` ([olang in the browser](wasm.md)).
 | `ui.esc(s)` | `s` (a non-String is first written with `to_string`) with `&`, `<`, `>` and `"` escaped for HTML |
 | `ui.html(node)` | a tree rendered to an HTML string, its text escaped |
 | `ui.render(el, children)` | a keyed list mounted in `el`, diffed against what it rendered last ([wasm.md](wasm.md)) |
+| `ui.control(kind, value, spec)` | a control as a node: `html` renders a real HTML control (`input` range, date, text or checkbox; a `select` and its options; a brush's `div`), and the node says its `control` kind and its `spec` (`min`, `max`, `step`, `options`, `chart`) |
+| `ui.slider(value, min, max, step = ())` | a number in [min, max] a host binds (an Int slider when the value and the bounds are Ints) |
+| `ui.select(value, options)` | one of `options` a host binds |
+| `ui.date(value)` · `ui.text(value)` · `ui.toggle(value)` | a `"YYYY-MM-DD"` String, a String, a Bool a host binds |
+| `ui.brush(chart, value = ())` | a range of a `plot` chart's x a host binds: `()` for none, or `[x0, x1]` (Floats) |
 | `viz.check(spec)` | `Ok(spec)` when a chart spec will render, or `Err` naming an unknown key or the absence of points to draw |
 | `viz.chart(spec)` | a spec compiled to SVG text ([the `viz` grammar](ods.md#the-viz-grammar)) |
 | `viz.draw(canvas, spec)` | the same spec drawn on a canvas, in the browser |
@@ -2005,6 +2011,17 @@ with `dom` ([olang in the browser](wasm.md)).
 | `dash.card(title, inner)` / `dash.half(title, inner)` / `dash.wide(title, inner)` | a titled panel one, two, or every column wide; `inner` is HTML and is not escaped |
 | `dash.grid(cards, columns)` | the tiles and cards in a grid of `columns` columns |
 | `dash.styles()` | the kit's stylesheet, a `<style>` element to prepend once |
+
+**Controls.** `ui.slider` and its kin check their value (a slider's
+within its range, a select's one of its options, each its type) and
+raise naming what is wrong, then answer `runtime.bind(ui.control(…),
+value)`. With no host — `olang run`, `test`, `check`, a plain REPL — a
+control is its value, so a notebook runs as a program. A notebook's
+kernel is a host: it says each cell's control to the editor, and the
+value the editor sets is the control's when the cell runs again, while
+it still fits (the same kind and default, within the range or options
+now) — see [notebooks](notebooks.md#controls). Binding reaches no
+capability: a control cell is pure.
 
 ```olang
 use ui

@@ -1079,3 +1079,131 @@ fn a_chart_says_its_description_decimated_and_zooms_by_range() {
     assert!(s["value"]["h"].is_u64());
     assert_eq!(s["value"]["svg"]["bg"], json!("#fcfcfb"));
 }
+
+#[test]
+fn a_cells_control_is_said_set_by_the_host_and_kept_while_it_fits() {
+    let dir = project();
+    let (mut r, hello) = Repl::start(dir.path());
+    assert!(hello["ops"].as_array().unwrap().contains(&json!("set")));
+    let cell = |r: &mut Repl, id: &str, code: &str| {
+        r.ask(json!({ "op": "eval", "cell": id, "code": code }))
+    };
+    let a = cell(
+        &mut r,
+        "c5",
+        "use ui\nlet lift = ui.slider(0.08, 0.0, 0.3, 0.01)",
+    );
+    assert_eq!(a["ok"], json!(true), "{a}");
+    let c = &a["control"];
+    assert_eq!(c["kind"], json!("slider"), "{a}");
+    assert_eq!(c["name"], json!("lift"));
+    assert_eq!(c["value"]["s"], json!("0.08"));
+    assert_eq!(c["default"]["s"], json!("0.08"));
+    assert_eq!(
+        (c["min"].clone(), c["max"].clone(), c["step"].clone()),
+        (json!(0.0), json!(0.3), json!(0.01))
+    );
+    // the host sets it: bound in place, and kept when the cell runs again
+    let s = r.ask(json!({ "op": "set", "cell": "c5", "value": "0.12" }));
+    assert_eq!(
+        s,
+        json!({ "id": s["id"], "ok": true, "eval": s["eval"], "name": "lift", "value": { "k": "float", "t": "Float", "s": "0.12" } })
+    );
+    assert_eq!(r.eval("lift")["value"]["s"], json!("0.12"));
+    let again = cell(
+        &mut r,
+        "c5",
+        "use ui\nlet lift = ui.slider(0.08, 0.0, 0.3, 0.01)",
+    );
+    assert_eq!(again["control"]["value"]["s"], json!("0.12"), "{again}");
+    assert_eq!(r.eval("lift")["value"]["s"], json!("0.12"));
+    // out of range, or the wrong kind of value, is refused
+    let out = r.ask(json!({ "op": "set", "cell": "c5", "value": "0.5" }));
+    assert_eq!(out["error"]["kind"], json!("invalid"), "{out}");
+    let bad = r.ask(json!({ "op": "set", "cell": "c5", "value": "\"x\"" }));
+    assert_eq!(bad["error"]["kind"], json!("invalid"), "{bad}");
+    // a set value reaches nothing
+    let imp = r
+        .ask(json!({ "op": "set", "cell": "c5", "value": "unwrap(fs.read_file(\"olang.toml\"))" }));
+    assert_eq!(imp["ok"], json!(false), "{imp}");
+    // a changed default forgets the host's value
+    let changed = cell(
+        &mut r,
+        "c5",
+        "use ui\nlet lift = ui.slider(0.1, 0.0, 0.3, 0.01)",
+    );
+    assert_eq!(changed["control"]["value"]["s"], json!("0.1"), "{changed}");
+    let again = cell(
+        &mut r,
+        "c5",
+        "use ui\nlet lift = ui.slider(0.1, 0.0, 0.3, 0.01)",
+    );
+    assert_eq!(again["control"]["value"]["s"], json!("0.1"));
+    // so does a range it no longer fits
+    r.ask(json!({ "op": "set", "cell": "c5", "value": "0.25" }));
+    let narrower = cell(
+        &mut r,
+        "c5",
+        "use ui\nlet lift = ui.slider(0.1, 0.0, 0.2, 0.01)",
+    );
+    assert_eq!(
+        narrower["control"]["value"]["s"],
+        json!("0.1"),
+        "{narrower}"
+    );
+    // an Int slider takes an Int; a select one of its options
+    let n = cell(&mut r, "c6", "use ui\nlet top_n = ui.slider(3, 1, 10, 1)");
+    assert_eq!(n["control"]["min"], json!(1));
+    let f = r.ask(json!({ "op": "set", "cell": "c6", "value": "2.5" }));
+    assert_eq!(f["error"]["kind"], json!("invalid"), "{f}");
+    let sel = cell(
+        &mut r,
+        "c7",
+        "use ui\nlet region = ui.select(\"west\", [\"east\", \"west\"])",
+    );
+    assert_eq!(sel["control"]["options"][0]["s"], json!("east"), "{sel}");
+    assert_eq!(
+        r.ask(json!({ "op": "set", "cell": "c7", "value": "\"north\"" }))["error"]["kind"],
+        json!("invalid")
+    );
+    assert_eq!(
+        r.ask(json!({ "op": "set", "cell": "c7", "value": "\"east\"" }))["ok"],
+        json!(true)
+    );
+    // drop forgets it
+    r.ask(json!({ "op": "drop", "cell": "c7" }));
+    let back = cell(
+        &mut r,
+        "c7",
+        "use ui\nlet region = ui.select(\"west\", [\"east\", \"west\"])",
+    );
+    assert_eq!(back["control"]["value"]["s"], json!("west"), "{back}");
+    // a brush carries its chart's description; set takes a range or ()
+    let b = cell(
+        &mut r,
+        "c8",
+        "use ui\nlet span = ui.brush(plot.line(ods.series([1, 2, 3]), ods.series([2, 4, 3]), #{}))",
+    );
+    assert_eq!(b["control"]["chart"]["type"], json!("xy"), "{b}");
+    assert_eq!(b["control"]["value"]["k"], json!("unit"));
+    let sb = r.ask(json!({ "op": "set", "cell": "c8", "value": "[2.0, 5.5]" }));
+    assert_eq!(sb["ok"], json!(true), "{sb}");
+    assert_eq!(
+        r.ask(json!({ "op": "set", "cell": "c8", "value": "()" }))["ok"],
+        json!(true)
+    );
+    // several names: the control is said with no name, and set refuses it
+    let two = cell(&mut r, "c9", "use ui\nlet t = ui.toggle(true)\nlet u = 1");
+    assert!(two["control"].get("name").is_none(), "{two}");
+    assert_eq!(
+        r.ask(json!({ "op": "set", "cell": "c9", "value": "false" }))["error"]["kind"],
+        json!("invalid")
+    );
+    // no control: nothing said, and set is the protocol's error
+    let plain = cell(&mut r, "c10", "let z = 1");
+    assert!(plain.get("control").is_none());
+    assert_eq!(
+        r.ask(json!({ "op": "set", "cell": "c10", "value": "2" }))["error"]["kind"],
+        json!("protocol")
+    );
+}
