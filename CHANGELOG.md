@@ -22,6 +22,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   NAME=VALUE` overrides, and its `capabilities` the run's grant,
   intersected with `olang.toml`'s and `--deny`'s and fail-closed. A
   notebook runs in its own folder.
+- **A notebook's kernel for a reactive editor.** `olang repl --serve`
+  says, with every evaluation, the capabilities it reached (`caps`:
+  `fs`, `net`, `db`, `proc`, `env` — granted or refused; `[]` is pure;
+  the gate's own classification on every tier), and gains four ops:
+  `deps` reads cells' defined and used names from their text without
+  running them (the checker's resolution, each name's line and column;
+  answered at once, even while a cell runs), `drop` forgets what a
+  deleted cell defined, `vars` lists the notebook's names with their
+  values as the protocol carries them (a Frame's shape, a list's length)
+  and their size in memory, and `reread` takes the front matter again
+  (the editor's unsaved text, or the file): a param whose value changed
+  bound again in place, one gone forgotten, the grant applied anew.
 - **An SVG picture's text is drawn.** `gui`'s image draws an SVG's
   `<text>` in the system's fonts (loaded once, when an SVG is first
   drawn; sans-serif the platform's interface face), so a `plot` chart

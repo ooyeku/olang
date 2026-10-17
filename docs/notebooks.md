@@ -247,7 +247,7 @@ document, and tabs as indentation. A key given twice is an error.
 | `olang fmt x.olmd` | formats each cell's code, `no-run` cells too, and leaves prose, fences, front matter and `output` blocks byte for byte; `--check` reports instead |
 | `olang expand x.olmd` | prints the program |
 | `:run x.olmd` in the REPL | runs it in its folder, under its grant |
-| `olang repl --serve --notebook x.olmd` | the notebook's kernel: its params bound, its grant, its folder, `eval` by cell ([the protocol](tooling.md#olang-repl---serve)) |
+| `olang repl --serve --notebook x.olmd` | the notebook's kernel: its params bound, its grant, its folder, `eval` by cell (each saying the capabilities it reached), a cell's names read without running it (`deps`), its names and values (`vars`), its front matter read again (`reread`) ([the protocol](tooling.md#olang-repl---serve)) |
 
 `olang check DIR` and `olang fmt DIR` take a folder's notebooks with its
 `.ol` files; `--watch` re-runs when a notebook changes. `olang fmt`

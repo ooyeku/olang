@@ -283,7 +283,7 @@ fn a_file_scope_has_its_declarations_and_names_what_is_not_bound() {
 fn a_functions_parameters_are_named_then_bound_for_one_evaluation() {
     let dir = project();
     let (mut r, hello) = Repl::start(dir.path());
-    assert_eq!(hello["features"], json!(["bind", "pure", "cell"]));
+    assert_eq!(hello["features"], json!(["bind", "pure", "cell", "caps"]));
     let f = calc(dir.path());
     // refused: the function and its parameters said
     let p = r.eval_at(&f, 7, "let y = x * RATE");
@@ -746,4 +746,197 @@ fn a_hosts_plot_theme_is_a_charts_when_it_names_none() {
         )
         .contains("#fcfcfb")
     );
+}
+
+#[test]
+fn a_cells_names_are_read_from_its_text_without_running_it_even_while_a_cell_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    notebook(dir.path());
+    let (mut r, hello) = Repl::start_with(dir.path(), &["--notebook", "nbs/sales.olmd"]);
+    let ops = hello["ops"].as_array().unwrap();
+    for op in ["deps", "drop", "vars", "reread"] {
+        assert!(ops.contains(&json!(op)), "{op}: {hello}");
+    }
+    let d = r.ask(json!({ "op": "deps", "cells": [
+        { "cell": "c1", "code": "let mine = rows(sales, region)\nlet total = sum(mine)", "line": 40 },
+        { "cell": "c2", "code": "fn detects(size) = {\n    random.seed(seed + size)\n    lift\n}\nuse util { helper }\nhelper(detects(3))", "line": 10 },
+        { "cell": "c3", "code": "let = 2", "line": 5 },
+    ] }));
+    assert_eq!(d["ok"], json!(true), "{d}");
+    let c1 = &d["cells"][0];
+    assert_eq!(c1["cell"], json!("c1"));
+    assert_eq!(
+        c1["defines"],
+        json!([{ "name": "mine", "line": 40, "col": 1 }, { "name": "total", "line": 41, "col": 1 }]),
+        "{d}"
+    );
+    // a builtin is no use; a name the cell defines before reading it neither
+    assert_eq!(
+        c1["uses"],
+        json!([{ "name": "rows", "line": 40, "col": 12 }, { "name": "sales", "line": 40, "col": 17 }, { "name": "region", "line": 40, "col": 24 }]),
+        "{d}"
+    );
+    // a function's body reads names too; a `use` binds one, said so
+    let c2 = &d["cells"][1];
+    let uses: Vec<&str> = c2["uses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|u| u["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(uses, ["seed", "lift"], "{d}");
+    assert_eq!(c2["uses"][0]["line"], json!(11));
+    assert_eq!(
+        c2["defines"][1],
+        json!({ "name": "helper", "line": 14, "col": 1, "use": true }),
+        "{d}"
+    );
+    // a cell that does not parse says where
+    assert_eq!(d["cells"][2]["ok"], json!(false), "{d}");
+    assert_eq!(d["cells"][2]["error"]["line"], json!(5), "{d}");
+    // asked while a cell runs: answered at once, the cell still running
+    let spin = r.write(json!({ "op": "eval", "cell": "c9", "code": "let mut s = 0\nwhile true { s = s + 1 }", "line": 30 }));
+    std::thread::sleep(Duration::from_millis(200));
+    let did =
+        r.write(json!({ "op": "deps", "cells": [{ "cell": "c1", "code": "x + 1", "line": 16 }] }));
+    let first = r.recv();
+    assert_eq!(first["id"], json!(did), "{first}");
+    assert_eq!(first["cells"][0]["uses"][0]["name"], json!("x"));
+    let _ = r.write(json!({ "op": "interrupt" }));
+    let mut stopped = J::Null;
+    while stopped.is_null() {
+        let m = r.recv();
+        if m["id"] == json!(spin) {
+            stopped = m;
+        }
+    }
+    assert_eq!(stopped["error"]["kind"], json!("interrupted"), "{stopped}");
+}
+
+#[test]
+fn every_evaluation_says_the_capabilities_it_reached() {
+    let dir = tempfile::tempdir().unwrap();
+    notebook(dir.path());
+    let (mut r, hello) = Repl::start_with(dir.path(), &["--notebook", "nbs/sales.olmd"]);
+    assert!(
+        hello["features"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("caps")),
+        "{hello}"
+    );
+    // a file read under the grant: fs, though allowed
+    let read = r.ask(json!({ "op": "eval", "cell": "c1", "code": "let t = unwrap(fs.read_file(\"data.txt\"))", "line": 12 }));
+    assert_eq!(read["ok"], json!(true), "{read}");
+    assert_eq!(read["caps"], json!(["fs"]), "{read}");
+    // computing, printing, the clock and randomness reach nothing
+    let pure = r.ask(json!({ "op": "eval", "cell": "c2", "code": "random.seed(3)\nprintln(len(t))\nlet r = random.random()\ntime.now_ms() > 0", "line": 16 }));
+    assert_eq!(pure["ok"], json!(true), "{pure}");
+    assert_eq!(pure["caps"], json!([]), "{pure}");
+    // a refusal is reached too, and on every tier a function calling it is
+    let refused = r.ask(json!({ "op": "eval", "cell": "c3", "code": "fn put() = fs.write_file(\"out.txt\", \"x\")\nunwrap(put())", "line": 20 }));
+    assert_eq!(refused["ok"], json!(false), "{refused}");
+    assert_eq!(refused["caps"], json!(["fs"]), "{refused}");
+    let env = r.ask(json!({ "op": "eval", "cell": "c4", "code": "fn home() = os.get_env(\"HOME\")\nlet hs = map(range(0, 300), (i) => home())\nlen(hs)", "line": 24 }));
+    assert_eq!(env["caps"], json!(["env"]), "{env}");
+    // the next evaluation starts afresh
+    assert_eq!(r.eval("1 + 1")["caps"], json!([]));
+}
+
+#[test]
+fn a_deleted_cells_names_are_dropped_and_the_notebooks_names_listed_with_their_shapes() {
+    let dir = tempfile::tempdir().unwrap();
+    notebook(dir.path());
+    let (mut r, _) = Repl::start_with(dir.path(), &["--notebook", "nbs/sales.olmd"]);
+    let a = r.ask(json!({ "op": "eval", "cell": "c1", "code": "let xs = [1, 2, 3]\nfn f(y) = y", "line": 12 }));
+    assert_eq!(a["ok"], json!(true), "{a}");
+    let b = r.ask(json!({ "op": "eval", "cell": "c2", "code": "let fr = ods.frame([[\"a\", ods.series([1, 2])], [\"b\", ods.series([\"x\", \"y\"])]])\nlet word = \"hello\"", "line": 16 }));
+    assert_eq!(b["ok"], json!(true), "{b}");
+    let v = r.ask(json!({ "op": "vars" }));
+    assert_eq!(v["ok"], json!(true), "{v}");
+    let vars = v["vars"].as_array().unwrap();
+    let by = |n: &str| {
+        vars.iter()
+            .find(|x| x["name"] == json!(n))
+            .cloned()
+            .unwrap_or(J::Null)
+    };
+    // the param, then each cell's names with their cell
+    assert_eq!(by("n")["param"], json!(true), "{v}");
+    assert_eq!(by("n")["v"]["s"], json!("2"));
+    assert_eq!(by("xs")["cell"], json!("c1"));
+    assert_eq!(by("xs")["v"]["k"], json!("list"));
+    assert_eq!(by("xs")["v"]["n"], json!(3));
+    assert_eq!(by("f")["v"]["k"], json!("fn"));
+    let fr = by("fr");
+    assert_eq!(fr["cell"], json!("c2"));
+    assert_eq!(fr["v"]["k"], json!("frame"));
+    assert_eq!(fr["v"]["n"], json!(2));
+    assert_eq!(fr["v"]["table"]["cols"], json!(["a", "b"]));
+    assert!(fr["bytes"].as_u64().unwrap() >= 16, "{fr}");
+    assert!(by("word")["bytes"].as_u64().unwrap() >= 5);
+    // a frame's handle reads its rows
+    let rows =
+        r.ask(json!({ "op": "expand", "h": fr["v"]["h"], "table": true, "start": 0, "count": 10 }));
+    assert_eq!(rows["rows"][1]["c"], json!(["2", "y"]), "{rows}");
+    // a cell deleted: its names dropped, the others kept
+    let d = r.ask(json!({ "op": "drop", "cell": "c1" }));
+    assert_eq!(d["dropped"], json!(["f", "xs"]), "{d}");
+    assert_eq!(r.eval("xs")["ok"], json!(false));
+    assert_eq!(r.eval("word")["value"]["s"], json!("hello"));
+    let after = r.ask(json!({ "op": "vars" }));
+    assert!(
+        !after["vars"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["name"] == json!("xs")),
+        "{after}"
+    );
+    // a cell never evaluated: nothing to drop
+    assert_eq!(
+        r.ask(json!({ "op": "drop", "cell": "c7" }))["dropped"],
+        json!([])
+    );
+}
+
+#[test]
+fn a_front_matter_read_again_binds_its_changed_params_and_its_grant_in_place() {
+    let dir = tempfile::tempdir().unwrap();
+    let nb = notebook(dir.path());
+    let (mut r, _) = Repl::start_with(dir.path(), &["--notebook", "nbs/sales.olmd"]);
+    let a = r.ask(json!({ "op": "eval", "cell": "c1", "code": "let x = n * 10", "line": 12 }));
+    assert_eq!(a["ok"], json!(true));
+    // the editor's unsaved text: n changed, a param added; the grant the same
+    let text = std::fs::read_to_string(&nb)
+        .unwrap()
+        .replace("  n: 2\n", "  n: 5\n  m: \"hi\"\n");
+    let rr = r.ask(json!({ "op": "reread", "text": text }));
+    assert_eq!(rr["ok"], json!(true), "{rr}");
+    assert_eq!(rr["params"], json!(["n", "m"]), "{rr}");
+    assert_eq!(rr["grant"], json!(false), "{rr}");
+    assert_eq!(r.eval("n")["value"]["s"], json!("5"));
+    assert_eq!(r.eval("m")["value"]["s"], json!("hi"));
+    // what a cell defined stays until it runs again
+    assert_eq!(r.eval("x")["value"]["s"], json!("20"));
+    // the same text again: nothing changed
+    assert_eq!(
+        r.ask(json!({ "op": "reread", "text": text }))["params"],
+        json!([])
+    );
+    // a param gone, the grant changed (fs off): applied at once
+    let off = text
+        .replace("  m: \"hi\"\n", "")
+        .replace("fs: read", "fs: false");
+    let r2 = r.ask(json!({ "op": "reread", "text": off }));
+    assert_eq!(r2["removed"], json!(["m"]), "{r2}");
+    assert_eq!(r2["grant"], json!(true), "{r2}");
+    assert_eq!(r.eval("m")["ok"], json!(false));
+    let read = r.ask(json!({ "op": "eval", "cell": "c4", "code": "fs.read_file(\"data.txt\")" }));
+    assert_eq!(read["ok"], json!(false), "{read}");
+    // with no text, the file on disk
+    let r3 = r.ask(json!({ "op": "reread" }));
+    assert_eq!(r3["params"], json!(["n"]), "{r3}");
+    assert_eq!(r3["grant"], json!(true), "{r3}");
+    assert_eq!(r.eval("n")["value"]["s"], json!("2"));
 }

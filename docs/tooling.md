@@ -910,7 +910,7 @@ What a program prints while the session serves is collected and sent with
 the evaluation that printed it (`out`); stdout belongs to the protocol.
 
 **Handshake.** On start the server says
-`{"event":"hello","protocol":1,"olang":"0.88.0","root":…,"pid":…,"ops":[…],"features":["bind","pure","cell"]}`
+`{"event":"hello","protocol":1,"olang":"0.88.0","root":…,"pid":…,"ops":[…],"features":["bind","pure","cell","caps"]}`
 (`features`: what an `eval` takes beyond the protocol's first version;
 a notebook's kernel says `notebook` too, below).
 A client that does not know the protocol's version stops there. `{"op":"hello"}`
@@ -957,6 +957,10 @@ capabilities and pass.
 | `{"op":"commands","id":11,"prefix":":t"?}` | `{"ok":true,"commands":[{"name","aliases","usage","summary","arg","group","client","words"?}…]}` — every command, for completion and help |
 | `{"op":"complete","id":12,"line":":cd sr","pos":6}` | `{"ok":true,"start":4,"items":[{"label","kind","detail"}…],"command":{"name","usage","summary","client"}?}` — completion of a prompt line at `pos` (characters); `items` replace `line[start..pos]` |
 | `{"op":"eval","id":13,"cell":"c3","code":"let t = total(xs)","line":21}` | as any `eval`, with `defines` (the names the cell defines, in order); what the code defines is cell `c3`'s, and an evaluation of `c3` again drops it first |
+| `{"op":"deps","id":14,"cells":[{"cell":"c3","code":"let t = total(xs)","line":21}…]}` | `{"ok":true,"cells":[{"cell":"c3","ok":true,"defines":[{"name":"t","line":21,"col":1}],"uses":[{"name":"total","line":21,"col":9},{"name":"xs","line":21,"col":15}]}…]}` — each cell's names read from its text, never run (below) |
+| `{"op":"drop","id":15,"cell":"c3"}` | `{"ok":true,"dropped":["t"]}` — what the cell defined, forgotten (a cell deleted) |
+| `{"op":"vars","id":16}` | `{"ok":true,"eval":9,"vars":[{"name":"sales","cell":"c3","v":V,"bytes":27411},{"name":"region","param":true,…}…]}` — a kernel's names (below) |
+| `{"op":"reread","id":17,"text":"…"?}` | `{"ok":true,"params":["region"],"removed":[],"grant":false,"problems":[…]}` — a kernel's front matter read again (below) |
 | `{"op":"reset"}`, `{"op":"shutdown"}` | the scopes forgotten (and what each cell defined); the server ends |
 
 **A notebook's kernel.** `olang repl --serve --notebook x.olmd` serves
@@ -981,8 +985,8 @@ The handshake says the notebook:
 `"notebook":{"path":…,"title":"Sales","params":["region"],"problems":[{"line","column","message"}…],"refused":false}`
 — `problems` are the notebook's own as olang reads it (a bad option, an
 unclosed fence), `refused` that its grant could not be read. The
-notebook is read once, as the server starts: a notebook whose front
-matter changed is served by a kernel started again.
+notebook is read as the server starts; `reread` reads its front matter
+again (below).
 
 **Cells.** An `eval` with `cell` (any id: a string or a number) is that
 cell's evaluation, in any session. Its top-level definitions — `let`s,
@@ -1000,6 +1004,40 @@ cell's function names the line the cell declared it on. Whether one cell
 may define what another does, or use what a later one does, is the
 notebook's rules, which `olang check` holds (the kernel runs cells in
 the order it is asked).
+
+**What an evaluation reached.** Every `eval` reply says `caps`: the
+capabilities the evaluation reached, as the grant names them (`fs`,
+`net`, `db`, `proc`, `env`), whether the grant let it through or refused
+it; `[]` when it reached none — it is pure, and an editor may run it
+again on its own. It is the gate's own classification, on every tier (a
+function the VM or native code runs included). The clock, randomness
+and printing are no capabilities.
+
+**A cell's names, without running it.** `deps` reads each cell's code
+(its first line `line`, so every place is the file's) as `olang check`
+reads a notebook's: `defines`, the top-level names it defines in order
+(`"use": true` on a name a `use` binds), and `uses`, the names it reads
+that none of its own statements defines, at their first use as a word —
+a builtin is none, a name read in a function the cell declares is one.
+A cell that does not parse answers `"ok":false` with its parse `error`.
+`deps` is answered as it is read, like `ping`: an editor asks as a
+person types, while a cell may be running.
+
+**A kernel's names.** `vars` lists the notebook's names: its params
+(`"param": true`) and what each cell defined (`cell`), each with its value
+as an evaluation's (its handle held under `eval`, a container's items
+left to `expand`) and `bytes`, its size in memory roughly (a long
+container measured on its first thousand items and scaled; a Frame's
+columns). `drop` forgets what a cell defined, as a cell evaluated again
+does first.
+
+**A kernel's front matter, again.** `reread` reads the notebook's front
+matter from `text` (an editor's unsaved buffer) or the file: each param
+whose value changed (or is new) is bound again in the notebook's scope
+on its line, one gone is forgotten, the grant is applied anew. The reply
+names the params that changed (`params`), those gone (`removed`), and
+whether the grant changed (`grant`); what cells defined stays, so an
+editor runs again only what reads a changed param.
 
 **Commands.** Every command of the interactive REPL (`:help`, `:type`,
 `:time`, `:sh`, … — `commands` lists them) runs through `command`, in the

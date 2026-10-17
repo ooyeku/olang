@@ -577,3 +577,36 @@ fn check_holds_a_notebook_to_one_name_one_cell_and_top_to_bottom() {
     assert!(out.status.success(), "{}{}", stdout(&out), stderr(&out));
     let _ = std::fs::remove_dir_all(&ws);
 }
+
+#[test]
+fn a_cells_defines_and_uses_are_read_from_its_text_on_the_files_lines() {
+    use olang::notebook::cell_deps;
+    let d = cell_deps(
+        "let mine = filter(sales, region)\nfn pct(x) = x * share\nlet n = len(mine)",
+        20,
+    )
+    .unwrap();
+    let defs: Vec<(&str, u32, bool)> = d.defines.iter().map(|x| (x.0.as_str(), x.1, x.3)).collect();
+    assert_eq!(
+        defs,
+        [("mine", 20, false), ("pct", 21, false), ("n", 22, false)]
+    );
+    // what it reads that it does not define, at its first use; builtins are none
+    let uses: Vec<(&str, u32, u32)> = d.uses.iter().map(|x| (x.0.as_str(), x.1, x.2)).collect();
+    assert_eq!(
+        uses,
+        [("sales", 20, 19), ("region", 20, 26), ("share", 21, 17)]
+    );
+    // a `use` binds names, said so
+    let u = cell_deps("use util { twice, half as h }\ntwice(2)", 3).unwrap();
+    assert_eq!(
+        u.defines
+            .iter()
+            .map(|x| (x.0.as_str(), x.3))
+            .collect::<Vec<_>>(),
+        [("twice", true), ("h", true)]
+    );
+    assert!(u.uses.is_empty());
+    // a cell that does not parse is an error
+    assert!(cell_deps("let = 1", 1).is_err());
+}

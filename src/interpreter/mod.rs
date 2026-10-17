@@ -6105,6 +6105,16 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         }
     }
 
+    /// The capabilities exercised since the last drain, the set emptied (a
+    /// serving session's purity: what one evaluation reached). Empty when
+    /// profiling is off.
+    pub fn drain_caps_trace(&mut self) -> std::collections::BTreeSet<crate::caps::CapUse> {
+        match self.caps_trace.as_ref() {
+            Some(t) => std::mem::take(&mut *t.lock().unwrap()),
+            None => Default::default(),
+        }
+    }
+
     /// Take the exercised-capability set back out (to print the profile at
     /// end of run).
     pub fn take_caps_trace(&mut self) -> Option<std::collections::BTreeSet<crate::caps::CapUse>> {

@@ -173,6 +173,14 @@ pub fn serve(no_ovm: bool, notebook: Option<PathBuf>) -> i32 {
                     out.send(&json!({ "id": msg.get("id").cloned().unwrap_or(J::Null), "ok": true, "running": busy }));
                     continue;
                 }
+                // a cell's names read from its text: parsing only, answered
+                // at once (an editor asks as a person types, while a cell runs)
+                if msg.get("op").and_then(|o| o.as_str()) == Some("deps") {
+                    let mut reply = deps_reply(&msg);
+                    reply["id"] = msg.get("id").cloned().unwrap_or(J::Null);
+                    out.send(&reply);
+                    continue;
+                }
                 if msg.get("op").and_then(|o| o.as_str()) == Some("interrupt") {
                     let busy = running.load(Ordering::SeqCst);
                     if busy {
@@ -229,6 +237,8 @@ struct NotebookInfo {
     problems: Vec<crate::notebook::Diagnostic>,
     /// Its grant could not be read: the session runs under none.
     refused: bool,
+    /// The front matter's grant as read (to tell when it changed).
+    grant: Option<crate::caps::Caps>,
 }
 
 struct Scope {
@@ -278,6 +288,9 @@ impl Session {
         if !no_ovm {
             interp.enable_bytecode_tier(1, false);
         }
+        // every evaluation says the capabilities it reached (its purity):
+        // the gate's own classification, on every tier
+        interp.enable_caps_trace();
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let root = crate::pkg::manifest::Manifest::find_root(&cwd).unwrap_or(cwd.clone());
         interp.set_current_file(&root.join("olang.toml"));
@@ -326,6 +339,29 @@ impl Session {
     fn open_notebook(&mut self, path: &Path) {
         let text = std::fs::read_to_string(path).unwrap_or_default();
         let nb = crate::notebook::parse(&text);
+        if let Some(t) = self.grant_table(&nb) {
+            self.cmd.interpreter.set_capabilities(t);
+        }
+        self.cmd.interpreter.set_current_file(path);
+        self.notebook = Some(NotebookInfo {
+            path: path.to_path_buf(),
+            title: nb.title.clone(),
+            params: nb
+                .params
+                .iter()
+                .map(|p| (p.name.clone(), p.value.clone(), p.line))
+                .collect(),
+            problems: nb.diagnostics.clone(),
+            refused: nb.capabilities_refused,
+            grant: nb.capabilities,
+        });
+    }
+
+    /// The grant a notebook's front matter makes the session's: the front
+    /// matter's, intersected with the enclosing project's (and each
+    /// dependency's attenuation) and `OLANG_DENY`'s; a grant that cannot be
+    /// read, none at all. `None`: nothing restricts the session.
+    fn grant_table(&self, nb: &crate::notebook::Notebook) -> Option<crate::caps::CapTable> {
         let deny = std::env::var("OLANG_DENY")
             .ok()
             .map(|d| crate::caps::parse_deny(&d).unwrap_or_else(|_| crate::caps::Caps::none()));
@@ -338,7 +374,7 @@ impl Session {
             (Some(a), Some(b)) => Some(a.intersect(b)),
             (a, b) => a.or(b),
         };
-        let table = match crate::pkg::manifest::Manifest::load_for_capabilities(&self.root) {
+        match crate::pkg::manifest::Manifest::load_for_capabilities(&self.root) {
             Ok(m) => match m.and_then(|m| m.capabilities.clone()) {
                 Some(config) => Some(match crate::caps::CapTable::build(&config, &self.deps) {
                     Ok(mut t) => {
@@ -365,22 +401,184 @@ impl Session {
                 app: crate::caps::Caps::none(),
                 deps: Vec::new(),
             }),
-        };
-        if let Some(t) = table {
-            self.cmd.interpreter.set_capabilities(t);
         }
-        self.cmd.interpreter.set_current_file(path);
-        self.notebook = Some(NotebookInfo {
-            path: path.to_path_buf(),
-            title: nb.title.clone(),
-            params: nb
-                .params
-                .iter()
-                .map(|p| (p.name.clone(), p.value.clone(), p.line))
-                .collect(),
-            problems: nb.diagnostics.clone(),
-            refused: nb.capabilities_refused,
+    }
+
+    /// The notebook's front matter read again (`text`, the editor's unsaved
+    /// buffer, else the file): each param whose value changed bound again in
+    /// the notebook's scope on its line, a param gone forgotten, the grant
+    /// applied anew. The reply says which params changed and whether the
+    /// grant did, so an editor marks what they reach.
+    fn reread(&mut self, msg: &J) -> J {
+        let Some(path) = self.notebook_path() else {
+            return json!({ "ok": false, "error": { "kind": "protocol", "message": "reread is a notebook's kernel's (--notebook)" } });
+        };
+        let text = match msg.get("text").and_then(|t| t.as_str()) {
+            Some(t) => t.to_string(),
+            None => std::fs::read_to_string(&path).unwrap_or_default(),
+        };
+        let nb = crate::notebook::parse(&text);
+        let info = self.notebook.as_ref().expect("a kernel's notebook");
+        let before = info.params.clone();
+        let grant_changed =
+            info.grant != nb.capabilities || info.refused != nb.capabilities_refused;
+        let now: Vec<(String, String, u32)> = nb
+            .params
+            .iter()
+            .map(|p| (p.name.clone(), p.value.clone(), p.line))
+            .collect();
+        let changed: Vec<(String, String, u32)> = now
+            .iter()
+            .filter(|p| !before.iter().any(|b| b.0 == p.0 && b.1 == p.1))
+            .cloned()
+            .collect();
+        let removed: Vec<String> = before
+            .iter()
+            .filter(|b| !now.iter().any(|p| p.0 == b.0))
+            .map(|b| b.0.clone())
+            .collect();
+        // the scope as it is (made with the params as they were when it is new)
+        let (key, mut scope, mut notes) = self.take_scope(Some(&path));
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        for name in &removed {
+            self.cmd.interpreter.forget_top_level(name);
+        }
+        for (name, value, line) in &changed {
+            let code = format!(
+                "{}let {} = {}",
+                "\n".repeat(*line as usize - 1),
+                name,
+                value
+            );
+            let outcome = match self.parser.parse(&code) {
+                Ok(p) => self.cmd.interpreter.eval_program(p),
+                Err(e) => Err(InterpreterError::RuntimeError {
+                    message: parse_message(&e),
+                }),
+            };
+            if let Err(e) = outcome {
+                let _ = self.cmd.interpreter.take_error_location();
+                notes.push(format!(
+                    "{}:{}: the param `{}` is not bound: {}",
+                    short(&self.root, &path),
+                    line,
+                    name,
+                    plain_message(&e)
+                ));
+            }
+        }
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        self.scopes.insert(key, scope);
+        if grant_changed {
+            match self.grant_table(&nb) {
+                Some(t) => self.cmd.interpreter.set_capabilities(t),
+                None => {
+                    let _ = self.cmd.interpreter.replace_capabilities(None);
+                }
+            }
+        }
+        let info = self.notebook.as_mut().expect("a kernel's notebook");
+        info.title = nb.title.clone();
+        info.params = now;
+        info.problems = nb.diagnostics.clone();
+        info.refused = nb.capabilities_refused;
+        info.grant = nb.capabilities;
+        let mut r = json!({
+            "ok": true,
+            "params": changed.iter().map(|p| p.0.clone()).collect::<Vec<_>>(),
+            "removed": removed,
+            "grant": grant_changed,
+            "problems": nb.diagnostics.iter().map(|d| json!({ "line": d.line, "column": d.column, "message": d.message })).collect::<Vec<_>>(),
         });
+        if !notes.is_empty() {
+            r["notes"] = json!(notes);
+        }
+        r
+    }
+
+    /// A cell's definitions forgotten (a cell deleted): `{"cell"}`, in the
+    /// notebook's scope (or a `file`'s). The reply says what was dropped.
+    fn drop_cell(&mut self, msg: &J) -> J {
+        let Some(c) = msg.get("cell").map(|c| match c.as_str() {
+            Some(s) => s.to_string(),
+            None => c.to_string(),
+        }) else {
+            return json!({ "ok": false, "error": { "kind": "protocol", "message": "drop needs a cell" } });
+        };
+        let file = msg
+            .get("file")
+            .and_then(|f| f.as_str())
+            .map(|f| self.resolve(f))
+            .or_else(|| self.notebook_path());
+        let (key, mut scope, _) = self.take_scope(file.as_deref());
+        let names = self.cells.remove(&(key.clone(), c)).unwrap_or_default();
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        for name in &names {
+            self.cmd.interpreter.forget_top_level(name);
+            self.declared.remove(name);
+        }
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        self.scopes.insert(key, scope);
+        json!({ "ok": true, "dropped": names })
+    }
+
+    /// The notebook's names and their values: each cell's definitions (and
+    /// the params), with the value as the protocol carries it (its handle
+    /// held, its first items left to `expand`) and its size in memory,
+    /// roughly.
+    fn vars(&mut self) -> J {
+        let Some(path) = self.notebook_path() else {
+            return json!({ "ok": false, "error": { "kind": "protocol", "message": "vars is a notebook's kernel's (--notebook)" } });
+        };
+        let key = path.to_string_lossy().into_owned();
+        let params: Vec<String> = self
+            .notebook
+            .as_ref()
+            .map(|n| n.params.iter().map(|p| p.0.clone()).collect())
+            .unwrap_or_default();
+        let mut owned: Vec<(String, String)> = self
+            .cells
+            .iter()
+            .filter(|((k, _), _)| *k == key)
+            .flat_map(|((_, c), names)| names.iter().map(move |n| (c.clone(), n.clone())))
+            .collect();
+        owned.sort();
+        let (skey, mut scope, _) = self.take_scope(Some(&path));
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        let mut found: Vec<(Option<String>, String, Value)> = Vec::new();
+        for p in &params {
+            if let Some(v) = self.cmd.interpreter.get_environment().get(p) {
+                found.push((None, p.clone(), v));
+            }
+        }
+        for (c, n) in &owned {
+            if let Some(v) = self.cmd.interpreter.get_environment().get(n) {
+                found.push((Some(c.clone()), n.clone(), v));
+            }
+        }
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        self.scopes.insert(skey, scope);
+        self.eval_seq += 1;
+        let seq = self.eval_seq;
+        let mut held = Vec::new();
+        let vars: Vec<J> = found
+            .iter()
+            .map(|(c, n, v)| {
+                let enc = self.encode(v, 2, &mut held);
+                let mut r = json!({ "name": n, "v": enc, "bytes": approx_bytes(v) });
+                match c {
+                    Some(c) => r["cell"] = J::String(c.clone()),
+                    None => r["param"] = J::Bool(true),
+                }
+                r
+            })
+            .collect();
+        self.evals.push_back((seq, held));
+        while self.evals.len() > KEEP_EVALS {
+            let (old, _) = self.evals[0];
+            self.drop_eval(old);
+        }
+        json!({ "ok": true, "eval": seq, "vars": vars })
     }
 
     /// The notebook's path, when this session is a kernel.
@@ -392,8 +590,8 @@ impl Session {
         let mut v = json!({
             "event": "hello", "protocol": PROTOCOL, "olang": crate::version::VERSION,
             "root": self.root.to_string_lossy(), "pid": std::process::id(),
-            "ops": ["hello", "eval", "command", "commands", "complete", "expand", "release", "interrupt", "ping", "reload", "render", "reset", "shutdown", "stats"],
-            "features": ["bind", "pure", "cell"],
+            "ops": ["hello", "eval", "command", "commands", "complete", "deps", "drop", "expand", "release", "interrupt", "ping", "reload", "reread", "render", "reset", "shutdown", "stats", "vars"],
+            "features": ["bind", "pure", "cell", "caps"],
         });
         if let Some(nb) = &self.notebook {
             v["notebook"] = json!({
@@ -441,6 +639,10 @@ impl Session {
             }
             "commands" => self.commands(msg),
             "complete" => self.complete(msg),
+            "deps" => deps_reply(msg),
+            "drop" => self.drop_cell(msg),
+            "vars" => self.vars(),
+            "reread" => self.reread(msg),
             "expand" => self.expand(msg),
             "release" => {
                 if let Some(e) = msg.get("eval").and_then(|e| e.as_u64()) {
@@ -793,6 +995,7 @@ impl Session {
                 }
             }
         }
+        let _ = self.cmd.interpreter.drain_caps_trace();
         let started = Instant::now();
         crate::profile::stats_sample_begin(crate::tier_stats::INTERVAL_US);
         let outcome = match bind_failed.take() {
@@ -808,6 +1011,21 @@ impl Session {
         crate::profile::stats_sample_end();
         let ms = started.elapsed().as_secs_f64() * 1000.0;
         running.store(false, Ordering::SeqCst);
+        // what it reached: what the gate let through, and what it refused
+        let mut reached: Vec<String> = self
+            .cmd
+            .interpreter
+            .drain_caps_trace()
+            .into_iter()
+            .map(|u| cap_word(u).to_string())
+            .collect();
+        if let Err(e) = &outcome
+            && let Some(cap) = denied_capability(&plain_message(e))
+        {
+            reached.push(cap);
+        }
+        reached.sort();
+        reached.dedup();
         let interrupted = crate::interrupt::pending();
         crate::interrupt::clear();
         let location = if outcome.is_err() {
@@ -918,6 +1136,7 @@ impl Session {
         reply["tier"] = J::String(tier.to_string());
         reply["calls"] = json!({ "bytecode": bc, "native": nat });
         reply["out"] = J::String(printed);
+        reply["caps"] = json!(reached);
         if !notes.is_empty() {
             reply["notes"] = json!(notes);
         }
@@ -1899,6 +2118,126 @@ fn denied_capability(message: &str) -> Option<String> {
     rest[end..]
         .starts_with("' denied")
         .then(|| rest[..end].to_string())
+}
+
+/// `deps`: each cell's defined and used names, read from its text without
+/// running it (`cells`: `[{cell, code, line}]`, each line the cell's first
+/// in its notebook). A cell that does not parse says its error instead.
+fn deps_reply(msg: &J) -> J {
+    let cells = msg
+        .get("cells")
+        .and_then(|c| c.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let out: Vec<J> = cells
+        .iter()
+        .map(|c| {
+            let code = c.get("code").and_then(|x| x.as_str()).unwrap_or("");
+            let line = c.get("line").and_then(|l| l.as_u64()).unwrap_or(1).max(1) as u32;
+            let mut r = match crate::notebook::cell_deps(code, line) {
+                Ok(d) => json!({
+                    "ok": true,
+                    "defines": d.defines.iter().map(|(n, l, col, by_use)| {
+                        let mut x = json!({ "name": n, "line": l, "col": col });
+                        if *by_use {
+                            x["use"] = J::Bool(true);
+                        }
+                        x
+                    }).collect::<Vec<_>>(),
+                    "uses": d.uses.iter().map(|(n, l, col)| json!({ "name": n, "line": l, "col": col })).collect::<Vec<_>>(),
+                }),
+                Err(e) => {
+                    let (l, col) = parse_position(&e);
+                    json!({ "ok": false, "error": { "kind": "parse", "message": parse_message(&e), "line": l, "col": col } })
+                }
+            };
+            if let Some(id) = c.get("cell") {
+                r["cell"] = id.clone();
+            }
+            r
+        })
+        .collect();
+    json!({ "ok": true, "cells": out })
+}
+
+/// A value's size in memory, roughly (bytes): its scalars, its strings'
+/// text, a container's items (a long one measured on its first thousand
+/// and scaled), a Frame's columns, Bytes' length.
+fn approx_bytes(v: &Value) -> u64 {
+    fn of(v: &Value, depth: usize) -> u64 {
+        if depth > 6 {
+            return 16;
+        }
+        let scaled = |n: usize, f: &mut dyn FnMut(usize) -> u64| -> u64 {
+            let k = n.min(1000);
+            let sum: u64 = (0..k).map(&mut *f).sum();
+            if k == 0 { 0 } else { sum * n as u64 / k as u64 }
+        };
+        match v {
+            Value::Integer(_) | Value::Float(_) | Value::Boolean(_) | Value::Unit => 16,
+            Value::String(s) => 24 + s.len() as u64,
+            Value::List(items) | Value::Tuple(items) => {
+                24 + scaled(items.len(), &mut |i| of(&items[i], depth + 1))
+            }
+            Value::Map(m) => {
+                let pairs: Vec<(&String, &Value)> = m.iter().collect();
+                48 + scaled(pairs.len(), &mut |i| {
+                    24 + pairs[i].0.len() as u64 + of(pairs[i].1, depth + 1)
+                })
+            }
+            Value::Struct { fields, .. } => {
+                let pairs: Vec<(&String, &Value)> = fields.iter().collect();
+                48 + scaled(pairs.len(), &mut |i| {
+                    24 + pairs[i].0.len() as u64 + of(pairs[i].1, depth + 1)
+                })
+            }
+            Value::Ok(inner) | Value::Err(inner) => 16 + of(inner, depth + 1),
+            Value::Native(_) => {
+                if let Some(cols) = ods_columns(v) {
+                    return cols
+                        .iter()
+                        .map(|(name, c)| name.len() as u64 + series_bytes(c))
+                        .sum();
+                }
+                match crate::stdlib::bytes::bytes_of(v) {
+                    Ok(b) => 24 + b.len() as u64,
+                    Err(_) => 64,
+                }
+            }
+            _ => 64,
+        }
+    }
+    of(v, 0)
+}
+
+/// An `ods` column's size: its values (a text column's spans and text,
+/// measured on its first ten thousand when longer), its nulls' bits.
+fn series_bytes(c: &olang_ods::Series) -> u64 {
+    use olang_ods::Series;
+    let n = c.len() as u64;
+    let bits = n.div_ceil(8);
+    match c {
+        Series::F64 { .. } | Series::I64 { .. } => 8 * n + bits,
+        Series::Bool { .. } => n + bits,
+        Series::Str { col, .. } => {
+            let k = col.len().min(10_000);
+            let text: u64 = (0..k).map(|i| col.get(i).len() as u64).sum();
+            let text = if k == 0 { 0 } else { text * n / k as u64 };
+            8 * n + text + bits
+        }
+    }
+}
+
+/// A capability's name as the grant writes it.
+fn cap_word(u: crate::caps::CapUse) -> &'static str {
+    use crate::caps::CapUse;
+    match u {
+        CapUse::FsRead | CapUse::FsWrite => "fs",
+        CapUse::Net => "net",
+        CapUse::Db => "db",
+        CapUse::Proc => "proc",
+        CapUse::Env => "env",
+    }
 }
 
 fn round3(x: f64) -> f64 {

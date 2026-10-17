@@ -975,6 +975,59 @@ fn rules(nb: &Notebook, lines: &[&str], source: &str) -> Vec<Diagnostic> {
     out
 }
 
+/// What one cell defines and uses, read from its text without running it
+/// (the kernel's `deps`): the graph an editor builds a notebook's runs on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CellDeps {
+    /// Each top-level name the cell defines, in order: (name, line,
+    /// column, whether a `use` binds it). A name a `use` binds is the
+    /// cell's for the cells that read it, and no clash with another
+    /// cell's `use` of it.
+    pub defines: Vec<(String, u32, u32, bool)>,
+    /// Each name the cell reads that none of its own statements defines
+    /// (a builtin is no such name), in order of first use: (name, line,
+    /// column of its first use as a word).
+    pub uses: Vec<(String, u32, u32)>,
+}
+
+/// The defined and used names of a cell whose code begins on `line`
+/// (1-based) of its notebook — every line and column the file's. Uses
+/// are the checker's resolution (`Analyzer`), as the notebook's rules
+/// read them; a name read inside a function the cell declares is a use.
+pub fn cell_deps(code: &str, line: u32) -> Result<CellDeps, crate::parser::ParseError> {
+    use crate::ast::Statement;
+    let padded = format!("{}{}", "\n".repeat(line.max(1) as usize - 1), code);
+    let program = crate::parser::Parser::new().parse_raw(&padded)?;
+    let mut defines: Vec<(String, u32, u32, bool)> = Vec::new();
+    for s in &program.statements {
+        let (l, c) = match s {
+            Statement::Located { line, column, .. } => (*line, *column),
+            _ => (line, 1),
+        };
+        let own = defined_names(s, false);
+        for name in defined_names(s, true) {
+            if defines.iter().any(|d| d.0 == name) {
+                continue;
+            }
+            let by_use = !own.contains(&name);
+            defines.push((name, l, c, by_use));
+        }
+    }
+    let mut analyzer = crate::analyze::Analyzer::new();
+    let _ = analyzer.analyze_program(&program);
+    let lines: Vec<&str> = padded.lines().collect();
+    let last = lines.len().max(1) as u32;
+    let mut uses: Vec<(String, u32, u32)> = Vec::new();
+    for name in analyzer.get_undefined_variables() {
+        if uses.iter().any(|u| u.0 == name) || defines.iter().any(|d| d.0 == name) {
+            continue;
+        }
+        let (l, c) = first_use(&lines, line.max(1)..=last, &name).unwrap_or((line.max(1), 1));
+        uses.push((name, l, c));
+    }
+    Ok(CellDeps { defines, uses })
+}
+
 /// Where `name` is first read in `lines` (1-based, inclusive range): the
 /// first time it stands as a word of its own outside a string or a
 /// comment, not a member (`x.name`) nor a key (`name:`).
