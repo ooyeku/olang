@@ -1573,7 +1573,7 @@ fn run_program(
         return 2;
     }
     if let Some(spec) = for_each {
-        return run_for_each(&cli, &file_path, &spec, &params, &args);
+        return run_for_each(cli, &file_path, &spec, &params, &args);
     }
     if let Err(code) = notebook_params(&params) {
         return code;
@@ -1744,6 +1744,14 @@ fn notebook_command(action: NotebookAction) -> i32 {
                 .and_then(|t| t.as_str())
                 .map(str::to_string)
                 .unwrap_or(text);
+            // what it writes, into folders made as needed
+            for p in [&json_out, &html, &pdf].into_iter().flatten() {
+                if p.as_os_str() != "-"
+                    && let Some(d) = p.parent().filter(|d| !d.as_os_str().is_empty())
+                {
+                    let _ = std::fs::create_dir_all(d);
+                }
+            }
             if let Some(j) = &json_out {
                 let body = serde_json::to_string(&doc).unwrap_or_default();
                 if j.as_os_str() == "-" {

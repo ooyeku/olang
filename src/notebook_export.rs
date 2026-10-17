@@ -169,13 +169,13 @@ fn num_type(t: &str) -> bool {
     matches!(t, "Int" | "Float" | "int" | "float" | "i64" | "f64")
 }
 
+/// A table read: its columns, their types, its rows (a null `None`), its size.
+type TableOf = (Vec<String>, Vec<String>, Vec<Vec<Option<String>>>, u64);
+
 /// A table's columns, types and rows: a Frame's, a Series', a list of
 /// records'. `page` (Studio's first page) when given, else the value's own
 /// first rows.
-fn table_of(
-    v: &J,
-    page: Option<&J>,
-) -> Option<(Vec<String>, Vec<String>, Vec<Vec<Option<String>>>, u64)> {
+fn table_of(v: &J, page: Option<&J>) -> Option<TableOf> {
     let table = v.get("table")?;
     let cols: Vec<String> = table
         .get("cols")?
@@ -251,7 +251,7 @@ fn count_text(n: u64) -> String {
     let s = n.to_string();
     let mut out = String::new();
     for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -662,11 +662,20 @@ fn control_html(ctl: &J, mode: Mode, cell: &str, value: Option<&J>) -> String {
             let lo = num("min").unwrap_or_else(|| "0".into());
             let hi = num("max").unwrap_or_else(|| "1".into());
             let step = num("step").unwrap_or_else(|| "any".into());
+            // how far along its track the knob stands (the track filled to it)
+            let f = |t: &str| t.parse::<f64>().ok();
+            let pct = match (f(&lo), f(&hi), f(&val)) {
+                (Some(a), Some(b), Some(v)) if b > a => {
+                    ((v - a) / (b - a) * 100.0).clamp(0.0, 100.0)
+                }
+                _ => 0.0,
+            };
             let _ = write!(
                 o,
-                "<span class=\"bound\">{}</span><input id=\"ctl-{}\" type=\"range\" min=\"{}\" max=\"{}\" step=\"{}\" value=\"{}\"{}{}><span class=\"bound\">{}</span><output class=\"value\">{}</output>",
+                "<span class=\"bound\">{}</span><input id=\"ctl-{}\" type=\"range\" style=\"--p:{:.1}%\" min=\"{}\" max=\"{}\" step=\"{}\" value=\"{}\"{}{}><span class=\"bound\">{}</span><output class=\"value\">{}</output>",
                 esc(&human_float(&lo)),
                 esc(cell),
+                pct,
                 esc(&lo),
                 esc(&hi),
                 esc(&step),
@@ -1278,11 +1287,16 @@ figure{margin:0}
 .control{display:flex;align-items:center;gap:10px;min-height:28px;font-size:13px}
 .control .name{font:12px/20px "SF Mono",ui-monospace,Menlo,monospace;color:var(--fg);min-width:64px}
 .control .bound{font:11px/16px "SF Mono",ui-monospace,Menlo,monospace;color:var(--muted)}
-.control input[type=range]{flex:1;max-width:360px;accent-color:var(--accent)}
+.control input[type=range]{-webkit-appearance:none;appearance:none;flex:1;max-width:360px;height:22px;margin:0;background:transparent}
+.control input[type=range]::-webkit-slider-runnable-track{height:3px;border-radius:2px;background:linear-gradient(to right,var(--accent) var(--p,0%),var(--hairline) var(--p,0%))}
+.control input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;margin-top:-5.5px;background:var(--bg);border:1px solid var(--border);box-shadow:0 1px 2px rgba(0,0,0,.18)}
+.control input[type=range]::-moz-range-track{height:3px;border-radius:2px;background:var(--hairline)}
+.control input[type=range]::-moz-range-progress{height:3px;border-radius:2px;background:var(--accent)}
+.control input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--bg);border:1px solid var(--border)}
 .control .value{font:12px/20px "SF Mono",ui-monospace,Menlo,monospace;border:1px solid var(--hairline);border-radius:6px;padding:0 8px;min-width:48px;text-align:right}
 .control select,.control input[type=text],.control input[type=date]{font:13px/20px inherit;color:var(--fg);background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:2px 8px;height:26px}
 .control :disabled{opacity:1}
-.control input[type=range]:disabled{opacity:.85}
+.control input[type=range]:disabled::-webkit-slider-thumb{box-shadow:none}
 .no-run .code{opacity:.75}
 .foot-note{margin:48px auto 0;max-width:680px;font-size:11px;color:var(--muted);border-top:1px solid var(--hairline);padding-top:12px}
 .busy .output{opacity:.55;transition:opacity .12s}
@@ -1337,7 +1351,12 @@ const APP_SCRIPT: &str = r#"
       var send = function () { post('/api/rpc/nb.set', { cell: el.dataset.cell, value: literal(el) }); };
       if (el.type === 'range') {
         var out = el.parentNode.querySelector('output');
-        el.addEventListener('input', function () { if (out) out.textContent = el.value; send(); });
+        el.addEventListener('input', function () {
+          if (out) out.textContent = el.value;
+          var lo = parseFloat(el.min), hi = parseFloat(el.max), v = parseFloat(el.value);
+          if (hi > lo) el.style.setProperty('--p', ((v - lo) / (hi - lo) * 100) + '%');
+          send();
+        });
       } else {
         el.addEventListener('change', send);
       }

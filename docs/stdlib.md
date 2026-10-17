@@ -1585,6 +1585,7 @@ that serves its own routes reads the same bytes.
 | `runtime.last_error()` | the error a boundary on this thread caught last (`attempt`, `call_budget`, `load_module`) with its frames, `#{ message, frames: [#{ path, line, function }] }`, innermost first (line 0: an expression body); `()` when none |
 | `runtime.shape(value)` | a value's shape as text — kind, a map's sorted keys with theirs, a list's first item's — what a host compares to keep a reloaded module's state |
 | `runtime.bind(node, value)` | a control a host binds (what `ui.slider` and its kin answer): `value` with no host; in a notebook's kernel the value the editor set for the evaluating cell's control while it still fits. Also in the browser build, where `runtime` has nothing else |
+| `runtime.preset(value, name)` | the next control the program binds with no host answers `value`, held to the control's kind and range or options (an error naming `name` when it does not fit): what `olang run x.olmd --param region=west` sets for a notebook's control cell |
 
 ```olang no-run
 let rt = unwrap(runtime.wasm())

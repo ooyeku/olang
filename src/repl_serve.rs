@@ -243,7 +243,8 @@ pub fn run_notebook(path: &Path, overrides: &[(String, String)]) -> Result<J, St
     };
     // params and controls apart: a param's override is the program's, a
     // control's is set as its cell runs
-    let (params_over, controls_over): (Vec<(String, String)>, Vec<(String, String)>) = overrides
+    type Pairs = Vec<(String, String)>;
+    let (params_over, controls_over): (Pairs, Pairs) = overrides
         .iter()
         .cloned()
         .partition(|(n, _)| nb.params.iter().any(|p| &p.name == n));
@@ -474,10 +475,7 @@ enum KernelTimeline {
         events: Vec<crate::timeline::Event>,
     },
     /// The trace served, and what each cell's replay found.
-    Replay {
-        trace: crate::timeline::Trace,
-        path: PathBuf,
-    },
+    Replay { trace: crate::timeline::Trace },
 }
 
 /// One cell's evaluation under the timeline: the tier kept aside, and in
@@ -841,6 +839,10 @@ impl Session {
             {
                 decimate_chart(&mut c, None);
                 o["chart"] = c;
+                // the chart itself, as a page draws it (an export, an app)
+                if let Some(sv) = svg_of(svg) {
+                    o["svg"] = sv;
+                }
             }
         }
         o
@@ -976,7 +978,6 @@ impl Session {
         doc
     }
 
-    /// The notebook's path, when this session is a kernel.
     // ── a recorded run ──────────────────────────────────────────────
 
     /// `record`: from now each cell's evaluation records what it read (the
@@ -1106,7 +1107,7 @@ impl Session {
                     .collect();
                 let reply = json!({ "ok": true, "replaying": true, "olang": trace.olang_version, "cells": cells,
                     "events": trace.events.len(), "notebook": trace.notebook.clone().unwrap_or(J::Null) });
-                self.timeline = Some(KernelTimeline::Replay { trace, path });
+                self.timeline = Some(KernelTimeline::Replay { trace });
                 reply
             }
             Err(e) => json!({ "ok": false, "error": { "kind": "io", "message": e } }),
@@ -1235,6 +1236,7 @@ impl Session {
         }
     }
 
+    /// The notebook's path, when this session is a kernel.
     fn notebook_path(&self) -> Option<PathBuf> {
         self.notebook.as_ref().map(|n| n.path.clone())
     }
