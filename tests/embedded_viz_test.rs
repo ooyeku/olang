@@ -163,3 +163,25 @@ plot.xy([["s", "sparkles", x, x]], #{})
     .unwrap_err();
     assert!(err.contains("mark must be"), "got: {}", err);
 }
+
+#[test]
+fn a_chart_from_a_spec_carries_its_description() {
+    // viz compiles to plot, so a chart made from a spec describes itself
+    assert_all_true(
+        &format!(
+            r#"use viz
+{ROWS}
+let svg = viz.chart(#{{ "data": rows, "mark": "line", "x": "day", "y": "value", "color": "kind", "title": "t" }})
+let d = unwrap(plot.describe(svg))
+let pts = viz.chart(#{{ "data": rows, "mark": "point", "x": "day", "y": "value", "color_by": "value" }})
+let p = unwrap(plot.describe(pts))
+let bars = unwrap(plot.describe(viz.chart(#{{ "data": rows, "mark": "bar", "x": "kind", "y": "value", "color": "day", "stack": true }})))
+[d.type == "xy", d.title == "t", len(d.series) == 2, d.series[0].name == "a",
+ d.series[1].y == [2.0, 6.0], d.series[0].mark == "line",
+ p.series[0].pc == true, len(p.series[0].colors) == 4,
+ bars.type == "bar", bars.layout == "stacked", bars.labels == ["a", "b"]]
+"#
+        ),
+        11,
+    );
+}

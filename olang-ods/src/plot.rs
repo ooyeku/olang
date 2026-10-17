@@ -116,6 +116,17 @@ pub enum HeatScale {
 }
 
 impl HeatScale {
+    /// The scale's name, as `parse` reads it.
+    pub fn name(self) -> &'static str {
+        match self {
+            HeatScale::Auto => "auto",
+            HeatScale::Ocean => "ocean",
+            HeatScale::Ember => "ember",
+            HeatScale::Thermal => "thermal",
+            HeatScale::Diverging => "diverging",
+        }
+    }
+
     pub fn parse(name: &str) -> Option<HeatScale> {
         Some(match name {
             "auto" => HeatScale::Auto,
@@ -441,10 +452,47 @@ pub fn render_xy(series: &[XySeries], opts: &PlotOptions) -> Result<String> {
                 .map(|(i, s)| (s.label.as_str(), pick(opts, i))),
         );
     }
-    Ok(svg.close(opts, &geo))
+    let described: Vec<String> = series
+        .iter()
+        .map(|s| {
+            let mark = match s.kind {
+                XyKind::Line => "line",
+                XyKind::Area => "area",
+                XyKind::Scatter => "scatter",
+            };
+            let mut o = format!(
+                "{{\"name\":{},\"mark\":{},\"x\":{},\"y\":{}",
+                jstr(&s.label),
+                jstr(mark),
+                jnums(&s.xs),
+                jnums(&s.ys)
+            );
+            if !s.point_colors.is_empty() {
+                let _ = write!(o, ",\"pc\":true,\"colors\":{}", jstrs(&s.point_colors));
+            }
+            o.push('}');
+            o
+        })
+        .collect();
+    let desc = Desc::new("xy", opts)
+        .field("x", jrange(x_lo, x_hi))
+        .field("y", jrange(y_lo, y_hi))
+        .field("series", format!("[{}]", described.join(",")));
+    Ok(svg.close(opts, &geo, desc))
 }
 
 pub fn render_bars(labels: &[String], values: &[f64], opts: &PlotOptions) -> Result<String> {
+    bars_with(labels, values, opts, None)
+}
+
+/// Bars, described as bars, or as the histogram they draw (its bins'
+/// edges and counts).
+fn bars_with(
+    labels: &[String],
+    values: &[f64],
+    opts: &PlotOptions,
+    hist: Option<(Vec<f64>, Vec<f64>)>,
+) -> Result<String> {
     if labels.len() != values.len() {
         return Err(OdsError::LengthMismatch {
             left: labels.len(),
@@ -493,7 +541,33 @@ pub fn render_bars(labels: &[String], values: &[f64], opts: &PlotOptions) -> Res
         );
     }
     svg.x_category_labels(&geo, labels, slot);
-    Ok(svg.close(opts, &geo))
+    let desc = match hist {
+        Some((edges, counts)) => Desc::new("hist", opts)
+            .field("x", jrange(edges[0], edges[edges.len() - 1]))
+            .field("y", jrange(y_lo, y_hi))
+            .field("edges", jnums(&edges))
+            .field(
+                "counts",
+                format!(
+                    "[{}]",
+                    counts
+                        .iter()
+                        .map(|c| (*c as u64).to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ),
+            ),
+        None => Desc::new("bar", opts)
+            .field("y", jrange(y_lo, y_hi))
+            .field("labels", jstrs(labels))
+            .field(
+                "series",
+                format!("[{{\"name\":\"\",\"values\":{}}}]", jnums(values)),
+            )
+            .field("layout", jstr("single"))
+            .field("vary", opts.vary.to_string()),
+    };
+    Ok(svg.close(opts, &geo, desc))
 }
 
 pub fn render_hist(values: &[f64], bins: usize, opts: &PlotOptions) -> Result<String> {
@@ -518,7 +592,10 @@ pub fn render_hist(values: &[f64], bins: usize, opts: &PlotOptions) -> Result<St
     let labels: Vec<String> = (0..bins)
         .map(|b| format_sig(lo + width * (b as f64 + 0.5) / bins as f64, 3))
         .collect();
-    render_bars(&labels, &counts, opts)
+    let edges: Vec<f64> = (0..=bins)
+        .map(|b| lo + width * b as f64 / bins as f64)
+        .collect();
+    bars_with(&labels, &counts, opts, Some((edges, counts.clone())))
 }
 
 /// One named value-list per series, aligned to the shared category labels.
@@ -608,7 +685,7 @@ pub fn render_bar_groups(
                         bar_w,
                         bottom - top,
                         true,
-                        opts.theme.series(si),
+                        pick(opts, si),
                         &attrs,
                     )
                 } else {
@@ -666,7 +743,27 @@ pub fn render_bar_groups(
                 .map(|(i, s)| (s.label.as_str(), pick(opts, i))),
         );
     }
-    Ok(svg.close(opts, &geo))
+    let desc = Desc::new("bar", opts)
+        .field("y", jrange(y_lo, y_hi))
+        .field("labels", jstrs(labels))
+        .field(
+            "series",
+            format!(
+                "[{}]",
+                series
+                    .iter()
+                    .map(|s| format!(
+                        "{{\"name\":{},\"values\":{}}}",
+                        jstr(&s.label),
+                        jnums(&s.values)
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+        )
+        .field("layout", jstr(if stacked { "stacked" } else { "grouped" }))
+        .field("vary", opts.vary.to_string());
+    Ok(svg.close(opts, &geo, desc))
 }
 
 /// A matrix of values as colored cells: rows[r][c] maps to the cell at
@@ -769,7 +866,18 @@ pub fn render_heatmap(
         escape(&format_num(hi)),
         ink = escape(&Paint::of(opts).ink2),
     );
-    Ok(svg.close(opts, &geo))
+    let desc = Desc::new("heatmap", opts)
+        .field("xl", jstrs(x_labels))
+        .field("yl", jstrs(y_labels))
+        .field(
+            "rows",
+            format!(
+                "[{}]",
+                rows.iter().map(|r| jnums(r)).collect::<Vec<_>>().join(",")
+            ),
+        )
+        .field("scale", jstr(opts.scale.name()));
+    Ok(svg.close(opts, &geo, desc))
 }
 
 /// Five-number-summary box plots, one per labeled series: whiskers to
@@ -798,10 +906,20 @@ pub fn render_box(series: &[BarSeries], opts: &PlotOptions) -> Result<String> {
     let slot = geo.plot_w / series.len() as f64;
     let box_w = (slot * 0.44).max(2.0);
     let color = pick(opts, 0);
+    let mut boxes: Vec<String> = Vec::with_capacity(series.len());
     for (i, s) in series.iter().enumerate() {
         let mut sorted = s.values.clone();
         sorted.sort_by(|a, b| a.partial_cmp(b).expect("finite checked above"));
         let [min, q1, med, q3, max] = [0.0, 0.25, 0.5, 0.75, 1.0].map(|q| quantile(&sorted, q));
+        boxes.push(format!(
+            "{{\"name\":{},\"min\":{},\"q1\":{},\"median\":{},\"q3\":{},\"max\":{}}}",
+            jstr(&s.label),
+            jnum(min),
+            jnum(q1),
+            jnum(med),
+            jnum(q3),
+            jnum(max)
+        ));
         let cx = geo.left + slot * i as f64 + slot / 2.0;
         let x = cx - box_w / 2.0;
         let (py_min, py_q1, py_med, py_q3, py_max) = (
@@ -842,7 +960,10 @@ pub fn render_box(series: &[BarSeries], opts: &PlotOptions) -> Result<String> {
     }
     let labels: Vec<String> = series.iter().map(|s| s.label.clone()).collect();
     svg.x_category_labels(&geo, &labels, slot);
-    Ok(svg.close(opts, &geo))
+    let desc = Desc::new("box", opts)
+        .field("y", jrange(y_lo, y_hi))
+        .field("series", format!("[{}]", boxes.join(",")));
+    Ok(svg.close(opts, &geo, desc))
 }
 
 /// Quantile by linear interpolation over a sorted slice (type 7, the
@@ -859,6 +980,130 @@ fn quantile(sorted: &[f64], q: f64) -> f64 {
     } else {
         sorted[base]
     }
+}
+
+// ---------------------------------------------------------------------
+// The chart's description: what it draws, as data
+// ---------------------------------------------------------------------
+
+/// The `id` of the `<metadata>` element every chart carries its
+/// description in (JSON, escaped for XML).
+pub const DESCRIPTION_ID: &str = "olang-chart";
+
+/// A JSON string literal.
+fn jstr(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// A JSON number (`null` for one JSON has no form for).
+fn jnum(v: f64) -> String {
+    if v.is_finite() {
+        // a float reads as one (`1.0`), so a host knows it from a count
+        format!("{:?}", v)
+    } else {
+        "null".to_string()
+    }
+}
+
+fn jnums(vs: &[f64]) -> String {
+    let mut out = String::with_capacity(vs.len() * 8 + 2);
+    out.push('[');
+    for (i, v) in vs.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&jnum(*v));
+    }
+    out.push(']');
+    out
+}
+
+fn jstrs<S: AsRef<str>>(vs: &[S]) -> String {
+    format!(
+        "[{}]",
+        vs.iter()
+            .map(|v| jstr(v.as_ref()))
+            .collect::<Vec<_>>()
+            .join(",")
+    )
+}
+
+fn jrange(lo: f64, hi: f64) -> String {
+    format!("{{\"lo\":{},\"hi\":{}}}", jnum(lo), jnum(hi))
+}
+
+/// A chart's description as it is built: a JSON object's fields, the
+/// common ones first.
+struct Desc(String);
+
+impl Desc {
+    fn new(kind: &str, opts: &PlotOptions) -> Desc {
+        let (light, dark): (Vec<&str>, Vec<&str>) = if opts.colors.is_empty() {
+            (SERIES_COLORS.to_vec(), SERIES_COLORS_DARK.to_vec())
+        } else {
+            let own: Vec<&str> = opts.colors.iter().map(String::as_str).collect();
+            (own.clone(), own)
+        };
+        Desc(format!(
+            "{{\"v\":1,\"type\":{},\"title\":{},\"x_label\":{},\"y_label\":{},\"width\":{},\"height\":{},\"theme\":{},\"palettes\":{{\"light\":{},\"dark\":{}}}",
+            jstr(kind),
+            jstr(&opts.title),
+            jstr(&opts.x_label),
+            jstr(&opts.y_label),
+            opts.width,
+            opts.height,
+            jstr(match opts.theme {
+                Theme::Light => "light",
+                Theme::Dark => "dark",
+            }),
+            jstrs(&light),
+            jstrs(&dark),
+        ))
+    }
+
+    /// A field whose value is JSON text already.
+    fn field(mut self, key: &str, json: String) -> Desc {
+        let _ = write!(self.0, ",{}:{}", jstr(key), json);
+        self
+    }
+
+    fn finish(mut self) -> String {
+        self.0.push('}');
+        self.0
+    }
+}
+
+/// The description a chart carries (`plot.*`'s SVG): its JSON text, or
+/// None for a string that carries none.
+pub fn description_of(svg: &str) -> Option<String> {
+    let open = format!("<metadata id=\"{}\">", DESCRIPTION_ID);
+    // it stands right after the opening tag: look no further than the
+    // document's start
+    let head = &svg[..svg.len().min(4096)];
+    let at = head.find(&open)? + open.len();
+    let end = svg[at..].find("</metadata>")? + at;
+    Some(
+        svg[at..end]
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&amp;", "&"),
+    )
 }
 
 // ---------------------------------------------------------------------
@@ -900,6 +1145,8 @@ struct Svg {
     body: String,
     paint: Paint,
     font_size: f64,
+    /// Where the opening `<svg …>` tag ends: the description goes there.
+    open_end: usize,
 }
 
 impl Svg {
@@ -914,17 +1161,24 @@ impl Svg {
         let _ = write!(
             body,
             "<svg xmlns=\"http://www.w3.org/2000/svg\" {size} \
-             viewBox=\"0 0 {w} {h}\" font-family=\"{font}\">\
-             <rect width=\"{w}\" height=\"{h}\" fill=\"{surface}\"/>",
+             viewBox=\"0 0 {w} {h}\" font-family=\"{font}\">",
             w = opts.width,
             h = opts.height,
             font = opts.font,
+        );
+        let open_end = body.len();
+        let _ = write!(
+            body,
+            "<rect width=\"{w}\" height=\"{h}\" fill=\"{surface}\"/>",
+            w = opts.width,
+            h = opts.height,
             surface = escape(&paint.surface),
         );
         Self {
             body,
             paint,
             font_size: opts.font_size,
+            open_end,
         }
     }
 
@@ -1024,7 +1278,7 @@ impl Svg {
         }
     }
 
-    fn close(mut self, opts: &PlotOptions, geo: &Geometry) -> String {
+    fn close(mut self, opts: &PlotOptions, geo: &Geometry, desc: Desc) -> String {
         // The title and axis labels scale with the tick text: at the
         // default 12.5 they are the long-standing 16.5 and 13.
         let title_size = opts.font_size * 1.32;
@@ -1073,6 +1327,17 @@ impl Svg {
                 &format!("font-size=\"{:.1}\"", self.font_size),
             );
         }
+        // the chart's description, right after the opening tag: what a
+        // host draws natively, and `plot.describe` answers
+        let json = desc.finish();
+        let meta = format!(
+            "<metadata id=\"{}\">{}</metadata>",
+            DESCRIPTION_ID,
+            json.replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+        );
+        self.body.insert_str(self.open_end, &meta);
         self.body
     }
 }
@@ -1220,6 +1485,55 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The drawing alone: the SVG without its description.
+    fn drawn(svg: &str) -> String {
+        match (svg.find("<metadata"), svg.find("</metadata>")) {
+            (Some(a), Some(b)) => format!("{}{}", &svg[..a], &svg[b + "</metadata>".len()..]),
+            _ => svg.to_string(),
+        }
+    }
+
+    #[test]
+    fn every_chart_carries_its_description() {
+        let o = PlotOptions {
+            title: "a <b> & c".to_string(),
+            ..Default::default()
+        };
+        let line = render_xy(
+            &[XySeries {
+                label: "s".to_string(),
+                xs: vec![0.0, 1.0, 2.0],
+                ys: vec![1.0, 3.0, 2.0],
+                kind: XyKind::Line,
+                point_colors: vec![],
+            }],
+            &o,
+        )
+        .unwrap();
+        // right after the opening tag, escaped for XML
+        let open = &line[..line.find('>').unwrap() + 1];
+        assert!(line[open.len()..].starts_with("<metadata id=\"olang-chart\">{"));
+        assert!(line.contains("a &lt;b&gt; &amp; c"));
+        let d = description_of(&line).unwrap();
+        assert!(d.contains("\"type\":\"xy\"") && d.contains("\"title\":\"a <b> & c\""), "{d}");
+        assert!(d.contains("\"series\":[{\"name\":\"s\",\"mark\":\"line\",\"x\":[0.0,1.0,2.0],\"y\":[1.0,3.0,2.0]}]"), "{d}");
+        assert!(d.contains("\"y\":{\"lo\":1.0,\"hi\":3.0}"), "{d}");
+        assert!(d.contains(&format!("\"light\":[\"{}\"", SERIES_COLORS[0])), "{d}");
+        let h = render_hist(&[1.0, 2.0, 2.0, 3.0], 2, &PlotOptions::default()).unwrap();
+        let d = description_of(&h).unwrap();
+        assert!(d.contains("\"type\":\"hist\"") && d.contains("\"edges\":[1.0,2.0,3.0]") && d.contains("\"counts\":[1,3]"), "{d}");
+        let b = render_bar_groups(
+            &["a".to_string()],
+            &[BarSeries { label: "p".to_string(), values: vec![2.0] }],
+            true,
+            &PlotOptions { colors: vec!["#123456".to_string()], ..Default::default() },
+        )
+        .unwrap();
+        let d = description_of(&b).unwrap();
+        assert!(d.contains("\"layout\":\"stacked\"") && d.contains("\"dark\":[\"#123456\"]"), "{d}");
+        assert!(description_of("<svg></svg>").is_none());
+    }
 
     fn opts() -> PlotOptions {
         PlotOptions {
@@ -1395,7 +1709,8 @@ mod tests {
         .unwrap();
         assert!(dark.contains(Theme::Dark.surface()));
         assert!(dark.contains(SERIES_COLORS_DARK[0]));
-        assert!(!dark.contains(SERIES_COLORS[0]));
+        // the drawing (its description names both themes' palettes)
+        assert!(!drawn(&dark).contains(SERIES_COLORS[0]));
         // Responsive: the svg tag carries container-driven sizing, not
         // fixed pixel attributes (the background rect keeps viewBox units).
         assert!(dark.starts_with(

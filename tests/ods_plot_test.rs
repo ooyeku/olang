@@ -309,3 +309,24 @@ fn an_interactive_line_carries_its_vertices() {
     );
     assert!(!plain.contains("vertex"));
 }
+
+#[test]
+fn describe_answers_a_charts_description_as_data() {
+    let v = eval(
+        r#"
+let x = ods.series([1.0, 2.0, 3.0])
+let y = ods.series([2.0, (), 4.0])
+let d = unwrap(plot.describe(plot.scatter(x, y, #{ "title": "a & b", "theme": "dark" })))
+let h = unwrap(plot.describe(plot.hist(ods.series([1, 2, 2, 3]), 2, #{})))
+let bx = unwrap(plot.describe(plot.box([["s", ods.series([1.0, 2.0, 3.0])]], #{})))
+let hm = unwrap(plot.describe(plot.heatmap(["a", "b"], ["r"], [[1, 2]], #{ "scale": "ocean" })))
+[d.v == 1, d.type == "xy", d.title == "a & b", d.theme == "dark",
+ d.series[0].x == [1.0, 3.0], d.series[0].mark == "scatter", d.x.lo <= 1.0, d.width == 720,
+ h.type == "hist", h.counts == [1, 3], bx.series[0].median == 2.0,
+ hm.scale == "ocean", hm.rows == [[1.0, 2.0]],
+ match plot.describe("<svg></svg>") { Err(_) => true, Ok(_) => false }]
+"#,
+    )
+    .unwrap();
+    assert_eq!(v, Value::List(vec![Value::Boolean(true); 14].into()));
+}

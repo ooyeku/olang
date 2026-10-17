@@ -2589,7 +2589,14 @@ fn svg_of(s: &str) -> Option<J> {
     let w = num(attr(open, "width")).or_else(|| vb.get(2).copied())?;
     let h = num(attr(open, "height")).or_else(|| vb.get(3).copied())?;
     let mut r = json!({ "w": w, "h": h, "text": s });
-    let rest = &t[open.len()..];
+    let mut rest = &t[open.len()..];
+    // a chart's description stands before its background
+    if let Some(r) = rest.strip_prefix('>')
+        && r.starts_with("<metadata")
+        && let Some(e) = r.find("</metadata>")
+    {
+        rest = &r[e + "</metadata>".len() - 1..];
+    }
     if let Some(at) = rest.find("<rect")
         && rest[..at].trim_start_matches('>').trim().is_empty()
     {

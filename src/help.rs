@@ -3792,6 +3792,9 @@ let parts = ods.split(f, 0.8)   // [train, test]"##],
         self.doc_ex("plot.ramp", "plot.ramp(scale, t)", "String", "plot", "one color at position t in [0, 1] from a named ramp (auto, ocean, ember, thermal, diverging)",
             &[r##"plot.ramp("ocean", 0.5)  // the middle color of the ocean ramp"##],
         );
+        self.doc_ex("plot.describe", "plot.describe(svg)", "Result", "plot", "a chart's description as data: `Ok(map)` — its type (xy, bar, hist, heatmap, box), title, labels, size, theme, palettes, axes' extents and data — read from the `<metadata id=\"olang-chart\">` every plot chart carries; `Err` for text that carries none",
+            &[r##"unwrap(plot.describe(plot.line(x, y, #{}))).series[0].y"##],
+        );
     }
 
     fn add_browser_and_toolkit_docs(&mut self) {

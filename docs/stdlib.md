@@ -3035,7 +3035,10 @@ ten-hue palette, so a chart is presentable with `#{}` — and color is
 an option, not a fate: `colors` gives a chart its own palette, `vary`
 colors bar categories individually, `scale` picks a heatmap ramp
 (`ocean`/`ember`/`thermal`/`diverging`), and `plot.ramp(name, t)`
-hands the same ramps to your code. In `viz`, `"color_by": "column"`
+hands the same ramps to your code. Every chart carries its description
+as data (a `<metadata id="olang-chart">` of JSON after its opening
+tag), and `plot.describe(svg)` answers it as a Map — `Err` for text
+that carries none ([the data stack](ods.md#a-charts-description)). In `viz`, `"color_by": "column"`
 maps values onto a ramp per point — continuous color encoding on both
 the SVG and canvas targets.
 

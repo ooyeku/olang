@@ -1275,6 +1275,32 @@ println(to_string(str.length(hist) > 500))
 unwrap(fs.write_file("waves.svg", svg))
 ```
 
+### A chart's description
+
+Every chart also says what it draws, as data: right after its opening
+`<svg>` tag stands `<metadata id="olang-chart">`, a JSON description
+(escaped for XML) that an SVG viewer ignores and a host reads to draw
+the chart itself — olang Studio's notebooks hover, zoom and brush a
+chart from it. `plot.describe(svg)` answers it as a Map, `Err` for text
+that carries none; a `viz` chart, compiled to `plot`, carries one too.
+
+| Key | What it says |
+|---|---|
+| `v`, `type` | `1`; `"xy"` (line, scatter, area, lines, xy), `"bar"` (bar, bars, stacked), `"hist"`, `"heatmap"`, `"box"` |
+| `title`, `x_label`, `y_label`, `width`, `height`, `theme` | the options the chart was drawn with |
+| `palettes` | `#{ light, dark }`: the series' colours in the order `plot` assigns them in each theme (the chart's own `colors` in both) |
+| `x`, `y` | `#{ lo, hi }`: an axis's extent as drawn (its nice ticks' ends); `y` only for bars, boxes and a histogram's counts (its `x` the bins' range) |
+| `series` (xy) | `[#{ name, mark, x, y }]`, the points as drawn (a null dropped); a series coloured per point (`plot.xy`'s fifth element, `viz`'s `color_by`) has `pc: true` and its `colors` |
+| `labels`, `series`, `layout`, `vary` (bar) | the categories, `[#{ name, values }]`, `"single"`, `"grouped"` or `"stacked"`, and whether one series' bars vary in colour |
+| `edges`, `counts` (hist) | the bins' `k + 1` edges and their `k` counts |
+| `xl`, `yl`, `rows`, `scale` (heatmap) | the column and row labels, the cells by row, the ramp's name |
+| `series` (box) | `[#{ name, min, q1, median, q3, max }]` |
+
+```olang
+let d = unwrap(plot.describe(plot.line(ods.series([1, 2, 3]), ods.series([2.0, 4.0, 3.0]), #{ "title": "t" })))
+println(d.type + " " + d.title + " " + to_string(d.series[0].y))   // xy t [2.0, 4.0, 3.0]
+```
+
 In the browser the same charts land on the page directly — the whole
 stack runs in the wasm build, so `dom.set_html(el, svg)` is the
 entire rendering step. The tracker's `/charts.html` draws live

@@ -40,6 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   Series' elements that contain `text`, case-sensitive. A null element is
   unknown to both, so a filter drops it, unless `values` holds `()`. Both
   compose with `ods.all_of`, `ods.filter` and a Frame's mask subscript.
+- **A chart's description as data.** Every `plot` chart carries what it
+  draws as JSON in a `<metadata id="olang-chart">` right after its opening
+  tag: its type, title, labels, size, theme, both themes' palettes, its
+  axes' extents as drawn, and its data (xy series with their marks and
+  points, bars with their layout, a histogram's edges and counts, a
+  heatmap's cells, boxes' five numbers). `plot.describe(svg)` answers it
+  as a Map; a `viz` chart, compiled to `plot`, carries one too. A stacked
+  chart's top segments take the chart's own `colors` as the others do.
 - **An SVG picture's text is drawn.** `gui`'s image draws an SVG's
   `<text>` in the system's fonts (loaded once, when an SVG is first
   drawn; sans-serif the platform's interface face), so a `plot` chart

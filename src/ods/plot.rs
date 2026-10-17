@@ -32,6 +32,7 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("heatmap", 4),
     ("box", 2),
     ("ramp", 2),
+    ("describe", 1),
 ];
 
 pub fn handles(func: &str) -> bool {
@@ -366,6 +367,26 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
         ));
     }
     let svg = match func {
+        // a chart's description as data: what a host draws natively
+        "describe" => {
+            let Value::String(text) = &args[0] else {
+                return Err(format!(
+                    "plot.describe: expects a chart (an SVG String), got {}",
+                    args[0].type_name()
+                ));
+            };
+            let err = |m: String| Ok(Value::Err(Box::new(Value::String(std::sync::Arc::new(m)))));
+            let Some(json) = olang_ods::plot::description_of(text) else {
+                return err("plot.describe: no chart description in this text (a chart plot made carries one)".to_string());
+            };
+            return match serde_json::from_str::<serde_json::Value>(&json)
+                .map_err(|e| e.to_string())
+                .and_then(crate::stdlib::json::json_to_olang_value)
+            {
+                Ok(v) => Ok(Value::Ok(Box::new(v))),
+                Err(m) => err(format!("plot.describe: the description does not read: {}", m)),
+            };
+        }
         "line" | "scatter" | "area" => {
             let x = want_series(func, &args, 0)?;
             let y = want_series(func, &args, 1)?;
