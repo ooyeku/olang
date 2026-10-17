@@ -685,10 +685,8 @@ fn a_frame_and_a_series_are_tables_with_typed_columns_read_by_range_and_sorted()
     // a Series: one column, named value
     let s = r.eval("ods.series([1.5, 2.5])");
     assert_eq!(s["value"]["k"], json!("series"), "{s}");
-    assert_eq!(
-        s["value"]["table"],
-        json!({ "cols": ["value"], "types": ["Float"] })
-    );
+    assert_eq!(s["value"]["table"]["cols"], json!(["value"]));
+    assert_eq!(s["value"]["table"]["types"], json!(["Float"]));
     assert_eq!(s["value"]["rows"][1]["c"], json!(["2.5"]));
     // a numeric Series says its summary and a histogram
     let st = &s["value"]["stats"];
@@ -939,4 +937,145 @@ fn a_front_matter_read_again_binds_its_changed_params_and_its_grant_in_place() {
     assert_eq!(r3["params"], json!(["n"]), "{r3}");
     assert_eq!(r3["grant"], json!(true), "{r3}");
     assert_eq!(r.eval("n")["value"]["s"], json!("2"));
+}
+
+#[test]
+fn every_frame_column_says_its_summary() {
+    let dir = project();
+    let (mut r, _) = Repl::start(dir.path());
+    let f = r.eval(
+        "ods.frame([[\"region\", ods.series([\"east\", \"west\", \"east\", (), \"north\", \"west\", \"east\"])], [\"amount\", ods.series([1.0, 3.0, (), 5.0, 1.0, 2.0, 3.0])], [\"ok\", ods.series([true, false, true, true, (), true, false])]])",
+    );
+    let t = &f["value"]["table"];
+    assert!(t.get("sampled").is_none(), "{t}");
+    let sum = t["sum"].as_array().unwrap();
+    assert_eq!(sum.len(), 3);
+    assert_eq!(
+        sum[0],
+        json!({ "nulls": 1, "distinct": 3, "top": [["east", 3], ["west", 2], ["north", 1]] })
+    );
+    assert_eq!(sum[1]["nulls"], json!(1));
+    assert_eq!(sum[1]["distinct"], json!(4));
+    assert_eq!(
+        (sum[1]["min"].clone(), sum[1]["max"].clone()),
+        (json!(1.0), json!(5.0))
+    );
+    assert_eq!(sum[1]["mean"], json!(2.5));
+    let hist = sum[1]["hist"].as_array().unwrap();
+    assert_eq!(hist.len(), 20);
+    assert_eq!((hist[0].clone(), hist[19].clone()), (json!(2), json!(1)));
+    assert_eq!(
+        sum[2],
+        json!({ "nulls": 1, "distinct": 2, "top": [["true", 4], ["false", 2]] })
+    );
+    // a column all null: no range, every bin empty
+    let n = r.eval("ods.series([(), ()]) * 1.0");
+    let s0 = &n["value"]["table"]["sum"][0];
+    assert!(s0.get("min").is_none(), "{s0}");
+    assert_eq!(s0["nulls"], json!(2));
+    // a long frame is summarised over its first million rows, quickly
+    let big = r.eval("let n = 1200000\nods.frame([[\"a\", ods.series(0..n)], [\"b\", ods.series(0..n) * 0.5], [\"c\", ods.cast(ods.series(0..n) > 600000, \"String\")], [\"d\", ods.series(0..n) > 5]])");
+    assert_eq!(big["ok"], json!(true), "{big}");
+    let t = &big["value"]["table"];
+    assert_eq!(t["sampled"], json!(1000000));
+    assert_eq!(t["sum"][0]["distinct"], json!(1000000));
+    assert_eq!(t["sum"][0]["max"], json!(999999.0));
+    assert_eq!(t["sum"][2]["distinct"], json!(2));
+}
+
+#[test]
+fn a_frames_view_is_filtered_sorted_and_summarised_by_handle() {
+    let dir = project();
+    let (mut r, _) = Repl::start(dir.path());
+    let f = r.eval(
+        "ods.frame([[\"product\", ods.series([\"gadget\", \"Gadget\", \"widget\", \"gadgetry\", \"bolt\"])], [\"region\", ods.series([\"east\", \"west\", \"north\", \"west\", ()])], [\"amount\", ods.series([120.0, 300.0, 150.0, 90.0, 500.0])], [\"qty\", ods.series([1, (), 3, 4, 5])]])",
+    );
+    let h = f["value"]["h"].as_u64().unwrap();
+    let view = r.ask(
+        json!({ "op": "expand", "h": h, "table": true, "start": 0, "count": 10,
+        "filters": [{ "col": 2, "range": [100.0, null] }, { "col": 1, "values": ["east", "west"] }],
+        "sort": { "col": 2, "desc": true }, "summary": true }),
+    );
+    assert_eq!(view["ok"], json!(true), "{view}");
+    assert_eq!(view["n"], json!(2));
+    assert_eq!(view["total"], json!(5));
+    assert_eq!(view["rows"][0]["i"], json!(1));
+    assert_eq!(view["rows"][1]["i"], json!(0));
+    assert_eq!(view["sum"][2]["min"], json!(120.0));
+    assert_eq!(view["sum"][0]["distinct"], json!(2));
+    // contains is case-sensitive, as ods.contains is; nulls kept or dropped
+    let c = r.ask(json!({ "op": "expand", "h": h, "table": true, "count": 10,
+        "filters": [{ "col": 0, "contains": "gad" }] }));
+    let at: Vec<J> = c["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["i"].clone())
+        .collect();
+    assert_eq!(at, vec![json!(0), json!(3)], "{c}");
+    let nulls = r.ask(json!({ "op": "expand", "h": h, "table": true, "count": 10,
+        "filters": [{ "col": 3, "nulls": true }] }));
+    assert_eq!(nulls["n"], json!(1));
+    assert_eq!(nulls["rows"][0]["i"], json!(1));
+    let kept = r.ask(json!({ "op": "expand", "h": h, "table": true, "count": 10,
+        "filters": [{ "col": 1, "values": [null, "north"] }] }));
+    assert_eq!(kept["n"], json!(2), "{kept}");
+    // no filters: as before, with the total
+    let all = r.ask(json!({ "op": "expand", "h": h, "table": true, "count": 2 }));
+    assert_eq!(
+        (all["n"].clone(), all["total"].clone()),
+        (json!(5), json!(5))
+    );
+    assert!(all.get("sum").is_none());
+    // a range on a text column is the protocol's error
+    let bad = r.ask(json!({ "op": "expand", "h": h, "table": true,
+        "filters": [{ "col": 0, "range": [1, 2] }] }));
+    assert_eq!(bad["error"]["kind"], json!("protocol"), "{bad}");
+    assert!(
+        bad["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("`product`")
+    );
+}
+
+#[test]
+fn a_chart_says_its_description_decimated_and_zooms_by_range() {
+    let dir = project();
+    let (mut r, _) = Repl::start(dir.path());
+    let c = r.eval("let x = ods.series(0..10000) * 0.001\nplot.xy([[\"wave\", \"line\", x, x * x], [\"dots\", \"scatter\", x, x]], #{})");
+    assert_eq!(c["ok"], json!(true), "{c}");
+    let v = &c["value"];
+    assert!(v["h"].is_u64(), "a chart is always held: {v}");
+    let chart = &v["chart"];
+    assert_eq!(chart["type"], json!("xy"));
+    let line = &chart["series"][0];
+    assert!(line["x"].as_array().unwrap().len() <= 1500);
+    assert_eq!(line["n"], json!(10000));
+    assert_eq!(line["cut"], json!(true));
+    // the line keeps its ends' extremes, in x order
+    let xs: Vec<f64> = line["x"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x.as_f64().unwrap())
+        .collect();
+    assert!(xs.windows(2).all(|w| w[0] <= w[1]));
+    assert_eq!(
+        line["y"].as_array().unwrap().last().unwrap(),
+        &json!(9.999 * 9.999)
+    );
+    assert!(chart["series"][1]["x"].as_array().unwrap().len() <= 1500);
+    // zoomed past what the reply carried
+    let h = v["h"].as_u64().unwrap();
+    let z = r.ask(json!({ "op": "expand", "h": h, "chart": { "x0": 1.5, "x1": 2.0 } }));
+    let zl = &z["chart"]["series"][0];
+    assert_eq!(zl["x"].as_array().unwrap().len(), 501, "{z}");
+    assert!(zl.get("cut").is_none());
+    assert_eq!(zl["x"][0], json!(1.5));
+    // a short chart is whole, and still held
+    let s = r.eval("plot.line(ods.series([1, 2]), ods.series([3, 4]), #{})");
+    assert_eq!(s["value"]["chart"]["series"][0]["y"], json!([3.0, 4.0]));
+    assert!(s["value"]["h"].is_u64());
+    assert_eq!(s["value"]["svg"]["bg"], json!("#fcfcfb"));
 }

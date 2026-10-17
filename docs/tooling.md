@@ -946,7 +946,9 @@ capabilities and pass.
 |---|---|
 | `{"op":"eval","id":1,"code":"rows(10)","file":"/p/calc.ol","line":12,"bind":{…}?,"pure":true?}` | `{"id":1,"ok":true,"eval":7,"value":V,"binding":"x"?,"ms":0.4,"server_ms":0.5,"tier":"native","calls":{"bytecode":1,"native":1},"out":"…","notes":[…]?}` — or `"ok":false` with `"error":E` |
 | `{"op":"expand","id":2,"h":3,"start":0,"count":100}` | more of a held value: a list's `items` (`{"i","v"}`), a map's or record's `entries` (`{"key","v"}`), a string's text (`s`), Bytes as base64 (`b64`) |
-| `{"op":"expand","id":3,"h":3,"table":true,"start":0,"count":50,"sort":{"col":2,"desc":true}}` | a table's `rows` (`{"i": index, "c": [cell text…]}`), sorted by a column |
+| `{"op":"expand","id":3,"h":3,"table":true,"start":0,"count":50,"sort":{"col":2,"desc":true}}` | a table's `rows` (`{"i": index, "c": [cell text…]}`), sorted by a column; `n` and `total` its rows |
+| `{"op":"expand","id":3,"h":7,"table":true,"start":0,"count":200,"filters":[…],"sort":{…}?,"summary":true?}` | a Frame's (or a Series') view, filtered, sorted, and summarised (below): `{"ok":true,"n":…,"total":…,"cols":[…],"rows":[…],"sum":[…]?}` |
+| `{"op":"expand","id":3,"h":12,"chart":{"x0":1.5,"x1":4.0}}` | a chart's description with each xy series cut to x in [`x0`, `x1`] (either `null`: open) and decimated again: `{"ok":true,"chart":C}` |
 | `{"op":"release","id":4,"eval":7}` | the evaluation's handles are let go (the last 200 are kept anyway) |
 | `{"op":"interrupt","id":5}` | `{"running":true}`; the running evaluation fails with `"kind":"interrupted"` |
 | `{"op":"ping","id":8}` | `{"running":…}` — answered even while an evaluation runs, so a client tells a busy session from one not answering |
@@ -1081,7 +1083,9 @@ A prompt's evaluations (no `file`) are the session's history (`:history`,
   past 2,000; `img`, the absolute path, when the string names a picture
   that exists; `svg: {w, h, bg?, text}` when the string is an SVG
   document, as `plot` answers: its size, the background a first `rect`
-  as wide as it paints, and its whole text), `enum`, `fn`, `decl` (a
+  as wide as it paints, and its whole text; `chart` (C) when it is a
+  chart that carries its description — every `plot` and `viz` chart
+  does — and then always a handle `h`), `enum`, `fn`, `decl` (a
   declaration evaluated at the prompt or in a file);
 - `result`: `ok` and the inner value `v`;
 - `list` and `tuple`: `n`, a handle `h`, the first 20 `items`; a list of
@@ -1093,14 +1097,57 @@ A prompt's evaluations (no `file`) are the session's history (`:history`,
   named `value`): `n` rows, `h`, `table: {cols, types}` (each column's
   name and its type: `Int`, `Float`, `Bool`, `String`) and the first 20
   `rows` (`{"i", "c": [cell…]}`, a cell its text — a float to six
-  significant digits — or `null`); a numeric Series also `stats: {count,
-  nulls, mean, min, max, hist}` (`hist` 24 bins over min … max); `expand`
-  with `table` reads the rest by range, sorted by a column (its nulls last
-  either way);
+  significant digits — or `null`); `table.sum`, each column's summary
+  (below); a numeric Series also `stats: {count, nulls, mean, min, max,
+  hist}` (`hist` 24 bins over min … max); `expand` with `table` reads
+  the rest by range, filtered and sorted (below);
 - `bytes`: `n`, `h`, and for a picture `img: {format, w, h}` and the
   picture itself (`png`, base64);
 - `view`: a Loom view node (`#{ role, key, props, children }`) — `role`
   and `h`, for `render`.
+
+**A column's summary.** `table.sum` is a list aligned with `table.cols`,
+one summary a column, computed by the data stack over the column's
+first 1,000,000 rows (a longer one says `"sampled": 1000000` on `table`,
+so a ten-million-row Frame stays cheap; a million rows of four columns
+take about 10 ms, 70 at worst — a million distinct strings):
+
+- an `Int` or `Float` column: `{"nulls", "distinct", "min", "max",
+  "mean", "hist"}` — `hist` 20 equal-width bins over [min, max] (every
+  value in the first when min is max), nulls not counted; `min`, `max`
+  and `mean` numbers over the finite values, absent when there are none;
+- any other: `{"nulls", "distinct", "top"}` — `top` the six most frequent
+  values, most first, ties by first appearance, each `["cell text",
+  count]` (the text the table's cells use); a null is never in `top`.
+
+`distinct` counts the values that are not null.
+
+**A table's view.** `expand` with `table` on a Frame or a Series takes
+`filters`, a list ANDed together, each on a column by index:
+
+- `{"col": 2, "range": [100.0, null]}` — inclusive bounds, either `null`
+  (open), on a numeric column only (any other is a `protocol` error naming
+  it); a null fails;
+- `{"col": 1, "values": ["east", "west"]}` — the cell's text is one of
+  them; `null` in the list keeps null cells;
+- `{"col": 0, "contains": "gad"}` — the cell's text contains it,
+  case-sensitive (the rows `ods.contains` keeps); a null fails;
+- `{"col": 3, "nulls": true}` — only nulls (`false`: none).
+
+A `sort` (nulls last, as ever) orders what the filters keep. `n` is the
+view's rows, `total` the table's; each row's `i` its index in the whole
+table, so `ods.take` reads it. The view's order is cached by handle,
+filters and sort, and let go with the handle. `"summary": true` adds
+`sum`, the view's column summaries as `table.sum` has them (`sampled`
+past a million rows). Without `filters` a view is the table, as before.
+
+**A chart (C).** A chart's description, as `plot.describe` answers it
+([the data stack](ods.md#a-charts-description)), with each xy series at
+most 1,500 points: a line's or an area's least and most y in each of 750
+buckets of x, in x order; a scatter's at an even stride. A series so
+decimated says `"n"` (its points) and `"cut": true`; `expand` with
+`chart` reads a range of x afresh, for zooming past what the reply
+carried.
 
 **Errors (E).** `{"kind","message","file","line","col","stack","hint"}`,
 `kind` one of `parse`, `runtime`, `unbound` (a parameter — with `fn`,

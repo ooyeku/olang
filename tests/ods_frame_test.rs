@@ -2584,9 +2584,15 @@ show([ods.to_list(ods.is_in(s, ["a"])), ods.to_list(ods.is_in(s, ["a", ()])), od
 #[test]
 fn is_in_and_contains_refuse_what_cannot_match() {
     let err = eval(r#"ods.contains(ods.series([1, 2]), "1")"#, None).expect_err("Int");
-    assert!(err.contains("String Series") && err.contains("Int"), "{err}");
+    assert!(
+        err.contains("String Series") && err.contains("Int"),
+        "{err}"
+    );
     let err = eval(r#"ods.is_in(ods.series([1, 2]), ["1"])"#, None).expect_err("kind");
-    assert!(err.contains("a String cannot be in a Series of Int"), "{err}");
+    assert!(
+        err.contains("a String cannot be in a Series of Int"),
+        "{err}"
+    );
     let err = eval(r#"ods.is_in(ods.series([1, 2]), 1)"#, None).expect_err("shape");
     assert!(err.contains("list or a Series"), "{err}");
 }

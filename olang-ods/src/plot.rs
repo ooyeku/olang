@@ -679,15 +679,7 @@ pub fn render_bar_groups(
                     ],
                 );
                 let seg = if last {
-                    rounded_bar(
-                        x,
-                        top,
-                        bar_w,
-                        bottom - top,
-                        true,
-                        pick(opts, si),
-                        &attrs,
-                    )
+                    rounded_bar(x, top, bar_w, bottom - top, true, pick(opts, si), &attrs)
                 } else {
                     format!(
                         "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" fill=\"{}\"{}/>",
@@ -1516,22 +1508,42 @@ mod tests {
         assert!(line[open.len()..].starts_with("<metadata id=\"olang-chart\">{"));
         assert!(line.contains("a &lt;b&gt; &amp; c"));
         let d = description_of(&line).unwrap();
-        assert!(d.contains("\"type\":\"xy\"") && d.contains("\"title\":\"a <b> & c\""), "{d}");
+        assert!(
+            d.contains("\"type\":\"xy\"") && d.contains("\"title\":\"a <b> & c\""),
+            "{d}"
+        );
         assert!(d.contains("\"series\":[{\"name\":\"s\",\"mark\":\"line\",\"x\":[0.0,1.0,2.0],\"y\":[1.0,3.0,2.0]}]"), "{d}");
         assert!(d.contains("\"y\":{\"lo\":1.0,\"hi\":3.0}"), "{d}");
-        assert!(d.contains(&format!("\"light\":[\"{}\"", SERIES_COLORS[0])), "{d}");
+        assert!(
+            d.contains(&format!("\"light\":[\"{}\"", SERIES_COLORS[0])),
+            "{d}"
+        );
         let h = render_hist(&[1.0, 2.0, 2.0, 3.0], 2, &PlotOptions::default()).unwrap();
         let d = description_of(&h).unwrap();
-        assert!(d.contains("\"type\":\"hist\"") && d.contains("\"edges\":[1.0,2.0,3.0]") && d.contains("\"counts\":[1,3]"), "{d}");
+        assert!(
+            d.contains("\"type\":\"hist\"")
+                && d.contains("\"edges\":[1.0,2.0,3.0]")
+                && d.contains("\"counts\":[1,3]"),
+            "{d}"
+        );
         let b = render_bar_groups(
             &["a".to_string()],
-            &[BarSeries { label: "p".to_string(), values: vec![2.0] }],
+            &[BarSeries {
+                label: "p".to_string(),
+                values: vec![2.0],
+            }],
             true,
-            &PlotOptions { colors: vec!["#123456".to_string()], ..Default::default() },
+            &PlotOptions {
+                colors: vec!["#123456".to_string()],
+                ..Default::default()
+            },
         )
         .unwrap();
         let d = description_of(&b).unwrap();
-        assert!(d.contains("\"layout\":\"stacked\"") && d.contains("\"dark\":[\"#123456\"]"), "{d}");
+        assert!(
+            d.contains("\"layout\":\"stacked\"") && d.contains("\"dark\":[\"#123456\"]"),
+            "{d}"
+        );
         assert!(description_of("<svg></svg>").is_none());
     }
 

@@ -48,6 +48,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   heatmap's cells, boxes' five numbers). `plot.describe(svg)` answers it
   as a Map; a `viz` chart, compiled to `plot`, carries one too. A stacked
   chart's top segments take the chart's own `colors` as the others do.
+- **The kernel's data UI.** `olang repl --serve` says each column's
+  summary with every Frame and Series (`table.sum`: nulls, distinct
+  values, a number's range, mean and 20-bin histogram, any other
+  column's six most frequent values; over the first million rows, a
+  longer table `sampled`). `expand` reads a Frame's view by handle:
+  `filters` (a numeric range, cells' values, a substring, nulls) ANDed,
+  sorted after, `total` beside the view's `n`, each row its index in the
+  whole, the view's own summaries with `summary`, its order cached. A
+  chart's value carries its description (`chart`, each xy series
+  decimated to 1,500 points, always held), and `expand` with `chart`
+  reads a range of x again for zooming.
 - **An SVG picture's text is drawn.** `gui`'s image draws an SVG's
   `<text>` in the system's fonts (loaded once, when an SVG is first
   drawn; sans-serif the platform's interface face), so a `plot` chart

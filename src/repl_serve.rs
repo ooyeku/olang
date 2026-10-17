@@ -262,6 +262,9 @@ struct Session {
     evals: VecDeque<(u64, Vec<u64>)>,
     eval_seq: u64,
     sorts: HashMap<(u64, usize, bool), Arc<Vec<usize>>>,
+    /// A Frame's filtered (and sorted) views' row orders, by handle and
+    /// the view's filters and sort as JSON text.
+    views: HashMap<(u64, String), Arc<Vec<usize>>>,
     files: HashMap<PathBuf, FileIndex>,
     loom: Option<PathBuf>,
     /// The library's names, for completion (made the first time asked).
@@ -320,6 +323,7 @@ impl Session {
             evals: VecDeque::new(),
             eval_seq: 0,
             sorts: HashMap::new(),
+            views: HashMap::new(),
             files: HashMap::new(),
             loom: None,
             tiers: !no_ovm,
@@ -659,6 +663,7 @@ impl Session {
                 self.handles.clear();
                 self.evals.clear();
                 self.sorts.clear();
+                self.views.clear();
                 json!({ "ok": true })
             }
             "shutdown" => json!({ "ok": true }),
@@ -1634,6 +1639,7 @@ impl Session {
             for h in hs {
                 self.handles.remove(&h);
                 self.sorts.retain(|k, _| k.0 != h);
+                self.views.retain(|k, _| k.0 != h);
             }
         }
     }
@@ -1649,7 +1655,9 @@ impl Session {
             Value::String(s) => {
                 let n = s.chars().count();
                 let mut r = json!({ "k": "str", "t": t, "n": n, "s": s.chars().take(TEXT_CHARS).collect::<String>() });
-                if n > TEXT_CHARS {
+                // a chart's description: what an editor draws natively
+                let chart = chart_of(s);
+                if n > TEXT_CHARS || chart.is_some() {
                     r["h"] = json!(self.hold(v, held));
                 }
                 if let Some(p) = self.image_path(s) {
@@ -1657,6 +1665,10 @@ impl Session {
                 }
                 if let Some(svg) = svg_of(s) {
                     r["svg"] = svg;
+                }
+                if let Some(mut c) = chart {
+                    decimate_chart(&mut c, None);
+                    r["chart"] = c;
                 }
                 r
             }
@@ -1784,8 +1796,13 @@ impl Session {
             )
         };
         let h = self.hold(v, held);
+        let series: Vec<&olang_ods::Series> = cols.iter().map(|(_, c)| *c).collect();
+        let mut table = json!({ "cols": names, "types": types, "sum": summaries(&series) });
+        if n > SUMMARY_ROWS {
+            table["sampled"] = json!(SUMMARY_ROWS);
+        }
         let mut r = json!({ "k": if frame { "frame" } else { "series" }, "t": v.type_name(), "n": n, "h": h, "s": s,
-                "table": { "cols": names, "types": types }, "rows": rows });
+                "table": table, "rows": rows });
         if !frame
             && let Some((_, col)) = cols.first()
             && let Some(st) = numeric_summary(col)
@@ -1823,6 +1840,18 @@ impl Session {
             (msg.get("count").and_then(|s| s.as_u64()).unwrap_or(100) as usize).min(EXPAND_MAX);
         let mut held = Vec::new();
         let reply = match &v {
+            Value::String(s) if msg.get("chart").is_some() => match chart_of(s) {
+                Some(mut c) => {
+                    let bound = |k: &str| msg["chart"].get(k).and_then(|x| x.as_f64());
+                    let lo = bound("x0").unwrap_or(f64::NEG_INFINITY);
+                    let hi = bound("x1").unwrap_or(f64::INFINITY);
+                    decimate_chart(&mut c, Some((lo.min(hi), hi.max(lo))));
+                    json!({ "ok": true, "chart": c })
+                }
+                None => {
+                    json!({ "ok": false, "error": { "kind": "protocol", "message": "that value is no chart (a plot chart's SVG)" } })
+                }
+            },
             Value::String(s) => {
                 let text: String = s.chars().skip(start).take(count.max(1) * 100).collect();
                 json!({ "ok": true, "s": text })
@@ -1855,7 +1884,7 @@ impl Session {
                             json!({ "i": at, "c": cells })
                         })
                         .collect();
-                    json!({ "ok": true, "n": n, "cols": cols, "rows": rows })
+                    json!({ "ok": true, "n": n, "total": n, "cols": cols, "rows": rows })
                 } else {
                     let n = items.len();
                     let out: Vec<J> = (start..(start + count).min(n))
@@ -1890,26 +1919,93 @@ impl Session {
             }
             Value::Native(_) if ods_columns(&v).is_some() => {
                 let cols = ods_columns(&v).unwrap_or_default();
-                let n = cols.first().map(|(_, c)| c.len()).unwrap_or(0);
-                let order = match msg
+                let total = cols.first().map(|(_, c)| c.len()).unwrap_or(0);
+                let sort = msg
                     .get("sort")
                     .and_then(|s| s.get("col"))
                     .and_then(|c| c.as_u64())
-                {
-                    Some(c) => {
+                    .map(|c| {
                         let desc = msg["sort"]
                             .get("desc")
                             .and_then(|d| d.as_bool())
                             .unwrap_or(false);
-                        Some(self.sorted_ods(h, &cols, c as usize, desc))
+                        (c as usize, desc)
+                    });
+                let filters = match msg.get("filters") {
+                    None | Some(J::Null) => Vec::new(),
+                    Some(J::Array(fs)) => match read_filters(fs, &cols) {
+                        Ok(f) => f,
+                        Err(m) => {
+                            return json!({ "ok": false, "error": { "kind": "protocol", "message": m } });
+                        }
+                    },
+                    Some(_) => {
+                        return json!({ "ok": false, "error": { "kind": "protocol", "message": "filters is a list of {col, range | values | contains | nulls}" } });
                     }
-                    None => None,
                 };
+                // the view's rows: the frame's own, or its filtered (and
+                // sorted) order, cached by handle
+                let order: Option<Arc<Vec<usize>>> = if filters.is_empty() {
+                    sort.map(|(c, desc)| self.sorted_ods(h, &cols, c, desc))
+                } else {
+                    let key = (
+                        h,
+                        json!([msg["filters"], msg.get("sort").cloned().unwrap_or(J::Null)])
+                            .to_string(),
+                    );
+                    match self.views.get(&key) {
+                        Some(o) => Some(o.clone()),
+                        None => {
+                            let keep = filter_mask(&filters, &cols, total);
+                            let o: Vec<usize> = match sort {
+                                Some((c, desc)) => self
+                                    .sorted_ods(h, &cols, c, desc)
+                                    .iter()
+                                    .copied()
+                                    .filter(|&i| keep[i])
+                                    .collect(),
+                                None => (0..total).filter(|&i| keep[i]).collect(),
+                            };
+                            let o = Arc::new(o);
+                            self.views.insert(key, o.clone());
+                            Some(o)
+                        }
+                    }
+                };
+                let n = order.as_ref().map(|o| o.len()).unwrap_or(total);
                 let rows: Vec<J> = (start..(start + count).min(n))
                     .map(|i| ods_row(&cols, order.as_ref().map(|o| o[i]).unwrap_or(i)))
                     .collect();
                 let names: Vec<&str> = cols.iter().map(|(name, _)| name.as_str()).collect();
-                json!({ "ok": true, "n": n, "cols": names, "rows": rows })
+                let mut r =
+                    json!({ "ok": true, "n": n, "total": total, "cols": names, "rows": rows });
+                if msg.get("summary").and_then(|s| s.as_bool()) == Some(true) {
+                    let sum = if filters.is_empty() {
+                        let series: Vec<&olang_ods::Series> =
+                            cols.iter().map(|(_, c)| *c).collect();
+                        summaries(&series)
+                    } else {
+                        // the view's rows (its first SUMMARY_ROWS), gathered
+                        let o = order.as_ref().expect("a filtered view has an order");
+                        let mut idx: Vec<i64> =
+                            o.iter().take(SUMMARY_ROWS).map(|&i| i as i64).collect();
+                        // a sort does not change a summary but its sample's rows
+                        if o.len() > SUMMARY_ROWS {
+                            idx.sort_unstable();
+                        }
+                        let take = olang_ods::Series::from_i64(idx);
+                        let gathered: Vec<olang_ods::Series> = cols
+                            .iter()
+                            .map(|(_, c)| c.take(&take).unwrap_or_else(|_| (*c).clone()))
+                            .collect();
+                        summaries(&gathered.iter().collect::<Vec<_>>())
+                    };
+                    r["sum"] = sum;
+                    if n > SUMMARY_ROWS {
+                        r["sampled"] = json!(SUMMARY_ROWS);
+                    }
+                }
+                r
             }
             Value::Native(_) => match crate::stdlib::bytes::bytes_of(&v) {
                 Ok(b) => {
@@ -2550,6 +2646,274 @@ fn numeric_summary(col: &olang_ods::Series) -> Option<J> {
     Some(
         json!({ "count": xs.len(), "nulls": n - xs.len(), "mean": mean, "min": lo, "max": hi, "hist": bins }),
     )
+}
+
+/// Rows a column's summary reads at most (a longer column is summarised
+/// over its first, and says it was sampled).
+const SUMMARY_ROWS: usize = 1_000_000;
+/// Bins of a summary's histogram.
+const SUMMARY_BINS: usize = 20;
+/// Values a summary's `top` names.
+const SUMMARY_TOP: usize = 6;
+
+/// Each column's summary (docs/tooling.md, "Values"): its nulls and
+/// distinct values, a number's least, most, mean and histogram, any other
+/// column's most frequent values as their cells' text. Long columns are
+/// summarised side by side.
+fn summaries(cols: &[&olang_ods::Series]) -> J {
+    let one = |c: &olang_ods::Series| -> J {
+        let s = c.summarize(SUMMARY_ROWS, SUMMARY_BINS, SUMMARY_TOP);
+        let mut o = json!({ "nulls": s.nulls, "distinct": s.distinct });
+        if s.numeric {
+            if let Some((lo, hi, mean)) = s.range {
+                o["min"] = json!(lo);
+                o["max"] = json!(hi);
+                o["mean"] = json!(mean);
+            }
+            o["hist"] = json!(s.hist);
+        } else {
+            o["top"] = J::Array(
+                s.top
+                    .iter()
+                    .map(|(row, count)| {
+                        json!([
+                            crate::ods::scalar_text(c.scalar_at(*row)).unwrap_or_default(),
+                            count
+                        ])
+                    })
+                    .collect(),
+            );
+        }
+        o
+    };
+    let long = cols.first().map(|c| c.len()).unwrap_or(0) >= 100_000;
+    if long && cols.len() > 1 {
+        let out: Vec<J> = std::thread::scope(|sc| {
+            let hs: Vec<_> = cols.iter().map(|c| sc.spawn(move || one(c))).collect();
+            hs.into_iter()
+                .map(|h| h.join().unwrap_or(J::Null))
+                .collect()
+        });
+        J::Array(out)
+    } else {
+        J::Array(cols.iter().map(|c| one(c)).collect())
+    }
+}
+
+/// One of `expand`'s filters, read.
+enum Filter {
+    Range(usize, Option<f64>, Option<f64>),
+    Values(usize, Vec<Option<String>>),
+    Contains(usize, String),
+    Nulls(usize, bool),
+}
+
+/// `expand`'s `filters` read against a table's columns: a protocol error
+/// names what is wrong.
+fn read_filters(fs: &[J], cols: &[(String, &olang_ods::Series)]) -> Result<Vec<Filter>, String> {
+    use olang_ods::DType;
+    let mut out = Vec::new();
+    for f in fs {
+        let Some(c) = f.get("col").and_then(|c| c.as_u64()).map(|c| c as usize) else {
+            return Err("a filter needs a col (a column's index)".to_string());
+        };
+        let Some((name, col)) = cols.get(c) else {
+            return Err(format!(
+                "a filter's col {} is past the table's {} columns",
+                c,
+                cols.len()
+            ));
+        };
+        if let Some(r) = f.get("range") {
+            let pair = r.as_array().filter(|a| a.len() == 2).ok_or_else(|| {
+                format!("the filter on `{}`: range is [lo, hi], either null", name)
+            })?;
+            if !matches!(col.dtype(), DType::F64 | DType::I64) {
+                return Err(format!(
+                    "the filter on `{}`: a range is a number's, and `{}` is a {} column",
+                    name,
+                    name,
+                    col.dtype()
+                ));
+            }
+            out.push(Filter::Range(c, pair[0].as_f64(), pair[1].as_f64()));
+        } else if let Some(vs) = f.get("values") {
+            let vs = vs.as_array().ok_or_else(|| {
+                format!(
+                    "the filter on `{}`: values is a list of cells' text (null for a null)",
+                    name
+                )
+            })?;
+            out.push(Filter::Values(
+                c,
+                vs.iter().map(|v| v.as_str().map(str::to_string)).collect(),
+            ));
+        } else if let Some(t) = f.get("contains") {
+            let t = t
+                .as_str()
+                .ok_or_else(|| format!("the filter on `{}`: contains is a String", name))?;
+            out.push(Filter::Contains(c, t.to_string()));
+        } else if let Some(b) = f.get("nulls") {
+            let b = b.as_bool().ok_or_else(|| {
+                format!(
+                    "the filter on `{}`: nulls is true (only nulls) or false (no nulls)",
+                    name
+                )
+            })?;
+            out.push(Filter::Nulls(c, b));
+        } else {
+            return Err(format!(
+                "the filter on `{}` says none of range, values, contains, nulls",
+                name
+            ));
+        }
+    }
+    Ok(out)
+}
+
+/// The rows every filter keeps (they AND together).
+fn filter_mask(filters: &[Filter], cols: &[(String, &olang_ods::Series)], n: usize) -> Vec<bool> {
+    use olang_ods::Scalar;
+    let mut keep = vec![true; n];
+    for f in filters {
+        match f {
+            Filter::Range(c, lo, hi) => {
+                let col = cols[*c].1;
+                for (i, k) in keep.iter_mut().enumerate() {
+                    if !*k {
+                        continue;
+                    }
+                    let x = match col.scalar_at(i) {
+                        Scalar::F64(x) => x,
+                        Scalar::I64(x) => x as f64,
+                        _ => {
+                            *k = false;
+                            continue;
+                        }
+                    };
+                    *k = !x.is_nan() && lo.is_none_or(|lo| x >= lo) && hi.is_none_or(|hi| x <= hi);
+                }
+            }
+            Filter::Values(c, vs) => {
+                let col = cols[*c].1;
+                let nulls = vs.iter().any(|v| v.is_none());
+                let set: std::collections::HashSet<&str> =
+                    vs.iter().flatten().map(String::as_str).collect();
+                for (i, k) in keep.iter_mut().enumerate() {
+                    if *k {
+                        *k = match crate::ods::scalar_text(col.scalar_at(i)) {
+                            Some(t) => set.contains(t.as_str()),
+                            None => nulls,
+                        };
+                    }
+                }
+            }
+            Filter::Contains(c, t) => {
+                let col = cols[*c].1;
+                for (i, k) in keep.iter_mut().enumerate() {
+                    if *k {
+                        *k = crate::ods::scalar_text(col.scalar_at(i))
+                            .is_some_and(|text| text.contains(t.as_str()));
+                    }
+                }
+            }
+            Filter::Nulls(c, only) => {
+                let col = cols[*c].1;
+                for (i, k) in keep.iter_mut().enumerate() {
+                    if *k {
+                        *k = matches!(col.scalar_at(i), Scalar::Null) == *only;
+                    }
+                }
+            }
+        }
+    }
+    keep
+}
+
+/// Points a chart's xy series carries at most (more are decimated).
+const CHART_POINTS: usize = 1500;
+
+/// A string's chart description (what `plot` embeds), parsed.
+fn chart_of(s: &str) -> Option<J> {
+    if !s.trim_start().starts_with("<svg") {
+        return None;
+    }
+    let text = olang_ods::plot::description_of(s)?;
+    serde_json::from_str(&text).ok()
+}
+
+/// A chart's xy series cut to x in `range` (when given) and each made at
+/// most CHART_POINTS points: a line's or an area's least and most y in
+/// each of CHART_POINTS / 2 buckets of x, in x order; a scatter's points
+/// at an even stride. A series decimated says its full count (`n`) and
+/// `cut`.
+fn decimate_chart(chart: &mut J, range: Option<(f64, f64)>) {
+    if chart.get("type").and_then(|t| t.as_str()) != Some("xy") {
+        return;
+    }
+    let Some(series) = chart.get_mut("series").and_then(|s| s.as_array_mut()) else {
+        return;
+    };
+    for s in series.iter_mut() {
+        let nums = |k: &str| -> Vec<f64> {
+            s.get(k)
+                .and_then(|a| a.as_array())
+                .map(|a| a.iter().map(|x| x.as_f64().unwrap_or(f64::NAN)).collect())
+                .unwrap_or_default()
+        };
+        let xs = nums("x");
+        let ys = nums("y");
+        let colors: Option<Vec<J>> = s.get("colors").and_then(|c| c.as_array()).cloned();
+        let mut idx: Vec<usize> = (0..xs.len().min(ys.len()))
+            .filter(|&i| range.is_none_or(|(lo, hi)| xs[i] >= lo && xs[i] <= hi))
+            .collect();
+        let full = idx.len();
+        let windowed = full != xs.len();
+        if full > CHART_POINTS {
+            let scatter = s.get("mark").and_then(|m| m.as_str()) == Some("scatter");
+            idx = if scatter {
+                let step = full.div_ceil(CHART_POINTS);
+                idx.into_iter().step_by(step).collect()
+            } else {
+                let buckets = CHART_POINTS / 2;
+                let lo = idx.iter().map(|&i| xs[i]).fold(f64::INFINITY, f64::min);
+                let hi = idx.iter().map(|&i| xs[i]).fold(f64::NEG_INFINITY, f64::max);
+                let span = if hi > lo { hi - lo } else { 1.0 };
+                // each bucket's (least y, most y) points
+                let mut picks: Vec<Option<(usize, usize)>> = vec![None; buckets];
+                for &i in &idx {
+                    let b = ((((xs[i] - lo) / span) * buckets as f64) as usize).min(buckets - 1);
+                    let p = picks[b].get_or_insert((i, i));
+                    if ys[i] < ys[p.0] {
+                        p.0 = i;
+                    }
+                    if ys[i] > ys[p.1] {
+                        p.1 = i;
+                    }
+                }
+                let mut out = Vec::with_capacity(CHART_POINTS);
+                for (a, b) in picks.into_iter().flatten() {
+                    let (a, b) = if xs[a] <= xs[b] { (a, b) } else { (b, a) };
+                    out.push(a);
+                    if b != a {
+                        out.push(b);
+                    }
+                }
+                out
+            };
+        }
+        if windowed || full > CHART_POINTS {
+            s["x"] = json!(idx.iter().map(|&i| xs[i]).collect::<Vec<_>>());
+            s["y"] = json!(idx.iter().map(|&i| ys[i]).collect::<Vec<_>>());
+            if let Some(cs) = &colors {
+                s["colors"] = J::Array(idx.iter().filter_map(|&i| cs.get(i).cloned()).collect());
+            }
+        }
+        if full > CHART_POINTS {
+            s["n"] = json!(full);
+            s["cut"] = J::Bool(true);
+        }
+    }
 }
 
 /// Row `i` of a table of columns: `{"i", "c": [text or null…]}`.

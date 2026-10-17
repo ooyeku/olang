@@ -1087,6 +1087,145 @@ impl Series {
     }
 }
 
+/// A column's summary, as a host draws it over a table's column: its
+/// nulls and distinct values, and a number's range, mean and histogram or
+/// any other column's most frequent values. Over the first `upto` rows.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ColumnSummary {
+    /// The rows summarised (at most `upto`).
+    pub rows: usize,
+    pub nulls: usize,
+    /// Distinct values, nulls not among them.
+    pub distinct: usize,
+    /// An Int or Float column.
+    pub numeric: bool,
+    /// A number's least, most and mean over its finite values; None when
+    /// it has none.
+    pub range: Option<(f64, f64, f64)>,
+    /// A number's histogram: equal-width bins over [min, max] (every
+    /// value in the first when they are equal); nulls not counted.
+    pub hist: Vec<u64>,
+    /// Any other column's most frequent values: (a row holding it, its
+    /// count), most first, ties by first appearance.
+    pub top: Vec<(usize, usize)>,
+}
+
+impl Series {
+    /// The column's summary over its first `upto` rows: `bins` histogram
+    /// bins for a number, the `top` most frequent values otherwise.
+    pub fn summarize(&self, upto: usize, bins: usize, top: usize) -> ColumnSummary {
+        let m = self.len().min(upto);
+        let valid = |i: usize| self.validity().map(|v| v.get(i)).unwrap_or(true);
+        let nulls = match self.validity() {
+            None => 0,
+            Some(_) => (0..m).filter(|&i| !valid(i)).count(),
+        };
+        let mut out = ColumnSummary {
+            rows: m,
+            nulls,
+            distinct: 0,
+            numeric: false,
+            range: None,
+            hist: Vec::new(),
+            top: Vec::new(),
+        };
+        match self {
+            Series::F64 { .. } | Series::I64 { .. } => {
+                out.numeric = true;
+                let bins = bins.max(1);
+                let at = |i: usize| -> f64 {
+                    match self {
+                        Series::F64 { values, .. } => values[i],
+                        Series::I64 { values, .. } => values[i] as f64,
+                        _ => unreachable!(),
+                    }
+                };
+                // distinct values by sorting their bits: a hash of float
+                // bits clusters (the fast hasher mixes the low bits), a
+                // sort does not care
+                let mut seen: Vec<u64> = Vec::with_capacity(m - nulls);
+                let (mut lo, mut hi, mut sum, mut n) =
+                    (f64::INFINITY, f64::NEG_INFINITY, 0.0, 0usize);
+                for i in 0..m {
+                    if !valid(i) {
+                        continue;
+                    }
+                    match self {
+                        Series::I64 { values, .. } => seen.push(values[i] as u64),
+                        _ => {
+                            let x = at(i);
+                            seen.push(if x.is_nan() {
+                                f64::NAN.to_bits()
+                            } else {
+                                (x + 0.0).to_bits()
+                            });
+                        }
+                    }
+                    let x = at(i);
+                    if x.is_finite() {
+                        lo = lo.min(x);
+                        hi = hi.max(x);
+                        sum += x;
+                        n += 1;
+                    }
+                }
+                seen.sort_unstable();
+                seen.dedup();
+                out.distinct = seen.len();
+                out.hist = vec![0; bins];
+                if n > 0 {
+                    out.range = Some((lo, hi, sum / n as f64));
+                    let span = hi - lo;
+                    for i in 0..m {
+                        if !valid(i) {
+                            continue;
+                        }
+                        let x = at(i);
+                        if !x.is_finite() {
+                            continue;
+                        }
+                        let b = if span > 0.0 {
+                            (((x - lo) / span) * bins as f64) as usize
+                        } else {
+                            0
+                        };
+                        out.hist[b.min(bins - 1)] += 1;
+                    }
+                }
+            }
+            Series::Str { col, .. } => {
+                let mut counts: FxMap<&str, (usize, usize)> =
+                    FxMap::with_capacity_and_hasher((m / 4).min(1 << 18), Default::default());
+                for i in 0..m {
+                    if valid(i) {
+                        counts.entry(col.get(i)).or_insert((i, 0)).1 += 1;
+                    }
+                }
+                out.distinct = counts.len();
+                let mut all: Vec<(usize, usize)> = counts.into_values().collect();
+                all.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+                all.truncate(top);
+                out.top = all;
+            }
+            Series::Bool { values, .. } => {
+                // (first row, count) of false and of true
+                let mut slots: [Option<(usize, usize)>; 2] = [None, None];
+                for i in 0..m {
+                    if valid(i) {
+                        slots[values[i] as usize].get_or_insert((i, 0)).1 += 1;
+                    }
+                }
+                let mut all: Vec<(usize, usize)> = slots.into_iter().flatten().collect();
+                out.distinct = all.len();
+                all.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+                all.truncate(top);
+                out.top = all;
+            }
+        }
+        out
+    }
+}
+
 // ---------------------------------------------------------------------
 // Group keys
 // ---------------------------------------------------------------------
@@ -1703,4 +1842,35 @@ fn coalesce(a: &Series, b: &Series) -> Result<Series> {
 
 fn col_valid(col: &Series, i: usize) -> bool {
     !matches!(col.scalar_at(i), Scalar::Null)
+}
+
+#[cfg(test)]
+mod summary_tests {
+    use super::*;
+
+    #[test]
+    fn a_columns_summary_counts_ranges_and_ranks() {
+        let n = Series::from_f64_options(vec![Some(1.0), None, Some(3.0), Some(1.0)]);
+        let s = n.summarize(10, 4, 6);
+        assert_eq!((s.nulls, s.distinct, s.numeric), (1, 2, true));
+        assert_eq!(s.range, Some((1.0, 3.0, 5.0 / 3.0)));
+        assert_eq!(s.hist, vec![2, 0, 0, 1]);
+        let t = Series::from_str_options(vec![
+            Some("b".into()),
+            Some("a".into()),
+            None,
+            Some("a".into()),
+            Some("b".into()),
+            Some("c".into()),
+        ]);
+        let s = t.summarize(10, 4, 2);
+        assert_eq!((s.nulls, s.distinct), (1, 3));
+        // ties by first appearance: b (row 0) before a (row 1)
+        assert_eq!(s.top, vec![(0, 2), (1, 2)]);
+        // the first rows only
+        let s = t.summarize(2, 4, 6);
+        assert_eq!((s.rows, s.distinct, s.nulls), (2, 2, 0));
+        let same = Series::from_i64(vec![4, 4]).summarize(10, 3, 6);
+        assert_eq!(same.hist, vec![2, 0, 0]);
+    }
 }

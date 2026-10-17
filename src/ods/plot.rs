@@ -384,7 +384,10 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
                 .and_then(crate::stdlib::json::json_to_olang_value)
             {
                 Ok(v) => Ok(Value::Ok(Box::new(v))),
-                Err(m) => err(format!("plot.describe: the description does not read: {}", m)),
+                Err(m) => err(format!(
+                    "plot.describe: the description does not read: {}",
+                    m
+                )),
             };
         }
         "line" | "scatter" | "area" => {
