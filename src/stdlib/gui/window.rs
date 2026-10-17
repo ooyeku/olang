@@ -2058,6 +2058,7 @@ impl WinState {
                     h: dh,
                     pic,
                     clip: inner_clip.intersect(Clip::rect(x, y, x + w, y + h)),
+                    alpha: opacity,
                 });
                 // the button that plays a still animation (or pauses it)
                 if let Some((r, play)) = badge {
@@ -2069,6 +2070,7 @@ impl WinState {
                         h: side,
                         pic: badge_picture(side as u32, play),
                         clip: inner_clip.intersect(Clip::rect(x, y, x + w, y + h)),
+                        alpha: opacity,
                     });
                 }
             }
@@ -2252,6 +2254,7 @@ impl WinState {
                         h: bh,
                         pic,
                         clip: c,
+                        alpha: opacity,
                     });
                 }
                 Item::Image {
@@ -2290,6 +2293,7 @@ impl WinState {
                             h: dh,
                             pic,
                             clip: sub(clip).intersect(Clip::rect(bx, by, bx + bw, by + bh)),
+                            alpha: opacity,
                         });
                     }
                 }
@@ -3887,6 +3891,8 @@ pub enum Prim {
         h: f32,
         pic: Arc<super::canvas::Picture>,
         clip: Clip,
+        /// The picture's opacity (its node's and its ancestors'), 0 … 1.
+        alpha: f32,
     },
 }
 

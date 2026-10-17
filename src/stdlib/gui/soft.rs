@@ -51,8 +51,9 @@ pub fn render(dl: &DisplayList) -> Pixmap {
                 h,
                 pic,
                 clip,
+                alpha,
             } => {
-                if clip.is_empty() || *w <= 0.0 || *h <= 0.0 {
+                if clip.is_empty() || *w <= 0.0 || *h <= 0.0 || *alpha <= 0.0 {
                     continue;
                 }
                 let Some(src) = tiny_skia::PixmapRef::from_bytes(&pic.rgba, pic.width, pic.height)
@@ -62,6 +63,7 @@ pub fn render(dl: &DisplayList) -> Pixmap {
                 let mask = clip_mask(&mut masks, *clip, dl.width, dl.height).cloned();
                 let paint = tiny_skia::PixmapPaint {
                     quality: tiny_skia::FilterQuality::Bilinear,
+                    opacity: alpha.clamp(0.0, 1.0),
                     ..Default::default()
                 };
                 let tf = Transform::from_row(

@@ -2338,3 +2338,75 @@ fn a_caret_is_drawn_only_in_the_key_window() {
     "##);
     assert_eq!(text(&v), "[true, true, true]");
 }
+
+/// A picture and a canvas under a parent at half opacity: both faded.
+#[test]
+fn a_picture_and_a_canvas_under_an_opacity_are_faded() {
+    let dir = tempfile::tempdir().unwrap();
+    let png = quarters_png(dir.path());
+    let n = |v: f64| Value::Float(v);
+    let mut st = WinState::new(1, true, "faded", 200.0, 100.0, 1.0);
+    let draw = Value::List(Arc::new(vec![m(vec![
+        ("op", s("rect")),
+        ("x", n(0.0)),
+        ("y", n(0.0)),
+        ("w", n(80.0)),
+        ("h", n(80.0)),
+        ("fill", s("#dc2626")),
+    ])]));
+    let ops = Value::List(Arc::new(vec![
+        m(vec![
+            ("key", s("root")),
+            ("box", tup(&[0.0, 0.0, 200.0, 100.0])),
+            ("style", m(vec![("bg", s("#ffffff"))])),
+        ]),
+        m(vec![
+            ("key", s("veil")),
+            ("parent", s("root")),
+            ("box", tup(&[0.0, 0.0, 200.0, 100.0])),
+            ("style", m(vec![("opacity", n(0.5))])),
+        ]),
+        m(vec![
+            ("key", s("pic")),
+            ("parent", s("veil")),
+            ("role", s("image")),
+            ("box", tup(&[0.0, 0.0, 80.0, 80.0])),
+            ("image", s(&png)),
+            ("fit", s("fill")),
+        ]),
+        m(vec![
+            ("key", s("chart")),
+            ("parent", s("veil")),
+            ("role", s("figure")),
+            ("box", tup(&[100.0, 0.0, 80.0, 80.0])),
+            ("draw", draw),
+        ]),
+    ]));
+    let mut out = Vec::new();
+    st.apply(&ops, &mut out).expect("the scene applies");
+    let dl = st.display_list();
+    let near = |got: [u8; 3], want: [u8; 3]| (0..3).all(|i| got[i].abs_diff(want[i]) <= 4);
+    // red (220, 38, 38) over white at half strength
+    let half = [238, 147, 147];
+    let check = |rgba: &[u8], what: &str| {
+        let px = |x: u32, y: u32| {
+            let i = ((y * dl.width + x) * 4) as usize;
+            [rgba[i], rgba[i + 1], rgba[i + 2]]
+        };
+        assert!(
+            near(px(10, 10), half),
+            "{what}: the picture at {:?}",
+            px(10, 10)
+        );
+        assert!(
+            near(px(140, 40), half),
+            "{what}: the canvas at {:?}",
+            px(140, 40)
+        );
+    };
+    check(&soft::rgba(&soft::render(&dl)), "software");
+    match gpu::gpu(None, None) {
+        Ok(g) => check(&g.render_rgba(&dl), "gpu"),
+        Err(_) => eprintln!("skipped the GPU half: no GPU here"),
+    }
+}

@@ -2298,7 +2298,9 @@ is due.
 top-left first), `color`, `font` (`"body"`, `"mono"`, or a family list),
 `size`, `weight`, `italic`, `line_height`, `align` (`start` and `end` follow the text's direction; `left`, `center`, `right` do not), `valign`, `wrap`,
 `pad` (one, two, or four), `clip` (children are clipped to the inside of
-the border, following its corners), `opacity`, `caret`, `selection`,
+the border, following its corners), `opacity` (the node and everything
+in it — text, boxes, a canvas's drawing, a picture — faded together),
+`caret`, `selection`,
 `placeholder_color`, `focus_ring` (a colour, or `false`), and the
 variants `hover`, `pressed`, `focus` — style maps the engine applies as
 the pointer and focus move, with no turn of the program. `group_hover:

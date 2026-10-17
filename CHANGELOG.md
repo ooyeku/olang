@@ -73,6 +73,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   map of `value` and any of `options`, `min`, `max`, `step` binds its
   `value`, held to its options or range (a diagnostic otherwise);
   `--param` is held to it the same way, and `reread` reads it too.
+- **A picture is drawn at its opacity.** `gui`'s pictures (an `image`,
+  an SVG chart shown as one, a canvas's pictures and images) are faded by
+  their node's and its ancestors' `opacity` on the software and GPU
+  renderers, as text, boxes and a canvas's drawing already were: a stale
+  chart under a half-opacity output is drawn at half strength.
 - **An SVG picture's text is drawn.** `gui`'s image draws an SVG's
   `<text>` in the system's fonts (loaded once, when an SVG is first
   drawn; sans-serif the platform's interface face), so a `plot` chart

@@ -497,16 +497,19 @@ impl Gpu {
                     h,
                     pic,
                     clip,
+                    alpha,
                 } => {
-                    if clip.is_empty() || *w <= 0.0 || *h <= 0.0 {
+                    if clip.is_empty() || *w <= 0.0 || *h <= 0.0 || *alpha <= 0.0 {
                         continue;
                     }
                     segments.push((out.len(), Some(pic.clone())));
-                    // Drawn as a colour glyph: premultiplied, sampled whole.
+                    // Drawn as a colour glyph: premultiplied, sampled whole,
+                    // faded by the fill's alpha (its opacity).
+                    let a = alpha.clamp(0.0, 1.0);
                     out.push(Inst {
                         rect: [*x, *y, *w, *h],
                         clip: [clip.x0, clip.y0, clip.x1, clip.y1],
-                        fill: [1.0, 1.0, 1.0, 1.0],
+                        fill: [a, a, a, a],
                         border: [0.0; 4],
                         radii: [0.0; 4],
                         uv: [0.0, 0.0, 1.0, 1.0],
