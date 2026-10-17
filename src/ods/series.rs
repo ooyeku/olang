@@ -294,12 +294,14 @@ fn is_in(s: &Series, values: &Value) -> Result<Series, String> {
         Scalar::Bool(_) => "a Bool",
         Scalar::Null => "()",
     };
-    let fits = |w: &Scalar| match (s.dtype(), w) {
-        (_, Scalar::Null) => true,
-        (DType::F64 | DType::I64, Scalar::F64(_) | Scalar::I64(_)) => true,
-        (DType::Str, Scalar::Str(_)) => true,
-        (DType::Bool, Scalar::Bool(_)) => true,
-        _ => false,
+    let fits = |w: &Scalar| {
+        matches!(
+            (s.dtype(), w),
+            (_, Scalar::Null)
+                | (DType::F64 | DType::I64, Scalar::F64(_) | Scalar::I64(_))
+                | (DType::Str, Scalar::Str(_))
+                | (DType::Bool, Scalar::Bool(_))
+        )
     };
     if let Some(bad) = wanted.iter().find(|w| !fits(w)) {
         return Err(format!(
