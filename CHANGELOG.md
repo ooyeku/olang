@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The language server reads a notebook.** `olang lsp` takes an `.olmd`
+  as one document whose cells are one module on the file's own lines:
+  completion, hover, signature help, go to definition, references,
+  highlights and rename reach across cells — a param is its front
+  matter key, and a name a `${expr}` in prose reads is found and renamed
+  there too — and its problems are `olang check`'s, each on its cell's
+  line (a name only prose reads is not unused). Prose completes
+  nothing; formatting is `olang fmt`'s. A profile's frames in a notebook
+  name their cells' lines.
+- **A kernel's profile of one cell, and a column's every value.** `eval`
+  with `"profile": true` samples that evaluation and answers its profile
+  (`olang profile --format json`'s document, a cell's functions at the
+  lines their cell declared them); `expand` with `distinct` pages a
+  Frame column's distinct values with their counts, the commonest first,
+  `contains` narrowing them.
+
 - **Notebooks: olang reads `.olmd` files as programs** (docs/notebooks.md).
   A notebook is markdown whose `olang` fenced blocks are code cells; its
   program is the cells' code with every other line empty, so every

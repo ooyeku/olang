@@ -748,6 +748,27 @@ impl Session {
         }
     }
 
+    /// A profile's frames named for where a cell declared them: a cell's
+    /// function's `file` and `line` are the notebook's (its text as the
+    /// kernel ran it, not the file on disk).
+    fn cell_frames(&self, mut doc: J) -> J {
+        if let Some(frames) = doc.get_mut("frames").and_then(|f| f.as_array_mut()) {
+            for f in frames.iter_mut() {
+                let name = f.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                let bare = name
+                    .strip_prefix("<lambda in ")
+                    .and_then(|r| r.strip_suffix('>'))
+                    .unwrap_or(name)
+                    .to_string();
+                if let Some((file, line)) = self.declared.get(&bare) {
+                    f["file"] = J::String(file.to_string_lossy().to_string());
+                    f["line"] = json!(line);
+                }
+            }
+        }
+        doc
+    }
+
     /// The notebook's path, when this session is a kernel.
     fn notebook_path(&self) -> Option<PathBuf> {
         self.notebook.as_ref().map(|n| n.path.clone())
@@ -758,7 +779,7 @@ impl Session {
             "event": "hello", "protocol": PROTOCOL, "olang": crate::version::VERSION,
             "root": self.root.to_string_lossy(), "pid": std::process::id(),
             "ops": ["hello", "eval", "command", "commands", "complete", "deps", "drop", "expand", "release", "interrupt", "ping", "reload", "reread", "render", "reset", "set", "shutdown", "stats", "vars"],
-            "features": ["bind", "pure", "cell", "caps"],
+            "features": ["bind", "pure", "cell", "caps", "profile", "distinct"],
         });
         if let Some(nb) = &self.notebook {
             v["notebook"] = json!({
@@ -1047,6 +1068,10 @@ impl Session {
             })
             .unwrap_or_default();
         let pure = msg.get("pure").and_then(|p| p.as_bool()).unwrap_or(false);
+        // `profile: true`: this evaluation sampled, its profile in the reply
+        // (none while another profile samples the process)
+        let profiling =
+            msg.get("profile").and_then(|p| p.as_bool()) == Some(true) && !crate::profile::busy();
         // a cell's evaluation: what it defines is the cell's (its id a
         // string or a number)
         let cell = msg.get("cell").map(|c| match c.as_str() {
@@ -1179,6 +1204,10 @@ impl Session {
             crate::controls::begin_cell(c);
         }
         let started = Instant::now();
+        let session = profiling.then(|| {
+            crate::profile::detail_enable();
+            crate::profile::start(PROFILE_EVAL_US)
+        });
         crate::profile::stats_sample_begin(crate::tier_stats::INTERVAL_US);
         let outcome = match bind_failed.take() {
             Some((name, e)) => Err(InterpreterError::RuntimeError {
@@ -1191,6 +1220,10 @@ impl Session {
             None => self.cmd.interpreter.eval_program(program),
         };
         crate::profile::stats_sample_end();
+        let profile_doc = session.map(|s| {
+            let mut lines = crate::profile::LineCache::default();
+            self.cell_frames(s.finish_json(&mut lines))
+        });
         let bound_controls = if cell.is_some() {
             crate::controls::end_cell()
         } else {
@@ -1350,6 +1383,9 @@ impl Session {
         reply["calls"] = json!({ "bytecode": bc, "native": nat });
         reply["out"] = J::String(printed);
         reply["caps"] = json!(reached);
+        if let Some(doc) = profile_doc {
+            reply["profile"] = doc;
+        }
         if !notes.is_empty() {
             reply["notes"] = json!(notes);
         }
@@ -2125,6 +2161,10 @@ impl Session {
                     .collect();
                 json!({ "ok": true, "n": n, "entries": out })
             }
+            Value::Native(_) if ods_columns(&v).is_some() && msg.get("distinct").is_some() => {
+                let cols = ods_columns(&v).unwrap_or_default();
+                distinct_values(&cols, &msg["distinct"], start, count)
+            }
             Value::Native(_) if ods_columns(&v).is_some() => {
                 let cols = ods_columns(&v).unwrap_or_default();
                 let total = cols.first().map(|(_, c)| c.len()).unwrap_or(0);
@@ -2854,6 +2894,55 @@ fn numeric_summary(col: &olang_ods::Series) -> Option<J> {
     Some(
         json!({ "count": xs.len(), "nulls": n - xs.len(), "mean": mean, "min": lo, "max": hi, "hist": bins }),
     )
+}
+
+/// How often an evaluation asked for its profile is sampled (µs): a cell
+/// runs for milliseconds, so finer than `olang profile`'s 1 kHz.
+const PROFILE_EVAL_US: u64 = 100;
+
+/// `expand`'s `distinct`: a column's distinct values with their counts,
+/// the commonest first (then by their text), a page of them (`start`,
+/// `count`); `contains` keeps the values holding the text
+/// (case-sensitive, as a filter's). Read over the column's first
+/// `SUMMARY_ROWS` (`sampled` past them). A null is a value (`null`).
+fn distinct_values(cols: &[(String, &olang_ods::Series)], d: &J, start: usize, count: usize) -> J {
+    let Some(c) = d.get("col").and_then(|c| c.as_u64()).map(|c| c as usize) else {
+        return json!({ "ok": false, "error": { "kind": "protocol", "message": "distinct needs a col (a column's index)" } });
+    };
+    let Some((name, col)) = cols.get(c) else {
+        return json!({ "ok": false, "error": { "kind": "protocol", "message": format!("distinct's col {} is past the table's {} columns", c, cols.len()) } });
+    };
+    let contains = d
+        .get("contains")
+        .and_then(|t| t.as_str())
+        .filter(|t| !t.is_empty());
+    let rows = col.len().min(SUMMARY_ROWS);
+    let mut counts: HashMap<Option<String>, u64> = HashMap::new();
+    for i in 0..rows {
+        let t = crate::ods::scalar_text(col.scalar_at(i));
+        *counts.entry(t).or_insert(0) += 1;
+    }
+    let mut all: Vec<(Option<String>, u64)> = counts
+        .into_iter()
+        .filter(|(t, _)| match (contains, t) {
+            (None, _) => true,
+            (Some(q), Some(t)) => t.contains(q),
+            (Some(_), None) => false,
+        })
+        .collect();
+    all.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let n = all.len();
+    let values: Vec<J> = all
+        .into_iter()
+        .skip(start)
+        .take(count)
+        .map(|(t, k)| json!([t, k]))
+        .collect();
+    let mut r = json!({ "ok": true, "col": name, "n": n, "start": start, "values": values });
+    if col.len() > SUMMARY_ROWS {
+        r["sampled"] = json!(SUMMARY_ROWS);
+    }
+    r
 }
 
 /// Rows a column's summary reads at most (a longer column is summarised

@@ -910,7 +910,7 @@ What a program prints while the session serves is collected and sent with
 the evaluation that printed it (`out`); stdout belongs to the protocol.
 
 **Handshake.** On start the server says
-`{"event":"hello","protocol":1,"olang":"0.88.0","root":…,"pid":…,"ops":[…],"features":["bind","pure","cell","caps"]}`
+`{"event":"hello","protocol":1,"olang":"0.88.0","root":…,"pid":…,"ops":[…],"features":["bind","pure","cell","caps","profile","distinct"]}`
 (`features`: what an `eval` takes beyond the protocol's first version;
 a notebook's kernel says `notebook` too, below).
 A client that does not know the protocol's version stops there. `{"op":"hello"}`
@@ -942,12 +942,21 @@ next request. An editor re-runs a result on save only when it is pure
 this way (and fast); the clock, randomness and printing are not
 capabilities and pass.
 
+**A profile of one evaluation.** `"profile": true` samples the evaluation
+(every 100 µs) and adds `profile` to its reply: the document `olang
+profile --format json` writes ([As data](#as-data-and-live)), its frames
+named as the stack says them — a cell's function at the line its cell
+declared it, the notebook's text as the kernel ran it. An evaluation
+asked while another profile samples the process (`olang profile`'s,
+`runtime.profile_start`'s) runs unsampled and says none.
+
 | Request | Reply |
 |---|---|
 | `{"op":"eval","id":1,"code":"rows(10)","file":"/p/calc.ol","line":12,"bind":{…}?,"pure":true?}` | `{"id":1,"ok":true,"eval":7,"value":V,"binding":"x"?,"ms":0.4,"server_ms":0.5,"tier":"native","calls":{"bytecode":1,"native":1},"out":"…","notes":[…]?}` — or `"ok":false` with `"error":E` |
 | `{"op":"expand","id":2,"h":3,"start":0,"count":100}` | more of a held value: a list's `items` (`{"i","v"}`), a map's or record's `entries` (`{"key","v"}`), a string's text (`s`), Bytes as base64 (`b64`) |
 | `{"op":"expand","id":3,"h":3,"table":true,"start":0,"count":50,"sort":{"col":2,"desc":true}}` | a table's `rows` (`{"i": index, "c": [cell text…]}`), sorted by a column; `n` and `total` its rows |
 | `{"op":"expand","id":3,"h":7,"table":true,"start":0,"count":200,"filters":[…],"sort":{…}?,"summary":true?}` | a Frame's (or a Series') view, filtered, sorted, and summarised (below): `{"ok":true,"n":…,"total":…,"cols":[…],"rows":[…],"sum":[…]?}` |
+| `{"op":"expand","id":3,"h":7,"distinct":{"col":1,"contains":"we"?},"start":0,"count":50}` | a Frame's (or a Series') column's distinct values, the commonest first (ties by their text), a page of them: `{"ok":true,"col":"region","n":…,"start":0,"values":[["west",120],[null,3],…],"sampled"?}` — `n` how many there are (`contains` kept: their text holds it, case-sensitive), a null one value (`null`), read over the column's first million rows |
 | `{"op":"expand","id":3,"h":12,"chart":{"x0":1.5,"x1":4.0}}` | a chart's description with each xy series cut to x in [`x0`, `x1`] (either `null`: open) and decimated again: `{"ok":true,"chart":C}` |
 | `{"op":"release","id":4,"eval":7}` | the evaluation's handles are let go (the last 200 are kept anyway) |
 | `{"op":"interrupt","id":5}` | `{"running":true}`; the running evaluation fails with `"kind":"interrupted"` |

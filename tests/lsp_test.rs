@@ -1197,3 +1197,220 @@ fn a_renamed_file_moves_its_document_and_rechecks_its_importers() {
     let _ = c.child.kill();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A notebook (`.olmd`) is one document whose cells are one module:
+/// problems land on the cell's own line, completion, hover and go to
+/// definition reach across cells, references and a rename find a name in
+/// every cell, its param's key and the prose's `${expr}`s — and prose
+/// itself is about nothing.
+#[test]
+fn a_notebook_is_one_document_across_its_cells() {
+    let mut c = Client::start();
+    let dir = std::env::temp_dir().join(format!("olang-lsp-nb-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("sales.olmd");
+    let uri = format!("file://{}", path.display());
+    let text = [
+        "---",                                          // 0
+        "params:",                                      // 1
+        "  top_n: 3",                                   // 2
+        "---",                                          // 3
+        "",                                             // 4
+        "Sold ${fmt(total)} in ${top_n} lines.",        // 5
+        "",                                             // 6
+        "```olang {name: helpers}",                     // 7
+        "fn fmt(x) = \"$\" + to_string(x)",             // 8
+        "```",                                          // 9
+        "",                                             // 10
+        "```olang {name: mine}",                        // 11
+        "let mine = [3, 4, 5]",                         // 12
+        "let total = mine |> fold(0, (a, b) => a + b)", // 13
+        "```",                                          // 14
+        "",                                             // 15
+        "```olang",                                     // 16
+        "let top = take(mine, top_n)",                  // 17
+        "missing_name + 1",                             // 18
+        "```",                                          // 19
+        "",
+    ]
+    .join("\n");
+    std::fs::write(&path, &text).unwrap();
+    c.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {}, "rootUri": format!("file://{}", dir.display()) }
+    }));
+    c.recv_until(|m| m["id"] == 1);
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+            "textDocument":{"uri":uri,"languageId":"olang","version":1,"text":text}}
+    }));
+    let m = c.recv_until(|m| diagnostics_of(m).is_some());
+    let ds = diagnostics_of(&m).unwrap();
+    // the undefined name is an error on its cell's line; nothing the
+    // prose reads (`fmt`, `total`) is unused, nor the param
+    let err = ds
+        .iter()
+        .find(|d| d["severity"] == 1)
+        .unwrap_or_else(|| panic!("an error: {ds:?}"));
+    assert_eq!(err["range"]["start"]["line"], 18, "{ds:?}");
+    assert!(
+        !ds.iter().any(|d| {
+            let msg = d["message"].as_str().unwrap_or("");
+            msg.contains("fmt") || msg.contains("total") || msg.contains("top_n")
+        }),
+        "{ds:?}"
+    );
+
+    let ask =
+        |c: &mut Client, id: i64, method: &str, line: u32, ch: u32, extra: serde_json::Value| {
+            let mut params = serde_json::json!({
+            "textDocument": { "uri": uri }, "position": { "line": line, "character": ch } });
+            if let (Some(p), Some(e)) = (params.as_object_mut(), extra.as_object()) {
+                for (k, v) in e {
+                    p.insert(k.clone(), v.clone());
+                }
+            }
+            c.send(&serde_json::json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}));
+            c.recv_until(|m| m["id"] == id)
+        };
+    let none = serde_json::json!({});
+
+    // completion in a cell knows an earlier cell's names
+    let r = ask(&mut c, 2, "textDocument/completion", 18, 0, none.clone());
+    let labels: Vec<&str> = r["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|i| i["label"].as_str())
+        .collect();
+    for want in ["mine", "total", "fmt", "top_n"] {
+        assert!(labels.contains(&want), "missing {want}: {labels:?}");
+    }
+    // prose completes nothing
+    let r = ask(&mut c, 3, "textDocument/completion", 5, 1, none.clone());
+    assert_eq!(r["result"], serde_json::json!([]), "{r}");
+
+    // hover and definition from a later cell
+    let r = ask(&mut c, 4, "textDocument/hover", 17, 16, none.clone());
+    assert!(r["result"].to_string().contains("mine"), "{r}");
+    let r = ask(&mut c, 5, "textDocument/definition", 17, 16, none.clone());
+    assert_eq!(r["result"]["range"]["start"]["line"], 12, "{r}");
+    assert_eq!(r["result"]["range"]["start"]["character"], 4, "{r}");
+    // a param's definition is its key in the front matter
+    let r = ask(&mut c, 6, "textDocument/definition", 17, 22, none.clone());
+    assert_eq!(
+        r["result"]["range"]["start"],
+        serde_json::json!({"line": 2, "character": 2}),
+        "{r}"
+    );
+
+    // references: every cell, and the prose's `${expr}`
+    let r = ask(
+        &mut c,
+        7,
+        "textDocument/references",
+        13,
+        5,
+        serde_json::json!({ "context": { "includeDeclaration": true } }),
+    );
+    let at: Vec<(i64, i64)> = r["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| {
+            (
+                l["range"]["start"]["line"].as_i64().unwrap(),
+                l["range"]["start"]["character"].as_i64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(at, vec![(5, 11), (13, 4)], "{r}");
+    // a param's: its key, its readers
+    let r = ask(
+        &mut c,
+        8,
+        "textDocument/references",
+        2,
+        3,
+        serde_json::json!({ "context": { "includeDeclaration": true } }),
+    );
+    let lines: Vec<i64> = r["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["range"]["start"]["line"].as_i64().unwrap())
+        .collect();
+    assert_eq!(lines, vec![2, 5, 17], "{r}");
+
+    // rename across cells, never a line of prose that does not read it
+    let r = ask(
+        &mut c,
+        9,
+        "textDocument/rename",
+        12,
+        5,
+        serde_json::json!({ "newName": "picked" }),
+    );
+    let edits = r["result"]["changes"][uri.as_str()]
+        .as_array()
+        .unwrap_or_else(|| panic!("{r}"));
+    let at: Vec<(i64, i64)> = edits
+        .iter()
+        .map(|e| {
+            (
+                e["range"]["start"]["line"].as_i64().unwrap(),
+                e["range"]["start"]["character"].as_i64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(at, vec![(12, 4), (13, 12), (17, 15)], "{r}");
+    assert!(edits.iter().all(|e| e["newText"] == "picked"));
+    // renamed from the prose, where `${top_n}` reads the param
+    let r = ask(
+        &mut c,
+        10,
+        "textDocument/rename",
+        5,
+        26,
+        serde_json::json!({ "newName": "limit" }),
+    );
+    let lines: Vec<i64> = r["result"]["changes"][uri.as_str()]
+        .as_array()
+        .unwrap_or_else(|| panic!("{r}"))
+        .iter()
+        .map(|e| e["range"]["start"]["line"].as_i64().unwrap())
+        .collect();
+    assert_eq!(lines, vec![2, 5, 17], "{r}");
+
+    // an edit to a cell: its problem gone, said for the file
+    let fixed = text.replace("missing_name + 1", "top");
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"textDocument/didChange","params":{
+            "textDocument":{"uri":uri,"version":2},"contentChanges":[{"text":fixed}]}
+    }));
+    let m = c.recv_until(|m| diagnostics_of(m).is_some());
+    assert!(
+        !diagnostics_of(&m)
+            .unwrap()
+            .iter()
+            .any(|d| d["severity"] == 1),
+        "{m}"
+    );
+    // a name defined in two cells: the notebook's own rule, on both
+    let twice = fixed.replace("let top = take", "let mine = take");
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"textDocument/didChange","params":{
+            "textDocument":{"uri":uri,"version":3},"contentChanges":[{"text":twice}]}
+    }));
+    let m = c.recv_until(|m| diagnostics_of(m).is_some());
+    let rules: Vec<i64> = diagnostics_of(&m)
+        .unwrap()
+        .iter()
+        .filter(|d| d["code"] == "notebook")
+        .map(|d| d["range"]["start"]["line"].as_i64().unwrap())
+        .collect();
+    assert!(rules.contains(&12) && rules.contains(&17), "{m}");
+    let _ = c.child.kill();
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -1257,7 +1257,16 @@ impl LineCache {
             return None;
         }
         let lines = self.files.entry(file.to_string()).or_insert_with(|| {
+            // a notebook's functions are its program's (its cells on the
+            // file's lines)
             std::fs::read_to_string(file)
+                .map(|t| {
+                    if crate::notebook::is_notebook(std::path::Path::new(file)) {
+                        crate::notebook::program(&t, crate::notebook::Mode::Check).source
+                    } else {
+                        t
+                    }
+                })
                 .map(|t| crate::tier_stats::fn_lines(&t))
                 .unwrap_or_default()
         });

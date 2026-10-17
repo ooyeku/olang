@@ -283,7 +283,10 @@ fn a_file_scope_has_its_declarations_and_names_what_is_not_bound() {
 fn a_functions_parameters_are_named_then_bound_for_one_evaluation() {
     let dir = project();
     let (mut r, hello) = Repl::start(dir.path());
-    assert_eq!(hello["features"], json!(["bind", "pure", "cell", "caps"]));
+    assert_eq!(
+        hello["features"],
+        json!(["bind", "pure", "cell", "caps", "profile", "distinct"])
+    );
     let f = calc(dir.path());
     // refused: the function and its parameters said
     let p = r.eval_at(&f, 7, "let y = x * RATE");
@@ -1234,4 +1237,70 @@ fn a_param_that_is_a_controls_spec_binds_its_value_and_is_read_again() {
             .contains("outside its range"),
         "{out}"
     );
+}
+
+#[test]
+fn a_columns_distinct_values_are_paged_commonest_first() {
+    let dir = project();
+    let (mut r, hello) = Repl::start(dir.path());
+    assert!(
+        hello["features"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("distinct")),
+        "{hello}"
+    );
+    let f = r.eval(
+        "ods.frame([[\"city\", ods.series(map(range(0, 40), (i) => \"c\" + to_string(i % 9)) + [(), ()])], [\"n\", ods.series(range(0, 42))]])",
+    );
+    let h = f["value"]["h"].as_u64().unwrap();
+    // nine cities and the nulls: more than a summary's six
+    let page =
+        r.ask(json!({ "op": "expand", "h": h, "distinct": { "col": 0 }, "start": 0, "count": 4 }));
+    assert_eq!(page["ok"], json!(true), "{page}");
+    assert_eq!(page["n"], json!(10), "{page}");
+    assert_eq!(page["values"].as_array().unwrap().len(), 4);
+    // the commonest first, ties by their text
+    assert_eq!(page["values"][0], json!(["c0", 5]), "{page}");
+    assert_eq!(page["values"][3], json!(["c3", 5]), "{page}");
+    let rest =
+        r.ask(json!({ "op": "expand", "h": h, "distinct": { "col": 0 }, "start": 8, "count": 4 }));
+    assert_eq!(rest["values"], json!([["c8", 4], [null, 2]]), "{rest}");
+    // contains narrows them (a null holds no text)
+    let some = r.ask(
+        json!({ "op": "expand", "h": h, "distinct": { "col": 0, "contains": "c1" }, "count": 50 }),
+    );
+    assert_eq!(some["values"], json!([["c1", 5]]), "{some}");
+    let bad = r.ask(json!({ "op": "expand", "h": h, "distinct": { "col": 7 } }));
+    assert_eq!(bad["error"]["kind"], json!("protocol"), "{bad}");
+}
+
+#[test]
+fn a_cells_run_profiled_says_its_profile_with_the_cells_lines() {
+    let dir = tempfile::tempdir().unwrap();
+    let nb = notebook(dir.path());
+    let (mut r, hello) = Repl::start_with(dir.path(), &["--notebook", nb.to_str().unwrap()]);
+    assert!(
+        hello["features"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("profile")),
+        "{hello}"
+    );
+    let code = "fn busy(n) = {\n    let mut s = 0\n    for i in 0..n { s = s + i % 7 }\n    s\n}\nbusy(300000)";
+    let a = r.ask(json!({ "op": "eval", "cell": "c9", "code": code, "line": 30, "profile": true }));
+    assert_eq!(a["ok"], json!(true), "{a}");
+    let p = &a["profile"];
+    assert!(p["samples"].as_u64().unwrap_or(0) > 0, "{p}");
+    let busy = p["frames"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == json!("busy"))
+        .unwrap_or_else(|| panic!("busy sampled: {p}"));
+    // where the cell declared it: the notebook's line
+    assert_eq!(busy["line"], json!(30), "{busy}");
+    // an evaluation not asked says none
+    let b = r.ask(json!({ "op": "eval", "cell": "c9", "code": "busy(10)", "line": 30 }));
+    assert!(b.get("profile").is_none(), "{b}");
 }

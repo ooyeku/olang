@@ -99,6 +99,43 @@ const MODULES: &[&str] = &[
 ];
 const USE_MODULES: &[&str] = &["cli", "term", "ui", "viz", "dash", "colx", "mathx"];
 
+#[path = "lsp_notebook.rs"]
+mod notebook;
+
+/// What a request reads of document `uri`: its text (a notebook's
+/// program, its cells on the file's lines) and the notebook when it is
+/// one.
+fn read_doc<'a>(
+    docs: &'a HashMap<Uri, String>,
+    uri: &Uri,
+) -> (std::borrow::Cow<'a, str>, Option<notebook::Notebook>) {
+    let text = docs.get(uri).map(String::as_str).unwrap_or("");
+    if notebook::is_notebook(uri) {
+        let nb = notebook::read(text);
+        (std::borrow::Cow::Owned(nb.program.clone()), Some(nb))
+    } else {
+        (std::borrow::Cow::Borrowed(text), None)
+    }
+}
+
+/// A position of the file as the program's (a notebook's: `None` outside
+/// its cells and params).
+fn pos_in(nb: &Option<notebook::Notebook>, p: Position) -> Option<Position> {
+    match nb {
+        Some(n) => n.pos_in(p),
+        None => Some(p),
+    }
+}
+
+/// A range of the program as the file's (a notebook's: `None` for what
+/// the file does not hold).
+fn range_out(nb: &Option<notebook::Notebook>, r: Range) -> Option<Range> {
+    match nb {
+        Some(n) => n.range_out(r),
+        None => Some(r),
+    }
+}
+
 /// The one help registry, built once: the same entries `:help` renders.
 fn help() -> &'static crate::help::HelpSystem {
     static HELP: std::sync::OnceLock<crate::help::HelpSystem> = std::sync::OnceLock::new();
@@ -390,6 +427,7 @@ fn file_operation_filters() -> lsp_types::FileOperationRegistrationOptions {
     lsp_types::FileOperationRegistrationOptions {
         filters: vec![
             filter("**/*.ol", lsp_types::FileOperationPatternKind::File),
+            filter("**/*.olmd", lsp_types::FileOperationPatternKind::File),
             filter("**", lsp_types::FileOperationPatternKind::Folder),
         ],
     }
@@ -440,9 +478,14 @@ fn handle_request(
             let (id, params): (RequestId, lsp_types::CompletionParams) =
                 req.extract(Completion::METHOD)?;
             let uri = params.text_document_position.text_document.uri.clone();
-            let text = docs.get(&uri).map(String::as_str).unwrap_or("");
+            let (text, nb) = read_doc(docs, &uri);
+            let text = text.as_ref();
             let dir = doc_dir(&uri);
-            let position = params.text_document_position.position;
+            // a notebook's prose, fences and front matter complete nothing
+            let Some(position) = pos_in(&nb, params.text_document_position.position) else {
+                respond(connection, id, &CompletionResponse::Array(Vec::new()))?;
+                return Ok(());
+            };
             // Inside `map_get(t, "` / `t["` / after `t.` on a value whose
             // declared shape is known: the shape's keys, and nothing else.
             let items = match shape_key_completions(text, position, dir.as_deref())
@@ -456,24 +499,29 @@ fn handle_request(
         lsp_types::request::DocumentSymbolRequest::METHOD => {
             let (id, params): (RequestId, lsp_types::DocumentSymbolParams) =
                 req.extract(lsp_types::request::DocumentSymbolRequest::METHOD)?;
-            let text = docs
-                .get(&params.text_document.uri)
-                .map(String::as_str)
-                .unwrap_or("");
+            let (text, nb) = read_doc(docs, &params.text_document.uri);
+            let symbols: Vec<lsp_types::DocumentSymbol> = document_symbols(&text)
+                .into_iter()
+                .filter_map(|mut s| {
+                    s.range = range_out(&nb, s.range)?;
+                    s.selection_range = s.range;
+                    Some(s)
+                })
+                .collect();
             respond(
                 connection,
                 id,
-                &lsp_types::DocumentSymbolResponse::Nested(document_symbols(text)),
+                &lsp_types::DocumentSymbolResponse::Nested(symbols),
             )?;
         }
         lsp_types::request::References::METHOD => {
             let (id, params): (RequestId, lsp_types::ReferenceParams) =
                 req.extract(lsp_types::request::References::METHOD)?;
             let uri = params.text_document_position.text_document.uri.clone();
-            let text = docs.get(&uri).map(String::as_str).unwrap_or("");
+            let (text, nb) = read_doc(docs, &uri);
             let locs: Option<Vec<lsp_types::Location>> =
-                word_at(text, params.text_document_position.position).map(|(word, _)| {
-                    occurrences(text, &word)
+                word_of(&text, &nb, params.text_document_position.position).map(|word| {
+                    occurrences_in(&text, &nb, &word)
                         .into_iter()
                         .map(|range| lsp_types::Location {
                             uri: uri.clone(),
@@ -487,13 +535,10 @@ fn handle_request(
             let (id, params): (RequestId, lsp_types::DocumentHighlightParams) =
                 req.extract(lsp_types::request::DocumentHighlightRequest::METHOD)?;
             let pos = params.text_document_position_params;
-            let text = docs
-                .get(&pos.text_document.uri)
-                .map(String::as_str)
-                .unwrap_or("");
-            let highlights: Option<Vec<lsp_types::DocumentHighlight>> = word_at(text, pos.position)
-                .map(|(word, _)| {
-                    occurrences(text, &word)
+            let (text, nb) = read_doc(docs, &pos.text_document.uri);
+            let highlights: Option<Vec<lsp_types::DocumentHighlight>> =
+                word_of(&text, &nb, pos.position).map(|word| {
+                    occurrences_in(&text, &nb, &word)
                         .into_iter()
                         .map(|range| lsp_types::DocumentHighlight { range, kind: None })
                         .collect()
@@ -504,9 +549,10 @@ fn handle_request(
             let (id, params): (RequestId, lsp_types::RenameParams) =
                 req.extract(lsp_types::request::Rename::METHOD)?;
             let uri = params.text_document_position.text_document.uri.clone();
-            let text = docs.get(&uri).map(String::as_str).unwrap_or("");
-            match rename(
-                text,
+            let (text, nb) = read_doc(docs, &uri);
+            match rename_in(
+                &text,
+                &nb,
                 params.text_document_position.position,
                 &params.new_name,
             ) {
@@ -536,27 +582,20 @@ fn handle_request(
             let (id, params): (RequestId, lsp_types::SignatureHelpParams) =
                 req.extract(lsp_types::request::SignatureHelpRequest::METHOD)?;
             let pos = params.text_document_position_params;
-            let text = docs
-                .get(&pos.text_document.uri)
-                .map(String::as_str)
-                .unwrap_or("");
+            let (text, nb) = read_doc(docs, &pos.text_document.uri);
             let dir = doc_dir(&pos.text_document.uri);
-            respond(
-                connection,
-                id,
-                &signature_help(text, pos.position, dir.as_deref()),
-            )?;
+            let help =
+                pos_in(&nb, pos.position).and_then(|p| signature_help(&text, p, dir.as_deref()));
+            respond(connection, id, &help)?;
         }
         lsp_types::request::HoverRequest::METHOD => {
             let (id, params): (RequestId, lsp_types::HoverParams) =
                 req.extract(lsp_types::request::HoverRequest::METHOD)?;
             let pos = params.text_document_position_params;
             let dir = doc_dir(&pos.text_document.uri);
-            let text = docs
-                .get(&pos.text_document.uri)
-                .map(String::as_str)
-                .unwrap_or("");
-            respond(connection, id, &hover(text, pos.position, dir.as_deref()))?;
+            let (text, nb) = read_doc(docs, &pos.text_document.uri);
+            let answer = pos_in(&nb, pos.position).and_then(|p| hover(&text, p, dir.as_deref()));
+            respond(connection, id, &answer)?;
         }
         lsp_types::request::GotoDefinition::METHOD => {
             let (id, params): (RequestId, lsp_types::GotoDefinitionParams) =
@@ -564,42 +603,58 @@ fn handle_request(
             let pos = params.text_document_position_params;
             let uri = pos.text_document.uri.clone();
             let dir = doc_dir(&uri);
-            let text = docs.get(&uri).map(String::as_str).unwrap_or("");
-            let loc = definition(text, pos.position, dir.as_deref()).and_then(|(file, range)| {
-                let target = match file {
-                    // Cross-file: the module file's own URI.
-                    Some(path) => Uri::from_file_path(path).ok()?,
-                    None => uri,
-                };
-                Some(lsp_types::GotoDefinitionResponse::Scalar(
-                    lsp_types::Location { uri: target, range },
-                ))
-            });
+            let (text, nb) = read_doc(docs, &uri);
+            let at = pos_in(&nb, pos.position);
+            let loc = at
+                .and_then(|p| definition(&text, p, dir.as_deref()))
+                .and_then(|(file, range)| {
+                    let (target, range) = match file {
+                        // Cross-file: the module file's own URI.
+                        Some(path) => (Uri::from_file_path(path).ok()?, range),
+                        // a notebook's own: its cell's place, or its param's key
+                        None => (uri, range_out(&nb, range)?),
+                    };
+                    Some(lsp_types::GotoDefinitionResponse::Scalar(
+                        lsp_types::Location { uri: target, range },
+                    ))
+                });
             respond(connection, id, &loc)?;
         }
         lsp_types::request::InlayHintRequest::METHOD => {
             let (id, params): (RequestId, lsp_types::InlayHintParams) =
                 req.extract(lsp_types::request::InlayHintRequest::METHOD)?;
-            let hints = docs
-                .get(&params.text_document.uri)
-                .map(|text| inlay_hints(text, params.range))
-                .unwrap_or_default();
+            let (text, nb) = read_doc(docs, &params.text_document.uri);
+            let hints: Vec<lsp_types::InlayHint> = inlay_hints(&text, params.range)
+                .into_iter()
+                .filter(|h| nb.as_ref().is_none_or(|n| n.code_line(h.position.line)))
+                .collect();
             respond(connection, id, &hints)?;
         }
         lsp_types::request::CodeActionRequest::METHOD => {
             let (id, params): (RequestId, lsp_types::CodeActionParams) =
                 req.extract(lsp_types::request::CodeActionRequest::METHOD)?;
-            let actions = docs
-                .get(&params.text_document.uri)
-                .map(|text| {
-                    code_actions(
-                        text,
-                        &params.text_document.uri,
-                        params.range,
-                        &params.context.diagnostics,
-                    )
-                })
-                .unwrap_or_default();
+            let (text, nb) = read_doc(docs, &params.text_document.uri);
+            let actions: Vec<lsp_types::CodeActionOrCommand> = code_actions(
+                &text,
+                &params.text_document.uri,
+                params.range,
+                &params.context.diagnostics,
+            )
+            .into_iter()
+            // a notebook's: those that edit its cells only
+            .filter(|a| match (&nb, a) {
+                (Some(n), lsp_types::CodeActionOrCommand::CodeAction(ca)) => ca
+                    .edit
+                    .as_ref()
+                    .and_then(|e| e.changes.as_ref())
+                    .is_none_or(|ch| {
+                        ch.values().flatten().all(|e| {
+                            n.code_line(e.range.start.line) && n.code_line(e.range.end.line)
+                        })
+                    }),
+                _ => true,
+            })
+            .collect();
             respond(connection, id, &actions)?;
         }
         lsp_types::request::WorkspaceSymbolRequest::METHOD => {
@@ -611,39 +666,46 @@ fn handle_request(
         lsp_types::request::SemanticTokensFullRequest::METHOD => {
             let (id, params): (RequestId, lsp_types::SemanticTokensParams) =
                 req.extract(lsp_types::request::SemanticTokensFullRequest::METHOD)?;
-            let text = docs
-                .get(&params.text_document.uri)
-                .map(String::as_str)
-                .unwrap_or("");
+            let (text, nb) = read_doc(docs, &params.text_document.uri);
             respond(
                 connection,
                 id,
-                &lsp_types::SemanticTokensResult::Tokens(semantic_tokens(text, 0, u32::MAX)),
+                &lsp_types::SemanticTokensResult::Tokens(semantic_tokens(
+                    &text,
+                    0,
+                    u32::MAX,
+                    nb.as_ref(),
+                )),
             )?;
         }
         lsp_types::request::SemanticTokensRangeRequest::METHOD => {
             let (id, params): (RequestId, lsp_types::SemanticTokensRangeParams) =
                 req.extract(lsp_types::request::SemanticTokensRangeRequest::METHOD)?;
-            let text = docs
-                .get(&params.text_document.uri)
-                .map(String::as_str)
-                .unwrap_or("");
+            let (text, nb) = read_doc(docs, &params.text_document.uri);
             respond(
                 connection,
                 id,
                 &lsp_types::SemanticTokensRangeResult::Tokens(semantic_tokens(
-                    text,
+                    &text,
                     params.range.start.line,
                     params.range.end.line,
+                    nb.as_ref(),
                 )),
             )?;
         }
         Formatting::METHOD => {
             let (id, params): (RequestId, lsp_types::DocumentFormattingParams) =
                 req.extract(Formatting::METHOD)?;
+            let uri = &params.text_document.uri;
             let edits = docs
-                .get(&params.text_document.uri)
-                .map(|text| format_edits(text))
+                .get(uri)
+                .map(|text| {
+                    if notebook::is_notebook(uri) {
+                        notebook_format_edits(text)
+                    } else {
+                        format_edits(text)
+                    }
+                })
                 .unwrap_or_default();
             respond(connection, id, &edits)?;
         }
@@ -712,7 +774,12 @@ fn apply_change(text: &mut String, change: lsp_types::TextDocumentContentChangeE
 }
 
 /// The semantic tokens of `text`, those on lines `lo..=hi`.
-fn semantic_tokens(text: &str, lo: u32, hi: u32) -> lsp_types::SemanticTokens {
+fn semantic_tokens(
+    text: &str,
+    lo: u32,
+    hi: u32,
+    nb: Option<&notebook::Notebook>,
+) -> lsp_types::SemanticTokens {
     let builtin = |w: &str| help().get_function(w).is_some();
     let mut modules: Vec<&str> = MODULES.to_vec();
     modules.extend_from_slice(USE_MODULES);
@@ -723,7 +790,11 @@ fn semantic_tokens(text: &str, lo: u32, hi: u32) -> lsp_types::SemanticTokens {
     } else {
         offset_of(text, Position::new(hi.saturating_add(1), 0))
     };
-    let toks = super::semantic::tokens(&text[..cut], &builtin, &modules);
+    let mut toks = super::semantic::tokens(&text[..cut], &builtin, &modules);
+    // a notebook's: its cells' only (a param's `let` is not the file's text)
+    if let Some(n) = nb {
+        toks.retain(|t| n.code_line(t.line));
+    }
     let data = super::semantic::encode(&toks, lo, hi);
     lsp_types::SemanticTokens {
         result_id: None,
@@ -756,7 +827,12 @@ fn publish(
     text: &str,
 ) -> Result<(), Box<dyn Error + Sync + Send>> {
     let dir = doc_dir(uri);
-    send_diagnostics(connection, uri.clone(), diagnostics(text, dir.as_deref()))
+    let found = if notebook::is_notebook(uri) {
+        notebook::read(text).diagnostics(text, dir.as_deref())
+    } else {
+        diagnostics(text, dir.as_deref())
+    };
+    send_diagnostics(connection, uri.clone(), found)
 }
 
 fn send_diagnostics(
@@ -1683,6 +1759,94 @@ fn occurrences(text: &str, name: &str) -> Vec<Range> {
         }
     }
     out
+}
+
+/// The name a references, highlight or rename request at `pos` is about:
+/// the word there (in a notebook, a cell's or a param's key, or a word of
+/// a `${expr}` in prose).
+fn word_of(text: &str, nb: &Option<notebook::Notebook>, pos: Position) -> Option<String> {
+    match pos_in(nb, pos) {
+        Some(p) => word_at(text, p).map(|(w, _)| w),
+        None => nb.as_ref()?.prose_word(pos),
+    }
+}
+
+/// Every occurrence of `name`, as the file's ranges: a notebook's cells,
+/// its param's key and the `${expr}`s of its prose that read it.
+fn occurrences_in(text: &str, nb: &Option<notebook::Notebook>, name: &str) -> Vec<Range> {
+    let mut out: Vec<Range> = occurrences(text, name)
+        .into_iter()
+        .filter_map(|r| range_out(nb, r))
+        .collect();
+    if let Some(n) = nb {
+        out.extend(n.prose_occurrences(name));
+        out.sort_by_key(|r| (r.start.line, r.start.character));
+    }
+    out
+}
+
+/// A rename at `pos`: `rename`'s edits as the file's (a notebook's cells,
+/// its param's key and its prose's `${expr}`s together).
+fn rename_in(
+    text: &str,
+    nb: &Option<notebook::Notebook>,
+    pos: Position,
+    new_name: &str,
+) -> Result<Vec<TextEdit>, String> {
+    let Some(n) = nb else {
+        return rename(text, pos, new_name);
+    };
+    // a word of prose: renamed where the program reads it
+    let at = match n.pos_in(pos) {
+        Some(p) => p,
+        None => {
+            let word = n
+                .prose_word(pos)
+                .ok_or_else(|| "nothing to rename here".to_string())?;
+            let found = occurrences(text, &word)
+                .into_iter()
+                .next()
+                .ok_or_else(|| format!("'{word}' is defined in no cell of this notebook"))?;
+            found.start
+        }
+    };
+    let (word, _) = word_at(text, at).ok_or_else(|| "nothing to rename here".to_string())?;
+    let mut edits: Vec<TextEdit> = rename(text, at, new_name)?
+        .into_iter()
+        .filter_map(|e| {
+            Some(TextEdit {
+                range: n.range_out(e.range)?,
+                new_text: e.new_text,
+            })
+        })
+        .collect();
+    edits.extend(
+        n.prose_occurrences(&word)
+            .into_iter()
+            .map(|range| TextEdit {
+                range,
+                new_text: new_name.to_string(),
+            }),
+    );
+    edits.sort_by_key(|e| (e.range.start.line, e.range.start.character));
+    Ok(edits)
+}
+
+/// A notebook formatted (`olang fmt`'s: each cell's code, the prose left
+/// as it is): one edit of the whole text, or none.
+fn notebook_format_edits(text: &str) -> Vec<TextEdit> {
+    match crate::notebook::format(text) {
+        Some(t) if t != text => {
+            let lines: Vec<&str> = text.split('\n').collect();
+            let last = lines.len().saturating_sub(1) as u32;
+            let end = char_to_utf16_col(lines.last().copied().unwrap_or(""), usize::MAX);
+            vec![TextEdit {
+                range: Range::new(Position::new(0, 0), Position::new(last, end)),
+                new_text: t,
+            }]
+        }
+        _ => Vec::new(),
+    }
 }
 
 fn span_range(text: &str, span: (u32, u32), name_len: usize) -> Range {
