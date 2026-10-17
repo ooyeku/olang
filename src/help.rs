@@ -3228,6 +3228,22 @@ let parts = ods.split(f, 0.8)   // [train, test]"##],
             &[r##"ods.filter(f, ods.not(ods.is_null(f["email"])))  // rows with an email"##],
         );
         self.doc_ex(
+            "ods.is_in",
+            "ods.is_in(s, values)",
+            "Series",
+            "ods",
+            "a Bool mask, true where the element equals one of `values` (a list or a Series; a number matches either kind of number). A null element is null, unless `values` holds `()`, which keeps nulls",
+            &[r##"f[ods.is_in(f["region"], ["east", "west"])]"##],
+        );
+        self.doc_ex(
+            "ods.contains",
+            "ods.contains(s, text)",
+            "Series",
+            "ods",
+            "a Bool mask over a String Series: true where the element contains `text` (case-sensitive); a null stays null. Any other Series is an error",
+            &[r##"f[ods.contains(f["product"], "gad")]"##],
+        );
+        self.doc_ex(
             "ods.concat",
             "ods.concat(frames)",
             "Frame",

@@ -2975,7 +2975,7 @@ Arithmetic, comparison, and math *operators* are vectorized directly
 | Reshape | `pivot(f, index, columns, values, agg)` long→wide · `unpivot(f, ids, value_columns = the rest)` wide→long, emitting `name`/`value` |
 | Sample | `sample(f, n)` (also on a Series) — n random rows, without replacement, in original order; seeded by `random.seed` |
 | Aggregate / join | `group_by(f, key, aggs)` · `join` (inner) · `join_left` · `join_full` · `join_semi` · `join_anti` — all `(a, b, on, on_b = on)` · `concat(frames)` |
-| Masks | `eq(s, v)` · `ne(s, v)` · `all_of(masks)` · `any_of(masks)` · `not(mask)` — three-valued, like SQL |
+| Masks | `eq(s, v)` · `ne(s, v)` · `is_in(s, values)` · `contains(s, text)` · `all_of(masks)` · `any_of(masks)` · `not(mask)` — three-valued, like SQL |
 
 The stack has its own chapter, **[The data stack](ods.md)**: the
 reasons for the columnar model (with the measured 50× rewrite behind

@@ -255,6 +255,126 @@ fn combine(all: bool, masks: &[&Series]) -> Result<Series, String> {
     Ok(Series::from_bool_options(out))
 }
 
+/// `ods.is_in(s, values)`: true where the element equals one of `values`
+/// (a list or a Series). A number matches a number of the other kind by
+/// value (`2` is `2.0`); a value of another kind than the column's is an
+/// error naming it. A null element is unknown (null), as a comparison
+/// with it is — unless `values` holds `()`, which keeps nulls (true).
+fn is_in(s: &Series, values: &Value) -> Result<Series, String> {
+    use std::collections::HashSet;
+    let wanted: Vec<Scalar> = if let Some(v) = series_of(values) {
+        (0..v.len()).map(|i| v.scalar_at(i)).collect()
+    } else {
+        match values {
+            Value::List(items) => items
+                .iter()
+                .enumerate()
+                .map(|(i, x)| {
+                    value_to_scalar(x).ok_or_else(|| {
+                        format!(
+                            "ods.is_in: value {} must be a number, a String, a Bool or (), got {}",
+                            i + 1,
+                            x.type_name()
+                        )
+                    })
+                })
+                .collect::<Result<_, _>>()?,
+            other => {
+                return Err(format!(
+                    "ods.is_in: argument 2 must be a list or a Series of values, got {}",
+                    other.type_name()
+                ));
+            }
+        }
+    };
+    let keeps_null = wanted.iter().any(|w| matches!(w, Scalar::Null));
+    let kind_of = |w: &Scalar| match w {
+        Scalar::F64(_) | Scalar::I64(_) => "a number",
+        Scalar::Str(_) => "a String",
+        Scalar::Bool(_) => "a Bool",
+        Scalar::Null => "()",
+    };
+    let fits = |w: &Scalar| match (s.dtype(), w) {
+        (_, Scalar::Null) => true,
+        (DType::F64 | DType::I64, Scalar::F64(_) | Scalar::I64(_)) => true,
+        (DType::Str, Scalar::Str(_)) => true,
+        (DType::Bool, Scalar::Bool(_)) => true,
+        _ => false,
+    };
+    if let Some(bad) = wanted.iter().find(|w| !fits(w)) {
+        return Err(format!(
+            "ods.is_in: {} cannot be in a Series of {}",
+            kind_of(bad),
+            s.dtype()
+        ));
+    }
+    let n = s.len();
+    let mut out: Vec<Option<bool>> = Vec::with_capacity(n);
+    let null_answer = if keeps_null { Some(true) } else { None };
+    match s {
+        Series::Str { col, validity } => {
+            let set: HashSet<&str> = wanted
+                .iter()
+                .filter_map(|w| match w {
+                    Scalar::Str(t) => Some(t.as_str()),
+                    _ => None,
+                })
+                .collect();
+            for (i, x) in col.iter().enumerate() {
+                let valid = validity.as_ref().map(|b| b.get(i)).unwrap_or(true);
+                out.push(if valid {
+                    Some(set.contains(x))
+                } else {
+                    null_answer
+                });
+            }
+        }
+        Series::I64 { values, validity } => {
+            let ints: HashSet<i64> = wanted
+                .iter()
+                .filter_map(|w| match w {
+                    Scalar::I64(v) => Some(*v),
+                    Scalar::F64(f) if f.fract() == 0.0 && f.abs() < 9.0e18 => Some(*f as i64),
+                    _ => None,
+                })
+                .collect();
+            for (i, x) in values.iter().enumerate() {
+                let valid = validity.as_ref().map(|b| b.get(i)).unwrap_or(true);
+                out.push(if valid {
+                    Some(ints.contains(x))
+                } else {
+                    null_answer
+                });
+            }
+        }
+        _ => {
+            let nums: Vec<f64> = wanted
+                .iter()
+                .filter_map(|w| match w {
+                    Scalar::F64(v) => Some(*v),
+                    Scalar::I64(v) => Some(*v as f64),
+                    _ => None,
+                })
+                .collect();
+            let bools: Vec<bool> = wanted
+                .iter()
+                .filter_map(|w| match w {
+                    Scalar::Bool(b) => Some(*b),
+                    _ => None,
+                })
+                .collect();
+            for i in 0..n {
+                out.push(match s.scalar_at(i) {
+                    Scalar::F64(x) => Some(nums.contains(&x)),
+                    Scalar::Bool(b) => Some(bools.contains(&b)),
+                    _ => null_answer,
+                });
+            }
+        }
+    }
+    Ok(Series::from_bool_options(out))
+}
+
 pub fn series_of(value: &Value) -> Option<&Series> {
     match value {
         Value::Native(h) => h.0.as_any().downcast_ref::<OdsSeries>().map(|s| s.series()),
@@ -384,6 +504,8 @@ pub const FUNCTIONS: &[(&str, usize)] = &[
     ("any_of", 1),
     ("not", 1),
     ("ne", 2),
+    ("is_in", 2),
+    ("contains", 2),
 ];
 
 /// The ranking methods, in the order the error lists them.
@@ -830,6 +952,35 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
                 })
                 .collect();
             Ok(OdsSeries::into_value(Series::from_bool_options(flipped)))
+        }
+        // Membership: the mask "is one of these", which a chain of `eq`s
+        // under `any_of` spells badly once there are more than two.
+        "is_in" => {
+            let s = want_series(func, &args, 0)?;
+            Ok(OdsSeries::into_value(is_in(s, &args[1])?))
+        }
+        "contains" => {
+            let s = want_series(func, &args, 0)?;
+            let text = match &args[1] {
+                Value::String(t) => t.as_str(),
+                other => {
+                    return Err(format!(
+                        "ods.contains: argument 2 must be a String, got {}",
+                        other.type_name()
+                    ));
+                }
+            };
+            let Series::Str { col, validity } = s else {
+                return Err(format!(
+                    "ods.contains: argument 1 must be a String Series, got a {} Series",
+                    s.dtype()
+                ));
+            };
+            let bits: Vec<bool> = col.iter().map(|x| x.contains(text)).collect();
+            Ok(OdsSeries::into_value(Series::Bool {
+                values: std::sync::Arc::new(bits),
+                validity: validity.clone(),
+            }))
         }
         _ => unreachable!("dispatch() checked membership"),
     }

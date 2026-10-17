@@ -2543,3 +2543,50 @@ fn a_large_unquoted_file_reads_identically_to_a_small_one() {
     .expect("eval");
     assert_eq!(format!("{}", got), "[120000, 14399880000, 7]");
 }
+
+// ── Membership and substring masks ────────────────────────────────────
+
+#[test]
+fn is_in_and_contains_make_masks_that_compose() {
+    let out = eval(
+        r#"
+let f = ods.read_csv("region,product,amount\neast,gadget,120.0\nnorth,gadget,300.0\nwest,widget,150.0\nwest,gadgetry,90.0\n")
+let a = f[ods.all_of([ods.is_in(f["region"], ["east", "west"]), f["amount"] >= 100.0, ods.contains(f["product"], "gad")])]
+let b = ods.filter(f, ods.is_in(f["amount"], ods.series([90, 300])))
+let c = ods.to_list(ods.contains(f["product"], "Gad"))
+show([ods.to_list(a["amount"]), ods.to_list(b["region"]), c])
+"#,
+        None,
+    )
+    .expect("masks");
+    assert_eq!(
+        shown(&out),
+        r#""[[120.0], ["north", "west"], [false, false, false, false]]""#.to_string()
+    );
+}
+
+#[test]
+fn is_in_treats_nulls_as_unknown_unless_asked_for() {
+    let out = eval(
+        r#"
+let s = ods.series(["a", (), "b"])
+show([ods.to_list(ods.is_in(s, ["a"])), ods.to_list(ods.is_in(s, ["a", ()])), ods.to_list(ods.contains(s, "b"))])
+"#,
+        None,
+    )
+    .expect("nulls");
+    assert_eq!(
+        shown(&out),
+        "\"[[true, (), false], [true, true, false], [false, (), true]]\"".to_string()
+    );
+}
+
+#[test]
+fn is_in_and_contains_refuse_what_cannot_match() {
+    let err = eval(r#"ods.contains(ods.series([1, 2]), "1")"#, None).expect_err("Int");
+    assert!(err.contains("String Series") && err.contains("Int"), "{err}");
+    let err = eval(r#"ods.is_in(ods.series([1, 2]), ["1"])"#, None).expect_err("kind");
+    assert!(err.contains("a String cannot be in a Series of Int"), "{err}");
+    let err = eval(r#"ods.is_in(ods.series([1, 2]), 1)"#, None).expect_err("shape");
+    assert!(err.contains("list or a Series"), "{err}");
+}

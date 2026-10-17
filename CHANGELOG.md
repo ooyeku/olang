@@ -34,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and their size in memory, and `reread` takes the front matter again
   (the editor's unsaved text, or the file): a param whose value changed
   bound again in place, one gone forgotten, the grant applied anew.
+- **`ods.is_in` and `ods.contains`.** `ods.is_in(s, values)` is a mask
+  of the elements that are one of `values` (a list or a Series; a number
+  matches either kind of number), `ods.contains(s, text)` one of a String
+  Series' elements that contain `text`, case-sensitive. A null element is
+  unknown to both, so a filter drops it, unless `values` holds `()`. Both
+  compose with `ods.all_of`, `ods.filter` and a Frame's mask subscript.
 - **An SVG picture's text is drawn.** `gui`'s image draws an SVG's
   `<text>` in the system's fonts (loaded once, when an SVG is first
   drawn; sans-serif the platform's interface face), so a `plot` chart

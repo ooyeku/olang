@@ -801,6 +801,26 @@ settles an `any_of`; otherwise an unknown propagates. A comparison
 against a null is itself unknown, which is why the mask above does not
 need a null check in front of it.
 
+Two more masks name the conditions a chain of `eq`s spells badly.
+`ods.is_in(s, values)` is true where the element is one of `values` (a
+list or a Series; a number matches either kind of number, so `2` finds
+`2.0`), and `ods.contains(s, text)` is true where a String element
+contains `text`, case-sensitive — a column of any other type is an
+error naming it. Both compose with `all_of`, `filter` and a Frame's
+mask subscript like any comparison:
+
+```olang
+let f = ods.read_csv("region,product,amount\neast,gadget,120.0\nnorth,gadget,300.0\nwest,widget,150.0\nwest,gadgetry,90.0\n")
+let picked = f[ods.all_of([ods.is_in(f["region"], ["east", "west"]),
+                           f["amount"] >= 100.0,
+                           ods.contains(f["product"], "gad")])]
+println(to_string(ods.to_list(picked["amount"])))            // [120.0]
+```
+
+A null element is unknown to both, as it is to a comparison, so a
+filter drops it. `is_in` keeps nulls when `values` holds `()` itself:
+`ods.is_in(f["region"], ["east", ()])` is "east, or not known".
+
 ### Stacking Frames
 
 `ods.concat(frames)` puts Frames on top of one another. It is what makes
