@@ -85,6 +85,7 @@ native = [
     "dep:cranelift-jit",
     "dep:cranelift-module",
     "dep:ctrlc",
+    "dep:pulldown-cmark",
     "olang-ods/parallel",
 ]
 
@@ -131,6 +132,8 @@ toml = "0.8"
 toml_edit = "0.22"
 semver = { version = "1.0", features = ["serde"] }
 base64 = "0.23"
+# A notebook's prose as HTML (`olang notebook export`, src/notebook_export.rs).
+pulldown-cmark = { version = "0.12", default-features = false, features = ["html"], optional = true }
 hostname = { version = "0.4", optional = true }
 whoami = { version = "1.4", optional = true }
 dirs = { version = "5.0", optional = true }

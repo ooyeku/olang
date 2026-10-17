@@ -773,6 +773,15 @@ fn apply_change(text: &mut String, change: lsp_types::TextDocumentContentChangeE
     }
 }
 
+/// Every semantic token of `text` (a cell's code, a file), as the server
+/// colours it: what an exported notebook highlights its code by.
+pub fn highlight_tokens(text: &str) -> Vec<super::semantic::Token> {
+    let builtin = |w: &str| help().get_function(w).is_some();
+    let mut modules: Vec<&str> = MODULES.to_vec();
+    modules.extend_from_slice(USE_MODULES);
+    super::semantic::tokens(text, &builtin, &modules)
+}
+
 /// The semantic tokens of `text`, those on lines `lo..=hi`.
 fn semantic_tokens(
     text: &str,

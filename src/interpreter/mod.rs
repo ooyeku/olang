@@ -5883,6 +5883,29 @@ the function it shadows is the usual cause; `olang check` names the parameter",
             .unwrap_or(false)
     }
 
+    /// Attach a timeline for one stretch of a long session (a notebook
+    /// kernel's cell): the bytecode tier is kept aside while it lasts, as
+    /// `set_timeline` drops it, and `end_timeline_stretch` gives it back.
+    pub fn begin_timeline_stretch(
+        &mut self,
+        timeline: crate::timeline::Timeline,
+    ) -> Option<Box<crate::ovm::tier::BytecodeTier>> {
+        let kept = self.bytecode_tier.take();
+        self.timeline = Some(timeline);
+        kept
+    }
+
+    /// The stretch's end: its timeline taken out, the tier given back.
+    pub fn end_timeline_stretch(
+        &mut self,
+        kept: Option<Box<crate::ovm::tier::BytecodeTier>>,
+    ) -> Option<crate::timeline::Timeline> {
+        if kept.is_some() {
+            self.bytecode_tier = kept;
+        }
+        self.timeline.take()
+    }
+
     /// Take the timeline back out (to write the trace at end of run).
     pub fn take_timeline(&mut self) -> Option<crate::timeline::Timeline> {
         self.timeline.take()

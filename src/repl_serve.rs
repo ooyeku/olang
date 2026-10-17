@@ -216,6 +216,182 @@ pub fn serve(no_ovm: bool, notebook: Option<PathBuf>) -> i32 {
     0
 }
 
+/// A notebook run cell by cell, as its kernel runs it (`olang notebook
+/// export`, `olang notebook pin`): each code cell evaluated in order in the
+/// notebook's own scope — its params bound (`overrides` replace them), its
+/// grant, its folder — and a control cell named by an override set to it
+/// as Studio sets one; then every `${expr}` of its prose evaluated under no
+/// capability. Answers the outputs document (src/notebook_export.rs): each
+/// cell's reply as the kernel gave it. The process enters the notebook's
+/// folder. A notebook with problems, or an override naming nothing, is an
+/// error (the problems as `olang run` prints them).
+pub fn run_notebook(path: &Path, overrides: &[(String, String)]) -> Result<J, String> {
+    let abs = std::path::absolute(path).unwrap_or(path.to_path_buf());
+    if !abs.is_file() || !crate::notebook::is_notebook(&abs) {
+        return Err(format!("{} is no notebook (an .olmd file)", abs.display()));
+    }
+    let text = std::fs::read_to_string(&abs).map_err(|e| format!("{}: {}", abs.display(), e))?;
+    let nb = crate::notebook::parse(&text);
+    let lines: Vec<&str> = text
+        .split('\n')
+        .map(|l| l.strip_suffix('\r').unwrap_or(l))
+        .collect();
+    let code_of = |c: &crate::notebook::Cell| -> String {
+        let from = c.fence_line as usize;
+        let to = (c.close_line as usize - 1).min(lines.len());
+        lines[from.min(to)..to].join("\n")
+    };
+    // params and controls apart: a param's override is the program's, a
+    // control's is set as its cell runs
+    let (params_over, controls_over): (Vec<(String, String)>, Vec<(String, String)>) = overrides
+        .iter()
+        .cloned()
+        .partition(|(n, _)| nb.params.iter().any(|p| &p.name == n));
+    let controls: Vec<(usize, String)> = nb
+        .cells
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| !c.no_run)
+        .filter_map(|(i, c)| crate::notebook::control_cell_name(&code_of(c)).map(|n| (i, n)))
+        .collect();
+    for (n, _) in &controls_over {
+        if !controls.iter().any(|(_, c)| c == n) {
+            let declared: Vec<String> = nb
+                .params
+                .iter()
+                .map(|p| p.name.clone())
+                .chain(controls.iter().map(|c| c.1.clone()))
+                .collect();
+            return Err(format!(
+                "{}: --param {}: the notebook has no param or control of that name{}",
+                abs.display(),
+                n,
+                if declared.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (its params and controls: {})", declared.join(", "))
+                }
+            ));
+        }
+    }
+    let program = crate::notebook::program_with(&text, crate::notebook::Mode::Run, &params_over);
+    if !program.diagnostics.is_empty() {
+        return Err(crate::notebook::report(&abs, &program.diagnostics));
+    }
+    if let Some(dir) = abs.parent() {
+        std::env::set_current_dir(dir)
+            .map_err(|e| format!("cannot enter {}: {}", dir.display(), e))?;
+    }
+    crate::output::collect_output();
+    let running = AtomicBool::new(false);
+    let mut session = Session::new(false, None);
+    session.open_notebook(&abs);
+    // the params as overridden (validated by the program above)
+    if let Some(info) = session.notebook.as_mut() {
+        for (name, value) in &params_over {
+            if let Some(p) = info.params.iter_mut().find(|p| &p.0 == name) {
+                p.1 = crate::notebook::param_value_source(value);
+            }
+        }
+    }
+    let hash = |code: &str| {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(code.as_bytes()))[..16].to_string()
+    };
+    let mut cells = Vec::new();
+    let mut controls_said = Vec::new();
+    for (i, c) in nb.cells.iter().enumerate() {
+        let code = code_of(c);
+        let id = format!("c{}", i + 1);
+        let line = c.fence_line + 1;
+        let mut entry =
+            json!({ "id": id, "name": c.options.name, "line": line, "code": hash(&code) });
+        if c.no_run {
+            entry["reply"] = J::Null;
+            cells.push(entry);
+            continue;
+        }
+        let msg = json!({ "op": "eval", "cell": id, "code": code, "line": line });
+        let mut reply = session.eval(&msg, &running);
+        // a control named by an override: set as an editor sets it, the cell
+        // run again so its reply says the value
+        if let Some((_, name)) = controls.iter().find(|(k, _)| *k == i)
+            && let Some((_, value)) = controls_over.iter().find(|(n, _)| n == name)
+        {
+            let set = session.set_control(
+                &json!({ "cell": id, "value": crate::notebook::param_value_source(value) }),
+            );
+            if set.get("ok").and_then(|o| o.as_bool()) != Some(true) {
+                let m = set
+                    .pointer("/error/message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("refused");
+                return Err(format!(
+                    "{}:{}: --param {}: {}",
+                    abs.display(),
+                    line,
+                    name,
+                    m
+                ));
+            }
+            reply = session.eval(&msg, &running);
+        }
+        if let Some(ctl) = reply.get("control")
+            && ctl.get("kind").and_then(|k| k.as_str()) != Some("brush")
+            && let Some(name) = ctl.get("name").and_then(|n| n.as_str())
+        {
+            let v = ctl
+                .get("value")
+                .map(crate::notebook_export::value_text)
+                .unwrap_or_default();
+            controls_said.push(json!({ "name": name, "value": v }));
+        }
+        entry["reply"] = reply;
+        cells.push(entry);
+    }
+    let mut interp = Vec::new();
+    for e in crate::notebook_export::prose_exprs(&text) {
+        if interp
+            .iter()
+            .any(|x: &J| x.get("expr").and_then(|x| x.as_str()) == Some(e.as_str()))
+        {
+            continue;
+        }
+        let reply = session.eval(&json!({ "op": "eval", "code": e, "pure": true }), &running);
+        interp.push(json!({ "expr": e, "reply": reply }));
+    }
+    let params: Vec<J> = session
+        .notebook
+        .as_ref()
+        .map(|n| {
+            n.params
+                .iter()
+                .map(|p| json!({ "name": p.0, "value": p.1 }))
+                .collect()
+        })
+        .unwrap_or_default();
+    let label = controls_said
+        .iter()
+        .chain(params.iter())
+        .filter_map(|p| {
+            Some(format!(
+                "{} {}",
+                p.get("name")?.as_str()?,
+                crate::notebook_export::unquote(p.get("value")?.as_str()?)
+            ))
+        })
+        .collect::<Vec<_>>()
+        .join(" · ");
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    Ok(
+        json!({ "v": 1, "at": at, "label": label, "notebook": abs.to_string_lossy(), "title": nb.title,
+        "params": params, "controls": controls_said, "cells": cells, "interp": interp }),
+    )
+}
+
 /// A file's declarations as the session knows them (for frames, and for
 /// naming a parameter that is not bound).
 struct FileIndex {
@@ -284,6 +460,36 @@ struct Session {
     /// The control each cell bound when it was last evaluated (one bound
     /// alone), and the name it binds when the cell defines one alone.
     controls: HashMap<String, CellControl>,
+    /// A recorded run being made, or one being replayed (`record`,
+    /// `replay`): each cell's evaluation records its inputs, or is served
+    /// them.
+    timeline: Option<KernelTimeline>,
+}
+
+/// A kernel's record or replay (docs/tooling.md, "A recorded run").
+enum KernelTimeline {
+    /// Each cell's stretch of events as it was evaluated.
+    Record {
+        cells: Vec<crate::timeline::TraceCell>,
+        events: Vec<crate::timeline::Event>,
+    },
+    /// The trace served, and what each cell's replay found.
+    Replay {
+        trace: crate::timeline::Trace,
+        path: PathBuf,
+    },
+}
+
+/// One cell's evaluation under the timeline: the tier kept aside, and in
+/// a replay the stretch it is served from.
+struct Stretch {
+    kept: Option<Box<crate::ovm::tier::BytecodeTier>>,
+    cell: String,
+    code: String,
+    line: u32,
+    /// Replay: the recorded cell's index, and how many of its events the
+    /// main thread makes.
+    from: Option<(usize, usize)>,
 }
 
 /// A cell's control, as `set` validates a value for it.
@@ -345,6 +551,7 @@ impl Session {
             cells: HashMap::new(),
             declared: HashMap::new(),
             controls: HashMap::new(),
+            timeline: None,
         }
     }
 
@@ -770,6 +977,264 @@ impl Session {
     }
 
     /// The notebook's path, when this session is a kernel.
+    // ── a recorded run ──────────────────────────────────────────────
+
+    /// `record`: from now each cell's evaluation records what it read (the
+    /// clock, random numbers, the environment, files, processes, the
+    /// network, the database); `record` with `path` writes the trace there
+    /// and stops. `{"stop": true}` stops without writing.
+    fn record(&mut self, msg: &J) -> J {
+        let path = msg
+            .get("path")
+            .and_then(|p| p.as_str())
+            .map(|p| self.resolve(p));
+        let stop = msg.get("stop").and_then(|s| s.as_bool()) == Some(true);
+        if path.is_none() && !stop {
+            self.timeline = Some(KernelTimeline::Record {
+                cells: Vec::new(),
+                events: Vec::new(),
+            });
+            return json!({ "ok": true, "recording": true });
+        }
+        let Some(KernelTimeline::Record { cells, events }) = self.timeline.take() else {
+            return json!({ "ok": false, "error": { "kind": "protocol", "message": "nothing is being recorded (`record` starts it)" } });
+        };
+        let Some(path) = path else {
+            return json!({ "ok": true, "recording": false });
+        };
+        // the notebook's program as it ran: its params as bound now
+        let nb_path = self.notebook_path();
+        let text = nb_path
+            .as_ref()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .unwrap_or_default();
+        let params: Vec<(String, String)> = self
+            .notebook
+            .as_ref()
+            .map(|n| {
+                n.params
+                    .iter()
+                    .map(|p| (p.0.clone(), p.1.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let source = if nb_path.is_some() {
+            crate::notebook::program_with(&text, crate::notebook::Mode::Run, &params).source
+        } else {
+            cells
+                .iter()
+                .map(|c| c.code.clone())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let controls: Vec<J> = self
+            .controls
+            .iter()
+            .filter_map(|(c, ctl)| ctl.name.as_ref().map(|n| (c, n)))
+            .filter_map(|(c, n)| {
+                let v = self.cmd.interpreter.get_environment().get(n)?;
+                Some(json!({ "cell": c, "name": n, "value": literal_text(&v) }))
+            })
+            .collect();
+        let sha = {
+            use sha2::{Digest, Sha256};
+            format!("{:x}", Sha256::digest(source.as_bytes()))
+        };
+        let n_events = events.len();
+        let n_cells = cells.len();
+        let trace = crate::timeline::Trace {
+            format: crate::timeline::TRACE_FORMAT,
+            olang_version: crate::version::VERSION.to_string(),
+            program_path: nb_path
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            program_sha256: sha,
+            source,
+            events,
+            cells,
+            notebook: Some(json!({
+                "params": params.iter().map(|(n, v)| json!({ "name": n, "value": v })).collect::<Vec<_>>(),
+                "controls": controls,
+            })),
+        };
+        let written = serde_json::to_vec(&trace)
+            .map_err(|e| e.to_string())
+            .and_then(|b| {
+                if let Some(d) = path.parent() {
+                    let _ = std::fs::create_dir_all(d);
+                }
+                std::fs::write(&path, &b)
+                    .map(|_| b.len())
+                    .map_err(|e| e.to_string())
+            });
+        match written {
+            Ok(bytes) => {
+                json!({ "ok": true, "path": path.to_string_lossy(), "cells": n_cells, "events": n_events, "bytes": bytes })
+            }
+            Err(e) => {
+                json!({ "ok": false, "error": { "kind": "io", "message": format!("the trace cannot be written to {}: {}", path.display(), e) } })
+            }
+        }
+    }
+
+    /// `replay` with `path`: from now each cell's evaluation is served what
+    /// the trace recorded for it (the cell found by its id and code, else
+    /// its code, else its id) — never the clock, the disk or a process.
+    /// `{"stop": true}` ends it.
+    fn replay(&mut self, msg: &J) -> J {
+        if msg.get("stop").and_then(|s| s.as_bool()) == Some(true) {
+            let was = matches!(self.timeline, Some(KernelTimeline::Replay { .. }));
+            if was {
+                self.timeline = None;
+            }
+            return json!({ "ok": true, "replaying": false, "was": was });
+        }
+        let Some(path) = msg
+            .get("path")
+            .and_then(|p| p.as_str())
+            .map(|p| self.resolve(p))
+        else {
+            return json!({ "ok": false, "error": { "kind": "protocol", "message": "`replay` takes the trace's `path`" } });
+        };
+        match crate::timeline::Timeline::load_trace(&path) {
+            Ok(trace) => {
+                let cells: Vec<J> = trace
+                    .cells
+                    .iter()
+                    .map(|c| json!({ "cell": c.cell, "line": c.line, "events": c.to - c.from }))
+                    .collect();
+                let reply = json!({ "ok": true, "replaying": true, "olang": trace.olang_version, "cells": cells,
+                    "events": trace.events.len(), "notebook": trace.notebook.clone().unwrap_or(J::Null) });
+                self.timeline = Some(KernelTimeline::Replay { trace, path });
+                reply
+            }
+            Err(e) => json!({ "ok": false, "error": { "kind": "io", "message": e } }),
+        }
+    }
+
+    /// A cell's evaluation begun under the timeline, if there is one.
+    fn stretch_begin(&mut self, cell: &str, code: &str, line: u32) -> Option<Stretch> {
+        let (timeline, from) = match self.timeline.as_ref()? {
+            KernelTimeline::Record { .. } => (
+                crate::timeline::Timeline::record(
+                    PathBuf::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                ),
+                None,
+            ),
+            KernelTimeline::Replay { trace, .. } => {
+                let at = trace
+                    .cells
+                    .iter()
+                    .position(|c| c.cell == cell && c.code == code)
+                    .or_else(|| trace.cells.iter().position(|c| c.code == code))
+                    .or_else(|| trace.cells.iter().position(|c| c.cell == cell));
+                let events: Vec<crate::timeline::Event> = match at {
+                    Some(i) => trace.events[trace.cells[i].from..trace.cells[i].to].to_vec(),
+                    None => Vec::new(),
+                };
+                let main = events.iter().filter(|e| e.thread == 0).count();
+                let t = crate::timeline::Trace {
+                    events,
+                    cells: Vec::new(),
+                    notebook: None,
+                    ..trace.clone()
+                };
+                crate::timeline::clear_diverged();
+                (
+                    crate::timeline::Timeline::replay(t),
+                    Some((at.unwrap_or(usize::MAX), main)),
+                )
+            }
+        };
+        let kept = self.cmd.interpreter.begin_timeline_stretch(timeline);
+        Some(Stretch {
+            kept,
+            cell: cell.to_string(),
+            code: code.to_string(),
+            line,
+            from,
+        })
+    }
+
+    /// The stretch ended: a recording's events kept as the cell's, a
+    /// replay's verdict. Answers the reply's key (`record`, `replay`) and
+    /// what it says.
+    fn stretch_end(
+        &mut self,
+        st: Stretch,
+        outcome: &Result<Value, InterpreterError>,
+    ) -> (&'static str, J) {
+        let t = self.cmd.interpreter.end_timeline_stretch(st.kept);
+        match (self.timeline.as_mut(), st.from) {
+            (Some(KernelTimeline::Record { cells, events }), _) => {
+                let mine = t.map(|t| t.recorded_events()).unwrap_or_default();
+                let n = mine.len();
+                // a cell recorded again replaces its stretch
+                if let Some(i) = cells.iter().position(|c| c.cell == st.cell) {
+                    let old = cells.remove(i);
+                    let gone = old.to - old.from;
+                    events.drain(old.from..old.to);
+                    for c in cells.iter_mut().filter(|c| c.from >= old.to) {
+                        c.from -= gone;
+                        c.to -= gone;
+                    }
+                }
+                let from = events.len();
+                events.extend(mine);
+                cells.push(crate::timeline::TraceCell {
+                    cell: st.cell,
+                    code: st.code,
+                    line: st.line,
+                    from,
+                    to: from + n,
+                });
+                ("record", json!({ "events": n }))
+            }
+            (Some(KernelTimeline::Replay { trace, .. }), Some((at, main))) => {
+                let used = t.as_ref().map(|t| t.len()).unwrap_or(0);
+                let rec = trace.cells.get(at);
+                let mut note = json!({ "events": used, "recorded": main });
+                match rec {
+                    None => {
+                        note["missing"] = J::Bool(true);
+                    }
+                    Some(rc) => {
+                        if rc.code != st.code {
+                            note["code_changed"] = J::Bool(true);
+                        }
+                    }
+                }
+                let diverged = match outcome {
+                    Err(e) => {
+                        let m = plain_message(e);
+                        m.contains("timeline: replay diverged").then_some(m)
+                    }
+                    Ok(_) => None,
+                }
+                .or_else(|| {
+                    (crate::timeline::any_thread_diverged()).then(|| "a task the cell spawned diverged from the trace".to_string())
+                })
+                .or_else(|| {
+                    (rec.is_some() && used < main).then(|| {
+                        format!(
+                            "the cell made {} of the {} recorded calls: it reads less than it did when recorded",
+                            used, main
+                        )
+                    })
+                });
+                if let Some(m) = diverged {
+                    note["diverged"] = J::String(m);
+                }
+                ("replay", note)
+            }
+            _ => ("replay", json!({ "missing": true })),
+        }
+    }
+
     fn notebook_path(&self) -> Option<PathBuf> {
         self.notebook.as_ref().map(|n| n.path.clone())
     }
@@ -778,8 +1243,8 @@ impl Session {
         let mut v = json!({
             "event": "hello", "protocol": PROTOCOL, "olang": crate::version::VERSION,
             "root": self.root.to_string_lossy(), "pid": std::process::id(),
-            "ops": ["hello", "eval", "command", "commands", "complete", "deps", "drop", "expand", "release", "interrupt", "ping", "reload", "reread", "render", "reset", "set", "shutdown", "stats", "vars"],
-            "features": ["bind", "pure", "cell", "caps", "profile", "distinct"],
+            "ops": ["hello", "eval", "command", "commands", "complete", "deps", "drop", "expand", "release", "interrupt", "page", "ping", "record", "reload", "replay", "reread", "render", "reset", "set", "shutdown", "stats", "vars"],
+            "features": ["bind", "pure", "cell", "caps", "profile", "distinct", "record", "html"],
         });
         if let Some(nb) = &self.notebook {
             v["notebook"] = json!({
@@ -832,6 +1297,29 @@ impl Session {
             "vars" => self.vars(),
             "reread" => self.reread(msg),
             "set" => self.set_control(msg),
+            "record" => self.record(msg),
+            // the notebook's page for an outputs document (a published app's)
+            "page" => match self.notebook_path() {
+                Some(p) => {
+                    let text = msg
+                        .get("text")
+                        .and_then(|t| t.as_str())
+                        .map(str::to_string)
+                        .or_else(|| std::fs::read_to_string(&p).ok())
+                        .unwrap_or_default();
+                    let mode = if msg.get("mode").and_then(|m| m.as_str()) == Some("app") {
+                        crate::notebook_export::Mode::App
+                    } else {
+                        crate::notebook_export::Mode::Export
+                    };
+                    let doc = msg.get("doc").cloned().unwrap_or(J::Null);
+                    json!({ "ok": true, "html": crate::notebook_export::page_html(&text, &p, &doc, mode) })
+                }
+                None => {
+                    json!({ "ok": false, "error": { "kind": "protocol", "message": "a page is a notebook kernel's (--notebook)" } })
+                }
+            },
+            "replay" => self.replay(msg),
             "expand" => self.expand(msg),
             "release" => {
                 if let Some(e) = msg.get("eval").and_then(|e| e.as_u64()) {
@@ -1203,6 +1691,12 @@ impl Session {
         if let Some(c) = &cell {
             crate::controls::begin_cell(c);
         }
+        // a recorded run's cell records its inputs, a replayed one is
+        // served them (never a prompt's or a pure `${expr}`'s evaluation)
+        let stretch = match &cell {
+            Some(c) if !pure => self.stretch_begin(c, &code, line as u32),
+            _ => None,
+        };
         let started = Instant::now();
         let session = profiling.then(|| {
             crate::profile::detail_enable();
@@ -1220,6 +1714,7 @@ impl Session {
             None => self.cmd.interpreter.eval_program(program),
         };
         crate::profile::stats_sample_end();
+        let timeline_note = stretch.map(|st| self.stretch_end(st, &outcome));
         let profile_doc = session.map(|s| {
             let mut lines = crate::profile::LineCache::default();
             self.cell_frames(s.finish_json(&mut lines))
@@ -1385,6 +1880,27 @@ impl Session {
         reply["caps"] = json!(reached);
         if let Some(doc) = profile_doc {
             reply["profile"] = doc;
+        }
+        if let Some((k, note)) = timeline_note {
+            reply[k] = note;
+        }
+        // `html`: the output as a page draws it (a published app swaps it in)
+        if let Some(h) = msg
+            .get("html")
+            .filter(|h| !h.is_null() && h.as_bool() != Some(false))
+        {
+            let md = h.get("markdown").and_then(|m| m.as_bool()) == Some(true);
+            let id = cell.clone().unwrap_or_default();
+            reply["html"] = J::String(crate::notebook_export::output_html(
+                &reply,
+                None,
+                crate::notebook_export::Mode::App,
+                &id,
+                md,
+            ));
+            if let Some(v) = reply.get("value") {
+                reply["text"] = J::String(crate::notebook_export::value_text(v));
+            }
         }
         if !notes.is_empty() {
             reply["notes"] = json!(notes);
@@ -2443,6 +2959,15 @@ impl Session {
 // ── helpers ─────────────────────────────────────────────────────────
 
 /// Whether prompt input is a REPL command: `:word`, `!shell`, `quit`.
+/// A value as olang source that makes it again, as far as a literal does
+/// (a string quoted, anything else as it displays).
+fn literal_text(v: &Value) -> String {
+    match v {
+        Value::String(s) => serde_json::to_string(s.as_str()).unwrap_or_default(),
+        other => other.to_string(),
+    }
+}
+
 fn is_command_line(code: &str) -> bool {
     (code.starts_with(':')
         && code

@@ -40,6 +40,7 @@ pub fn create_runtime_module() -> Value {
     module.insert("shape".to_string(), builtin("shape", 1));
     // a control a host binds (ui.slider and its kin): src/controls.rs
     module.insert("bind".to_string(), builtin("bind", 2));
+    module.insert("preset".to_string(), builtin("preset", 2));
     Value::Struct {
         type_name: "Module".to_string(),
         fields: Arc::new(module),

@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Notebooks beyond the scratchpad** (docs/notebooks.md). `olang run
+  x.olmd --for region=east,west` (or `--for sets.json|.yaml|.csv`) runs a
+  notebook once a parameter set; `--param` may name a control cell
+  (`runtime.preset`, held to its options or range). **Pinned output**:
+  ```` ```output {cell: name, kind: text|table|chart} ```` under a `pin:
+  true` cell keeps its last output in the file, checked in place, never
+  run. `olang notebook export` writes a self-contained page (prose, code,
+  tables, charts as SVG in both themes, controls at their value; light
+  and dark; `--pdf` through WebKit on macOS; `--json` the outputs),
+  `olang notebook pin` writes the pinned outputs (`--check` compares),
+  `olang notebook app` writes a web-sdk app whose controls re-run what
+  reads them in the notebook's kernel. The kernel records a cell's inputs
+  and replays them (`record`, `replay`: a recorded notebook replays with
+  its data gone), draws an output as HTML (`html`) and the page (`page`).
+  A Frame read whole is recorded in its columnar bytes, and a chart is
+  redrawn in the other theme from its own colours (olang-ods `retheme`).
+
 - **The language server reads a notebook.** `olang lsp` takes an `.olmd`
   as one document whose cells are one module on the file's own lines:
   completion, hover, signature help, go to definition, references,

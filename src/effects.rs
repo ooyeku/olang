@@ -36,8 +36,9 @@ pub struct Effects {
     /// Whether record/replay must capture this call's result for a trace
     /// to replay deterministically. A subset of "nondeterministic or
     /// input-reading"; results must round-trip through the trace format,
-    /// so calls returning native handles (`ods.open_csv`) are gated but
-    /// not recorded — a documented replay limitation.
+    /// so calls returning native handles (`ods.open_csv`'s reader) are
+    /// gated but not recorded — a documented replay limitation; a Frame
+    /// read whole (`ods.read_csv_file`) is recorded in its columnar bytes.
     pub recorded: bool,
 }
 
@@ -194,7 +195,12 @@ fn recorded_of(op: &str) -> bool {
             | "os.pid"
             | "os.is_tty"
             | "os.stdin_is_tty"
-            // filesystem reads: external, mutable state.
+            // filesystem reads: external, mutable state (a Frame read
+            // whole is data too: recorded in its columnar bytes).
+            | "ods.read_csv_file"
+            | "ods.read_jsonl_file"
+            | "ods.read_frame"
+            | "ods.frame_info"
             | "fs.read_file"
             | "fs.exists"
             | "fs.real_path"

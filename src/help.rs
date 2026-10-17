@@ -6545,6 +6545,15 @@ for f in map_get(runtime.last_error(), "frames") { println(show(map_get(f, "file
             &[r##"runtime.bind(ui.control("toggle", true, #{}), true)  // true, with no host"##],
         );
         self.doc_ex(
+            "runtime.preset",
+            "runtime.preset(value, name)",
+            "Unit",
+            "runtime",
+            "The next control the program binds with no host answers `value` instead of its own, held to the control's kind and its range or options (a value that does not fit is an error there, naming `name`). `olang run x.olmd --param region=west` sets a notebook's control cell this way.",
+            &[r##"runtime.preset("west", "region")
+let region = ui.select("east", ["east", "west"])   // "west""##],
+        );
+        self.doc_ex(
             "runtime.build",
             "runtime.build()",
             "Map",

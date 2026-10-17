@@ -20,6 +20,7 @@ specified in its own notebook design (studio/docs/notebooks.md).
 - [Params](#params)
 - [Capabilities](#capabilities)
 - [Controls](#controls)
+- [Pinned output](#pinned-output)
 - [The YAML subset](#the-yaml-subset)
 - [Commands](#commands)
 - [Diagnostics](#diagnostics)
@@ -79,7 +80,7 @@ CommonMark:
 | `olang` | a code cell |
 | `olang {options}` | a code cell with [options](#cell-options) |
 | `olang no-run`, `olang no-run {options}` | a cell that is shown and checked but never run |
-| `output {cell: name}` | a cell's pinned output (olang Studio's); prose to olang |
+| `output {cell: name, kind: …}` | a cell's [pinned output](#pinned-output); the program never sees it (a bare `output` block is prose) |
 | anything else (`sql`, `json`, `olangx`, none) | prose |
 
 A fence inside a list item or a block quote is not read as a cell. A
@@ -205,6 +206,21 @@ params:
   top_n: {value: 3, min: 1, max: 10, step: 1}
 ```
 
+`--param` may also name a **control cell** — one defining one name with
+a `ui` control (`let region = ui.select("east", […])`): its control
+answers the value as it binds (`runtime.preset`), held to its kind,
+range or options (an error naming the param otherwise). `--for` runs
+the notebook once a set: `--for region=east,west` (every value of one
+param or control, split at the commas outside quotes and brackets) or
+`--for sets.json` (a list of objects; `.yaml` a list of maps; `.csv` a
+header of names and a row a set), each run a child of its own under a
+line naming its set, the exit the first failing run's.
+
+```bash
+olang run sales.olmd --for region=east,west,north,south
+olang run sales.olmd --for sets.csv --param top_n=5
+```
+
 A `--param` that names no param the notebook declares is an error at the
 line of `params:` (or line 1), and the notebook does not run. A param's
 name must be one a `let` can bind: an identifier that is not a keyword.
@@ -258,6 +274,44 @@ names says its first control without a name, read-only. Binding reaches
 no capability: a control cell is pure, so the cells reading it run again
 on their own.
 
+## Pinned output
+
+A cell with `pin: true` keeps its last output in the file, so a reader
+with no olang (a repository's web page, a plain editor) sees it. It is a
+fenced block directly under the cell, blank lines between:
+
+````markdown
+```olang {name: top, pin: true}
+ods.head(by_region, 3)
+```
+
+```output {cell: top, kind: table}
+region  revenue  orders
+String  Float    Int
+──────  ───────  ──────
+east    13597.5  96
+west    13529.5  95
+south   11191.9  99
+4 rows × 3 columns · the first 3 shown
+```
+````
+
+| `kind` | The block holds |
+|---|---|
+| `text` (the default) | the value's words (a string bare, a float as a person reads it), what the cell printed above them, an error as `error: …`, a control as `name = value` |
+| `table` | a Frame's, a Series' or a list of records' columns aligned: names, types, a rule of `─` under each column (every column starts where its rule does), its first twenty rows (`null` for a null), its size |
+| `chart` | the chart's SVG, its description inside (`plot.describe` reads it) |
+
+The block's fence is three backticks, or one more than the longest run
+opening a line of its body. A cell whose output is nothing (it only
+defines) keeps no block. The rules, each a diagnostic: a pinned cell has
+a `name` (its block names it); an output block stands directly under the
+cell its `cell` names, and that cell is pinned. olang reads the block as
+prose, so a run, `olang test` and `olang check` never see it; `olang fmt`
+leaves it byte for byte. `olang notebook pin` writes them from a run (and
+`--check` says which differ); olang Studio writes them as a pinned cell
+runs, and draws one where nothing has run.
+
 ## The YAML subset
 
 olang reads front matter in a strict subset of YAML, and anything
@@ -289,6 +343,10 @@ document, and tabs as indentation. A key given twice is an error.
 | `olang expand x.olmd` | prints the program |
 | `:run x.olmd` in the REPL | runs it in its folder, under its grant |
 | `olang lsp` | a notebook is one document: its cells one module on the file's own lines, so completion, hover, signature help, go to definition, references, highlights and rename work across cells; a param is its front matter key, and a name a `${expr}` in prose reads is found (and renamed) there too; prose, fences and the front matter's other lines are about nothing; its problems are `olang check`'s (the notebook's own, code `notebook`), a name only prose reads not unused; formatting is `olang fmt`'s |
+| `olang run x.olmd --for NAME=A,B` | runs it once a parameter set ([Params](#params)) |
+| `olang notebook export x.olmd` | runs it cell by cell (as its kernel does) and writes a self-contained page: prose, code (unless hidden), outputs (tables as HTML tables, charts as SVG in both themes, pictures inline), controls at their value, light and dark by the reader's appearance; `--html`, `--pdf` (macOS: WebKit's print), `--json` (the outputs document), `--outputs RUN.json` (draw given outputs, run nothing), `--param` |
+| `olang notebook pin x.olmd` | runs it and writes each pinned cell's [output block](#pinned-output); `--check` writes nothing and exits 1 when one differs |
+| `olang notebook app x.olmd` | writes a web-sdk app (`-o DIR`, default `<stem>-app` beside it): `olang run main.ol` serves the page, its controls form fields and its params editable; a change runs again, in the notebook's kernel, only the cells that read it, and the page swaps their outputs in |
 | `olang repl --serve --notebook x.olmd` | the notebook's kernel: its params bound, its grant, its folder, `eval` by cell (each saying the capabilities it reached), a cell's names read without running it (`deps`), its names and values (`vars`), its front matter read again (`reread`), a cell's control and the value an editor sets for it (`set`); a Frame's column summaries, its views filtered and sorted and a column's distinct values paged by handle, a chart's description as data, an evaluation's profile ([the protocol](tooling.md#olang-repl---serve)) |
 
 `olang check DIR` and `olang fmt DIR` take a folder's notebooks with its

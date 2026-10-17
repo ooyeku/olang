@@ -143,6 +143,17 @@ struct Cli {
     )]
     param: Vec<String>,
 
+    /// Run a notebook once for each parameter set: NAME=A,B,C (every value
+    /// of one param or control cell) or a file of sets (.json, .yaml or
+    /// .csv: a set a row). Each run is a child of its own, under a line
+    /// naming its set; the exit is the first failing run's
+    #[arg(
+        long = "for",
+        value_name = "NAME=A,B,… | SETS",
+        help_heading = "Run options"
+    )]
+    for_each: Option<String>,
+
     /// Record this run's nondeterministic inputs to a portable .olt trace.
     /// Replay it bit-for-bit later with `olang replay <trace>`.
     #[arg(long, value_name = "TRACE.olt", help_heading = "Run options")]
@@ -516,6 +527,13 @@ enum Commands {
         args: Vec<String>,
     },
 
+    /// A notebook beyond its run: its page, its pinned outputs, its app
+    /// (docs/notebooks.md)
+    Notebook {
+        #[command(subcommand)]
+        action: NotebookAction,
+    },
+
     /// Start the language server (LSP over stdio)
     Lsp {
         /// Accepted for editor-client compatibility: vscode-languageclient
@@ -531,6 +549,68 @@ enum Commands {
     /// Run a program file — the file-first form `olang <file> [args]`
     #[command(external_subcommand)]
     External(Vec<String>),
+}
+
+/// `olang notebook`'s commands.
+#[derive(Subcommand)]
+enum NotebookAction {
+    /// Run the notebook cell by cell and write it out: a self-contained
+    /// HTML page (prose, code, outputs, charts as SVG, controls at their
+    /// value; light and dark), a PDF of that page (macOS), or the outputs
+    /// as JSON. With no --html, --pdf or --json: <notebook>.html beside it
+    Export {
+        /// The notebook (.olmd)
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Write the page here
+        #[arg(long, value_name = "OUT.html")]
+        html: Option<PathBuf>,
+        /// Write the page as a PDF here (WebKit's print, macOS only)
+        #[arg(long, value_name = "OUT.pdf")]
+        pdf: Option<PathBuf>,
+        /// Write the outputs document (each cell's reply as the kernel
+        /// gives it) here, `-` for stdout
+        #[arg(long, value_name = "OUT.json")]
+        json: Option<PathBuf>,
+        /// Draw these outputs (an outputs document: Studio's run) instead of
+        /// running the notebook
+        #[arg(long, value_name = "RUN.json")]
+        outputs: Option<PathBuf>,
+        /// A param or a control cell's value as NAME=VALUE (repeatable)
+        #[arg(long = "param", value_name = "NAME=VALUE")]
+        params: Vec<String>,
+    },
+    /// Run the notebook and write each pinned cell's output (`pin: true`)
+    /// into the file, in its output block
+    Pin {
+        /// The notebook (.olmd)
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Write nothing: say which pinned outputs differ from the run's,
+        /// and exit 1 when one does
+        #[arg(long)]
+        check: bool,
+        /// A param or a control cell's value as NAME=VALUE (repeatable)
+        #[arg(long = "param", value_name = "NAME=VALUE")]
+        params: Vec<String>,
+    },
+    /// Write the notebook as a web-sdk app: its controls form fields, a
+    /// change running again what reads it. Run it with `olang run main.ol`
+    App {
+        /// The notebook (.olmd)
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// The app's folder (default: <notebook>-app beside it)
+        #[arg(short, long, value_name = "DIR")]
+        out: Option<PathBuf>,
+        /// Where web-sdk is (default: WEB_SDK_DIR, the shelf's `web`, or
+        /// olang's own frameworks/web-sdk)
+        #[arg(long, value_name = "DIR")]
+        web: Option<PathBuf>,
+        /// The port it serves on by default
+        #[arg(long, default_value = "7700")]
+        port: u16,
+    },
 }
 
 /// The interpreter recurses on the host stack, and its documented call-depth
@@ -1184,6 +1264,7 @@ fn run() -> i32 {
         }
         Some(Commands::Bench { args }) => olang::tools::bench::run(&args),
 
+        Some(Commands::Notebook { action }) => notebook_command(action),
         Some(Commands::Lsp { stdio: _ }) => match olang::tools::lsp::run() {
             Ok(()) => 0,
             Err(e) => {
@@ -1275,6 +1356,7 @@ fn notebook_params(params: &[String]) -> Result<(), i32> {
 /// `--ovm-stats` and `--ovm-tier` take theirs only after `=`.
 const RUN_OPTIONS_WITH_VALUE: &[&str] = &[
     "--param",
+    "--for",
     "--profile-live",
     "--verify-tiers",
     "--ovm-parallelism",
@@ -1447,31 +1529,51 @@ fn run_program(
     // notebook's own arguments are its params, not os.args()'s).
     let mut args = args;
     let mut params = cli.param.clone();
+    let mut for_each = cli.for_each.clone();
     if olang::notebook::is_notebook(&file_path) {
         let mut rest = Vec::new();
         let mut it = std::mem::take(&mut args).into_iter();
         while let Some(a) = it.next() {
-            if a == "--param" {
+            if a == "--param" || a == "--for" {
                 match it.next() {
-                    Some(v) => params.push(v),
+                    Some(v) if a == "--param" => params.push(v),
+                    Some(v) => for_each = Some(v),
                     None => {
-                        eprintln!("olang: --param expects NAME=VALUE");
+                        eprintln!(
+                            "olang: {} expects {}",
+                            a,
+                            if a == "--param" {
+                                "NAME=VALUE"
+                            } else {
+                                "NAME=A,B,… or a file of sets"
+                            }
+                        );
                         return 2;
                     }
                 }
             } else if let Some(v) = a.strip_prefix("--param=") {
                 params.push(v.to_string());
+            } else if let Some(v) = a.strip_prefix("--for=") {
+                for_each = Some(v.to_string());
             } else {
                 rest.push(a);
             }
         }
         args = rest;
-    } else if !params.is_empty() {
+    } else if !params.is_empty() || for_each.is_some() {
         eprintln!(
-            "olang: --param sets a notebook's param; {} is no notebook (.olmd)",
+            "olang: {} sets a notebook's params; {} is no notebook (.olmd)",
+            if params.is_empty() {
+                "--for"
+            } else {
+                "--param"
+            },
             file_path.display()
         );
         return 2;
+    }
+    if let Some(spec) = for_each {
+        return run_for_each(&cli, &file_path, &spec, &params, &args);
     }
     if let Err(code) = notebook_params(&params) {
         return code;
@@ -1560,6 +1662,362 @@ fn run_program(
 /// polling the newest mtime of every .ol file at or below the script's
 /// directory -- no dependency, and a save mid-run queues an immediate
 /// rerun. Ctrl+C stops watcher and child together (same process group).
+/// `NAME=VALUE` flags read, or the message.
+fn param_pairs(params: &[String]) -> Result<Vec<(String, String)>, String> {
+    params
+        .iter()
+        .map(|p| olang::notebook::parse_param_flag(p))
+        .collect()
+}
+
+/// `olang notebook export | pin | app`.
+fn notebook_command(action: NotebookAction) -> i32 {
+    let abs = |p: &std::path::Path| std::path::absolute(p).unwrap_or(p.to_path_buf());
+    let need_notebook = |f: &std::path::Path| -> Result<PathBuf, i32> {
+        let f = abs(f);
+        if !f.is_file() || !olang::notebook::is_notebook(&f) {
+            eprintln!(
+                "olang notebook: {} is no notebook (an .olmd file)",
+                f.display()
+            );
+            return Err(2);
+        }
+        Ok(f)
+    };
+    match action {
+        NotebookAction::Export {
+            file,
+            html,
+            pdf,
+            json,
+            outputs,
+            params,
+        } => {
+            let file = match need_notebook(&file) {
+                Ok(f) => f,
+                Err(c) => return c,
+            };
+            let overrides = match param_pairs(&params) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("olang: {}", e);
+                    return 2;
+                }
+            };
+            let html = html.map(|p| abs(&p));
+            let pdf = pdf.map(|p| abs(&p));
+            let json_out = json.map(|p| if p.as_os_str() == "-" { p } else { abs(&p) });
+            let html = if html.is_none() && pdf.is_none() && json_out.is_none() {
+                Some(file.with_extension("html"))
+            } else {
+                html
+            };
+            let text = match std::fs::read_to_string(&file) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("olang notebook export: {}: {}", file.display(), e);
+                    return 1;
+                }
+            };
+            let doc = match &outputs {
+                Some(o) => match std::fs::read_to_string(abs(o))
+                    .map_err(|e| e.to_string())
+                    .and_then(|t| {
+                        serde_json::from_str::<serde_json::Value>(&t).map_err(|e| e.to_string())
+                    }) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        eprintln!("olang notebook export: --outputs {}: {}", o.display(), e);
+                        return 1;
+                    }
+                },
+                None => match olang::repl_serve::run_notebook(&file, &overrides) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        return 1;
+                    }
+                },
+            };
+            let text = doc
+                .get("text")
+                .and_then(|t| t.as_str())
+                .map(str::to_string)
+                .unwrap_or(text);
+            if let Some(j) = &json_out {
+                let body = serde_json::to_string(&doc).unwrap_or_default();
+                if j.as_os_str() == "-" {
+                    println!("{}", body);
+                } else if let Err(e) = std::fs::write(j, body) {
+                    eprintln!("olang notebook export: {}: {}", j.display(), e);
+                    return 1;
+                } else {
+                    eprintln!("wrote {}", j.display());
+                }
+            }
+            let page = olang::notebook_export::page_html(
+                &text,
+                &file,
+                &doc,
+                olang::notebook_export::Mode::Export,
+            );
+            if let Some(h) = &html {
+                if let Err(e) = std::fs::write(h, &page) {
+                    eprintln!("olang notebook export: {}: {}", h.display(), e);
+                    return 1;
+                }
+                eprintln!("wrote {}", h.display());
+            }
+            if let Some(p) = &pdf {
+                match print_pdf(&page, p) {
+                    Ok(()) => eprintln!("wrote {}", p.display()),
+                    Err(e) => {
+                        eprintln!("olang notebook export --pdf: {}", e);
+                        return 1;
+                    }
+                }
+            }
+            0
+        }
+        NotebookAction::Pin {
+            file,
+            check,
+            params,
+        } => {
+            let file = match need_notebook(&file) {
+                Ok(f) => f,
+                Err(c) => return c,
+            };
+            let overrides = match param_pairs(&params) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("olang: {}", e);
+                    return 2;
+                }
+            };
+            let text = std::fs::read_to_string(&file).unwrap_or_default();
+            let doc = match olang::repl_serve::run_notebook(&file, &overrides) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("{}", e);
+                    return 1;
+                }
+            };
+            let nb = olang::notebook::parse(&text);
+            let entries = olang::notebook_export::cell_entries(&nb, &doc);
+            let mut pins = Vec::new();
+            for (c, e) in nb.cells.iter().zip(entries) {
+                if !c.options.pin {
+                    continue;
+                }
+                let Some(name) = c.options.name.clone() else {
+                    continue;
+                };
+                let out = e
+                    .and_then(|e| e.get("reply"))
+                    .filter(|r| !r.is_null())
+                    .and_then(|r| olang::notebook_export::pin_of(r, None));
+                pins.push((name, out));
+            }
+            let after = olang::notebook::with_pins(&text, &pins);
+            let names: Vec<&str> = pins.iter().map(|p| p.0.as_str()).collect();
+            if check {
+                let before: Vec<(String, String)> = olang::notebook::pinned_outputs(&text)
+                    .into_iter()
+                    .map(|(o, b)| (o.cell, b))
+                    .collect();
+                let now: Vec<(String, String)> = olang::notebook::pinned_outputs(&after)
+                    .into_iter()
+                    .map(|(o, b)| (o.cell, b))
+                    .collect();
+                let differ: Vec<&str> = names
+                    .iter()
+                    .copied()
+                    .filter(|n| {
+                        before.iter().find(|(c, _)| c == n).map(|x| &x.1)
+                            != now.iter().find(|(c, _)| c == n).map(|x| &x.1)
+                    })
+                    .collect();
+                if differ.is_empty() {
+                    println!(
+                        "{}: {} pinned output{} as kept",
+                        file.display(),
+                        names.len(),
+                        if names.len() == 1 { "" } else { "s" }
+                    );
+                    0
+                } else {
+                    println!(
+                        "{}: pinned output{} differ from the run: {}",
+                        file.display(),
+                        if differ.len() == 1 { "" } else { "s" },
+                        differ.join(", ")
+                    );
+                    1
+                }
+            } else {
+                if after != text
+                    && let Err(e) = std::fs::write(&file, &after)
+                {
+                    eprintln!("olang notebook pin: {}: {}", file.display(), e);
+                    return 1;
+                }
+                if names.is_empty() {
+                    println!("{}: no cell is pinned (`pin: true`)", file.display());
+                } else {
+                    println!("{}: pinned {}", file.display(), names.join(", "));
+                }
+                0
+            }
+        }
+        NotebookAction::App {
+            file,
+            out,
+            web,
+            port,
+        } => {
+            let file = match need_notebook(&file) {
+                Ok(f) => f,
+                Err(c) => return c,
+            };
+            let Some(web) = olang::notebook_export::web_sdk_dir(web.as_deref()) else {
+                eprintln!(
+                    "olang notebook app: web-sdk is not found: give it with --web DIR (olang's frameworks/web-sdk), WEB_SDK_DIR, or the shelf's `web`"
+                );
+                return 1;
+            };
+            let stem = file
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("notebook")
+                .to_string();
+            let out = out
+                .map(|o| abs(&o))
+                .unwrap_or_else(|| file.with_file_name(format!("{}-app", stem)));
+            match olang::notebook_export::write_app(&file, &out, &web, port) {
+                Ok(files) => {
+                    for f in files {
+                        println!("wrote {}", f.display());
+                    }
+                    println!("run it: olang run {}", out.join("main.ol").display());
+                    0
+                }
+                Err(e) => {
+                    eprintln!("{}", e);
+                    1
+                }
+            }
+        }
+    }
+}
+
+/// A page printed to a PDF through WebKit (macOS's own, by `osascript`):
+/// paginated as Safari prints it, margins of half an inch, light.
+fn print_pdf(page: &str, out: &std::path::Path) -> Result<(), String> {
+    if !cfg!(target_os = "macos") {
+        return Err(
+            "a PDF is printed by macOS's WebKit: on this system, print the HTML page".to_string(),
+        );
+    }
+    let dir = std::env::temp_dir().join(format!("olang-pdf-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let html = dir.join("page.html");
+    let js = dir.join("print.js");
+    std::fs::write(&html, page).map_err(|e| e.to_string())?;
+    std::fs::write(&js, olang::notebook_export::PDF_SCRIPT).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(out);
+    let run = std::process::Command::new("/usr/bin/osascript")
+        .arg("-l")
+        .arg("JavaScript")
+        .arg(&js)
+        .arg(&html)
+        .arg(out)
+        .output()
+        .map_err(|e| format!("osascript: {}", e));
+    let _ = std::fs::remove_dir_all(&dir);
+    let run = run?;
+    let said = String::from_utf8_lossy(&run.stdout).trim().to_string();
+    if out.is_file() && said == "ok" {
+        Ok(())
+    } else {
+        Err(format!(
+            "WebKit printed nothing ({}{})",
+            said,
+            String::from_utf8_lossy(&run.stderr).trim()
+        ))
+    }
+}
+
+/// `olang run x.olmd --for …`: the notebook run once a parameter set, each
+/// a child `olang run` with the set's `--param`s after the ones given (a
+/// set's name replaces a given param of the same name), under a line that
+/// says the set. The exit is the first failing run's (0 when all pass).
+fn run_for_each(
+    cli: &Cli,
+    file: &std::path::Path,
+    spec: &str,
+    params: &[String],
+    args: &[String],
+) -> i32 {
+    use std::io::Write as _;
+    let sets = match olang::notebook::param_sets(spec) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("olang: {}", e);
+            return 2;
+        }
+    };
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("olang --for: cannot find its own executable: {}", e);
+            return 1;
+        }
+    };
+    let mut worst = 0;
+    for (k, set) in sets.iter().enumerate() {
+        let said = set
+            .iter()
+            .map(|(n, v)| format!("{} = {}", n, v))
+            .collect::<Vec<_>>()
+            .join(" · ");
+        if k > 0 {
+            println!();
+        }
+        println!("── {} ({} of {})", said, k + 1, sets.len());
+        let _ = std::io::stdout().flush();
+        let mut cmd = std::process::Command::new(&exe);
+        if let Some(d) = cli.deny.as_deref() {
+            cmd.arg("--deny").arg(d);
+        }
+        if cli.no_ovm {
+            cmd.arg("--no-ovm");
+        }
+        cmd.arg("run").arg(file);
+        for p in params {
+            let name = p.split_once('=').map(|x| x.0.trim()).unwrap_or("");
+            if !set.iter().any(|(n, _)| n == name) {
+                cmd.arg("--param").arg(p);
+            }
+        }
+        for (n, v) in set {
+            cmd.arg("--param").arg(format!("{}={}", n, v));
+        }
+        cmd.args(args);
+        let code = match cmd.status() {
+            Ok(st) => st.code().unwrap_or(1),
+            Err(e) => {
+                eprintln!("olang --for: {}", e);
+                1
+            }
+        };
+        if code != 0 && worst == 0 {
+            worst = code;
+        }
+    }
+    worst
+}
+
 fn watch_loop(script: &std::path::Path, deny: Option<&str>, script_args: &[String]) -> i32 {
     use std::time::{Duration, SystemTime};
     let exe = match std::env::current_exe() {

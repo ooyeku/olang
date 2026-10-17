@@ -19,6 +19,17 @@ pub use frame::{OdsFrame, frame_of};
 pub use series::{OdsSeries, make_series_value, series_of};
 pub use table::scalar_text;
 
+/// A Frame's bytes in the columnar file format (`ods.write_frame`'s), or
+/// None for anything else: what a recorded run keeps of a Frame it read.
+pub fn frame_bytes(v: &Value) -> Option<Vec<u8>> {
+    frame_of(v).map(columns::encode)
+}
+
+/// A Frame made again from `frame_bytes`.
+pub fn frame_from_bytes(b: &[u8]) -> Result<Value, String> {
+    columns::decode(b, None).map(OdsFrame::into_value)
+}
+
 use crate::ast::{BinaryOp, BuiltinFunction, Value};
 use crate::native::{NativeHandle, NativeObject, OvmModule};
 use std::any::Any;

@@ -274,7 +274,7 @@ fn options_are_parsed_and_validated() {
     let ws = workspace("options");
     write(
         &ws.join("ok.olmd"),
-        "```olang {name: load, hide: code, run: manual, pin: true}\nprintln(1)\n```\n\n```olang no-run {name: \"two words\", as: markdown}\nprintln(2)\n```\n\n```output {cell: load}\n1\n```\n",
+        "```olang {name: load, hide: code, run: manual, pin: true}\nprintln(1)\n```\n\n```output {cell: load}\n1\n```\n\n```olang no-run {name: \"two words\", as: markdown}\nprintln(2)\n```\n",
     );
     let out = run_in(&ws, &["ok.olmd"]);
     assert_eq!(stdout(&out), "1\n", "{}", stderr(&out));

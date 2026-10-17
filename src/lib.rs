@@ -34,6 +34,8 @@ pub mod log;
 pub mod memory; // The accounting behind `runtime.memory()`
 pub mod native;
 pub mod notebook; // A `.olmd` file read as a program
+#[cfg(feature = "native")]
+pub mod notebook_export; // A notebook's outputs as a page, an app's fragment, a pinned output
 pub mod ods;
 pub mod olb; // The program image: a parsed Program as bytes
 pub mod output;

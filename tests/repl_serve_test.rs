@@ -285,7 +285,9 @@ fn a_functions_parameters_are_named_then_bound_for_one_evaluation() {
     let (mut r, hello) = Repl::start(dir.path());
     assert_eq!(
         hello["features"],
-        json!(["bind", "pure", "cell", "caps", "profile", "distinct"])
+        json!([
+            "bind", "pure", "cell", "caps", "profile", "distinct", "record", "html"
+        ])
     );
     let f = calc(dir.path());
     // refused: the function and its parameters said
@@ -1303,4 +1305,103 @@ fn a_cells_run_profiled_says_its_profile_with_the_cells_lines() {
     // an evaluation not asked says none
     let b = r.ask(json!({ "op": "eval", "cell": "c9", "code": "busy(10)", "line": 30 }));
     assert!(b.get("profile").is_none(), "{b}");
+}
+
+#[test]
+fn a_recorded_run_replays_from_its_trace_and_says_a_difference() {
+    let dir = tempfile::tempdir().unwrap();
+    let nbdir = dir.path().join("nbs");
+    std::fs::create_dir_all(&nbdir).unwrap();
+    std::fs::write(nbdir.join("data.csv"), "a,b\n1,2\n3,4\n").unwrap();
+    std::fs::write(
+        nbdir.join("rec.olmd"),
+        "---\ncapabilities:\n  fs: read\n---\n\n```olang\nlet f = unwrap(ods.read_csv_file(\"data.csv\"))\nlet t = unwrap(fs.read_file(\"data.csv\"))\n```\n\n```olang\nlet r = random.random()\nods.n_rows(f) + len(t)\n```\n",
+    )
+    .unwrap();
+    let cells = [
+        (
+            "c1",
+            "let f = unwrap(ods.read_csv_file(\"data.csv\"))\nlet t = unwrap(fs.read_file(\"data.csv\"))",
+            7,
+        ),
+        ("c2", "let r = random.random()\nods.n_rows(f) + len(t)", 12),
+    ];
+    let trace = dir.path().join("run.olt");
+    let (mut r, hello) = Repl::start_with(dir.path(), &["--notebook", "nbs/rec.olmd"]);
+    assert!(
+        hello["features"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("record")),
+        "{hello}"
+    );
+    assert_eq!(r.ask(json!({ "op": "record" }))["recording"], json!(true));
+    let mut said = Vec::new();
+    for (c, code, line) in cells {
+        let a = r.ask(json!({ "op": "eval", "cell": c, "code": code, "line": line }));
+        assert_eq!(a["ok"], json!(true), "{a}");
+        said.push(a["record"]["events"].as_u64().unwrap());
+    }
+    let random = r.eval("r")["value"]["s"].clone();
+    assert_eq!(
+        said,
+        vec![2, 1],
+        "a Frame read and a file read; one random draw"
+    );
+    let w = r.ask(json!({ "op": "record", "path": trace }));
+    assert_eq!(w["ok"], json!(true), "{w}");
+    assert_eq!(w["cells"], json!(2));
+    drop(r);
+    // anywhere: the data gone, the trace serves it
+    std::fs::remove_file(nbdir.join("data.csv")).unwrap();
+    let (mut k, _) = Repl::start_with(dir.path(), &["--notebook", "nbs/rec.olmd"]);
+    let rp = k.ask(json!({ "op": "replay", "path": trace }));
+    assert_eq!(rp["ok"], json!(true), "{rp}");
+    for (c, code, line) in cells {
+        let a = k.ask(json!({ "op": "eval", "cell": c, "code": code, "line": line }));
+        assert_eq!(a["ok"], json!(true), "{a}");
+        assert!(a["replay"]["diverged"].is_null(), "{a}");
+        if c == "c2" {
+            assert_eq!(a["value"]["s"], json!("14"), "{a}");
+        }
+    }
+    assert_eq!(k.eval("r")["value"]["s"], random, "the same random draw");
+    // a cell changed since: its replay says it diverged
+    let d = k.ask(json!({ "op": "eval", "cell": "c2", "code": "let r = random.random() + random.random()\n1", "line": 12 }));
+    assert!(
+        d["replay"]["diverged"]
+            .as_str()
+            .unwrap_or("")
+            .contains("diverged")
+            || d["error"]["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("diverged"),
+        "{d}"
+    );
+    assert_eq!(
+        k.ask(json!({ "op": "replay", "stop": true }))["was"],
+        json!(true)
+    );
+}
+
+#[test]
+fn an_output_as_html_and_the_notebooks_page() {
+    let dir = tempfile::tempdir().unwrap();
+    notebook(dir.path());
+    let (mut r, _) = Repl::start_with(dir.path(), &["--notebook", "nbs/sales.olmd"]);
+    let a = r.ask(json!({ "op": "eval", "cell": "c1", "code": "use ui\nlet x = ui.slider(3, 0, 10, 1)", "line": 12, "html": true }));
+    let html = a["html"].as_str().unwrap();
+    assert!(
+        html.contains("type=\"range\"") && html.contains("data-cell=\"c1\" data-name=\"x\""),
+        "{html}"
+    );
+    let p = r.ask(
+        json!({ "op": "page", "mode": "app", "doc": { "cells": [{ "line": 12, "reply": a }] } }),
+    );
+    let page = p["html"].as_str().unwrap();
+    assert!(
+        page.contains("<h1>Kernel</h1>") && page.contains("<script>"),
+        "{page}"
+    );
 }

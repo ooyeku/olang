@@ -70,6 +70,28 @@ pub struct Trace {
     /// The program source itself — a trace is self-contained and portable.
     pub source: String,
     pub events: Vec<Event>,
+    /// A notebook kernel's trace (`olang repl --serve --notebook`'s
+    /// `record`): each cell it evaluated, in order, and which of `events`
+    /// were its own — so a kernel replays a cell from its own stretch. Its
+    /// cells in file order make `events` the program's own run, so `olang
+    /// replay` replays it too. Empty for a program's trace.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cells: Vec<TraceCell>,
+    /// What the notebook ran with (its params and controls' values), as
+    /// the kernel said them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notebook: Option<serde_json::Value>,
+}
+
+/// One cell of a notebook kernel's trace: its id and code as evaluated,
+/// its first line, and its events: `events[from..to]`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TraceCell {
+    pub cell: String,
+    pub code: String,
+    pub line: u32,
+    pub from: usize,
+    pub to: usize,
 }
 
 /// Record or replay.
@@ -361,6 +383,8 @@ impl Timeline {
                 Some(shared) => shared.lock().map(|all| all.clone()).unwrap_or_default(),
                 None => self.events.clone(),
             },
+            cells: Vec::new(),
+            notebook: None,
         };
         let json = serde_json::to_vec_pretty(&trace).map_err(std::io::Error::other)?;
         std::fs::write(path, json)?;
@@ -412,6 +436,11 @@ pub fn any_thread_diverged() -> bool {
     DIVERGED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Forget that a thread diverged (a kernel replays one cell at a time).
+pub fn clear_diverged() {
+    DIVERGED.store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// `v` with every channel and task handle replaced by a serializable
 /// marker (see `record_result`). Values without handles come back as
 /// they are.
@@ -420,6 +449,28 @@ fn portable(v: &Value) -> Value {
     match v {
         Value::Native(h) => {
             let kind = h.0.type_name();
+            // a Frame (one `ods.read_csv_file` answered) is data: kept
+            // whole in its columnar bytes and made again under replay
+            if kind == "Frame"
+                && let Some(b) = crate::ods::frame_bytes(v)
+            {
+                let mut fields = crate::ast::ValueMap::default();
+                fields.insert(
+                    "kind".to_string(),
+                    Value::String(Arc::new("Frame".to_string())),
+                );
+                fields.insert(
+                    "b64".to_string(),
+                    Value::String(Arc::new(base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        b,
+                    ))),
+                );
+                return Value::Struct {
+                    type_name: HANDLE_MARKER.to_string(),
+                    fields: Arc::new(fields),
+                };
+            }
             if matches!(
                 kind,
                 "Channel" | "Task" | "Cursor" | "Bytes" | "ConnectionHandle"
@@ -476,7 +527,7 @@ fn holds_handle(v: &Value) -> bool {
     match v {
         Value::Native(h) => matches!(
             h.0.type_name(),
-            "Channel" | "Task" | "Cursor" | "Bytes" | "ConnectionHandle"
+            "Channel" | "Task" | "Cursor" | "Bytes" | "ConnectionHandle" | "Frame"
         ),
         Value::Map(m) => m.values().any(holds_handle),
         Value::Struct { fields, .. } => fields.values().any(holds_handle),
@@ -523,6 +574,17 @@ fn revive(v: &Value) -> Value {
                 #[cfg(feature = "native")]
                 Some(Value::String(k)) if k.as_str() == "ConnectionHandle" => {
                     crate::stdlib::db::detached_connection_owner()
+                }
+                Some(Value::String(k)) if k.as_str() == "Frame" => {
+                    let raw = match fields.get("b64") {
+                        Some(Value::String(t)) => base64::Engine::decode(
+                            &base64::engine::general_purpose::STANDARD,
+                            t.as_bytes(),
+                        )
+                        .unwrap_or_default(),
+                        _ => Vec::new(),
+                    };
+                    crate::ods::frame_from_bytes(&raw).unwrap_or(Value::Unit)
                 }
                 Some(Value::String(k)) if k.as_str() == "Bytes" => {
                     let raw = match fields.get("hex") {
@@ -652,6 +714,8 @@ mod tests {
             program_sha256: "sha".into(),
             source: "source".into(),
             events: rec.recorded_events(),
+            cells: Vec::new(),
+            notebook: None,
         };
         let mut rep = Timeline::replay(trace);
         assert_eq!(
@@ -684,6 +748,8 @@ mod tests {
             program_sha256: "sha".into(),
             source: "source".into(),
             events: ev,
+            cells: Vec::new(),
+            notebook: None,
         };
         let no_args = Timeline::fingerprint(&[]);
 

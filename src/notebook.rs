@@ -99,6 +99,26 @@ impl Cell {
     }
 }
 
+/// What a pinned output block holds: `text` (a value's words, a string
+/// bare), `table` (a table's columns aligned: names, types, a rule, its
+/// first rows, its size), `chart` (the chart's SVG, its description
+/// inside).
+pub const OUTPUT_KINDS: &[&str] = &["text", "table", "chart"];
+
+/// A pinned output: the block ```` ```output {cell: name, kind: …} ````
+/// directly under the cell (blank lines between) whose last output it
+/// keeps. olang reads it as prose: the program never sees it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutputBlock {
+    /// The name of the cell it is the output of.
+    pub cell: String,
+    /// One of `OUTPUT_KINDS`.
+    pub kind: String,
+    /// The 1-based lines of its opening and closing fences.
+    pub fence_line: u32,
+    pub close_line: u32,
+}
+
 /// A front matter param: its name, its value as olang source, and the
 /// line its `let` is placed on (the line of its key).
 #[derive(Debug, Clone, PartialEq)]
@@ -236,6 +256,8 @@ fn control_spec(node: &yaml::Node) -> Option<Result<(String, ParamControl), Diag
 #[derive(Debug, Clone, Default)]
 pub struct Notebook {
     pub cells: Vec<Cell>,
+    /// The pinned outputs, in the file's order.
+    pub outputs: Vec<OutputBlock>,
     /// The lines of the front matter's opening and closing `---`.
     pub front_matter: Option<(u32, u32)>,
     pub title: Option<String>,
@@ -286,6 +308,185 @@ pub fn set_param_overrides(overrides: Vec<(String, String)>) {
 
 fn param_overrides() -> Vec<(String, String)> {
     OVERRIDES.lock().map(|o| o.clone()).unwrap_or_default()
+}
+
+/// `--for`'s parameter sets, each a list of `(NAME, VALUE)` as `--param`
+/// takes them: `NAME=A,B,C` (every value of one param or control, split at
+/// the commas outside quotes and brackets), or a file of sets — `.json` (a
+/// list of objects), `.yaml`/`.yml` (a list of maps, front matter's YAML
+/// subset) or `.csv` (a header of names, a row a set).
+pub fn param_sets(spec: &str) -> Result<Vec<Vec<(String, String)>>, String> {
+    let word = |w: &str| {
+        !w.is_empty()
+            && w.chars().all(|c| c.is_alphanumeric() || c == '_')
+            && !w.starts_with(|c: char| c.is_ascii_digit())
+    };
+    if let Some((name, values)) = spec.split_once('=')
+        && word(name.trim())
+    {
+        let vals = split_top(values);
+        if vals.iter().all(|v| v.trim().is_empty()) {
+            return Err(format!("--for {}: no values (NAME=A,B,C)", name.trim()));
+        }
+        return Ok(vals
+            .into_iter()
+            .map(|v| vec![(name.trim().to_string(), v.trim().to_string())])
+            .collect());
+    }
+    let path = Path::new(spec);
+    let text = std::fs::read_to_string(path).map_err(|e| {
+        format!(
+            "--for {}: neither NAME=A,B,C nor a file of sets ({})",
+            spec, e
+        )
+    })?;
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let sets: Vec<Vec<(String, String)>> = match ext.as_str() {
+        "json" => {
+            let v: serde_json::Value =
+                serde_json::from_str(&text).map_err(|e| format!("--for {}: {}", spec, e))?;
+            let arr = v
+                .as_array()
+                .ok_or_else(|| format!("--for {}: a list of objects, one a set", spec))?;
+            arr.iter()
+                .map(|o| {
+                    o.as_object()
+                        .map(|m| m.iter().map(|(k, x)| (k.clone(), json_source(x))).collect())
+                        .ok_or_else(|| {
+                            format!("--for {}: each set is an object of names to values", spec)
+                        })
+                })
+                .collect::<Result<_, _>>()?
+        }
+        "yaml" | "yml" => {
+            let lines = lines_of(&text);
+            let node = yaml::parse(&lines, 1)
+                .map_err(|d| format!("--for {}:{}: {}", spec, d.line, d.message))?;
+            let Some(yaml::Node {
+                value: yaml::Value::List(items),
+                ..
+            }) = node
+            else {
+                return Err(format!("--for {}: a list of maps, one a set", spec));
+            };
+            items
+                .iter()
+                .map(|n| match &n.value {
+                    yaml::Value::Map(es) => Ok(es
+                        .iter()
+                        .map(|e| (e.key.clone(), yaml::to_olang(&e.value.value)))
+                        .collect()),
+                    _ => Err(format!(
+                        "--for {}:{}: each set is a map of names to values",
+                        spec, n.line
+                    )),
+                })
+                .collect::<Result<_, _>>()?
+        }
+        "csv" => {
+            let mut rows = csv::ReaderBuilder::new()
+                .has_headers(true)
+                .from_reader(text.as_bytes());
+            let names: Vec<String> = rows
+                .headers()
+                .map_err(|e| format!("--for {}: {}", spec, e))?
+                .iter()
+                .map(|h| h.trim().to_string())
+                .collect();
+            rows.records()
+                .map(|r| {
+                    r.map(|r| {
+                        names
+                            .iter()
+                            .cloned()
+                            .zip(r.iter().map(|c| c.trim().to_string()))
+                            .collect()
+                    })
+                    .map_err(|e| format!("--for {}: {}", spec, e))
+                })
+                .collect::<Result<_, _>>()?
+        }
+        _ => {
+            return Err(format!(
+                "--for {}: a file of sets is .json, .yaml or .csv",
+                spec
+            ));
+        }
+    };
+    if sets.is_empty() {
+        return Err(format!("--for {}: no sets", spec));
+    }
+    for set in &sets {
+        if let Some((n, _)) = set.iter().find(|(n, _)| !word(n)) {
+            return Err(format!("--for {}: `{}` is no param's name", spec, n));
+        }
+    }
+    Ok(sets)
+}
+
+/// `text` split at its commas outside quotes and brackets.
+fn split_top(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    let mut esc = false;
+    for c in text.chars() {
+        if let Some(q) = quote {
+            cur.push(c);
+            if esc {
+                esc = false;
+            } else if c == '\\' {
+                esc = true;
+            } else if c == q {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '"' | '\'' => {
+                quote = Some(c);
+                cur.push(c);
+            }
+            '[' | '{' | '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ']' | '}' | ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            ',' if depth == 0 => out.push(std::mem::take(&mut cur)),
+            c => cur.push(c),
+        }
+    }
+    out.push(cur);
+    out
+}
+
+/// A JSON value as olang source (a string quoted, an object a map).
+fn json_source(v: &serde_json::Value) -> String {
+    use serde_json::Value as J;
+    match v {
+        J::Null => "()".to_string(),
+        J::String(s) => olang_string(s),
+        J::Array(a) => format!(
+            "[{}]",
+            a.iter().map(json_source).collect::<Vec<_>>().join(", ")
+        ),
+        J::Object(o) => format!(
+            "#{{ {} }}",
+            o.iter()
+                .map(|(k, x)| format!("{}: {}", olang_string(k), json_source(x)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        other => other.to_string(),
+    }
 }
 
 /// Split `NAME=VALUE`, as `--param` takes it.
@@ -405,6 +606,9 @@ fn fence_close(line: &str, ch: char, count: usize) -> bool {
 /// `no-run`, and its options), or anything else.
 enum Kind {
     Cell(bool, CellOptions),
+    /// ```` ```output {cell: name, kind: …} ````: a pinned output (its
+    /// cell and kind), or None when its options are wrong (a diagnostic).
+    Output(Option<(String, String)>),
     Other,
 }
 
@@ -413,6 +617,20 @@ fn classify(line: &str, at: usize, line_no: u32, diags: &mut Vec<Diagnostic>) ->
     let raw = &line[at..];
     let lead = raw.len() - raw.trim_start().len();
     let info = raw.trim();
+    // a pinned output: `output` and its record (a bare `output` block is
+    // prose, as markdown writes a program's output)
+    if let Some(rest) = info.strip_prefix("output")
+        && rest.trim_start().starts_with('{')
+    {
+        let at_rec = at + lead + 6 + (rest.len() - rest.trim_start().len());
+        return match parse_output_options(line, at_rec, line_no) {
+            Ok(o) => Kind::Output(Some(o)),
+            Err(d) => {
+                diags.push(d);
+                Kind::Output(None)
+            }
+        };
+    }
     let Some(rest) = info.strip_prefix("olang") else {
         return Kind::Other;
     };
@@ -462,10 +680,24 @@ enum OptValue {
     Bool(bool),
 }
 
-/// The options record at byte `at` of `line`: `{key: value, …}`, a value
-/// a bare word, a double-quoted string, `true` or `false`. Every key is
-/// validated; the first problem is the answer.
-fn parse_options(line: &str, at: usize, line_no: u32) -> Result<CellOptions, Diagnostic> {
+/// One entry of an options record: its key, its value, and the byte
+/// offsets of each in the line (for columns).
+struct RecordEntry {
+    key: String,
+    key_at: usize,
+    value: OptValue,
+    value_at: usize,
+}
+
+/// The record at byte `at` of `line`: `{key: value, …}`, a value a bare
+/// word, a double-quoted string, `true` or `false`; a key given twice is
+/// an error. `what` names the record in messages (`the cell's options`).
+fn read_record(
+    line: &str,
+    at: usize,
+    line_no: u32,
+    what: &str,
+) -> Result<Vec<RecordEntry>, Diagnostic> {
     let bytes = line.as_bytes();
     let err = |p: usize, m: String| Diagnostic::at(line_no, col(line, p), m);
     let skip_ws = |mut p: usize| {
@@ -483,14 +715,13 @@ fn parse_options(line: &str, at: usize, line_no: u32) -> Result<CellOptions, Dia
         p
     };
     let mut p = at + 1; // past `{`
-    let mut seen: Vec<String> = Vec::new();
-    let mut options = CellOptions::default();
+    let mut entries: Vec<RecordEntry> = Vec::new();
     loop {
         p = skip_ws(p);
         if p >= bytes.len() {
             return Err(err(
                 at,
-                "the cell's options record is not closed: `}` is missing".into(),
+                format!("{} record is not closed: `}}` is missing", what),
             ));
         }
         if bytes[p] == b'}' {
@@ -503,7 +734,10 @@ fn parse_options(line: &str, at: usize, line_no: u32) -> Result<CellOptions, Dia
         if ke == p || !(bytes[p].is_ascii_alphabetic() || bytes[p] == b'_') {
             return Err(err(
                 p,
-                "a cell's options record is `{key: value, …}`: a key is expected here".into(),
+                format!(
+                    "{} record is `{{key: value, …}}`: a key is expected here",
+                    what
+                ),
             ));
         }
         let key = line[p..ke].to_string();
@@ -565,48 +799,82 @@ fn parse_options(line: &str, at: usize, line_no: u32) -> Result<CellOptions, Dia
                 w => OptValue::Word(w.to_string()),
             }
         };
-        if seen.contains(&key) {
+        if entries.iter().any(|e| e.key == key) {
             return Err(err(key_at, format!("the option `{}` is given twice", key)));
         }
-        seen.push(key.clone());
-        let text = match &value {
+        entries.push(RecordEntry {
+            key,
+            key_at,
+            value,
+            value_at,
+        });
+        p = skip_ws(p);
+        if p < bytes.len() && bytes[p] == b',' {
+            p += 1;
+        } else if p < bytes.len() && bytes[p] != b'}' {
+            return Err(err(p, format!("`,` or `}}` is expected in {}", what)));
+        }
+    }
+    let trailing = skip_ws(p);
+    if trailing < bytes.len() {
+        return Err(err(trailing, format!("nothing may follow {} record", what)));
+    }
+    Ok(entries)
+}
+
+impl RecordEntry {
+    /// The value's text (a word or a string), or None for a boolean.
+    fn text(&self) -> Option<String> {
+        match &self.value {
             OptValue::Word(w) | OptValue::Str(w) => Some(w.clone()),
             OptValue::Bool(_) => None,
-        };
-        let one_of = |allowed: &[&str]| -> Result<String, Diagnostic> {
-            match &text {
-                Some(t) if allowed.contains(&t.as_str()) => Ok(t.clone()),
-                _ => Err(err(
-                    value_at,
-                    format!(
-                        "`{}` is one of {}",
-                        key,
-                        allowed
-                            .iter()
-                            .map(|a| format!("`{}`", a))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
-                )),
-            }
-        };
-        match key.as_str() {
-            "name" => match &text {
-                Some(t) if !t.is_empty() => options.name = Some(t.clone()),
+        }
+    }
+
+    /// The value, held to one of `allowed`.
+    fn one_of(&self, line: &str, line_no: u32, allowed: &[&str]) -> Result<String, Diagnostic> {
+        match self.text() {
+            Some(t) if allowed.contains(&t.as_str()) => Ok(t),
+            _ => Err(Diagnostic::at(
+                line_no,
+                col(line, self.value_at),
+                format!(
+                    "`{}` is one of {}",
+                    self.key,
+                    allowed
+                        .iter()
+                        .map(|a| format!("`{}`", a))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            )),
+        }
+    }
+}
+
+/// The options record at byte `at` of `line`: every key validated; the
+/// first problem is the answer.
+fn parse_options(line: &str, at: usize, line_no: u32) -> Result<CellOptions, Diagnostic> {
+    let err = |p: usize, m: String| Diagnostic::at(line_no, col(line, p), m);
+    let mut options = CellOptions::default();
+    for e in read_record(line, at, line_no, "the cell's options")? {
+        match e.key.as_str() {
+            "name" => match e.text() {
+                Some(t) if !t.is_empty() => options.name = Some(t),
                 _ => {
-                    return Err(err(value_at, "`name` is a word or a string".into()));
+                    return Err(err(e.value_at, "`name` is a word or a string".into()));
                 }
             },
-            "hide" => options.hide = Some(one_of(&["code", "output", "all"])?),
-            "run" => options.run = Some(one_of(&["auto", "manual"])?),
-            "as" => options.as_ = Some(one_of(&["markdown"])?),
-            "pin" => match value {
+            "hide" => options.hide = Some(e.one_of(line, line_no, &["code", "output", "all"])?),
+            "run" => options.run = Some(e.one_of(line, line_no, &["auto", "manual"])?),
+            "as" => options.as_ = Some(e.one_of(line, line_no, &["markdown"])?),
+            "pin" => match e.value {
                 OptValue::Bool(b) => options.pin = b,
-                _ => return Err(err(value_at, "`pin` is `true` or `false`".into())),
+                _ => return Err(err(e.value_at, "`pin` is `true` or `false`".into())),
             },
             other => {
                 return Err(err(
-                    key_at,
+                    e.key_at,
                     format!(
                         "a cell has no option `{}` (its options: name, hide, run, pin, as)",
                         other
@@ -614,24 +882,50 @@ fn parse_options(line: &str, at: usize, line_no: u32) -> Result<CellOptions, Dia
                 ));
             }
         }
-        p = skip_ws(p);
-        if p < bytes.len() && bytes[p] == b',' {
-            p += 1;
-        } else if p < bytes.len() && bytes[p] != b'}' {
-            return Err(err(
-                p,
-                "`,` or `}` is expected in the cell's options".into(),
-            ));
-        }
-    }
-    let trailing = skip_ws(p);
-    if trailing < bytes.len() {
-        return Err(err(
-            trailing,
-            "nothing may follow the cell's options record".into(),
-        ));
     }
     Ok(options)
+}
+
+/// A pinned output's options (```` ```output {cell: total, kind: table} ````):
+/// the cell it is the output of, and its kind.
+fn parse_output_options(
+    line: &str,
+    at: usize,
+    line_no: u32,
+) -> Result<(String, String), Diagnostic> {
+    let err = |p: usize, m: String| Diagnostic::at(line_no, col(line, p), m);
+    let mut cell = None;
+    let mut kind = "text".to_string();
+    for e in read_record(line, at, line_no, "the output block's options")? {
+        match e.key.as_str() {
+            "cell" => match e.text() {
+                Some(t) if !t.is_empty() => cell = Some(t),
+                _ => {
+                    return Err(err(
+                        e.value_at,
+                        "`cell` is the name of the cell above".into(),
+                    ));
+                }
+            },
+            "kind" => kind = e.one_of(line, line_no, OUTPUT_KINDS)?,
+            other => {
+                return Err(err(
+                    e.key_at,
+                    format!(
+                        "an output block has no option `{}` (its options: cell, kind)",
+                        other
+                    ),
+                ));
+            }
+        }
+    }
+    match cell {
+        Some(c) => Ok((c, kind)),
+        None => Err(err(
+            at,
+            "an output block names its cell: ```output {cell: <the cell's name>}".into(),
+        )),
+    }
 }
 
 /// Read a notebook's structure: its front matter, its cells and their
@@ -688,7 +982,16 @@ pub fn parse(text: &str) -> Notebook {
                 lines.len() as u32 + 1
             }
         };
-        if let Kind::Cell(no_run, options) = classify(line, info_at, line_no, &mut nb.diagnostics) {
+        let kind = classify(line, info_at, line_no, &mut nb.diagnostics);
+        if let Kind::Output(Some((cell, okind))) = &kind {
+            nb.outputs.push(OutputBlock {
+                cell: cell.clone(),
+                kind: okind.clone(),
+                fence_line: line_no,
+                close_line,
+            });
+        }
+        if let Kind::Cell(no_run, options) = kind {
             if let Some(name) = &options.name {
                 if let Some((_, first)) = names.iter().find(|(n, _)| n == name) {
                     nb.diagnostics.push(Diagnostic::at(
@@ -712,7 +1015,57 @@ pub fn parse(text: &str) -> Notebook {
         }
         i = close.map(|k| k + 1).unwrap_or(lines.len());
     }
+    pinned_rules(&lines, &mut nb);
     nb
+}
+
+/// A pinned output's place: directly under its cell (blank lines
+/// between), which names it and is pinned; a pinned cell has a name (its
+/// block says it).
+fn pinned_rules(lines: &[&str], nb: &mut Notebook) {
+    for c in &nb.cells {
+        if c.options.pin && c.options.name.is_none() {
+            nb.diagnostics.push(Diagnostic::at(
+                c.fence_line,
+                1,
+                "a pinned cell needs a name: its output block names it ({name: …, pin: true})",
+            ));
+        }
+    }
+    for o in &nb.outputs {
+        // the nearest block above, past blank lines, must be a cell's close
+        let mut k = o.fence_line as usize - 1; // 0-based index of the fence
+        while k > 0 && lines[k - 1].trim().is_empty() {
+            k -= 1;
+        }
+        let above = nb.cells.iter().find(|c| c.close_line as usize == k);
+        let problem = match above {
+            None => Some(format!(
+                "this output block is `{}`'s, but it does not stand under a cell: it goes directly under its cell",
+                o.cell
+            )),
+            Some(c) if c.options.name.as_deref() != Some(o.cell.as_str()) => {
+                Some(match &c.options.name {
+                    Some(n) => format!(
+                        "this output block says `{}`, but the cell above it is `{}`",
+                        o.cell, n
+                    ),
+                    None => format!(
+                        "this output block says `{}`, but the cell above it has no name",
+                        o.cell
+                    ),
+                })
+            }
+            Some(c) if !c.options.pin => Some(format!(
+                "this output block keeps `{}`'s output, but the cell is not pinned (`pin: true`): pin it or remove the block",
+                o.cell
+            )),
+            _ => None,
+        };
+        if let Some(m) = problem {
+            nb.diagnostics.push(Diagnostic::at(o.fence_line, 1, m));
+        }
+    }
 }
 
 /// The front matter's keys: `title`, `params`, `capabilities`; others
@@ -914,6 +1267,20 @@ pub fn program_with(text: &str, mode: Mode, overrides: &[(String, String)]) -> P
     let mut diagnostics = nb.diagnostics.clone();
     // Params: each a `let` on its key's line, the line's others after `;`.
     let mut params = nb.params.clone();
+    // the control cells a `--param` may name (a run's: `runtime.preset`)
+    let control_cells: Vec<(String, u32)> = if mode == Mode::Run
+        && overrides
+            .iter()
+            .any(|(n, _)| !nb.params.iter().any(|p| &p.name == n))
+    {
+        nb.cells
+            .iter()
+            .filter(|c| !c.no_run)
+            .filter_map(|c| control_cell_name(&cell_code(&lines, c)).map(|n| (n, c.fence_line)))
+            .collect()
+    } else {
+        Vec::new()
+    };
     for (name, value) in overrides {
         match params.iter_mut().find(|p| &p.name == name) {
             Some(p) => {
@@ -926,6 +1293,20 @@ pub fn program_with(text: &str, mode: Mode, overrides: &[(String, String)]) -> P
                     )),
                     _ => p.value = v,
                 }
+            }
+            // a control cell's name: its control takes the value as it binds
+            // (`runtime.preset` on the cell's fence line, empty in the program)
+            None if control_cells.iter().any(|(n, _)| n == name) => {
+                let fence = control_cells
+                    .iter()
+                    .find(|(n, _)| n == name)
+                    .map(|c| c.1)
+                    .unwrap_or(1);
+                out[fence as usize - 1] = format!(
+                    "runtime.preset({}, {})",
+                    param_value_source(value),
+                    olang_string(name)
+                );
             }
             None => {
                 let declared: Vec<&str> = nb.params.iter().map(|p| p.name.as_str()).collect();
@@ -971,6 +1352,34 @@ pub fn program_with(text: &str, mode: Mode, overrides: &[(String, String)]) -> P
         front_matter: nb.front_matter,
         capabilities_refused: nb.capabilities_refused,
     }
+}
+
+/// A cell's code: its lines between its fences.
+fn cell_code(lines: &[&str], c: &Cell) -> String {
+    let from = c.fence_line as usize;
+    let to = (c.close_line as usize - 1).min(lines.len());
+    lines[from.min(to)..to].join("\n")
+}
+
+/// The one name a control cell defines (`let region = ui.select(…)`):
+/// a cell whose top-level statements define one name (its `use`s aside)
+/// with a `ui` control's call (`ui.slider`, `ui.select`, `ui.date`,
+/// `ui.text`, `ui.toggle`, `ui.brush`).
+pub fn control_cell_name(code: &str) -> Option<String> {
+    let calls = ["slider", "select", "date", "text", "toggle", "brush"];
+    if !calls.iter().any(|k| code.contains(&format!("ui.{}(", k))) {
+        return None;
+    }
+    let program = crate::parser::Parser::new().parse(code).ok()?;
+    let mut names: Vec<String> = Vec::new();
+    for st in &program.statements {
+        for n in defined_names(st, false) {
+            if !names.contains(&n) {
+                names.push(n);
+            }
+        }
+    }
+    (names.len() == 1).then(|| names.remove(0))
 }
 
 // ── one name, one cell; top to bottom ───────────────────────────────
@@ -1352,6 +1761,127 @@ pub fn format(text: &str) -> Option<String> {
         at += 1;
     }
     Some(out.join("\n"))
+}
+
+/// The fence a block's body needs: three backticks, or one more than the
+/// longest run of backticks at the start of any of its lines.
+pub fn fence_for(body: &str) -> String {
+    let longest = body
+        .split('\n')
+        .map(|l| {
+            let t = l.trim_start_matches(' ');
+            t.len() - t.trim_start_matches('`').len()
+        })
+        .max()
+        .unwrap_or(0);
+    "`".repeat(longest.max(2) + 1)
+}
+
+/// `text` with the pinned outputs given written: each `(cell, output)`
+/// replaces the output block under the cell of that name (or adds one
+/// under it, after a blank line), `None` removes it; every other line is
+/// kept byte for byte. An output is `(kind, body)`.
+pub fn with_pins(text: &str, pins: &[(String, Option<(String, String)>)]) -> String {
+    let nb = parse(text);
+    let raw: Vec<&str> = text.split('\n').collect();
+    // (from, to, replacement): 0-based line ranges to replace, in order
+    let mut edits: Vec<(usize, usize, Vec<String>)> = Vec::new();
+    for (name, out) in pins {
+        let Some(cell) = nb
+            .cells
+            .iter()
+            .find(|c| c.options.name.as_deref() == Some(name.as_str()))
+        else {
+            continue;
+        };
+        let close = cell.close_line as usize; // 1-based close == 0-based next line
+        let block = nb.outputs.iter().find(|o| {
+            let mut k = o.fence_line as usize - 1;
+            while k > 0 && raw[k - 1].trim().is_empty() {
+                k -= 1;
+            }
+            k == close
+        });
+        let lines_of_block = |kind: &str, body: &str| -> Vec<String> {
+            let fence = fence_for(body);
+            let mut v = vec![format!(
+                "{}output {{cell: {}, kind: {}}}",
+                fence,
+                cell_name_text(name),
+                kind
+            )];
+            v.extend(body.trim_end_matches('\n').split('\n').map(str::to_string));
+            v.push(fence);
+            v
+        };
+        match (block, out) {
+            (Some(b), Some((kind, body))) => {
+                edits.push((
+                    b.fence_line as usize - 1,
+                    b.close_line as usize,
+                    lines_of_block(kind, body),
+                ));
+            }
+            (Some(b), None) => {
+                // the block and the blank lines between it and its cell
+                edits.push((close, b.close_line as usize, Vec::new()));
+            }
+            (None, Some((kind, body))) => {
+                let mut v = vec![String::new()];
+                v.extend(lines_of_block(kind, body));
+                edits.push((close, close, v));
+            }
+            (None, None) => {}
+        }
+    }
+    edits.sort_by_key(|e| e.0);
+    let mut out: Vec<String> = Vec::with_capacity(raw.len());
+    let mut at = 0usize;
+    for (from, to, rep) in edits {
+        if from < at {
+            continue;
+        }
+        while at < from && at < raw.len() {
+            out.push(raw[at].to_string());
+            at += 1;
+        }
+        out.extend(rep);
+        at = to.min(raw.len());
+    }
+    while at < raw.len() {
+        out.push(raw[at].to_string());
+        at += 1;
+    }
+    out.join("\n")
+}
+
+/// A cell's name as an option's value: bare when it is a word, else quoted.
+fn cell_name_text(name: &str) -> String {
+    if !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+        && !matches!(name, "true" | "false")
+    {
+        name.to_string()
+    } else {
+        format!("\"{}\"", name.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+}
+
+/// Each pinned output's body, by its cell's name: the lines between its
+/// fences.
+pub fn pinned_outputs(text: &str) -> Vec<(OutputBlock, String)> {
+    let nb = parse(text);
+    let raw = lines_of(text);
+    nb.outputs
+        .iter()
+        .map(|o| {
+            let from = o.fence_line as usize; // 0-based first body line
+            let to = (o.close_line as usize - 1).min(raw.len());
+            (o.clone(), raw[from.min(to)..to].join("\n"))
+        })
+        .collect()
 }
 
 // ── the front matter's YAML ─────────────────────────────────────────
@@ -2193,5 +2723,172 @@ mod tests {
         );
         assert_eq!(wrong.diagnostics[0].line, 3);
         assert!(wrong.params.is_empty());
+    }
+
+    #[test]
+    fn a_pinned_output_stands_under_its_cell() {
+        let text = "# T\n\n```olang {name: total, pin: true}\nlet total = 3\ntotal\n```\n\n```output {cell: total}\n3\n```\n\nprose\n";
+        let nb = parse(text);
+        assert!(nb.diagnostics.is_empty(), "{:?}", nb.diagnostics);
+        assert_eq!(nb.outputs.len(), 1);
+        assert_eq!(nb.outputs[0].cell, "total");
+        assert_eq!(nb.outputs[0].kind, "text");
+        assert_eq!(
+            (nb.outputs[0].fence_line, nb.outputs[0].close_line),
+            (8, 10)
+        );
+        // the program never sees it: its lines are empty
+        let p = program_with(text, Mode::Run, &[]);
+        assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+        assert_eq!(p.source.split('\n').nth(8), Some(""));
+        assert_eq!(pinned_outputs(text)[0].1, "3");
+        // a bare `output` block is prose, as markdown writes a program's output
+        assert!(parse("```output\nhello\n```\n").diagnostics.is_empty());
+    }
+
+    #[test]
+    fn a_pinned_output_out_of_place_is_a_diagnostic() {
+        let msgs = |t: &str| {
+            parse(t)
+                .diagnostics
+                .into_iter()
+                .map(|d| (d.line, d.message))
+                .collect::<Vec<_>>()
+        };
+        let unnamed = msgs("```olang {pin: true}\n1\n```\n");
+        assert!(
+            unnamed[0].1.contains("a pinned cell needs a name"),
+            "{:?}",
+            unnamed
+        );
+        let stray = msgs("prose\n\n```output {cell: x}\n1\n```\n");
+        assert!(
+            stray[0].1.contains("does not stand under a cell"),
+            "{:?}",
+            stray
+        );
+        let other = msgs("```olang {name: y, pin: true}\n1\n```\n```output {cell: x}\n1\n```\n");
+        assert_eq!(other[0].0, 4);
+        assert!(
+            other[0].1.contains("the cell above it is `y`"),
+            "{:?}",
+            other
+        );
+        let unpinned = msgs("```olang {name: x}\n1\n```\n```output {cell: x}\n1\n```\n");
+        assert!(unpinned[0].1.contains("not pinned"), "{:?}", unpinned);
+        let nocell =
+            msgs("```olang {name: x, pin: true}\n1\n```\n```output {kind: text}\n1\n```\n");
+        assert!(nocell[0].1.contains("names its cell"), "{:?}", nocell);
+        let kind = msgs(
+            "```olang {name: x, pin: true}\n1\n```\n```output {cell: x, kind: movie}\n1\n```\n",
+        );
+        assert!(kind[0].1.contains("`kind` is one of"), "{:?}", kind);
+    }
+
+    #[test]
+    fn pins_are_written_replaced_and_removed() {
+        let text = "```olang {name: a, pin: true}\n1\n```\n\nprose\n\n```olang {name: b, pin: true}\n\"x\"\n```\n";
+        let one = with_pins(
+            text,
+            &[
+                ("a".into(), Some(("text".into(), "1".into()))),
+                ("b".into(), Some(("text".into(), "```\nfenced".into()))),
+            ],
+        );
+        assert_eq!(
+            one,
+            "```olang {name: a, pin: true}\n1\n```\n\n```output {cell: a, kind: text}\n1\n```\n\nprose\n\n```olang {name: b, pin: true}\n\"x\"\n```\n\n````output {cell: b, kind: text}\n```\nfenced\n````\n"
+        );
+        assert!(
+            parse(&one).diagnostics.is_empty(),
+            "{:?}",
+            parse(&one).diagnostics
+        );
+        let two = with_pins(
+            &one,
+            &[("a".into(), Some(("table".into(), "x  y\n1  2".into())))],
+        );
+        assert!(
+            two.contains("```output {cell: a, kind: table}\nx  y\n1  2\n```\n\nprose"),
+            "{}",
+            two
+        );
+        let gone = with_pins(&two, &[("a".into(), None), ("b".into(), None)]);
+        assert_eq!(gone, text);
+        assert_eq!(with_pins(text, &[("nobody".into(), None)]), text);
+    }
+
+    #[test]
+    fn a_param_may_name_a_control_cell() {
+        let text = "```olang {name: region}\nuse ui\nlet region = ui.select(\"east\", [\"east\", \"west\"])\n```\n\n```olang\nlet x = region\n```\n";
+        let p = program_with(text, Mode::Run, &[("region".into(), "west".into())]);
+        assert!(p.diagnostics.is_empty(), "{:?}", p.diagnostics);
+        assert_eq!(
+            p.source.split('\n').next(),
+            Some("runtime.preset(\"west\", \"region\")")
+        );
+        assert_eq!(
+            control_cell_name("use ui\nlet lift = ui.slider(0.08, 0.0, 0.3, 0.01)").as_deref(),
+            Some("lift")
+        );
+        assert_eq!(
+            control_cell_name("let a = ui.slider(1, 0, 2, 1)\nlet b = 2"),
+            None
+        );
+        let none = program_with(text, Mode::Run, &[("nobody".into(), "1".into())]);
+        assert!(
+            none.diagnostics[0].message.contains("no such param")
+                || none.diagnostics[0].message.contains("declares no params"),
+            "{:?}",
+            none.diagnostics
+        );
+    }
+
+    #[test]
+    fn param_sets_from_a_list_or_a_file() {
+        let sets = param_sets("region=east,west,\"a, b\",[1, 2]").unwrap();
+        assert_eq!(sets.len(), 4);
+        assert_eq!(
+            sets[2],
+            vec![("region".to_string(), "\"a, b\"".to_string())]
+        );
+        assert_eq!(sets[3][0].1, "[1, 2]");
+        let dir = std::env::temp_dir().join(format!("olang-for-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let j = dir.join("sets.json");
+        std::fs::write(
+            &j,
+            r#"[{"region": "east", "top_n": 2}, {"region": "west", "top_n": 5}]"#,
+        )
+        .unwrap();
+        let js = param_sets(j.to_str().unwrap()).unwrap();
+        assert_eq!(
+            js[1],
+            vec![
+                ("region".to_string(), "\"west\"".to_string()),
+                ("top_n".to_string(), "5".to_string())
+            ]
+        );
+        let y = dir.join("sets.yaml");
+        std::fs::write(
+            &y,
+            "- region: east\n  top_n: 2\n- region: north\n  top_n: 4\n",
+        )
+        .unwrap();
+        assert_eq!(
+            param_sets(y.to_str().unwrap()).unwrap()[1][0],
+            ("region".to_string(), "\"north\"".to_string())
+        );
+        let c = dir.join("sets.csv");
+        std::fs::write(&c, "region,top_n\neast,1\nsouth,3\n").unwrap();
+        assert_eq!(
+            param_sets(c.to_str().unwrap()).unwrap()[1],
+            vec![
+                ("region".to_string(), "south".to_string()),
+                ("top_n".to_string(), "3".to_string())
+            ]
+        );
+        assert!(param_sets("nothing-here.toml").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

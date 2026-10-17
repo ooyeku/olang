@@ -962,6 +962,9 @@ impl BuiltinFunctions {
         if name == "runtime.bind" {
             return crate::controls::bind(arguments).map_err(InterpreterError::runtime);
         }
+        if name == "runtime.preset" {
+            return crate::controls::preset(arguments).map_err(InterpreterError::runtime);
+        }
         #[cfg(feature = "native")]
         if let Some(runtime_function) = name.strip_prefix("runtime.") {
             if let Some(result) =

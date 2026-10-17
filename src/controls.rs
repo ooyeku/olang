@@ -47,6 +47,25 @@ struct Host {
 
 thread_local! {
     static HOST: RefCell<Host> = RefCell::new(Host::default());
+    /// `runtime.preset`'s value: the next control bound with no host
+    /// takes it (`olang run x.olmd --param region=west` on a control).
+    static PRESET: RefCell<Option<(Value, String)>> = const { RefCell::new(None) };
+}
+
+/// `runtime.preset(value, name)`: the next control the program binds (with no
+/// host) answers `value` instead of its own, held to its kind, range or
+/// options — what `--param NAME=VALUE` does for a notebook's control cell.
+pub fn preset(args: Vec<Value>) -> Result<Value, String> {
+    let (v, name) = match args.as_slice() {
+        [v, Value::String(n)] => (v.clone(), n.to_string()),
+        _ => {
+            return Err(
+                "runtime.preset expects a value and the control's name (a String)".to_string(),
+            );
+        }
+    };
+    PRESET.with(|p| *p.borrow_mut() = Some((v, name)));
+    Ok(Value::Unit)
 }
 
 /// A host evaluates `cell`: what it binds is recorded from now.
@@ -239,10 +258,19 @@ pub fn bind(args: Vec<Value>) -> Result<Value, String> {
         }
     };
     let spec = get(node, "spec").cloned().unwrap_or(Value::Unit);
-    Ok(HOST.with(|h| {
+    HOST.with(|h| {
         let mut h = h.borrow_mut();
         let Some(cell) = h.cell.clone() else {
-            return value.clone();
+            return match PRESET.with(|p| p.borrow_mut().take()) {
+                None => Ok(value.clone()),
+                Some((p, name)) => validate(&kind, value, &spec, &p).map_err(|m| {
+                    if name.is_empty() {
+                        format!("the value preset for this control does not fit: {}", m)
+                    } else {
+                        format!("--param {}: {}", name, m)
+                    }
+                }),
+            };
         };
         let mut answer = value.clone();
         if let Some(set) = h.values.get(&cell).cloned() {
@@ -261,8 +289,8 @@ pub fn bind(args: Vec<Value>) -> Result<Value, String> {
             spec,
             value: answer.clone(),
         });
-        answer
-    }))
+        Ok(answer)
+    })
 }
 
 /// The `runtime` module where the binary has no other (the browser):
@@ -273,6 +301,13 @@ pub fn bind_only_module() -> Value {
         "bind".to_string(),
         Value::Builtin(crate::ast::BuiltinFunction {
             name: "runtime.bind".to_string(),
+            arity: 2,
+        }),
+    );
+    module.insert(
+        "preset".to_string(),
+        Value::Builtin(crate::ast::BuiltinFunction {
+            name: "runtime.preset".to_string(),
             arity: 2,
         }),
     );

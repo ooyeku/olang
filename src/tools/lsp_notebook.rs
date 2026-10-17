@@ -38,6 +38,9 @@ pub(super) struct Notebook {
     params: Vec<Param>,
     /// The file's lines.
     lines: Vec<String>,
+    /// Per 0-based line: whether it is in a pinned output block (its
+    /// fences too): a cell's output, never prose a name is read in.
+    pinned: Vec<bool>,
 }
 
 /// Whether a document is a notebook (its name ends `.olmd`).
@@ -57,6 +60,14 @@ pub(super) fn read(text: &str) -> Notebook {
     for cell in &nb.cells {
         for l in cell.code_lines() {
             if let Some(slot) = code.get_mut(l as usize - 1) {
+                *slot = true;
+            }
+        }
+    }
+    let mut pinned = vec![false; lines.len()];
+    for o in &nb.outputs {
+        for l in o.fence_line..=o.close_line {
+            if let Some(slot) = pinned.get_mut(l as usize - 1) {
                 *slot = true;
             }
         }
@@ -86,6 +97,7 @@ pub(super) fn read(text: &str) -> Notebook {
         code,
         params,
         lines,
+        pinned,
     }
 }
 
@@ -156,6 +168,7 @@ impl Notebook {
         for (ln, line) in self.lines.iter().enumerate() {
             let l = ln as u32;
             if self.is_code(l)
+                || self.pinned.get(l as usize).copied().unwrap_or(false)
                 || self.in_front(l)
                 || self.front.is_some_and(|(o, c)| l + 1 == o || l + 1 == c)
             {

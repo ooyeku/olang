@@ -1081,6 +1081,74 @@ impl Desc {
     }
 }
 
+/// A chart drawn in one theme as the other theme draws it: every colour
+/// its theme gave it — the surface, the inks, the grid and the axis, the
+/// series' palette — swapped for the other's (the description says which
+/// it was drawn in). A chart given its own colours keeps them; a heatmap's
+/// ramp stays. A string with no description, or drawn in `to` already,
+/// comes back as it is.
+pub fn retheme(svg: &str, to: Theme) -> String {
+    let Some(desc) = description_of(svg) else {
+        return svg.to_string();
+    };
+    let from = if desc.contains("\"theme\":\"dark\"") {
+        Theme::Dark
+    } else {
+        Theme::Light
+    };
+    if from == to {
+        return svg.to_string();
+    }
+    let default_palette = desc.contains(&format!("\"light\":{}", jstrs(&SERIES_COLORS)));
+    let mut pairs: Vec<(&str, &str)> = vec![
+        (from.surface(), to.surface()),
+        (from.ink(), to.ink()),
+        (from.ink2(), to.ink2()),
+        (from.grid(), to.grid()),
+        (from.axis(), to.axis()),
+    ];
+    if default_palette {
+        for i in 0..SERIES_COLORS.len() {
+            pairs.push((from.series(i), to.series(i)));
+        }
+    }
+    // the description keeps its palettes (they name both) and says the
+    // theme it is drawn in now
+    let open = format!("<metadata id=\"{}\">", DESCRIPTION_ID);
+    let (head, body) = match svg
+        .find(&open)
+        .and_then(|a| svg[a..].find("</metadata>").map(|e| a + e))
+    {
+        Some(end) => svg.split_at(end),
+        None => ("", svg),
+    };
+    let word = |t: Theme| {
+        if t == Theme::Dark {
+            "\"theme\":\"dark\""
+        } else {
+            "\"theme\":\"light\""
+        }
+    };
+    let mut out = String::with_capacity(svg.len());
+    out.push_str(&head.replacen(word(from), word(to), 1));
+    let bytes = body.as_bytes();
+    let mut i = 0;
+    while i < body.len() {
+        if bytes[i] == b'#' && i + 7 <= body.len() {
+            let token = &body[i..i + 7];
+            if let Some((_, to_c)) = pairs.iter().find(|(f, _)| f.eq_ignore_ascii_case(token)) {
+                out.push_str(to_c);
+                i += 7;
+                continue;
+            }
+        }
+        let ch = body[i..].chars().next().unwrap_or(' ');
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
 /// The description a chart carries (`plot.*`'s SVG): its JSON text, or
 /// None for a string that carries none.
 pub fn description_of(svg: &str) -> Option<String> {
@@ -1700,6 +1768,35 @@ mod tests {
         // Without them the theme's own colors stand, at full opacity.
         let plain = render_xy(&series, &PlotOptions::default()).unwrap();
         assert!(plain.contains(Theme::Light.surface()) && plain.contains("stroke-opacity=\"1\""));
+    }
+
+    #[test]
+    fn a_chart_drawn_again_in_the_other_theme() {
+        let light = render_xy(
+            &[XySeries {
+                label: String::new(),
+                xs: vec![1.0, 2.0, 3.0],
+                ys: vec![2.0, 1.0, 3.0],
+                kind: XyKind::Line,
+                point_colors: Vec::new(),
+            }],
+            &PlotOptions::default(),
+        )
+        .unwrap();
+        let dark = retheme(&light, Theme::Dark);
+        assert!(dark.contains(Theme::Dark.surface()) && dark.contains(SERIES_COLORS_DARK[0]));
+        assert!(
+            !drawn(&dark).contains(SERIES_COLORS[0])
+                && !drawn(&dark).contains(Theme::Light.surface())
+        );
+        // its description says the theme, and back again is the chart it was
+        assert!(
+            description_of(&dark)
+                .unwrap()
+                .contains("\"theme\":\"dark\"")
+        );
+        assert_eq!(retheme(&dark, Theme::Light), light);
+        assert_eq!(retheme("<svg/>", Theme::Dark), "<svg/>");
     }
 
     #[test]

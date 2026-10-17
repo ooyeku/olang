@@ -973,7 +973,30 @@ asked while another profile samples the process (`olang profile`'s,
 | `{"op":"vars","id":16}` | `{"ok":true,"eval":9,"vars":[{"name":"sales","cell":"c3","v":V,"bytes":27411},{"name":"region","param":true,…}…]}` — a kernel's names (below) |
 | `{"op":"reread","id":17,"text":"…"?}` | `{"ok":true,"params":["region"],"removed":[],"grant":false,"problems":[…]}` — a kernel's front matter read again (below) |
 | `{"op":"set","id":18,"cell":"c5","value":"0.12"}` | `{"ok":true,"eval":10,"name":"lift","value":V}` — the value an editor chose for a cell's control (below) |
+| `{"op":"record","id":19}` | `{"ok":true,"recording":true}` — from now each cell's evaluation records its inputs (below); `{"op":"record","path":"run.olt"}` writes the trace and stops (`{"ok":true,"path","cells","events","bytes"}`), `"stop": true` stops without writing |
+| `{"op":"replay","id":20,"path":"run.olt"}` | `{"ok":true,"replaying":true,"cells":[{"cell","line","events"}…],"notebook":{"params","controls"}}` — from now each cell's evaluation is served its recorded inputs; `"stop": true` ends it |
+| `{"op":"page","id":21,"doc":{…},"mode":"app"?,"text":"…"?}` | `{"ok":true,"html":"…"}` — the notebook's page for an outputs document (`olang notebook export`'s), live controls with `mode: "app"` |
 | `{"op":"reset"}`, `{"op":"shutdown"}` | the scopes forgotten (and what each cell defined, and every control's value set); the server ends |
+
+**A recorded run.** After `record`, a cell's evaluation (an `eval` with
+`cell`, not `pure`) runs with the [Open Timeline](#olang-record-and-olang-replay--the-open-timeline)
+attached — the interpreter tier for that evaluation, the tiers back after
+— and its reply says `"record": {"events": n}`; a cell evaluated again
+replaces its stretch. The trace is an `.olt` whose `cells` say each cell's
+id, code, line and its stretch of `events`, whose `source` is the
+notebook's program with its params as bound, and whose `notebook` says
+the params' and controls' values: a Run All in file order makes it the
+program's own run, so `olang replay run.olt` replays it too. After
+`replay`, a cell is served the stretch recorded for it (found by its id
+and code, else its code, else its id) and its reply says `"replay":
+{"events", "recorded", "code_changed"?, "missing"?, "diverged"?}` —
+`diverged` the message when its calls stepped off the trace (another
+call, other arguments, fewer calls than recorded).
+
+**An output as HTML.** `"html": true` (or `{"markdown": true}`) on an
+`eval` adds `html`, the output as `olang notebook export`'s page draws it
+with its controls live, and `text`, its value's words: what a published
+app swaps in.
 
 **A notebook's kernel.** `olang repl --serve --notebook x.olmd` serves
 one notebook (olang Studio starts one per notebook it shows). The
@@ -1536,7 +1559,11 @@ is [its own chapter](notebooks.md).
 
 ```bash
 olang sales.olmd                          # run it (or `olang run sales.olmd`)
-olang run sales.olmd --param region=west  # override a front matter param
+olang run sales.olmd --param region=west  # override a front matter param (or a control cell)
+olang run sales.olmd --for region=east,west  # once a parameter set
+olang notebook export sales.olmd         # sales.html: a self-contained page (--pdf, --json)
+olang notebook pin sales.olmd            # pinned cells' outputs written into the file
+olang notebook app experiment.olmd       # a web-sdk app: olang run experiment-app/main.ol
 olang test notes/                         # .olmd files are found beside .ol files
 olang check sales.olmd --format json      # the file's lines; the notebook's own problems coded `notebook`
 olang fmt sales.olmd                      # each cell formatted; prose byte for byte
