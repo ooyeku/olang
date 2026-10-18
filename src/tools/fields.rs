@@ -547,7 +547,7 @@ fn eval(ts: &[T], resolve: &mut dyn FnMut(&str) -> Option<Fields>) -> Option<Fie
 }
 
 /// Tokens split where `cut` holds at depth 0.
-fn split_at<'a>(ts: &'a [T], cut: impl Fn(&T) -> bool) -> Vec<&'a [T]> {
+fn split_at(ts: &[T], cut: impl Fn(&T) -> bool) -> Vec<&[T]> {
     let mut out = Vec::new();
     let mut depth = 0i32;
     let mut from = 0;
