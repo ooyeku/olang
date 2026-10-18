@@ -20,8 +20,8 @@ Part of [the olang book](README.md).
 | Hover | the declaration with the checker's type knowledge: annotated signatures in full (`fn dist(a: Float, b: Float) -> Float`), and unannotated `let`s with their inferred types when the checker knows one (`let total: Int`) |
 | Go to definition | jumps to the name's declaration — including into the module file that `share`s it |
 | Document outline | every `fn`, `meta fn`, `type`, top-level `let`, and `test` block, live while you type |
-| References / highlight | every standalone occurrence of the name under the cursor |
-| Rename | all occurrences in the file; refuses keywords and standard-library names with a reason |
+| References / highlight | every place reading the binding the name under the cursor reads, as olang scopes it: a parameter, a lambda's, a loop's, a match arm's or a block's `let` that shadows an outer name is its own; a module's top-level name is one name wherever it is bound; a name bound nowhere in the file (a builtin, a module) by its spelling; by spelling too while the file does not parse |
+| Rename | those places; refuses keywords and standard-library names the file does not bind itself, with a reason |
 | Signature help | the signature and active parameter as you type a call — local functions and every registry entry alike |
 | Formatting | the `olang fmt` engine — AST-verified, whitespace-only |
 | Files renamed, moved or deleted | `workspace/didRenameFiles` and `workspace/didDeleteFiles` (registered for olang files and folders): the open documents follow a rename (a folder's too), the old name's problems are cleared, and every open document is checked again — an importer of the name that went or came hears it at once, without an edit |

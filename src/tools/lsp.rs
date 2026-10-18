@@ -520,8 +520,8 @@ fn handle_request(
             let uri = params.text_document_position.text_document.uri.clone();
             let (text, nb) = read_doc(docs, &uri);
             let locs: Option<Vec<lsp_types::Location>> =
-                word_of(&text, &nb, params.text_document_position.position).map(|word| {
-                    occurrences_in(&text, &nb, &word)
+                refs_in(&text, &nb, params.text_document_position.position).map(|ranges| {
+                    ranges
                         .into_iter()
                         .map(|range| lsp_types::Location {
                             uri: uri.clone(),
@@ -537,8 +537,8 @@ fn handle_request(
             let pos = params.text_document_position_params;
             let (text, nb) = read_doc(docs, &pos.text_document.uri);
             let highlights: Option<Vec<lsp_types::DocumentHighlight>> =
-                word_of(&text, &nb, pos.position).map(|word| {
-                    occurrences_in(&text, &nb, &word)
+                refs_in(&text, &nb, pos.position).map(|ranges| {
+                    ranges
                         .into_iter()
                         .map(|range| lsp_types::DocumentHighlight { range, kind: None })
                         .collect()
@@ -1780,6 +1780,69 @@ fn word_of(text: &str, nb: &Option<notebook::Notebook>, pos: Position) -> Option
     }
 }
 
+/// What the name at `pos` (the file's) reads, by the checker's scoping
+/// (`scope_refs`): in a notebook a cell's name or a param's key, or a
+/// word of a `${expr}` in prose (the module's name). `None` when the
+/// program does not parse or no name is there.
+fn resolved_at(
+    text: &str,
+    nb: &Option<notebook::Notebook>,
+    pos: Position,
+) -> Option<crate::tools::scope_refs::Resolved> {
+    match pos_in(nb, pos) {
+        Some(p) => {
+            let line = text.split('\n').nth(p.line as usize)?;
+            crate::tools::scope_refs::resolve_at(text, p.line, utf16_to_char_col(line, p.character))
+        }
+        None => {
+            let word = nb.as_ref()?.prose_word(pos)?;
+            crate::tools::scope_refs::resolve_top(text, &word)
+        }
+    }
+}
+
+/// The places a resolved name is read and bound, as the file's ranges
+/// (a notebook's prose `${expr}`s too when it is the module's name).
+fn resolved_ranges(
+    text: &str,
+    nb: &Option<notebook::Notebook>,
+    r: &crate::tools::scope_refs::Resolved,
+) -> Vec<Range> {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut out: Vec<Range> = r
+        .places
+        .iter()
+        .filter_map(|&(l, a, b)| {
+            let line = lines.get(l as usize)?;
+            range_out(
+                nb,
+                Range::new(
+                    Position::new(l, char_to_utf16_col(line, a)),
+                    Position::new(l, char_to_utf16_col(line, b)),
+                ),
+            )
+        })
+        .collect();
+    if let Some(n) = nb
+        && r.top_level
+    {
+        out.extend(n.prose_occurrences(&r.name));
+    }
+    out.sort_by_key(|r| (r.start.line, r.start.character));
+    out.dedup();
+    out
+}
+
+/// References and highlights at `pos`: the places reading the same
+/// binding (a shadowed name inside a function, a lambda, a loop or a
+/// block is its own); by spelling when the program does not parse.
+fn refs_in(text: &str, nb: &Option<notebook::Notebook>, pos: Position) -> Option<Vec<Range>> {
+    match resolved_at(text, nb, pos) {
+        Some(r) => Some(resolved_ranges(text, nb, &r)),
+        None => word_of(text, nb, pos).map(|word| occurrences_in(text, nb, &word)),
+    }
+}
+
 /// Every occurrence of `name`, as the file's ranges: a notebook's cells,
 /// its param's key and the `${expr}`s of its prose that read it.
 fn occurrences_in(text: &str, nb: &Option<notebook::Notebook>, name: &str) -> Vec<Range> {
@@ -1802,6 +1865,24 @@ fn rename_in(
     pos: Position,
     new_name: &str,
 ) -> Result<Vec<TextEdit>, String> {
+    // by binding when the program parses: a name bound in it is the
+    // person's (a `let count` too), and a shadowing one is its own
+    if let Some(r) = resolved_at(text, nb, pos)
+        && r.bound
+    {
+        rename_checks(&r.name, None, new_name, true)?;
+        let edits: Vec<TextEdit> = resolved_ranges(text, nb, &r)
+            .into_iter()
+            .map(|range| TextEdit {
+                range,
+                new_text: new_name.to_string(),
+            })
+            .collect();
+        if edits.is_empty() {
+            return Err(format!("'{}' does not occur in this file", r.name));
+        }
+        return Ok(edits);
+    }
     let Some(n) = nb else {
         return rename(text, pos, new_name);
     };
@@ -2358,12 +2439,35 @@ fn rename(text: &str, pos: Position, new_name: &str) -> Result<Vec<TextEdit>, St
     let Some((word, qualified)) = word_at(text, pos) else {
         return Err("nothing to rename here".to_string());
     };
-    if qualified.is_some() || help().get_function(&word).is_some() {
+    rename_checks(&word, qualified.as_deref(), new_name, false)?;
+    let edits: Vec<TextEdit> = occurrences(text, &word)
+        .into_iter()
+        .map(|range| TextEdit {
+            range,
+            new_text: new_name.to_string(),
+        })
+        .collect();
+    if edits.is_empty() {
+        return Err(format!("'{word}' does not occur in this file"));
+    }
+    Ok(edits)
+}
+
+/// Whether `word` may become `new_name`: never a keyword, never a
+/// standard-library name the program does not bind itself (`bound`), and
+/// the new name an identifier.
+fn rename_checks(
+    word: &str,
+    qualified: Option<&str>,
+    new_name: &str,
+    bound: bool,
+) -> Result<(), String> {
+    if qualified.is_some() || (!bound && help().get_function(word).is_some()) {
         return Err(format!(
             "'{word}' is a standard-library name — it cannot be renamed"
         ));
     }
-    if KEYWORDS.contains(&word.as_str()) {
+    if KEYWORDS.contains(&word) {
         return Err(format!("'{word}' is a keyword"));
     }
     let valid = new_name
@@ -2377,17 +2481,7 @@ fn rename(text: &str, pos: Position, new_name: &str) -> Result<Vec<TextEdit>, St
             "'{new_name}' is not a valid olang identifier (letter first, then letters, digits, _)"
         ));
     }
-    let edits: Vec<TextEdit> = occurrences(text, &word)
-        .into_iter()
-        .map(|range| TextEdit {
-            range,
-            new_text: new_name.to_string(),
-        })
-        .collect();
-    if edits.is_empty() {
-        return Err(format!("'{word}' does not occur in this file"));
-    }
-    Ok(edits)
+    Ok(())
 }
 
 // ── signature help ─────────────────────────────────────────────────────

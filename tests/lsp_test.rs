@@ -1414,3 +1414,173 @@ fn a_notebook_is_one_document_across_its_cells() {
     let _ = c.child.kill();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// References and a rename follow a name's binding, not its spelling: a
+/// cell's parameter, a lambda's, a block's `let` that shadow a param or
+/// another cell's name are their own (in a notebook and in an `.ol` file).
+#[test]
+fn a_shadowed_name_is_its_own_in_references_and_a_rename() {
+    let mut c = Client::start();
+    let dir = std::env::temp_dir().join(format!("olang-lsp-shadow-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("shadow.olmd");
+    let uri = format!("file://{}", path.display());
+    let text = [
+        "---",                                                          // 0
+        "params:",                                                      // 1
+        "  n: 3",                                                       // 2
+        "---",                                                          // 3
+        "",                                                             // 4
+        "Total ${total} of ${n}.",                                      // 5
+        "",                                                             // 6
+        "```olang",                                                     // 7
+        "let total = n * 2",                                            // 8
+        "```",                                                          // 9
+        "",                                                             // 10
+        "```olang",                                                     // 11
+        "fn scaled(n) = n * 10",                                        // 12
+        "let bump = (total) => total + 1",                              // 13
+        "let shown = map([1, 2], (x) => { let n = x\n    n + total })", // 14, 15
+        "```",                                                          // 16
+        "",
+    ]
+    .join("\n");
+    std::fs::write(&path, &text).unwrap();
+    let ol = dir.join("main.ol");
+    let ol_uri = format!("file://{}", ol.display());
+    let ol_text = "let size = 4\nfn grow(size) = size + 1\nprintln(grow(size))\n";
+    std::fs::write(&ol, ol_text).unwrap();
+    c.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {}, "rootUri": format!("file://{}", dir.display()) }
+    }));
+    c.recv_until(|m| m["id"] == 1);
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    for (u, t) in [(&uri, &text), (&ol_uri, &ol_text.to_string())] {
+        c.send(&serde_json::json!({
+            "jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+                "textDocument":{"uri":u,"languageId":"olang","version":1,"text":t}}
+        }));
+        c.recv_until(|m| diagnostics_of(m).is_some());
+    }
+    let ask = |c: &mut Client,
+               id: i64,
+               u: &str,
+               method: &str,
+               line: u32,
+               ch: u32,
+               extra: serde_json::Value| {
+        let mut params = serde_json::json!({
+            "textDocument": { "uri": u }, "position": { "line": line, "character": ch } });
+        if let (Some(p), Some(e)) = (params.as_object_mut(), extra.as_object()) {
+            for (k, v) in e {
+                p.insert(k.clone(), v.clone());
+            }
+        }
+        c.send(&serde_json::json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}));
+        c.recv_until(|m| m["id"] == id)
+    };
+    let places = |r: &serde_json::Value, list: &serde_json::Value| -> Vec<(i64, i64)> {
+        list.as_array()
+            .unwrap_or_else(|| panic!("{r}"))
+            .iter()
+            .map(|l| {
+                (
+                    l["range"]["start"]["line"].as_i64().unwrap(),
+                    l["range"]["start"]["character"].as_i64().unwrap(),
+                )
+            })
+            .collect()
+    };
+    let refs = serde_json::json!({ "context": { "includeDeclaration": true } });
+    // the param from its key: the front matter, the prose, the cell that
+    // reads it — never the function's parameter, nor the block's `let n`
+    let r = ask(
+        &mut c,
+        2,
+        &uri,
+        "textDocument/rename",
+        2,
+        2,
+        serde_json::json!({ "newName": "count" }),
+    );
+    assert_eq!(
+        places(&r, &r["result"]["changes"][uri.as_str()]),
+        vec![(2, 2), (5, 20), (8, 12)]
+    );
+    // the function's parameter: its own two places
+    let r = ask(
+        &mut c,
+        3,
+        &uri,
+        "textDocument/references",
+        12,
+        15,
+        refs.clone(),
+    );
+    assert_eq!(places(&r, &r["result"]), vec![(12, 10), (12, 15)]);
+    // the block's `let n` and its read
+    let r = ask(
+        &mut c,
+        4,
+        &uri,
+        "textDocument/references",
+        15,
+        4,
+        refs.clone(),
+    );
+    assert_eq!(places(&r, &r["result"]), vec![(14, 37), (15, 4)]);
+    // another cell's name: the lambda's parameter `total` is its own
+    let r = ask(
+        &mut c,
+        5,
+        &uri,
+        "textDocument/rename",
+        8,
+        5,
+        serde_json::json!({ "newName": "sum" }),
+    );
+    assert_eq!(
+        places(&r, &r["result"]["changes"][uri.as_str()]),
+        vec![(5, 8), (8, 4), (15, 8)]
+    );
+    let r = ask(
+        &mut c,
+        6,
+        &uri,
+        "textDocument/documentHighlight",
+        13,
+        23,
+        serde_json::json!({}),
+    );
+    assert_eq!(places(&r, &r["result"]), vec![(13, 12), (13, 22)]);
+    // an `.ol` file: the same
+    let r = ask(
+        &mut c,
+        7,
+        &ol_uri,
+        "textDocument/rename",
+        0,
+        5,
+        serde_json::json!({ "newName": "width" }),
+    );
+    assert_eq!(
+        places(&r, &r["result"]["changes"][ol_uri.as_str()]),
+        vec![(0, 4), (2, 13)]
+    );
+    let r = ask(
+        &mut c,
+        8,
+        &ol_uri,
+        "textDocument/rename",
+        1,
+        17,
+        serde_json::json!({ "newName": "by" }),
+    );
+    assert_eq!(
+        places(&r, &r["result"]["changes"][ol_uri.as_str()]),
+        vec![(1, 8), (1, 16)]
+    );
+    let _ = c.child.kill();
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -172,6 +172,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   field's edge (`gui.read(w, "caret")` was `()`): it stands at the next
   row's start inside a paragraph, at the row's end at a paragraph's end,
   where the input method's box says.
+- **References, highlights and rename follow a name's binding.** They
+  were word-based, so a parameter or a block's `let` that shadowed a
+  module's name (a notebook's param, another cell's name) was renamed
+  with it. The server now walks the program as olang scopes it (a `let`
+  binds after its value; parameters, loop bindings, match arms and
+  blocks shadow), in `.ol` files and notebooks alike; text that does not
+  parse falls back to words. A name the file binds itself may be renamed
+  even when a builtin shares its spelling.
 
 ## [1.0.0-rc.2] - 2026-10-14
 
