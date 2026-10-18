@@ -8095,7 +8095,7 @@ impl BytecodeVm {
         // authority — except for the O(1) probes below, which answer
         // through the wrapper without conversion.
         if args.iter().any(|a| matches!(a.data, ValueData::AstList(_)))
-            && !matches!(name, "len" | "head" | "typeof")
+            && !matches!(name, "len" | "head" | "first" | "last" | "typeof")
         {
             return None;
         }
@@ -8103,7 +8103,7 @@ impl BytecodeVm {
         // below; everything else sees the boxed form — one O(n)
         // conversion in front of an O(n) operation.
         let normalized: Vec<OvmValue>;
-        let args: &[OvmValue] = if !matches!(name, "len" | "head" | "typeof")
+        let args: &[OvmValue] = if !matches!(name, "len" | "head" | "first" | "last" | "typeof")
             && args
                 .iter()
                 .any(|a| matches!(a.data, ValueData::FloatList(_) | ValueData::IntList(_)))
@@ -8661,6 +8661,32 @@ impl BytecodeVm {
                     "head: argument must be a list".to_string(),
                 )),
             }),
+            // `first(xs)` / `last(xs)`: O(1) on every layout. Bridged, each
+            // call converted the whole list — `fold(xs, [0], (acc, x) =>
+            // acc + [last(acc) + x])` was quadratic (olang Studio's diff
+            // offsets: 1.2 s for 20,000 rows). Empty is `()`, as the
+            // interpreter says; a string's character too.
+            "first" | "last" if args.len() == 1 => {
+                let first = name == "first";
+                fn pick<T: Clone>(items: &[T], first: bool) -> Option<T> {
+                    if first { items.first() } else { items.last() }.cloned()
+                }
+                let v = match &args[0].data {
+                    ValueData::List(items) | ValueData::Tuple(items) => pick(items, first),
+                    ValueData::AstList(items) => pick(items, first).map(OvmValue::from_ast),
+                    ValueData::FloatList(items) => pick(items, first).map(OvmValue::new_float),
+                    ValueData::IntList(items) => pick(items, first).map(OvmValue::new_integer),
+                    ValueData::String(st) => if first {
+                        st.chars().next()
+                    } else {
+                        st.chars().next_back()
+                    }
+                    .map(|c| OvmValue::new_string(c.to_string())),
+                    // Anything else keeps the interpreter's error.
+                    _ => return None,
+                };
+                Some(Ok(v.unwrap_or_else(OvmValue::new_unit)))
+            }
             "tail" if args.len() == 1 => Some(match &args[0].data {
                 ValueData::List(items) => {
                     if items.is_empty() {
@@ -15004,6 +15030,71 @@ mod tests {
             BytecodeError::DivisionByZero => {}
             _ => panic!("Expected division by zero error"),
         }
+    }
+
+    #[test]
+    fn first_and_last_answer_without_the_bridge() {
+        // Bridged, `first`/`last` converted the whole list on every call:
+        // `fold(xs, [0], (acc, x) => acc + [last(acc) + x])` was quadratic
+        // (1.2 s at 20,000). Every layout answers natively, O(1).
+        use crate::ovm::value::ValueData;
+        let mut vm = BytecodeVm::new();
+        let ints = |v: Vec<i64>| OvmValue {
+            data: ValueData::IntList(std::sync::Arc::new(v)),
+        };
+        let cases: Vec<(OvmValue, Value, Value)> = vec![
+            (
+                OvmValue::new_list(vec![OvmValue::new_integer(1), OvmValue::new_integer(2)]),
+                Value::Integer(1),
+                Value::Integer(2),
+            ),
+            (ints(vec![7, 8, 9]), Value::Integer(7), Value::Integer(9)),
+            (
+                OvmValue {
+                    data: ValueData::FloatList(std::sync::Arc::new(vec![0.5, 1.5])),
+                },
+                Value::Float(0.5),
+                Value::Float(1.5),
+            ),
+            (
+                OvmValue {
+                    data: ValueData::AstList(std::sync::Arc::new(vec![
+                        Value::Integer(3),
+                        Value::Integer(4),
+                    ])),
+                },
+                Value::Integer(3),
+                Value::Integer(4),
+            ),
+            (
+                OvmValue::new_tuple(vec![OvmValue::new_integer(5), OvmValue::new_integer(6)]),
+                Value::Integer(5),
+                Value::Integer(6),
+            ),
+            (
+                OvmValue::new_string("héllo".to_string()),
+                Value::String("h".to_string().into()),
+                Value::String("o".to_string().into()),
+            ),
+            (ints(vec![]), Value::Unit, Value::Unit),
+            (OvmValue::new_list(vec![]), Value::Unit, Value::Unit),
+        ];
+        for (arg, first, last) in cases {
+            for (name, want) in [("first", first), ("last", last)] {
+                let got = vm
+                    .try_native_higher_order(name, std::slice::from_ref(&arg))
+                    .unwrap_or_else(|| panic!("{name} bridged for {:?}", arg.data))
+                    .expect("answers")
+                    .to_ast()
+                    .expect("converts");
+                assert_eq!(got, want, "{name} of {:?}", arg.data);
+            }
+        }
+        // Anything else keeps the interpreter's error, through the bridge.
+        assert!(
+            vm.try_native_higher_order("last", &[OvmValue::new_integer(1)])
+                .is_none()
+        );
     }
 
     #[test]

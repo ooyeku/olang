@@ -173,6 +173,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`first` and `last` are O(1) on the compiled tiers.** They had no
+  native arm, so each call crossed to the interpreter with its whole list
+  converted: `fold(xs, [0], (acc, x) => acc + [last(acc) + x])` took
+  1,195 ms for 20,000 items (olang Studio's diff of a large file, every
+  frame). Every list layout, a tuple and a string answer in place: 1.4 ms.
 - **`fs.search` passes a file with no match at a pass over its bytes.**
   A case-blind search lower-cased and searched a file a line at a time
   even when it held no match: a workspace with 23 MB of CSV beside its
