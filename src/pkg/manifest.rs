@@ -107,6 +107,7 @@ pub const PROMOTE_CLASSES: &[&str] = &[
     "result",
     "copy",
     "shadow",
+    "no_effect",
     "tier",
 ];
 

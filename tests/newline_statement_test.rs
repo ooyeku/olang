@@ -47,13 +47,19 @@ range(1, 6)
 
 #[test]
 fn multiline_binary_expressions_still_parse() {
-    // A sum continues when its line ends with the operator; a line that
-    // starts with `+` or `-` is a statement of its own.
+    // A sum continues when its line ends with the operator, or when the
+    // next line starts with `+` or a binary-looking `- ` (a space after
+    // it); `-1` glued to its operand is a statement of its own.
     let src = "let x = 1 + 2 +\n    3 +\n    4\nx";
     assert_eq!(eval(src), Value::Integer(10));
-    assert!(Parser::new().parse("let x = 1 + 2\n    + 3\nx").is_err());
+    assert_eq!(eval("let x = 1 + 2\n    + 3\nx"), Value::Integer(6));
+    assert_eq!(eval("let x = 1.0 + 2.0\n    - 10.0\nx"), Value::Float(-7.0));
+    assert_eq!(eval("let x = 10\n    - 2\n    + 5\n    -\n    1\nx"), Value::Integer(12));
+    assert_eq!(eval("let x = 10\n    // why\n    - 2\nx"), Value::Integer(8));
     let src = "let x = 7\n-1\nx";
     assert_eq!(eval(src), Value::Integer(7));
+    assert_eq!(eval("fn f() = {\n    let a = 3\n    -a\n}\nf()"), Value::Integer(-3));
+    assert_eq!(eval("fn f() = {\n    - 3\n}\nf()"), Value::Integer(-3));
     let src = "let x = [1, 2]\n    |> len\n    == 2\nx";
     assert_eq!(eval(src), Value::Boolean(true));
 }

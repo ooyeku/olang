@@ -492,7 +492,7 @@ message, tags, line, column, end_line, end_column, range }`:
 `severity` `error`, `warning`, `information` or `hint`; `code` the rule
 (`syntax`, `macro`, `scope`, `runtime`, `type`, `advisory`, an
 advisory's class — `shadow`, `exhaustiveness`, `shape`, `keys`,
-`result`, `copy` — `unused` for a name nothing reads, `manifest` for olang.toml:
+`result`, `copy`, `no_effect` — `unused` for a name nothing reads, `manifest` for olang.toml:
 a `[package] olang` that is not a version is an error, since it names the oldest olang the
 project runs on, see [packages.md](packages.md));
 `tags` `["unnecessary"]` on an unused name (a hint, faded by an editor,
@@ -652,6 +652,15 @@ judgement about intent rather than a provable contradiction.
   loop variable, and a pattern binding whose name is then read as the
   module (`fn h(fs) = fs.exists(p)`); `use lib.csv` binds `csv` over the
   stdlib module (the path import wins, on purpose) and says so.
+- **A value computed and dropped.** An expression statement that is a
+  literal, a name, or arithmetic, a comparison or a negation over them
+  does nothing but produce a value, so outside a block's last line
+  (its value) and the program's last statement it is reported:
+  `let a = 1.0 + 2.0` over `-10.0` binds `3.0`, and `-10.0` is a
+  statement of its own (a continuation is written `- 10.0`, see [source
+  structure](language.md#source-structure)); `x == 3` alone on
+  a line was meant as an assertion. `()` is exempt, and so is a
+  notebook cell's last statement, the cell's output.
 - **An `==` between values of provably different types** — `"yes" ==
   true` — is always false (values of different types never compare
   equal), so the comparison is almost certainly not the one intended.
@@ -822,7 +831,8 @@ pattern binding of a module's name that its scope then reads as the
 module: `fn table_sort(rows, col) = col.sort_by(…)`), `copy` (a loop that copies the collection it is
 building on every pass: a temporary read again after the rebind, or a
 prepend — see [the rebind forms](performance.md#the-rebind-forms)),
-`tier` (a function `olang check --tier`
+`no_effect` (an expression statement whose value is dropped and whose
+evaluation does nothing else), `tier` (a function `olang check --tier`
 finds the bytecode tier refuses), and `all`. A
 promoted finding fails `olang check` and shows as an error in the
 editor, and its message says which block promoted it.

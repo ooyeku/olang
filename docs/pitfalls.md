@@ -15,7 +15,7 @@ division — account for most early confusion.
 2. [Integer division truncates; overflow is an error](#integer-division-truncates-overflow-is-an-error)
 3. [`to_string` prints values, not columns](#to_string-prints-values-not-columns)
 4. [A condition is a Bool](#a-condition-is-a-bool)
-5. [A line starting with `-` or `+` is a new statement](#a-line-starting-with---or--is-a-new-statement)
+5. [A line starting with `-x` is a new statement](#a-line-starting-with--x-is-a-new-statement)
 6. [Parsing returns a `Result`](#parsing-returns-a-result)
 7. [Functions can't be compared with `==`, even inside a list](#functions-cant-be-compared-with--even-inside-a-list)
 8. [Closures capture by value, at creation](#closures-capture-by-value-at-creation)
@@ -125,28 +125,34 @@ println(if name != () => "named" else => "anonymous")      // anonymous
 (Before the 1.0 freeze pass a condition took any value: `false`, `0`,
 `0.0`, `""`, an empty list, tuple or range, and `()` were false.)
 
-## A line starting with `-` or `+` is a new statement
+## A line starting with `-x` is a new statement
 
 A binary operator at the start of a line continues the expression above
-it — `|>`, `&&`, `||`, `??`, the comparisons, `*`, `/` and the bitwise
-operators — so a long pipeline or condition breaks before its operator.
-`-` and `+` are the exception: a line that starts with one starts a new
-statement, since `-1` is an expression of its own (and `+` has no
-unary form, so a line starting with it is a parse error that points at
-it). Break a long sum after its operator instead:
+it — `|>`, `&&`, `||`, `??`, the comparisons, `+`, `*`, `/` and the
+bitwise operators — so a long pipeline, condition or sum breaks before
+its operator. `-` continues only when it is written as a binary
+operator, with a space after it. A `-` glued to its operand is a
+negation, and starts a statement of its own:
 
 ```olang
 let base = 10
-let total = base +
-    5                     // continues: the `+` ends the line above
-println(total)            // 15
+let total = base
+    - 5                   // continues: `base - 5`
+println(total)            // 5
 let shown = base
 -1                        // a statement of its own, not `base - 1`
 println(shown)            // 10
 ```
 
-(Before the 1.0 freeze pass a leading `-` continued the line above, so
-`println("x")` over `-1` raised "cannot apply '-' to Unit and Int".)
+`olang check` reports the second case: `-1` computes a value nothing
+uses (class `no_effect`). Any expression statement that is only a
+literal, a name, or arithmetic or a comparison over them is reported
+the same way when it is not a block's last line.
+
+(Before the 1.0 freeze pass every leading `-` continued the line above,
+so `println("x")` over `-1` raised "cannot apply '-' to Unit and Int".
+From the freeze pass through 1.0.0-rc.2 no leading `-` or `+` continued,
+so `let a = 1.0 + 2.0` over `    - 10.0` silently bound `3.0`.)
 
 Since 0.69 the precedence table reads conventionally, and since the
 freeze pass the bitwise operators take Rust's order: `1 << 4 * 2` is

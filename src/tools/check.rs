@@ -177,6 +177,15 @@ pub fn run_json(paths: &[PathBuf]) -> i32 {
             }
         };
         let mut found = crate::tools::lsp::file_diagnostics(&text, file.parent());
+        // a notebook cell's last statement is the cell's value
+        let no_effect =
+            |d: &lsp_types::Diagnostic| matches!(&d.code, Some(NumberOrString::String(c)) if c == "no_effect");
+        if crate::notebook::is_notebook(file) && found.iter().any(no_effect) {
+            let values = std::fs::read_to_string(file)
+                .map(|t| crate::notebook::cell_value_lines(&t))
+                .unwrap_or_default();
+            found.retain(|d| !(no_effect(d) && values.contains(&(d.range.start.line + 1))));
+        }
         // a notebook's params are bound on its front matter's lines, and
         // a param no cell reads is no unused name
         if let Some((open, close)) = front {
@@ -358,7 +367,14 @@ pub fn run(paths: &[PathBuf], rules: Option<&Path>) -> i32 {
             }
         };
         let unresolved = crate::analyze::Analyzer::unresolved_names(&program);
-        let diagnostics = file_diagnostics(&program, &source, file.parent(), unresolved);
+        let mut diagnostics = file_diagnostics(&program, &source, file.parent(), unresolved);
+        // a notebook cell's last statement is the cell's value
+        if let Some(text) = &shown
+            && diagnostics.iter().any(|d| d.class == Some("no_effect"))
+        {
+            let values = crate::notebook::cell_value_lines(text);
+            diagnostics.retain(|d| !(d.class == Some("no_effect") && values.contains(&d.line)));
+        }
         for d in diagnostics {
             if d.warning {
                 warnings += 1;
@@ -1866,7 +1882,7 @@ pub struct CheckDiagnostic {
     pub scope: bool,
     /// The advisory's class, which `[check] promote` names and
     /// `--format json` reports as its `code`: `exhaustiveness`, `shape`,
-    /// `keys`, `result`, `copy`, `shadow`. Set where the
+    /// `keys`, `result`, `copy`, `shadow`, `no_effect`. Set where the
     /// finding is made, never read back from its wording.
     pub class: Option<&'static str>,
 }
@@ -2262,6 +2278,7 @@ pub fn promoted_label(d: &CheckDiagnostic) -> Option<&'static str> {
         "keys" => "no construction has this key",
         "result" => "the Result is dropped here",
         "copy" => "the collection is copied here on every pass",
+        "no_effect" => "this value is computed and dropped",
         _ => return None,
     })
 }
@@ -2667,9 +2684,14 @@ pub fn check_program_with_context(context: &[&Program], program: &Program) -> Ve
     }
     checker.collect(program);
     checker.push_scope();
-    for stmt in &program.statements {
+    // The program's last statement is its value (the REPL's result, a
+    // notebook cell's output); the others' values are discarded.
+    let last = program.statements.len().saturating_sub(1);
+    for (i, stmt) in program.statements.iter().enumerate() {
+        checker.top_level_tail = i == last;
         checker.check_statement(stmt, (0, 0));
     }
+    checker.top_level_tail = false;
 
     // Scope and mutability come from the same validator the interpreter
     // runs before execution, so `olang check` and `olang run` report the
@@ -2703,9 +2725,14 @@ pub fn hover_types(program: &Program) -> HashMap<String, String> {
     let mut checker = Checker::default();
     checker.collect(program);
     checker.push_scope();
-    for stmt in &program.statements {
+    // The program's last statement is its value (the REPL's result, a
+    // notebook cell's output); the others' values are discarded.
+    let last = program.statements.len().saturating_sub(1);
+    for (i, stmt) in program.statements.iter().enumerate() {
+        checker.top_level_tail = i == last;
         checker.check_statement(stmt, (0, 0));
     }
+    checker.top_level_tail = false;
     let mut out = HashMap::new();
     for (name, sig) in &checker.sigs {
         let params = sig
@@ -2760,6 +2787,10 @@ struct Checker {
     /// True while walking a block's final statement, which is the block's
     /// value rather than a discarded expression.
     in_tail_position: bool,
+    /// True while walking the program's last top-level statement, its
+    /// value. (`in_tail_position` stays a block's, so a dropped Result
+    /// at the end of a script is still reported.)
+    top_level_tail: bool,
     /// Qualified stdlib names documented as returning `Result`, from the
     /// help registry. Populated lazily — most checks never need it.
     fallible: std::collections::HashSet<String>,
@@ -3610,6 +3641,58 @@ impl Checker {
         );
     }
 
+    /// An expression statement that computes a value and does nothing
+    /// else — a literal, a name, arithmetic or a comparison over them —
+    /// outside a block's last slot, where its value is discarded. It
+    /// is almost always a line that was meant to continue the one above
+    /// (`-10.0` under `let a = b`, a negation of its own) or a
+    /// comparison meant as an assertion. `()` is exempt: it is the
+    /// written way to say "nothing here".
+    fn warn_no_effect(&mut self, expr: &Expr, span: (u32, u32)) {
+        if self.in_tail_position || self.top_level_tail || !Self::no_effect(expr) {
+            return;
+        }
+        let message = if let Expr::UnaryOp {
+            op: crate::ast::UnaryOp::Negate,
+            ..
+        } = expr
+        {
+            "this statement is a negation whose value is unused: a line that starts with \
+             `-x` is a statement of its own. To continue the expression above, write the \
+             `-` with a space after it (`- x`) or end the line above with the operator"
+                .to_string()
+        } else {
+            "this expression's value is unused, and computing it has no effect: use it \
+             (bind it, return it from the block's last line) or remove it"
+                .to_string()
+        };
+        self.advise("no_effect", span, message);
+    }
+
+    /// Whether evaluating `e` can do nothing but produce its value.
+    fn no_effect(e: &Expr) -> bool {
+        match e {
+            Expr::Integer(_)
+            | Expr::Float(_)
+            | Expr::String(_)
+            | Expr::RawString(_)
+            | Expr::Boolean(_)
+            | Expr::Identifier(_)
+            | Expr::LocalRef { .. } => true,
+            Expr::BinaryOp { left, right, .. } | Expr::BitwiseOp { left, right, .. } => {
+                Self::no_effect(left) && Self::no_effect(right)
+            }
+            Expr::UnaryOp { operand, .. } => Self::no_effect(operand),
+            Expr::TemplateString { parts } => parts.iter().all(|p| match p {
+                crate::ast::TemplatePart::Literal(_) => true,
+                crate::ast::TemplatePart::Interpolation(x) => Self::no_effect(x),
+            }),
+            Expr::Tuple(xs) => !xs.is_empty() && xs.iter().all(Self::no_effect),
+            Expr::List(xs) => xs.iter().all(Self::no_effect),
+            _ => false,
+        }
+    }
+
     /// A bundled-collection *write* in statement position throws away
     /// the handle it returns. The collections are values, not objects:
     /// `heap.push(h, x)` computes a new heap and discards it, leaving
@@ -4033,6 +4116,7 @@ impl Checker {
             Statement::Expression(e) => {
                 self.warn_discarded_result(e, span);
                 self.warn_unrebound_collection_write(e, span);
+                self.warn_no_effect(e, span);
                 // Nested constructs start fresh: an expression *inside*
                 // this one is not in the enclosing block's tail slot.
                 let tail = std::mem::replace(&mut self.in_tail_position, false);

@@ -1354,6 +1354,26 @@ pub fn program_with(text: &str, mode: Mode, overrides: &[(String, String)]) -> P
     }
 }
 
+/// The lines (1-based, the file's) where each cell's last top-level
+/// statement starts: the cell's value, shown under it, never a value
+/// dropped (`olang check`'s `no_effect` reads the notebook as one
+/// program, where only the last cell's last statement is its value).
+pub fn cell_value_lines(text: &str) -> std::collections::HashSet<u32> {
+    let nb = parse(text);
+    let lines = lines_of(text);
+    let parser = crate::parser::Parser::new();
+    let mut out = std::collections::HashSet::new();
+    for c in &nb.cells {
+        let Ok(program) = parser.parse_raw(&cell_code(&lines, c)) else {
+            continue;
+        };
+        if let Some(crate::ast::Statement::Located { line, .. }) = program.statements.last() {
+            out.insert(c.fence_line + line);
+        }
+    }
+    out
+}
+
 /// A cell's code: its lines between its fences.
 fn cell_code(lines: &[&str], c: &Cell) -> String {
     let from = c.fence_line as usize;

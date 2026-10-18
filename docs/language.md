@@ -48,12 +48,14 @@ println(greeting + ", " + audience)
 ```
 
 An expression continues onto the next line when its line ends with a
-binary operator, or when the next line starts with one — but `-` and
-`+`: a line that starts with `-` or `+` starts a new statement, since
-`-1` is an expression of its own (`+` has no unary form, so such a line
-is a parse error pointing at it). So a long pipeline or
-condition breaks before its `|>`, `&&`, `||`, `??` or comparison, and a
-long sum breaks after its `+`.
+binary operator, or when the next line starts with one. So a long
+pipeline, condition or sum breaks before its `|>`, `&&`, `||`, `??`,
+comparison, `+` or `-`. `+` has no unary form, so a line that starts
+with it always continues. A line that starts with `-` continues only
+when the `-` is written as a binary operator, with a space after it
+(`- 10.0`); a `-` glued to its operand (`-1`) is a negation, and starts
+a statement of its own. A negation whose value is then dropped is
+reported by `olang check` (class `no_effect`, [tooling.md](tooling.md#advisory-warnings)).
 
 ```olang
 let words = ["b", "a", "c"]
@@ -61,7 +63,12 @@ let words = ["b", "a", "c"]
     |> join("-")
 let total = 1 +
     2
-println(`${words} ${total}`)   // a-b-c 3
+let price = 1.0 + 2.0
+    - 10.0                     // continues: `price` is -7.0
+let net = 100
+    - 15
+    + 5
+println(`${words} ${total} ${price} ${net}`)   // a-b-c 3 -7.0 90
 ```
 
 Statements are one of: a declaration (`let`, `fn`, `type`, `trait`, `impl`,

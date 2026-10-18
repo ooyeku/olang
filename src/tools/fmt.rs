@@ -329,6 +329,16 @@ fn tokenize_line(line: &str, mut mode: Mode) -> (Vec<Tok>, Mode, Option<String>)
 fn respace(indent: &str, toks: &[Tok], tail: Option<&str>) -> String {
     // A keyword after `.` is a member name (`proc.spawn`), not syntax:
     // demote it to a plain word for spacing decisions.
+    // So is a contextual keyword used as a name — `test["x"]`,
+    // `share(x)`: one glued to a `(`, `[` or `.` after it.
+    let named = |i: usize| {
+        matches!(
+            toks[i].text.as_str(),
+            "test" | "share" | "use" | "type" | "trait" | "impl" | "error" | "catch"
+        ) && toks
+            .get(i + 1)
+            .is_some_and(|n| n.gap == 0 && matches!(n.text.as_str(), "(" | "[" | "."))
+    };
     let toks: Vec<Tok> = toks
         .iter()
         .enumerate()
@@ -336,9 +346,8 @@ fn respace(indent: &str, toks: &[Tok], tail: Option<&str>) -> String {
             gap: t.gap,
             text: t.text.clone(),
             kind: if t.kind == TokKind::Word
-                && i > 0
-                && toks[i - 1].text == "."
                 && is_keyword(&t.text)
+                && ((i > 0 && toks[i - 1].text == ".") || named(i))
             {
                 TokKind::Str // value-like, never keyword-spaced
             } else {
@@ -348,13 +357,17 @@ fn respace(indent: &str, toks: &[Tok], tail: Option<&str>) -> String {
         .collect();
     let toks = &toks[..];
     // A `-`/`+` after anything but a value is a sign and glues to its
-    // operand; `!`, `...`, and `@` always do.
+    // operand; `!`, `...`, and `@` always do. At the start of a line the
+    // author's spacing is the meaning: `- d` continues the line above,
+    // `-d` is a negation that starts a statement (`+` is never a sign).
     let mut glue_right = vec![false; toks.len()];
     for (i, t) in toks.iter().enumerate() {
         if t.kind == TokKind::Op {
             glue_right[i] = match t.text.as_str() {
                 "!" | "..." | "@" => true,
-                "-" | "+" => i > 0 && !value_like(&toks[i - 1]),
+                "-" if i == 0 => toks.get(1).is_some_and(|n| n.gap == 0),
+                "+" if i == 0 => false,
+                "-" | "+" => !value_like(&toks[i - 1]),
                 _ => false,
             };
         }
@@ -751,11 +764,29 @@ mod tests {
     fn unary_signs_glue_binary_signs_breathe() {
         assert_eq!(format_source("let z = a- -1\n"), "let z = a - -1\n");
         assert_eq!(format_source("let z = f(-1,!b)\n"), "let z = f(-1, !b)\n");
-        // A continuation line's leading + is binary, not a sign.
+        // A continuation line's leading `+` is binary, not a sign, and
+        // so is a leading `-` with a space after it; `-b` stays a sign.
         assert_eq!(
             format_source("let s = a\n    + b\n"),
             "let s = a\n    + b\n"
         );
+        assert_eq!(
+            format_source("let s = a\n    - b\n"),
+            "let s = a\n    - b\n"
+        );
+        assert_eq!(
+            format_source("let s = a\n-b\nprintln(s)\n"),
+            "let s = a\n-b\nprintln(s)\n"
+        );
+    }
+
+    #[test]
+    fn a_keyword_used_as_a_name_is_spaced_as_one() {
+        assert_eq!(
+            format_source("let x = test[\"x\"] + share(y)\n"),
+            "let x = test[\"x\"] + share(y)\n"
+        );
+        assert_eq!(format_source("if(x) => 1\n"), "if (x) => 1\n");
     }
 
     #[test]

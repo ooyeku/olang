@@ -373,7 +373,7 @@ main()
 }
 
 #[test]
-fn a_line_starting_with_minus_or_plus_is_a_new_statement() {
+fn a_line_starting_with_a_glued_minus_is_a_new_statement() {
     let src = "fn main() = {\n    let base = 10\n    let shown = base\n    -1\n    let sum = base +\n        5\n    let piped = [1, 2]\n        |> len\n    (shown, sum, piped)\n}\nmain()\n";
     assert_eq!(
         agree(src),
@@ -381,6 +381,20 @@ fn a_line_starting_with_minus_or_plus_is_a_new_statement() {
             Value::Integer(10),
             Value::Integer(15),
             Value::Integer(2),
+        ])))
+    );
+}
+
+#[test]
+fn a_line_starting_with_plus_or_a_spaced_minus_continues() {
+    let src = "fn main() = {\n    let a = 1.5 + 2.0\n        - 10.0\n    let b = 10\n        - 2\n        + 5\n    let c = 4\n        * 2\n        - 1\n    let d = -b\n    (a, b, c, d)\n}\nmain()\n";
+    assert_eq!(
+        agree(src),
+        Ok(Value::Tuple(std::sync::Arc::new(vec![
+            Value::Float(-6.5),
+            Value::Integer(13),
+            Value::Integer(7),
+            Value::Integer(-13),
         ])))
     );
 }

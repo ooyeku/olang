@@ -171,6 +171,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   be `wavy`; a style's `group_hover` shows its hover look over an
   ancestor's hover (`gui.platform().group_hover`).
 
+- **`olang check` reports a value computed and dropped** (class
+  `no_effect`, promotable): an expression statement that is a literal, a
+  name, or arithmetic, a comparison or a negation over them, anywhere but
+  a block's last line, the program's last statement or a notebook cell's
+  last (its output). `-10.0` under `let a = b` is said to be a negation
+  of its own, with how to continue the line instead.
+
 ### Changed
 
 - **A map keeps its keys in the order they were first set**, as a Python
@@ -185,6 +192,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `db.query`'s rows keep the SELECT's order. `col.count_by` and
   `col.frequencies` count in the order first met; `os.list_env` is by
   name. (Maps were sorted by key.)
+
+- **A line that starts with `+`, or with `-` and a space, continues the
+  expression above** (docs/language.md, "Source structure"). `let a =
+  1.0 + 2.0` over `    - 10.0` is `-7.0`; it bound `3.0`, and `- 10.0`
+  was a statement of its own, silently. A `-` glued to its operand
+  (`-x`) is still a negation that starts a statement; a line that
+  started with `+` was a parse error. `olang fmt` keeps a leading `- x`
+  spaced and a leading `-x` glued, since the space is the meaning. In
+  the repository this changes examples/data-processing/crimes/lib/ml.ol's
+  Gini gain, which was `parent_gini` alone and is now the formula it
+  spells.
+- **`olang fmt` spaces a keyword used as a name as a name**: `test["x"]`
+  and `share(x)` stay glued (`test`, `share`, `use`, `type`, `trait`,
+  `impl`, `error` and `catch` before a `(`, `[` or `.`).
 
 ### Fixed
 

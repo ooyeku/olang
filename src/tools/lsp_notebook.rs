@@ -278,7 +278,14 @@ impl Notebook {
                 }
             })
             .collect();
-        let found = super::diagnostics(&self.program, dir);
+        let mut found = super::diagnostics(&self.program, dir);
+        // a cell's last statement is the cell's value, not a value dropped
+        let no_effect =
+            |d: &Diagnostic| matches!(&d.code, Some(NumberOrString::String(c)) if c == "no_effect");
+        if found.iter().any(no_effect) {
+            let values = crate::notebook::cell_value_lines(text);
+            found.retain(|d| !(no_effect(d) && values.contains(&(d.range.start.line + 1))));
+        }
         // a name only prose reads (`${fmt_money(total)}`) is used
         out.extend(found.into_iter().filter(|d| {
             let unused = matches!(&d.code, Some(NumberOrString::String(c)) if c == "unused");

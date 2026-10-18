@@ -244,19 +244,25 @@ unary_op      = { "-" | "!" }
 //   * a range's `..` takes no newline around it, and its bounds are
 //     additive — `0..n-1` — which precedence gives; a range of a range
 //     (`a..b..c`) is refused by the builder, as the ladder refused it;
-//   * every other operator may sit at the start of the next line, but
-//     `+` and `-`: a line that starts with one starts a new statement
-//     (`-1` is an expression of its own; a lone `+` a parse error), so
-//     `let t = base` over `-d` is two statements, never `base - d`.
+//   * every operator may sit at the start of the next line. `+` has no
+//     unary form, so a line that starts with it always continues. A
+//     line that starts with `-` continues only when the `-` is followed
+//     by a space (or the line's end), as a binary `-` is written: `-d`
+//     glued to its operand is a negation, and starts a new statement, so
+//     `let t = base` over `- d` is `base - d`, over `-d` two statements.
 // Bitwise operators come before the comparisons in the choice so `<<`
 // is never read as `<`.
 binary_expr   = { unary_expr ~ binary_tail* }
 binary_tail   = _{
     (NL* ~ (or_op | and_op | coalesce_op | pipe_op | bitwise_op | mul_op) ~ NL* ~ unary_expr)
   | (add_op ~ NL* ~ unary_expr)
+  | (NL+ ~ &lead_add_op ~ add_op ~ NL* ~ unary_expr)
   | (NL* ~ comp_op ~ NL* ~ cmp_rhs)
   | (range_op ~ unary_expr)
 }
+// A `+` or `-` that continues the line above (see the ladder's notes):
+// any `+`, and a `-` with a space, a tab or the line's end after it.
+lead_add_op = @{ "+" | ("-" ~ (" " | "\t" | NEWLINE | "//")) }
 // The right of a comparison is the one place `()` must outrank the
 // nullary-lambda reading. `if t == () => 0 else => 1` means "t is Unit,
 // then this branch" — never "t equals a function" — but ordered choice
