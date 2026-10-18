@@ -160,6 +160,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `col.frequencies` count in the order first met; `os.list_env` is by
   name. (Maps were sorted by key.)
 
+### Fixed
+
+- **`fs.search` passes a file with no match at a pass over its bytes.**
+  A case-blind search lower-cased and searched a file a line at a time
+  even when it held no match: a workspace with 23 MB of CSV beside its
+  sources took 15 ms to search for a word instead of 6. The file is now
+  lower-cased once and searched whole first.
+
 ## [1.0.0-rc.2] - 2026-10-14
 
 ### Added

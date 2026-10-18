@@ -148,6 +148,29 @@ fn search_finds_a_literal_ignoring_case_by_default_with_columns_in_characters() 
     assert_eq!(text, "share fn twice(n) = n * 2");
 }
 
+/// A case-blind search reads a file whole before its lines: a data file
+/// of megabytes holding no match costs a pass over its bytes, and one
+/// holding a match in any case (or the Kelvin sign's K) is still found.
+#[test]
+fn a_case_blind_search_passes_a_large_file_holding_no_match_and_finds_one_in_any_case() {
+    let d = tempfile::tempdir().unwrap();
+    let r = d.path().to_string_lossy().to_string();
+    let row = "Entity,Year,CO2,Energy per Capita\n";
+    std::fs::write(d.path().join("big.csv"), row.repeat(200_000)).unwrap();
+    std::fs::write(d.path().join("mixed.txt"), "a ValUE here\nnone\n").unwrap();
+    std::fs::write(d.path().join("kelvin.txt"), "300 \u{212A}elvin\n").unwrap();
+    let t0 = std::time::Instant::now();
+    let got = s(eval(&format!(
+        r#"show(map(unwrap(fs.search("{r}", "value")), (h) => map_get(h, "path") + ":" + to_string(map_get(h, "line"))))"#
+    )));
+    assert_eq!(got, r#"["mixed.txt:1"]"#);
+    assert!(t0.elapsed().as_millis() < 2000, "{:?}", t0.elapsed());
+    let got = s(eval(&format!(
+        r#"show(map(unwrap(fs.search("{r}", "kelvin")), (h) => map_get(h, "path")))"#
+    )));
+    assert_eq!(got, r#"["kelvin.txt"]"#);
+}
+
 #[test]
 fn search_matches_case_words_and_regular_expressions_and_stops_at_its_limit() {
     let d = tree();

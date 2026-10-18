@@ -414,6 +414,22 @@ fn search_file(
     {
         return Vec::new();
     }
+    // a case-blind search for an ASCII word: the whole file lower-cased
+    // once and searched (most files hold no match), never a line at a
+    // time — a data file of megabytes was most of a workspace's search.
+    // (Lower-casing ASCII bytes keeps every offset; the one other
+    // character that lower-cases to an ASCII letter, the Kelvin sign,
+    // keeps a file it is in.)
+    if let Needle::Literal {
+        text: t,
+        case: false,
+    } = needle
+        && t.is_ascii()
+        && memchr::memmem::find(&bytes.to_ascii_lowercase(), t.as_bytes()).is_none()
+        && !(t.contains('k') && memchr::memmem::find(&bytes, "\u{212A}".as_bytes()).is_some())
+    {
+        return Vec::new();
+    }
     #[cfg(feature = "regex-module")]
     if let Needle::Regex(rx) = needle
         && !rx.is_match(text)
