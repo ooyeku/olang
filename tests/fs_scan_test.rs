@@ -114,6 +114,41 @@ fn scan_keeps_extensions_hidden_entries_and_ignored_files_on_request() {
     );
 }
 
+/// `within` and `own`: only some folders read, by the whole walk's rules
+/// (a parent's .gitignore, the skipped and hidden folders on the way), so
+/// a watch's changed folders are listed as a whole scan lists them.
+#[test]
+fn scan_within_some_folders_lists_them_as_the_whole_walk_would() {
+    let d = tree();
+    let r = root_of(&d);
+    let within = |opts: &str| {
+        s(eval(&format!(
+            r#"show(unwrap(fs.scan("{}", {})))"#,
+            r, opts
+        )))
+    };
+    assert_eq!(
+        within(r#"#{ "skip": ["target"], "within": ["app/lib", "loose"] }"#),
+        r#"["app/lib/util.ol", "loose/data.bin.ol", "loose/script.ol"]"#
+    );
+    // the folder's own files only; the root's own too
+    assert_eq!(
+        within(r#"#{ "own": ["app", ""] }"#),
+        r#"["app/main.ol", "app/olang.toml", "notes.md"]"#
+    );
+    // a folder a parent's .gitignore leaves out stays out, as do the
+    // skipped and the hidden
+    assert_eq!(within(r#"#{ "within": ["lib2/generated"] }"#), "[]");
+    assert_eq!(
+        within(r#"#{ "skip": ["node_modules"], "within": ["lib2/node_modules"] }"#),
+        "[]"
+    );
+    assert_eq!(within(r#"#{ "within": [".hidden"] }"#), "[]");
+    assert_eq!(within(r#"#{ "own": ["lib2/generated"] }"#), "[]");
+    // a folder that is not there: nothing
+    assert_eq!(within(r#"#{ "within": ["nowhere"] }"#), "[]");
+}
+
 #[test]
 fn scan_refuses_what_is_not_a_folder_and_options_it_does_not_know() {
     assert_eq!(

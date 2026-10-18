@@ -21,6 +21,8 @@ pub mod embedded;
 pub mod fs;
 #[cfg(feature = "native")]
 pub mod fs_scan;
+#[cfg(feature = "native")]
+pub mod fs_watch;
 #[cfg(feature = "gui")]
 pub mod gui;
 #[cfg(feature = "native")]

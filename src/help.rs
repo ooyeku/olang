@@ -4985,7 +4985,7 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             "fs.scan(root, opts)",
             "Result",
             "fs",
-            "every file under a folder a checkout keeps, relative to it and sorted: its .gitignores respected at every level, hidden entries and the folders in skip left out, walked on worker threads (opts: skip, exts, hidden, gitignore, limit, max_depth)",
+            "every file under a folder a checkout keeps, relative to it and sorted: its .gitignores respected at every level, hidden entries and the folders in skip left out, walked on worker threads (opts: skip, exts, hidden, gitignore, limit, max_depth; within and own: only some folders, by the rules of the whole walk)",
             &[r##"unwrap(fs.scan(".", #{ "skip": ["target", "node_modules"], "exts": ["ol", "toml"] }))"##],
         );
         self.doc_ex(
@@ -4995,6 +4995,30 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             "fs",
             "every line under a folder holding a literal or a regular expression, searched on worker threads: Ok of maps with path, line, col, end and text, by path then line (opts: regex, case, word, limit, per_file, files, and fs.scan's)",
             &[r##"unwrap(fs.search("src", "fn main", #{ "exts": ["ol"], "word": true }))"##],
+        );
+        self.doc_ex(
+            "fs.watch",
+            "fs.watch(root, opts)",
+            "Result",
+            "fs",
+            "a folder's whole tree watched for changes (FSEvents on macOS; elsewhere an Err): Ok(Watch) for fs.watch_next to read (opts: ignore, folder names never said at any depth; keep, paths under them said all the same such as .git/HEAD; latency_ms)",
+            &[r##"let w = unwrap(fs.watch(".", #{ "ignore": [".git", "target"] }))"##],
+        );
+        self.doc_ex(
+            "fs.watch_next",
+            "fs.watch_next(watch, opts)",
+            "Result",
+            "fs",
+            "the next batch of a watch's changes, a burst as one: Ok(#{ root, events, rescan }) with each event #{ path, kind, dir } (kind created, removed or modified; rescan the folders to read again when the system dropped events), Ok(()) when none came within timeout_ms, Err once closed (opts: timeout_ms, settle_ms, max)",
+            &[r##"match fs.watch_next(w, #{ "timeout_ms": 500 }) { Ok(b) => b, Err(e) => () }"##],
+        );
+        self.doc_ex(
+            "fs.watch_close",
+            "fs.watch_close(watch)",
+            "Result",
+            "fs",
+            "a watch stopped: Ok(true), Ok(false) for one closed already; a fs.watch_next waiting answers Err",
+            &[r##"fs.watch_close(w)"##],
         );
         self.doc_ex(
             "fs.glob",

@@ -273,6 +273,9 @@ fn fs_read_only(name: &str) -> bool {
             | "glob"
             | "scan"
             | "search"
+            | "watch"
+            | "watch_next"
+            | "watch_close"
             | "abs_path"
             | "real_path"
     )

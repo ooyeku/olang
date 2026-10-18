@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`fs.watch`: a folder's whole tree followed as it changes** (FSEvents
+  on macOS, one stream on a thread of its own, nothing polled).
+  `fs.watch_next` answers a burst as one batch (each path once,
+  `created`/`removed`/`modified`, `dir`), `rescan` when the system
+  dropped notices or a batch passes `max`; `ignore` drops a folder's
+  paths on the watching thread (`target/` during a build), `keep` lets
+  chosen ones through (`.git/HEAD`). `fs.watch_close` stops it. Gated as
+  a read of the file system; elsewhere than macOS an `Err`.
+- **`fs.scan`'s `within` and `own`**: only some folders read (all below
+  them, or their own files), by the whole walk's rules — a parent's
+  `.gitignore`, the skipped and hidden folders on the way — so a watch's
+  changed folders are listed exactly as a whole scan lists them.
 - **A node can hear only the wheel's sideways part** (`wheel_x`, said by
   `gui.platform()`): a `wheel` event with `dy` 0 for it, and down goes on
   to the scrollers around it — lines in a list that scroll across

@@ -23,6 +23,13 @@ struct Walk {
     limit: usize,
     /// At most this deep below the root (`None`: any depth).
     max_depth: Option<usize>,
+    /// Only these folders (relative to the root) walked, all below them —
+    /// the root's rules applied on the way, so a file is listed exactly
+    /// when a whole walk would list it (a watch's changed folders read
+    /// again). Empty with `own` empty: the whole tree.
+    within: Vec<String>,
+    /// Only these folders' own files (not their folders'), as `within`.
+    own: Vec<String>,
 }
 
 impl Default for Walk {
@@ -34,6 +41,8 @@ impl Default for Walk {
             gitignore: true,
             limit: 100_000,
             max_depth: None,
+            within: Vec::new(),
+            own: Vec::new(),
         }
     }
 }
@@ -116,10 +125,12 @@ fn walk_opts(opts: &ValueMap, who: &str, extra: &[&str]) -> Result<Walk, Value> 
             "limit" if !extra.contains(&"limit") => w.limit = count(v, who, "limit")?,
             "files_limit" => w.limit = count(v, who, "files_limit")?,
             "max_depth" => w.max_depth = Some(count(v, who, "max_depth")?),
+            "within" => w.within = folders(strings(v, who, "within")?),
+            "own" => w.own = folders(strings(v, who, "own")?),
             other if extra.contains(&other) => {}
             other => {
                 return Err(err(format!(
-                    "{}: unknown option '{}' (supported: skip, exts, hidden, gitignore, {}max_depth{}{})",
+                    "{}: unknown option '{}' (supported: skip, exts, hidden, gitignore, {}max_depth, within, own{}{})",
                     who,
                     other,
                     if extra.contains(&"limit") {
@@ -134,6 +145,41 @@ fn walk_opts(opts: &ValueMap, who: &str, extra: &[&str]) -> Result<Walk, Value> 
         }
     }
     Ok(w)
+}
+
+/// Folders as `within`/`own` name them: `/`-separated, no ends.
+fn folders(xs: Vec<String>) -> Vec<String> {
+    xs.into_iter()
+        .map(|x| x.replace('\\', "/").trim_matches('/').to_string())
+        .collect()
+}
+
+/// Whether `a` is `b` or a folder above it (`""` is above everything).
+fn above_or_at(a: &str, b: &str) -> bool {
+    a.is_empty() || a == b || (b.starts_with(a) && b.as_bytes().get(a.len()) == Some(&b'/'))
+}
+
+/// What a restricted walk (`within`, `own`) enters and lists.
+#[derive(Clone)]
+struct Only {
+    within: Vec<String>,
+    own: Vec<String>,
+}
+
+impl Only {
+    /// A folder at `rel` is entered: on the way to a target, or below one
+    /// walked whole.
+    fn enters(&self, rel: &str) -> bool {
+        self.within
+            .iter()
+            .chain(self.own.iter())
+            .any(|t| above_or_at(rel, t))
+            || self.within.iter().any(|t| above_or_at(t, rel))
+    }
+    /// A file whose folder is `dir` is listed.
+    fn lists(&self, dir: &str) -> bool {
+        self.own.iter().any(|t| t == dir) || self.within.iter().any(|t| above_or_at(t, dir))
+    }
 }
 
 /// The files under `root` the walk keeps, relative to it with `/`
@@ -151,14 +197,39 @@ fn walk_files(root: &Path, w: &Walk) -> Vec<String> {
         .max_depth(w.max_depth)
         .threads(num_cpus::get().clamp(1, 8));
     let skip = Arc::new(w.skip.clone());
+    let only = if w.within.is_empty() && w.own.is_empty() {
+        None
+    } else {
+        Some(Arc::new(Only {
+            within: w.within.clone(),
+            own: w.own.clone(),
+        }))
+    };
+    let only_f = only.clone();
+    let root_f: Arc<PathBuf> = Arc::new(root.to_path_buf());
     b.filter_entry(move |e| {
         let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        !(is_dir
+        if is_dir
             && e.depth() > 0
             && e.file_name()
                 .to_str()
                 .map(|n| skip.iter().any(|s| s == n))
-                .unwrap_or(false))
+                .unwrap_or(false)
+        {
+            return false;
+        }
+        match (&only_f, is_dir && e.depth() > 0) {
+            (Some(o), true) => match e
+                .path()
+                .strip_prefix(root_f.as_ref())
+                .ok()
+                .and_then(|r| r.to_str())
+            {
+                Some(r) => o.enters(&r.replace(std::path::MAIN_SEPARATOR, "/")),
+                None => false,
+            },
+            _ => true,
+        }
     });
     let found: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let exts = Arc::new(w.exts.clone());
@@ -168,6 +239,7 @@ fn walk_files(root: &Path, w: &Walk) -> Vec<String> {
         let found = found.clone();
         let exts = exts.clone();
         let root_buf = root_buf.clone();
+        let only = only.clone();
         Box::new(move |entry| {
             let e = match entry {
                 Ok(e) => e,
@@ -195,6 +267,12 @@ fn walk_files(root: &Path, w: &Walk) -> Vec<String> {
                 Some(s) => s.replace(std::path::MAIN_SEPARATOR, "/"),
                 None => return ignore::WalkState::Continue,
             };
+            if let Some(o) = &only {
+                let dir = rel.rfind('/').map(|i| &rel[..i]).unwrap_or("");
+                if !o.lists(dir) {
+                    return ignore::WalkState::Continue;
+                }
+            }
             let mut f = found.lock().unwrap();
             if f.len() >= limit {
                 return ignore::WalkState::Quit;

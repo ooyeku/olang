@@ -99,6 +99,16 @@ pub fn create_fs_module() -> Value {
     // threads: src/stdlib/fs_scan.rs.
     module.insert("scan".to_string(), create_builtin_function("scan", 1));
     module.insert("search".to_string(), create_builtin_function("search", 2));
+    // A folder's tree watched (FSEvents on macOS): src/stdlib/fs_watch.rs.
+    module.insert("watch".to_string(), create_builtin_function("watch", 1));
+    module.insert(
+        "watch_next".to_string(),
+        create_builtin_function("watch_next", 1),
+    );
+    module.insert(
+        "watch_close".to_string(),
+        create_builtin_function("watch_close", 1),
+    );
     module.insert(
         "create_dir".to_string(),
         create_builtin_function("create_dir", 1),
@@ -178,6 +188,9 @@ pub fn call_fs_function(name: &str, args: Vec<Value>) -> Result<Value, Box<dyn s
         "glob" => glob(args),
         "scan" => crate::stdlib::fs_scan::scan(args),
         "search" => crate::stdlib::fs_scan::search(args),
+        "watch" => crate::stdlib::fs_watch::watch(args),
+        "watch_next" => crate::stdlib::fs_watch::watch_next(args),
+        "watch_close" => crate::stdlib::fs_watch::watch_close(args),
         "create_dir" => create_dir(args),
         "create_dir_all" => create_dir_all(args),
         "remove_dir" => remove_dir(args),

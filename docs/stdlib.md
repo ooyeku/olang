@@ -1317,6 +1317,7 @@ a `Bool`, and the path functions `join`, `dirname`, `basename`, and
 | Files | `read_file` `write_file` `append_file` `copy_file` `move_file` `remove_file` `trash` — and `read_bytes` / `write_bytes` for [binary data](#bytes--binary-data) |
 | Directories | `create_dir` `create_dir_all` `list_dir` `walk` `glob` `remove_dir` `remove_dir_all` |
 | Queries | `exists` `is_file` `is_dir` `file_size` `file_info` |
+| Watching | `watch` `watch_next` `watch_close`: a folder's whole tree followed as it changes |
 | Paths | `join(parts)` `dirname` `basename` `ext`: pure string surgery, answering the string itself. `abs_path` answers a **`Result`** (`Ok(path)`): it resolves against the current directory, which can fail, and normalizes `.`/`..` without requiring the file to exist. `real_path` (a `Result` too) also resolves symbolic links (`/tmp/x` is `/private/tmp/x` on macOS); for a path that does not exist yet it makes the nearest existing folder real and keeps the rest |
 
 `fs.trash(path)` moves a file or a folder to the Trash as the Finder's
@@ -1359,6 +1360,8 @@ preview and apply. An option either function does not know raises.
 | `gitignore` | `false` ignores the `.gitignore`s (`true`) |
 | `limit` | at most this many files (100,000) |
 | `max_depth` | folders deeper than this are not walked (no limit) |
+| `within` | only these folders (relative to `root`) and all below them, by the whole walk's rules: a parent's `.gitignore`, the skipped and hidden folders on the way (what a watch's changed folders are read again with) |
+| `own` | only these folders' own files, as `within` (`""` the root's) |
 
 | `fs.search` option | Meaning (default) |
 |---|---|
@@ -1369,7 +1372,49 @@ preview and apply. An option either function does not know raises.
 | `per_file` | at most this many matches a file (200) |
 | `files` | search these paths (relative to `root`) instead of walking |
 | `replace` | a template each match also answers as `with` |
-| `skip` `exts` `hidden` `gitignore` `max_depth` | as `fs.scan`'s, for the walk |
+| `skip` `exts` `hidden` `gitignore` `max_depth` `within` `own` | as `fs.scan`'s, for the walk |
+
+`fs.watch(root, opts)` follows a folder's whole tree as it changes — a
+file made in the Finder, a `git checkout`, a build's output — with the
+operating system's own notices (FSEvents on macOS: one stream for the
+tree, on a thread of its own, nothing polled; elsewhere it answers an
+`Err`, and a caller keeps polling). It answers `Ok(Watch)`, a handle a
+reader task holds. `fs.watch_next(w, opts)` waits up to `timeout_ms` for
+a change, then keeps taking more while they come within `settle_ms`
+(never past a second), so a burst of thousands of writes is one batch:
+`Ok(#{ root, events, rescan })`, each path once as `#{ path, kind, dir }`
+— `kind` is `created`, `removed` or `modified` as the disk stands when
+the batch is made (a rename is its old path removed and its new one
+created), `dir` whether it is a folder, `path` absolute and spelled as
+`root` was. When the system dropped notices, or a batch would hold more
+than `max` paths, `events` is empty and `rescan` names the folders to
+read again. `Ok(())` when nothing changed in time; `Err` once closed.
+`fs.watch_close(w)` stops it (a `watch_next` waiting answers `Err`). A
+path under a folder named in `ignore` never leaves the watching thread,
+so a build writing into `target/` costs nothing downstream; `keep` lets
+chosen paths under an ignored folder through (a repository's
+`.git/HEAD`, `.git/index`, `.git/refs`, at any depth).
+
+| `fs.watch` option | Meaning (default) |
+|---|---|
+| `ignore` | folder names whose contents are never said, wherever they are (`[]`) |
+| `keep` | paths from an ignored folder's name down said all the same: `.git/HEAD` (`[]`) |
+| `latency_ms` | how long the system gathers notices before handing them over (50) |
+
+| `fs.watch_next` option | Meaning (default) |
+|---|---|
+| `timeout_ms` | how long to wait for the first change (1,000) |
+| `settle_ms` | a burst ends after this long with nothing new (50) |
+| `max` | at most this many paths a batch; past it, `rescan` the root (5,000) |
+
+```olang no-run
+let w = unwrap(fs.watch("project", #{ "ignore": [".git", "target"], "keep": [".git/HEAD"] }))
+match fs.watch_next(w, #{ "timeout_ms": 2000 }) {
+    Ok(b) => if b != () => { for e in b.events { println(e.kind + " " + e.path) } },
+    Err(e) => println("closed")
+}
+fs.watch_close(w)
+```
 
 ```olang no-run
 let text = unwrap(fs.read_file("data.txt"))
