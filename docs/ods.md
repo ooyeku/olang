@@ -1347,7 +1347,9 @@ println(to_string(str.contains(svg, "<svg")))
 ```
 
 Marks: `line`, `area`, `scatter`/`point` (layerable,
-color-splittable), `bar`, `hist` (with `bins`), and `box` (one box
+color-splittable), `bar`, `hist` (its values the `y` column, with
+`bins`; `color` splits it into grouped bars over shared bins, one group's
+counts beside another's), and `box` (one box
 per distinct `x`). All plot options (`colors`, `vary`, `scale`,
 `theme`, `interactive`, sizes, labels) ride in the spec itself.
 

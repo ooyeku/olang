@@ -24,7 +24,8 @@
 //
 // Marks: line, area, scatter/point (layerable, color-splittable);
 // bar (color splits into grouped bars, `"stack": true` stacks them;
-// rows sharing a category sum); hist (`"bins"`); box (one box per
+// rows sharing a category sum); hist (`"y"` its values, `"bins"`;
+// color splits it into grouped bars over shared bins); box (one box per
 // distinct x value). Line marks connect points in row order — sort
 // the records first when order matters.
 
@@ -207,7 +208,8 @@ share fn chart(spec) = {
             else => [en[0], en[1], as_series(en[2]), as_series(en[3])]), o)
     } else => {
         let records = records_of(spec.data)
-        if mark == "hist" => plot.hist(
+        if mark == "hist" && map_has_key(spec, "color") => hist_by(records, spec.y, spec.color, opt(spec, "bins", 20), o)
+        else if mark == "hist" => plot.hist(
             ods.series(col(records, spec.y)), opt(spec, "bins", 20), o)
         else => {
             let xcol = spec.x
@@ -233,6 +235,29 @@ share fn chart(spec) = {
             }
         }
     }
+}
+
+// A histogram split by `color`: every group's counts over the same
+// `bins` bins of the whole range, as grouped bars (each bin's label its
+// lower edge), so two groups' distributions read side by side.
+fn hist_by(records, ycol, ccol, bins, o) = {
+    let rows = filter(records, (r) => map_get(r, ycol) != ())
+    let xs = map(rows, (r) => to_float(map_get(r, ycol)))
+    let lo = if len(xs) == 0 => 0.0 else => min(xs)
+    let hi = if len(xs) == 0 => 1.0 else => max(xs)
+    let w = if hi > lo => (hi - lo) / to_float(bins) else => 1.0
+    let at = (x) => min(bins - 1, max(0, math.floor((x - lo) / w)))
+    let digits = if w >= 10.0 => 0 else if w >= 1.0 => 1 else => 2
+    let labels = map(range(0, bins), (i) => str.fixed(lo + w * to_float(i), digits))
+    let pairs = map(groups(rows, ccol), (g) => {
+        let mut counts = map(range(0, bins), (i) => 0)
+        for r in filter(rows, (r) => map_get(r, ccol) == g) {
+            let i = at(to_float(map_get(r, ycol)))
+            counts = take(counts, i) + [counts[i] + 1] + skip(counts, i + 1)
+        }
+        [to_label(g), ods.series(counts)]
+    })
+    plot.bars(labels, pairs, o)
 }
 
 // ── the canvas target ──────────────────────────────────────────────────

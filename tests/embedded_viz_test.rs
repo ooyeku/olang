@@ -115,6 +115,27 @@ let ff = viz.chart(#{{ "data": df, "mark": "bar", "x": "kind", "y": "value" }})
 }
 
 #[test]
+fn a_histogram_split_by_color_is_grouped_bars_over_shared_bins() {
+    assert_all_true(
+        &format!(
+            r##"use viz
+{ROWS}
+let hs = viz.chart(#{{ "data": rows, "mark": "hist", "y": "value", "color": "kind", "bins": 4 }})
+let d = unwrap(plot.describe(hs))
+let total = fold(d.series, 0, (acc, s) => acc + fold(ods.to_list(ods.series(s.values)), 0, (a, b) => a + to_int(b)))
+[
+    d.type == "bar",
+    d.layout == "grouped",
+    len(d.labels) == 4,
+    len(d.series) == 2,
+    total == len(rows)
+]"##
+        ),
+        5,
+    );
+}
+
+#[test]
 fn interactive_passes_through_to_marks() {
     assert_all_true(
         &format!(
