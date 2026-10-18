@@ -1742,6 +1742,32 @@ impl WinState {
         } else {
             (dx, dy)
         };
+        // A node that hears only the sideways part (`wheel_x`: a diff's
+        // lines scrolling across together) takes it; down goes on to the
+        // scrollers around it.
+        let dx = match self.scene.target_up(&hit, |n| n.wheel_x) {
+            Some(k) => {
+                if dx != 0.0 {
+                    let m = mods.unwrap_or(self.mods);
+                    out.push(self.ev(
+                        "wheel",
+                        vec![
+                            ("key", s(&k)),
+                            ("dx", float(dx)),
+                            ("dy", float(0.0)),
+                            ("x", float(x)),
+                            ("y", float(y)),
+                            ("mod", Value::Boolean(m.command())),
+                            ("shift", Value::Boolean(m.shift)),
+                            ("alt", Value::Boolean(m.alt)),
+                            ("ctrl", Value::Boolean(m.ctrl)),
+                        ],
+                    ));
+                }
+                0.0
+            }
+            None => dx,
+        };
         // Each axis goes to the nearest scroller that can still move
         // along it: two fingers across a board's column (which scrolls
         // down) move the board sideways, and a diagonal moves both.

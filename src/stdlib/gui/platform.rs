@@ -264,6 +264,8 @@ pub fn capabilities() -> Value {
         // field's `track` and `past_end`)
         ("group_hover", b(true)),
         ("scroll_bars", b(true)),
+        // a node's `wheel_x`: it hears the wheel's sideways part only
+        ("wheel_x", b(true)),
     ])
 }
 

@@ -1817,6 +1817,39 @@ fn a_canvas_hears_the_wheel_the_pinch_and_says_what_is_under_the_pointer() {
 }
 
 #[test]
+fn a_node_that_hears_the_wheel_across_takes_only_that_and_down_scrolls_around_it() {
+    let _turn = events_turn();
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (300, 200) })
+        let ev = gui.events()
+        let mut stale = true
+        while stale { match chan.try_recv(ev) { Ok(()) => { stale = false }, Ok(e) => (), Err(e) => { stale = false } } }
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 300, 200) },
+          #{ "key": "sc", "parent": "root", "role": "region", "box": (0, 0, 300, 200), "content": (300, 800) },
+          #{ "key": "line", "parent": "sc", "role": "group", "decorative": true, "box": (0, 0, 300, 20), "wheel_x": true,
+             "draw": [#{ "op": "rect", "x": 0, "y": 0, "w": 300, "h": 20, "fill": "#eeeeee" }] }
+        ])
+        gui.input(w, #{ "kind": "pointer", "action": "move", "x": 20, "y": 10 })
+        // a diagonal: across to the line, down to the region
+        gui.input(w, #{ "kind": "wheel", "dx": -12, "dy": -5 })
+        // shift turns a mouse's wheel across: the line's
+        gui.input(w, #{ "kind": "wheel", "dx": 0, "dy": -10, "shift": true })
+        let mut got = []
+        let mut more = true
+        while more { match chan.try_recv(ev) { Ok(()) => { more = false }, Ok(e) => { got = got + [e] }, Err(e) => { more = false } } }
+        let wheels = filter(got, (e) => map_get(e, "kind") == "wheel")
+        let scrolled = filter(got, (e) => map_get(e, "kind") == "scrolled")
+        [len(wheels), map_get(wheels[0], "key"), map_get(wheels[0], "dx"), map_get(wheels[0], "dy"), map_get(wheels[1], "dx"), len(scrolled), map_get(scrolled[0], "y"),
+         gui.platform().wheel_x]
+    "##);
+    assert_eq!(
+        text(&v),
+        r#"[2, "line", -12.0, 0.0, -10.0, 1, 5.0, true]"#
+    );
+}
+
+#[test]
 fn a_styled_field_edits_a_paragraph_at_a_time_and_says_what_changed() {
     let _turn = events_turn();
     let v = run(r##"

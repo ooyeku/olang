@@ -334,6 +334,11 @@ pub struct Node {
     /// zooms): the window sends `wheel` and `pinch` events for it rather
     /// than scrolling what is around it.
     pub wheel: bool,
+    /// It hears only the wheel's sideways part (lines that scroll across
+    /// together, inside a list that scrolls down): the window sends a
+    /// `wheel` event with `dx` for it, and the rest scrolls what is
+    /// around it.
+    pub wheel_x: bool,
     /// The node that stands for this one's focus to assistive output (its
     /// active descendant): a canvas's focused shape, said by an element
     /// placed over it.
@@ -464,6 +469,7 @@ const NODE_KEYS: &[&str] = &[
     "actions",
     "draw",
     "wheel",
+    "wheel_x",
     "active",
     "image",
     "fit",
@@ -722,6 +728,7 @@ impl Scene {
             },
             draw: get(op, "draw").cloned(),
             wheel: get_bool(op, "wheel", what)?.unwrap_or(false),
+            wheel_x: get_bool(op, "wheel_x", what)?.unwrap_or(false),
             active: get_str(op, "active", what)?.map(str::to_string),
             image: get(op, "image").cloned(),
             fit: get_str(op, "fit", what)?.unwrap_or("contain").to_string(),
