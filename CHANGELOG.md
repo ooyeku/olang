@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   its data gone), draws an output as HTML (`html`) and the page (`page`).
   A Frame read whole is recorded in its columnar bytes, and a chart is
   redrawn in the other theme from its own colours (olang-ods `retheme`).
+- **A brush is dragged on an exported page and in a published app.** A
+  `ui.brush` chart is drawn under a layer the pointer drags a range on:
+  in `olang notebook export`'s page the range is shaded and the points
+  outside it dimmed, in the page alone (the page's only script); in
+  `olang notebook app`'s, the range is set in the kernel, as a slider's
+  value is, and the cells reading it run again. A chart's description
+  says where its plot stands (`plot: #{ left, top, w, h }`).
 
 - **The language server reads a notebook.** `olang lsp` takes an `.olmd`
   as one document whose cells are one module on the file's own lines:

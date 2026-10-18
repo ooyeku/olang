@@ -1406,3 +1406,42 @@ fn an_output_as_html_and_the_notebooks_page() {
         "{page}"
     );
 }
+
+/// A brush is set as a slider is: the range an app's page dragged (as
+/// olang source), or `()` for none; its output, drawn for the app, is a
+/// layer over its chart a drag is read on.
+#[test]
+fn a_brush_is_set_by_the_host_and_drawn_for_dragging() {
+    let dir = project();
+    let (mut r, _) = Repl::start(dir.path());
+    let c = r.ask(json!({ "op": "eval", "cell": "c5",
+        "code": "let chart = plot.scatter(ods.series([1.0, 2.0, 3.0, 4.0]), ods.series([2.0, 1.0, 4.0, 3.0]), #{})" }));
+    assert_eq!(c["ok"], json!(true), "{c}");
+    let a = r.ask(json!({ "op": "eval", "cell": "c6", "html": true,
+        "code": "use ui\nlet window = ui.brush(chart)" }));
+    assert_eq!(a["ok"], json!(true), "{a}");
+    assert_eq!(a["control"]["kind"], json!("brush"), "{a}");
+    let html = a["html"].as_str().unwrap_or("");
+    assert!(
+        html.contains("<div class=\"brush\"")
+            && html.contains("data-cell=\"c6\" data-name=\"window\"")
+            && html.contains("\"plot\":{"),
+        "{html}"
+    );
+    let s = r.ask(json!({ "op": "set", "cell": "c6", "value": "[1.5, 3.0]" }));
+    assert_eq!(s["ok"], json!(true), "{s}");
+    let n = r.eval("len(filter([1.0, 2.0, 3.0, 4.0], (x) => window != () && x >= window[0] && x <= window[1]))");
+    assert_eq!(n["value"]["s"], json!("2"), "{n}");
+    let again = r.ask(json!({ "op": "eval", "cell": "c6", "html": true,
+        "code": "use ui\nlet window = ui.brush(chart)" }));
+    assert!(
+        again["html"]
+            .as_str()
+            .unwrap_or("")
+            .contains("data-x0=\"1.5\" data-x1=\"3\""),
+        "{again}"
+    );
+    let cleared = r.ask(json!({ "op": "set", "cell": "c6", "value": "()" }));
+    assert_eq!(cleared["ok"], json!(true), "{cleared}");
+    assert_eq!(r.eval("window")["value"]["s"], json!("()"));
+}

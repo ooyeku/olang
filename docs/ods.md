@@ -1296,6 +1296,7 @@ that carries none; a `viz` chart, compiled to `plot`, carries one too.
 | `edges`, `counts` (hist) | the bins' `k + 1` edges and their `k` counts |
 | `xl`, `yl`, `rows`, `scale` (heatmap) | the column and row labels, the cells by row, the ramp's name |
 | `series` (box) | `[#{ name, min, q1, median, q3, max }]` |
+| `plot` | `#{ left, top, w, h }`: where the plot stands in the chart's own units (an `x` extent's `lo` drawn at `left`, its `hi` at `left + w`) — what a page's brush maps the pointer through |
 
 ```olang
 let d = unwrap(plot.describe(plot.line(ods.series([1, 2, 3]), ods.series([2.0, 4.0, 3.0]), #{ "title": "t" })))

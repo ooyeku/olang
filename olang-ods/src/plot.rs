@@ -1388,8 +1388,21 @@ impl Svg {
             );
         }
         // the chart's description, right after the opening tag: what a
-        // host draws natively, and `plot.describe` answers
-        let json = desc.finish();
+        // host draws natively, and `plot.describe` answers — with where
+        // its plot stands in the chart (what a page's brush maps the
+        // pointer through: `x.lo` at `left`, `x.hi` at `left + w`)
+        let json = desc
+            .field(
+                "plot",
+                format!(
+                    "{{\"left\":{},\"top\":{},\"w\":{},\"h\":{}}}",
+                    jnum(geo.left),
+                    jnum(geo.top),
+                    jnum(geo.plot_w),
+                    jnum(geo.plot_h)
+                ),
+            )
+            .finish();
         let meta = format!(
             "<metadata id=\"{}\">{}</metadata>",
             DESCRIPTION_ID,

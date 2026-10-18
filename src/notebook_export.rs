@@ -733,9 +733,22 @@ fn control_html(ctl: &J, mode: Mode, cell: &str, value: Option<&J>) -> String {
             );
         }
         "brush" => {
+            // the chart under a layer the pointer drags a range on (the
+            // page's script): its range said as data, drawn as it loads
+            let range = brush_range(&val)
+                .map(|(a, b)| format!(" data-x0=\"{}\" data-x1=\"{}\"", a, b))
+                .unwrap_or_default();
+            let _ = write!(
+                o,
+                "<div class=\"brush\" role=\"group\" aria-label=\"{}: drag across the chart to choose a range\"{}{}>",
+                esc(name),
+                data,
+                range
+            );
             if let Some(svg) = ctl.pointer("/svg/text").and_then(|t| t.as_str()) {
                 o.push_str(&chart_html(svg));
             }
+            o.push_str("</div>");
             let _ = write!(
                 o,
                 "<output class=\"value\">{}</output>",
@@ -759,6 +772,16 @@ fn control_html(ctl: &J, mode: Mode, cell: &str, value: Option<&J>) -> String {
     }
     o.push_str("</div>");
     o
+}
+
+/// A brush's range from its value's words (`[x0, x1]`), or `None`.
+fn brush_range(val: &str) -> Option<(f64, f64)> {
+    let inner = val.trim().strip_prefix('[')?.strip_suffix(']')?;
+    let mut parts = inner.split(',').map(|p| p.trim().parse::<f64>());
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(Ok(a)), Some(Ok(b)), None) if a.is_finite() && b.is_finite() => Some((a, b)),
+        _ => None,
+    }
 }
 
 // ── prose ───────────────────────────────────────────────────────────
@@ -1170,7 +1193,17 @@ pub fn page_html(text: &str, path: &Path, doc: &J, mode: Mode) -> String {
             "an exported notebook"
         }
     );
-    let script = if mode == Mode::App { APP_SCRIPT } else { "" };
+    // a page runs nothing but its brushes (a range dragged on a chart,
+    // highlighted on the page) and, an app's, its controls' posts
+    let brushes = body.contains("<div class=\"brush\"");
+    let script = match (mode, brushes) {
+        (Mode::App, _) => format!("{}{}", BRUSH_SCRIPT, APP_SCRIPT),
+        (_, true) => format!(
+            "{}\n<script>olangBrush(document, null);</script>",
+            BRUSH_SCRIPT
+        ),
+        _ => String::new(),
+    };
     format!(
         "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<meta name=\"color-scheme\" content=\"light dark\">\n<meta name=\"generator\" content=\"{}\">\n<title>{}</title>\n<style>{}</style>\n</head>\n<body>\n<main class=\"nb\">\n{}\n<footer class=\"foot-note\">{} · {}</footer>\n</main>{}\n</body>\n</html>\n",
         esc(&generated),
@@ -1297,6 +1330,9 @@ figure{margin:0}
 .control select,.control input[type=text],.control input[type=date]{font:13px/20px inherit;color:var(--fg);background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:2px 8px;height:26px}
 .control :disabled{opacity:1}
 .control input[type=range]:disabled::-webkit-slider-thumb{box-shadow:none}
+.brush{position:relative;flex:1;min-width:0;max-width:720px;cursor:crosshair;touch-action:none;-webkit-user-select:none;user-select:none}
+.brush .sel{position:absolute;display:none;pointer-events:none;background:color-mix(in srgb,var(--accent) 14%,transparent);border-left:1px solid var(--accent);border-right:1px solid var(--accent)}
+.control:has(.brush){align-items:flex-start;flex-wrap:wrap}
 .no-run .code{opacity:.75}
 .foot-note{margin:48px auto 0;max-width:680px;font-size:11px;color:var(--muted);border-top:1px solid var(--hairline);padding-top:12px}
 .busy .output{opacity:.55;transition:opacity .12s}
@@ -1304,6 +1340,104 @@ figure{margin:0}
 .light-only{display:block!important}.dark-only{display:none!important}.nb{padding:0;max-width:none}.cell{break-inside:avoid}}
 @media (max-width:640px){.nb{padding:24px 16px 48px}}
 "#;
+
+/// A brush on a page: a range dragged across its chart (the pointer
+/// mapped through the chart's description: its `x` extent over its
+/// `plot`'s width), shaded, the points outside it dimmed, its words said
+/// beside it; a press without a drag clears it. `olangBrush(root, send)`
+/// binds every brush under `root` once; `send(el, literal)` hears a range
+/// chosen (an app's: `[x0, x1]` or `()` as olang source), or nothing on
+/// an exported page.
+const BRUSH_SCRIPT: &str = r#"
+<script>
+window.olangBrush = (function () {
+  function desc(svg) {
+    var m = svg && svg.querySelector('metadata');
+    try { return m ? JSON.parse(m.textContent) : null; } catch (e) { return null; }
+  }
+  function shown(el) {
+    var all = el.querySelectorAll('svg');
+    for (var i = 0; i < all.length; i++) { if (all[i].getBoundingClientRect().width > 0) return all[i]; }
+    return all[0] || null;
+  }
+  function lit(v) {
+    var t = String(Number(v.toPrecision(6)));
+    return /[.e]/.test(t) ? t : t + '.0';
+  }
+  return function (root, send) {
+    root.querySelectorAll('.brush').forEach(function (el) {
+      if (el.dataset.brushed) return;
+      var d = desc(shown(el));
+      if (!d || !d.plot || !d.x || !(d.x.hi > d.x.lo)) return;
+      el.dataset.brushed = '1';
+      var sel = document.createElement('div');
+      sel.className = 'sel';
+      el.appendChild(sel);
+      var out = el.parentNode.querySelector('output');
+      var range = el.dataset.x0 !== undefined ? [parseFloat(el.dataset.x0), parseFloat(el.dataset.x1)] : null;
+      var from = null;
+      function geo() {
+        var svg = shown(el), r = svg.getBoundingClientRect(), e = el.getBoundingClientRect();
+        return { k: r.width / d.width, ox: r.left - e.left, oy: r.top - e.top, left: e.left };
+      }
+      function toX(clientX) {
+        var g = geo(), f = ((clientX - g.left - g.ox) / g.k - d.plot.left) / d.plot.w;
+        return d.x.lo + Math.max(0, Math.min(1, f)) * (d.x.hi - d.x.lo);
+      }
+      function toPx(x) {
+        var g = geo();
+        return g.ox + (d.plot.left + (x - d.x.lo) / (d.x.hi - d.x.lo) * d.plot.w) * g.k;
+      }
+      function draw() {
+        var g = geo();
+        if (range) {
+          var a = toPx(range[0]), b = toPx(range[1]);
+          sel.style.display = 'block';
+          sel.style.left = a + 'px';
+          sel.style.width = Math.max(1, b - a) + 'px';
+          sel.style.top = (g.oy + d.plot.top * g.k) + 'px';
+          sel.style.height = (d.plot.h * g.k) + 'px';
+        } else {
+          sel.style.display = 'none';
+        }
+        el.querySelectorAll('svg circle').forEach(function (c) {
+          var cx = parseFloat(c.getAttribute('cx')), cy = parseFloat(c.getAttribute('cy'));
+          if (!(cy >= d.plot.top - 1 && cy <= d.plot.top + d.plot.h + 1)) return;
+          var v = d.x.lo + (cx - d.plot.left) / d.plot.w * (d.x.hi - d.x.lo);
+          var inside = !range || (v >= range[0] - 1e-9 * Math.abs(d.x.hi - d.x.lo) && v <= range[1] + 1e-9 * Math.abs(d.x.hi - d.x.lo));
+          c.style.opacity = inside ? '' : '0.22';
+        });
+        if (out) out.textContent = range ? '[' + lit(range[0]) + ', ' + lit(range[1]) + ']' : 'no range brushed';
+      }
+      el.addEventListener('pointerdown', function (e) {
+        if (e.button !== 0) return;
+        from = toX(e.clientX);
+        range = [from, from];
+        el.setPointerCapture(e.pointerId);
+        draw();
+        e.preventDefault();
+      });
+      el.addEventListener('pointermove', function (e) {
+        if (from === null) return;
+        var x = toX(e.clientX);
+        range = [Math.min(from, x), Math.max(from, x)];
+        draw();
+      });
+      function end() {
+        if (from === null) return;
+        from = null;
+        if (range && toPx(range[1]) - toPx(range[0]) < 3) range = null;
+        draw();
+        if (send) send(el, range ? '[' + lit(range[0]) + ', ' + lit(range[1]) + ']' : '()');
+      }
+      el.addEventListener('pointerup', end);
+      el.addEventListener('pointercancel', end);
+      window.addEventListener('resize', draw);
+      draw();
+    });
+  };
+})();
+</script>"#;
 
 /// A published app's page: each control change posts its cell and value,
 /// and the outputs the server ran again are swapped in.
@@ -1345,8 +1479,12 @@ const APP_SCRIPT: &str = r#"
     return JSON.stringify(el.value);
   }
   function bind() {
+    // a brush: a range dragged on its chart is set, as a slider's value is
+    window.olangBrush(document, function (el, value) {
+      if (el.dataset.cell) post('/api/rpc/nb.set', { cell: el.dataset.cell, value: value });
+    });
     document.querySelectorAll('[data-cell][data-name]').forEach(function (el) {
-      if (el.dataset.bound) return;
+      if (el.dataset.bound || el.classList.contains('brush')) return;
       el.dataset.bound = '1';
       var send = function () { post('/api/rpc/nb.set', { cell: el.dataset.cell, value: literal(el) }); };
       if (el.type === 'range') {
@@ -1790,7 +1928,10 @@ mod tests {
             !html.contains("cell-gone"),
             "a cell hidden all is not on the page"
         );
-        assert!(!html.contains("<script"), "an exported page runs nothing");
+        assert!(
+            !html.contains("<script"),
+            "an exported page with no brush runs nothing"
+        );
         assert!(html.contains("prefers-color-scheme:dark"));
     }
 
@@ -1813,6 +1954,66 @@ mod tests {
             "{}",
             live
         );
+    }
+
+    #[test]
+    fn a_brush_is_dragged_on_a_page_and_set_in_an_app() {
+        let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 720 440\"><metadata id=\"olang-chart\">{\"v\":1,\"type\":\"xy\",\"width\":720,\"height\":440,\"x\":{\"lo\":0.0,\"hi\":10.0},\"plot\":{\"left\":56.0,\"top\":20.0,\"w\":644.0,\"h\":380.0}}</metadata></svg>";
+        let reply = json!({ "ok": true, "out": "", "value": { "k": "list", "s": "[2.0, 4.5]" },
+            "control": { "kind": "brush", "name": "window", "value": { "k": "list", "s": "[2.0, 4.5]" }, "svg": { "text": svg } } });
+        // the chart under a layer a range is dragged on, its range said
+        let page = output_html(&reply, None, Mode::Export, "c4", false);
+        assert!(
+            page.contains("<div class=\"brush\"")
+                && page.contains("data-x0=\"2\" data-x1=\"4.5\"")
+                && page.contains("olang-chart")
+                && !page.contains("data-cell"),
+            "{}",
+            page
+        );
+        // an app's: the cell and name a drag sets
+        let live = output_html(&reply, None, Mode::App, "c4", false);
+        assert!(
+            live.contains("data-cell=\"c4\" data-name=\"window\""),
+            "{}",
+            live
+        );
+        // no range: nothing drawn yet
+        let none = json!({ "ok": true, "out": "", "value": { "k": "unit", "s": "()" },
+            "control": { "kind": "brush", "name": "window", "value": { "k": "unit", "s": "()" }, "svg": { "text": svg } } });
+        let empty = output_html(&none, None, Mode::Export, "c4", false);
+        assert!(
+            !empty.contains("data-x0") && empty.contains("no range brushed"),
+            "{}",
+            empty
+        );
+        // the page runs its brush script (only for a page with a brush),
+        // an app's its posts too
+        let text = "```olang\nlet window = ui.brush(chart)\n```\n";
+        let doc = json!({ "cells": [{ "line": 2, "reply": reply }] });
+        let exported = page_html(text, Path::new("/x/b.olmd"), &doc, Mode::Export);
+        assert!(
+            exported.contains("window.olangBrush")
+                && exported.contains("olangBrush(document, null)")
+                && !exported.contains("/api/rpc/nb.set"),
+            "{}",
+            exported
+        );
+        let app = page_html(text, Path::new("/x/b.olmd"), &doc, Mode::App);
+        assert!(
+            app.contains("window.olangBrush(document, function (el, value)"),
+            "{}",
+            app
+        );
+        let plain = page_html(
+            "```olang\n1\n```\n",
+            Path::new("/x/p.olmd"),
+            &json!({}),
+            Mode::Export,
+        );
+        assert!(!plain.contains("<script"));
+        assert_eq!(brush_range("[1.5, -2e3]"), Some((1.5, -2000.0)));
+        assert_eq!(brush_range("()"), None);
     }
 
     #[test]
