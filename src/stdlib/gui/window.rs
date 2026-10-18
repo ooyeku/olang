@@ -2147,8 +2147,22 @@ impl WinState {
             } else {
                 max_w
             };
-            let mut shaped = ts.shape(t, &st.font, fade(st.color), align_w, st.align, s);
+            // a text that does not wrap is one line: shaped as one, then
+            // aligned in its box only when it fits (shaped at the box's
+            // width it would wrap onto lines the box cannot hold)
+            let one = !st.wrap && st.align != Align::Start;
+            let line = if one {
+                Some(ts.shape(t, &st.font, fade(st.color), None, Align::Start, s))
+            } else {
+                None
+            };
+            let fits = line.as_ref().is_none_or(|l| l.width <= content[2] + 0.5);
+            let mut shaped = match line {
+                Some(l) if !fits => l,
+                _ => ts.shape(t, &st.font, fade(st.color), align_w, st.align, s),
+            };
             // a line wider than its box, cut to fit with an ellipsis
+            // (whatever its alignment)
             if st.truncate && !st.wrap && shaped.width > content[2] + 0.5 && content[2] > 0.0 {
                 let chars: Vec<char> = t.chars().collect();
                 let (mut lo, mut hi) = (0usize, chars.len());

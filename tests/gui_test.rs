@@ -973,6 +973,30 @@ fn under_a_zoom_the_pointer_lands_where_the_pixels_show() {
     assert_eq!(text(&v), r#""b""#);
 }
 
+#[test]
+fn a_line_aligned_to_its_end_is_cut_never_wrapped() {
+    // shaped at its box's width an aligned line wrapped onto lines its
+    // box could not hold (olang Studio's status notice, its completions'
+    // descriptions): one line, cut with an ellipsis, nothing under its box
+    let _turn = events_turn();
+    let v = run(r##"
+        fn shot(align, cover) = {
+            let w = gui.headless(#{ "size": (200, 60) })
+            gui.apply(w, [#{ "key": "root", "box": (0, 0, 200, 60), "style": #{ "bg": "#ffffff" } },
+                          #{ "key": "t", "parent": "root", "role": "text", "box": (8, 8, 100, 16), "text": "a notice far too long for the box it is given here",
+                             "style": #{ "color": "#000000", "align": align, "truncate": true } }] +
+                          (if cover => [#{ "key": "c", "parent": "root", "role": "group", "box": (0, 26, 200, 34), "style": #{ "bg": "#ffffff" } }] else => []))
+            let png = gui.read(w, "pixels")
+            gui.close(w)
+            png
+        }
+        // nothing drawn under the box, whatever the alignment
+        [map_get(gui.compare(shot("end", false), shot("end", true)), "same"), map_get(gui.compare(shot("center", false), shot("center", true)), "same"),
+         map_get(gui.compare(shot("start", false), shot("start", true)), "same")]
+    "##);
+    assert_eq!(text(&v), r#"[true, true, true]"#);
+}
+
 // ── pictures and files ───────────────────────────────────────────────
 
 const QUADS: [[u8; 3]; 4] = [[220, 38, 38], [37, 99, 235], [22, 163, 74], [250, 204, 21]];

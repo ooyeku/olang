@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **A node can hear only the wheel's sideways part** (`wheel_x`, said by
+  `gui.platform()`): a `wheel` event with `dy` 0 for it, and down goes on
+  to the scrollers around it — lines in a list that scroll across
+  together (olang Studio's side-by-side diff).
 - **Notebooks beyond the scratchpad** (docs/notebooks.md). `olang run
   x.olmd --for region=east,west` (or `--for sets.json|.yaml|.csv`) runs a
   notebook once a parameter set; `--param` may name a control cell
@@ -174,6 +178,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   even when it held no match: a workspace with 23 MB of CSV beside its
   sources took 15 ms to search for a word instead of 6. The file is now
   lower-cased once and searched whole first.
+- **A line aligned to its end or centre is cut, never wrapped.** A text
+  without `wrap` was shaped at its box's width when aligned, so a line
+  wider than its box wrapped onto lines the box could not hold, over
+  what was under it, and `truncate` never cut it (olang Studio's status
+  notice at its least window). It is shaped as one line, aligned only
+  when it fits, and `truncate` cuts it with an ellipsis whatever its
+  alignment.
 - **A styled field's caret after a space its row wrapped at is drawn.**
   The space hangs past the row's end, and the caret there was cut by the
   field's edge (`gui.read(w, "caret")` was `()`): it stands at the next
