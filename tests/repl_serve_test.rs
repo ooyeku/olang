@@ -1509,8 +1509,14 @@ fn a_values_fields_are_said_by_name_and_at_a_caret() {
     let x = at(&mut r, "cfg.", J::Null);
     assert_eq!(x["want"], json!("keys"));
     assert_eq!(x["fields"][1]["name"], json!("inner"), "{x}");
-    // a frame is no map: nothing after `sales.`
+    // a frame is no map: nothing after `sales.`; a module's functions are
+    // no keys (the language server completes them)
     assert_eq!(at(&mut r, "sales.", J::Null)["fields"], json!([]));
+    assert_eq!(at(&mut r, "ods.", J::Null)["fields"], json!([]));
+    assert_eq!(
+        r.ask(json!({ "op": "fields", "name": "ods" }))["kind"],
+        json!("module")
+    );
     // a name not held: an editor's cached copy
     let known =
         json!({ "cached": { "kind": "frame", "fields": [{ "name": "when", "type": "String" }] } });

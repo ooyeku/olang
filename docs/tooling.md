@@ -1072,7 +1072,8 @@ made of, for an editor's completion: a Frame's columns with their types
 (`kind` `frame`), a map's keys and a record's fields with their values'
 types, in the order they were set (`map`, `record`), a list of maps'
 columns, each typed by the first item holding it (`table`); a Series, a
-list and any other value have none (`fields` empty). `path` walks keys
+list, a module (a map of functions: `ods`, a `use`d package; `kind`
+`module`) and any other value have none (`fields` empty). `path` walks keys
 into it (`m.inner` is `"name": "m", "path": ["inner"]`). Nothing is
 evaluated, so it answers at once and under no capability; a name that is
 not bound is an `unbound` error. At most 500 fields are said (`more` how

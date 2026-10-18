@@ -901,7 +901,7 @@ impl Session {
                 }
                 if let Some(v) = env.get(n) {
                     let (kind, fs) = value_fields(&v);
-                    if kind != "none" && kind != "list" && kind != "series" {
+                    if !matches!(kind, "none" | "list" | "series" | "module") {
                         from_live.push(n.to_string());
                         return Some(fields::Fields { kind, fields: fs });
                     }
@@ -3553,6 +3553,22 @@ fn value_fields(v: &Value) -> (&'static str, Vec<(String, String)>) {
         return ("series", Vec::new());
     }
     match v {
+        // a map of functions is a module (`ods`, a `use`d package), not data
+        Value::Map(m)
+            if !m.is_empty()
+                && m.values()
+                    .all(|x| matches!(x, Value::Builtin(_) | Value::Function(_))) =>
+        {
+            ("module", Vec::new())
+        }
+        Value::Struct { fields, .. }
+            if !fields.is_empty()
+                && fields
+                    .values()
+                    .all(|x| matches!(x, Value::Builtin(_) | Value::Function(_))) =>
+        {
+            ("module", Vec::new())
+        }
         Value::Map(m) if loom_view_role(m).is_none() => (
             "map",
             m.iter()
