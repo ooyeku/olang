@@ -492,7 +492,8 @@ message, tags, line, column, end_line, end_column, range }`:
 `severity` `error`, `warning`, `information` or `hint`; `code` the rule
 (`syntax`, `macro`, `scope`, `runtime`, `type`, `advisory`, an
 advisory's class — `shadow`, `exhaustiveness`, `shape`, `keys`,
-`result`, `copy`, `no_effect` — `unused` for a name nothing reads, `manifest` for olang.toml:
+`result`, `copy`, `no_effect` — `unused` for a name nothing reads, `allow` for an
+[allow comment](#allowing-one-line) that names no class (a warning), `manifest` for olang.toml:
 a `[package] olang` that is not a version is an error, since it names the oldest olang the
 project runs on, see [packages.md](packages.md));
 `tags` `["unnecessary"]` on an unused name (a hint, faded by an editor,
@@ -683,6 +684,47 @@ The discarded-`Result` warning reads which functions return `Result`
 from the same registry `:help` does, so the diagnostic and the
 documentation cannot disagree about what can fail.
 
+### Allowing one line
+
+An advisory that is deliberate is silenced where it is, by an `// allow:`
+comment naming its class — at the end of the line the finding is on, or
+on a line of its own directly above it (other comment lines between are
+allowed; a blank line or code ends it):
+
+```olang
+"logo.png" // allow: no_effect — evaluated by the lens tests
+// allow: shadow, no_effect
+// the shell's own name, on purpose
+let cell = 2
+```
+
+The names are the classes `[check] promote` takes (`exhaustiveness`,
+`shape`, `keys`, `result`, `shadow`, `copy`, `no_effect`, `tier`), plus
+`unused` for the hint of a name nothing reads and `all` for every one of
+them; a list is separated by commas, and the text after its last name is
+free. An allow applies to its one line — the line a finding is reported
+on (a statement's first line, a function's `fn` line) — and only to
+advisories: a syntax, scope, type or run-time error is never silenced,
+whatever the comment says. Its rules:
+
+- **An allow wins over `[check] promote`.** It is explicit and local,
+  so a promoted class's finding on an allowed line is not reported at
+  all; the same finding on any other line is still an error.
+- **A name that is no class is a warning** (code `allow`, at the name,
+  with the nearest class), as is an `// allow:` with no name; that
+  warning is never silenced or promoted. An allow that silences nothing
+  is not reported.
+- **Everywhere findings are made**: `olang check` and its `--format
+  json`, the language server (`unused` silences the hint), a notebook's
+  cells (`.olmd`: the comment in the cell, on the file's own lines),
+  `--tier` (`// allow: tier` on the `fn` line, or above it, leaves a
+  refusal unreported: its JSON row says `"allowed": true` and `"error":
+  false` — but a function pinned native stays an error, since the pin
+  says it must compile), and `--rules`, where a project rule is allowed
+  by its own name (`// allow: rule_no_bare_unwrap`; `all` is the
+  checker's classes, not a rule's).
+- `olang fmt` keeps the comment where it is written, trailing or above.
+
 The same checker runs in the language server, so editors surface all
 three classes while you type — errors as squiggles, advisories as
 hints. Exit is non-zero for a violation or parse error but **not** for a
@@ -717,12 +759,14 @@ refused ones, for an editor's gutter (its `format` is its own, not
 {"format":1,"kind":"tier-check","olang":"0.88.0","refused":1,"errors":0,
  "files":[{"file":"/p/main.ol","error":null,"functions":[
    {"name":"fib","line":5,"col":4,"end_line":6,"verdict":"bytecode","reason":null,"code":null,
-    "docs":null,"ambiguous":false,"pinned":"olang.toml","error":false},
+    "docs":null,"ambiguous":false,"pinned":"olang.toml","allowed":false,"error":false},
    {"name":"doubled_later","line":9,"col":4,"end_line":12,"verdict":"refused",
     "reason":"Compilation failed: it contains a `spawn` (a task starts on the interpreter)",
-    "code":"task","docs":"docs/tooling.md#tier-task","ambiguous":false,"pinned":null,"error":false}]}]}
+    "code":"task","docs":"docs/tooling.md#tier-task","ambiguous":false,"pinned":null,"allowed":false,"error":false}]}]}
 ```
 
+`allowed` is a refusal an [`// allow: tier`](#allowing-one-line) on
+its `fn` line keeps out of the report (not counted, never an error).
 `verdict` is `bytecode` (it compiles; native code is decided per call,
 at run time), `refused` (with the compiler's `reason` and its `code`,
 below), `unchecked` (its refusal names a top-level binding this pass
@@ -845,7 +889,9 @@ knows: a later olang may add a class, or a class such as `keys` or
 `shape` may learn to find more, so a project that promotes `all` can
 see a new failure when it moves to a newer olang —
 name the classes instead to fix the set. `unused`, the class of the
-hint for a name nothing reads, is a hint and never promoted. A name
+hint for a name nothing reads, is a hint and never promoted. One line's
+finding of any class is silenced by an [`// allow:`
+comment](#allowing-one-line), which wins over `promote`. A name
 `promote` does not know is warned about, with the nearest class, by
 `olang check` and `olang doctor`, as is any key or section of
 olang.toml that olang does not read (a near miss such as
@@ -879,6 +925,9 @@ The command applies the following behaviors:
 
 - A rule that raises an error is reported with its name.
 - A rules file that defines no `rule_*` functions is an error.
+- A finding on a line that an `// allow: <rule name>` comment covers
+  (`// allow: rule_no_bare_unwrap`, [as an advisory's](#allowing-one-line))
+  is not reported; `// allow: all` does not cover a rule.
 
 ## `olang eval`
 

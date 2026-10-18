@@ -54,6 +54,13 @@ pub fn file_diagnostics(
     diagnostics.extend(shadow_warnings_in(program, source));
     diagnostics.extend(binding_shadow_warnings(program));
     diagnostics.extend(key_warnings(program, source));
+    // A line's `// allow: <class>` silences its advisories of the class
+    // (never an error), before `[check] promote` makes any an error: an
+    // allow is explicit and local, so it wins.
+    let allows = crate::tools::allow::scan(source);
+    if !allows.is_empty() {
+        diagnostics.retain(|d| !allows.silences(d));
+    }
     // The project's `[check] promote`: the advisory classes it names
     // are errors here, so an exhaustiveness or shape finding gates
     // without a rules file.
@@ -61,6 +68,8 @@ pub fn file_diagnostics(
     for d in diagnostics.iter_mut() {
         promote(d, &promoted);
     }
+    // an allow naming no class: said, never silenced or promoted
+    diagnostics.extend(allows.problems());
     diagnostics
 }
 
@@ -532,6 +541,9 @@ fn run_rules(rules_path: &Path, files: &[PathBuf]) -> usize {
         else {
             continue;
         };
+        // `// allow: rule_<name>` on a finding's line: that rule's, by
+        // its name (`all` is the checker's classes, not a rule's)
+        let allows = crate::tools::allow::scan(&src);
         // Parse to the meta AST; a file that doesn't parse is already
         // reported by the type-check pass, so skip it silently here.
         let nodes = match crate::stdlib::meta::call_meta_function(
@@ -552,6 +564,9 @@ fn run_rules(rules_path: &Path, files: &[PathBuf]) -> usize {
             match interp.call_function(func.clone(), vec![flat.clone()]) {
                 Ok(result) => {
                     for (line, message) in rule_findings(&result) {
+                        if line > 0 && allows.allows(line as u32, name) {
+                            continue;
+                        }
                         findings += 1;
                         if line > 0 {
                             eprintln!("{}:{}: [{}] {}", file.display(), line, name, message);
@@ -1882,8 +1897,9 @@ pub struct CheckDiagnostic {
     pub scope: bool,
     /// The advisory's class, which `[check] promote` names and
     /// `--format json` reports as its `code`: `exhaustiveness`, `shape`,
-    /// `keys`, `result`, `copy`, `shadow`, `no_effect`. Set where the
-    /// finding is made, never read back from its wording.
+    /// `keys`, `result`, `copy`, `shadow`, `no_effect` (and `allow`, an
+    /// allow comment's own warning, which is never promoted). Set where
+    /// the finding is made, never read back from its wording.
     pub class: Option<&'static str>,
 }
 
@@ -4797,6 +4813,19 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
                 }
             })
             .collect();
+        // `// allow: tier` on a function's `fn` line: its refusal is not
+        // reported, unless the function is pinned native (a pin says it
+        // must compile; the allow cannot unsay it)
+        let allows = crate::tools::allow::scan(&source);
+        let allowed = |name: &str| {
+            facts.pin(name).is_none()
+                && declared
+                    .iter()
+                    .find(|(n, ..)| n == name)
+                    .is_some_and(|(_, l, ..)| allows.allows(*l, "tier"))
+        };
+        let refusals: Vec<(String, String)> =
+            refusals.into_iter().filter(|(n, _)| !allowed(n)).collect();
         let pinned_refused: Vec<&TierVerdict> = verdicts
             .iter()
             .filter(|v| v.pinned.is_some() && v.verdict == "refused")
@@ -4820,7 +4849,8 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
                         "verdict": v.verdict, "reason": v.reason, "code": code,
                         "docs": code.map(crate::tier_stats::docs_ref),
                         "ambiguous": v.ambiguous, "pinned": v.pinned,
-                        "error": v.verdict == "refused" && (promoted || v.pinned.is_some()),
+                        "allowed": v.verdict == "refused" && allowed(&v.name),
+                        "error": v.verdict == "refused" && !allowed(&v.name) && (promoted || v.pinned.is_some()),
                     })
                 })
                 .collect();

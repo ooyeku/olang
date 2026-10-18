@@ -2,6 +2,7 @@
 //! (`olang test`), the formatter (`olang fmt`), and the static checker
 //! (`olang check`).
 
+pub mod allow; // `// allow: <class>` — one line's advisories silenced
 pub mod bench; // `olang bench` — reproducible timings with baseline compare
 pub mod check; // `olang check` — provable annotation violations, pre-run
 pub mod coverage; // `olang test --coverage` — line coverage from the runner

@@ -1036,8 +1036,13 @@ fn program_diagnostics(
     let unused = analyzer.get_unused_variables();
     if !unused.is_empty() {
         let sites = declaration_sites(text, &unused);
+        // `// allow: unused` (or `all`) on the declaration's line
+        let allows = crate::tools::allow::scan(text);
         out.extend(unused.into_iter().filter_map(|name| {
             let range = *sites.get(name.as_str())?;
+            if allows.allows(range.start.line + 1, "unused") {
+                return None;
+            }
             Some(Diagnostic {
                 range,
                 severity: Some(DiagnosticSeverity::HINT),

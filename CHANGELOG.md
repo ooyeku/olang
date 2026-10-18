@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`// allow: <class>[, <class>…]`: one line's advisories silenced**,
+  at the end of the line or on a line of its own above it (comment lines
+  between). The classes `[check] promote` takes, `unused` (the hint) and
+  `all`; never an error, and it wins over `promote`. `olang check` (text
+  and `--format json`), the language server, notebook cells, `--tier`
+  (on the `fn` line, `"allowed"` in its JSON; a native pin still fails)
+  and `--rules` (by the rule's name). A name that is no class is a
+  warning, code `allow` (docs/tooling.md "Allowing one line").
 - **`fs.watch`: a folder's whole tree followed as it changes** (FSEvents
   on macOS, one stream on a thread of its own, nothing polled).
   `fs.watch_next` answers a burst as one batch (each path once,
