@@ -486,13 +486,30 @@ fn handle_request(
                 respond(connection, id, &CompletionResponse::Array(Vec::new()))?;
                 return Ok(());
             };
-            // Inside `map_get(t, "` / `t["` / after `t.` on a value whose
-            // declared shape is known: the shape's keys, and nothing else.
-            let items = match shape_key_completions(text, position, dir.as_deref())
-                .or_else(|| built_key_completions(text, position))
-            {
-                Some(keys) => keys,
-                None => completions(text, position),
+            // Inside a string where a column or a key is named (`sales["`,
+            // `ods.select(sales, ["`, `map_get(t, "`): the fields the
+            // program's literals give it, or a declared shape's keys;
+            // inside any other string, nothing.
+            let prefix = text_before(text, position);
+            let quoted = crate::tools::fields::context(&prefix).filter(|c| c.quoted);
+            let items = if let Some(ctx) = quoted {
+                let data = data_completions(text, position, &ctx);
+                if data.is_empty() {
+                    shape_key_completions(text, position, dir.as_deref()).unwrap_or_default()
+                } else {
+                    data
+                }
+            } else if crate::tools::fields::in_string(&prefix) {
+                Vec::new()
+            } else {
+                // after `t.` on a value whose declared shape is known: the
+                // shape's keys, and nothing else
+                match shape_key_completions(text, position, dir.as_deref())
+                    .or_else(|| built_key_completions(text, position))
+                {
+                    Some(keys) => keys,
+                    None => completions(text, position),
+                }
             };
             respond(connection, id, &CompletionResponse::Array(items))?;
         }
@@ -1388,6 +1405,96 @@ fn built_key_completions(text: &str, pos: Position) -> Option<Vec<CompletionItem
             })
             .collect(),
     )
+}
+
+/// The text before `pos`: every line above it and its own up to the caret.
+fn text_before(text: &str, pos: Position) -> String {
+    let mut out = String::new();
+    for (n, line) in text.split('\n').enumerate() {
+        if n == pos.line as usize {
+            let cursor = utf16_to_char_col(line, pos.character);
+            out.extend(line.chars().take(cursor));
+            break;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+/// The fields that complete at a data place (`fields::context`) as the
+/// program's literals give them: the receiver's verbs followed from the
+/// nearest `let` of the name it starts from (`ods.frame([["a", …]])`,
+/// `ods.read_csv("a,b\n…")`, `#{ "k": … }`), else the keys the checker's
+/// key analysis finds built for that name. A value read at run time (a
+/// CSV file) has none here: a notebook's kernel completes those.
+fn data_completions(
+    text: &str,
+    pos: Position,
+    ctx: &crate::tools::fields::Context,
+) -> Vec<CompletionItem> {
+    use crate::tools::fields;
+    // the bindings above the caret's line (its own may be the one typed)
+    let above: String = text
+        .split('\n')
+        .take(pos.line as usize)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut depth = 0u32;
+    let mut program_keys: Option<Option<crate::ast::Program>> = None;
+    let mut resolve = |n: &str| -> Option<fields::Fields> {
+        depth += 1;
+        if depth > 16 {
+            return None;
+        }
+        if let Some(init) = fields::binding_text(&above, n) {
+            let mut inner = |m: &str| {
+                fields::binding_text(&above, m)
+                    .and_then(|t| fields::fields_of(&t, &mut |_: &str| None))
+            };
+            if let Some(f) = fields::fields_of(&init, &mut inner) {
+                return Some(f);
+            }
+        }
+        // the keys the program builds for the name (its line left out, so
+        // the rest parses)
+        let program = program_keys.get_or_insert_with(|| {
+            let fixed: String = text
+                .split('\n')
+                .enumerate()
+                .map(|(k, l)| if k == pos.line as usize { "" } else { l })
+                .collect::<Vec<_>>()
+                .join("\n");
+            OlangParser::new().parse_raw(&fixed).ok()
+        });
+        let keys = crate::tools::keys::keys_of_name(program.as_ref()?, n)?;
+        Some(fields::Fields {
+            kind: "map",
+            fields: keys.into_iter().map(|k| (k, String::new())).collect(),
+        })
+    };
+    let Some(found) = fields::fields_of(&ctx.receiver, &mut resolve) else {
+        return Vec::new();
+    };
+    if !found.answers(ctx.want) {
+        return Vec::new();
+    }
+    let what = if found.kind == "frame" || found.kind == "table" {
+        "a column"
+    } else {
+        "a key"
+    };
+    found
+        .fields
+        .into_iter()
+        .map(|(name, ty)| CompletionItem {
+            label: name.clone(),
+            kind: Some(CompletionItemKind::FIELD),
+            detail: Some(if ty.is_empty() { what.to_string() } else { ty }),
+            insert_text: Some(name),
+            ..Default::default()
+        })
+        .collect()
 }
 
 fn completions(text: &str, pos: Position) -> Vec<CompletionItem> {

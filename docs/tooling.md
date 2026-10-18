@@ -970,6 +970,7 @@ asked while another profile samples the process (`olang profile`'s,
 | `{"op":"eval","id":13,"cell":"c3","code":"let t = total(xs)","line":21}` | as any `eval`, with `defines` (the names the cell defines, in order); what the code defines is cell `c3`'s, and an evaluation of `c3` again drops it first |
 | `{"op":"deps","id":14,"cells":[{"cell":"c3","code":"let t = total(xs)","line":21}…]}` | `{"ok":true,"cells":[{"cell":"c3","ok":true,"defines":[{"name":"t","line":21,"col":1}],"uses":[{"name":"total","line":21,"col":9},{"name":"xs","line":21,"col":15}]}…]}` — each cell's names read from its text, never run (below) |
 | `{"op":"drop","id":15,"cell":"c3"}` | `{"ok":true,"dropped":["t"]}` — what the cell defined, forgotten (a cell deleted) |
+| `{"op":"fields","id":22,"name":"sales","path":[…]?}` | `{"ok":true,"name":"sales","kind":"frame","t":"Frame","fields":[{"name":"region","type":"String"}…]}` — what a value held by name is made of (below); with `code` in place of `name`, what completes at its end |
 | `{"op":"vars","id":16}` | `{"ok":true,"eval":9,"vars":[{"name":"sales","cell":"c3","v":V,"bytes":27411},{"name":"region","param":true,…}…]}` — a kernel's names (below) |
 | `{"op":"reread","id":17,"text":"…"?}` | `{"ok":true,"params":["region"],"removed":[],"grant":false,"problems":[…]}` — a kernel's front matter read again (below) |
 | `{"op":"set","id":18,"cell":"c5","value":"0.12"}` | `{"ok":true,"eval":10,"name":"lift","value":V}` — the value an editor chose for a cell's control (below) |
@@ -1065,6 +1066,36 @@ left to `expand`) and `bytes`, its size in memory roughly (a long
 container measured on its first thousand items and scaled; a Frame's
 columns). `drop` forgets what a cell defined, as a cell evaluated again
 does first.
+
+**A value's fields.** `fields` says what a value held by `name` is
+made of, for an editor's completion: a Frame's columns with their types
+(`kind` `frame`), a map's keys and a record's fields with their values'
+types, in the order they were set (`map`, `record`), a list of maps'
+columns, each typed by the first item holding it (`table`); a Series, a
+list and any other value have none (`fields` empty). `path` walks keys
+into it (`m.inner` is `"name": "m", "path": ["inner"]`). Nothing is
+evaluated, so it answers at once and under no capability; a name that is
+not bound is an `unbound` error. At most 500 fields are said (`more` how
+many past that).
+
+Given `code` — the text before an editor's caret, a cell's — in place of
+`name`, `fields` answers what completes there, as the language server
+reads the place: inside a string where a column is named (`t["`,
+`ods.select(t, ["`, `ods.group_by(t, "`, a chain's `|> ods.sort_by("`,
+an aggregation's column, `ods.pivot`'s and `ods.join`'s) or a key
+(`map_get(m, "`), or after `m.`. Its receiver's chain is followed from
+the value the name it starts from holds — a `group_by` makes its keys and
+aggregates, `select`, `drop`, `with_column`, `rename` and `join` theirs, a
+filter, a sort or a head keeps them — and a name not held is taken from
+`known` (an editor's cached copy: `{"sales": {"kind": "frame", "fields":
+[{"name", "type"}…]}}`), else from what `code` itself binds:
+
+`{"ok":true,"context":true,"receiver":"sales","want":"columns","typed":"re","quoted":true,"live":true,"kind":"frame","fields":[…]}`
+
+— `want` is `columns` (a Frame's), `keys` (a map's or a record's) or
+`any` (after `t["`), `typed` what is typed of the field so far, `live`
+whether a value held answered; `"context": false` where no field
+completes.
 
 **A kernel's front matter, again.** `reread` reads the notebook's front
 matter from `text` (an editor's unsaved buffer) or the file: each param

@@ -8,6 +8,7 @@ pub mod coverage; // `olang test --coverage` — line coverage from the runner
 pub mod doc; // `olang doc` — API reference from /// comments
 #[cfg(feature = "native")]
 pub mod doctor; // `olang doctor` — audit a project
+pub mod fields; // what completes inside data: a Frame's columns, a map's keys
 pub mod fix; // `olang fix maps` — the migration to `.` and `??`
 pub mod fix_idioms; // `olang fix guards / defaults / first-last / units` — the 1.0 idioms
 pub mod fmt;

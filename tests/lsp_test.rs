@@ -1584,3 +1584,96 @@ fn a_shadowed_name_is_its_own_in_references_and_a_rename() {
     let _ = c.child.kill();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Inside a string where a column or a key is named, a notebook's cell
+/// completes the fields the program's literals give: a Frame's columns
+/// (with their types) after `t["`, in `ods.select(t, ["`, `ods.group_by(t, "`
+/// and a chain's `ods.sort_by("` (the columns its group_by makes), a map's
+/// keys after `m["`; inside any other string nothing.
+#[test]
+fn a_notebook_completes_columns_and_keys_inside_strings() {
+    let mut c = Client::start();
+    let dir = std::env::temp_dir().join(format!("olang-lsp-fields-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("fields.olmd");
+    let uri = format!("file://{}", path.display());
+    let head = [
+        "# Fields",
+        "",
+        "```olang {name: load}",
+        "let sales = ods.read_csv(\"region,amount,qty\\neast,25.5,10\\nwest,3.0,2\\n\")",
+        "let cfg = #{ \"title\": \"Q1\", \"limit\": 10 }",
+        "```",
+        "",
+        "```olang {name: use}",
+    ]
+    .join("\n");
+    // the cell typed in: its lines as they stand, the caret at the end of
+    // the last
+    let doc = |typed: &str| format!("{head}\n{typed}\n```\n");
+    c.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {}, "rootUri": format!("file://{}", dir.display()) }
+    }));
+    c.recv_until(|m| m["id"] == 1);
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    std::fs::write(&path, doc("")).unwrap();
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+            "textDocument":{"uri":uri,"languageId":"olang","version":1,"text":doc("")}}
+    }));
+    let mut id = 10;
+    let mut at = |c: &mut Client, typed: &str| -> Vec<(String, String)> {
+        id += 1;
+        let text = doc(typed);
+        c.send(
+            &serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didChange","params":{
+            "textDocument":{"uri":uri,"version":id},"contentChanges":[{"text":text}]}}),
+        );
+        let lines: Vec<&str> = typed.split('\n').collect();
+        let line = 8 + lines.len() - 1;
+        let ch = lines.last().unwrap().encode_utf16().count();
+        c.send(&serde_json::json!({"jsonrpc":"2.0","id":id,"method":"textDocument/completion","params":{
+            "textDocument": { "uri": uri }, "position": { "line": line, "character": ch } }}));
+        let r = c.recv_until(|m| m["id"] == id);
+        r["result"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a list: {r}"))
+            .iter()
+            .map(|i| {
+                (
+                    i["label"].as_str().unwrap_or("").to_string(),
+                    i["detail"].as_str().unwrap_or("").to_string(),
+                )
+            })
+            .collect()
+    };
+    let cols = |xs: &[(String, String)]| xs.iter().map(|x| x.0.clone()).collect::<Vec<_>>();
+    let r = at(&mut c, "sales[\"");
+    assert_eq!(cols(&r), ["region", "amount", "qty"], "{r:?}");
+    // each says its type
+    assert_eq!(r[1].1, "Float", "{r:?}");
+    assert_eq!(r[2].1, "Int", "{r:?}");
+    assert_eq!(
+        cols(&at(&mut c, "ods.select(sales, [\"amount\", \"")),
+        ["region", "amount", "qty"]
+    );
+    assert_eq!(
+        cols(&at(&mut c, "ods.group_by(sales, \"re")),
+        ["region", "amount", "qty"]
+    );
+    // after the group_by: its key and what it aggregates
+    let r = at(
+        &mut c,
+        "let by = sales\n    |> ods.group_by(\"region\", [[\"revenue\", \"sum\", \"amount\"]])\n    |> ods.sort_by(\"",
+    );
+    assert_eq!(cols(&r), ["region", "revenue"], "{r:?}");
+    assert_eq!(r[1].1, "Float", "{r:?}");
+    let r = at(&mut c, "cfg[\"");
+    assert_eq!(cols(&r), ["title", "limit"], "{r:?}");
+    assert_eq!(r[0].1, "String", "{r:?}");
+    // a string that names no field completes nothing (no keywords)
+    assert!(at(&mut c, "println(\"he").is_empty());
+    let _ = c.child.kill();
+    let _ = std::fs::remove_dir_all(&dir);
+}

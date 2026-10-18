@@ -1445,3 +1445,82 @@ fn a_brush_is_set_by_the_host_and_drawn_for_dragging() {
     assert_eq!(cleared["ok"], json!(true), "{cleared}");
     assert_eq!(r.eval("window")["value"]["s"], json!("()"));
 }
+
+/// `fields` says what a value held by name is made of — a Frame's columns
+/// with their types, a map's keys, a record's fields, a list of maps'
+/// columns, keys walked by `path` — and, given the text before an editor's
+/// caret (`code`), what completes there: a column's place read as the
+/// language server reads it, the receiver's chain followed from the values
+/// held, a name not held from `known` (an editor's cached copy).
+#[test]
+fn a_values_fields_are_said_by_name_and_at_a_caret() {
+    let dir = tempfile::tempdir().unwrap();
+    notebook(dir.path());
+    let (mut r, hello) = Repl::start_with(dir.path(), &["--notebook", "nbs/sales.olmd"]);
+    assert!(
+        hello["ops"].as_array().unwrap().contains(&json!("fields")),
+        "{hello}"
+    );
+    let a = r.ask(json!({ "op": "eval", "cell": "c1", "line": 12, "code":
+        "let sales = ods.read_csv(\"region,amount,qty\\neast,25.5,10\\nwest,3.0,2\\n\")\nlet cfg = #{ \"title\": \"Q1\", \"inner\": #{ \"depth\": 2 } }\nlet rows = [#{ \"a\": 1, \"b\": \"x\" }]" }));
+    assert_eq!(a["ok"], json!(true), "{a}");
+    let f = r.ask(json!({ "op": "fields", "name": "sales" }));
+    assert_eq!(f["kind"], json!("frame"), "{f}");
+    assert_eq!(
+        f["fields"],
+        json!([{ "name": "region", "type": "String" }, { "name": "amount", "type": "Float" }, { "name": "qty", "type": "Int" }])
+    );
+    let m = r.ask(json!({ "op": "fields", "name": "cfg" }));
+    assert_eq!(m["kind"], json!("map"), "{m}");
+    assert_eq!(m["fields"][0], json!({ "name": "title", "type": "String" }));
+    let p = r.ask(json!({ "op": "fields", "name": "cfg", "path": ["inner"] }));
+    assert_eq!(
+        p["fields"],
+        json!([{ "name": "depth", "type": "Int" }]),
+        "{p}"
+    );
+    let t = r.ask(json!({ "op": "fields", "name": "rows" }));
+    assert_eq!(t["kind"], json!("table"), "{t}");
+    assert_eq!(t["fields"][1], json!({ "name": "b", "type": "String" }));
+    let u = r.ask(json!({ "op": "fields", "name": "nobody" }));
+    assert_eq!(u["ok"], json!(false));
+    assert_eq!(u["error"]["kind"], json!("unbound"), "{u}");
+    // at a caret: the live value's columns, a chain followed
+    let at = |r: &mut Repl, code: &str, known: J| {
+        let x = r.ask(json!({ "op": "fields", "code": code, "known": known }));
+        assert_eq!(x["ok"], json!(true), "{x}");
+        x
+    };
+    let x = at(&mut r, "ods.select(sales, [\"", J::Null);
+    assert_eq!(x["context"], json!(true));
+    assert_eq!(x["live"], json!(true));
+    assert_eq!(x["fields"].as_array().unwrap().len(), 3, "{x}");
+    let x = at(
+        &mut r,
+        "sales\n    |> ods.group_by(\"region\", [[\"total\", \"sum\", \"amount\"]])\n    |> ods.sort_by(\"to",
+        J::Null,
+    );
+    assert_eq!(
+        x["fields"],
+        json!([{ "name": "region", "type": "String" }, { "name": "total", "type": "Float" }]),
+        "{x}"
+    );
+    assert_eq!(x["typed"], json!("to"));
+    let x = at(&mut r, "cfg.", J::Null);
+    assert_eq!(x["want"], json!("keys"));
+    assert_eq!(x["fields"][1]["name"], json!("inner"), "{x}");
+    // a frame is no map: nothing after `sales.`
+    assert_eq!(at(&mut r, "sales.", J::Null)["fields"], json!([]));
+    // a name not held: an editor's cached copy
+    let known =
+        json!({ "cached": { "kind": "frame", "fields": [{ "name": "when", "type": "String" }] } });
+    let x = at(&mut r, "cached[\"", known);
+    assert_eq!(
+        x["fields"],
+        json!([{ "name": "when", "type": "String" }]),
+        "{x}"
+    );
+    assert_eq!(x["live"], json!(false));
+    // no place for a field
+    assert_eq!(at(&mut r, "println(\"hi", J::Null)["context"], json!(false));
+}

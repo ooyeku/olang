@@ -15,7 +15,7 @@ Part of [the olang book](README.md).
 | Capability | Source |
 |---|---|
 | Diagnostics as you type (each with its rule as `code`, as `olang check --format json` writes them) | the real parser (with its line/column info), the semantic analyzer, and the [`olang check`](tooling.md#olang-check) static checker — provable type-annotation violations appear as errors, down to element types (`[1, "a"]` against `List<Int>` flags element 1); warnings sit on the exact declaration span |
-| Completions | keywords, the global builtins, the stdlib modules, and `fn`/`type`/`let` names from the open file |
+| Completions | keywords, the global builtins, the stdlib modules, and `fn`/`type`/`let` names from the open file; inside a string where data is named, its fields: a Frame's columns with their types after `t["`, in `ods.select(t, ["`, `ods.group_by(t, "`, a chain's `\|> ods.sort_by("` and an aggregation's column (the chain's verbs followed: a `group_by` makes its keys and aggregates), a map's keys after `m["` and `map_get(m, "` — from what the program's literals build (`ods.frame([["a", …]])`, `ods.read_csv("a,b\n…")`, `#{ "k": … }`); inside any other string, nothing |
 | Cross-file awareness | `use`d modules are resolved and parsed alongside the open file: imported signatures feed the checker's diagnostics, hover shows an imported function's typed signature (marked `// from <file>`), and go-to-definition crosses into the module |
 | Hover | the declaration with the checker's type knowledge: annotated signatures in full (`fn dist(a: Float, b: Float) -> Float`), and unannotated `let`s with their inferred types when the checker knows one (`let total: Int`) |
 | Go to definition | jumps to the name's declaration — including into the module file that `share`s it |

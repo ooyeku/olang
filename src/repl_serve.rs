@@ -806,6 +806,164 @@ impl Session {
         json!({ "ok": true, "eval": seq, "vars": vars })
     }
 
+    /// What a value held by name is made of, for an editor's completion:
+    /// a Frame's columns with their types, a map's keys or a record's
+    /// fields with their values' types, a list of maps' columns. `name`
+    /// is read in the notebook's scope (or a `file`'s, or the session's),
+    /// `path` walks keys into it (`m.inner` is `name: "m", path:
+    /// ["inner"]`). Nothing is evaluated: a name that is not bound is an
+    /// `unbound` error; a value of another kind has no fields.
+    fn fields(&mut self, msg: &J) -> J {
+        if let Some(code) = msg.get("code").and_then(|c| c.as_str()) {
+            return self.fields_at(code, msg);
+        }
+        let Some(name) = msg.get("name").and_then(|n| n.as_str()).map(str::to_string) else {
+            return json!({ "ok": false, "error": { "kind": "protocol", "message": "fields needs a name (or code)" } });
+        };
+        let path: Vec<String> = msg
+            .get("path")
+            .and_then(|p| p.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|k| k.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let file = msg
+            .get("file")
+            .and_then(|f| f.as_str())
+            .map(|f| self.resolve(f));
+        let (key, mut scope, _) = self.take_scope(file.as_deref());
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        let found = self.cmd.interpreter.get_environment().get(&name);
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        self.scopes.insert(key, scope);
+        let Some(mut v) = found else {
+            return json!({ "ok": false, "name": name, "error": { "kind": "unbound", "message": format!("`{name}` is not bound in this session") } });
+        };
+        for k in &path {
+            let inner = match &v {
+                Value::Map(m) => m.get(k).cloned(),
+                Value::Struct { fields, .. } => fields.get(k).cloned(),
+                _ => None,
+            };
+            match inner {
+                Some(x) => v = x,
+                None => {
+                    return json!({ "ok": true, "name": name, "path": path, "kind": "none", "t": v.type_name(), "fields": [] });
+                }
+            }
+        }
+        let (kind, fields) = value_fields(&v);
+        let total = fields.len();
+        let shown: Vec<J> = fields
+            .into_iter()
+            .take(FIELDS_MAX)
+            .map(|(n, t)| json!({ "name": n, "type": t }))
+            .collect();
+        let mut r =
+            json!({ "ok": true, "name": name, "kind": kind, "t": v.type_name(), "fields": shown });
+        if !path.is_empty() {
+            r["path"] = json!(path);
+        }
+        if total > FIELDS_MAX {
+            r["more"] = json!(total - FIELDS_MAX);
+        }
+        r
+    }
+
+    /// The fields that complete at the end of `code` (the text before an
+    /// editor's caret): the place read as the language server reads it
+    /// (`tools::fields`), the receiver's fields from the values held — a
+    /// name not held from `known` (an editor's cached copy: `{"sales":
+    /// {"kind": "frame", "fields": [{"name", "type"}…]}}`), else from
+    /// what `code` itself binds.
+    fn fields_at(&mut self, code: &str, msg: &J) -> J {
+        use crate::tools::fields;
+        let Some(ctx) = fields::context(code) else {
+            return json!({ "ok": true, "context": false });
+        };
+        let file = msg
+            .get("file")
+            .and_then(|f| f.as_str())
+            .map(|f| self.resolve(f));
+        let known = msg.get("known").cloned().unwrap_or(J::Null);
+        let (key, mut scope, _) = self.take_scope(file.as_deref());
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        let mut from_live = Vec::new();
+        let found = {
+            let env = self.cmd.interpreter.get_environment();
+            let mut depth = 0u32;
+            let mut resolve = |n: &str| -> Option<fields::Fields> {
+                depth += 1;
+                if depth > 16 {
+                    return None;
+                }
+                if let Some(v) = env.get(n) {
+                    let (kind, fs) = value_fields(&v);
+                    if kind != "none" && kind != "list" && kind != "series" {
+                        from_live.push(n.to_string());
+                        return Some(fields::Fields { kind, fields: fs });
+                    }
+                    return None;
+                }
+                if let Some(k) = known.get(n) {
+                    let kind = match k.get("kind").and_then(|x| x.as_str()) {
+                        Some("frame") => "frame",
+                        Some("map") => "map",
+                        Some("record") => "record",
+                        Some("table") => "table",
+                        _ => return None,
+                    };
+                    let fs = k
+                        .get("fields")
+                        .and_then(|f| f.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|f| {
+                                    Some((
+                                        f.get("name")?.as_str()?.to_string(),
+                                        f.get("type")
+                                            .and_then(|t| t.as_str())
+                                            .unwrap_or("")
+                                            .to_string(),
+                                    ))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    return Some(fields::Fields { kind, fields: fs });
+                }
+                let init = fields::binding_text(code, n)?;
+                fields::fields_of(&init, &mut |_: &str| None)
+            };
+            fields::fields_of(&ctx.receiver, &mut resolve)
+        };
+        self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
+        self.scopes.insert(key, scope);
+        let want = match ctx.want {
+            fields::Want::Columns => "columns",
+            fields::Want::Keys => "keys",
+            fields::Want::Any => "any",
+        };
+        let mut r = json!({ "ok": true, "context": true, "receiver": ctx.receiver, "want": want,
+                            "typed": ctx.typed, "quoted": ctx.quoted, "live": !from_live.is_empty() });
+        match found {
+            Some(f) if f.answers(ctx.want) => {
+                r["kind"] = json!(f.kind);
+                r["fields"] = J::Array(
+                    f.fields
+                        .into_iter()
+                        .take(FIELDS_MAX)
+                        .map(|(n, t)| json!({ "name": n, "type": t }))
+                        .collect(),
+                );
+            }
+            _ => r["fields"] = json!([]),
+        }
+        r
+    }
+
     /// A bound control as an eval's reply says it: its kind, the cell's
     /// name (when it binds one alone), its value and default as values are
     /// encoded, and what its kind has of min, max, step, options and a
@@ -1245,7 +1403,7 @@ impl Session {
         let mut v = json!({
             "event": "hello", "protocol": PROTOCOL, "olang": crate::version::VERSION,
             "root": self.root.to_string_lossy(), "pid": std::process::id(),
-            "ops": ["hello", "eval", "command", "commands", "complete", "deps", "drop", "expand", "release", "interrupt", "page", "ping", "record", "reload", "replay", "reread", "render", "reset", "set", "shutdown", "stats", "vars"],
+            "ops": ["hello", "eval", "command", "commands", "complete", "deps", "drop", "expand", "fields", "release", "interrupt", "page", "ping", "record", "reload", "replay", "reread", "render", "reset", "set", "shutdown", "stats", "vars"],
             "features": ["bind", "pure", "cell", "caps", "profile", "distinct", "record", "html"],
         });
         if let Some(nb) = &self.notebook {
@@ -1297,6 +1455,7 @@ impl Session {
             "deps" => deps_reply(msg),
             "drop" => self.drop_cell(msg),
             "vars" => self.vars(),
+            "fields" => self.fields(msg),
             "reread" => self.reread(msg),
             "set" => self.set_control(msg),
             "record" => self.record(msg),
@@ -3373,6 +3532,67 @@ fn series_of(items: &[Value]) -> Option<J> {
 
 /// A Frame's columns (or a Series as one column, `value`): each name and
 /// its series.
+/// The most fields `fields` answers (a wider value says how many more).
+const FIELDS_MAX: usize = 500;
+
+/// A value's kind and its fields as `fields` answers them: a Frame's
+/// columns and their types, a map's keys and a record's fields with their
+/// values' types (in the order they were set), a list of maps' columns
+/// (each typed by the first item holding it); anything else none.
+fn value_fields(v: &Value) -> (&'static str, Vec<(String, String)>) {
+    if let Some(f) = crate::ods::frame_of(v) {
+        let cols = f
+            .names()
+            .iter()
+            .cloned()
+            .zip(f.columns().iter().map(|c| c.dtype().to_string()))
+            .collect();
+        return ("frame", cols);
+    }
+    if crate::ods::series_of(v).is_some() {
+        return ("series", Vec::new());
+    }
+    match v {
+        Value::Map(m) if loom_view_role(m).is_none() => (
+            "map",
+            m.iter()
+                .map(|(k, x)| (k.clone(), x.type_name().to_string()))
+                .collect(),
+        ),
+        Value::Struct { fields, .. } => (
+            "record",
+            fields
+                .iter()
+                .map(|(k, x)| (k.clone(), x.type_name().to_string()))
+                .collect(),
+        ),
+        Value::List(items) => match table_columns(items) {
+            Some(cols) => {
+                let typed = cols
+                    .into_iter()
+                    .map(|c| {
+                        let t = items
+                            .iter()
+                            .take(TABLE_SAMPLE)
+                            .find_map(|it| match it {
+                                Value::Map(m) => m.get(&c).map(|x| x.type_name().to_string()),
+                                Value::Struct { fields, .. } => {
+                                    fields.get(&c).map(|x| x.type_name().to_string())
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or_default();
+                        (c, t)
+                    })
+                    .collect();
+                ("table", typed)
+            }
+            None => ("list", Vec::new()),
+        },
+        _ => ("none", Vec::new()),
+    }
+}
+
 fn ods_columns(v: &Value) -> Option<Vec<(String, &olang_ods::Series)>> {
     if let Some(f) = crate::ods::frame_of(v) {
         return Some(f.names().iter().cloned().zip(f.columns().iter()).collect());
