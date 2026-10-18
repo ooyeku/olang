@@ -1113,6 +1113,30 @@ impl RichEditor {
             .expect("a paragraph used is laid out (ensure)")
     }
 
+    /// A caret's box at byte `local` of paragraph `i` (laid out) with
+    /// `aff`, its own row's coordinates (no paragraph offset). A caret
+    /// after a space the row wrapped at would stand past the row's end
+    /// (the space hangs there) and be cut by the field: it stands at the
+    /// start of the next row, or, at the paragraph's end (no row after),
+    /// at the row's end.
+    fn caret_geometry(&self, i: usize, local: usize, aff: Affinity, width: f32) -> BoundingBox {
+        let layout = self.layout_of(i);
+        let g = self.cursor(i, local, aff).geometry(layout, width);
+        let wrap = self.width as f64;
+        if self.nowrap || wrap <= 0.0 || g.x1 <= wrap + 0.01 {
+            return g;
+        }
+        if local < self.paras[i].len {
+            let down = Cursor::from_byte_index(layout, local, Affinity::Downstream)
+                .geometry(layout, width);
+            if down.y0 > g.y0 + 0.5 {
+                return down;
+            }
+        }
+        let w = (g.x1 - g.x0).max(0.0);
+        BoundingBox::new((wrap - w).max(0.0), g.y0, wrap, g.y1)
+    }
+
     fn cursor(&self, i: usize, local: usize, aff: Affinity) -> Cursor {
         let l = self.layout_of(i);
         if local >= self.paras[i].len {
@@ -1811,9 +1835,7 @@ impl RichEditor {
     ) -> BoundingBox {
         self.ensure(i, ts);
         self.refresh(ts);
-        let g = self
-            .cursor(i, local, Affinity::Downstream)
-            .geometry(self.layout_of(i), width);
+        let g = self.caret_geometry(i, local, Affinity::Downstream, width);
         let y = self.ys[i] as f64;
         BoundingBox::new(g.x0, g.y0 + y, g.x1, g.y1 + y)
     }
@@ -1868,9 +1890,7 @@ impl RichEditor {
         let (i, l) = self.locate(self.focus);
         self.ensure(i, ts);
         self.refresh(ts);
-        let g = self
-            .cursor(i, l, self.affinity)
-            .geometry(self.layout_of(i), width);
+        let g = self.caret_geometry(i, l, self.affinity, width);
         let y = self.ys[i] as f64;
         BoundingBox::new(g.x0, g.y0 + y, g.x1, g.y1 + y)
     }
@@ -1886,9 +1906,7 @@ impl RichEditor {
         let (i, l) = self.locate(at);
         self.ensure(i, ts);
         self.refresh(ts);
-        let g = self
-            .cursor(i, l, Affinity::Downstream)
-            .geometry(self.layout_of(i), 1.0);
+        let g = self.caret_geometry(i, l, Affinity::Downstream, 1.0);
         let y = self.ys[i] as f64;
         BoundingBox::new(g.x0, g.y0 + y, g.x1, g.y1 + y)
     }

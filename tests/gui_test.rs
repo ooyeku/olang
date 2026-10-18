@@ -871,6 +871,41 @@ fn a_trailing_space_after_right_to_left_text_keeps_the_caret_in_view() {
 }
 
 #[test]
+fn a_caret_after_a_space_the_field_wrapped_at_is_drawn_whole() {
+    let _turn = events_turn();
+    // A styled field's caret right after a space its row wrapped at: the
+    // space hangs past the row's end, and the caret there was cut by the
+    // field's edge (`caret` was `()` or a sliver). It is drawn whole,
+    // inside the field, where the `ime` box says it is: the next row's
+    // start inside a paragraph, the row's end at the paragraph's end.
+    let v = run(r##"
+        let mut bad = []
+        for n in range(1, 60) {
+            for tail in ["", " more"] {
+                let w = gui.headless(#{ "size": (900, 1200) })
+                gui.apply(w, [
+                  #{ "key": "root", "box": (0, 0, 900, 1200) },
+                  #{ "key": "f", "parent": "root", "role": "textarea", "box": (10, 10, 830, 1180),
+                     "edit": #{ "value": "", "rich": true, "undo": false }, "style": #{ "pad": (4, 12, 4, 12) } },
+                  #{ "op": "focus", "key": "f" }
+                ])
+                gui.input(w, #{ "kind": "text", "text": str.repeat("long paste 中文 ", n) + tail })
+                // the caret after the space, inside the paragraph too
+                if tail != "" => { for i in 0..5 { gui.input(w, #{ "kind": "key", "key": "left" }) } }
+                let c = gui.read(w, "caret")
+                let ime = gui.read(w, "ime")
+                let whole = c != () && c[2] > 1.4 && c[0] >= 22.0 && c[0] + c[2] <= 828.01
+                let agrees = ime != () && c != () && (c[0] - ime[0]) * (c[0] - ime[0]) < 1.0 && (c[1] - ime[1]) * (c[1] - ime[1]) <= 4.0
+                if !whole || !agrees => { bad = bad + [(n, tail, c, ime)] }
+                gui.close(w)
+            }
+        }
+        bad
+    "##);
+    assert_eq!(text(&v), "[]");
+}
+
+#[test]
 fn a_zoomed_window_lays_out_in_larger_units_at_the_same_pixels() {
     let _turn = events_turn();
     let v = run(r##"

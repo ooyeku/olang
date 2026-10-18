@@ -167,6 +167,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   even when it held no match: a workspace with 23 MB of CSV beside its
   sources took 15 ms to search for a word instead of 6. The file is now
   lower-cased once and searched whole first.
+- **A styled field's caret after a space its row wrapped at is drawn.**
+  The space hangs past the row's end, and the caret there was cut by the
+  field's edge (`gui.read(w, "caret")` was `()`): it stands at the next
+  row's start inside a paragraph, at the row's end at a paragraph's end,
+  where the input method's box says.
 
 ## [1.0.0-rc.2] - 2026-10-14
 

@@ -121,7 +121,6 @@ program observes; `after` when it is additive.
 ## The desktop engine (`gui`)
 
 | Item | Evidence | Done when | 1.0 |
-| `[gui]` A caret after a space the field wrapped at is not drawn | a styled field whose text ends with a space that falls at a soft wrap reports its caret's place (`ime`) on the next row but draws no caret there (`gui.read(h, "caret")` is `()`, the invariants' `caret` fails): Studio's front matter pasted with `"long paste 中文 " × 700` at 820 wide (tests/nbactions_test.ol ends its paste on a word since) | the caret drawn at the start of the row after the wrap, as the `ime` box says | after |
 |---|---|---|---|
 | `[gui]` Inlay hints inside a line | lenses (a band under a line) and `eol` (text after a line's end) exist; an inlay — a parameter name or type inside a line — needs inline boxes. Studio shows the caret line's hints in its status bar instead (Loom, Studio) | `inlays: [(line, col, text, look)]` on a styled field: drawn inline, stepped over by the caret and selection, not in the value, announced as decoration | after |
 | `[gui]` The plain `textarea` lays out its whole text on every keystroke | parley's PlainEditor re-lays-out the whole value: 2,000 lines cost 36 ms a keystroke headless against 0.6 ms in the styled field (Loom) | the plain field uses the styled field's per-paragraph layout, or the docs state it is for short values | after |
