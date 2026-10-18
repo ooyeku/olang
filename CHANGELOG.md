@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   them, or their own files), by the whole walk's rules — a parent's
   `.gitignore`, the skipped and hidden folders on the way — so a watch's
   changed folders are listed exactly as a whole scan lists them.
+- **`fs.scan`'s `empty_dirs`**: the empty folders, by the walk's rules,
+  instead of the files, or (`"also"`) beside them from one walk (an
+  editor's tree shows a folder just made).
 - **A node can hear only the wheel's sideways part** (`wheel_x`, said by
   `gui.platform()`): a `wheel` event with `dy` 0 for it, and down goes on
   to the scrollers around it — lines in a list that scroll across

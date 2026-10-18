@@ -1362,6 +1362,7 @@ preview and apply. An option either function does not know raises.
 | `max_depth` | folders deeper than this are not walked (no limit) |
 | `within` | only these folders (relative to `root`) and all below them, by the whole walk's rules: a parent's `.gitignore`, the skipped and hidden folders on the way (what a watch's changed folders are read again with) |
 | `own` | only these folders' own files, as `within` (`""` the root's) |
+| `empty_dirs` | `true` answers the empty folders instead of the files: those the walk enters holding nothing it visits (a hidden or ignored entry does not count; with `max_depth`, none at the limit); `"also"` answers both from one walk, `Ok(#{ files, empty_dirs })` |
 
 | `fs.search` option | Meaning (default) |
 |---|---|

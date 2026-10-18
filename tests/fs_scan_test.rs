@@ -149,6 +149,52 @@ fn scan_within_some_folders_lists_them_as_the_whole_walk_would() {
     assert_eq!(within(r#"#{ "within": ["nowhere"] }"#), "[]");
 }
 
+/// `empty_dirs`: the folders holding nothing the walk visits, by its
+/// rules (a hidden entry, an ignored one, does not count), also within
+/// some folders.
+#[test]
+fn scan_says_the_empty_folders() {
+    let d = tree();
+    let mk = |rel: &str| fs::create_dir_all(d.path().join(rel)).unwrap();
+    mk("app/empty");
+    mk("app/nested/inner");
+    mk("lib2/generated/hollow");
+    mk(".hidden/void");
+    mk("app/target/none");
+    fs::create_dir_all(d.path().join("app/dotted")).unwrap();
+    fs::write(d.path().join("app/dotted/.DS_Store"), b"x").unwrap();
+    let r = root_of(&d);
+    let empty = |opts: &str| {
+        s(eval(&format!(
+            r#"show(unwrap(fs.scan("{}", {})))"#,
+            r, opts
+        )))
+    };
+    assert_eq!(
+        empty(r#"#{ "skip": ["target"], "empty_dirs": true }"#),
+        r#"["app/dotted", "app/empty", "app/nested/inner"]"#
+    );
+    // within a folder; a folder's own (its children seen, not listed)
+    assert_eq!(
+        empty(r#"#{ "skip": ["target"], "empty_dirs": true, "within": ["app/nested"] }"#),
+        r#"["app/nested/inner"]"#
+    );
+    assert_eq!(
+        empty(r#"#{ "skip": ["target"], "empty_dirs": true, "own": ["app/nested", "app/empty"] }"#),
+        r#"["app/empty"]"#
+    );
+    assert_eq!(
+        empty(r#"#{ "empty_dirs": true, "own": ["app/nested/inner"] }"#),
+        r#"["app/nested/inner"]"#
+    );
+    // both in one walk
+    let both = s(eval(&format!(
+        r#"let b = unwrap(fs.scan("{}", #{{ "skip": ["target"], "empty_dirs": "also" }})); show(b.empty_dirs) + " " + show(len(b.files))"#,
+        r
+    )));
+    assert_eq!(both, r#"["app/dotted", "app/empty", "app/nested/inner"] 10"#);
+}
+
 #[test]
 fn scan_refuses_what_is_not_a_folder_and_options_it_does_not_know() {
     assert_eq!(

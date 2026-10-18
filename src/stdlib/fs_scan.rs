@@ -30,6 +30,10 @@ struct Walk {
     within: Vec<String>,
     /// Only these folders' own files (not their folders'), as `within`.
     own: Vec<String>,
+    /// The empty folders: folders the walk enters that hold nothing it
+    /// would visit (a hidden or ignored entry does not count) — answered
+    /// instead of the files (1), or beside them in one walk (2).
+    empty_dirs: u8,
 }
 
 impl Default for Walk {
@@ -43,6 +47,7 @@ impl Default for Walk {
             max_depth: None,
             within: Vec::new(),
             own: Vec::new(),
+            empty_dirs: 0,
         }
     }
 }
@@ -127,10 +132,22 @@ fn walk_opts(opts: &ValueMap, who: &str, extra: &[&str]) -> Result<Walk, Value> 
             "max_depth" => w.max_depth = Some(count(v, who, "max_depth")?),
             "within" => w.within = folders(strings(v, who, "within")?),
             "own" => w.own = folders(strings(v, who, "own")?),
+            "empty_dirs" => {
+                w.empty_dirs = match v {
+                    Value::String(s) if s.as_str() == "also" => 2,
+                    other => {
+                        if flag(other, who, "empty_dirs (true, false or \"also\")")? {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                }
+            }
             other if extra.contains(&other) => {}
             other => {
                 return Err(err(format!(
-                    "{}: unknown option '{}' (supported: skip, exts, hidden, gitignore, {}max_depth, within, own{}{})",
+                    "{}: unknown option '{}' (supported: skip, exts, hidden, gitignore, {}max_depth, within, own, empty_dirs{}{})",
                     who,
                     other,
                     if extra.contains(&"limit") {
@@ -159,6 +176,11 @@ fn above_or_at(a: &str, b: &str) -> bool {
     a.is_empty() || a == b || (b.starts_with(a) && b.as_bytes().get(a.len()) == Some(&b'/'))
 }
 
+/// The folder `rel` is in (`""` the root).
+fn parent_of(rel: &str) -> &str {
+    rel.rfind('/').map(|i| &rel[..i]).unwrap_or("")
+}
+
 /// What a restricted walk (`within`, `own`) enters and lists.
 #[derive(Clone)]
 struct Only {
@@ -167,14 +189,21 @@ struct Only {
 }
 
 impl Only {
-    /// A folder at `rel` is entered: on the way to a target, or below one
-    /// walked whole.
+    /// A folder at `rel` is entered: on the way to a target, below one
+    /// walked whole, or right inside an `own` one (so whether that one is
+    /// empty is known; none of its files are listed).
     fn enters(&self, rel: &str) -> bool {
         self.within
             .iter()
             .chain(self.own.iter())
             .any(|t| above_or_at(rel, t))
             || self.within.iter().any(|t| above_or_at(t, rel))
+            || self.own.iter().any(|t| parent_of(rel) == t.as_str())
+    }
+    /// A folder at `rel` is seen whole (all it holds visited): one an
+    /// empty folder may be said of.
+    fn whole(&self, rel: &str) -> bool {
+        self.own.iter().any(|t| t == rel) || self.within.iter().any(|t| above_or_at(t, rel))
     }
     /// A file whose folder is `dir` is listed.
     fn lists(&self, dir: &str) -> bool {
@@ -184,7 +213,7 @@ impl Only {
 
 /// The files under `root` the walk keeps, relative to it with `/`
 /// between folders, sorted.
-fn walk_files(root: &Path, w: &Walk) -> Vec<String> {
+fn walk(root: &Path, w: &Walk) -> (Vec<String>, Vec<String>) {
     let mut b = ignore::WalkBuilder::new(root);
     b.hidden(!w.hidden)
         .parents(w.gitignore)
@@ -232,6 +261,11 @@ fn walk_files(root: &Path, w: &Walk) -> Vec<String> {
         }
     });
     let found: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    // empty_dirs: the folders entered (seen whole) and those holding something
+    let dirs: Arc<Mutex<(Vec<String>, std::collections::HashSet<String>)>> =
+        Arc::new(Mutex::new((Vec::new(), std::collections::HashSet::new())));
+    let empty_dirs = w.empty_dirs;
+    let at_limit = w.max_depth;
     let exts = Arc::new(w.exts.clone());
     let root_buf: Arc<PathBuf> = Arc::new(root.to_path_buf());
     let limit = w.limit;
@@ -240,11 +274,32 @@ fn walk_files(root: &Path, w: &Walk) -> Vec<String> {
         let exts = exts.clone();
         let root_buf = root_buf.clone();
         let only = only.clone();
+        let dirs = dirs.clone();
         Box::new(move |entry| {
             let e = match entry {
                 Ok(e) => e,
                 Err(_) => return ignore::WalkState::Continue,
             };
+            if empty_dirs > 0 && e.depth() > 0 {
+                if let Some(rel) = e
+                    .path()
+                    .strip_prefix(root_buf.as_ref())
+                    .ok()
+                    .and_then(|r| r.to_str())
+                    .map(|s| s.replace(std::path::MAIN_SEPARATOR, "/"))
+                {
+                    let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                    let mut d = dirs.lock().unwrap();
+                    d.1.insert(parent_of(&rel).to_string());
+                    let seen_whole = only.as_ref().map(|o| o.whole(&rel)).unwrap_or(true);
+                    if is_dir && seen_whole && at_limit.map(|m| e.depth() < m).unwrap_or(true) {
+                        d.0.push(rel);
+                    }
+                }
+            }
+            if empty_dirs == 1 {
+                return ignore::WalkState::Continue;
+            }
             if !e.file_type().map(|t| t.is_file()).unwrap_or(false) {
                 return ignore::WalkState::Continue;
             }
@@ -281,12 +336,28 @@ fn walk_files(root: &Path, w: &Walk) -> Vec<String> {
             ignore::WalkState::Continue
         })
     });
+    let empties = if empty_dirs > 0 {
+        let d = dirs.lock().unwrap();
+        let mut out: Vec<String> = d.0.iter().filter(|x| !d.1.contains(*x)).cloned().collect();
+        out.sort();
+        out.truncate(limit);
+        out
+    } else {
+        Vec::new()
+    };
     let mut out = Arc::try_unwrap(found)
         .map(|m| m.into_inner().unwrap())
         .unwrap_or_else(|a| a.lock().unwrap().clone());
     out.sort();
     out.truncate(limit);
-    out
+    (out, empties)
+}
+
+/// The files under `root` the walk keeps (or, with `empty_dirs: true`,
+/// the empty folders), relative to it with `/` between folders, sorted.
+fn walk_files(root: &Path, w: &Walk) -> Vec<String> {
+    let (files, empties) = walk(root, w);
+    if w.empty_dirs == 1 { empties } else { files }
 }
 
 /// An options problem a helper answered as `Err(text)`: a misuse, raised.
@@ -353,12 +424,23 @@ pub fn scan(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Ok(w) => w,
         Err(e) => return Err(raised(e)),
     };
-    let files = walk_files(&root, &w);
-    let list: Vec<Value> = files
-        .into_iter()
-        .map(|p| Value::String(Arc::new(p)))
-        .collect();
-    Ok(Value::Ok(Box::new(Value::List(list.into()))))
+    let strs = |xs: Vec<String>| -> Value {
+        Value::List(
+            xs.into_iter()
+                .map(|p| Value::String(Arc::new(p)))
+                .collect::<Vec<_>>()
+                .into(),
+        )
+    };
+    if w.empty_dirs == 2 {
+        // one walk, both: #{ files, empty_dirs }
+        let (files, empties) = walk(&root, &w);
+        let mut m = ValueMap::default();
+        m.insert("files".to_string(), strs(files));
+        m.insert("empty_dirs".to_string(), strs(empties));
+        return Ok(Value::Ok(Box::new(Value::Map(Arc::new(m)))));
+    }
+    Ok(Value::Ok(Box::new(strs(walk_files(&root, &w)))))
 }
 
 /// How a line is searched.

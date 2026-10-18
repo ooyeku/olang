@@ -4985,7 +4985,7 @@ if banner != () => dom.set_text(banner, "hello") else => ()"##],
             "fs.scan(root, opts)",
             "Result",
             "fs",
-            "every file under a folder a checkout keeps, relative to it and sorted: its .gitignores respected at every level, hidden entries and the folders in skip left out, walked on worker threads (opts: skip, exts, hidden, gitignore, limit, max_depth; within and own: only some folders, by the rules of the whole walk)",
+            "every file under a folder a checkout keeps, relative to it and sorted: its .gitignores respected at every level, hidden entries and the folders in skip left out, walked on worker threads (opts: skip, exts, hidden, gitignore, limit, max_depth; within and own: only some folders, by the rules of the whole walk; empty_dirs: the empty folders instead, or also both)",
             &[r##"unwrap(fs.scan(".", #{ "skip": ["target", "node_modules"], "exts": ["ol", "toml"] }))"##],
         );
         self.doc_ex(
