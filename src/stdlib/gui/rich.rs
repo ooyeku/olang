@@ -469,7 +469,12 @@ pub fn parse_lenses(v: Option<&Value>) -> Vec<Lens> {
 /// glyph, colour)` — in a column at the gutter's left edge. A mark whose
 /// glyph is a list of canvas operations is drawn from them instead, in a
 /// box of `MARK_BOX` logical pixels centred on its line's first row
-/// (`drawn`): a shape, not a character of whatever font has it.
+/// (`drawn`): a shape, not a character of whatever font has it. And the
+/// changes against a version kept elsewhere (a repository's index) —
+/// `(line, kind, colour)`, `kind` `added`, `modified` or `removed` — in a
+/// lane of their own between the numbers and the text: a bar the height
+/// of each added or modified line, a tick at the edge above the line a
+/// removal came out before (`changes`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Gutter {
     pub numbers: bool,
@@ -478,10 +483,26 @@ pub struct Gutter {
     pub line_bg: Option<Color>,
     pub marks: Vec<(usize, String, Option<Color>)>,
     pub drawn: Vec<(usize, Value)>,
+    pub changes: Vec<(usize, Change, Option<Color>)>,
+}
+
+/// How a line differs from the version it is compared with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Change {
+    Added,
+    Modified,
+    Removed,
 }
 
 /// The side of a drawn gutter mark's box, logical pixels.
 pub const MARK_BOX: f32 = 12.0;
+
+/// The changes' lane: its right edge this far left of the text, and its
+/// width (logical pixels); a press this far left of the text or nearer
+/// is the lane's.
+pub const CHANGE_LANE_RIGHT: f32 = 6.0;
+pub const CHANGE_LANE_W: f32 = 3.0;
+pub const CHANGE_LANE_HIT: f32 = 13.0;
 
 impl Gutter {
     pub fn parse(v: &Value) -> Option<Gutter> {
@@ -512,6 +533,26 @@ impl Gutter {
                 .collect(),
             _ => Vec::new(),
         };
+        let changes = match get(v, "changes") {
+            Some(Value::List(l)) => l
+                .iter()
+                .filter_map(|c| {
+                    let Value::Tuple(t) = c else { return None };
+                    let line = match t.first()? {
+                        Value::Integer(i) if *i >= 0 => *i as usize,
+                        _ => return None,
+                    };
+                    let kind = match t.get(1)? {
+                        Value::String(k) if k.as_str() == "added" => Change::Added,
+                        Value::String(k) if k.as_str() == "modified" => Change::Modified,
+                        Value::String(k) if k.as_str() == "removed" => Change::Removed,
+                        _ => return None,
+                    };
+                    Some((line, kind, t.get(2).and_then(parse_color)))
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
         Some(Gutter {
             numbers: !matches!(get(v, "numbers"), Some(Value::Boolean(false))),
             color: get(v, "color").and_then(parse_color),
@@ -519,6 +560,7 @@ impl Gutter {
             line_bg: get(v, "line_bg").and_then(parse_color),
             marks,
             drawn,
+            changes,
         })
     }
 }

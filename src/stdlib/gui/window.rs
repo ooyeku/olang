@@ -1532,7 +1532,27 @@ impl WinState {
                                 .find(|(y0, y1, _)| vy >= *y0 && vy < *y1)
                                 .map(|d| d.2)
                         });
-                        let lens = if pinned.is_some() {
+                        // a press in the changes' lane, on a line: the
+                        // program's (said as a lens of id "change" on that
+                        // line), the caret left where it was
+                        let change = if pinned.is_some()
+                            || tx >= 0.0
+                            || tx < -super::rich::CHANGE_LANE_HIT * self.scale
+                        {
+                            None
+                        } else {
+                            ed.rich_mut().and_then(|r| {
+                                if r.gutter
+                                    .as_ref()
+                                    .map(|g| g.changes.is_empty())
+                                    .unwrap_or(true)
+                                {
+                                    return None;
+                                }
+                                r.gutter_line_at(ty, &mut ts).map(|(line, _)| line)
+                            })
+                        };
+                        let lens = if pinned.is_some() || change.is_some() {
                             None
                         } else {
                             ed.rich_mut().and_then(|r| {
@@ -1541,7 +1561,22 @@ impl WinState {
                                 Some((l, ly / self.scale))
                             })
                         };
-                        if let Some(line) = pinned {
+                        if let Some(line) = change {
+                            drop(ts);
+                            let f = f.clone();
+                            out.push(self.ev(
+                                "lens",
+                                vec![
+                                    ("key", s(&f)),
+                                    ("line", Value::Integer(line as i64 + 1)),
+                                    ("id", s("change")),
+                                    ("hit", Value::Unit),
+                                    ("x", float(tx / self.scale)),
+                                    ("y", float(0.0)),
+                                    ("clicks", Value::Integer(clicks as i64)),
+                                ],
+                            ));
+                        } else if let Some(line) = pinned {
                             drop(ts);
                             let f = f.clone();
                             out.push(self.ev(
@@ -2898,6 +2933,54 @@ impl WinState {
                     let shaped = ts.shape(&label, &font, fade(color), None, Align::Start, s);
                     let x = content[0] - 14.0 * s - shaped.width;
                     push_glyphs(&shaped, x, oy + py, gclip, dl);
+                }
+            }
+            // the changes' lane: a bar down each added or modified line
+            // (a wrapped line's whole height), a tick across the lane at
+            // the edge a removal came out of
+            let lane_x =
+                content[0] - (super::rich::CHANGE_LANE_RIGHT + super::rich::CHANGE_LANE_W) * s;
+            let lane_w = super::rich::CHANGE_LANE_W * s;
+            let paras = r.para_count();
+            for (line, kind, color) in &g.changes {
+                let c = fade(color.unwrap_or(base));
+                match kind {
+                    super::rich::Change::Removed => {
+                        // the edge above `line`: its top, or under the last line
+                        let edge = if *line < paras && shown.contains(line) {
+                            Some(r.para(*line).0)
+                        } else if *line > 0 && *line - 1 < paras && shown.contains(&(*line - 1)) {
+                            let (py, _, ph) = r.para(*line - 1);
+                            Some(py + ph)
+                        } else {
+                            None
+                        };
+                        if let Some(ey) = edge {
+                            let h = (3.0 * s).max(2.0);
+                            dl.prims.push(solid(
+                                lane_x - 2.0 * s,
+                                (oy + ey - h / 2.0).round(),
+                                lane_w + 4.0 * s,
+                                h,
+                                c,
+                                gclip,
+                            ));
+                        }
+                    }
+                    _ => {
+                        if !shown.contains(line) || *line >= paras {
+                            continue;
+                        }
+                        let (py, _, ph) = r.para(*line);
+                        dl.prims.push(solid(
+                            lane_x,
+                            (oy + py).round(),
+                            lane_w,
+                            ph.ceil(),
+                            c,
+                            gclip,
+                        ));
+                    }
                 }
             }
             for (line, ops) in &g.drawn {

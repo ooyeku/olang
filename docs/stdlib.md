@@ -2346,9 +2346,14 @@ the program's selection, `undo: false` (⌘Z is the program's), `report`
 and the caret's, are laid out (the rest are estimated until they show),
 so a 50,000-line text opens and edits at the cost of a page. For a code
 editor it also takes `gutter` `#{ numbers, color, current, line_bg,
-marks }` — line numbers (the caret's in `current`) and marks `(line,
+marks, changes }` — line numbers (the caret's in `current`) and marks `(line,
 glyph, colour)` drawn in the field's left padding, the caret's line
-behind in `line_bg` — `decorations` `[(line, start, end, style)]`
+behind in `line_bg`, and `changes` `(line, kind, colour)` (`kind`
+`"added"`, `"modified"`, `"removed"`: a line's change against a version
+kept elsewhere, a repository's index) in a 3-pixel lane between the
+numbers and the text — a bar down a changed line, a tick at the edge a
+removal came out of; a press in the lane is a `lens` event with `id`
+`"change"` on that line, the caret left where it was — `decorations` `[(line, start, end, style)]`
 (characters within a line: a style's `bg` behind, its `underline` under,
 without restyling the text: a matching bracket, the find's matches, a
 problem), `scroll_to` `(line, seq)` (that line first in view, when
@@ -2384,7 +2389,7 @@ handed back is known as the field's own earlier one by its identity.
 | `"viewport"` | `key`, `top` — a styled field's first line in view moved into another band of 16 lines (the wheel) |
 | `"select"` | `key`, `selection`, `place`, `rev`, `caret`, `top`, `click_mod` — a styled field's selection moved (`report`) |
 | `"hover"` | `key` (a styled field with `hover: true`), `line` and `column` (1-based, the character the pointer rests on; both `()` when it left the text, `column` `()` and `gutter: true` over the gutter), `rect` |
-| `"lens"` | `key`, `line` (1-based: the line the lens sits under), `id`, `hit`, `x`, `y`, `clicks` — a press in a code field's lens (a lens is `#{ line, height, ops, id }`, `line` 1-based) |
+| `"lens"` | `key`, `line` (1-based: the line the lens sits under), `id`, `hit`, `x`, `y`, `clicks` — a press in a code field's lens (a lens is `#{ line, height, ops, id }`, `line` 1-based); `id` `"sticky"` a pinned scope's line, `"change"` the gutter's changes' lane |
 | `"a11y"` | `key`, `action` (`"set_value"`, `"increment"`, `"decrement"`), `value` |
 | `"outside"` | `key` (the modal layer), `x`, `y` — a press outside the topmost modal layer |
 | `"window_focus"` | `on` |
