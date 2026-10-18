@@ -1505,7 +1505,7 @@ fn the_systems_settings_reach_a_window_and_its_program() {
     "##);
     assert_eq!(
         text(&v),
-        r##"[false, #{"accent": "#ff2d55", "contrast": false, "dark": true, "reduce_motion": true, "reduce_transparency": true}, (true, false, true, true, "#ff2d55", "test"), true, ["accent", "contrast", "dark", "reduce_motion", "reduce_transparency"]]"##
+        r##"[false, #{"dark": true, "contrast": false, "reduce_motion": true, "reduce_transparency": true, "accent": "#ff2d55"}, (true, false, true, true, "#ff2d55", "test"), true, ["accent", "contrast", "dark", "reduce_motion", "reduce_transparency"]]"##
     );
 }
 

@@ -635,7 +635,7 @@ impl Interpreter {
                 self.pending_top_level.remove(&f.name);
                 // Declared on first use already: bind that same value
                 // here rather than building a second one.
-                if let Some(value) = self.declared_early.remove(&f.name) {
+                if let Some(value) = self.declared_early.swap_remove(&f.name) {
                     self.environment.define(f.name.clone(), value);
                     continue;
                 }
@@ -4811,7 +4811,7 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         self.environment.remove_variable(name);
         self.scope_bindings.remove(name);
         self.pending_top_level.remove(name);
-        self.declared_early.remove(name);
+        self.declared_early.swap_remove(name);
     }
 
     /// Perform safepoint poll for GC coordination

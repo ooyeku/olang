@@ -704,7 +704,7 @@ fn json_lines_become_a_frame() {
     .expect("read_jsonl");
     assert_eq!(
         shown(&out),
-        "\"[[\"name\", \"note\", \"score\"], [2, 1]]\"".to_string()
+        "\"[[\"name\", \"score\", \"note\"], [2, 1]]\"".to_string()
     );
 }
 

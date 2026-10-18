@@ -730,7 +730,7 @@ main()
         Ok(l(vec![
             s("[PrintedPoint { y: 2, x: 1 }, Circle(2.0), Dot]"),
             s("#{\"k\": [\"a\\\"b\\n\"]}"),
-            s("{ a: \"x\", b: 1 }"),
+            s("{ b: 1, a: \"x\" }"),
             s("#{\"a b\": 1}"),
             s("top"),
             s("[1, \"s\"]"),
@@ -1101,7 +1101,7 @@ let ww = proc.wait(q)
             s("Bytes"),
             Value::Integer(4),
             Value::Map(std::sync::Arc::new(query)),
-            s("n=1&t=a&t=b"),
+            s("t=a&t=b&n=1"),
             Value::Boolean(true),
         ]))
     );

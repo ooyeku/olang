@@ -1260,7 +1260,7 @@ impl Session {
         if let Some(id) = id {
             v["id"] = id.clone();
             v["ok"] = J::Bool(true);
-            v.as_object_mut().map(|o| o.remove("event"));
+            v.as_object_mut().map(|o| o.shift_remove("event"));
         }
         v
     }
@@ -2482,8 +2482,7 @@ impl Session {
                 let h = self.hold(v, held);
                 let mut r = json!({ "k": "map", "t": t, "n": m.len(), "h": h, "s": preview(v) });
                 if depth < 2 {
-                    let mut keys: Vec<&String> = m.keys().collect();
-                    keys.sort();
+                    let keys: Vec<&String> = m.keys().collect();
                     let entries: Vec<J> = keys
                         .into_iter()
                         .take(FIRST_ITEMS)
@@ -2498,8 +2497,7 @@ impl Session {
                 let mut r =
                     json!({ "k": "record", "t": t, "n": fields.len(), "h": h, "s": preview(v) });
                 if depth < 2 {
-                    let mut keys: Vec<&String> = fields.keys().collect();
-                    keys.sort();
+                    let keys: Vec<&String> = fields.keys().collect();
                     let entries: Vec<J> = keys
                         .into_iter()
                         .take(FIRST_ITEMS)
@@ -2656,8 +2654,7 @@ impl Session {
                 }
             }
             Value::Map(m) => {
-                let mut keys: Vec<&String> = m.keys().collect();
-                keys.sort();
+                let keys: Vec<&String> = m.keys().collect();
                 let n = keys.len();
                 let out: Vec<J> = keys
                     .into_iter()
@@ -2668,8 +2665,7 @@ impl Session {
                 json!({ "ok": true, "n": n, "entries": out })
             }
             Value::Struct { fields, .. } => {
-                let mut keys: Vec<&String> = fields.keys().collect();
-                keys.sort();
+                let keys: Vec<&String> = fields.keys().collect();
                 let n = keys.len();
                 let out: Vec<J> = keys
                     .into_iter()
@@ -3295,8 +3291,7 @@ fn table_columns(items: &[Value]) -> Option<Vec<String>> {
             Value::Struct { fields, .. } => fields.as_ref(),
             _ => return None,
         };
-        let mut keys: Vec<&String> = fields.keys().collect();
-        keys.sort();
+        let keys: Vec<&String> = fields.keys().collect();
         for k in keys {
             if cols.len() < 64 && !cols.contains(k) {
                 cols.push(k.clone());
@@ -3865,7 +3860,7 @@ mod tests {
         let rows = vec![Value::Map(Arc::new(m))];
         assert_eq!(
             table_columns(&rows),
-            Some(vec!["a".to_string(), "b".to_string()])
+            Some(vec!["b".to_string(), "a".to_string()])
         );
     }
 }

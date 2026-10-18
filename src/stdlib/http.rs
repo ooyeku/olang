@@ -1736,8 +1736,8 @@ fn encode_query(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Err(format!("encode_query expects 1 argument, got {}", args.len()).into());
     }
 
-    // A `#{}` map or a `{ }` record, alike: the keys in sorted order so
-    // the same pairs always encode to the same string.
+    // A `#{}` map or a `{ }` record, alike: the keys in its order (as
+    // written, or as first set).
     let entries: Vec<(&String, &Value)> = match &args[0] {
         Value::Struct { fields, .. } => fields.iter().collect(),
         Value::Map(map) => map.iter().collect(),
@@ -1749,8 +1749,6 @@ fn encode_query(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
             .into());
         }
     };
-    let mut entries = entries;
-    entries.sort_by(|a, b| a.0.cmp(b.0));
     // A value is a string, a number or a Bool; a list of them is the name
     // said once for each (what decode_query reads back as the list). A
     // nested value has no query form, and is refused.
@@ -2427,7 +2425,7 @@ mod tests {
         match assert_ok(&encoded) {
             Value::String(q) => assert_eq!(
                 q.as_str(),
-                "list=item1&list=item2&simple_int=42&simple_string=hello"
+                "simple_string=hello&simple_int=42&list=item1&list=item2"
             ),
             other => panic!("Expected string result from encode_query, got: {:?}", other),
         }

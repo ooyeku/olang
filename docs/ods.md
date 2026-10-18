@@ -507,7 +507,8 @@ comma or a quote is quoted so the column count survives the trip.
 
 And `ods.frame_from_records` takes a list of maps — exactly what
 `json.parse` yields for a JSON array of objects — with columns formed
-from the sorted union of keys and missing keys becoming nulls:
+from the union of keys in the order first met (the first record's, then
+each new key where it first appears) and missing keys becoming nulls:
 
 ```olang
 let records = unwrap(json.parse("[{\"name\": \"ada\", \"score\": 99}, {\"name\": \"bob\"}]"))

@@ -146,7 +146,7 @@ fn a_rewritten_accumulator_means_what_it_meant() {
         assert_eq!(code, 0, "{flags:?}: {err}");
         assert_eq!(
             out,
-            "([1, 2, 3], 6)\n([0], [0, 1, 2])\n#{\"k\": 2, \"other\": 1}\n#{\"inner\": 5}\n([9, 3], [9], [9])\n",
+            "([1, 2, 3], 6)\n([0], [0, 1, 2])\n#{\"other\": 1, \"k\": 2}\n#{\"inner\": 5}\n([9, 3], [9], [9])\n",
             "{flags:?}: {err}"
         );
     }

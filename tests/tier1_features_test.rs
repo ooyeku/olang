@@ -33,12 +33,12 @@ fn show_renders_strings_bare_and_others_like_to_string() {
 // ── entries ────────────────────────────────────────────────────────────
 
 #[test]
-fn entries_yields_sorted_key_value_tuples() {
+fn entries_yields_key_value_tuples_in_the_maps_order() {
     let src = r#"
 let parts = entries(#{ "b": 2, "a": 1 }) |> map((p) => p[0] + "=" + show(p[1]))
 join(parts, ",")
 "#;
-    assert_eq!(s(eval(src)), "a=1,b=2");
+    assert_eq!(s(eval(src)), "b=2,a=1");
 }
 
 #[test]
@@ -121,7 +121,7 @@ let mut out = ""
 for (k, v) in entries(#{ "b": 2, "a": 1 }) { out = out + k + "=" + show(v) + " " }
 out
 "#;
-    assert_eq!(s(eval(src)), "a=1 b=2 ");
+    assert_eq!(s(eval(src)), "b=2 a=1 ");
 }
 
 #[test]

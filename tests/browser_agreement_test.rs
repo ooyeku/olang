@@ -172,6 +172,6 @@ fn a_client_bundle_keeps_each_modules_names_its_own_in_the_browser() {
     );
     assert_eq!(
         in_browser(&wasm, &ws.join("bundle.ol")),
-        "<code>x</code>\n#{\"kind\": \"code\", \"max\": 2, \"min\": 1}\n[\"fields\", \"client\"]\n"
+        "<code>x</code>\n#{\"kind\": \"code\", \"min\": 1, \"max\": 2}\n[\"fields\", \"client\"]\n"
     );
 }

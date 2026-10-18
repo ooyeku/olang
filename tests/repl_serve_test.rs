@@ -190,13 +190,14 @@ fn values_arrive_by_kind_with_their_type_time_and_tier() {
     assert_eq!(res["value"]["k"], json!("result"));
     assert_eq!(res["value"]["ok"], json!(false));
     assert_eq!(res["value"]["v"]["s"], json!("no"));
-    // a map: a handle and its entries, sorted
+    // a map: a handle and its entries, in its order
     let m = r.eval("#{ \"b\": [1, 2, 3], \"a\": 1.5 }");
     assert_eq!(m["value"]["k"], json!("map"));
-    assert_eq!(m["value"]["entries"][0]["key"], json!("a"));
+    assert_eq!(m["value"]["entries"][0]["key"], json!("b"));
     let h = m["value"]["h"].as_u64().unwrap();
-    let e = r.ask(json!({ "op": "expand", "h": h, "start": 1, "count": 10 }));
+    let e = r.ask(json!({ "op": "expand", "h": h, "start": 0, "count": 10 }));
     assert_eq!(e["entries"][0]["key"], json!("b"));
+    assert_eq!(e["entries"][1]["key"], json!("a"));
     assert_eq!(e["entries"][0]["v"]["series"]["hi"], json!(3.0));
     // a let's value is its binding's
     let l = r.eval("let answer = 6 * 7");

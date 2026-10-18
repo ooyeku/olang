@@ -8772,19 +8772,19 @@ impl BytecodeVm {
                 match &args[0].data {
                     ValueData::Map(m) => {
                         let mut new_map = (**m).clone();
-                        new_map.remove(&key);
+                        new_map.shift_remove(&key);
                         Ok(OvmValue::new_map(Arc::new(new_map)))
                     }
                     ValueData::AstMap(m) => {
                         let mut new_map = (**m).clone();
-                        new_map.remove(&key);
+                        new_map.shift_remove(&key);
                         Ok(OvmValue {
                             data: ValueData::AstMap(Arc::new(new_map)),
                         })
                     }
                     ValueData::AstStruct(m, kind) => {
                         let mut new_map = (**m).clone();
-                        new_map.remove(&key);
+                        new_map.shift_remove(&key);
                         Ok(OvmValue {
                             data: ValueData::AstStruct(Arc::new(new_map), *kind),
                         })
@@ -8861,12 +8861,7 @@ impl BytecodeVm {
                         }
                         Err(_) => {
                             let st = OvmValue::force_ast_struct(m, *kind);
-                            let mut pairs: Vec<(String, OvmValue)> = st
-                                .iter()
-                                .filter(|(name, _)| **name != key)
-                                .map(|(name, v)| (name.clone(), v.clone()))
-                                .collect();
-                            pairs.push((key, args[2].clone()));
+                            let pairs = st.set_pairs(key, args[2].clone());
                             Ok(OvmValue::new_struct(Arc::new(
                                 crate::ovm::value::StructObject::from_pairs(
                                     kind.type_name(),
@@ -8876,12 +8871,7 @@ impl BytecodeVm {
                         }
                     },
                     ValueData::Struct(st) => {
-                        let mut pairs: Vec<(String, OvmValue)> = st
-                            .iter()
-                            .filter(|(name, _)| **name != key)
-                            .map(|(name, v)| (name.clone(), v.clone()))
-                            .collect();
-                        pairs.push((key, args[2].clone()));
+                        let pairs = st.set_pairs(key, args[2].clone());
                         Ok(OvmValue::new_struct(Arc::new(
                             crate::ovm::value::StructObject::from_pairs(st.type_name(), pairs),
                         )))
@@ -8892,7 +8882,7 @@ impl BytecodeVm {
                 }
             })()),
             "entries" if args.len() == 1 => Some((|| {
-                let mut pairs: Vec<(String, OvmValue)> = match &args[0].data {
+                let pairs: Vec<(String, OvmValue)> = match &args[0].data {
                     ValueData::Map(m) => m.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
                     ValueData::AstMap(m) | ValueData::AstStruct(m, _) => m
                         .iter()
@@ -8907,8 +8897,7 @@ impl BytecodeVm {
                         ));
                     }
                 };
-                // The interpreter sorts keys, so entries is deterministic
-                pairs.sort_by(|a, b| a.0.cmp(&b.0));
+                // In the map's order, as the interpreter's entries walks it
                 Ok(OvmValue::new_list(
                     pairs
                         .into_iter()
@@ -11621,10 +11610,10 @@ impl BytecodeCompiler {
                 }
 
                 // Field exprs compile in literal order (side-effect order);
-                // the instruction stores their registers in SHAPE order.
+                // the shape keeps that order (a record keeps its fields as written).
                 let exprs: Vec<&Expr> = literal.fields.iter().map(|f| &f.value).collect();
                 let regs = self.compile_operands(&exprs)?;
-                let mut pairs: Vec<(String, Register)> = literal
+                let pairs: Vec<(String, Register)> = literal
                     .fields
                     .iter()
                     .zip(regs)
@@ -11634,7 +11623,6 @@ impl BytecodeCompiler {
                     &literal.type_name,
                     pairs.iter().map(|(n, _)| n.clone()).collect(),
                 );
-                pairs.sort_by(|a, b| a.0.cmp(&b.0));
                 // Field types in shape order, parallel to field_regs. Fields
                 // with an unenforceable annotation carry `None` and stay
                 // dynamic.
@@ -11660,7 +11648,7 @@ impl BytecodeCompiler {
             Expr::AnonymousObject { fields } => {
                 let exprs: Vec<&Expr> = fields.iter().map(|f| &f.value).collect();
                 let regs = self.compile_operands(&exprs)?;
-                let mut pairs: Vec<(String, Register)> = fields
+                let pairs: Vec<(String, Register)> = fields
                     .iter()
                     .zip(regs)
                     .map(|(f, reg)| (f.name.clone(), reg))
@@ -11669,7 +11657,6 @@ impl BytecodeCompiler {
                     "Object",
                     pairs.iter().map(|(n, _)| n.clone()).collect(),
                 );
-                pairs.sort_by(|a, b| a.0.cmp(&b.0));
                 // Anonymous objects declare no field types: nothing to check.
                 let field_types: std::sync::Arc<[Option<crate::ast::FieldTypeCheck>]> =
                     pairs.iter().map(|_| None).collect();

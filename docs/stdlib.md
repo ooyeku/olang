@@ -369,8 +369,8 @@ they write, not the map's size. An identifier key reads as `m.key`
 | `map_set_in(m, [k1, k2, …], v)` | new value with the end of the key path set — each level a new value of its own kind, a missing level a new map |
 | `map_update(m, k, f)` | new value with `k` set to `f(m.k)` (`f` is given `()` for an absent key) |
 | `map_has_key(m, k)` | presence test (distinguishes absent from null) |
-| `map_keys(m)` / `map_values(m)` | key/value lists, in key order (the order `entries` uses) |
-| `entries(m)` | `(key, value)` tuples, sorted by key — for `for (k, v) in` |
+| `map_keys(m)` / `map_values(m)` | key/value lists, in the map's order (each key where it was first set; the order `entries` uses) |
+| `entries(m)` | `(key, value)` tuples, in the map's order — for `for (k, v) in` |
 | `map_len(m)` | entry count (an object's or a JSON object's fields) |
 | `map_set(m, k, v)` | new value of the same kind with `k` set |
 | `map_remove(m, k)` | new value of the same kind without `k` |
@@ -784,8 +784,8 @@ do not.
 | Function | Description |
 |---|---|
 | `json.parse(s)` | `Result` of the parsed value |
-| `json.stringify(v)` | `Result` of compact JSON text; an object's keys are written sorted |
-| `json.stringify_pairs(pairs)` | `Result` of one JSON object whose keys are in the order of `pairs`, a list of `(key, value)` (each value as `stringify` writes it) |
+| `json.stringify(v)` | `Result` of compact JSON text; an object's keys in its order (a map's as they were first set) |
+| `json.stringify_pairs(pairs)` | `Result` of one JSON object whose keys are in the order of `pairs`, a list of `(key, value)`, a key repeated written twice (each value as `stringify` writes it) |
 | `json.prettify(s)` / `json.minify(s)` | reformat JSON text |
 | `json.is_valid(s)` | is the text valid JSON? |
 | `json.get(s, key)` / `json.set(s, key, v)` | read or replace one top-level key of JSON text: `Result` of the value / of the new text |
@@ -800,7 +800,7 @@ println(`${doc.name} has ${len(doc.tags)} tags`)
 let field = "age"
 println(to_string(map_get(doc, field)))          // a computed key
 let out = unwrap(json.stringify({ ok: true, n: 1 }))
-println(out)                                     // {"n":1,"ok":true}
+println(out)                                     // {"ok":true,"n":1}
 let row = unwrap(json.stringify_pairs([("id", 7), ("name", "ada"), ("tags", ["x"])]))
 println(row)                                     // {"id":7,"name":"ada","tags":["x"]}
 ```
@@ -1546,7 +1546,7 @@ expansion deterministic. It takes source text, not `meta.parse` nodes —
 nodes summarize patterns and types and cannot be turned back into a
 program. `meta.lit(value)` renders a
 value as source text that evaluates back to it, with strings escaped and
-map keys sorted so the output is reproducible; and `meta.fresh(prefix)`
+map keys in the map's order, so the literal makes the same map; and `meta.fresh(prefix)`
 yields a name no program writes by hand, for generated temporaries: the
 form is `prefix__m<N>`, numbered per expansion, and the expander refuses
 a macro-using program that spells a name of that form, so a generated
@@ -2459,7 +2459,7 @@ values for a header sent more than once, as `set-cookie` is), and
 | `http.get(url[, opts])` / `http.post(url, body[, opts])` / `http.put` / `http.delete` | requests |
 | `http.request(method, url, body[, opts])` | any method |
 | `http.parse_url(url)` | split a URL into parts: `Ok({ scheme, host, port, path, query, fragment })`, `port`, `query` and `fragment` `()` when the URL names none |
-| `http.encode_query(map)` / `http.decode_query(s)` | query strings — `encode_query` takes a `#{}` map or a `{ }` record, keys in sorted order, each value a string, a number, a Bool or a list of them (the name repeated for each); anything nested raises. `decode_query` answers a map: a name given once its string, a name given more than once a list of its strings in order (`"t=a&t=b"` is `#{ "t": ["a", "b"] }`) |
+| `http.encode_query(map)` / `http.decode_query(s)` | query strings — `encode_query` takes a `#{}` map or a `{ }` record, keys in its order, each value a string, a number, a Bool or a list of them (the name repeated for each); anything nested raises. `decode_query` answers a map: a name given once its string, a name given more than once a list of its strings in order (`"t=a&t=b"` is `#{ "t": ["a", "b"] }`) |
 | `http.serve(port, handler[, options])` | serve `handler(request)` on a bounded worker pool; blocks the calling program |
 | `http.response(status, body)` / `http.response_with_headers(status, body, headers)` | build responses: an `HttpResponse` of the client's shape, `{ status, body, headers, success }`, `headers` a map |
 | `http.shutdown()` | ask every running `http.serve` to drain: no new connections, in-flight requests finish (up to `drain_ms`), and `serve` returns `Ok` — what an [`os.on_shutdown`](#os--operating-system) handler calls |
@@ -2626,9 +2626,10 @@ in the path as `%25`, `%3F`, and `%23`. Under a capability manifest, a
 read-only open (either way) needs `fs = "read"`; any other file open
 needs full `fs`.
 
-**Rows as SQL has them.** A `db.query` row is a map, so its keys come
-back sorted, two columns of one name collapse into one, and a result
-with no rows says nothing about its columns. `db.query_rows` keeps all
+**Rows as SQL has them.** A `db.query` row is a map: its keys come in
+the SELECT's order (a map keeps its keys' order), but two columns of one
+name collapse into one, and a result with no rows says nothing about
+its columns. `db.query_rows` keeps all
 of it: the columns in order, each with its declared type (`decltype`,
 `()` for an expression), repeated names kept, known with zero rows; the
 rows as lists in the same order.

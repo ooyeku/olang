@@ -175,7 +175,7 @@ fn encode_query_takes_a_map_as_well_as_a_record() {
     // anything but a map or a record is a misuse: it raises
     assert_eq!(
         out,
-        "Ok(\"page=2&q=a%20b\")\nOk(\"ok=true&q=x%26y\")\nErr(\"http.encode_query: takes a map or a record, got String\")\n"
+        "Ok(\"q=a%20b&page=2\")\nOk(\"q=x%26y&ok=true\")\nErr(\"http.encode_query: takes a map or a record, got String\")\n"
     );
 }
 

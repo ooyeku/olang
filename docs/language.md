@@ -251,8 +251,8 @@ escaped.
 |---|---|
 | String inside a container | `"a\"b"`, with `\"`, `\\`, `\n`, `\r`, `\t` and other control characters escaped |
 | List, tuple | `[1, "a"]`, `(1, "a")` |
-| Map | `#{"k": 1}`, its keys sorted |
-| Object, parsed JSON object | `{ a: 1, b: 2 }`, its fields sorted (a JSON object with a key that is not a name prints as the map it reads as, `#{"a b": 1}`) |
+| Map | `#{"k": 1}`, its keys in the map's order |
+| Object, parsed JSON object | `{ a: 1, b: 2 }`, its fields in their order (a JSON object with a key that is not a name prints as the map it reads as, `#{"a b": 1}`) |
 | Struct | `P { x: 1, y: 2 }`, its fields in the order the declaration writes them |
 | Enum value | its constructor: `North`, `Ring(2.0)` |
 | `Result` | `Ok(1)`, `Err("bad")` |
@@ -1103,7 +1103,22 @@ println(quadrant((2, 5)) + " " + quadrant((0, 0)))
 
 `#{ key: value }` builds a hash map. Keys are strings (integers, floats, and
 booleans are converted to their string form). Maps are immutable — `map_set`
-returns a new map:
+returns a new map.
+
+A map **keeps its keys in the order they were first set**, as a Python
+dict or a JavaScript object does: `entries`, `map_keys`, `map_values`,
+printing and `json.stringify` walk that order; `map_set` of a key it
+has keeps its place, a new key goes last, and `map_remove` closes the
+gap. An object's fields (`{ a: 1 }`, a parsed JSON object) keep theirs
+the same way. Equality ignores the order:
+
+```olang
+let m = #{ "zeta": 1, "alpha": 2 } |> map_set("mid", 3) |> map_set("zeta", 9)
+println(to_string(map_keys(m)))                       // ["zeta", "alpha", "mid"]
+println(m)                                             // #{"zeta": 9, "alpha": 2, "mid": 3}
+println(to_string(#{ "a": 1, "b": 2 } == #{ "b": 2, "a": 1 }))   // true
+```
+
 
 ```olang
 let scores = #{ "ada": 99, "bob": 82 }
@@ -1329,7 +1344,7 @@ for (i, x) in enumerate(["a", "b"]) {
     println(to_string(i) + ": " + x)
 }
 for (k, v) in entries(#{ "b": 2, "a": 1 }) {
-    println(k + " -> " + show(v))      // entries are sorted by key
+    println(k + " -> " + show(v))      // b -> 2, then a -> 1: the map's order
 }
 ```
 

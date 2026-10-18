@@ -22,7 +22,7 @@ pub struct ResultObject {
 /// attacker's hash-flooding surface, and a `map_get` in a hot loop spends
 /// most of its time hashing the key — SipHash cost three times what the
 /// lookup itself did.
-pub type OvmMap = std::collections::HashMap<String, OvmValue, rustc_hash::FxBuildHasher>;
+pub type OvmMap = indexmap::IndexMap<String, OvmValue, rustc_hash::FxBuildHasher>;
 
 /// Unified value representation for the OVM
 #[derive(Debug)]
@@ -441,7 +441,7 @@ pub struct ClosureObject {
 }
 
 /// A struct's layout, interned globally: one shape per (type name, field
-/// set), field names in sorted order, with a stable id. Two structs of the
+/// names in their order), with a stable id. Two structs of the
 /// same type share the same `Arc<StructShape>`, which is what lets a
 /// GetField site cache "shape id → field index" and turn a repeat read
 /// into an integer compare plus an array index — no hashing.
@@ -449,7 +449,8 @@ pub struct ClosureObject {
 pub struct StructShape {
     pub id: u32,
     pub type_name: String,
-    /// Sorted — the canonical order `values` is stored in.
+    /// The record's own order (a literal's as written, a key set later
+    /// last) — the order `values` is stored in.
     pub field_names: Vec<String>,
     index: HashMap<String, u32, FnvBuildHasher>,
 }
@@ -469,13 +470,16 @@ impl PartialEq for StructShape {
 
 /// Intern a shape. Shapes live for the process; ids start at 1 so 0 can
 /// mean "cold" in inline caches.
-pub fn intern_shape(type_name: &str, mut field_names: Vec<String>) -> Arc<StructShape> {
+pub fn intern_shape(type_name: &str, field_names: Vec<String>) -> Arc<StructShape> {
     use std::sync::{Mutex, OnceLock};
     type Interner = Mutex<HashMap<(String, Vec<String>), Arc<StructShape>>>;
     static SHAPES: OnceLock<Interner> = OnceLock::new();
     static NEXT_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
 
-    field_names.sort();
+    // The fields in the order given (a literal's as written, a record's
+    // as its keys were first set): a record keeps its order across the
+    // tiers, as a map does. The same names in another order are another
+    // shape.
     let mut shapes = SHAPES.get_or_init(Default::default).lock().unwrap();
     let key = (type_name.to_string(), field_names);
     if let Some(shape) = shapes.get(&key) {
@@ -535,6 +539,26 @@ impl StructObject {
 
     pub fn type_name(&self) -> &str {
         &self.shape.type_name
+    }
+
+    /// The fields with `key` set to `value`: in its place when the record
+    /// has it (as a map keeps a key set again where it was), else last.
+    pub fn set_pairs(&self, key: String, value: OvmValue) -> Vec<(String, OvmValue)> {
+        let mut value = Some(value);
+        let mut pairs: Vec<(String, OvmValue)> = self
+            .iter()
+            .map(|(name, v)| {
+                if *name == key {
+                    (name.clone(), value.take().unwrap_or_else(|| v.clone()))
+                } else {
+                    (name.clone(), v.clone())
+                }
+            })
+            .collect();
+        if let Some(v) = value {
+            pairs.push((key, v));
+        }
+        pairs
     }
 }
 

@@ -335,7 +335,7 @@ fn the_capabilities_grant_is_enforced_and_fail_closed() {
         assert_eq!(out.status.code(), Some(1), "{:?}", tier);
         assert_eq!(
             stdout(&out),
-            "#{\"db\": true, \"env\": true, \"fs\": \"read\", \"net\": false, \"proc\": true}\ntrue\n",
+            "#{\"fs\": \"read\", \"net\": false, \"proc\": true, \"db\": true, \"env\": true}\ntrue\n",
             "{:?}",
             tier
         );
@@ -349,7 +349,7 @@ fn the_capabilities_grant_is_enforced_and_fail_closed() {
     // with --deny, and with the enclosing project's grant: both intersect
     let out = run_in(&ws, &["--deny", "env", "c.olmd"]);
     assert!(
-        stdout(&out).contains("\"env\": false, \"fs\": \"read\""),
+        stdout(&out).contains("\"db\": true, \"env\": false"),
         "{}",
         stdout(&out)
     );

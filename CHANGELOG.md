@@ -145,6 +145,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   be `wavy`; a style's `group_hover` shows its hover look over an
   ancestor's hover (`gui.platform().group_hover`).
 
+### Changed
+
+- **A map keeps its keys in the order they were first set**, as a Python
+  dict and a JavaScript object do, and an object's (a parsed JSON
+  object's) fields keep theirs, on every tier: `entries`, `map_keys`,
+  `map_values`, printing, `meta.lit`, `json.stringify` (JSON is parsed in
+  its document's order, TOML in its file's) and `http.encode_query`
+  follow it; a key set again keeps its place, a removed one closes the
+  gap; equality ignores the order. `ods.frame_from_records` and
+  `ods.read_jsonl` take a record's keys in the order first met, so
+  `#{ "repo": …, "files": …, "lines": … }` keeps repo first, and
+  `db.query`'s rows keep the SELECT's order. `col.count_by` and
+  `col.frequencies` count in the order first met; `os.list_env` is by
+  name. (Maps were sorted by key.)
+
 ## [1.0.0-rc.2] - 2026-10-14
 
 ### Added

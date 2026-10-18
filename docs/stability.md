@@ -16,8 +16,9 @@ gradual-typing enforcement in 0.48; the scope, mutability,
 stdlib-convention and error-model changes across 0.61–0.65; operator
 precedence in 0.68; and, in 0.88, the last release before 1.0, the
 settling of records (a missing field of an object reads as `()`), of
-modules (a missing member reads as `()`), and of how a lambda stage in a
-pipeline ends ([Settled before 1.0](#settled-before-10)). Earlier
+modules (a missing member reads as `()`), of how a lambda stage in a
+pipeline ends, and of a map's order (its keys as they were first set)
+([Settled before 1.0](#settled-before-10)). Earlier
 editions of this chapter called 0.61 and then 0.68 the final deliberate
 break; 0.88's changes were made because 1.0 freezes what it ships. What remains before the 1.0 tag is
 the release itself. The guarantees below hold now and are what 1.0
@@ -89,6 +90,15 @@ reversed:
   `|>`.**
 - **`??`'s level** is below the arithmetic, the pipeline and the ranges,
   above the comparisons.
+- **A map keeps its keys in the order they were first set**, as a
+  Python dict and a JavaScript object do; an object's (and a parsed JSON
+  object's) fields keep theirs. Iteration (`entries`, `map_keys`,
+  `map_values`), printing, `meta.lit`, `json.stringify` and
+  `http.encode_query` follow it; setting a key again keeps its place,
+  removing one closes the gap. Equality ignores the order (`#{ "a": 1,
+  "b": 2 } == #{ "b": 2, "a": 1 }`). A record's columns follow it too:
+  `ods.frame_from_records` and `ods.read_jsonl` take the keys in the
+  order first met, `db.query`'s rows the SELECT's.
 
 ## What each surface guarantees
 

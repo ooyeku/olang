@@ -249,9 +249,9 @@ impl Timeline {
 
     /// A deterministic fingerprint of a recorded call's arguments, so replay
     /// can tell two calls of the same op apart. Canonical: map and struct
-    /// fields are emitted in sorted-key order (a `HashMap`'s native order is
-    /// process-randomized and would make the fingerprint unstable), then the
-    /// whole rendering is hashed for a compact, collision-resistant tag.
+    /// fields are emitted in sorted-key order (two maps equal but built in
+    /// another order are the same argument), then the whole rendering is
+    /// hashed for a compact, collision-resistant tag.
     pub fn fingerprint(args: &[Value]) -> String {
         use sha2::{Digest, Sha256};
         let mut rendered = String::new();
@@ -421,8 +421,8 @@ fn round_trips(v: &Value) -> bool {
 }
 
 /// Render a value deterministically for [`Timeline::fingerprint`]: maps and
-/// structs in sorted-key order (so a randomized `HashMap` order can't make
-/// the fingerprint unstable), lists and tuples in order, scalars via their
+/// structs in sorted-key order (equal maps fingerprint alike, whatever
+/// order they were built in), lists and tuples in order, scalars via their
 /// display form.
 const HANDLE_MARKER: &str = "$ReplayHandle";
 

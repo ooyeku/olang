@@ -13,7 +13,6 @@
 
 use crate::ast::Value;
 use crate::interpreter::{Interpreter, InterpreterError};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Registers the `col` module. The function bodies live in
@@ -444,7 +443,8 @@ fn count_by(args: Vec<Value>, interpreter: &mut Interpreter) -> Result<Value, In
         .ok_or_else(|| InterpreterError::RuntimeError {
             message: "col.count_by: missing key function".to_string(),
         })?;
-    let mut counts: HashMap<String, i64> = HashMap::new();
+    // each key where it was first met
+    let mut counts = indexmap::IndexMap::<String, i64>::new();
     for item in list.iter() {
         let key = interpreter.call_function(key_fn.clone(), vec![item.clone()])?;
         *counts.entry(key_string(&key)).or_insert(0) += 1;
@@ -454,7 +454,7 @@ fn count_by(args: Vec<Value>, interpreter: &mut Interpreter) -> Result<Value, In
 
 fn frequencies(args: Vec<Value>) -> Result<Value, InterpreterError> {
     let list = list_arg(&args, 0, "frequencies")?;
-    let mut counts: HashMap<String, i64> = HashMap::new();
+    let mut counts = indexmap::IndexMap::<String, i64>::new();
     for item in list.iter() {
         *counts.entry(key_string(item)).or_insert(0) += 1;
     }
@@ -462,7 +462,7 @@ fn frequencies(args: Vec<Value>) -> Result<Value, InterpreterError> {
 }
 
 /// Build an olang map (Struct-backed) from string keys to integer counts.
-fn map_of_counts(counts: HashMap<String, i64>) -> Value {
+fn map_of_counts(counts: indexmap::IndexMap<String, i64>) -> Value {
     let fields: crate::ast::ValueMap = counts
         .into_iter()
         .map(|(k, v)| (k, Value::Integer(v)))

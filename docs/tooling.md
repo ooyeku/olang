@@ -1155,7 +1155,7 @@ A prompt's evaluations (no `file`) are the session's history (`:history`,
   maps or records also says `table: {cols}`, and a list of numbers (or of
   `(x, number)` pairs) `series: {lo, hi, pts}` (at most 512 points: past
   that, each bucket's least and most);
-- `map` and `record`: `n`, `h`, the first 20 `entries`, sorted by key;
+- `map` and `record`: `n`, `h`, the first 20 `entries`, in the map's order;
 - `frame` (an `ods` Frame) and `series` (an `ods` Series, one column
   named `value`): `n` rows, `h`, `table: {cols, types}` (each column's
   name and its type: `Int`, `Float`, `Bool`, `String`) and the first 20
@@ -1692,7 +1692,7 @@ nondeterministic calls no longer matches the trace — a *different* call,
 or the *same* call with *different arguments* — replay stops at the exact
 point and says so, rather than silently producing a different run. The
 trace records a fingerprint of each call's arguments for that check, and
-map iteration order is deterministic (sorted by key), so the two never
+map iteration order is deterministic (the order its keys were set), so the two never
 disagree by accident. A clean replay is a proof that the recorded inputs
 fully determined the run.
 

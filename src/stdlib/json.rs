@@ -180,10 +180,9 @@ fn json_stringify(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
 }
 
 /// `json.stringify_pairs([(k, v), …])`: one JSON object with its keys in
-/// the order given — what `stringify` cannot do for a map, whose keys it
-/// writes sorted (a query's columns, a form's fields). Each value is
-/// written as `stringify` writes it. A key repeated is written twice, as
-/// given. Misuse (not a list of `(String, value)` pairs) raises.
+/// the order given, a key repeated written twice (what a map, whose keys
+/// are each once, cannot say). Each value is written as `stringify`
+/// writes it. Misuse (not a list of `(String, value)` pairs) raises.
 fn json_stringify_pairs(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() != 1 {
         return Err(format!("stringify_pairs expects 1 argument, got {}", args.len()).into());
@@ -271,7 +270,7 @@ fn preview(value: &Value) -> String {
 
 /// An olang value as serde sees it, written exactly as
 /// `olang_value_to_json` then `serde_json::to_string` wrote it: object
-/// keys in sorted order, floats by the same shortest form, and the same
+/// keys in the map's order, floats by the same shortest form, and the same
 /// `Type error: …` for a value with no JSON form. serde calls back into
 /// `serialize` for every element, so a nested value is serialized where
 /// the stack can grow.
@@ -306,11 +305,11 @@ fn serialize_nested<S: serde::Serializer>(value: &Value, serializer: S) -> Resul
         Value::Struct { fields, .. } | Value::Map(fields) => {
             // A `db` connection's handle is its owner, not its data: the
             // connection writes as the id and path it always did.
-            let mut keys: Vec<&String> = fields
+            // in the map's (the record's) own order
+            let keys: Vec<&String> = fields
                 .keys()
                 .filter(|k| !matches!(&fields[*k], Value::Native(h) if h.0.type_name() == "ConnectionHandle"))
                 .collect();
-            keys.sort();
             let mut map = serializer.serialize_map(Some(keys.len()))?;
             for key in keys {
                 map.serialize_entry(key, &AsJson(&fields[key]))?;
@@ -681,7 +680,7 @@ fn json_remove(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     match serde_json::from_str::<serde_json::Value>(json_str) {
         Ok(mut json_value) => {
             if let serde_json::Value::Object(ref mut obj) = json_value {
-                obj.remove(key);
+                obj.shift_remove(key);
                 match serde_json::to_string(&json_value) {
                     Ok(result_str) => Ok(Value::Ok(Box::new(Value::String(Arc::new(result_str))))),
                     Err(e) => Ok(Value::Err(Box::new(Value::String(Arc::new(format!(

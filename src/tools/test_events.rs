@@ -333,8 +333,7 @@ pub fn note_snapshot(info: &Value) {
     let j = match info {
         Value::Map(m) => {
             let mut o = serde_json::Map::new();
-            let mut keys: Vec<&String> = m.keys().collect();
-            keys.sort();
+            let keys: Vec<&String> = m.keys().collect();
             for k in keys {
                 o.insert(k.clone(), plain_json(&m[k], 0));
             }
@@ -483,8 +482,7 @@ fn write_literal(v: &Value, out: &mut String, depth: usize) -> bool {
                 out.push_str("#{}");
                 return true;
             }
-            let mut keys: Vec<&String> = m.keys().collect();
-            keys.sort();
+            let keys: Vec<&String> = m.keys().collect();
             out.push_str("#{ ");
             for (i, k) in keys.into_iter().enumerate() {
                 if i > 0 {
@@ -547,8 +545,7 @@ fn plain_json(v: &Value, depth: usize) -> J {
         ),
         Value::Map(m) => {
             let mut o = serde_json::Map::new();
-            let mut keys: Vec<&String> = m.keys().collect();
-            keys.sort();
+            let keys: Vec<&String> = m.keys().collect();
             for k in keys.into_iter().take(2000) {
                 o.insert(k.clone(), plain_json(&m[k], depth + 1));
             }
@@ -556,8 +553,7 @@ fn plain_json(v: &Value, depth: usize) -> J {
         }
         Value::Struct { fields, .. } => {
             let mut o = serde_json::Map::new();
-            let mut keys: Vec<&String> = fields.keys().collect();
-            keys.sort();
+            let keys: Vec<&String> = fields.keys().collect();
             for k in keys.into_iter().take(2000) {
                 o.insert(k.clone(), plain_json(&fields[k], depth + 1));
             }
@@ -601,8 +597,7 @@ pub fn pretty(v: &Value, indent: usize) -> String {
             ")",
         ),
         Value::Map(m) => {
-            let mut keys: Vec<&String> = m.keys().collect();
-            keys.sort();
+            let keys: Vec<&String> = m.keys().collect();
             join(
                 "#{",
                 keys.iter()
@@ -612,8 +607,7 @@ pub fn pretty(v: &Value, indent: usize) -> String {
             )
         }
         Value::Struct { type_name, fields } => {
-            let mut keys: Vec<&String> = fields.keys().collect();
-            keys.sort();
+            let keys: Vec<&String> = fields.keys().collect();
             join(
                 &format!("<struct: {}>{{", type_name),
                 keys.iter()

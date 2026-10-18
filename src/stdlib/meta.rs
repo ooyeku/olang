@@ -1377,9 +1377,8 @@ fn render_literal(v: &Value) -> Result<String, Box<dyn std::error::Error>> {
             format!("({})", parts?.join(", "))
         }
         Value::Map(entries) => {
-            // Deterministic order, so expansion output is reproducible.
-            let mut keys: Vec<_> = entries.keys().collect();
-            keys.sort();
+            // The map's own order: the literal makes the same map again.
+            let keys: Vec<_> = entries.keys().collect();
             let parts: Result<Vec<_>, _> = keys
                 .iter()
                 .map(|k| {
@@ -1393,8 +1392,7 @@ fn render_literal(v: &Value) -> Result<String, Box<dyn std::error::Error>> {
         // fields in order (Heddle's recordings converted objects to maps
         // first). Its fields are identifiers, as its literal wrote them.
         Value::Struct { type_name, fields } if type_name == "Object" => {
-            let mut keys: Vec<_> = fields.keys().collect();
-            keys.sort();
+            let keys: Vec<_> = fields.keys().collect();
             let parts: Result<Vec<_>, Box<dyn std::error::Error>> = keys
                 .iter()
                 .map(|k| {

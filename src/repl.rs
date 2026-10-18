@@ -4582,10 +4582,9 @@ fn color_value(value: &Value) -> String {
             format!("({})", inner.join(", "))
         }
         Value::Map(map) => {
-            // Sorted by key, matching Display — output stays deterministic
+            // In the map's order, matching Display — the same output
             // whether or not color is on.
-            let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort();
+            let keys: Vec<&String> = map.keys().collect();
             let inner: Vec<String> = keys
                 .into_iter()
                 .map(|k| format!("{}: {}", format!("\"{}\"", k).cyan(), color_value(&map[k])))
@@ -4593,8 +4592,7 @@ fn color_value(value: &Value) -> String {
             format!("#{{{}}}", inner.join(", "))
         }
         Value::Struct { type_name, fields } => {
-            let mut names: Vec<&String> = fields.keys().collect();
-            names.sort();
+            let names: Vec<&String> = fields.keys().collect();
             let inner: Vec<String> = names
                 .into_iter()
                 .map(|k| format!("{}: {}", k.cyan(), color_value(&fields[k])))

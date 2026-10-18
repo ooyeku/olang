@@ -66,7 +66,7 @@ fn json_stringify_pairs_keeps_the_order() {
     for (stdout, _) in run("pairs.ol", src) {
         assert_eq!(
             stdout,
-            "{\"z\":1,\"a\":\"x\",\"m\":{\"a\":[null],\"b\":2}}\nOk(\"{}\")\nErr(\"json.stringify_pairs: the key of pair 0 is Int, not a String\")\n"
+            "{\"z\":1,\"a\":\"x\",\"m\":{\"b\":2,\"a\":[null]}}\nOk(\"{}\")\nErr(\"json.stringify_pairs: the key of pair 0 is Int, not a String\")\n"
         );
     }
 }

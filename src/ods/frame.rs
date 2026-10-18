@@ -2382,16 +2382,18 @@ fn read_jsonl(text: &str) -> Result<Value, String> {
         }
     }
 
-    // Columns are the sorted union of keys, missing keys are null —
-    // the same shape frame_from_records gives the same file.
+    // Columns are the union of keys in the order first met (the first
+    // line's, then each new one where it first appears), missing keys are
+    // null — the same shape frame_from_records gives the same file.
     let mut name_set: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut names: Vec<String> = Vec::new();
     for rec in &records {
         for key in rec.keys() {
-            name_set.insert(key.as_str());
+            if name_set.insert(key.as_str()) {
+                names.push(key.clone());
+            }
         }
     }
-    let mut names: Vec<String> = name_set.into_iter().map(String::from).collect();
-    names.sort();
 
     // Consume the rows into per-column cell vectors, chunk-parallel:
     // each worker scatters its contiguous run of rows, and the runs
@@ -2491,15 +2493,17 @@ fn records_to_frame(records: &[Value]) -> Result<Frame, String> {
             )),
         }
     }
+    // the union of the records' keys in the order first met: a record's
+    // own order (`#{ "repo": …, "files": … }` keeps repo first)
     let mut names: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for rec in records {
         for (k, _) in record_fields(rec)? {
-            if !names.contains(k) {
+            if seen.insert(k.as_str()) {
                 names.push(k.clone());
             }
         }
     }
-    names.sort();
     // Each output column gathers and type-checks independently, so on a
     // large record set the columns build on their own cores; name order
     // is preserved and the first failing column (in name order) reports,

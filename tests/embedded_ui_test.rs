@@ -36,7 +36,7 @@ html(h("div", #{ "class": "card" }, [
 }
 
 #[test]
-fn attrs_render_in_stable_order_and_numbers_unquote() {
+fn attrs_render_in_their_order_and_numbers_unquote() {
     let v = eval(
         r#"
 use ui { h, html }
@@ -46,7 +46,7 @@ html(h("td", #{ "colspan": 2, "b": "x", "a": "y" }, [show(42)]))
     assert_eq!(
         v,
         Value::String(
-            "<td a=\"y\" b=\"x\" colspan=\"2\">42</td>"
+            "<td colspan=\"2\" b=\"x\" a=\"y\">42</td>"
                 .to_string()
                 .into()
         )
@@ -105,12 +105,12 @@ let s = ui.control("slider", 3, #{ "min": 1, "max": 10, "step": 1 })
     assert_eq!(
         shown,
         vec![
-            "<input max=\"10\" min=\"1\" step=\"1\" type=\"range\" value=\"3\" />",
+            "<input type=\"range\" min=\"1\" max=\"10\" value=\"3\" step=\"1\" />",
             "slider",
-            "<select><option value=\"a\">a</option><option selected=\"selected\" value=\"b\">b</option></select>",
+            "<select><option value=\"a\">a</option><option value=\"b\" selected=\"selected\">b</option></select>",
             "<input type=\"date\" value=\"2026-10-16\" />",
             "<input type=\"text\" value=\"a &lt;b&gt;\" />",
-            "<input checked=\"checked\" type=\"checkbox\" />",
+            "<input type=\"checkbox\" checked=\"checked\" />",
         ]
     );
 }

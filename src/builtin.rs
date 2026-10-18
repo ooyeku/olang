@@ -3611,8 +3611,8 @@ impl BuiltinFunctions {
     }
 
     /// The (key, value) pairs of a map or any struct-like value, as a list
-    /// of tuples sorted by key — deterministic order, made for
-    /// `for (k, v) in entries(m)`.
+    /// of tuples in the map's order (each key where it was first set),
+    /// made for `for (k, v) in entries(m)`.
     fn entries(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
         if args.len() != 1 {
             return Err(InterpreterError::ArityMismatch {
@@ -3628,14 +3628,12 @@ impl BuiltinFunctions {
                 });
             }
         };
-        let mut keys: Vec<&String> = map.keys().collect();
-        keys.sort();
-        let pairs: Vec<Value> = keys
-            .into_iter()
-            .map(|k| {
+        let pairs: Vec<Value> = map
+            .iter()
+            .map(|(k, v)| {
                 Value::Tuple(std::sync::Arc::from(vec![
                     Value::String(std::sync::Arc::new(k.clone())),
-                    map.get(k).cloned().unwrap_or(Value::Unit),
+                    v.clone(),
                 ]))
             })
             .collect();
@@ -4117,15 +4115,12 @@ impl BuiltinFunctions {
             }
         };
 
-        // Sorted by key: map iteration order must be deterministic — a
-        // `HashMap`'s native order is process-randomized, which silently
-        // breaks record/replay (values applied in a different order) and any
-        // program that hashes or serializes iterated output. `entries` and
-        // `map_values` sort identically, so the three agree elementwise.
-        let mut keys: Vec<&String> = map.keys().collect();
-        keys.sort();
-        let keys: Vec<Value> = keys
-            .into_iter()
+        // In the map's order (each key where it was first set): the same
+        // in every process, so record/replay and anything that hashes or
+        // serializes iterated output stay deterministic. `entries` and
+        // `map_values` walk the same order, so the three agree elementwise.
+        let keys: Vec<Value> = map
+            .keys()
             .map(|k| Value::String(std::sync::Arc::new(k.clone())))
             .collect();
 
@@ -4149,14 +4144,9 @@ impl BuiltinFunctions {
             }
         };
 
-        // Sorted by key, matching `map_keys`/`entries`, so iteration order is
-        // deterministic and the three accessors correspond elementwise.
-        let mut keys: Vec<&String> = map.keys().collect();
-        keys.sort();
-        let values: Vec<Value> = keys
-            .into_iter()
-            .map(|k| map.get(k).cloned().unwrap_or(Value::Unit))
-            .collect();
+        // In the map's order, matching `map_keys`/`entries`, so the three
+        // accessors correspond elementwise.
+        let values: Vec<Value> = map.values().cloned().collect();
 
         Ok(Value::List(std::sync::Arc::from(values)))
     }
@@ -4187,12 +4177,12 @@ impl BuiltinFunctions {
         match &args[0] {
             Value::Map(map_ref) => {
                 let mut new_map = (**map_ref).clone();
-                new_map.remove(&key);
+                new_map.shift_remove(&key);
                 Ok(Value::Map(std::sync::Arc::new(new_map)))
             }
             Value::Struct { type_name, fields } => {
                 let mut new_fields = fields.as_ref().clone();
-                new_fields.remove(&key);
+                new_fields.shift_remove(&key);
                 Ok(Value::Struct {
                     type_name: type_name.clone(),
                     fields: std::sync::Arc::new(new_fields),

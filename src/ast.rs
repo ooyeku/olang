@@ -543,11 +543,13 @@ pub enum EnumVariantData {
 }
 
 /// A map's (and a struct's) fields: string keys under FxHash, as the
-/// VM's maps are (`ovm::value::OvmMap`). A program's maps are never an
-/// attacker's hash-flooding surface, and a lookup spent most of its time
-/// in SipHash; one hasher on both tiers also keeps a map crossing
-/// between them from changing its cost.
-pub type ValueMap = HashMap<String, Value, rustc_hash::FxBuildHasher>;
+/// VM's maps are (`ovm::value::OvmMap`), in the order each key was first
+/// set — iteration, `map_keys`, printing and JSON follow it (a Python
+/// dict's, a JavaScript object's order); equality ignores it. A
+/// program's maps are never an attacker's hash-flooding surface, and a
+/// lookup spent most of its time in SipHash; one hasher on both tiers
+/// also keeps a map crossing between them from changing its cost.
+pub type ValueMap = indexmap::IndexMap<String, Value, rustc_hash::FxBuildHasher>;
 
 /// Whether `.key` on this value reads `()` for an absent key: a map, an
 /// anonymous object and a parsed JSON object, for each of which `.key`
@@ -2033,11 +2035,7 @@ fn struct_order(type_name: &str, fields: &ValueMap) -> Vec<String> {
         {
             order
         }
-        _ => {
-            let mut names: Vec<String> = fields.keys().cloned().collect();
-            names.sort();
-            names
-        }
+        _ => fields.keys().cloned().collect(),
     }
 }
 
@@ -2098,18 +2096,15 @@ impl Value {
                 write!(f, "]")
             }
             Value::Map(map_rc) => {
-                // Sorted by key: printing must be deterministic across
-                // sessions and tiers, and sorted-by-key is the language's
-                // canonical order (`entries()`).
-                let map = map_rc.as_ref();
-                let mut keys: Vec<&String> = map.keys().collect();
-                keys.sort();
+                // In the map's own order (each key where it was first
+                // set), as `entries()` walks it: the same in every session
+                // and on both tiers.
                 write!(f, "#{{")?;
-                for (i, key) in keys.into_iter().enumerate() {
+                for (i, (key, value)) in map_rc.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}: {}", quote_string(key), map[key])?;
+                    write!(f, "{}: {}", quote_string(key), value)?;
                 }
                 write!(f, "}}")
             }
@@ -2135,10 +2130,9 @@ impl Value {
                 if type_name == "Object" || type_name == "JsonObject" =>
             {
                 // An object (and a parsed JSON object) as its literal,
-                // fields sorted; one whose keys are not all names is
-                // written as the map it reads as.
-                let mut names: Vec<&String> = fields.keys().collect();
-                names.sort();
+                // fields in their order; one whose keys are not all names
+                // is written as the map it reads as.
+                let names: Vec<&String> = fields.keys().collect();
                 if !names.iter().all(|k| is_identifier(k)) {
                     write!(f, "#{{")?;
                     for (i, name) in names.into_iter().enumerate() {
@@ -2197,8 +2191,7 @@ impl Value {
                     write!(f, ")")
                 }
                 EnumVariantData::Struct(fields) => {
-                    let mut names: Vec<&String> = fields.keys().collect();
-                    names.sort();
+                    let names: Vec<&String> = fields.keys().collect();
                     write!(f, "{} {{ ", e.variant_name)?;
                     for (i, name) in names.into_iter().enumerate() {
                         if i > 0 {

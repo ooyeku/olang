@@ -314,8 +314,11 @@ fn os_list_env(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Err(format!("os.list_env expects 0 arguments, got {}", args.len()).into());
     }
 
+    // by name: the environment block's own order is the platform's
+    let mut vars: Vec<(String, String)> = env::vars().collect();
+    vars.sort();
     let mut env_vars = crate::ast::ValueMap::default();
-    for (key, value) in env::vars() {
+    for (key, value) in vars {
         env_vars.insert(key, Value::String(Arc::new(value)));
     }
 
