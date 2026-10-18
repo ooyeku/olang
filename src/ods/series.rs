@@ -2,7 +2,8 @@
 //!
 //! Everything here is translation — olang `Value`s to engine `Scalar`s and
 //! back, argument checking, and parallelism policy (the configured
-//! threshold via `crate::parallel::should_parallelize`). No numeric logic
+//! threshold via `crate::parallel::should_parallelize`, and the engine's
+//! per-class size via `olang_ods::par_worth`: see `par`). No numeric logic
 //! lives in this file; that is the engine's job (L0/L2 split in
 //! docs/design/ods.md).
 //!
@@ -57,7 +58,7 @@ impl OdsSeries {
                 .pending
                 .as_ref()
                 .expect("an unmaterialized OdsSeries always carries its chain");
-            expr.eval(*len, crate::parallel::should_parallelize(*len))
+            expr.eval(*len, par(expr.par_class(), *len))
         })
     }
 
@@ -455,8 +456,16 @@ pub(super) fn series_from_list(items: &[Value]) -> Result<Series, String> {
     Ok(Series::from_f64_options(opts))
 }
 
-fn par_for(s: &Series) -> bool {
-    crate::parallel::should_parallelize(s.len())
+/// Whether a kernel of `class` over `len` elements fans out across the
+/// pool: the host's switch and threshold allow it (`set_parallel`,
+/// `OLANG_PARALLELISM`), and the engine finds the work large enough for
+/// its class to pay for the hand-off (`olang_ods::ParClass`).
+pub fn par(class: olang_ods::ParClass, len: usize) -> bool {
+    crate::parallel::should_parallelize(len) && olang_ods::par_worth(class, len)
+}
+
+fn par_for(class: olang_ods::ParClass, s: &Series) -> bool {
+    par(class, s.len())
 }
 
 // ---------------------------------------------------------------------
@@ -714,11 +723,11 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
         }
         "sum" => {
             let s = want_series(func, &args, 0)?;
-            s.sum(par_for(s)).map(scalar_to_value).map_err(e)
+            s.sum(par_for(olang_ods::ParClass::Reduce, s)).map(scalar_to_value).map_err(e)
         }
         "mean" | "var" | "std" => {
             let s = want_series(func, &args, 0)?;
-            let par = par_for(s);
+            let par = par_for(olang_ods::ParClass::Reduce, s);
             let out = match func {
                 "mean" => s.mean(par),
                 "var" => s.var(par),
@@ -889,11 +898,11 @@ fn dispatch_inner(func: &str, mut args: Vec<Value>, expected: usize) -> Result<V
         "dot" => {
             let a = want_series(func, &args, 0)?;
             let b = want_series(func, &args, 1)?;
-            a.dot(b, par_for(a)).map(Value::Float).map_err(e)
+            a.dot(b, par_for(olang_ods::ParClass::Reduce, a)).map(Value::Float).map_err(e)
         }
         "sort" => {
             let s = want_series(func, &args, 0)?;
-            s.sort(par_for(s)).map(OdsSeries::into_value).map_err(e)
+            s.sort(par_for(olang_ods::ParClass::Sort, s)).map(OdsSeries::into_value).map_err(e)
         }
         "argsort" => want_series(func, &args, 0)?
             .argsort()
@@ -1069,14 +1078,14 @@ pub fn binary_op(
     let arith = |o: ArithOp| -> Option<Result<Value, String>> {
         match (series_of(lhs), series_of(rhs)) {
             (Some(a), Some(b)) => Some(
-                a.arith(o, b, par_for(a))
+                a.arith(o, b, par_for(olang_ods::ParClass::Elementwise, a))
                     .map(OdsSeries::into_value)
                     .map_err(|e| e.to_string()),
             ),
             (Some(a), None) => {
                 let s = value_to_scalar(rhs)?;
                 Some(
-                    a.arith_scalar(o, s, false, par_for(a))
+                    a.arith_scalar(o, s, false, par_for(olang_ods::ParClass::ElementwiseScalar, a))
                         .map(OdsSeries::into_value)
                         .map_err(|e| e.to_string()),
                 )
@@ -1084,7 +1093,7 @@ pub fn binary_op(
             (None, Some(b)) => {
                 let s = value_to_scalar(lhs)?;
                 Some(
-                    b.arith_scalar(o, s, true, par_for(b))
+                    b.arith_scalar(o, s, true, par_for(olang_ods::ParClass::ElementwiseScalar, b))
                         .map(OdsSeries::into_value)
                         .map_err(|e| e.to_string()),
                 )

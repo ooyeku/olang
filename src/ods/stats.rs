@@ -177,7 +177,7 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
     match func {
         "describe" => {
             let s = want_series(func, &args, 0)?;
-            let par = crate::parallel::should_parallelize(s.len());
+            let par = super::series::par(olang_ods::ParClass::Reduce, s.len());
             Ok(map_value(vec![
                 ("count", Value::Integer((s.len() - s.null_count()) as i64)),
                 ("null_count", Value::Integer(s.null_count() as i64)),
@@ -252,7 +252,7 @@ pub fn dispatch(func: &str, args: Vec<Value>) -> Result<Value, String> {
                     )
                 })?],
             };
-            let par = crate::parallel::should_parallelize(y.len());
+            let par = super::series::par(olang_ods::ParClass::Reduce, y.len());
             let fit = stats::ols(y, &x_values, par).map_err(e)?;
             Ok(map_value(vec![
                 ("coef", make_series_value(Series::from_f64(fit.coef))),

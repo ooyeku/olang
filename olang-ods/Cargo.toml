@@ -33,3 +33,7 @@ harness = false
 [[bench]]
 name = "groupby"
 harness = false
+
+[[bench]]
+name = "crossover"
+harness = false

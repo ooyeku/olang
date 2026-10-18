@@ -24,6 +24,7 @@ below made a measured difference of between 2× and several hundred times.
 - [Reading the tier's decisions](#reading-the-tiers-decisions)
 - [Verifying a hot program](#verifying-a-hot-program)
 - [Bulk data belongs in ods](#bulk-data-belongs-in-ods)
+- [Automatic parallelism in ods](#automatic-parallelism-in-ods)
 - [What a program costs in memory](#what-a-program-costs-in-memory)
 
 ## Put hot loops in functions
@@ -195,6 +196,80 @@ against NumPy, pandas, and Polars. The division of labor is simple:
 express per-element logic in olang functions, keep bulk transformation
 in `Series` and `Frame` operations, and cross between the two at the
 edges rather than inside loops.
+
+## Automatic parallelism in ods
+
+A `Series` or `Frame` operation fans out across the thread pool on its
+own, but only where that pays. Waking the pool's workers and joining
+them costs tens to a couple of hundred microseconds whatever the work,
+so each kernel class has a threshold below which it runs on its
+caller's thread (`olang_ods::ParClass`, and the frame kernels' own):
+
+| Kernel class | Parallel from | Sequential at the threshold |
+|---|---|---|
+| Arithmetic between columns (`a * b`, a fused chain over two or more columns) | 500,000 elements | ~0.1 ms |
+| Arithmetic with a scalar (`s + 1.5`, a chain over one column) | 2,000,000 | ~0.23 ms |
+| Reductions (`sum`, `mean`, `var`, `std`, `dot`, a regression's Gram matrix) | 1,000,000 | ~0.09 ms (`sum`) |
+| Sorts (`sort`, `argsort`, `sort_by`) | 100,000 | ~1 ms |
+| `join` probe | 200,000 rows | ~1.7 ms |
+| `group_by` | 500,000 rows | ~1.2 ms |
+| `filter` and `take` across columns | 500,000 rows | ~1.5 ms |
+
+A kernel already running on a pool worker (inside a `par_map` stage)
+never fans out again, and with `OLANG_PARALLELISM=1` nothing does.
+`set_parallel(false)` turns all of it off; the host's own threshold
+(the REPL's `:parallel threshold`) applies on top. Comparisons
+(`s > 1.5`) and string kernels are always sequential.
+
+The thresholds are read off `benches/crossover.rs` in olang-ods, which
+times every kernel with its sequential path and its parallel path
+forced, across sizes (`cargo bench -p olang-ods --bench crossover`).
+Measured on an Apple M5 Pro (6P+12E, 18 threads, 24 GB), macOS 27.0;
+microseconds per call, sequential / parallel:
+
+| Kernel | 50,000 | 250,000 | 500,000 | 1M | 10M |
+|---|---|---|---|---|---|
+| `mul` | 9.3 / 7.3 | 48.4 / 48.2 | 95.8 / 76.9 | 194 / 120 | 1,943 / 1,033 |
+| `a * b + 1.0` fused | 15.5 / 15.7 | 77.5 / 73.3 | 157 / 123 | 317 / 203 | 3,166 / 1,648 |
+| `s + 1.5` | 6.4 / 12.4 | 32.4 / 61.8 | 51.4 / 92.5 | 99.1 / 150 | 1,288 / 686 |
+| `sum` | 4.1 / 4.2 | 20.8 / 53.0 | 41.7 / 54.5 | 85.7 / 48.1 | 954 / 365 |
+| `sort` | 388 / 282 | 2,463 / 727 | 5,352 / 1,365 | 11,249 / 2,507 | 126,423 / 23,939 |
+| `group_by`, 1,000 groups | 145 / 145 | 620 / 619 | 1,193 / 1,029 | 2,417 / 1,393 | 22,441 / 7,960 |
+| `join` against 1,000 rows | 444 / 444 | 2,160 / 1,682 | 4,706 / 2,956 | 9,641 / 5,600 | 94,150 / 66,053 |
+
+In 1.0.0-rc.2 every Series kernel went parallel at the language's
+list threshold (10,000 elements), and arithmetic called its operator
+through a function pointer at every element. At 15,000 elements the
+parallel `ods.mean(s * t)` took ten times the sequential one, and a
+notebook built of medium columns ran several times slower on all cores
+than on one. `benchmarks/ods_parallel.ol` measures the operations as a
+program calls them (milliseconds per call; the machine's 18 threads,
+then `OLANG_PARALLELISM=1`):
+
+| Operation | n | rc.2, all threads | rc.2, one | now, all threads | now, one |
+|---|---|---|---|---|---|
+| `ods.mean(s * t)` | 15,000 | 0.150 | 0.015 | 0.004 | 0.005 |
+| `ods.mean(s / t)` | 15,000 | 0.201 | 0.023 | 0.005 | 0.005 |
+| `ods.dot(s, t)` | 15,000 | 0.175 | 0.015 | 0.011 | 0.011 |
+| `ods.mean(s * t)` | 50,000 | 0.198 | 0.034 | 0.014 | 0.014 |
+| `ods.mean(s / t)` | 50,000 | 0.297 | 0.069 | 0.016 | 0.016 |
+| `ods.mean(s * t)` | 1M | 0.420 | 0.536 | 0.252 | 0.281 |
+| `ods.mean(s / t)` | 1M | 0.771 | 1.234 | 0.329 | 0.357 |
+| `group_by` | 1M | 1.40 | 5.27 | 1.33 | 4.22 |
+| `ods.mean(s * t)` | 10M | 2.16 | 5.49 | 1.53 | 3.01 |
+| `ods.mean(s / t)` | 10M | 4.12 | 12.02 | 2.48 | 3.98 |
+| `ods.len(s + 1.5)` | 10M | 1.40 | 4.02 | 0.70 | 1.31 |
+| `group_by` | 10M | 8.95 | 49.05 | 8.10 | 39.33 |
+
+The repository's notebooks under `olmd/`, `olang test` wall time
+(fastest of three):
+
+| Notebook | rc.2, all threads | rc.2, one | now, all threads | now, one |
+|---|---|---|---|---|
+| churn | 2.22 s (18.1 s system) | 0.53 s | 0.35 s | 0.35 s |
+| segments | 0.78 s | 0.78 s | 0.63 s | 0.63 s |
+| energy | 0.20 s | 0.21 s | 0.21 s | 0.21 s |
+| housing, workspace, experiment, sales | unchanged (0.01–0.16 s) | | | |
 
 ## What a program costs in memory
 

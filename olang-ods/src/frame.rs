@@ -956,13 +956,16 @@ fn scalar_name(v: Scalar, fmt_f64: &dyn Fn(f64) -> String) -> String {
 // ---------------------------------------------------------------------
 
 /// Left frames at or above this many rows probe in parallel. Below it, the
-/// thread hand-off costs more than the probe saves.
+/// thread hand-off costs more than the probe saves (benches/crossover.rs:
+/// 0.88x at 50,000 rows, 1.25x at 250,000).
 #[cfg(feature = "parallel")]
-const PAR_JOIN_ROWS: usize = 50_000;
+const PAR_JOIN_ROWS: usize = 200_000;
 
-/// Below this many gathered rows, Frame::take stays sequential.
+/// Below this many gathered rows, Frame::take (and filter) stays
+/// sequential: a column apiece gains nothing on a narrow frame below it
+/// (0.86x at 100,000 rows, 1.04x at 500,000).
 #[cfg(feature = "parallel")]
-const PAR_TAKE_ROWS: usize = 100_000;
+const PAR_TAKE_ROWS: usize = 500_000;
 
 /// Probe left rows `[lo, hi)` against the built right-key table, producing
 /// `(left_idx, right_idx)` match pairs in left-row order (a matched left row
@@ -1498,9 +1501,10 @@ type F64Acc = (Vec<f64>, Vec<i64>, Vec<f64>, Vec<f64>);
 type I64Acc = (Vec<i64>, Vec<i64>, Vec<i64>, Vec<i64>);
 
 /// Below this row count, group-by aggregation stays sequential — the thread
-/// hand-off costs more than the scatter saves.
+/// hand-off costs more than the scatter saves (benches/crossover.rs: 0.40x
+/// at 100,000 rows, 0.75x at 250,000, 1.17x at 500,000).
 #[cfg(feature = "parallel")]
-const PAR_GROUPBY_ROWS: usize = 100_000;
+const PAR_GROUPBY_ROWS: usize = 500_000;
 /// Above this group count, aggregation stays sequential regardless of rows:
 /// each thread holds its own `n_groups`-sized partial accumulators, so a very
 /// high-cardinality group-by would blow memory. Typical group-bys have far

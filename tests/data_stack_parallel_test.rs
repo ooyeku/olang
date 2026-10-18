@@ -57,7 +57,9 @@ fn assert_parallel_transparent(source: &str) {
     );
 }
 
-/// 150k rows crosses every data-stack threshold (100k) with room over.
+/// 150k rows crosses the parsers' thresholds and the sort's (100k) with
+/// room over; `frame_kernels_past_their_thresholds_are_parallel_transparent`
+/// crosses the group-by's, the join's and the filter's (200k to 500k).
 const ROWS: usize = 150_000;
 
 fn big_csv() -> String {
@@ -194,4 +196,25 @@ fn join_is_parallel_transparent() {
          let j = ods.join_left(df, dim, \"name\")\n\
          to_string(ods.n_rows(j)) + \"|\" + ods.to_csv(ods.head(ods.sort_by(j, \"id\", false), 20))",
     ));
+}
+
+#[test]
+fn frame_kernels_past_their_thresholds_are_parallel_transparent() {
+    // 600k rows: past PAR_GROUPBY_ROWS and PAR_TAKE_ROWS (500k), past
+    // PAR_JOIN_ROWS (200k), and past the column arithmetic's 500k. The
+    // values are halves, so every sum is exact whatever its order.
+    assert_parallel_transparent(
+        "let n = 600000\n\
+         let k = ods.cast(ods.map(ods.linspace(0.0, 976.0, n), \"floor\"), \"Int\")\n\
+         let v = ods.linspace(0.0, 299999.5, n)\n\
+         let df = ods.frame([[\"k\", k], [\"v\", v]])\n\
+         let g = ods.group_by(df, [\"k\"], [[\"total\", \"sum\", \"v\"], [\"n\", \"count\", \"\"]])\n\
+         let dim = ods.frame([[\"k\", ods.cast(ods.linspace(0.0, 976.0, 977), \"Int\")], [\"rank\", ods.linspace(0.0, 976.0, 977)]])\n\
+         let j = ods.join(df, dim, \"k\")\n\
+         let f = ods.filter(df, v > 1000.0)\n\
+         let w = v * v - v\n\
+         ods.to_csv(ods.sort_by(g, \"k\", false)) + to_string(ods.n_rows(j)) + \"|\" \
+         + to_string(ods.n_rows(f)) + \"|\" + to_string(ods.get(w, 599999)) + \"|\" \
+         + to_string(ods.get(ods.sort(v), 0))",
+    );
 }

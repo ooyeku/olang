@@ -209,6 +209,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **ods goes parallel only where that pays, and its arithmetic
+  vectorizes.** Every Series kernel fanned out at the language's list
+  threshold (10,000 elements), where waking 18 workers costs ten times
+  the work: at 15,000 elements `ods.mean(s * t)` took 0.150 ms on all
+  cores and 0.015 on one, and olmd/churn ran in 2.2 s (18 s of system
+  time) against 0.53 s single-threaded. Each kernel class now has a
+  measured threshold (`olang_ods::ParClass`: 500,000 elements between
+  columns, 2M with a scalar, 1M for a reduction, 100,000 for a sort;
+  the join probe 200,000 rows, group-by and filter 500,000), a parallel
+  kernel takes pieces of at least 128K elements, and nothing fans out
+  from a pool worker (a `par_map` stage) or with a pool of one thread.
+  Column arithmetic ran its operator through a function pointer at
+  every element; it is one loop per operator now, 3.6x faster
+  sequentially (`mul` 1M: 0.70 → 0.19 ms), and a fused chain reads its
+  columns in place. Parallel is no slower than one thread at any size
+  measured; churn runs in 0.35 s. benchmarks/ods_parallel.ol and
+  olang-ods's benches/crossover.rs measure it (docs/performance.md,
+  "Automatic parallelism in ods").
+
 - **`first` and `last` are O(1) on the compiled tiers.** They had no
   native arm, so each call crossed to the interpreter with its whole list
   converted: `fold(xs, [0], (acc, x) => acc + [last(acc) + x])` took

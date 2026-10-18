@@ -1444,10 +1444,15 @@ columns against NumPy and 10M-row tables against Polars, are as follows:
 | group-by, 10M rows, 1k groups | 27.2 ms (one thread) | Polars 24.0 ms (18 threads) | within 1.13× |
 | group-by after parallel dictionary encoding (E9) | 5 ms in the pipeline below | Polars 8 ms | ahead as executed |
 
-Reductions on large columns parallelize automatically under the
-language's standard policy — the same machinery as `par_map`, switched
-off with `set_parallel(false)` and sized by `OLANG_PARALLELISM` — with no
-change to any result. The practical
+Large columns parallelize automatically — the same pool as `par_map`,
+switched off with `set_parallel(false)` and sized by
+`OLANG_PARALLELISM` — with no change to any result. Each kernel class
+fans out only past the size where that pays for waking the pool:
+500,000 elements for arithmetic between columns, 2M for arithmetic with
+a scalar, 1M for a reduction, 100,000 for a sort, 200,000 to 500,000
+rows for a join, a filter or a group-by; below them, and inside a
+`par_map` stage, a kernel runs on its caller's thread
+([measured thresholds](performance.md#automatic-parallelism-in-ods)). The practical
 guidance is simpler than the table: keep computations in Series and
 Frame operations, cross to lists at the edges, and column size stops
 being something to think about. The end-to-end standing is measured by
@@ -1602,7 +1607,7 @@ is available:
 | Contiguous typed buffers | 10–100× over boxed lists | The representation above; this is most of the win |
 | LLVM autovectorization | SIMD for free | Kernels are tight branch-free loops over `&[f64]` |
 | Explicit SIMD (`pulp`) | AVX/NEON where autovec fails | Only for kernels that measurably need it |
-| Rayon | Near-linear scaling on large arrays | Kernels split above the language's standard parallel threshold |
+| Rayon | Near-linear scaling on large arrays | Kernels split above their class's measured threshold (`olang_ods::ParClass`) |
 | In-crate solvers + `statrs` | Regression, distributions | Normal equations with a small Cholesky for OLS; pdf/cdf/ppf machinery never hand-rolled |
 | Copy-on-write | Fused-allocation pipelines | `Arc::make_mut` in every kernel's output path |
 

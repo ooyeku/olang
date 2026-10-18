@@ -53,15 +53,90 @@ pub fn set_parallel_enabled(on: bool) {
     PARALLEL_ENABLED.store(on, Ordering::Relaxed);
 }
 
-/// Is the engine allowed to fan out on its own?
+/// Is the engine allowed to fan out on its own? Not when the switch is
+/// off, not with a pool of one thread (the work would only change
+/// threads), and not from inside the pool: a kernel already running on
+/// one of its workers (an olang `par_map` stage, a column of a parallel
+/// take) is part of a parallel region, and stays sequential in it.
 pub fn parallel_enabled() -> bool {
-    PARALLEL_ENABLED.load(Ordering::Relaxed)
+    if !PARALLEL_ENABLED.load(Ordering::Relaxed) {
+        return false;
+    }
+    #[cfg(feature = "parallel")]
+    {
+        rayon::current_thread_index().is_none() && rayon::current_num_threads() > 1
+    }
+    #[cfg(not(feature = "parallel"))]
+    false
 }
 
-/// Below this many rows, argsort stays sequential — the merge passes of a
-/// parallel stable sort cost more than they save.
+/// What a kernel costs per element, which decides where fanning out
+/// across the pool starts to pay. Waking the pool's workers and joining
+/// them costs tens to a hundred microseconds whatever the work, so a
+/// kernel goes parallel only when its sequential pass costs several
+/// times that (measured on an Apple M5 Pro, 18 cores; the numbers are in
+/// docs/performance.md, "Automatic parallelism in ods").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParClass {
+    /// `+ - * /` between two columns, a fused chain of them: about a
+    /// nanosecond an element, bound by memory.
+    Elementwise,
+    /// `+ - * /` between a column and a scalar: one stream in, one out, a
+    /// tenth of a nanosecond an element — the output's fresh pages cost
+    /// more than the arithmetic, and faulting them from many threads
+    /// gains nothing until the column is large.
+    ElementwiseScalar,
+    /// `sum`, `mean`, `var`, `std`, `dot`, a regression's Gram matrix:
+    /// a fraction of a nanosecond an element, vectorized.
+    Reduce,
+    /// `sort`, `argsort`: n log n comparisons.
+    Sort,
+}
+
+impl ParClass {
+    /// The fewest elements at which this class fans out.
+    pub const fn min_rows(self) -> usize {
+        match self {
+            ParClass::Elementwise => PAR_ELEMENTWISE_ROWS,
+            ParClass::ElementwiseScalar => PAR_SCALAR_ROWS,
+            ParClass::Reduce => PAR_REDUCE_ROWS,
+            ParClass::Sort => PAR_SORT_ROWS,
+        }
+    }
+}
+
+/// Below this many elements, elementwise arithmetic between columns stays
+/// sequential (benches/crossover.rs: `mul` 1.00x at 250,000, 1.3x at
+/// 500,000, 1.8x at 10M).
+pub const PAR_ELEMENTWISE_ROWS: usize = 500_000;
+/// Below this many elements, arithmetic with a scalar stays sequential
+/// (0.71x at 1M, 1.2x at 2M, 1.8x at 4M).
+pub const PAR_SCALAR_ROWS: usize = 2_000_000;
+/// Below this many elements, a reduction stays sequential (`sum` 0.74x
+/// at 500,000, 1.24x at 1M, 2.2x at 10M).
+pub const PAR_REDUCE_ROWS: usize = 1_000_000;
+/// The fewest elements one task of a parallel elementwise kernel or
+/// reduction takes: a large column is cut into a few pieces this big or
+/// bigger, never into thousands of small ones each a hand-off.
 #[cfg(feature = "parallel")]
-const PAR_SORT_ROWS: usize = 100_000;
+const PAR_MIN_PIECE: usize = 1 << 17;
+/// A parallel sum's pieces: each summed as the sequential pass sums, the
+/// partial sums added after.
+#[cfg(feature = "parallel")]
+const SUM_PIECE: usize = 65_536;
+
+/// Whether a kernel of `class` over `len` elements fans out: the size is
+/// past the class's threshold and the engine may (see
+/// [`parallel_enabled`]). The caller's own policy (the host language's
+/// threshold) applies on top of this.
+pub fn par_worth(class: ParClass, len: usize) -> bool {
+    len >= class.min_rows() && parallel_enabled()
+}
+
+/// Below this many rows, a sort stays sequential — the merge passes of a
+/// parallel sort cost more than they save (0.74x at 15,000 rows, 2.4x at
+/// 100,000).
+pub const PAR_SORT_ROWS: usize = 100_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DType {
@@ -1008,7 +1083,12 @@ impl Series {
         if merged.is_none() {
             #[cfg(feature = "parallel")]
             if par {
-                return Ok(a.par_iter().zip(b.par_iter()).map(|(x, y)| x * y).sum());
+                return Ok(a
+                    .par_iter()
+                    .zip(b.par_iter())
+                    .with_min_len(PAR_MIN_PIECE)
+                    .map(|(x, y)| x * y)
+                    .sum());
             }
             let _ = par;
             return Ok(a.iter().zip(b.iter()).map(|(x, y)| x * y).sum());
@@ -1141,7 +1221,7 @@ impl Series {
         // is bit-identical to the sequential path — ties keep original
         // order either way.
         #[cfg(feature = "parallel")]
-        let par = n >= PAR_SORT_ROWS && crate::parallel_enabled();
+        let par = par_worth(ParClass::Sort, n);
         match self {
             Series::F64 { values, .. } => {
                 #[cfg(feature = "parallel")]
@@ -1552,7 +1632,7 @@ fn f64_sum(values: &[f64], validity: Option<&Bitmap>, par: bool) -> f64 {
         None => {
             #[cfg(feature = "parallel")]
             if par {
-                return values.par_chunks(65_536).map(f64_sum_dense).sum();
+                return values.par_chunks(SUM_PIECE).map(f64_sum_dense).sum();
             }
             let _ = par;
             f64_sum_dense(values)
@@ -1567,7 +1647,7 @@ fn f64_sum_sq_dev(values: &[f64], validity: Option<&Bitmap>, mean: f64, par: boo
             #[cfg(feature = "parallel")]
             if par {
                 return values
-                    .par_chunks(65_536)
+                    .par_chunks(SUM_PIECE)
                     .map(|c| f64_sum_sq_dev_dense(c, mean))
                     .sum();
             }
@@ -1583,6 +1663,48 @@ fn f64_sum_sq_dev(values: &[f64], validity: Option<&Bitmap>, mean: f64, par: boo
     }
 }
 
+/// Whether any of `b` is zero where it computes (`validity` valid).
+/// The dense case is a branch-free scan the compiler vectorizes.
+fn any_zero_divisor(b: &[f64], validity: Option<&Bitmap>) -> bool {
+    match validity {
+        None => b
+            .chunks(64)
+            .any(|c| c.iter().fold(false, |z, &y| z | (y == 0.0))),
+        Some(v) => (0..b.len()).any(|i| b[i] == 0.0 && v.get(i)),
+    }
+}
+
+/// `f` over the pairs of `a` and `b`, in parallel pieces when `par`.
+/// Generic, so each operator is its own loop: through a function pointer
+/// the call is indirect at every element and nothing vectorizes.
+fn map2<F: Fn(f64, f64) -> f64 + Sync + Send>(a: &[f64], b: &[f64], f: F, par: bool) -> Vec<f64> {
+    #[cfg(feature = "parallel")]
+    if par {
+        return a
+            .par_iter()
+            .zip(b.par_iter())
+            .with_min_len(PAR_MIN_PIECE)
+            .map(|(x, y)| f(*x, *y))
+            .collect();
+    }
+    let _ = par;
+    a.iter().zip(b.iter()).map(|(x, y)| f(*x, *y)).collect()
+}
+
+/// `f` over `a`, in parallel pieces when `par` (see [`map2`]).
+fn map1<F: Fn(f64) -> f64 + Sync + Send>(a: &[f64], f: F, par: bool) -> Vec<f64> {
+    #[cfg(feature = "parallel")]
+    if par {
+        return a
+            .par_iter()
+            .with_min_len(PAR_MIN_PIECE)
+            .map(|&x| f(x))
+            .collect();
+    }
+    let _ = par;
+    a.iter().map(|&x| f(x)).collect()
+}
+
 fn f64_arith(
     a: &[f64],
     b: &[f64],
@@ -1590,30 +1712,16 @@ fn f64_arith(
     validity: Option<Bitmap>,
     par: bool,
 ) -> Result<Series> {
-    if op == ArithOp::Div {
-        // The language errors on float division by zero; only positions
-        // that actually compute (both operands valid) are checked.
-        let zero_at = |i: usize| b[i] == 0.0 && validity.as_ref().map(|v| v.get(i)).unwrap_or(true);
-        if (0..b.len()).any(zero_at) {
-            return Err(OdsError::DivisionByZero);
-        }
+    // The language errors on float division by zero; only positions that
+    // actually compute (both operands valid) are checked.
+    if op == ArithOp::Div && any_zero_divisor(b, validity.as_ref()) {
+        return Err(OdsError::DivisionByZero);
     }
-    let f = arith_fn(op);
-    let values: Vec<f64> = {
-        #[cfg(feature = "parallel")]
-        if par {
-            let v = a
-                .par_iter()
-                .zip(b.par_iter())
-                .map(|(x, y)| f(*x, *y))
-                .collect();
-            return Ok(Series::F64 {
-                values: Arc::new(v),
-                validity,
-            });
-        }
-        let _ = par;
-        a.iter().zip(b.iter()).map(|(x, y)| f(*x, *y)).collect()
+    let values = match op {
+        ArithOp::Add => map2(a, b, |x, y| x + y, par),
+        ArithOp::Sub => map2(a, b, |x, y| x - y, par),
+        ArithOp::Mul => map2(a, b, |x, y| x * y, par),
+        ArithOp::Div => map2(a, b, |x, y| x / y, par),
     };
     Ok(Series::F64 {
         values: Arc::new(values),
@@ -1633,41 +1741,24 @@ fn f64_arith_scalar(
         if !swapped && s == 0.0 {
             return Err(OdsError::DivisionByZero);
         }
-        if swapped {
-            let zero_at =
-                |i: usize| a[i] == 0.0 && validity.as_ref().map(|v| v.get(i)).unwrap_or(true);
-            if (0..a.len()).any(zero_at) {
-                return Err(OdsError::DivisionByZero);
-            }
+        if swapped && any_zero_divisor(a, validity.as_ref()) {
+            return Err(OdsError::DivisionByZero);
         }
     }
-    let f = arith_fn(op);
-    let apply = move |x: f64| if swapped { f(s, x) } else { f(x, s) };
-    let values: Vec<f64> = {
-        #[cfg(feature = "parallel")]
-        if par {
-            let v = a.par_iter().map(|&x| apply(x)).collect();
-            return Ok(Series::F64 {
-                values: Arc::new(v),
-                validity,
-            });
-        }
-        let _ = par;
-        a.iter().map(|&x| apply(x)).collect()
+    let values = match (op, swapped) {
+        (ArithOp::Add, false) => map1(a, move |x| x + s, par),
+        (ArithOp::Add, true) => map1(a, move |x| s + x, par),
+        (ArithOp::Sub, false) => map1(a, move |x| x - s, par),
+        (ArithOp::Sub, true) => map1(a, move |x| s - x, par),
+        (ArithOp::Mul, false) => map1(a, move |x| x * s, par),
+        (ArithOp::Mul, true) => map1(a, move |x| s * x, par),
+        (ArithOp::Div, false) => map1(a, move |x| x / s, par),
+        (ArithOp::Div, true) => map1(a, move |x| s / x, par),
     };
     Ok(Series::F64 {
         values: Arc::new(values),
         validity,
     })
-}
-
-fn arith_fn(op: ArithOp) -> fn(f64, f64) -> f64 {
-    match op {
-        ArithOp::Add => |x, y| x + y,
-        ArithOp::Sub => |x, y| x - y,
-        ArithOp::Mul => |x, y| x * y,
-        ArithOp::Div => |x, y| x / y,
-    }
 }
 
 // ---------------------------------------------------------------------
@@ -1821,6 +1912,29 @@ pub mod fuse {
     /// per tree level stays in L1.
     pub const CHUNK: usize = 1024;
 
+    /// `$body` with `$f` bound to the operator's closure: one loop per
+    /// operator, so nothing is decided per element and the loop
+    /// vectorizes.
+    macro_rules! by_op {
+        ($op:expr, $f:ident, $body:expr) => {
+            match $op {
+                ArithOp::Add => {
+                    let $f = |x: f64, y: f64| x + y;
+                    $body
+                }
+                ArithOp::Sub => {
+                    let $f = |x: f64, y: f64| x - y;
+                    $body
+                }
+                ArithOp::Mul => {
+                    let $f = |x: f64, y: f64| x * y;
+                    $body
+                }
+                ArithOp::Div => unreachable!("Div is never fused"),
+            }
+        };
+    }
+
     #[derive(Clone, Debug)]
     pub enum Expr {
         /// A materialized, null-free F64 column.
@@ -1832,33 +1946,85 @@ pub mod fuse {
     }
 
     impl Expr {
-        fn eval_chunk(&self, start: usize, out: &mut [f64]) {
+        /// How many columns the chain reads: one (a column with scalars)
+        /// costs what arithmetic with a scalar does, more what arithmetic
+        /// between columns does (`ParClass`).
+        pub fn leaves(&self) -> usize {
             match self {
-                Expr::Leaf(v) => out.copy_from_slice(&v[start..start + out.len()]),
-                Expr::Const(c) => out.fill(*c),
-                Expr::Bin(op, a, b) => {
+                Expr::Leaf(_) => 1,
+                Expr::Const(_) => 0,
+                Expr::Bin(_, a, b) => a.leaves() + b.leaves(),
+            }
+        }
+
+        /// The kernel class the chain's evaluation is.
+        pub fn par_class(&self) -> ParClass {
+            if self.leaves() > 1 {
+                ParClass::Elementwise
+            } else {
+                ParClass::ElementwiseScalar
+            }
+        }
+
+        fn eval_chunk(&self, start: usize, out: &mut [f64]) {
+            let n = out.len();
+            let Expr::Bin(op, a, b) = self else {
+                match self {
+                    Expr::Leaf(v) => out.copy_from_slice(&v[start..start + n]),
+                    Expr::Const(c) => out.fill(*c),
+                    Expr::Bin(..) => unreachable!(),
+                }
+                return;
+            };
+            // An operand that is a column or a scalar is read where it
+            // is, never copied into a buffer first; the operator applies
+            // in place in `out` (the same float operation on each element
+            // as the eager kernels).
+            match (a.as_ref(), b.as_ref()) {
+                (Expr::Leaf(x), Expr::Leaf(y)) => {
+                    let (x, y) = (&x[start..start + n], &y[start..start + n]);
+                    by_op!(op, f, {
+                        for ((o, x), y) in out.iter_mut().zip(x).zip(y) {
+                            *o = f(*x, *y);
+                        }
+                    });
+                }
+                (_, Expr::Const(c)) => {
+                    a.eval_chunk(start, out);
+                    by_op!(op, f, out.iter_mut().for_each(|o| *o = f(*o, *c)));
+                }
+                (Expr::Const(c), _) => {
+                    b.eval_chunk(start, out);
+                    by_op!(op, f, out.iter_mut().for_each(|o| *o = f(*c, *o)));
+                }
+                (_, Expr::Leaf(y)) => {
+                    a.eval_chunk(start, out);
+                    let y = &y[start..start + n];
+                    by_op!(op, f, {
+                        for (o, y) in out.iter_mut().zip(y) {
+                            *o = f(*o, *y);
+                        }
+                    });
+                }
+                (Expr::Leaf(x), _) => {
+                    b.eval_chunk(start, out);
+                    let x = &x[start..start + n];
+                    by_op!(op, f, {
+                        for (o, x) in out.iter_mut().zip(x) {
+                            *o = f(*x, *o);
+                        }
+                    });
+                }
+                _ => {
                     a.eval_chunk(start, out);
                     let mut buf = [0.0f64; CHUNK];
-                    let rhs = &mut buf[..out.len()];
+                    let rhs = &mut buf[..n];
                     b.eval_chunk(start, rhs);
-                    match op {
-                        ArithOp::Add => {
-                            for (o, r) in out.iter_mut().zip(rhs.iter()) {
-                                *o += r;
-                            }
+                    by_op!(op, f, {
+                        for (o, r) in out.iter_mut().zip(rhs.iter()) {
+                            *o = f(*o, *r);
                         }
-                        ArithOp::Sub => {
-                            for (o, r) in out.iter_mut().zip(rhs.iter()) {
-                                *o -= r;
-                            }
-                        }
-                        ArithOp::Mul => {
-                            for (o, r) in out.iter_mut().zip(rhs.iter()) {
-                                *o *= r;
-                            }
-                        }
-                        ArithOp::Div => unreachable!("Div is never fused"),
-                    }
+                    });
                 }
             }
         }
@@ -1866,13 +2032,36 @@ pub mod fuse {
         /// Materialize the chain: one output allocation, one pass.
         /// Chunks are independent, so the parallel build fans them out.
         pub fn eval(&self, len: usize, par: bool) -> Series {
+            // One operator over columns and scalars is the eager kernel's
+            // work, done as it does it: one pass, no zeroed output first.
+            if let Expr::Bin(op, a, b) = self {
+                match (a.as_ref(), b.as_ref()) {
+                    (Expr::Leaf(v), Expr::Const(c)) | (Expr::Const(c), Expr::Leaf(v)) => {
+                        let swapped = matches!(a.as_ref(), Expr::Const(_));
+                        return f64_arith_scalar(v.as_slice(), *c, *op, swapped, None, par)
+                            .expect("Add, Sub and Mul never fail");
+                    }
+                    (Expr::Leaf(x), Expr::Leaf(y)) => {
+                        return f64_arith(x.as_slice(), y.as_slice(), *op, None, par)
+                            .expect("Add, Sub and Mul never fail");
+                    }
+                    _ => {}
+                }
+            }
             let mut values = vec![0.0f64; len];
             #[cfg(feature = "parallel")]
             if par {
+                // A task a piece of many chunks: one hand-off per piece,
+                // the chunks inside it walked as the sequential pass does.
+                const PIECE: usize = CHUNK * 128;
                 values
-                    .par_chunks_mut(CHUNK)
+                    .par_chunks_mut(PIECE)
                     .enumerate()
-                    .for_each(|(ci, chunk)| self.eval_chunk(ci * CHUNK, chunk));
+                    .for_each(|(pi, piece)| {
+                        for (ci, chunk) in piece.chunks_mut(CHUNK).enumerate() {
+                            self.eval_chunk(pi * PIECE + ci * CHUNK, chunk);
+                        }
+                    });
                 return Series::F64 {
                     values: Arc::new(values),
                     validity: None,
