@@ -523,9 +523,7 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if let Some(mut se) = child.stderr.take() {
         let sink = stderr_buf.clone();
         std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = se.read_to_end(&mut buf);
-            *sink.lock().unwrap() = buf;
+            *sink.lock().unwrap() = drain_bounded(&mut se, STDERR_KEEP);
         });
     }
 
@@ -682,6 +680,49 @@ fn proc_read_all(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         lines.push(String::from_utf8_lossy(&line).into_owned());
     }
     Ok(ok(Value::String(Arc::new(lines.join("\n")))))
+}
+
+/// How much of a child's stderr is kept: a child that floods it (a run
+/// printing in a loop, a REPL left going) costs this, not all it wrote.
+pub(crate) const STDERR_KEEP: usize = 4 << 20;
+
+/// Read `r` to its end, keeping its last `keep` bytes (from a line's start
+/// where one is near): what was dropped is said by a first line,
+/// `[… N bytes of stderr dropped …]`.
+pub(crate) fn drain_bounded(r: &mut impl Read, keep: usize) -> Vec<u8> {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut dropped: u64 = 0;
+    let mut chunk = [0u8; 65536];
+    loop {
+        match r.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                buf.extend_from_slice(&chunk[..n]);
+                if buf.len() > keep + keep / 4 {
+                    let mut cut = buf.len() - keep;
+                    // from the next line's start, when one is close
+                    if let Some(i) = buf[cut..].iter().take(4096).position(|&b| b == b'\n') {
+                        cut += i + 1;
+                    }
+                    buf.drain(..cut);
+                    dropped += cut as u64;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        }
+    }
+    if buf.len() > keep {
+        let cut = buf.len() - keep;
+        buf.drain(..cut);
+        dropped += cut as u64;
+    }
+    if dropped == 0 {
+        return buf;
+    }
+    let mut out = format!("[… {dropped} bytes of stderr dropped …]\n").into_bytes();
+    out.extend_from_slice(&buf);
+    out
 }
 
 /// `proc.stderr(p)` — everything the child has written to stderr. Complete
@@ -1038,11 +1079,10 @@ fn proc_pipeline(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     for child in &mut children {
         let se = child.stderr.take();
         stderr_threads.push(std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            if let Some(mut s) = se {
-                let _ = s.read_to_end(&mut buf);
+            match se {
+                Some(mut s) => drain_bounded(&mut s, STDERR_KEEP),
+                None => Vec::new(),
             }
-            buf
         }));
     }
 
@@ -1083,4 +1123,31 @@ fn proc_pipeline(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
         type_name: "Object".to_string(),
         fields: std::sync::Arc::new(fields),
     }))
+}
+
+#[cfg(test)]
+mod stderr_bound_tests {
+    use super::*;
+
+    #[test]
+    fn a_flood_of_stderr_keeps_its_last_part_and_says_what_went() {
+        let mut flood: Vec<u8> = Vec::new();
+        for i in 0..200_000 {
+            flood.extend_from_slice(format!("line {i}\n").as_bytes());
+        }
+        let total = flood.len();
+        let out = drain_bounded(&mut std::io::Cursor::new(flood), 64 * 1024);
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.len() < 64 * 1024 + 100, "{}", text.len());
+        assert!(text.starts_with("[… "), "{}", &text[..40]);
+        assert!(text.ends_with("line 199999\n"));
+        // the kept part starts at a line
+        let second = text.lines().nth(1).unwrap();
+        assert!(second.starts_with("line "), "{second}");
+        let dropped: usize = text[5..].split(' ').next().unwrap().parse().unwrap();
+        assert_eq!(dropped + text.len() - text.lines().next().unwrap().len() - 1, total);
+        // a quiet child: all of it, nothing said
+        let small = drain_bounded(&mut std::io::Cursor::new(b"oops\n".to_vec()), 64 * 1024);
+        assert_eq!(small, b"oops\n");
+    }
 }

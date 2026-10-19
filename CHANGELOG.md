@@ -217,6 +217,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A child's stderr is bounded** (`proc.spawn`, `proc.pipeline`): its
+  last 4 MB are kept, what went before said by a first line `[… N bytes
+  of stderr dropped …]`. A run or a REPL flooding stderr grew its
+  parent's memory without end.
 - **`pty.close` ends what is left of the shell's session**: a job that
   ignored the hang-up (`trap '' HUP`, `nohup`, one in a group of its
   own) outlived the terminal; after the grace it is killed.
