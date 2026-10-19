@@ -217,6 +217,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A kernel ends with its editor**: `olang repl --serve` (a notebook's
+  kernel too) exits when its stdin closes or its parent is gone, even
+  mid-evaluation; an orphaned kernel looping in a cell spun for minutes.
+- **`plot.heatmap`**: a `diverging` scale is centred on zero, and the row
+  labels get the room they need (up to a third of the chart, cut beyond).
+- **`olang notebook app`**: the published app answers only its own page
+  on this machine — bound to 127.0.0.1, another `Host` refused (DNS
+  rebinding), a change taken only as JSON from its own origin, a param's
+  value one line.
+
 - **ods goes parallel only where that pays, and its arithmetic
   vectorizes.** Every Series kernel fanned out at the language's list
   threshold (10,000 elements), where waking 18 workers costs ten times
