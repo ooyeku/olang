@@ -491,7 +491,7 @@ fn host_load_module(
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "module".to_string());
-    let grant = match crate::caps::grant_from_value(
+    let mut grant = match crate::caps::grant_from_value(
         dir.clone(),
         &default_name,
         args.get(1).unwrap_or(&Value::Unit),
@@ -499,6 +499,13 @@ fn host_load_module(
         Ok(g) => g,
         Err(e) => return Ok(err_value(e)),
     };
+    // A grant is never wider than its caller's: a dependency held to
+    // `fs = false` loaded a file of its own folder with `#{ fs: true }`
+    // and all its code then answered to that (the app's code too, had it
+    // loaded the app's main file)
+    if let Some(caller) = interpreter.caller_caps() {
+        grant.caps = grant.caps.intersect(caller);
+    }
     let before = crate::caps::register_module(grant);
     crate::errtrace::begin();
     match interpreter.load_module_at(&file) {

@@ -1205,3 +1205,63 @@ fn a_built_application_keeps_its_dependency_attenuation() {
     let _ = std::fs::remove_file(&bin);
     let _ = std::fs::remove_dir_all(&home);
 }
+
+/// A dependency held to `fs = false` reaches the filesystem neither by
+/// `meta.eval` (the evaluated source was the app's main file's, and got
+/// the app's grant) nor by `runtime.load_module` of a file of its own
+/// with a wide grant (its whole folder then answered to that grant).
+#[test]
+fn an_attenuated_dependency_cannot_widen_its_grant_through_eval_or_load_module() {
+    let ws = workspace("escape");
+    write(
+        &ws.join("lib/olang.toml"),
+        "[package]\nname = \"lib\"\nversion = \"1.0.0\"\n",
+    );
+    write(
+        &ws.join("lib/index.ol"),
+        "share fn by_eval() = show(meta.eval(\"fs.read_file(\\\"/etc/hosts\\\")\"))\n",
+    );
+    write(&ws.join("lib/x.ol"), "share let READ = fs.read_file(\"/etc/hosts\")\n");
+    write(
+        &ws.join("app/olang.toml"),
+        "[package]\nname = \"app\"\nversion = \"1.0.0\"\n\n\
+         [dependencies]\nlib = { path = \"../lib\" }\n\n\
+         [capabilities]\nfs = \"read\"\n\n\
+         [capabilities.dependencies.lib]\nfs = false\n",
+    );
+    write(&ws.join("app/main.ol"), "use lib { by_eval }\nprintln(by_eval())\n");
+    let out = Command::new(olang())
+        .current_dir(ws.join("app"))
+        .arg("main.ol")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("Err") && stdout.contains("denied"),
+        "meta.eval in the dependency read the file: {} {}",
+        stdout,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let lib = std::fs::canonicalize(ws.join("lib")).unwrap();
+    write(
+        &ws.join("lib/index.ol"),
+        &format!(
+            "share fn by_load() = match runtime.load_module(\"{}/x.ol\", #{{ \"name\": \"x\", \"fs\": true }}) {{ Ok(m) => \"read: \" + show(str.length(unwrap(m.READ))), Err(e) => \"refused: \" + e }}\n",
+            lib.display()
+        ),
+    );
+    write(&ws.join("app/main.ol"), "use lib { by_load }\nprintln(by_load())\n");
+    let out = Command::new(olang())
+        .current_dir(ws.join("app"))
+        .arg("main.ol")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("refused") && stdout.contains("denied"),
+        "runtime.load_module widened the dependency's grant: {} {}",
+        stdout,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&ws);
+}

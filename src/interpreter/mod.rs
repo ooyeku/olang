@@ -5967,9 +5967,21 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         child.dependency_map = self.dependency_map.clone();
         // Re-seed through the setter, not the field: module discovery
         // reads the path back out of the module cache, which the setter
-        // populates.
-        if let Some(path) = self.current_module_path.as_ref() {
+        // populates. The file is the caller's as the gate attributes it
+        // (the running function's), not the module last loaded: a
+        // dependency held to `fs = false`, or a plugin loaded under a
+        // grant, evaluated `meta.eval("fs.read_file(…)")` as the app's own
+        // main file and was given the app's grant — or none at all, so
+        // unrestricted. The evaluated source's functions are that file's
+        // too, so a call into one stays attributed there.
+        let attributed = self
+            .coverage_file_stack
+            .last()
+            .and_then(|f| f.clone())
+            .or_else(|| self.current_module_path.clone());
+        if let Some(path) = attributed.as_ref() {
             child.set_current_file(std::path::Path::new(path));
+            child.coverage_file_stack.push(Some(path.clone()));
         }
         match child.eval_program(program) {
             Ok(v) => Value::Ok(Box::new(v)),
@@ -6170,6 +6182,12 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         let table = self.caps.clone()?;
         let (caps, package) = table.caps_for(canon.as_deref());
         Some((*caps, package.map(|s| s.to_string())))
+    }
+
+    /// The capabilities the running code holds (its package's, or the
+    /// module's it belongs to), or None when nothing is restricted.
+    pub fn caller_caps(&mut self) -> Option<crate::caps::Caps> {
+        self.current_caps().map(|(caps, _)| caps)
     }
 
     /// The real path of the file whose code is running (memoized).
