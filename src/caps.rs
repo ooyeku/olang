@@ -466,9 +466,11 @@ fn two_paths(full_name: &str) -> bool {
     f.contains("copy") || f.contains("rename") || f.contains("move") || f.contains("link")
 }
 
-/// A path as the gate compares it: absolute, `.`/`..` resolved, real
-/// where it exists (its nearest existing parent made real otherwise, so
-/// a file not yet written is placed by its folder).
+/// A path as the gate compares it: absolute, and where the system would
+/// take it — resolved a component at a time, each existing link followed
+/// before a `..` after it is applied (so `root/link/../x` is placed where
+/// the link leads, not lexically back in `root`), a part not yet on disk
+/// placed by its folder.
 pub fn gate_path(p: &str) -> PathBuf {
     let raw = PathBuf::from(p);
     let abs = if raw.is_absolute() {
@@ -476,35 +478,53 @@ pub fn gate_path(p: &str) -> PathBuf {
     } else {
         std::env::current_dir().unwrap_or_default().join(raw)
     };
-    let mut clean = PathBuf::new();
-    for c in abs.components() {
-        match c {
-            std::path::Component::ParentDir => {
-                clean.pop();
-            }
-            std::path::Component::CurDir => {}
-            other => clean.push(other.as_os_str()),
-        }
-    }
-    if let Ok(real) = std::fs::canonicalize(&clean) {
+    gate_resolve(abs, 0)
+}
+
+fn gate_resolve(abs: PathBuf, depth: u32) -> PathBuf {
+    if let Ok(real) = std::fs::canonicalize(&abs) {
         return real;
     }
-    let mut tail = Vec::new();
-    let mut at = clean.clone();
-    while let Some(parent) = at.parent().map(|p| p.to_path_buf()) {
-        if let Some(name) = at.file_name() {
-            tail.push(name.to_os_string());
-        }
-        if let Ok(real) = std::fs::canonicalize(&parent) {
-            let mut out = real;
-            for n in tail.iter().rev() {
-                out.push(n);
+    let mut at = PathBuf::new();
+    // once a part is missing nothing below it exists: the rest is lexical
+    let mut missing = false;
+    for c in abs.components() {
+        match c {
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                at.push(c.as_os_str())
             }
-            return out;
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                // `at` is real (no link left in it) while nothing is missing
+                at.pop();
+            }
+            std::path::Component::Normal(name) => {
+                at.push(name);
+                if !missing {
+                    match std::fs::canonicalize(&at) {
+                        Ok(real) => at = real,
+                        Err(_) => {
+                            // a link to nothing yet: a write would make
+                            // its target, so it is placed there
+                            let target = std::fs::symlink_metadata(&at)
+                                .ok()
+                                .filter(|m| m.file_type().is_symlink())
+                                .and_then(|_| std::fs::read_link(&at).ok());
+                            match target {
+                                Some(t) if depth < 40 => {
+                                    let base = at.parent().map(|b| b.to_path_buf()).unwrap_or_default();
+                                    at = gate_resolve(base.join(t), depth + 1);
+                                }
+                                _ => {}
+                            }
+                            missing = true;
+                        }
+                    }
+                }
+            }
         }
-        at = parent;
     }
-    clean
+    at
 }
 
 /// The program a process-starting call names: a list's first item, or a
@@ -1062,6 +1082,36 @@ mod tests {
         assert!(FsCap::Full.allows(FsCap::Read));
         assert!(!FsCap::Read.allows(FsCap::Full));
         assert!(!FsCap::None.allows(FsCap::Read));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gate_path_follows_a_link_before_its_dotdot() {
+        // root/l -> outside/sub; root/l/../secret is outside/secret to the
+        // system, so the gate must place it there, not back in root
+        let base = std::env::temp_dir().join(format!("olang-gate-{}", std::process::id()));
+        let root = base.join("root");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(root.join("in")).unwrap();
+        std::fs::create_dir_all(outside.join("sub")).unwrap();
+        std::fs::write(outside.join("secret"), "x").unwrap();
+        let _ = std::fs::remove_file(root.join("l"));
+        let _ = std::fs::remove_file(root.join("dl"));
+        std::os::unix::fs::symlink(outside.join("sub"), root.join("l")).unwrap();
+        std::os::unix::fs::symlink(outside.join("made"), root.join("dl")).unwrap();
+        let root_real = std::fs::canonicalize(&root).unwrap();
+        let out_real = std::fs::canonicalize(&outside).unwrap();
+        let g = |p: &std::path::Path| gate_path(p.to_str().unwrap());
+        // the file exists: the system's answer
+        assert_eq!(g(&root.join("l/../secret")), out_real.join("secret"));
+        // nothing there yet: still placed past the link
+        assert!(g(&root.join("l/../not-yet")).starts_with(&out_real));
+        // a dangling link: where a write would land
+        assert!(g(&root.join("dl")).starts_with(&out_real));
+        // lexical .. inside the root stays inside
+        assert!(g(&root.join("in/../in/new.txt")).starts_with(&root_real));
+        assert_eq!(g(&root.join("in/../in")), root_real.join("in"));
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

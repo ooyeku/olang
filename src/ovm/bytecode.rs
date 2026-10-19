@@ -12329,6 +12329,7 @@ impl BytecodeCompiler {
             params: parameters.to_vec(),
             body: body.clone(),
             captured: captured.keys().cloned().collect(),
+            def_file: self.pending_def_file.as_deref().map(str::to_string),
         };
         let lambda_src = self.emitter.recording.then(lambda_src);
 
@@ -12342,9 +12343,10 @@ impl BytecodeCompiler {
             // variables resolve identically in both tiers
             closure: std::sync::Arc::new(captured.clone()),
             param_bounds: Vec::new(),
-            // The bytecode tier isn't instrumented for coverage (that runs
-            // on the interpreter), so no def_file is threaded here.
-            def_file: None,
+            // The file it was written in: capabilities are attributed by
+            // it (a lambda a plugin makes answers to the plugin's grant,
+            // as the interpreter's does), never to the host's.
+            def_file: self.pending_def_file.as_deref().map(str::to_string),
             parent_scope: 0,
             // A lambda sees the siblings its enclosing function sees.
             run: self.enclosing_run.clone(),

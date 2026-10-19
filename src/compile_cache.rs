@@ -65,7 +65,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 const MAGIC: &[u8; 4] = b"olcc";
 /// The entry layout; part of every key.
-const FORMAT: u16 = 1;
+const FORMAT: u16 = 2;
 
 /// A compile's key: the first 16 bytes of a SHA-256.
 pub type Key = [u8; 16];
@@ -214,6 +214,10 @@ pub struct LambdaSrc {
     pub params: Vec<Parameter>,
     pub body: Expr,
     pub captured: Vec<String>,
+    /// The file the lambda was written in: what its capabilities are
+    /// attributed by (a plugin's lambda answers to the plugin's grant).
+    #[serde(default)]
+    pub def_file: Option<String>,
 }
 
 /// Where a constant came from.

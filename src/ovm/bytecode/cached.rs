@@ -456,7 +456,7 @@ impl BytecodeCompiler {
             body: Arc::new(src.body.clone()),
             closure: Arc::new(closure),
             param_bounds: Vec::new(),
-            def_file: None,
+            def_file: src.def_file.clone(),
             parent_scope: 0,
             run: self.enclosing_run.clone(),
         })

@@ -227,6 +227,65 @@ println(show(is_ok(fs.read_file("outside.txt"))))
     );
 }
 
+/// A lambda a module makes answers to the module's grant on either
+/// tier — called by a builtin (`attempt`, `map`), stored and called
+/// later, after its function was compiled hot — and a link inside its
+/// folder followed by `..` is placed where the system takes it.
+#[test]
+fn a_modules_lambdas_and_links_hold_to_its_grant() {
+    let ws = workspace("lambdas");
+    write(&ws.join("proj/in.txt"), "inside");
+    write(&ws.join("outside/sub/x.txt"), "x");
+    write(&ws.join("outside/secret.txt"), "secret");
+    write(
+        &ws.join("plug/p/plugin.ol"),
+        r#"fn said(r) = match r { Ok(v) => "ok", Err(e) => show(e) }
+share fn env() = said(attempt(() => os.get_env("HOME")))
+share fn env_map() = said(first(map([1], (x) => attempt(() => os.get_env("HOME")))))
+share fn net() = said(attempt(() => http.get("http://127.0.0.1:9/")))
+share fn load() = said(attempt(() => runtime.load_module("plugin.ol", #{ "fs": true })))
+share fn later() = () => os.get_env("HOME")
+share fn link(dir) = said(attempt(() => fs.read_file(dir + "/l/../secret.txt")))
+"#,
+    );
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(ws.join("outside/sub"), ws.join("plug/p/l")).unwrap();
+    let out = run(
+        &ws,
+        r#"let m = unwrap(runtime.load_module("plug/p/plugin.ol", #{ "name": "p", "fs": "read", "fs_roots": ["proj", "plug/p"] }))
+fn v(r) = map_get(r, "value") ?? map_get(r, "error")
+// hot enough to be compiled
+for i in range(0, 200) { let _x = runtime.call_budget(m.env, [], 1000) }
+println(v(runtime.call_budget(m.env, [], 1000)))
+println(v(runtime.call_budget(m.env_map, [], 1000)))
+println(v(runtime.call_budget(m.net, [], 1000)))
+println(v(runtime.call_budget(m.load, [], 1000)))
+let f = map_get(runtime.call_budget(m.later, [], 1000), "value")
+println(match attempt(() => f()) { Ok(v) => "ran: " + show(v), Err(e) => show(e) })
+println(v(runtime.call_budget(m.link, [fs.join(unwrap(os.cwd()), "plug/p")], 1000)))
+"#,
+    );
+    let lines: Vec<&str> = out.lines().collect();
+    for (i, cap) in ["env", "env", "net", "host"].iter().enumerate() {
+        assert!(
+            lines[i].contains(&format!("capability '{cap}' denied")),
+            "line {i}: {}",
+            lines[i]
+        );
+    }
+    assert!(
+        lines[4].contains("capability 'env' denied"),
+        "a module's lambda called by the host is still the module's: {}",
+        lines[4]
+    );
+    #[cfg(unix)]
+    assert!(
+        lines[5].contains("capability 'fs' denied"),
+        "a link then .. is where the link leads: {}",
+        lines[5]
+    );
+}
+
 #[test]
 fn a_module_within_a_manifest_gets_no_more_than_the_app() {
     let ws = workspace("manifest");

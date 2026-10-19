@@ -217,6 +217,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A module loaded at run time (a plugin) is held to its grant in
+  every lambda and through every link.** A lambda the bytecode tier
+  made had no file of its own, so it answered to the host's grant: a
+  plugin granted nothing read the environment, reached the network and
+  loaded code of its own with `attempt(() => …)` or `map`. A lambda now
+  carries the file it was written in (the compile cache's lambdas too;
+  its format is 2). And the gate placed `root/link/../x` lexically back
+  in `root` while the system reads past the link: a path is now
+  resolved a part at a time, each link followed before a `..` after it,
+  a link to nothing yet placed where a write would land.
 - **Rename across files**: a name a module `share`s, renamed in the
   language server, is renamed in every file of the folder that imports it
   — its `use` lists (the source side of `name as alias`, a re-export),
