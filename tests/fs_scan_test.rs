@@ -252,6 +252,28 @@ fn a_case_blind_search_passes_a_large_file_holding_no_match_and_finds_one_in_any
     assert_eq!(got, r#"["kelvin.txt"]"#);
 }
 
+/// A file past `max_bytes` is not read; a case-blind match that straddles
+/// the megabyte pieces a large file is lower-cased in is still found.
+#[test]
+fn search_leaves_out_files_past_max_bytes_and_finds_a_match_across_its_pieces() {
+    let d = tempfile::tempdir().unwrap();
+    let r = d.path().to_string_lossy().to_string();
+    // "NeedLE" across the first megabyte's end
+    let mut big = "x".repeat((1 << 20) - 3);
+    big.push_str("NeedLE\n");
+    big.push_str(&"y".repeat(1000));
+    std::fs::write(d.path().join("big.txt"), &big).unwrap();
+    std::fs::write(d.path().join("small.txt"), "a needle\n").unwrap();
+    let got = s(eval(&format!(
+        r#"show(map(unwrap(fs.search("{r}", "needle")), (h) => map_get(h, "path")))"#
+    )));
+    assert_eq!(got, r#"["big.txt", "small.txt"]"#);
+    let got = s(eval(&format!(
+        r#"show(map(unwrap(fs.search("{r}", "needle", #{{ "max_bytes": 4096 }})), (h) => map_get(h, "path")))"#
+    )));
+    assert_eq!(got, r#"["small.txt"]"#);
+}
+
 #[test]
 fn search_matches_case_words_and_regular_expressions_and_stops_at_its_limit() {
     let d = tree();

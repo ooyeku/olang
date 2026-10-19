@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`fs.search`'s `max_bytes`**: a file larger is not read (a data file of
+  gigabytes not left out by `.gitignore` was read whole on a worker). A
+  case-blind search lower-cases a file a megabyte at a time, never a
+  copy of the whole file.
 - **`// allow: <class>[, <class>…]`: one line's advisories silenced**,
   at the end of the line or on a line of its own above it (comment lines
   between). The classes `[check] promote` takes, `unused` (the hint) and

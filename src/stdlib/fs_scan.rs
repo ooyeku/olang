@@ -540,6 +540,33 @@ fn replaced_with(line: &str, at: usize, needle: &Needle, template: &str) -> Stri
     }
 }
 
+/// Whether `bytes`, lower-cased as ASCII, hold `needle` (lower-case
+/// already): a megabyte lower-cased at a time, never a copy of the whole
+/// file (a 1 GB file was another 1 GB on each worker searching one).
+fn contains_ascii_folded(bytes: &[u8], needle: &[u8]) -> bool {
+    const CHUNK: usize = 1 << 20;
+    if needle.is_empty() {
+        return true;
+    }
+    let finder = memchr::memmem::Finder::new(needle);
+    let mut buf: Vec<u8> = Vec::with_capacity(CHUNK.min(bytes.len()) + needle.len());
+    let mut start = 0;
+    while start < bytes.len() {
+        // each piece overlaps the next by the needle less one byte
+        let end = (start + CHUNK + needle.len() - 1).min(bytes.len());
+        buf.clear();
+        buf.extend(bytes[start..end].iter().map(|b| b.to_ascii_lowercase()));
+        if finder.find(&buf).is_some() {
+            return true;
+        }
+        if end == bytes.len() {
+            break;
+        }
+        start += CHUNK;
+    }
+    false
+}
+
 /// A match: `(line, start, end, text, with)`.
 type Found = (usize, usize, usize, String, Option<String>);
 
@@ -552,7 +579,16 @@ fn search_file(
     word: bool,
     cap: usize,
     replace: Option<&str>,
+    max_bytes: Option<u64>,
 ) -> Vec<Found> {
+    // a file past `max_bytes` is not read at all (a data file of
+    // gigabytes not left out by .gitignore was read whole, on every
+    // worker at once)
+    if let Some(max) = max_bytes
+        && std::fs::metadata(path).map(|m| m.len() > max).unwrap_or(false)
+    {
+        return Vec::new();
+    }
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
         Err(_) => return Vec::new(),
@@ -585,7 +621,7 @@ fn search_file(
         case: false,
     } = needle
         && t.is_ascii()
-        && memchr::memmem::find(&bytes.to_ascii_lowercase(), t.as_bytes()).is_none()
+        && !contains_ascii_folded(&bytes, t.as_bytes())
         && !(t.contains('k') && memchr::memmem::find(&bytes, "\u{212A}".as_bytes()).is_some())
     {
         return Vec::new();
@@ -627,7 +663,8 @@ fn search_file(
 /// `regex`, `case` (match case; default false), `word` (whole words),
 /// `limit` (matches, default 2,000), `per_file` (default 200),
 /// `replace` (a template: each match also says `with`, what it becomes —
-/// a regular expression's groups expanded, `$1`, `${name}`, `$$`), and
+/// a regular expression's groups expanded, `$1`, `${name}`, `$$`),
+/// `max_bytes` (a file larger is not searched), and
 /// `fs.scan`'s `skip`, `exts`, `hidden`, `gitignore`, `max_depth`.
 pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if args.len() < 2 || args.len() > 3 {
@@ -653,7 +690,7 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Some(None) => return Err("fs.search: options must be a map".into()),
     };
     let extra = [
-        "regex", "case", "word", "limit", "per_file", "files", "replace",
+        "regex", "case", "word", "limit", "per_file", "files", "replace", "max_bytes",
     ];
     // (the walk's own `limit` is `files_limit` here: `limit` counts matches)
     let w = match walk_opts(&opts, "fs.search", &extra) {
@@ -685,6 +722,13 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Some(Err(e)) => return Err(raised(e)),
         Some(Ok(n)) => n.max(1),
         None => 200,
+    };
+    let max_bytes: Option<u64> = match get("max_bytes") {
+        None | Some(Value::Unit) => None,
+        Some(v) => match count(v, "fs.search", "max_bytes") {
+            Ok(n) => Some(n as u64),
+            Err(e) => return Err(raised(e)),
+        },
     };
     let replace: Option<String> = match get("replace") {
         None | Some(Value::Unit) => None,
@@ -741,7 +785,14 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         .map(|(i, rel)| {
             (
                 i,
-                search_file(&root.join(rel), &needle, word, per_file, replace.as_deref()),
+                search_file(
+                    &root.join(rel),
+                    &needle,
+                    word,
+                    per_file,
+                    replace.as_deref(),
+                    max_bytes,
+                ),
             )
         })
         .filter(|(_, ms)| !ms.is_empty())
