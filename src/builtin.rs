@@ -2498,11 +2498,7 @@ impl BuiltinFunctions {
                 if end > crate::builtin::MAX_BUILT_LEN {
                     return Err(too_long("range", end));
                 }
-                let mut result = Vec::with_capacity(end.max(0) as usize);
-                for i in 0..end {
-                    result.push(Value::Integer(i));
-                }
-                Ok(Value::List(result.into()))
+                range_list(0, end, 1)
             }
             2 => {
                 // range(start, end) -> [start, start+1, ..., end-1]
@@ -2527,11 +2523,7 @@ impl BuiltinFunctions {
                 if end.saturating_sub(start) > crate::builtin::MAX_BUILT_LEN {
                     return Err(too_long("range", end.saturating_sub(start)));
                 }
-                let mut result = Vec::new();
-                for i in start..end {
-                    result.push(Value::Integer(i));
-                }
-                Ok(Value::List(result.into()))
+                range_list(start, end, 1)
             }
             3 => {
                 // range(start, end, step) -> [start, start+step, start+2*step, ...]
@@ -2573,18 +2565,9 @@ impl BuiltinFunctions {
                 if span > crate::builtin::MAX_BUILT_LEN as i128 {
                     return Err(too_long("range", span.min(i64::MAX as i128) as i64));
                 }
-                let mut result = Vec::new();
                 // a step past i64's end stops the range (it wrapped round,
                 // looping forever, before)
-                let mut i = start;
-                while (step > 0 && i < end) || (step < 0 && i > end) {
-                    result.push(Value::Integer(i));
-                    match i.checked_add(step) {
-                        Some(n) => i = n,
-                        None => break,
-                    }
-                }
-                Ok(Value::List(result.into()))
+                range_list(start, end, step)
             }
             _ => Err(InterpreterError::ArityMismatch {
                 expected: 2, // We'll say 2 for the error, but we actually accept 1-3
@@ -4670,4 +4653,36 @@ pub(crate) fn strip_error_prefixes(text: &str) -> String {
 /// past it the answer is an error, not an allocation that aborts the
 /// process (a meta fn's `str.repeat("x", 1 << 62)` killed the language
 /// server; release builds abort on any panic).
-pub const MAX_BUILT_LEN: i64 = 1 << 32;
+pub const MAX_BUILT_LEN: i64 = 1 << 28;
+
+/// A range's integers as a list, built so it can fail rather than end the
+/// process: its room asked for first (an allocation refused is an error),
+/// and a stop asked for (an interrupt, a plugin's `call_budget` past its
+/// time) heard every million elements.
+fn range_list(start: i64, end: i64, step: i64) -> Result<Value, InterpreterError> {
+    let count = if (step > 0 && start < end) || (step < 0 && start > end) {
+        ((end as i128 - start as i128).abs() + step.unsigned_abs() as i128 - 1) / step.unsigned_abs() as i128
+    } else {
+        0
+    };
+    let mut result: Vec<Value> = Vec::new();
+    result
+        .try_reserve_exact(count as usize)
+        .map_err(|_| InterpreterError::RuntimeError {
+            message: format!("range: no memory for {count} elements"),
+        })?;
+    let mut i = start;
+    let mut n: u64 = 0;
+    while (step > 0 && i < end) || (step < 0 && i > end) {
+        result.push(Value::Integer(i));
+        n += 1;
+        if n & 0xF_FFFF == 0 && crate::interrupt::pending() {
+            return Err(crate::interrupt::interpreter_error());
+        }
+        match i.checked_add(step) {
+            Some(x) => i = x,
+            None => break,
+        }
+    }
+    Ok(Value::List(result.into()))
+}
