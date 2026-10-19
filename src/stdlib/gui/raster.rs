@@ -4,7 +4,8 @@
 //! quarter-pixel horizontal offset, and cached. Outlines become 8-bit
 //! coverage masks the renderer tints with the text's colour; colour
 //! glyphs (COLR outlines, sbix and CBDT bitmaps — emoji) become
-//! premultiplied RGBA images drawn as they are.
+//! premultiplied RGBA images drawn as they are. The cache is bounded by
+//! count and bytes, the least recently drawn glyphs going first.
 
 use super::text::FaceKey;
 use std::collections::HashMap;
@@ -75,32 +76,85 @@ pub struct GlyphImage {
 
 struct Rasterizer {
     context: ScaleContext,
-    cache: HashMap<GlyphKey, Option<Arc<GlyphImage>>>,
+    /// Each glyph's image (`None`: no ink) and the tick it was last asked for.
+    cache: HashMap<GlyphKey, (Option<Arc<GlyphImage>>, u64)>,
+    bytes: usize,
+    tick: u64,
+    evicted: u64,
 }
 
 static RASTER: OnceLock<Mutex<Rasterizer>> = OnceLock::new();
 
+/// The most glyph images kept, and their bytes: past either, the least
+/// recently asked for quarter goes (it was all of them, at once).
 const CACHE_LIMIT: usize = 16384;
+const CACHE_BYTES: usize = 64 << 20;
+
+fn rasterizer() -> &'static Mutex<Rasterizer> {
+    RASTER.get_or_init(|| {
+        Mutex::new(Rasterizer {
+            context: ScaleContext::new(),
+            cache: HashMap::new(),
+            bytes: 0,
+            tick: 0,
+            evicted: 0,
+        })
+    })
+}
+
+fn image_bytes(i: &Option<Arc<GlyphImage>>) -> usize {
+    i.as_ref().map(|i| i.data.len()).unwrap_or(0) + 64
+}
+
+impl Rasterizer {
+    /// Drop the least recently used quarter of the cache.
+    fn evict(&mut self) {
+        let mut ticks: Vec<u64> = self.cache.values().map(|v| v.1).collect();
+        let cut = ticks.len() / 4;
+        if cut == 0 {
+            return;
+        }
+        let (_, nth, _) = ticks.select_nth_unstable(cut);
+        let nth = *nth;
+        let before = self.cache.len();
+        let mut freed = 0;
+        self.cache.retain(|_, v| {
+            let keep = v.1 > nth;
+            if !keep {
+                freed += image_bytes(&v.0);
+            }
+            keep
+        });
+        self.bytes -= freed;
+        self.evicted += (before - self.cache.len()) as u64;
+    }
+}
 
 /// The image of a glyph, or `None` for one with no ink (a space) or a
 /// face that cannot be read.
 pub fn glyph(key: &GlyphKey, coords: &[i16]) -> Option<Arc<GlyphImage>> {
-    let r = RASTER.get_or_init(|| {
-        Mutex::new(Rasterizer {
-            context: ScaleContext::new(),
-            cache: HashMap::new(),
-        })
-    });
-    let mut r = r.lock().ok()?;
-    if let Some(hit) = r.cache.get(key) {
-        return hit.clone();
+    let mut r = rasterizer().lock().ok()?;
+    r.tick += 1;
+    let now = r.tick;
+    if let Some(hit) = r.cache.get_mut(key) {
+        hit.1 = now;
+        return hit.0.clone();
     }
-    if r.cache.len() >= CACHE_LIMIT {
-        r.cache.clear();
+    if r.cache.len() >= CACHE_LIMIT || r.bytes >= CACHE_BYTES {
+        r.evict();
     }
     let image = render(&mut r.context, key, coords).map(Arc::new);
-    r.cache.insert(key.clone(), image.clone());
+    r.bytes += image_bytes(&image);
+    r.cache.insert(key.clone(), (image.clone(), now));
     image
+}
+
+/// What the glyph cache holds: `(images, bytes, evicted ever)`.
+pub fn stats() -> (usize, usize, u64) {
+    match rasterizer().lock() {
+        Ok(r) => (r.cache.len(), r.bytes, r.evicted),
+        Err(_) => (0, 0, 0),
+    }
 }
 
 /// The largest glyph drawn, in device pixels: a text at an absurd size (a
