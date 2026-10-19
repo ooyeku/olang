@@ -113,6 +113,31 @@ const HIDDEN: u16 = 64;
 const STRIKE: u16 = 128;
 
 /// A colour: 0 the default, `IDX | n` the palette's `n`, `RGB | rgb`.
+/// What a program's output may make the screen keep, so a hostile file
+/// `cat` to it draws and nothing more: a sequence's parameters and
+/// intermediates (past them the sequence is ignored, as xterm does), the
+/// marks combined on one cell, a repeat (`CSI b`: a line's worth), and
+/// the answers waiting for the child (a program that never reads them
+/// queues no more).
+const MAX_PARAMS: usize = 32;
+const MAX_INTER: usize = 4;
+const MAX_MARKS: usize = 16;
+const MAX_REPLY: usize = 4096;
+const MAX_URI: usize = 2048;
+
+/// A title or a folder as a program set it, said back without what could
+/// move or hide text where it is shown: C0 and C1 controls, DEL, and the
+/// bidirectional overrides and isolates.
+fn printable(t: &str, max: usize) -> String {
+    t.chars()
+        .filter(|&c| {
+            !c.is_control()
+                && !matches!(c, '\u{200e}' | '\u{200f}' | '\u{061c}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+        })
+        .take(max)
+        .collect()
+}
+
 const IDX: u32 = 0x100_0000;
 const RGB: u32 = 0x200_0000;
 
@@ -556,7 +581,9 @@ impl Term {
             };
             let e = l.extra.get_or_insert_with(|| Box::new(Vec::new()));
             if let Some(x) = e.iter_mut().find(|(cc, _)| *cc as usize == col) {
-                x.1.push(c);
+                if x.1.chars().count() < MAX_MARKS {
+                    x.1.push(c);
+                }
             } else {
                 e.push((col as u16, c.to_string()));
             }
@@ -700,9 +727,8 @@ impl Term {
         let a = self.a;
         let l = self.line_mut(r);
         l.fit(cols);
-        for _ in 0..n.min(cols - c) {
-            l.cells.insert(c, Cell::blank(a));
-        }
+        let n = n.min(cols - c);
+        l.cells.splice(c..c, std::iter::repeat_n(Cell::blank(a), n));
         l.cells.truncate(cols);
         if l.cells[cols - 1].w == 2 {
             l.cells[cols - 1] = Cell::blank(a);
@@ -716,10 +742,8 @@ impl Term {
         let l = self.line_mut(r);
         l.fit(cols);
         let n = n.min(cols - c);
-        for _ in 0..n {
-            l.cells.remove(c);
-            l.cells.push(Cell::blank(a));
-        }
+        l.cells.drain(c..c + n);
+        l.cells.extend(std::iter::repeat_n(Cell::blank(a), n));
         if c < cols && l.cells[c].w == 0 {
             l.cells[c] = Cell::blank(a);
         }
@@ -1066,6 +1090,14 @@ impl Term {
 
     // ── the parser ──
 
+    /// An answer for the child (a report it asked for), kept while what
+    /// waits is under `MAX_REPLY`.
+    fn answer(&mut self, a: &str) {
+        if self.reply.len() + a.len() <= MAX_REPLY {
+            self.reply.push_str(a);
+        }
+    }
+
     fn param(&self, i: usize, default: u32) -> u32 {
         match self.params.get(i) {
             Some(&0) | None => default,
@@ -1170,7 +1202,9 @@ impl Term {
             St::Esc => self.esc(b),
             St::EscInter => {
                 if (0x20..=0x2f).contains(&b) {
-                    self.inter.push(b);
+                    if self.inter.len() < MAX_INTER {
+                        self.inter.push(b);
+                    }
                 } else {
                     self.esc_dispatch(b);
                 }
@@ -1308,6 +1342,7 @@ impl Term {
                     .min(65535);
                 self.has_cur = true;
             }
+            b';' | b':' if self.params.len() + 1 >= MAX_PARAMS => self.st = St::CsiIgnore,
             b';' | b':' => {
                 self.params.push(self.cur);
                 self.sub.push(self.pending_sub());
@@ -1323,6 +1358,7 @@ impl Term {
                     self.st = St::CsiIgnore;
                 }
             }
+            0x20..=0x2f if self.inter.len() >= MAX_INTER => self.st = St::CsiIgnore,
             0x20..=0x2f => self.inter.push(b),
             0x40..=0x7e => {
                 if self.has_cur || !self.params.is_empty() {
@@ -1430,16 +1466,16 @@ impl Term {
             }
             (0, 0, b'b') => {
                 let c = self.last;
-                for _ in 0..p0.min(65535) {
+                for _ in 0..p0.min(self.cols) {
                     self.put(c);
                 }
             }
             (0, 0, b'c') => {
                 if self.params.first().copied().unwrap_or(0) == 0 {
-                    self.reply.push_str("\x1b[?62;22c");
+                    self.answer("\x1b[?62;22c");
                 }
             }
-            (b'>', 0, b'c') => self.reply.push_str("\x1b[>0;276;0c"),
+            (b'>', 0, b'c') => self.answer("\x1b[>0;276;0c"),
             (0, 0, b'd') => {
                 let c = self.col as i64;
                 self.goto(p0 as i64 - 1, c);
@@ -1460,22 +1496,20 @@ impl Term {
             (0, 0, b'l') | (b'?', 0, b'l') => self.set_mode(false),
             (0, 0, b'm') => self.sgr(),
             (0, 0, b'n') => match self.params.first().copied().unwrap_or(0) {
-                5 => self.reply.push_str("\x1b[0n"),
+                5 => self.answer("\x1b[0n"),
                 6 => {
                     let r = if self.origin {
                         self.row - self.top
                     } else {
                         self.row
                     };
-                    self.reply
-                        .push_str(&format!("\x1b[{};{}R", r + 1, self.col + 1));
+                    self.answer(&format!("\x1b[{};{}R", r + 1, self.col + 1));
                 }
                 _ => {}
             },
             (b'?', 0, b'n') => {
                 if self.params.first().copied() == Some(6) {
-                    self.reply
-                        .push_str(&format!("\x1b[?{};{}R", self.row + 1, self.col + 1));
+                    self.answer(&format!("\x1b[?{};{}R", self.row + 1, self.col + 1));
                 }
             }
             (0, b' ', b'q') => {
@@ -1494,8 +1528,7 @@ impl Term {
             (0, 0, b'u') => self.restore_cursor(),
             (0, 0, b't') => {
                 if self.params.first().copied() == Some(18) {
-                    self.reply
-                        .push_str(&format!("\x1b[8;{};{}t", self.rows, self.cols));
+                    self.answer(&format!("\x1b[8;{};{}t", self.rows, self.cols));
                 }
             }
             (0, b'!', b'p') => self.soft_reset(),
@@ -1503,7 +1536,7 @@ impl Term {
                 let p = self.params.first().copied().unwrap_or(0);
                 let v = self.mode_state(p);
                 let q = if pr == b'?' { "?" } else { "" };
-                self.reply.push_str(&format!("\x1b[{q}{p};{v}$y"));
+                self.answer(&format!("\x1b[{q}{p};{v}$y"));
             }
             _ => {}
         }
@@ -1522,7 +1555,7 @@ impl Term {
             None => (text.as_str(), ""),
         };
         match code {
-            "0" | "2" => self.title = rest.chars().take(256).collect(),
+            "0" | "2" => self.title = printable(rest, 256),
             "7" => {
                 // file://host/path, percent-encoded
                 let path = rest.strip_prefix("file://").map(|r| match r.find('/') {
@@ -1530,7 +1563,11 @@ impl Term {
                     None => "",
                 });
                 if let Some(p) = path {
-                    self.cwd = percent_decode(p);
+                    let d = percent_decode(p);
+                    // a folder: absolute, nothing in it that is no name's
+                    if d.starts_with('/') && printable(&d, 4096) == d {
+                        self.cwd = d;
+                    }
                 }
             }
             "8" => {
@@ -1539,7 +1576,11 @@ impl Term {
                     Some(i) => &rest[i + 1..],
                     None => "",
                 };
-                if uri.is_empty() {
+                // an address that hides a part of itself is no link
+                let shown = uri.len() <= MAX_URI
+                    && !uri.chars().any(char::is_whitespace)
+                    && printable(uri, MAX_URI) == uri;
+                if uri.is_empty() || !shown {
                     self.link = 0;
                 } else if let Some(i) = self.links.iter().rposition(|l| l == uri) {
                     self.link = (i + 1) as u16;
@@ -1557,7 +1598,7 @@ impl Term {
                 } else {
                     self.bg_rgb
                 };
-                self.reply.push_str(&format!(
+                self.answer(&format!(
                     "\x1b]{code};rgb:{r:02x}{r:02x}/{g:02x}{g:02x}/{b:02x}{b:02x}\x1b\\"
                 ));
             }
@@ -3014,5 +3055,71 @@ mod tests {
         assert_eq!(t.lines.len(), 7);
         assert_eq!(t.first_id(), 14);
         assert_eq!(t.line_by_id(14).unwrap().text(0, 2).trim_end(), "14");
+    }
+
+    /// What `cat` of a hostile file can make the screen do: draw, and
+    /// nothing more — no unbounded memory, no answers past a bound, no
+    /// controls or hidden parts in what Studio shows of it.
+    #[test]
+    fn hostile_output_only_draws() {
+        // a sequence of a million parameters: ignored, nothing kept
+        let mut t = Term::new(4, 20, 10);
+        let mut many = String::from("\x1b[");
+        for _ in 0..1_000_000 {
+            many.push_str("1;");
+        }
+        many.push_str("mok");
+        t.feed(many.as_bytes());
+        assert!(t.params.capacity() <= 64, "{}", t.params.capacity());
+        assert_eq!(screen(&t)[0], "ok");
+        assert_eq!(t.a.fl, 0, "the overlong SGR was ignored");
+        // huge numbers saturate; the cursor stays on the screen
+        t.feed(b"\x1b[99999999;99999999H\x1b[99999999@\x1b[99999999P\x1b[99999999L\x1b[99999999Mx");
+        assert!(t.row < 4 && t.col < 20);
+        // intermediates past a few: ignored
+        t.feed(format!("\x1b[{}qz", " ".repeat(10_000)).as_bytes());
+        assert!(t.inter.capacity() <= 16);
+        // a thousand combining marks on one cell: a few kept
+        let mut zalgo = String::from("\r\na");
+        for _ in 0..1000 {
+            zalgo.push('\u{301}');
+        }
+        t.feed(zalgo.as_bytes());
+        let row = t.row;
+        let marks = t.line(row).extra_at(0).map(|x| x.chars().count()).unwrap_or(0);
+        assert!(marks > 0 && marks <= MAX_MARKS, "{marks}");
+        // a repeat is a line's worth at most
+        let mut r = Term::new(3, 10, 0);
+        r.feed(b"x\x1b[65535b");
+        assert_eq!(screen(&r), vec!["xxxxxxxxxx", "x", ""]);
+        // answers a program never reads stay bounded
+        let mut q = Term::new(3, 10, 0);
+        q.feed("\x1b[c".repeat(100_000).as_bytes());
+        assert!(q.reply.len() <= MAX_REPLY);
+        // a title, a folder and a link with controls or bidi tricks
+        let mut w = Term::new(2, 20, 0);
+        w.feed("\x1b]2;ab\ncd\r\u{202e}ef\u{9b}g\u{2067}\x07".as_bytes());
+        assert_eq!(w.title, "abcdefg");
+        w.feed(b"\x1b]7;file://h/tmp/a%0Ab\x07");
+        assert_eq!(w.cwd, "", "a folder with a newline is not taken");
+        w.feed(b"\x1b]7;file://h/Users/me\x07");
+        assert_eq!(w.cwd, "/Users/me");
+        w.feed("\x1b]8;;https://a.b/\u{202e}gpj.exe\x07x\x1b]8;;\x07".as_bytes());
+        w.feed(b"\x1b]8;;https://a.b/x y\x07y\x1b]8;;\x07");
+        assert!(w.links.is_empty(), "{:?}", w.links);
+        // strings that are not ours (DCS, APC: sixel, kitty graphics, DECRQSS) are swallowed whole
+        let mut d = Term::new(2, 20, 0);
+        d.feed(b"\x1bP$qm\x1b\\\x1b_Gf=24;AAAA\x1b\\\x1bPq#0;2;0;0;0#0~~\x1b\\\x05ok");
+        assert!(d.reply.is_empty(), "{:?}", d.reply);
+        assert_eq!(screen(&d)[0], "ok");
+    }
+
+    #[test]
+    fn insert_and_delete_characters_keep_the_line() {
+        let mut t = run(1, 8, "abcdefgh\x1b[1;3H\x1b[2@");
+        assert_eq!(screen(&t)[0], "ab  cdef");
+        t.feed(b"\x1b[3P");
+        assert_eq!(screen(&t)[0], "abdef");
+        assert_eq!(t.line(0).cells.len(), 8);
     }
 }

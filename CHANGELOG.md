@@ -217,6 +217,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`vt`: what a program writes can only draw.** A sequence's
+  parameters and intermediates are bounded (32 and 4; past them it is
+  ignored — a million `;` grew memory without end), the marks combined
+  on a cell (16), a repeat (`CSI b`, a line's worth: 65,535 cells per
+  six bytes), the answers waiting for a child that never reads them
+  (4 KB: `ESC [ c` a million times queued megabytes into its input);
+  ICH/DCH are one move each. A title and a folder (OSC 0/2/7) drop C0
+  and C1 controls and bidi overrides; an OSC 8 address with them or a
+  space is no link.
 - **A module loaded at run time (a plugin) is held to its grant in
   every lambda and through every link.** A lambda the bytecode tier
   made had no file of its own, so it answered to the host's grant: a
