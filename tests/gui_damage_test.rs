@@ -18,6 +18,14 @@ use olang::stdlib::gui::window::{Clipboard, Input, Mods, PointerAction, WinState
 use olang::stdlib::gui::{gpu, soft};
 use std::sync::Arc;
 
+/// The GPU's glyph atlas is the process's: tests that draw on the GPU take
+/// turns (one filling every page would leave another's frame no room).
+static GPU_TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn gpu_turn() -> std::sync::MutexGuard<'static, ()> {
+    GPU_TURN.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 struct Rng(u64);
 
 impl Rng {
@@ -153,7 +161,46 @@ fn canvas_ops(r: &mut Rng) -> Value {
     Value::List(Arc::new(ops))
 }
 
-/// A node, new or changed: a box, a text, a canvas, or a scroll region.
+/// A picture for image nodes: a PNG of four coloured quarters, once.
+fn picture_path() -> String {
+    static P: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    P.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("gui-damage-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let mut pm = tiny_skia::Pixmap::new(40, 30).expect("a pixmap");
+        for (x, y, c) in [(0, 0, [220, 38, 38]), (20, 0, [37, 99, 235]), (0, 15, [22, 163, 74]), (20, 15, [245, 158, 11])] {
+            let mut p = tiny_skia::Paint::default();
+            p.set_color_rgba8(c[0], c[1], c[2], 200);
+            pm.fill_rect(
+                tiny_skia::Rect::from_xywh(x as f32, y as f32, 20.0, 15.0).expect("a rect"),
+                &p,
+                tiny_skia::Transform::identity(),
+                None,
+            );
+        }
+        let path = dir.join("quarters.png");
+        pm.save_png(&path).expect("written");
+        path.to_string_lossy().to_string()
+    })
+    .clone()
+}
+
+/// A hostile style or box now and then: absurd sizes, huge places,
+/// nothing at all (what `tests/gui_hostile_test.rs` throws, here drawn
+/// three ways).
+fn hostile(r: &mut Rng, f: &mut Vec<(&str, Value)>) {
+    match r.below(6) {
+        0 => f.push(("box", tup(&[r.f(-1e6, 1e6), r.f(-1e6, 1e6), r.f(0.0, 1e6), r.f(0.0, 1e6)]))),
+        1 => f.push(("box", tup(&[r.f(0.0, W), r.f(0.0, H), 0.0, 0.0]))),
+        2 => f.push(("style", m(vec![("bg", colour(r)), ("radius", Value::Float(1e6)), ("border", colour(r)), ("border_width", Value::Float(500.0))]))),
+        3 => f.push(("style", m(vec![("size", Value::Float(if r.chance(50) { 0.5 } else { 900.0 })), ("color", colour(r))]))),
+        4 => f.push(("style", m(vec![("bg", colour(r)), ("opacity", Value::Float(0.0))]))),
+        _ => f.push(("style", m(vec![("bg", s("#00000000")), ("border", colour(r)), ("border_width", Value::Float(0.25))]))),
+    }
+}
+
+/// A node, new or changed: a box, a text, a canvas, a picture, or a
+/// scroll region.
 fn node(r: &mut Rng, key: &str, parents: &[String]) -> Value {
     let parent = parents[r.below(parents.len() as u64) as usize].clone();
     let mut f = vec![
@@ -162,7 +209,14 @@ fn node(r: &mut Rng, key: &str, parents: &[String]) -> Value {
         ("box", a_box(r)),
         ("style", style(r)),
     ];
-    match r.below(5) {
+    if r.chance(5) {
+        f.retain(|(k, _)| *k != "box" && *k != "style");
+        hostile(r, &mut f);
+        if !f.iter().any(|(k, _)| *k == "box") {
+            f.push(("box", a_box(r)));
+        }
+    }
+    match r.below(6) {
         0 | 1 => {
             let words: Vec<&str> = (0..1 + r.below(6))
                 .map(|_| WORDS[r.below(WORDS.len() as u64) as usize])
@@ -173,6 +227,11 @@ fn node(r: &mut Rng, key: &str, parents: &[String]) -> Value {
         2 => {
             f.push(("role", s("figure")));
             f.push(("draw", canvas_ops(r)));
+        }
+        4 => {
+            f.push(("role", s("image")));
+            f.push(("image", s(&picture_path())));
+            f.push(("fit", s(["contain", "cover", "fill"][r.below(3) as usize])));
         }
         3 => {
             f.push(("role", s("region")));
@@ -468,6 +527,36 @@ fn fuzz(seed: u64, steps: usize, scale: f32, with_gpu: bool) -> (usize, usize, u
                 first_difference(&damaged, &whole_gpu, dl.width)
             );
             if let Err(e) = gpu_agrees(&soft::rgba(&full), &whole_gpu) {
+                if let Some(dir) = std::env::var_os("GUI_FUZZ_DEBUG") {
+                    // both frames as PNGs, and the primitives, to look at
+                    let dir = std::path::PathBuf::from(dir);
+                    let _ = full.save_png(dir.join("soft.png"));
+                    if let Some(sz) = tiny_skia::IntSize::from_wh(dl.width, dl.height) {
+                        let mut pre = whole_gpu.clone();
+                        for px in pre.chunks_mut(4) {
+                            let a = px[3] as u32;
+                            for c in &mut px[..3] {
+                                *c = ((*c as u32 * a + 127) / 255) as u8;
+                            }
+                        }
+                        if let Some(pm) = tiny_skia::Pixmap::from_vec(pre, sz) {
+                            let _ = pm.save_png(dir.join("gpu.png"));
+                        }
+                    }
+                    let a = soft::rgba(&full);
+                    let mut worst = (0u8, 0usize);
+                    for (i, (x, y)) in a.chunks(4).zip(whole_gpu.chunks(4)).enumerate() {
+                        let d = (0..4).map(|k| x[k].abs_diff(y[k])).max().unwrap_or(0);
+                        if d > worst.0 {
+                            worst = (d, i);
+                        }
+                    }
+                    eprintln!("worst at ({}, {}) by {}", worst.1 % dl.width as usize, worst.1 / dl.width as usize, worst.0);
+                    for (i, p) in dl.prims.iter().enumerate() {
+                        let txt = format!("{p:?}");
+                        eprintln!("{i}: {}", &txt[..txt.len().min(300)]);
+                    }
+                }
                 panic!("seed {seed} step {step} at {scale}x: the GPU and software frames disagree: {e}");
             }
         }
@@ -487,6 +576,7 @@ fn a_damaged_frame_is_the_whole_frame_in_software() {
 
 #[test]
 fn a_damaged_frame_is_the_whole_frame_on_the_gpu_and_agrees_with_software() {
+    let _turn = gpu_turn();
     if gpu::gpu(None, None).is_err() {
         eprintln!("skipped: no GPU here");
         return;
@@ -528,6 +618,7 @@ fn an_unchanged_frame_draws_nothing_and_a_caret_move_draws_a_tile_or_two() {
 
 #[test]
 fn the_glyph_atlas_takes_more_pages_and_evicts_the_least_recently_drawn() {
+    let _turn = gpu_turn();
     let Ok(g) = gpu::gpu(None, None) else {
         eprintln!("skipped: no GPU here");
         return;
@@ -636,6 +727,7 @@ fn scrolled(scale: f32) -> WinState {
 
 #[test]
 fn a_scroll_moves_the_kept_frame_and_draws_only_what_it_uncovered() {
+    let _turn = gpu_turn();
     for scale in [1.0f32, 2.0] {
         let mut st = scrolled(scale);
         let mut kept = soft::Retained::default();
@@ -697,6 +789,7 @@ fn a_scroll_moves_the_kept_frame_and_draws_only_what_it_uncovered() {
 #[test]
 #[ignore]
 fn measure_damaged_against_whole_frames() {
+    let _turn = gpu_turn();
     let g = gpu::gpu(None, None).ok();
     let (w, h) = (1200.0, 800.0);
     let base = |st: &mut WinState, extra: Vec<Value>| {

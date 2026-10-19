@@ -212,6 +212,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   drawn. In a 1200×800 window at 2×, typing in a 50,000-line field
   drew 3% of the window (GPU 2.9 → 1.1 ms a frame, the engine's frame
   1.2 → 0.6 ms).
+- **`gui`'s drawing is fuzzed three ways.** `tests/gui_damage_test.rs`
+  drives a window with random patches (boxes, text, canvases, pictures,
+  scroll regions, and now and then hostile ones: places of a million
+  pixels, empty boxes, radii and borders past the box, text at half a
+  pixel or 900), pointer, wheel, keys and focus, and draws every frame
+  whole in software, damaged in software, whole on the GPU and damaged
+  on the GPU: the damaged frames must be the whole ones, and the GPU's
+  the software's within the renderers' tolerance. A run is part of the
+  suite (under a second); `GUI_FUZZ_STEPS=5000 GUI_FUZZ_SEED=n` runs
+  longer, `GUI_FUZZ_DEBUG=<dir>` keeps a disagreement's frames as PNGs.
 - **A scroll moves the kept frame.** A scroll region scrolled by whole
   device pixels copies the pixels it still shows to their new place and
   draws only the band it uncovered and what else changed (a tile is
