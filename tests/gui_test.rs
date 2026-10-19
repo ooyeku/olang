@@ -320,8 +320,15 @@ fn a_stale_value_from_the_program_does_not_undo_typing() {
 fn the_accessibility_tree_names_every_control() {
     let mut st = reference_scene(1.0);
     let tree = olang::stdlib::gui::a11y::tree(&st);
-    // The window, plus every node.
-    assert_eq!(tree.nodes.len(), st.scene.nodes.len() + 1);
+    // The window, plus every node, plus the field's text as runs (a line
+    // each: what a screen reader reads it by and Zoom follows its caret in)
+    let runs = tree
+        .nodes
+        .iter()
+        .filter(|(_, n)| n.role() == accesskit::Role::TextRun)
+        .count();
+    assert!(runs >= 1, "the field's text is a run");
+    assert_eq!(tree.nodes.len(), st.scene.nodes.len() + 1 + runs);
     let v = olang::stdlib::gui::a11y::as_value(&mut st);
     let t = text(&v);
     assert!(t.contains("\"Button\""), "{t}");
