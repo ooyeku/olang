@@ -251,7 +251,7 @@ fn the_actions_a_client_may_ask_for() {
     "##);
     assert_eq!(
         text(&v),
-        "[[[\"focus\", \"increment\", \"decrement\"], [\"click\", \"expand\"], [\"scroll_up\", \"scroll_down\"], []], \
+        "[[[\"focus\", \"increment\", \"decrement\"], [\"click\", \"expand\"], [\"scroll_down\"], []], \
          [[\"a11y\", \"step\", \"increment\"], [\"a11y\", \"step\", \"decrement\"], [\"a11y\", \"item\", \"expand\"], [\"scrolled\", \"sc\", 160.0]], \
          (100.0, -160.0, 300.0, 20.0)]"
     );

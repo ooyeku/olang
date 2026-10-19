@@ -322,6 +322,25 @@ fn steps(n: &Node) -> bool {
             || n.numeric.is_some() && !matches!(n.role.as_str(), "progressbar" | "meter"))
 }
 
+/// The page scrolls a scroller can make from where it is (none up at its
+/// top, none down at its end).
+fn page_scrolls(n: &Node, max_x: f32, max_y: f32) -> Vec<Action> {
+    let mut out = Vec::new();
+    if n.offset.1 > 0.5 {
+        out.push(Action::ScrollUp);
+    }
+    if n.offset.1 < max_y - 0.5 {
+        out.push(Action::ScrollDown);
+    }
+    if n.offset.0 > 0.5 {
+        out.push(Action::ScrollLeft);
+    }
+    if n.offset.0 < max_x - 0.5 {
+        out.push(Action::ScrollRight);
+    }
+    out
+}
+
 /// How far a scroller can move, across and down.
 fn scroll_max(sc: &scene::Scene, n: &Node) -> (f32, f32) {
     let (cw, ch) = sc.content_size(n);
@@ -491,14 +510,10 @@ pub fn tree(st: &WinState) -> TreeUpdate {
             node.set_scroll_y_min(0.0);
             node.set_scroll_x_max(max_x as f64);
             node.set_scroll_y_max(max_y as f64);
-            // a page at a time, as VoiceOver's scroll gestures ask
-            if max_y > 0.0 {
-                node.add_action(Action::ScrollUp);
-                node.add_action(Action::ScrollDown);
-            }
-            if max_x > 0.0 {
-                node.add_action(Action::ScrollLeft);
-                node.add_action(Action::ScrollRight);
+            // a page at a time, as VoiceOver's scroll gestures ask: the
+            // ways it can still go
+            for a in page_scrolls(n, max_x, max_y) {
+                node.add_action(a);
             }
         }
         // The node's actions (a card's "Move right"), its own or lent by
@@ -946,13 +961,13 @@ fn walk(
     }
     if n.scrollable {
         let (mx, my) = scroll_max(&st.scene, n);
-        if my > 0.0 {
-            actions.push(s("scroll_up"));
-            actions.push(s("scroll_down"));
-        }
-        if mx > 0.0 {
-            actions.push(s("scroll_left"));
-            actions.push(s("scroll_right"));
+        for a in page_scrolls(n, mx, my) {
+            actions.push(s(match a {
+                Action::ScrollUp => "scroll_up",
+                Action::ScrollDown => "scroll_down",
+                Action::ScrollLeft => "scroll_left",
+                _ => "scroll_right",
+            }));
         }
     }
     let place = places.get(key).copied().unwrap_or_default();

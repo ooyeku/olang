@@ -19,7 +19,7 @@ mod mac {
     use objc2::msg_send;
     use objc2::rc::Retained;
     use objc2::runtime::{AnyClass, AnyObject, Bool};
-    use objc2::{Encode, Encoding};
+    use objc2::{ClassType, Encode, Encoding};
     use objc2_foundation::{NSArray, NSDictionary, NSString};
     use olang::{Interpreter, Parser};
     use std::ffi::c_void;
@@ -204,7 +204,8 @@ mod mac {
 
     /// The window's root element (the view's one child).
     fn root() -> Option<Retained<AnyObject>> {
-        children(&content_view()?).into_iter().next()
+        let v = content_view()?;
+        children(&v).into_iter().next()
     }
 
     fn predicate(key: &str, start: Option<&AnyObject>, previous: bool) -> Retained<AnyObject> {
