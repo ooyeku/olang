@@ -591,12 +591,18 @@ fn walk(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     Ok(Value::Ok(Box::new(Value::List(values.into()))))
 }
 
+// A link is not followed into a folder (one pointing at its own parent
+// walked ~40 levels until the system said ELOOP and the walk failed); a
+// link to a file is listed as the file it names.
 fn walk_into(dir: &std::path::Path, out: &mut Vec<String>) -> std::io::Result<()> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.is_dir() {
+        let ft = entry.file_type()?;
+        if ft.is_dir() {
             walk_into(&path, out)?;
+        } else if ft.is_symlink() && path.is_dir() {
+            continue;
         } else if let Some(s) = path.to_str() {
             out.push(s.to_string());
         }
@@ -1231,6 +1237,24 @@ mod tests {
         assert_fails(read_file(vec![]));
 
         assert_fails(write_file(vec![string_val("file.txt")]));
+    }
+
+    #[test]
+    fn walk_and_glob_do_not_follow_a_link_into_a_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path().join("d");
+        std::fs::create_dir_all(d.join("sub")).unwrap();
+        std::fs::write(d.join("sub/a.ol"), "1").unwrap();
+        std::os::unix::fs::symlink("..", d.join("loop")).unwrap();
+        std::os::unix::fs::symlink("sub/a.ol", d.join("b.ol")).unwrap();
+        let root = d.to_str().unwrap().to_string();
+        let got = walk(vec![string_val(&root)]).unwrap();
+        let shown = format!("{got}");
+        assert!(shown.starts_with("Ok("), "{shown}");
+        assert!(shown.contains("sub/a.ol") && shown.contains("b.ol"), "{shown}");
+        assert!(!shown.contains("loop"), "{shown}");
+        let g = glob(vec![string_val(&format!("{root}/**/*.ol"))]).unwrap();
+        assert!(!format!("{g}").contains("loop"), "{g}");
     }
 
     #[test]
