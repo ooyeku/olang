@@ -84,6 +84,21 @@ const TABLE_SAMPLE: usize = 200;
 const KEEP_EVALS: usize = 200;
 /// The most `expand` answers at once.
 const EXPAND_MAX: usize = 2000;
+/// The furthest line a request may place code on (it is parsed after as
+/// many line breaks).
+const LINE_MAX: usize = 1_000_000;
+
+/// A request's `line`, 1 at least and `LINE_MAX` at most.
+fn asked_line(msg: &J) -> usize {
+    msg.get("line")
+        .and_then(|l| l.as_u64())
+        .unwrap_or(1)
+        .clamp(1, LINE_MAX as u64) as usize
+}
+
+/// The frames of an error's stack a reply names: its first and last.
+const STACK_HEAD: usize = 40;
+const STACK_TAIL: usize = 10;
 
 struct Out(Mutex<Box<dyn Write + Send>>);
 
@@ -485,6 +500,9 @@ struct Session {
     /// `replay`): each cell's evaluation records its inputs, or is served
     /// them.
     timeline: Option<KernelTimeline>,
+    /// The params that could not be bound, and why: an evaluation that
+    /// reads one says so (it said "a cell not run yet").
+    unbound_params: HashMap<String, String>,
 }
 
 /// A kernel's record or replay (docs/tooling.md, "A recorded run").
@@ -570,6 +588,7 @@ impl Session {
             declared: HashMap::new(),
             controls: HashMap::new(),
             timeline: None,
+            unbound_params: HashMap::new(),
         }
     }
 
@@ -597,6 +616,27 @@ impl Session {
             refused: nb.capabilities_refused,
             grant: nb.capabilities,
         });
+        self.note_param_problems(&text, &nb.diagnostics);
+    }
+
+    /// A front matter's problems on a param's line (a value outside its
+    /// range, of no kind it takes): the param is not bound, and a cell
+    /// that reads it says so and why (it said "a cell not run yet").
+    fn note_param_problems(&mut self, text: &str, problems: &[crate::notebook::Diagnostic]) {
+        let lines: Vec<&str> = text.lines().collect();
+        for d in problems {
+            let Some(l) = (d.line as usize).checked_sub(1).and_then(|i| lines.get(i)) else {
+                continue;
+            };
+            let Some((key, _)) = l.trim_start().split_once(':') else {
+                continue;
+            };
+            let key = key.trim();
+            if !key.is_empty() && key.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                self.unbound_params
+                    .insert(key.to_string(), d.message.clone());
+            }
+        }
     }
 
     /// The grant a notebook's front matter makes the session's: the front
@@ -700,6 +740,8 @@ impl Session {
             };
             if let Err(e) = outcome {
                 let _ = self.cmd.interpreter.take_error_location();
+                self.unbound_params
+                    .insert(name.to_string(), plain_message(&e));
                 notes.push(format!(
                     "{}:{}: the param `{}` is not bound: {}",
                     short(&self.root, &path),
@@ -707,6 +749,8 @@ impl Session {
                     name,
                     plain_message(&e)
                 ));
+            } else {
+                self.unbound_params.remove(name.as_str());
             }
         }
         self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
@@ -724,6 +768,10 @@ impl Session {
         info.params = now;
         info.problems = nb.diagnostics.clone();
         info.refused = nb.capabilities_refused;
+        self.unbound_params
+            .retain(|n, _| nb.params.iter().all(|p| p.name != *n));
+        self.note_param_problems(&text, &nb.diagnostics);
+        let info = self.notebook.as_mut().expect("a kernel's notebook");
         info.grant = nb.capabilities;
         let mut r = json!({
             "ok": true,
@@ -1587,6 +1635,8 @@ impl Session {
             };
             if let Err(e) = outcome {
                 let _ = self.cmd.interpreter.take_error_location();
+                self.unbound_params
+                    .insert(name.to_string(), plain_message(&e));
                 notes.push(format!(
                     "{}:{}: the param `{}` is not bound: {}",
                     short(&self.root, &path),
@@ -1594,6 +1644,8 @@ impl Session {
                     name,
                     plain_message(&e)
                 ));
+            } else {
+                self.unbound_params.remove(name.as_str());
             }
         }
         self.cmd.interpreter.swap_repl_scope(&mut scope.scope);
@@ -1754,7 +1806,15 @@ impl Session {
             .and_then(|f| f.as_str())
             .map(|f| self.resolve(f))
             .or_else(|| self.notebook_path());
-        let line = msg.get("line").and_then(|l| l.as_u64()).unwrap_or(1).max(1) as usize;
+        // a snippet is parsed where it stands, after as many line breaks:
+        // a line past its file's end (or past any file) padded gigabytes
+        let line = asked_line(msg).min(
+            file.as_deref()
+                .and_then(|f| std::fs::read_to_string(f).ok())
+                // its buffer may be longer than the disk's text: room for that
+                .map(|t| t.lines().count() + 10_000)
+                .unwrap_or(LINE_MAX),
+        );
         let t0 = Instant::now();
         let (key, mut scope, notes) = self.take_scope(file.as_deref());
         // the snippet parsed where it stands in its file
@@ -2378,6 +2438,12 @@ impl Session {
         // here: the REPL evaluates code as written (SPEC §18.1 is open)
         let mut within: Option<(String, u32, Vec<String>)> = None;
         let in_notebook = file.is_some_and(|f| self.notebook.as_ref().is_some_and(|n| n.path == f));
+        let param_why = match e {
+            InterpreterError::UndefinedVariable { name } => {
+                self.unbound_params.get(name.as_str()).cloned()
+            }
+            _ => None,
+        };
         if let (InterpreterError::UndefinedVariable { name }, Some(f)) = (e, file)
             && let Some(ix) = self.file_index(f)
         {
@@ -2387,6 +2453,10 @@ impl Session {
                 message = format!("`{}` is a parameter of `{}` — not bound here", name, fname);
                 kind = "unbound";
                 within = Some((fname.clone(), *a, ps.clone()));
+            } else if let Some(why) = &param_why {
+                // a param whose value did not bind: said, with why
+                message = format!("the param `{}` is not bound: {}", name, why);
+                kind = "unbound";
             } else if let Some((_, l)) = ix.skipped.iter().find(|(n, _)| n == name) {
                 let l = *l;
                 // a kernel's: the cell that defines it is to be run
@@ -2404,8 +2474,21 @@ impl Session {
                 kind = "unbound";
             }
         }
-        let frames: Vec<J> = stack
-            .iter()
+        // A runaway recursion's stack is a hundred thousand frames: its
+        // first and last ones are what tell, and each frame is looked up
+        // below (the reply was megabytes, and slow to make).
+        let total = stack.len();
+        let kept: Vec<&String> = if total > STACK_HEAD + STACK_TAIL {
+            stack
+                .iter()
+                .take(STACK_HEAD)
+                .chain(stack.iter().skip(total - STACK_TAIL))
+                .collect()
+        } else {
+            stack.iter().collect()
+        };
+        let mut frames: Vec<J> = kept
+            .into_iter()
             .map(|frame| {
                 let (name, ffile) = match frame.rfind(" (") {
                     Some(i) if frame.ends_with(')') => (frame[..i].to_string(), Some(self.resolve(&frame[i + 2..frame.len() - 1]))),
@@ -2416,6 +2499,13 @@ impl Session {
                         "line": place.as_ref().map(|p| p.1) })
             })
             .collect();
+        if total > STACK_HEAD + STACK_TAIL {
+            let left_out = total - STACK_HEAD - STACK_TAIL;
+            frames.insert(
+                STACK_HEAD,
+                json!({ "name": format!("… {} frames more", left_out), "file": J::Null, "line": J::Null }),
+            );
+        }
         let mut out = json!({ "kind": kind, "message": message, "file": efile.map(|f| f.to_string_lossy().into_owned()),
                 "line": line, "col": col, "stack": frames, "hint": hint });
         // the function the snippet stands in: what `bind` would give
@@ -3179,7 +3269,7 @@ fn deps_reply(msg: &J) -> J {
         .iter()
         .map(|c| {
             let code = c.get("code").and_then(|x| x.as_str()).unwrap_or("");
-            let line = c.get("line").and_then(|l| l.as_u64()).unwrap_or(1).max(1) as u32;
+            let line = asked_line(c) as u32;
             let mut r = match crate::notebook::cell_deps(code, line) {
                 Ok(d) => json!({
                     "ok": true,

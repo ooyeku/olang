@@ -31,7 +31,7 @@ fn write_stdout(bytes: &[u8], flush: bool) {
     }
     if COLLECTING.load(std::sync::atomic::Ordering::Relaxed) {
         if let Ok(mut buf) = COLLECTED.lock() {
-            buf.extend_from_slice(bytes);
+            buf.push(bytes);
         }
         return;
     }
@@ -97,7 +97,67 @@ pub fn drain_captured() -> String {
 #[cfg(feature = "native")]
 static COLLECTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 #[cfg(feature = "native")]
-static COLLECTED: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
+static COLLECTED: std::sync::Mutex<Collected> = std::sync::Mutex::new(Collected {
+    head: Vec::new(),
+    tail: Vec::new(),
+    dropped: 0,
+});
+
+/// What an evaluation printed, bounded: a loop printing millions of lines
+/// made one reply of tens of megabytes (and held them all), which the
+/// editor then had to read and lay out. Its first `HEAD_MAX` bytes and its
+/// last `TAIL_MAX` are kept, and how much fell between them.
+#[cfg(feature = "native")]
+struct Collected {
+    head: Vec<u8>,
+    tail: Vec<u8>,
+    dropped: u64,
+}
+
+#[cfg(feature = "native")]
+const HEAD_MAX: usize = 512 * 1024;
+#[cfg(feature = "native")]
+const TAIL_MAX: usize = 256 * 1024;
+
+#[cfg(feature = "native")]
+impl Collected {
+    fn push(&mut self, bytes: &[u8]) {
+        let room = HEAD_MAX.saturating_sub(self.head.len());
+        let (h, t) = bytes.split_at(room.min(bytes.len()));
+        self.head.extend_from_slice(h);
+        if t.is_empty() {
+            return;
+        }
+        self.tail.extend_from_slice(t);
+        // trimmed in steps, not on every write: a line at a time stays cheap
+        if self.tail.len() > 2 * TAIL_MAX {
+            let cut = self.tail.len() - TAIL_MAX;
+            self.tail.drain(..cut);
+            self.dropped += cut as u64;
+        }
+    }
+
+    fn take(&mut self) -> String {
+        let mut head = std::mem::take(&mut self.head);
+        let mut tail = std::mem::take(&mut self.tail);
+        let mut dropped = std::mem::take(&mut self.dropped);
+        if tail.len() > TAIL_MAX {
+            let cut = tail.len() - TAIL_MAX;
+            tail.drain(..cut);
+            dropped += cut as u64;
+        }
+        if dropped == 0 {
+            head.extend_from_slice(&tail);
+            return String::from_utf8_lossy(&head).into_owned();
+        }
+        format!(
+            "{}\n… {} bytes of output not kept …\n{}",
+            String::from_utf8_lossy(&head),
+            dropped,
+            String::from_utf8_lossy(&tail)
+        )
+    }
+}
 
 /// From now on `print` and `println` collect instead of writing.
 #[cfg(feature = "native")]
@@ -109,7 +169,7 @@ pub fn collect_output() {
 #[cfg(feature = "native")]
 pub fn take_collected() -> String {
     match COLLECTED.lock() {
-        Ok(mut buf) => String::from_utf8_lossy(&std::mem::take(&mut *buf)).into_owned(),
+        Ok(mut buf) => buf.take(),
         Err(_) => String::new(),
     }
 }

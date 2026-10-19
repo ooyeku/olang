@@ -1530,3 +1530,62 @@ fn a_values_fields_are_said_by_name_and_at_a_caret() {
     // no place for a field
     assert_eq!(at(&mut r, "println(\"hi", J::Null)["context"], json!(false));
 }
+
+#[test]
+fn a_session_stays_answerable_under_what_a_program_can_throw_at_it() {
+    let dir = project();
+    let (mut r, _) = Repl::start(dir.path());
+    // a long sleep stops at the interrupt (one sleep of the whole time
+    // could not be stopped: ⌘. did nothing for its length)
+    let t0 = Instant::now();
+    let s = r.interrupted(
+        json!({ "op": "eval", "code": "time.sleep(60000)" }),
+        Duration::from_millis(300),
+    );
+    assert_eq!(s["error"]["kind"], json!("interrupted"), "{s}");
+    assert!(t0.elapsed() < Duration::from_secs(5));
+    // a flood of printing comes back bounded: its start and its end, and
+    // how much was left out between them
+    let flood = r.eval("for i in range(0, 300000) { print(\"line \" + to_string(i)) }\n7");
+    assert_eq!(flood["value"]["s"], json!("7"), "{}", &flood.to_string()[..300]);
+    let out = flood["out"].as_str().unwrap();
+    assert!(out.len() < 1_200_000, "{} bytes of output in one reply", out.len());
+    assert!(out.starts_with("line 0line 1"), "{}", &out[..40]);
+    assert!(out.ends_with("line 299999"), "{}", &out[out.len() - 40..]);
+    assert!(out.contains("not kept"), "the cut is said");
+    // a deep recursion's error names its frames, not a hundred thousand
+    let deep = r.eval("fn down(n) = down(n + 1) + 1\ndown(0)");
+    assert_eq!(deep["ok"], json!(false));
+    let frames = deep["error"]["stack"].as_array().unwrap();
+    assert!(frames.len() <= 64, "{} frames", frames.len());
+    assert!(deep.to_string().len() < 100_000, "{} bytes", deep.to_string().len());
+    // a cell holding itself is shown (its display waited on itself)
+    let c = r.eval("let c = cell(0)\ncell.set(c, [c])\nc");
+    assert_eq!(c["ok"], json!(true), "{c}");
+    // and the session answers after all of it
+    assert_eq!(r.eval("1 + 1")["value"]["s"], json!("2"));
+}
+
+#[test]
+fn a_param_that_does_not_bind_is_named_with_why_and_a_far_line_is_no_hang() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("p.olmd"),
+        "---\nparams:\n  top_n: {value: 12, min: 1, max: 10, step: 1}\n---\n\n```olang\nlet t = top_n\n```\n",
+    )
+    .unwrap();
+    let (mut r, hello) = Repl::start_with(dir.path(), &["--notebook", "p.olmd"]);
+    assert_eq!(hello["notebook"]["params"], json!([]), "{hello}");
+    // a cell reading it says the param and why, not "a cell not run yet"
+    let c = r.ask(json!({ "op": "eval", "cell": "c1", "code": "let t = top_n", "line": 7 }));
+    let m = c["error"]["message"].as_str().unwrap();
+    assert!(m.contains("the param `top_n` is not bound") && m.contains("outside its range"), "{c}");
+    assert_eq!(c["error"]["kind"], json!("unbound"));
+    // a line far past any file: answered at once, not padded line by line
+    let t0 = Instant::now();
+    let far = r.ask(json!({ "op": "eval", "code": "1 + 1", "line": 99_999_999_999u64 }));
+    assert_eq!(far["value"]["s"], json!("2"), "{far}");
+    let deps = r.ask(json!({ "op": "deps", "cells": [{ "id": "a", "code": "let q = 1", "line": 99_999_999_999u64 }] }));
+    assert!(deps.to_string().contains("\"q\""), "{deps}");
+    assert!(t0.elapsed() < Duration::from_secs(5), "{:?}", t0.elapsed());
+}

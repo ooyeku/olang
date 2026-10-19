@@ -109,6 +109,9 @@ fn time_monotonic(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>>
     Ok(Value::Float(monotonic_now()))
 }
 
+/// How long a sleep goes before it looks for an interrupt again, ms.
+const SLEEP_SLICE_MS: u64 = 20;
+
 /// Block for the given number of milliseconds.
 /// Usage: time.sleep(50) -> ()
 fn time_sleep(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
@@ -127,7 +130,18 @@ fn time_sleep(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         }
     };
     let _parked = crate::profile::blocked();
-    crate::clock::sleep_ms(ms);
+    // In slices, the interrupt asked between them: a REPL's ⌘. (or a
+    // call's time budget) stops a long sleep as it stops a loop — one
+    // sleep of the whole time could not be stopped at all.
+    let mut left = ms;
+    while left > 0 {
+        if crate::interrupt::pending() {
+            return Err(crate::interrupt::MESSAGE.into());
+        }
+        let slice = left.min(SLEEP_SLICE_MS);
+        crate::clock::sleep_ms(slice);
+        left -= slice;
+    }
     Ok(Value::Unit)
 }
 
