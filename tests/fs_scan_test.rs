@@ -192,7 +192,10 @@ fn scan_says_the_empty_folders() {
         r#"let b = unwrap(fs.scan("{}", #{{ "skip": ["target"], "empty_dirs": "also" }})); show(b.empty_dirs) + " " + show(len(b.files))"#,
         r
     )));
-    assert_eq!(both, r#"["app/dotted", "app/empty", "app/nested/inner"] 10"#);
+    assert_eq!(
+        both,
+        r#"["app/dotted", "app/empty", "app/nested/inner"] 10"#
+    );
 }
 
 #[test]

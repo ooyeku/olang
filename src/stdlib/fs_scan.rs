@@ -585,7 +585,9 @@ fn search_file(
     // gigabytes not left out by .gitignore was read whole, on every
     // worker at once)
     if let Some(max) = max_bytes
-        && std::fs::metadata(path).map(|m| m.len() > max).unwrap_or(false)
+        && std::fs::metadata(path)
+            .map(|m| m.len() > max)
+            .unwrap_or(false)
     {
         return Vec::new();
     }
@@ -690,7 +692,14 @@ pub fn search(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         Some(None) => return Err("fs.search: options must be a map".into()),
     };
     let extra = [
-        "regex", "case", "word", "limit", "per_file", "files", "replace", "max_bytes",
+        "regex",
+        "case",
+        "word",
+        "limit",
+        "per_file",
+        "files",
+        "replace",
+        "max_bytes",
     ];
     // (the walk's own `limit` is `files_limit` here: `limit` counts matches)
     let w = match walk_opts(&opts, "fs.search", &extra) {
