@@ -69,6 +69,9 @@ fn role_of(n: &Node) -> Role {
         "tooltip" => Role::Tooltip,
         "status" => Role::Status,
         "log" => Role::Log,
+        // something that wants the person now (a file changed on disk
+        // under edits): said at once, interrupting
+        "alert" => Role::Alert,
         "progressbar" => Role::ProgressIndicator,
         "region" => {
             if n.scrollable {
@@ -195,6 +198,8 @@ pub fn tree(st: &WinState) -> TreeUpdate {
             });
         } else if matches!(n.role.as_str(), "status" | "log") {
             node.set_live(accesskit::Live::Polite);
+        } else if n.role == "alert" {
+            node.set_live(accesskit::Live::Assertive);
         }
         if n.focusable && !n.disabled {
             node.add_action(Action::Focus);

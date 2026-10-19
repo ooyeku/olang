@@ -393,6 +393,7 @@ pub const ROLES: &[&str] = &[
     "tooltip",
     "status",
     "log",
+    "alert",
     "progressbar",
     "region",
     "link",

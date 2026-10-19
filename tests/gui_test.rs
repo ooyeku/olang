@@ -2502,3 +2502,19 @@ fn a_picture_and_a_canvas_under_an_opacity_are_faded() {
         Err(_) => eprintln!("skipped the GPU half: no GPU here"),
     }
 }
+
+#[test]
+fn an_alert_is_a_role_said_at_once() {
+    // something that wants the person now (a file changed on disk under
+    // edits): its own role, live and assertive on the platform's tree
+    let v = run(r##"
+        let w = gui.headless(#{ "size": (200, 100) })
+        let r = gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 200, 100) },
+          #{ "key": "al", "parent": "root", "role": "alert", "box": (0, 0, 200, 36), "name": "Changed on disk" }
+        ])
+        let n = filter(gui.read(w, "a11y"), (n) => map_get(n, "key") == "al")[0]
+        [r, contains(gui.roles(), "alert"), map_get(n, "role"), map_get(n, "name")]
+    "##);
+    assert_eq!(text(&v), r#"[Ok(()), true, "Alert", "Changed on disk"]"#);
+}
