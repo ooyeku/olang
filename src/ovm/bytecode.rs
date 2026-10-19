@@ -300,6 +300,9 @@ pub struct BytecodeVm {
     /// What compiling at a first call decided, for the tier's books
     /// (`take_lazy_events`).
     lazy_events: Vec<LazyEvent>,
+    /// This VM's mark on the cells it writes (`stdlib::cell::vm_call`):
+    /// it reads its own values back unconverted.
+    cell_owner: u64,
 }
 
 /// Whether callees compile at their first call: on, unless
@@ -1745,6 +1748,7 @@ impl BytecodeVm {
             error_trace_frames: Vec::new(),
             error_trace_leak: None,
             poll_countdown: 256,
+            cell_owner: crate::stdlib::cell::next_vm_owner(),
         }
     }
 
@@ -5928,6 +5932,12 @@ impl BytecodeVm {
                         && let Some(r) = Self::spread_native(&arg_values)
                     {
                         r
+                    } else if let Some(op) = function_name.strip_prefix("cell.")
+                        && let Some(r) =
+                            crate::stdlib::cell::vm_call(op, &mut arg_values, self.cell_owner)
+                    {
+                        // the VM's own values kept in the cell as they are
+                        r.map_err(BytecodeError::RuntimeError)
                     } else if self.builtin_names.contains(function_name)
                         || function_name.contains('.')
                     {

@@ -192,6 +192,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **A cell the bytecode VM writes keeps the VM's value**, unconverted
+  (tagged with the VM that wrote it): that VM reads it back as it is, the
+  tree-walker and any other VM converted. A table grown in a cell
+  (`cell.set(c, map_set(cell.take(c), k, v))`) was converted to the
+  interpreter's form at every write and back at every read: a hot
+  read of a nested entry 5x faster, a write 2x.
 - **A map keeps its keys in the order they were first set**, as a Python
   dict and a JavaScript object do, and an object's (a parsed JSON
   object's) fields keep theirs, on every tier: `entries`, `map_keys`,

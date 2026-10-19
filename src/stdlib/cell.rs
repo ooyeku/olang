@@ -48,6 +48,17 @@
 //! return value silently overwrites. The lock is never held across `f`, so
 //! the failure is a diagnosable error, not a deadlock.
 //!
+//! ## The bytecode VM's values
+//!
+//! A cell the VM writes holds the VM's own value, unconverted, tagged with
+//! the VM that wrote it; that VM reads it back as it is. A table grown in
+//! a cell (`cell.set(c, map_set(cell.take(c), k, v))`, a UI's memo) was
+//! converted to the interpreter's form at every write and back at every
+//! read — a frame's layout paid a subtree's conversion each time it found
+//! one. The tree-walker, and any other VM, reads such a cell converted
+//! (a closure's bytecode is its VM's own), as a value crossing the tiers
+//! is.
+//!
 //! ## Determinism
 //!
 //! Cell mutation is deterministic within a thread and unreachable across
@@ -57,6 +68,7 @@
 use crate::ast::Value;
 use crate::interpreter::InterpreterError;
 use crate::native::{NativeHandle, NativeObject};
+use crate::ovm::value::{OvmValue, ValueData};
 use std::any::Any;
 use std::sync::Mutex;
 use std::thread::ThreadId;
@@ -68,7 +80,40 @@ const POISONED: &str = "cell is unusable: the thread holding it panicked mid-upd
 /// satisfy `Send + Sync`, which every `Value` must be.
 struct CellState {
     value: Value,
+    /// The value as a bytecode VM set it, with that VM's mark
+    /// (`next_vm_owner`); while it is here, `value` is `()`.
+    vm: Option<(OvmValue, u64)>,
     updating: bool,
+}
+
+impl CellState {
+    /// The value in the interpreter's form.
+    fn ast(&self) -> Result<Value, String> {
+        match &self.vm {
+            Some((v, _)) => v.to_ast().map_err(|e| format!("cell: {}", e)),
+            None => Ok(self.value.clone()),
+        }
+    }
+
+    /// The value moved out, in the interpreter's form; the cell holds `()`.
+    fn take_ast(&mut self) -> Result<Value, String> {
+        match self.vm.take() {
+            Some((v, _)) => v.to_ast().map_err(|e| format!("cell: {}", e)),
+            None => Ok(std::mem::replace(&mut self.value, Value::Unit)),
+        }
+    }
+
+    fn set_ast(&mut self, v: Value) {
+        self.vm = None;
+        self.value = v;
+    }
+}
+
+/// A mark for a new bytecode VM: the cells it writes are its own to read
+/// back unconverted.
+pub fn next_vm_owner() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 struct CellObject {
@@ -145,7 +190,10 @@ impl NativeObject for CellObject {
         // reply, a `print`, hung on it).
         match self.state.try_lock() {
             Ok(st) if st.updating => "<cell: updating>".to_string(),
-            Ok(st) => format!("cell({})", st.value),
+            Ok(st) => match st.ast() {
+                Ok(v) => format!("cell({})", v),
+                Err(_) => "<cell>".to_string(),
+            },
             Err(std::sync::TryLockError::WouldBlock) => "cell(…)".to_string(),
             Err(_) => "<cell>".to_string(),
         }
@@ -269,6 +317,7 @@ fn cell_new(mut args: Vec<Value>) -> Result<Value, String> {
         owner_label: thread_label(),
         state: Mutex::new(CellState {
             value,
+            vm: None,
             updating: false,
         }),
     })))
@@ -284,7 +333,7 @@ fn cell_get(args: Vec<Value>) -> Result<Value, String> {
     if state.updating {
         return Err(CellObject::reentrant("read"));
     }
-    Ok(state.value.clone())
+    state.ast()
 }
 
 /// `cell.take(c)` — the value, moved out; the cell holds `()` until it
@@ -300,7 +349,7 @@ fn cell_take(args: Vec<Value>) -> Result<Value, String> {
     if state.updating {
         return Err(CellObject::reentrant("taken"));
     }
-    Ok(std::mem::replace(&mut state.value, Value::Unit))
+    state.take_ast()
 }
 
 fn cell_set(mut args: Vec<Value>) -> Result<Value, String> {
@@ -314,8 +363,94 @@ fn cell_set(mut args: Vec<Value>) -> Result<Value, String> {
     if state.updating {
         return Err(CellObject::reentrant("written"));
     }
-    state.value = value;
+    state.set_ast(value);
     Ok(Value::Unit)
+}
+
+/// `cell.new`, `cell.get`, `cell.take` and `cell.set` as the bytecode VM
+/// marked `vm` calls them, on its own values: what it sets is kept as it
+/// is, and what it set it reads back as it is. `None` for anything else
+/// (another operation, not a cell, the wrong thread, an update running):
+/// the bridge then runs the call, and says its errors.
+pub fn vm_call(op: &str, args: &mut [OvmValue], vm: u64) -> Option<Result<OvmValue, String>> {
+    if op == "new" {
+        if args.len() != 1 {
+            return None;
+        }
+        let v = std::mem::replace(&mut args[0], OvmValue::new_unit());
+        let cell = CellObject {
+            owner: std::thread::current().id(),
+            owner_label: thread_label(),
+            state: Mutex::new(CellState {
+                value: Value::Unit,
+                vm: Some((v, vm)),
+                updating: false,
+            }),
+        };
+        return Some(Ok(OvmValue {
+            data: ValueData::Native(NativeHandle::new(cell)),
+        }));
+    }
+    let want = match op {
+        "get" | "take" => 1,
+        "set" => 2,
+        _ => return None,
+    };
+    if args.len() != want {
+        return None;
+    }
+    let handle = match &args[0].data {
+        ValueData::Native(h) => h.clone(),
+        _ => return None,
+    };
+    let cell = handle.0.as_any().downcast_ref::<CellObject>()?;
+    if cell.own_thread().is_err() {
+        return None;
+    }
+    let mut state = cell.state.lock().ok()?;
+    if state.updating {
+        return None;
+    }
+    // Another VM's value, or the interpreter's: converted, as a value
+    // crossing the tiers is (a closure's bytecode belongs to its VM).
+    fn mine(slot: Option<(OvmValue, u64)>, vm: u64) -> Result<OvmValue, String> {
+        match slot {
+            Some((v, o)) if o == vm => Ok(v),
+            Some((v, _)) => v
+                .to_ast()
+                .map(OvmValue::from_ast)
+                .map_err(|e| format!("cell: {}", e)),
+            None => Ok(OvmValue::new_unit()),
+        }
+    }
+    Some(match op {
+        "get" => match &state.vm {
+            Some((v, o)) if *o == vm => Ok(v.clone()),
+            Some(_) => mine(state.vm.clone(), vm),
+            None => Ok(OvmValue::from_ast(state.value.clone())),
+        },
+        "take" => {
+            if state.vm.is_some() {
+                mine(state.vm.take(), vm)
+            } else {
+                Ok(OvmValue::from_ast(std::mem::replace(
+                    &mut state.value,
+                    Value::Unit,
+                )))
+            }
+        }
+        _ => {
+            let v = std::mem::replace(&mut args[1], OvmValue::new_unit());
+            let old_value = std::mem::replace(&mut state.value, Value::Unit);
+            let old_vm = state.vm.replace((v, vm));
+            // what the cell held is let go once the lock is (a value
+            // holding this very cell takes it on its way out)
+            drop(state);
+            drop(old_value);
+            drop(old_vm);
+            Ok(OvmValue::new_unit())
+        }
+    })
 }
 
 /// `cell.update(c, f)` — read, apply, store, and return the new value.
@@ -341,8 +476,9 @@ fn cell_update(
         if state.updating {
             return Err(raise(CellObject::reentrant("updated")));
         }
+        let current = state.ast().map_err(raise)?;
         state.updating = true;
-        state.value.clone()
+        current
     };
 
     let applied = interpreter.call_function_optimized(&function, vec![current]);
@@ -352,6 +488,6 @@ fn cell_update(
     let mut state = cell.state.lock().map_err(|_| raise(POISONED.to_string()))?;
     state.updating = false;
     let next = applied?;
-    state.value = next.clone();
+    state.set_ast(next.clone());
     Ok(next)
 }
