@@ -302,6 +302,12 @@ pub fn capabilities() -> Value {
         // `contexts` the program's commands bind their chords in) and
         // submenus (`submenu`); the window's view answers Services
         ("edit_menu", b(mac)),
+        // a field's `spellcheck`: misspelled words underlined by the
+        // platform's checker (macOS's NSSpellChecker)
+        ("spellcheck", b(mac)),
+        // the text input client: dictation, Look Up, an input method's
+        // context read from the focused field
+        ("text_input", b(mac)),
         // `gui.flat_emit`'s keyed keep, and `gui.flat_diff` (flat.rs)
         ("flat_keyed", b(true)),
         ("flat_diff", b(true)),
@@ -3814,6 +3820,51 @@ pub mod edit_menu {
         }
     }
 
+    /// The misspelled words of `text` (characters), by AppKit's shared
+    /// spell checker in the person's languages.
+    fn spell_check(text: &str) -> Vec<(usize, usize)> {
+        contain_callback("spell_check", || {
+            let cls = AnyClass::get(c"NSSpellChecker")?;
+            let ns = NSString::from_str(text);
+            let total = super::chars_to_utf16(text, text.chars().count());
+            let mut out = Vec::new();
+            // SAFETY: AppKit's shared checker; the string lives for the
+            // call; the answer is an NSArray of NSTextCheckingResults.
+            unsafe {
+                let checker: Retained<AnyObject> = msg_send![cls, sharedSpellChecker];
+                let none: *const AnyObject = std::ptr::null();
+                let words: *mut u8 = std::ptr::null_mut();
+                // spelling (NSTextCheckingTypeSpelling), the language
+                // found from the text (a word-by-word check of a short
+                // text guesses none)
+                let results: Option<Retained<AnyObject>> = msg_send![&*checker,
+                    checkString: &*ns,
+                    range: Range { location: 0, length: total },
+                    types: 2u64,
+                    options: none,
+                    inSpellDocumentWithTag: 0isize,
+                    orthography: none,
+                    wordCount: words as *mut isize];
+                let Some(results) = results else { return Some(out) };
+                let n: usize = msg_send![&*results, count];
+                for i in 0..n.min(10_000) {
+                    let r: Retained<AnyObject> = msg_send![&*results, objectAtIndex: i];
+                    let range: Range = msg_send![&*r, range];
+                    if range.location == NOT_FOUND || range.length == 0 {
+                        continue;
+                    }
+                    out.push((
+                        super::utf16_to_chars(text, range.location),
+                        super::utf16_to_chars(text, range.location + range.length),
+                    ));
+                }
+            }
+            Some(out)
+        })
+        .flatten()
+        .unwrap_or_default()
+    }
+
     /// Replace winit's view's text input methods with the ones above
     /// (each calling winit's where it should), once.
     unsafe fn text_input_client(cls: *mut AnyClass) {
@@ -3932,6 +3983,7 @@ pub mod edit_menu {
                     validate_enc.as_ptr(),
                 );
                 text_input_client(cls);
+                crate::stdlib::gui::edit::set_spell_checker(Some(spell_check));
                 // the types this application sends and takes for Services
                 if let Some(app) = AnyClass::get(c"NSApplication") {
                     let app: Retained<AnyObject> = msg_send![app, sharedApplication];

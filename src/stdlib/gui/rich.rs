@@ -1957,6 +1957,11 @@ impl RichEditor {
         self.caret_box_at(i, la, 1.0, ts)
     }
 
+    /// The paragraph character `c` is in.
+    pub fn para_of_char(&self, c: usize) -> usize {
+        self.locate(char_at(&self.buffer, c)).0
+    }
+
     /// The character under a point, device pixels from the text's
     /// top-left (scroll included).
     pub fn char_at_point(&mut self, x: f32, y: f32, ts: &mut TextSystem) -> usize {
@@ -1974,6 +1979,28 @@ impl RichEditor {
         let base = self.paras[i].start;
         let (a, b) = (base + r.start.min(self.paras[i].len), base + r.end.min(self.paras[i].len));
         (chars_of(&self.buffer, a), chars_of(&self.buffer, b))
+    }
+
+    /// The visual lines of the paragraphs a band `y0..y1` shows (device
+    /// pixels from the text's top, no scroll).
+    pub fn lines(&mut self, y0: f32, y1: f32, ts: &mut TextSystem) -> Vec<super::text::FieldLine> {
+        let mut out = Vec::new();
+        for i in self.visible(y0, y1, ts) {
+            let p = &self.paras[i];
+            let text = self.buffer[p.start..p.end()].to_string();
+            let top = self.ys[i];
+            for (start, _end, t, h, chars) in super::text::layout_lines(self.layout_of(i), &text) {
+                out.push(super::text::FieldLine {
+                    para: i,
+                    start: text[..start.min(text.len())].chars().count(),
+                    top: top + t,
+                    height: h,
+                    xs: chars.iter().map(|c| c.1).collect(),
+                    widths: chars.iter().map(|c| c.2).collect(),
+                });
+            }
+        }
+        out
     }
 
     /// Paragraph `i` laid out (for drawing it out of its place).

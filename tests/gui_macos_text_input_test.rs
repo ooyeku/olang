@@ -15,7 +15,8 @@
 //!   (⌃⌘D) and an input method read;
 //! - composes (`setMarkedText:…`, then `insertText:`): the composition is
 //!   committed once, as before;
-//! - and finds the view answers a force click (`quickLookWithEvent:`).
+//! - finds the view answers a force click (`quickLookWithEvent:`);
+//! - and a field with `spellcheck` has AppKit's checker's misspellings.
 //!
 //! The harness is off: AppKit needs the process's first thread.
 
@@ -38,6 +39,7 @@ mod mac {
         gui.apply(w, [
           #{ "key": "root", "box": (0, 0, 360, 120), "style": #{ "bg": "#ffffff" } },
           #{ "key": "f", "parent": "root", "role": "input", "box": (10, 10, 300, 30), "edit": #{ "value": "hello world" } },
+          #{ "key": "s", "parent": "root", "role": "textarea", "box": (10, 50, 300, 30), "edit": #{ "value": "a speling eror here", "spellcheck": true } },
           #{ "op": "focus", "key": "f" }
         ])
         let mut going = true
@@ -196,6 +198,13 @@ mod mac {
                         b.as_bool()
                     });
                     say(format!("force click looks up: {looks}"));
+                    // a spell-checked field: AppKit's checker found its two
+                    let spelt = {
+                        let st = windows().lock().unwrap().get(&id).cloned().unwrap();
+                        let st = st.lock().unwrap();
+                        st.misspelled("s")
+                    };
+                    say(format!("misspelled: {spelt:?}"));
                     olang::stdlib::gui::emit(vec![olang::stdlib::gui::values::event("test_done", vec![])]);
                 });
                 let program = Parser::new().parse(PROGRAM).expect("parses");
@@ -218,6 +227,7 @@ mod mac {
             "index under the rect: true",
             "composed: 1",
             "force click looks up: true",
+            "misspelled: [(2, 9), (10, 14)]",
         ];
         assert_eq!(checks, want.map(String::from).to_vec());
         println!("gui_macos_text_input_test: ok");

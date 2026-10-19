@@ -13,6 +13,30 @@ use super::text::{Color, Font, TextSystem};
 use parley::{GenericFamily, PlainEditor, StyleProperty};
 use std::collections::VecDeque;
 
+/// A spell checker: the misspelled words of a text, as character ranges.
+pub type SpellChecker = fn(&str) -> Vec<(usize, usize)>;
+
+static SPELL: std::sync::Mutex<Option<SpellChecker>> = std::sync::Mutex::new(None);
+
+/// Set the process's spell checker (the platform's, as its first window
+/// opens; a test's own).
+pub fn set_spell_checker(f: Option<SpellChecker>) {
+    *SPELL.lock().unwrap_or_else(|e| e.into_inner()) = f;
+}
+
+/// The longest text checked (characters): past it a field is not
+/// checked (a log pasted into a note).
+pub const SPELL_MAX_CHARS: usize = 100_000;
+
+/// The misspelled words of `text`, or `None` with no checker.
+pub fn spell_check(text: &str) -> Option<Vec<(usize, usize)>> {
+    let f = (*SPELL.lock().unwrap_or_else(|e| e.into_inner()))?;
+    if text.len() > SPELL_MAX_CHARS * 4 || text.chars().count() > SPELL_MAX_CHARS {
+        return Some(Vec::new());
+    }
+    Some(f(text))
+}
+
 pub struct Editor {
     pub ed: PlainEditor<Color>,
     pub rev: i64,
@@ -482,6 +506,27 @@ impl Editor {
         (self.char_of_byte(r.start), self.char_of_byte(r.end))
     }
 
+    /// The text's visual lines (see [`FieldLine`]).
+    pub fn lines(&mut self, ts: &mut TextSystem) -> Vec<super::text::FieldLine> {
+        let text = self.ed.raw_text().to_string();
+        let layout = self.layout(ts);
+        super::text::layout_lines(layout, &text)
+            .into_iter()
+            .map(|(start, _end, top, height, chars)| {
+                let para = text[..start].matches('\n').count();
+                let pstart = text[..start].rfind('\n').map_or(0, |i| i + 1);
+                super::text::FieldLine {
+                    para,
+                    start: text[pstart..start].chars().count(),
+                    top,
+                    height,
+                    xs: chars.iter().map(|c| c.1).collect(),
+                    widths: chars.iter().map(|c| c.2).collect(),
+                }
+            })
+            .collect()
+    }
+
     /// Keep the caret of a single-line field in view: adjust `scroll_x`
     /// for a visible width (device pixels).
     pub fn follow_caret(&mut self, visible: f32) {
@@ -745,6 +790,15 @@ impl Field {
         match self {
             Field::Plain(e) => e.word_at_point(x, y, ts),
             Field::Rich(r) => r.word_at_point(x, y, ts),
+        }
+    }
+
+    /// The visual lines of the text in a band `y0..y1` (device pixels
+    /// from the text's top, no scroll); a plain field's all of them.
+    pub fn lines(&mut self, y0: f32, y1: f32, ts: &mut TextSystem) -> Vec<super::text::FieldLine> {
+        match self {
+            Field::Plain(e) => e.lines(ts),
+            Field::Rich(r) => r.lines(y0, y1, ts),
         }
     }
 

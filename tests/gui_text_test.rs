@@ -226,3 +226,126 @@ fn a_double_click_drags_by_words_and_a_drag_past_the_edge_scrolls_on() {
     "##);
     assert_eq!(format!("{v}"), "[(6, 10), (6, 16), true, true, ()]");
 }
+
+#[test]
+fn a_fields_lines_place_each_character_for_assistive_output() {
+    let _turn = events_turn();
+    run(r##"
+        let w = gui.headless(#{ "size": (300, 200), "scale": 2 })
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 300, 200) },
+          #{ "key": "lined", "parent": "root", "role": "textarea", "box": (10, 20, 120, 160),
+             "edit": #{ "value": "one two three four five six\nseven", "multiline": true } }
+        ])
+        gui.read(w, "pixels")
+    "##);
+    let st = olang::stdlib::gui::windows()
+        .lock()
+        .unwrap()
+        .values()
+        .find(|w| w.lock().unwrap().editors.contains_key("lined"))
+        .cloned()
+        .expect("the window");
+    let mut st = st.lock().unwrap();
+    let lines = st.field_lines("lined").expect("lines");
+    // wrapped at 120: the first paragraph on two lines or more, then "seven"
+    assert!(lines.len() >= 3, "{lines:?}");
+    let last = lines.last().unwrap();
+    assert_eq!((last.0.para, last.0.start, last.0.xs.len()), (1, 0, 5));
+    // each line below the last, inside the field's box (device pixels at 2×)
+    for w in lines.windows(2) {
+        assert!(w[1].1[1] >= w[0].1[1] + w[0].1[3] - 2.0, "{lines:?}");
+    }
+    assert!(lines[0].1[0] >= 20.0 && lines[0].1[1] >= 38.0, "{:?}", lines[0].1);
+    // characters left to right along a line, as wide as their advances
+    let first = &lines[0].0;
+    assert!(first.xs.windows(2).all(|p| p[1] > p[0]));
+    assert!(first.widths.iter().all(|w| *w >= 0.0));
+    assert_eq!(first.start, 0);
+    let second = &lines[1].0;
+    assert_eq!(second.para, 0);
+    assert!(second.start > 0);
+}
+
+/// A stand-in checker: "teh" is the only misspelling.
+fn teh(text: &str) -> Vec<(usize, usize)> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = vec![];
+    for i in 0..chars.len().saturating_sub(2) {
+        let start = i == 0 || !chars[i - 1].is_alphanumeric();
+        let end = chars.get(i + 3).is_none_or(|c| !c.is_alphanumeric());
+        if start && end && chars[i..i + 3] == ['t', 'e', 'h'] {
+            out.push((i, i + 3));
+        }
+    }
+    out
+}
+
+#[test]
+fn a_spell_checked_field_underlines_its_misspelled_words_but_not_the_one_being_typed() {
+    use olang::stdlib::gui::edit;
+    let _turn = events_turn();
+    edit::set_spell_checker(Some(teh));
+    run(r##"
+        let w = gui.headless(#{ "size": (300, 100) })
+        gui.apply(w, [
+          #{ "key": "root", "box": (0, 0, 300, 100), "style": #{ "bg": "#ffffff" } },
+          #{ "key": "spelt", "parent": "root", "role": "textarea", "box": (0, 0, 300, 40),
+             "edit": #{ "value": "teh cat and teh", "spellcheck": true } },
+          #{ "key": "unspelt", "parent": "root", "role": "textarea", "box": (0, 50, 300, 40),
+             "edit": #{ "value": "teh dog" } },
+          #{ "op": "focus", "key": "spelt" }
+        ])
+        gui.read(w, "pixels")
+    "##);
+    let st = olang::stdlib::gui::windows()
+        .lock()
+        .unwrap()
+        .values()
+        .find(|w| w.lock().unwrap().editors.contains_key("spelt"))
+        .cloned()
+        .expect("the window");
+    let mut st = st.lock().unwrap();
+    let red = |st: &mut window::WinState| {
+        st.display_list()
+            .prims
+            .iter()
+            .filter(|p| matches!(p, window::Prim::Rect { fill, .. } if *fill == [255, 59, 48, 255]))
+            .count()
+    };
+    // both words found; the caret (at the end, after focusing) is on the
+    // second, still being typed: only the first is underlined
+    let _ = red(&mut st);
+    assert_eq!(st.misspelled("spelt"), vec![(0, 3), (12, 15)]);
+    assert!(st.misspelled("unspelt").is_empty(), "a field not asked is not checked");
+    let first_only = red(&mut st);
+    let ed = st.editors.get_mut("spelt").unwrap();
+    let mut ts = text::system().lock().unwrap();
+    if let Some(e) = ed.plain_mut() {
+        e.select_chars(5, 5, &mut ts);
+    }
+    drop(ts);
+    let both = red(&mut st);
+    assert!(first_only > 0 && both > first_only, "{first_only} {both}");
+    edit::set_spell_checker(None);
+}
+
+#[test]
+fn spelling_rechecks_only_the_paragraph_typed_in_once_typing_pauses() {
+    use olang::stdlib::gui::edit;
+    use olang::stdlib::gui::window::{SPELL_PAUSE_MS, Spelling};
+    let _turn = events_turn();
+    edit::set_spell_checker(Some(teh));
+    let mut sp = Spelling::default();
+    // the first time, every paragraph at once
+    assert_eq!(sp.update("teh one\nand teh two", 0.0), None);
+    assert_eq!(sp.found, vec![(0, 3), (12, 15)]);
+    // typing in the first: the second's kept (moved along), the first's
+    // waits for a pause
+    let due = sp.update("teh ones\nand teh two", 10.0);
+    assert_eq!(due, Some(10.0 + SPELL_PAUSE_MS));
+    assert_eq!(sp.found, vec![(13, 16)]);
+    assert_eq!(sp.update("teh ones\nand teh two", 10.0 + SPELL_PAUSE_MS), None);
+    assert_eq!(sp.found, vec![(0, 3), (13, 16)]);
+    edit::set_spell_checker(None);
+}

@@ -22,6 +22,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   through those answers, a force click on a word in a field
   (`quickLookWithEvent:`) by showing its definition.
   tests/gui_macos_text_input_test.rs
+- **`gui`: spell checking, opt-in.** A field's `edit` takes `spellcheck:
+  true`: its misspelled words (macOS's NSSpellChecker, the language found
+  from the text) get the system's red dotted underline; the word at the
+  caret is left until it is done, and an edit re-checks only the
+  paragraph it changed, once typing pauses (250 ms). Off by default: code
+  and data are not prose. `gui.platform()` says `spellcheck` and
+  `text_input`. tests/gui_text_test.rs, tests/gui_macos_text_input_test.rs
+- **`gui`: a field's lines for assistive output.** `WinState::field_lines`
+  answers each visual line of a field (a styled field's in view) with its
+  box and its characters' positions and widths, as AccessKit's text runs
+  take them (`character_positions`, `character_widths`), so Zoom can
+  follow the caret and VoiceOver box a word. tests/gui_text_test.rs
 - **`gui`: text gestures as a Mac's.** A drag after a double click
   extends the selection by words, after a triple click by lines; a drag
   past a field's edge scrolls it on each frame (faster the farther past;

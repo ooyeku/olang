@@ -580,6 +580,54 @@ impl TextSystem {
     }
 }
 
+/// One visual line of a field's text as assistive output places it: its
+/// paragraph, its first character there, its top and height (device
+/// pixels from the text's top-left, no scroll), and each of its
+/// characters' left edge and width (device pixels from the text's left),
+/// in order — what Zoom and VoiceOver need to follow the caret and box a
+/// word.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FieldLine {
+    pub para: usize,
+    pub start: usize,
+    pub top: f32,
+    pub height: f32,
+    pub xs: Vec<f32>,
+    pub widths: Vec<f32>,
+}
+
+/// The visual lines of `layout` (of `text`): (first byte, end byte, top,
+/// height, each character's (byte, left, width) in byte order). A
+/// cluster's advance is shared among its characters (a ligature's).
+pub fn layout_lines(layout: &Layout<Color>, text: &str) -> Vec<(usize, usize, f32, f32, Vec<(usize, f32, f32)>)> {
+    let mut out = Vec::new();
+    for line in layout.lines() {
+        let m = line.metrics();
+        let r = line.text_range();
+        let mut chars: Vec<(usize, f32, f32)> = Vec::new();
+        for item in line.items() {
+            let PositionedLayoutItem::GlyphRun(gr) = item else {
+                continue;
+            };
+            let mut x = gr.offset();
+            for c in gr.run().visual_clusters() {
+                let cr = c.text_range();
+                let adv = c.advance();
+                let piece = text.get(cr.clone()).unwrap_or("");
+                let n = piece.chars().count().max(1) as f32;
+                for (k, (b, _)) in piece.char_indices().enumerate() {
+                    chars.push((cr.start + b, x + adv * k as f32 / n, adv / n));
+                }
+                x += adv;
+            }
+        }
+        chars.sort_by_key(|c| c.0);
+        chars.dedup_by_key(|c| c.0);
+        out.push((r.start, r.end, m.block_min_coord, m.block_max_coord - m.block_min_coord, chars));
+    }
+    out
+}
+
 /// The glyph runs and line metrics of a broken, aligned layout.
 pub fn shaped_of(layout: &Layout<Color>, scale: f32) -> Shaped {
     let mut runs = Vec::new();
