@@ -71,6 +71,15 @@ pub enum Cmd {
     /// ended after it had (`false`): every window says so.
     NotResponding(bool),
     ServiceText { id: u64, text: String },
+    /// Text the platform put in outside a key press and a composition
+    /// (dictation, the Character Viewer, a Service): into window `id`'s
+    /// focused field, over `replace` (UTF-16 location and length in its
+    /// value) when given.
+    InsertText {
+        id: u64,
+        text: String,
+        replace: Option<(usize, usize)>,
+    },
 }
 
 impl From<accesskit_winit::Event> for Cmd {
@@ -909,6 +918,12 @@ impl App {
             let Ok(mut st) = pw.state.lock() else {
                 return;
             };
+            // a drag-select past a field's edge: its step this frame
+            let mut said = Vec::new();
+            st.autoscroll(&mut said);
+            if !said.is_empty() {
+                emit(said);
+            }
             #[allow(unused_mut)]
             let mut dl = st.display_list();
             // the program's turn running long: the veil and the spinner,
@@ -1228,6 +1243,24 @@ fn ns_window(win: &Window) -> Option<objc2::rc::Retained<objc2::runtime::AnyObje
 
 /// An NSString's text.
 #[cfg(target_os = "macos")]
+/// A UTF-16 offset into `s` (AppKit's text input counts so) as
+/// characters, clamped to its end.
+pub fn utf16_to_chars(s: &str, u16s: usize) -> usize {
+    let mut n = 0;
+    for (i, c) in s.chars().enumerate() {
+        if n >= u16s {
+            return i;
+        }
+        n += c.len_utf16();
+    }
+    s.chars().count()
+}
+
+/// Characters into `s` as a UTF-16 offset.
+pub fn chars_to_utf16(s: &str, chars: usize) -> usize {
+    s.chars().take(chars).map(char::len_utf16).sum()
+}
+
 unsafe fn ns_text(s: *mut objc2::runtime::AnyObject) -> Option<String> {
     if s.is_null() {
         return None;
@@ -1575,6 +1608,7 @@ impl App {
                 Cmd::Tick { .. } => String::new(),
                 Cmd::NotResponding(on) => format!("not responding {on}"),
                 Cmd::ServiceText { id, .. } => format!("service text {id}"),
+                Cmd::InsertText { id, .. } => format!("insert text {id}"),
             };
             if !what.is_empty() {
                 eprintln!("gui: {what}");
@@ -1732,6 +1766,18 @@ impl App {
             Cmd::Tick { .. } => self.on_tick(cmd),
             Cmd::NotResponding(on) => self.not_responding(on),
             Cmd::ServiceText { id, text } => self.input(id, Input::ImeCommit(text)),
+            Cmd::InsertText { id, text, replace } => {
+                if let Some((loc, len)) = replace
+                    && let Some(pw) = self.windows.get_mut(&id)
+                    && let Ok(mut st) = pw.state.lock()
+                    && let Some((value, ..)) = st.text_input()
+                {
+                    let a = utf16_to_chars(&value, loc);
+                    let b = utf16_to_chars(&value, loc + len);
+                    st.select_text_input(a, b);
+                }
+                self.input(id, Input::ImeCommit(text))
+            }
             Cmd::Exit(code) => {
                 #[cfg(target_os = "macos")]
                 frames::report();
@@ -3206,7 +3252,7 @@ pub fn edit_enabled(st: &WinState, role: &str, contexts: &[String]) -> bool {
 /// menu for a focused field (its selection sent, a Service's text put
 /// in).
 #[cfg(target_os = "macos")]
-mod edit_menu {
+pub mod edit_menu {
     use super::{Cmd, EDIT_ROLES, contain_callback, edit_enabled, send};
     use crate::stdlib::gui::windows;
     use objc2::msg_send;
@@ -3441,6 +3487,392 @@ mod edit_menu {
         Bool::new(ok.unwrap_or(false))
     }
 
+    // ── the text input client (dictation, Look Up, input methods) ──────
+
+    /// AppKit's NSRange, NSPoint and NSRect, as passed by value.
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug)]
+    pub struct Range {
+        pub location: usize,
+        pub length: usize,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug)]
+    pub struct Point {
+        pub x: f64,
+        pub y: f64,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug)]
+    pub struct Rect {
+        pub origin: Point,
+        pub size: Point,
+    }
+    // SAFETY: the layouts above are AppKit's (two NSUIntegers; two and
+    // four CGFloats, which are f64 on every Mac olang runs on).
+    unsafe impl objc2::Encode for Range {
+        const ENCODING: objc2::Encoding =
+            objc2::Encoding::Struct("_NSRange", &[usize::ENCODING, usize::ENCODING]);
+    }
+    unsafe impl objc2::RefEncode for Range {
+        const ENCODING_REF: objc2::Encoding = objc2::Encoding::Pointer(&<Self as objc2::Encode>::ENCODING);
+    }
+    unsafe impl objc2::Encode for Point {
+        const ENCODING: objc2::Encoding = objc2::Encoding::Struct("CGPoint", &[f64::ENCODING, f64::ENCODING]);
+    }
+    unsafe impl objc2::Encode for Rect {
+        const ENCODING: objc2::Encoding = objc2::Encoding::Struct(
+            "CGRect",
+            &[
+                <Point as objc2::Encode>::ENCODING,
+                objc2::Encoding::Struct("CGSize", &[f64::ENCODING, f64::ENCODING]),
+            ],
+        );
+    }
+
+    const NOT_FOUND: usize = isize::MAX as usize;
+
+    /// winit's own implementations, replaced below and called through.
+    static OLD: OnceLock<Mutex<HashMap<&'static str, usize>>> = OnceLock::new();
+
+    fn old(name: &'static str) -> Option<Imp> {
+        let p = *OLD.get()?.lock().ok()?.get(name)?;
+        // SAFETY: an IMP method_setImplementation answered.
+        Some(unsafe { std::mem::transmute::<usize, Imp>(p) })
+    }
+
+    thread_local! {
+        /// Inside winit's `keyDown:` (its `interpretKeyEvents:`): text
+        /// inserted then is the key's, which winit sends as the key.
+        static IN_KEY: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+
+    unsafe fn has_marked(this: *mut AnyObject) -> bool {
+        // SAFETY: winit's view, alive for the call.
+        let b: Bool = unsafe { msg_send![&*this, hasMarkedText] };
+        b.as_bool()
+    }
+
+    /// The text of an NSString or an NSAttributedString.
+    unsafe fn string_of(obj: *mut AnyObject) -> Option<String> {
+        if obj.is_null() {
+            return None;
+        }
+        let attributed = AnyClass::get(c"NSAttributedString")?;
+        // SAFETY: AppKit's string object, alive for the call.
+        unsafe {
+            let is: Bool = msg_send![&*obj, isKindOfClass: attributed];
+            if is.as_bool() {
+                let st: *mut AnyObject = msg_send![&*obj, string];
+                super::ns_text(st)
+            } else {
+                super::ns_text(obj)
+            }
+        }
+    }
+
+    /// The focused field's text, when the view should answer for it (no
+    /// composition under way: during one winit's answers, which count in
+    /// the composition, stay).
+    unsafe fn field_text(this: *mut AnyObject) -> Option<(u64, crate::stdlib::gui::Shared, String, usize, usize)> {
+        if unsafe { has_marked(this) } {
+            return None;
+        }
+        let (id, st) = state_of(this)?;
+        let (text, a, b, composing) = st.lock().ok()?.text_input()?;
+        if composing {
+            return None;
+        }
+        Some((id, st, text, a, b))
+    }
+
+    unsafe extern "C-unwind" fn key_down(this: *mut AnyObject, cmd: Sel, event: *mut AnyObject) {
+        let Some(imp) = old("keyDown:") else { return };
+        IN_KEY.with(|k| k.set(k.get() + 1));
+        struct Out;
+        impl Drop for Out {
+            fn drop(&mut self) {
+                IN_KEY.with(|k| k.set(k.get().saturating_sub(1)));
+            }
+        }
+        let _out = Out;
+        // SAFETY: winit's keyDown:, with the arguments AppKit gave.
+        unsafe {
+            let f = std::mem::transmute::<Imp, unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject)>(imp);
+            f(this, cmd, event)
+        }
+    }
+
+    /// `insertText:replacementRange:` — winit takes text only to end a
+    /// composition; text put in otherwise (dictation, the Character
+    /// Viewer) goes to the focused field here.
+    unsafe extern "C-unwind" fn insert_text(this: *mut AnyObject, cmd: Sel, string: *mut AnyObject, range: Range) {
+        let in_key = IN_KEY.with(|k| k.get()) > 0;
+        if !in_key && !unsafe { has_marked(this) } {
+            let took = contain_callback("insert_text", || {
+                let text = unsafe { string_of(string) }?;
+                let (id, st) = state_of(this)?;
+                if !st.lock().ok()?.wants_ime() || text.chars().next().is_some_and(char::is_control) {
+                    return None;
+                }
+                let replace = (range.location != NOT_FOUND).then_some((range.location, range.length));
+                send(Cmd::InsertText { id, text, replace });
+                Some(())
+            })
+            .flatten();
+            if took.is_some() {
+                return;
+            }
+        }
+        if let Some(imp) = old("insertText:replacementRange:") {
+            // SAFETY: winit's method, with the arguments AppKit gave.
+            unsafe {
+                let f = std::mem::transmute::<Imp, unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject, Range)>(imp);
+                f(this, cmd, string, range)
+            }
+        }
+    }
+
+    unsafe extern "C-unwind" fn selected_range(this: *mut AnyObject, cmd: Sel) -> Range {
+        let mine = contain_callback("selected_range", || {
+            let (_, _, text, a, b) = unsafe { field_text(this) }?;
+            let lo = super::chars_to_utf16(&text, a);
+            Some(Range { location: lo, length: super::chars_to_utf16(&text, b) - lo })
+        })
+        .flatten();
+        if let Some(r) = mine {
+            return r;
+        }
+        match old("selectedRange") {
+            // SAFETY: winit's method.
+            Some(imp) => unsafe {
+                std::mem::transmute::<Imp, unsafe extern "C-unwind" fn(*mut AnyObject, Sel) -> Range>(imp)(this, cmd)
+            },
+            None => Range { location: NOT_FOUND, length: 0 },
+        }
+    }
+
+    unsafe extern "C-unwind" fn attributed_substring(
+        this: *mut AnyObject,
+        cmd: Sel,
+        range: Range,
+        actual: *mut Range,
+    ) -> *mut AnyObject {
+        let mine = contain_callback("attributed_substring", || {
+            let (_, _, text, _, _) = unsafe { field_text(this) }?;
+            let total = super::chars_to_utf16(&text, text.chars().count());
+            if range.location == NOT_FOUND || range.location > total {
+                return Some(std::ptr::null_mut());
+            }
+            let a = super::utf16_to_chars(&text, range.location);
+            let b = super::utf16_to_chars(&text, range.location.saturating_add(range.length).min(total));
+            let sub: String = text.chars().skip(a).take(b - a).collect();
+            if !actual.is_null() {
+                let lo = super::chars_to_utf16(&text, a);
+                // SAFETY: AppKit's out pointer.
+                unsafe {
+                    *actual = Range { location: lo, length: super::chars_to_utf16(&text, b) - lo };
+                }
+            }
+            let cls = AnyClass::get(c"NSAttributedString")?;
+            let ns = NSString::from_str(&sub);
+            // SAFETY: a new NSAttributedString, autoreleased as AppKit's
+            // getter convention expects.
+            unsafe {
+                let alloc: Allocated<AnyObject> = msg_send![cls, alloc];
+                let s: Retained<AnyObject> = msg_send![alloc, initWithString: &*ns];
+                Some(Retained::autorelease_return(s))
+            }
+        })
+        .flatten();
+        if let Some(r) = mine {
+            return r;
+        }
+        match old("attributedSubstringForProposedRange:actualRange:") {
+            // SAFETY: winit's method.
+            Some(imp) => unsafe {
+                std::mem::transmute::<Imp, unsafe extern "C-unwind" fn(*mut AnyObject, Sel, Range, *mut Range) -> *mut AnyObject>(
+                    imp,
+                )(this, cmd, range, actual)
+            },
+            None => std::ptr::null_mut(),
+        }
+    }
+
+    /// The view's window.
+    unsafe fn window_of(this: *mut AnyObject) -> Option<Retained<AnyObject>> {
+        // SAFETY: winit's view.
+        unsafe { msg_send![&*this, window] }
+    }
+
+    unsafe extern "C-unwind" fn character_index(this: *mut AnyObject, cmd: Sel, point: Point) -> usize {
+        let mine = contain_callback("character_index", || {
+            let (_, st, text, _, _) = unsafe { field_text(this) }?;
+            let win = unsafe { window_of(this) }?;
+            // screen → window → the view's (flipped: logical pixels)
+            let none: *const AnyObject = std::ptr::null();
+            let p: Point = unsafe { msg_send![&*win, convertPointFromScreen: point] };
+            let p: Point = unsafe { msg_send![&*this, convertPoint: p, fromView: none] };
+            let i = st.lock().ok()?.text_input_index(p.x as f32, p.y as f32)?;
+            Some(super::chars_to_utf16(&text, i))
+        })
+        .flatten();
+        if let Some(i) = mine {
+            return i;
+        }
+        match old("characterIndexForPoint:") {
+            // SAFETY: winit's method.
+            Some(imp) => unsafe {
+                std::mem::transmute::<Imp, unsafe extern "C-unwind" fn(*mut AnyObject, Sel, Point) -> usize>(imp)(this, cmd, point)
+            },
+            None => NOT_FOUND,
+        }
+    }
+
+    unsafe extern "C-unwind" fn first_rect(this: *mut AnyObject, cmd: Sel, range: Range, actual: *mut Range) -> Rect {
+        let mine = contain_callback("first_rect", || {
+            let (_, st, text, _, _) = unsafe { field_text(this) }?;
+            if range.location == NOT_FOUND {
+                return None;
+            }
+            let a = super::utf16_to_chars(&text, range.location);
+            let b = super::utf16_to_chars(&text, range.location.saturating_add(range.length));
+            let r = st.lock().ok()?.text_input_rect(a, b)?;
+            if !actual.is_null() {
+                let lo = super::chars_to_utf16(&text, a);
+                // SAFETY: AppKit's out pointer.
+                unsafe {
+                    *actual = Range { location: lo, length: super::chars_to_utf16(&text, b) - lo };
+                }
+            }
+            let win = unsafe { window_of(this) }?;
+            let none: *const AnyObject = std::ptr::null();
+            let local = Rect {
+                origin: Point { x: r[0] as f64, y: r[1] as f64 },
+                size: Point { x: r[2] as f64, y: r[3] as f64 },
+            };
+            // the view's (flipped) → the window's → the screen's
+            let inw: Rect = unsafe { msg_send![&*this, convertRect: local, toView: none] };
+            let on: Rect = unsafe { msg_send![&*win, convertRectToScreen: inw] };
+            Some(on)
+        })
+        .flatten();
+        if let Some(r) = mine {
+            return r;
+        }
+        match old("firstRectForCharacterRange:actualRange:") {
+            // SAFETY: winit's method.
+            Some(imp) => unsafe {
+                std::mem::transmute::<Imp, unsafe extern "C-unwind" fn(*mut AnyObject, Sel, Range, *mut Range) -> Rect>(imp)(
+                    this, cmd, range, actual,
+                )
+            },
+            None => Rect { origin: Point { x: 0.0, y: 0.0 }, size: Point { x: 0.0, y: 0.0 } },
+        }
+    }
+
+    /// `quickLookWithEvent:` — a force click (or a three-finger tap) on a
+    /// word in a field looks it up, as a Mac's text views do.
+    unsafe extern "C-unwind" fn quick_look(this: *mut AnyObject, _cmd: Sel, event: *mut AnyObject) {
+        contain_callback("quick_look", || {
+            if event.is_null() {
+                return None;
+            }
+            let (_, st) = state_of(this)?;
+            let none: *const AnyObject = std::ptr::null();
+            let p: Point = unsafe { msg_send![&*event, locationInWindow] };
+            let p: Point = unsafe { msg_send![&*this, convertPoint: p, fromView: none] };
+            let (word, r, size) = st.lock().ok()?.word_at(p.x as f32, p.y as f32)?;
+            unsafe { show_definition(this, &word, r, size) };
+            Some(())
+        });
+    }
+
+    /// Show the system's definition of `word`, set in `size` points, whose
+    /// box in the view is `r`.
+    unsafe fn show_definition(view: *mut AnyObject, word: &str, r: [f32; 4], size: f32) {
+        let (Some(astr), Some(font), Some(dict)) = (
+            AnyClass::get(c"NSAttributedString"),
+            AnyClass::get(c"NSFont"),
+            AnyClass::get(c"NSDictionary"),
+        ) else {
+            return;
+        };
+        // SAFETY: AppKit classes; every object made here is retained
+        // until the call returns.
+        unsafe {
+            let f: Retained<AnyObject> = msg_send![font, systemFontOfSize: size as f64];
+            let key = NSString::from_str("NSFont");
+            let attrs: Retained<AnyObject> = msg_send![dict, dictionaryWithObject: &*f, forKey: &*key];
+            let ns = NSString::from_str(word);
+            let alloc: Allocated<AnyObject> = msg_send![astr, alloc];
+            let s: Retained<AnyObject> = msg_send![alloc, initWithString: &*ns, attributes: &*attrs];
+            // the baseline's start: the box's bottom less the font's descent
+            let descender: f64 = msg_send![&*f, descender];
+            let at = Point { x: r[0] as f64, y: (r[1] + r[3]) as f64 + descender };
+            let _: () = msg_send![&*view, showDefinitionForAttributedString: &*s, atPoint: at];
+        }
+    }
+
+    /// Replace winit's view's text input methods with the ones above
+    /// (each calling winit's where it should), once.
+    unsafe fn text_input_client(cls: *mut AnyClass) {
+        let mut olds = HashMap::new();
+        let swap = |olds: &mut HashMap<&'static str, usize>, name: &'static str, sel: Sel, imp: Imp| {
+            // SAFETY: winit's class and a selector it implements; the new
+            // IMP has the method's signature.
+            unsafe {
+                let m = objc2::ffi::class_getInstanceMethod(cls, sel);
+                if m.is_null() {
+                    return;
+                }
+                if let Some(o) = objc2::ffi::method_setImplementation(m, imp) {
+                    olds.insert(name, o as usize);
+                }
+            }
+        };
+        // SAFETY: the transmutes only erase each function's signature
+        // into an IMP; the runtime calls it with that signature.
+        unsafe {
+            swap(&mut olds, "keyDown:", objc2::sel!(keyDown:), std::mem::transmute::<unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject), Imp>(key_down));
+            swap(
+                &mut olds,
+                "insertText:replacementRange:",
+                objc2::sel!(insertText:replacementRange:),
+                std::mem::transmute::<unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject, Range), Imp>(insert_text),
+            );
+            swap(&mut olds, "selectedRange", objc2::sel!(selectedRange), std::mem::transmute::<unsafe extern "C-unwind" fn(*mut AnyObject, Sel) -> Range, Imp>(selected_range));
+            swap(
+                &mut olds,
+                "attributedSubstringForProposedRange:actualRange:",
+                objc2::sel!(attributedSubstringForProposedRange:actualRange:),
+                std::mem::transmute::<unsafe extern "C-unwind" fn(*mut AnyObject, Sel, Range, *mut Range) -> *mut AnyObject, Imp>(
+                    attributed_substring,
+                ),
+            );
+            swap(
+                &mut olds,
+                "characterIndexForPoint:",
+                objc2::sel!(characterIndexForPoint:),
+                std::mem::transmute::<unsafe extern "C-unwind" fn(*mut AnyObject, Sel, Point) -> usize, Imp>(character_index),
+            );
+            swap(
+                &mut olds,
+                "firstRectForCharacterRange:actualRange:",
+                objc2::sel!(firstRectForCharacterRange:actualRange:),
+                std::mem::transmute::<unsafe extern "C-unwind" fn(*mut AnyObject, Sel, Range, *mut Range) -> Rect, Imp>(first_rect),
+            );
+            let ql: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject) = quick_look;
+            objc2::ffi::class_addMethod(
+                cls,
+                objc2::sel!(quickLookWithEvent:),
+                std::mem::transmute::<unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject), Imp>(ql),
+                c"v@:@".as_ptr(),
+            );
+        }
+        let _ = OLD.set(Mutex::new(olds));
+    }
+
     /// Teach winit's view the Edit menu's selectors, `validateMenuItem:`
     /// and the Services protocol, once; and tell AppKit the application
     /// sends and takes text for Services.
@@ -3499,6 +3931,7 @@ mod edit_menu {
                     std::mem::transmute::<unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject) -> Bool, Imp>(rd),
                     validate_enc.as_ptr(),
                 );
+                text_input_client(cls);
                 // the types this application sends and takes for Services
                 if let Some(app) = AnyClass::get(c"NSApplication") {
                     let app: Retained<AnyObject> = msg_send![app, sharedApplication];

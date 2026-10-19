@@ -95,6 +95,7 @@ impl SpanStyle {
         }
         if let Some(s) = self.size {
             out.push(StyleProperty::FontSize(s * scale_size));
+            out.push(super::text::optical_size(s));
         }
         if let Some(c) = self.color {
             out.push(StyleProperty::Brush(c));
@@ -204,6 +205,11 @@ pub struct RichEditor {
     redo: Vec<(String, usize, usize)>,
     /// Vertical scroll, device pixels.
     pub scroll_y: f32,
+    /// Where the wheel has taken the text, unrounded: `scroll_y` is it on
+    /// whole device pixels (as AppKit's scroll views are), so a scroll
+    /// moves the kept frame (damage) and the rows never shimmer between
+    /// pixels, while slow wheels still add up.
+    scroll_exact: f32,
     /// The caret should be brought into view at the next frame.
     pub follow: bool,
     /// The visible height last painted, device pixels.
@@ -213,6 +219,9 @@ pub struct RichEditor {
     /// paragraphs' tops are known (`follow_caret`).
     pending_line: Option<usize>,
     pub dragging: bool,
+    /// A double or triple click's word or line (bytes, low and high): a
+    /// drag after it extends by words or lines, as a Mac's text does.
+    drag_unit: Option<(u8, usize, usize)>,
     /// The value last reported to the program (for the next delta).
     reported: Arc<String>,
     /// The value as one shared string, made once an edit (`edits`).
@@ -617,6 +626,12 @@ fn chars_of(s: &str, bytes: usize) -> usize {
     s[..b2].chars().count()
 }
 
+/// A scroll offset (device pixels) on a whole pixel, within `max`.
+pub fn snap_scroll(y: f32, max: f32) -> f32 {
+    let r = y.round();
+    if r > max { max.floor().max(0.0) } else { r.max(0.0) }
+}
+
 impl RichEditor {
     pub fn new(value: &str, font: &Font, color: Color) -> RichEditor {
         let mut e = RichEditor {
@@ -643,10 +658,12 @@ impl RichEditor {
             undo: Vec::new(),
             redo: Vec::new(),
             scroll_y: 0.0,
+            scroll_exact: 0.0,
             follow: false,
             view_h: 0.0,
             pending_line: None,
             dragging: false,
+            drag_unit: None,
             reported: Arc::new(value.to_string()),
             value_cache: None,
             last_edit: None,
@@ -1552,7 +1569,7 @@ impl RichEditor {
         let ty = if down { y + step } else { y - step };
         let at = self.point_to_byte(x, ty, ts);
         self.set_focus_to(at.0, at.1, extend);
-        self.scroll_y = (self.scroll_y + if down { step } else { -step }).max(0.0);
+        self.scroll_y = snap_scroll((self.scroll_y + if down { step } else { -step }).max(0.0), f32::MAX);
         self.h_pos = Some(x);
     }
 
@@ -1831,8 +1848,27 @@ impl RichEditor {
         }
         self.affinity = aff;
         self.h_pos = None;
-        self.dragging = clicks <= 1;
+        self.dragging = true;
+        self.drag_unit = (clicks >= 2).then(|| {
+            (
+                clicks.min(3) as u8,
+                self.anchor.min(self.focus),
+                self.anchor.max(self.focus),
+            )
+        });
         self.follow = true;
+    }
+
+    /// The word (`unit` 2) or line (3) around byte `at`, at point (x, y).
+    fn unit_at(&mut self, unit: u8, at: usize, x: f32, y: f32, ts: &mut TextSystem) -> (usize, usize) {
+        let (i, _) = self.locate(at);
+        if unit >= 3 {
+            return (self.paras[i].start, self.paras[i].end());
+        }
+        self.ensure(i, ts);
+        let r = Selection::word_from_point(self.layout_of(i), x, y - self.ys[i]).text_range();
+        let base = self.paras[i].start;
+        (base + r.start.min(self.paras[i].len), base + r.end.min(self.paras[i].len))
     }
 
     pub fn drag(&mut self, x: f32, y: f32, ts: &mut TextSystem) {
@@ -1841,6 +1877,20 @@ impl RichEditor {
         }
         self.refresh(ts);
         let (at, aff) = self.point_to_byte(x, y, ts);
+        if let Some((unit, lo, hi)) = self.drag_unit {
+            // the clicked word or line and every one up to the pointer's
+            let (a, b) = self.unit_at(unit, at, x, y, ts);
+            if a < lo {
+                self.anchor = hi;
+                self.focus = a;
+            } else {
+                self.anchor = lo;
+                self.focus = b.max(hi);
+            }
+            self.affinity = Affinity::Downstream;
+            self.follow = true;
+            return;
+        }
         self.set_focus_to(at, aff, true);
     }
 
@@ -1887,6 +1937,45 @@ impl RichEditor {
         BoundingBox::new(g.x0, g.y0 + y, g.x1, g.y1 + y)
     }
 
+    /// The box of characters `a..b` (its first line's; a caret's when
+    /// empty), device pixels from the text's top-left (no scroll): what
+    /// the platform's text input asks of a range (the input method's
+    /// window, Look Up, dictation).
+    pub fn char_box(&mut self, a: usize, b: usize, ts: &mut TextSystem) -> BoundingBox {
+        let (ba, bb) = (char_at(&self.buffer, a), char_at(&self.buffer, b.max(a)));
+        let (i, la) = self.locate(ba);
+        self.ensure(i, ts);
+        self.refresh(ts);
+        let (j, lb) = self.locate(bb);
+        let lb = if j == i { lb } else { self.paras[i].len };
+        if lb > la
+            && let Some(bx) = self.range_boxes(i, la, lb).first().copied()
+        {
+            let y = self.ys[i] as f64;
+            return BoundingBox::new(bx.x0, bx.y0 + y, bx.x1, bx.y1 + y);
+        }
+        self.caret_box_at(i, la, 1.0, ts)
+    }
+
+    /// The character under a point, device pixels from the text's
+    /// top-left (scroll included).
+    pub fn char_at_point(&mut self, x: f32, y: f32, ts: &mut TextSystem) -> usize {
+        let (at, _) = self.point_to_byte(x, y, ts);
+        chars_of(&self.buffer, at)
+    }
+
+    /// The word under a point (characters), as a double click takes it.
+    pub fn word_at_point(&mut self, x: f32, y: f32, ts: &mut TextSystem) -> (usize, usize) {
+        self.refresh(ts);
+        let (at, _) = self.point_to_byte(x, y, ts);
+        let (i, _) = self.locate(at);
+        self.ensure(i, ts);
+        let r = Selection::word_from_point(self.layout_of(i), x, y - self.ys[i]).text_range();
+        let base = self.paras[i].start;
+        let (a, b) = (base + r.start.min(self.paras[i].len), base + r.end.min(self.paras[i].len));
+        (chars_of(&self.buffer, a), chars_of(&self.buffer, b))
+    }
+
     /// Paragraph `i` laid out (for drawing it out of its place).
     pub fn ensure_line(&mut self, i: usize, ts: &mut TextSystem) {
         self.ensure(i, ts);
@@ -1918,16 +2007,25 @@ impl RichEditor {
     pub fn scroll_set(&mut self, y: f32, ts: &mut TextSystem) -> bool {
         let max = self.max_scroll(self.view_h, ts);
         let before = self.scroll_y;
-        self.scroll_y = y.clamp(0.0, max);
+        self.scroll_y = snap_scroll(y.clamp(0.0, max), max);
+        self.scroll_exact = self.scroll_y;
         self.follow = false;
         (self.scroll_y - before).abs() > 0.01
     }
 
     pub fn wheel(&mut self, dy: f32, ts: &mut TextSystem) -> bool {
         let max = self.max_scroll(self.view_h, ts);
-        let before = self.scroll_y;
-        self.scroll_y = (self.scroll_y - dy * self.scale).clamp(0.0, max);
-        (self.scroll_y - before).abs() > 0.01
+        // the unrounded place, unless something else (the caret, a bar)
+        // moved the text since
+        let base = if (self.scroll_exact - self.scroll_y).abs() < 1.0 {
+            self.scroll_exact
+        } else {
+            self.scroll_y
+        };
+        let exact = (base - dy * self.scale).clamp(0.0, max);
+        self.scroll_exact = exact;
+        self.scroll_y = snap_scroll(exact, max);
+        (exact - base).abs() > 0.01
     }
 
     // ── geometry ────────────────────────────────────────────────────
@@ -2013,7 +2111,7 @@ impl RichEditor {
             self.follow = false;
         }
         let max = self.max_scroll(h, ts);
-        self.scroll_y = self.scroll_y.clamp(0.0, max);
+        self.scroll_y = snap_scroll(self.scroll_y.clamp(0.0, max), max);
     }
 
     /// The paragraphs a band `y0..y1` (device pixels, no scroll) shows.
@@ -2074,9 +2172,9 @@ impl RichEditor {
         self.refresh(ts);
         let max = self.max_scroll(self.view_h, ts);
         self.scroll_y = if self.view_h > 0.0 {
-            self.ys[i].min(max)
+            snap_scroll(self.ys[i].min(max), max)
         } else {
-            self.ys[i]
+            snap_scroll(self.ys[i], f32::MAX)
         };
         // the caret's own line asked for: the caret shown, wherever it is
         // in a line taller than the view (a long line wrapped)

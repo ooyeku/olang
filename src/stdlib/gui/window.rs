@@ -201,6 +201,9 @@ pub struct WinState {
     /// this window's clock (ms): the platform draws again then. `None`
     /// when nothing in view moves.
     pub next_frame: Option<f64>,
+    /// A drag selecting text past its field's edge scrolls it on, a step
+    /// a frame: the clock at the last step.
+    autoscroll_at: Option<f64>,
     /// The press that played or paused an animation: its release is not
     /// the program's.
     swallow_up: bool,
@@ -359,6 +362,7 @@ impl WinState {
             plays: HashMap::new(),
             shown_anims: Vec::new(),
             next_frame: None,
+            autoscroll_at: None,
             swallow_up: false,
             click_mod: false,
             click_count: 0,
@@ -854,6 +858,67 @@ impl WinState {
         }
         let h = ed.layout(ts).height();
         ((content_h - h) / 2.0).max(0.0)
+    }
+
+    /// A field being drag-selected with the pointer past its edge: the
+    /// field and how far past (device pixels; negative before it, along
+    /// y for a field of lines, along x for a line).
+    fn autoscroll_reach(&self) -> Option<(String, f32)> {
+        let p = self.scene.pressed.as_deref()?;
+        let ed = self.editors.get(p)?;
+        if !ed.dragging() {
+            return None;
+        }
+        let (ox, oy, w, h) = self.edit_origin(p)?;
+        let (x, y) = (self.pointer.0 * self.scale, self.pointer.1 * self.scale);
+        let (v, lo, hi) = if ed.multiline() { (y, oy, oy + h) } else { (x, ox, ox + w) };
+        let past = if v < lo { v - lo } else if v > hi { v - hi } else { 0.0 };
+        (past != 0.0).then(|| (p.to_string(), past))
+    }
+
+    /// A step of a drag-select past a field's edge: the text scrolls on,
+    /// the faster the farther past, and the selection follows the pointer
+    /// (a frame's, on the window's clock; a headless window's moves with
+    /// its test clock).
+    pub fn autoscroll(&mut self, out: &mut Vec<Value>) {
+        let Some((key, past)) = self.autoscroll_reach() else {
+            self.autoscroll_at = None;
+            return;
+        };
+        let now = self.clock_ms();
+        let Some(last) = self.autoscroll_at.replace(now) else {
+            // the first step a refresh after the pointer left
+            self.dirty = true;
+            return;
+        };
+        let dt = (now - last).clamp(0.0, 100.0) as f32;
+        if dt <= 0.0 {
+            return;
+        }
+        let s = self.scale.max(0.01);
+        // logical pixels a second: ten times the distance past, within
+        // a line a refresh at a pointer's width past and a page at most
+        let speed = ((past.abs() / s) * 10.0).clamp(30.0, 3000.0);
+        let step = (speed * dt / 1000.0 * s).copysign(past);
+        let Some((ox, oy, _, h)) = self.edit_origin(&key) else { return };
+        let Ok(mut ts) = text::system().lock() else { return };
+        let dy = self.edit_text_dy(&key, h, &mut ts);
+        let (x, y) = (self.pointer.0 * s, self.pointer.1 * s);
+        let Some(ed) = self.editors.get_mut(&key) else { return };
+        if let Some(r) = ed.rich_mut() {
+            let to = r.scroll_y + step;
+            r.scroll_set(to, &mut ts);
+            r.drag(x - ox + r.scroll_x, y - oy + r.scroll_y, &mut ts);
+        } else if let Some(e) = ed.plain_mut() {
+            // a line: the caret goes on past the edge, and the field
+            // follows it
+            let past_x = if e.multiline { 0.0 } else { step };
+            let tx = x - ox + e.scroll_x + past_x;
+            e.drag(tx, y - oy - dy, &mut ts);
+        }
+        drop(ts);
+        self.report_selection(&key, out);
+        self.dirty = true;
     }
 
     /// Set the text size: the window keeps its logical size and lays out
@@ -1851,6 +1916,102 @@ impl WinState {
         ])
     }
 
+    /// The focused field's text as the platform's text input reads it
+    /// (an input method's context, dictation, Look Up): its value, its
+    /// selection (characters, low and high) and whether a composition is
+    /// under way. `None` with no field focused, or a password.
+    pub fn text_input(&self) -> Option<(String, usize, usize, bool)> {
+        let f = self.scene.focus.as_deref()?;
+        let ed = self.editors.get(f)?;
+        if ed.secure() {
+            return None;
+        }
+        let (a, b) = ed.selection_chars();
+        Some((ed.value(), a.min(b), a.max(b), ed.is_composing()))
+    }
+
+    /// Select characters `a..b` of the focused field (text the platform
+    /// puts in over a range replaces it).
+    pub fn select_text_input(&mut self, a: usize, b: usize) {
+        let Some(f) = self.scene.focus.clone() else { return };
+        let Ok(mut ts) = text::system().lock() else { return };
+        match self.editors.get_mut(&f) {
+            Some(super::edit::Field::Plain(e)) => e.select_chars(a, b, &mut ts),
+            Some(super::edit::Field::Rich(r)) => r.select_chars(a, b),
+            None => {}
+        }
+    }
+
+    /// Device pixels in the window to a field `key`'s text coordinates
+    /// (its top-left, scroll included), as a press finds them.
+    fn to_text(&mut self, key: &str, x: f32, y: f32, ts: &mut text::TextSystem) -> Option<(f32, f32)> {
+        let (ox, oy, _, h) = self.edit_origin(key)?;
+        let dy = self.edit_text_dy(key, h, ts);
+        let (sx, sy) = self.editors.get(key)?.scrolled();
+        Some((x - ox + sx, y - oy - dy + sy))
+    }
+
+    /// The box of a field's characters `a..b` (its first line's), device
+    /// pixels in the window.
+    fn text_box(&mut self, key: &str, a: usize, b: usize, ts: &mut text::TextSystem) -> Option<[f32; 4]> {
+        let (ox, oy, _, h) = self.edit_origin(key)?;
+        let dy = self.edit_text_dy(key, h, ts);
+        let ed = self.editors.get_mut(key)?;
+        let (sx, sy) = ed.scrolled();
+        let bx = ed.char_box(a, b, ts);
+        Some([
+            ox + bx.x0 as f32 - sx,
+            oy + dy + bx.y0 as f32 - sy,
+            ((bx.x1 - bx.x0) as f32).max(1.0),
+            ((bx.y1 - bx.y0) as f32).max(1.0),
+        ])
+    }
+
+    /// The box of the focused field's characters `a..b`, logical pixels
+    /// in the window (the platform's: AppKit's points).
+    pub fn text_input_rect(&mut self, a: usize, b: usize) -> Option<[f32; 4]> {
+        let f = self.scene.focus.clone()?;
+        let mut ts = text::system().lock().ok()?;
+        let r = self.text_box(&f, a, b, &mut ts)?;
+        let s = self.platform_scale.max(0.01);
+        Some(r.map(|v| v / s))
+    }
+
+    /// The focused field's character at a point, logical pixels in the
+    /// window (AppKit's points).
+    pub fn text_input_index(&mut self, x: f32, y: f32) -> Option<usize> {
+        let f = self.scene.focus.clone()?;
+        let s = self.platform_scale.max(0.01);
+        let mut ts = text::system().lock().ok()?;
+        let (tx, ty) = self.to_text(&f, x * s, y * s, &mut ts)?;
+        Some(self.editors.get_mut(&f)?.char_at_point(tx, ty, &mut ts))
+    }
+
+    /// The word at a point (logical pixels in the window, AppKit's points)
+    /// in whichever field is there, for Look Up: the word, its box
+    /// (logical pixels in the window) and the field's text size (logical).
+    /// `None` off a field, over a password, or between words.
+    pub fn word_at(&mut self, x: f32, y: f32) -> Option<(String, [f32; 4], f32)> {
+        let s = self.platform_scale.max(0.01);
+        let (dx, dy) = (x * s, y * s);
+        let hit = self.scene.hit(dx / self.scale, dy / self.scale)?;
+        let k = self.scene.target_up(&hit, |n| n.edit.is_some())?;
+        if self.editors.get(&k)?.secure() {
+            return None;
+        }
+        let size = self.scene.nodes.get(&k).map(|n| n.style.font.size).unwrap_or(13.0);
+        let mut ts = text::system().lock().ok()?;
+        let (tx, ty) = self.to_text(&k, dx, dy, &mut ts)?;
+        let ed = self.editors.get_mut(&k)?;
+        let (a, b) = ed.word_at_point(tx, ty, &mut ts);
+        let word: String = ed.value().chars().skip(a).take(b.saturating_sub(a)).collect();
+        if !word.chars().any(char::is_alphanumeric) {
+            return None;
+        }
+        let r = self.text_box(&k, a, b, &mut ts)?;
+        Some((word, r.map(|v| v / s), size * self.scale / s))
+    }
+
     /// Whether the focused node is a text field, or a node that takes the
     /// keyboard as it is (the input method is allowed only then).
     pub fn wants_ime(&self) -> bool {
@@ -1899,6 +2060,10 @@ impl WinState {
         self.caret = None;
         self.shown_anims.clear();
         self.next_frame = None;
+        // a drag past a field's edge: the next step a refresh on
+        if self.autoscroll_reach().is_some() {
+            self.next_frame = Some(self.clock_ms() + AUTOSCROLL_MS);
+        }
         self.bar_hits.clear();
         let Some(root) = self.scene.root.clone() else {
             return dl;
@@ -2819,7 +2984,7 @@ impl WinState {
                 let (ba, bb) = r.para_char_bytes(di, a, b);
                 let boxes = r.range_boxes(di, ba, bb);
                 for prim in dl.prims[first..].iter_mut() {
-                    if let Prim::Glyph { x, y, color, .. } = prim {
+                    if let Prim::Glyph { x, y, color, key, .. } = prim {
                         let hit = boxes.iter().any(|bx| {
                             *x >= ox + bx.x0 as f32 - 0.5
                                 && *x < ox + bx.x1 as f32 - 0.5
@@ -2828,6 +2993,7 @@ impl WinState {
                         });
                         if hit {
                             *color = fade(c);
+                            key.tone = super::raster::tone_of(*color);
                         }
                     }
                 }
@@ -2845,7 +3011,7 @@ impl WinState {
                             x,
                             (oy + py + b.y1 as f32 - 2.0 * s).round(),
                             w,
-                            s.max(1.0),
+                            s.round().max(1.0),
                             c,
                             clip,
                         ));
@@ -2855,7 +3021,7 @@ impl WinState {
                             x,
                             (oy + py + ((b.y0 + b.y1) / 2.0) as f32).round(),
                             w,
-                            s.max(1.0),
+                            s.round().max(1.0),
                             c,
                             clip,
                         ));
@@ -2864,11 +3030,12 @@ impl WinState {
             }
             if let Some((a, b)) = r.para_compose(i) {
                 for bx in r.range_boxes(i, a, b) {
+                    let (uy, uh) = snap_line(oy + py + bx.y1 as f32 - s, s);
                     dl.prims.push(solid(
                         ox + bx.x0 as f32,
-                        oy + py + bx.y1 as f32 - s,
+                        uy,
                         (bx.x1 - bx.x0) as f32,
-                        s,
+                        uh,
                         fade(st.color),
                         clip,
                     ));
@@ -3923,6 +4090,12 @@ pub fn eol_cut(label: &str, keep: usize) -> Option<String> {
     Some(trimmed.to_string() + "…")
 }
 
+/// A horizontal hairline's top and thickness on whole device pixels: at
+/// least one pixel thick, its top where the nearest row starts.
+pub fn snap_line(y: f32, h: f32) -> (f32, f32) {
+    (y.round(), h.round().max(1.0))
+}
+
 fn push_glyphs(shaped: &Shaped, ox: f32, oy: f32, clip: Clip, dl: &mut DisplayList) {
     // a span's background behind its glyphs
     for d in shaped.decos.iter().filter(|d| !d.over) {
@@ -3944,6 +4117,7 @@ fn push_glyphs(shaped: &Shaped, ox: f32, oy: f32, clip: Clip, dl: &mut DisplayLi
                     &run.coords,
                     run.embolden,
                     run.skew,
+                    run.color,
                 ),
                 coords: run.coords.clone(),
                 color: run.color,
@@ -3951,10 +4125,12 @@ fn push_glyphs(shaped: &Shaped, ox: f32, oy: f32, clip: Clip, dl: &mut DisplayLi
             });
         }
     }
-    // a strike or an underline over them
+    // a strike or an underline over them: a hairline on whole device
+    // pixels, as the baselines are (half on one row and half on the next
+    // it is a blurred band at any scale)
     for d in shaped.decos.iter().filter(|d| d.over) {
-        dl.prims
-            .push(solid(ox + d.x, oy + d.y, d.w, d.h, d.color, clip));
+        let (y, h) = snap_line(oy + d.y, d.h);
+        dl.prims.push(solid(ox + d.x, y, d.w, h, d.color, clip));
     }
 }
 
@@ -4063,6 +4239,9 @@ pub struct DisplayList {
     /// The scrolled regions drawn, for damage to follow their moves.
     pub scrolls: Vec<super::damage::Scroll>,
 }
+
+/// How often a drag-select past a field's edge scrolls it (ms).
+const AUTOSCROLL_MS: f64 = 16.0;
 
 /// A hover that left the text: no line or column.
 fn hover_left(key: &str) -> Vec<(&'static str, Value)> {

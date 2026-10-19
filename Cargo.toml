@@ -341,6 +341,10 @@ name = "gui_macos_edit_menu_test"
 harness = false
 
 [[test]]
+name = "gui_macos_text_input_test"
+harness = false
+
+[[test]]
 name = "gui_macos_latency_test"
 harness = false
 

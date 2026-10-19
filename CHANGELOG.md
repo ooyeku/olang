@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`gui`: the text input client, complete (macOS).** The window's view
+  answers what AppKit asks of a view that edits text for the focused
+  field: its selection, a range's text and its place on the screen, the
+  character under a point (NSTextInputClient's `selectedRange`,
+  `attributedSubstringForProposedRange:`, `firstRectForCharacterRange:`,
+  `characterIndexForPoint:`; winit's answers stay during a
+  composition). Text put in outside a key press and a composition —
+  dictation, the Character Viewer — reaches the field (winit took
+  `insertText:` only to end a composition, so dictated text was dropped),
+  over the range it names when it names one. Look Up finds the word: ⌃⌘D
+  through those answers, a force click on a word in a field
+  (`quickLookWithEvent:`) by showing its definition.
+  tests/gui_macos_text_input_test.rs
+- **`gui`: text gestures as a Mac's.** A drag after a double click
+  extends the selection by words, after a triple click by lines; a drag
+  past a field's edge scrolls it on each frame (faster the farther past;
+  a headless window steps with its clock), the selection following.
+  tests/gui_text_test.rs
 - **`gui.turn(on)`: a program's long turn shown while it runs.** A
   program says when its turn begins and ends (Loom's loop does, two
   atomic writes a turn); one that runs past 2 s
@@ -260,6 +278,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`gui`: text drawn as macOS draws it.** Glyph outlines grow and their
+  coverage takes a curve as Core Graphics' font smoothing does — light
+  text on dark the most, by the text colour's lightness in four steps —
+  tuned against AppKit's NSTextField (Inter at 11, 13, 17 and 24 px, 1×
+  and 2×, black, grey and white text): the ink's difference from
+  AppKit's, mean 22 % (worst 39 %) before, is 3.6 % (worst 9 %). Both
+  renderers draw the same glyph images (the tone is in the glyph's
+  key). `OLANG_GUI_TEXT_DARKEN` tunes it, `=0` turns it off. A variable
+  font is set at its optical size (`opsz` = the text's size, as Core
+  Text and CSS do). Shaped text is kept in two generations (a turn-over
+  keeps what the last generation used, where the whole cache was reset)
+  and found without copying the text or the font; `gui.read(_,
+  "render")` says `texts_shaped`, `texts_found`, `texts_cached`.
+  Underlines, strikes and a composition's underline sit on whole device
+  pixels; a styled field scrolls by whole device pixels (slow wheels add
+  up), so its scrolls move the kept frame. tests/gui_text_test.rs
 - **`gui` draws only what changed, and presents nothing when nothing
   did.** A window keeps its last frame (a texture of its own on the GPU,
   a pixmap in software); each frame's primitives are hashed into 64-pixel
