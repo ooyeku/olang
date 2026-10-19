@@ -101,3 +101,60 @@ fn the_checker_counts_argv_as_the_one_required_argument() {
         .collect();
     assert!(said.is_empty(), "{said:?}");
 }
+
+/// A folder holding an executable `name` that prints "hijacked", made
+/// fresh for one test.
+#[cfg(unix)]
+fn planted(tag: &str, name: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("olang-path-{}-{}", tag, std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join(name);
+    std::fs::write(&f, "#!/bin/sh\necho hijacked\n").unwrap();
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+    dir
+}
+
+#[cfg(unix)]
+#[test]
+fn a_bare_name_is_never_found_through_paths_empty_or_relative_entries_in_the_childs_folder() {
+    // a trailing colon and "." are the child's folder to execvp: a
+    // repository's own program ran when started there with a PATH given
+    let dir = planted("exec", "olang-planted-prog");
+    for path in ["/usr/bin:/bin:", ".:/usr/bin", "/usr/bin::/bin", "bin:/usr/bin"] {
+        let src = format!(
+            r#"os.exec(["olang-planted-prog"], #{{ "cwd": "{}", "env": #{{ "PATH": "{}" }} }})"#,
+            dir.display(),
+            path
+        );
+        match eval(&src) {
+            Value::Err(ref e) => assert!(e.to_string().contains("No such file"), "{}: {:?}", path, e),
+            other => panic!("PATH {:?} ran the folder's own program: {:?}", path, other),
+        }
+    }
+    // the same name on an absolute folder of PATH is found, and keeps its
+    // plain name as argv[0]
+    let src = format!(
+        r#"str.trim(unwrap(os.exec(["olang-planted-prog"], #{{ "cwd": "/", "env": #{{ "PATH": "/nowhere:{}" }} }})).stdout)"#,
+        dir.display()
+    );
+    assert_eq!(eval(&src), Value::String(std::sync::Arc::new("hijacked".to_string())));
+    let src = format!(
+        r#"str.trim(unwrap(os.exec(["sh", "-c", "echo $0"], #{{ "cwd": "{}" }})).stdout)"#,
+        dir.display()
+    );
+    assert_eq!(eval(&src), Value::String(std::sync::Arc::new("sh".to_string())));
+    // proc.spawn and a pipeline look it up the same way
+    let src = format!(
+        r#"proc.spawn(["olang-planted-prog"], #{{ "cwd": "{}", "env": #{{ "PATH": "/usr/bin:" }} }})"#,
+        dir.display()
+    );
+    assert!(matches!(eval(&src), Value::Err(_)));
+    let src = format!(
+        r#"proc.pipeline([["olang-planted-prog"]], #{{ "cwd": "{}", "env": #{{ "PATH": "/usr/bin:" }} }})"#,
+        dir.display()
+    );
+    assert!(matches!(eval(&src), Value::Err(_)));
+    let _ = std::fs::remove_dir_all(&dir);
+}

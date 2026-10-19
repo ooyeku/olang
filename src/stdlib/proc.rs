@@ -118,6 +118,60 @@ pub(crate) fn apply_env(
     }
 }
 
+/// The `Command` for `program` as a child would find it, looked up on
+/// PATH here, in the parent, through PATH's absolute folders only. An
+/// empty entry (`a::b`, a trailing `:`) or a relative one (`.`, `bin`) is
+/// resolved by `execvp` from the child's folder once it has moved there
+/// — so `os.exec(["git", …], #{ cwd: repo, env: #{ PATH: … } })` ran the
+/// repository's own `git`. A name with a slash is taken as it is. The
+/// child still sees its plain name as `argv[0]`. A name found in no
+/// absolute folder is not found (`No such file or directory`), never
+/// left for the child to look up.
+pub(crate) fn command_for(
+    program: &str,
+    clear: bool,
+    set: &[(String, String)],
+    removed: &[String],
+) -> std::io::Result<Command> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::process::CommandExt;
+        if program.contains('/') || program.is_empty() {
+            return Ok(Command::new(program));
+        }
+        // the PATH the child gets: the options' own, else none when the
+        // environment is cleared or PATH removed, else this process's
+        let path: Option<String> = match set.iter().rev().find(|(k, _)| k == "PATH") {
+            Some((_, v)) => Some(v.clone()),
+            None if clear || removed.iter().any(|k| k == "PATH") => None,
+            None => std::env::var("PATH").ok(),
+        };
+        // execvp's own default when there is no PATH
+        let path = path.unwrap_or_else(|| "/usr/bin:/bin".to_string());
+        for dir in path.split(':') {
+            if !dir.starts_with('/') {
+                continue;
+            }
+            let cand = std::path::Path::new(dir).join(program);
+            if let Ok(meta) = std::fs::metadata(&cand)
+                && meta.is_file()
+                && meta.permissions().mode() & 0o111 != 0
+            {
+                let mut c = Command::new(&cand);
+                c.arg0(program);
+                return Ok(c);
+            }
+        }
+        Err(std::io::Error::from_raw_os_error(2))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (clear, set, removed);
+        Ok(Command::new(program))
+    }
+}
+
 /// A `cwd` option that names no directory: said as such, before the
 /// spawn would blame the program ("failed to start 'sh': No such file
 /// or directory").
@@ -388,7 +442,10 @@ fn proc_spawn(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Ok(err(msg));
     }
 
-    let mut command = Command::new(&program);
+    let mut command = match command_for(&program, clear_env, &env, &env_removed) {
+        Ok(c) => c,
+        Err(e) => return Ok(err(format!("spawn: failed to start '{}': {}", program, e))),
+    };
     command
         .args(&cargs)
         .stdin(Stdio::piped())
@@ -919,7 +976,18 @@ fn proc_pipeline(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> 
     let mut children: Vec<Child> = Vec::with_capacity(n);
     let mut prev_out = None;
     for (i, (program, cargs)) in stages.iter().enumerate() {
-        let mut command = Command::new(program);
+        let mut command = match command_for(program, clear_env, &env, &env_removed) {
+            Ok(c) => c,
+            Err(e) => {
+                for mut c in children {
+                    let _ = c.kill();
+                }
+                return Ok(err(format!(
+                    "pipeline: failed to start stage {} '{}': {}",
+                    i, program, e
+                )));
+            }
+        };
         command
             .args(cargs)
             .stdout(Stdio::piped())

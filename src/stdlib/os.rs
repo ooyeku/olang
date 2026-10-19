@@ -629,7 +629,16 @@ fn os_exec(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
         return Ok(Value::Err(Box::new(Value::String(Arc::new(msg)))));
     }
 
-    let mut command = process::Command::new(&program);
+    let mut command =
+        match crate::stdlib::proc::command_for(&program, clear_env, &env_vars, &env_removed) {
+            Ok(c) => c,
+            Err(e) => {
+                return Ok(Value::Err(Box::new(Value::String(Arc::new(format!(
+                    "os.exec: failed to run '{}': {}",
+                    program, e
+                ))))));
+            }
+        };
     command.args(&cmd_args);
     if let Some(dir) = &cwd {
         command.current_dir(dir);
