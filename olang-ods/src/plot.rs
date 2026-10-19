@@ -794,14 +794,22 @@ pub fn render_heatmap(
     }
     let lo = all.iter().copied().fold(f64::INFINITY, f64::min);
     let hi = all.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let t_of = heat_t(opts.scale, lo, hi);
 
-    let geo = Geometry::new(opts, false);
+    // The row labels' column as wide as the longest needs (up to a third
+    // of the chart): a long label is cut to it, never drawn past the edge.
+    let mut geo = Geometry::new(opts, false);
+    let (label_w, label_chars) = row_label_room(y_labels, opts.width as f64, geo.left);
+    if label_w > geo.left {
+        geo.plot_w -= label_w - geo.left;
+        geo.left = label_w;
+    }
     let mut svg = Svg::open(opts, &geo);
     let cell_w = geo.plot_w / x_labels.len() as f64;
     let cell_h = geo.plot_h / y_labels.len() as f64;
     for (r, row) in rows.iter().enumerate() {
         for (c, &v) in row.iter().enumerate() {
-            let t = if hi > lo { (v - lo) / (hi - lo) } else { 0.5 };
+            let t = t_of(v);
             let attrs = data_attrs(
                 opts.interactive,
                 &[
@@ -835,7 +843,7 @@ pub fn render_heatmap(
             geo.left - 8.0,
             geo.top + cell_h * r as f64 + cell_h / 2.0 + 4.0,
             escape(&Paint::of(opts).ink2),
-            escape(&truncate(label, 12)),
+            escape(&truncate(label, label_chars)),
         );
     }
     // A minimal scale key: lo and hi swatches in the top-right corner.
@@ -848,12 +856,12 @@ pub fn render_heatmap(
          <rect x=\"{:.2}\" y=\"{:.2}\" width=\"10\" height=\"10\" rx=\"2\" fill=\"{}\"/>\
          <text x=\"{:.2}\" y=\"{key_y:.2}\" font-size=\"12.5\" fill=\"{ink}\">{}</text>",
         key_y - 9.0,
-        ramp_color(opts.scale, opts.theme, 0.0),
+        ramp_color(opts.scale, opts.theme, t_of(lo)),
         key_x + 14.0,
         escape(&format_num(lo)),
         key_x + 60.0,
         key_y - 9.0,
-        ramp_color(opts.scale, opts.theme, 1.0),
+        ramp_color(opts.scale, opts.theme, t_of(hi)),
         key_x + 74.0,
         escape(&format_num(hi)),
         ink = escape(&Paint::of(opts).ink2),
@@ -870,6 +878,35 @@ pub fn render_heatmap(
         )
         .field("scale", jstr(opts.scale.name()));
     Ok(svg.close(opts, &geo, desc))
+}
+
+/// Where a value falls on a heatmap's ramp, 0 to 1. A diverging scale is
+/// centred on zero (its middle colour is 0, each side as far as the
+/// larger end reaches), so −0.33..1 colours −0.33 a third of the way to
+/// cold, not the coldest; the others span the least to the most.
+fn heat_t(scale: HeatScale, lo: f64, hi: f64) -> impl Fn(f64) -> f64 {
+    let reach = lo.abs().max(hi.abs());
+    move |v: f64| {
+        if scale == HeatScale::Diverging {
+            if reach > 0.0 { 0.5 + v / (2.0 * reach) } else { 0.5 }
+        } else if hi > lo {
+            (v - lo) / (hi - lo)
+        } else {
+            0.5
+        }
+    }
+}
+
+/// The left margin a heatmap's row labels need (`base` at least, a third
+/// of `width` at most) and how many characters of a label fit in it, at
+/// the labels' 12.5 (about 7 units a character).
+fn row_label_room(labels: &[String], width: f64, base: f64) -> (f64, usize) {
+    const CHAR_W: f64 = 7.0;
+    let longest = labels.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+    let most = (width / 3.0).max(base);
+    let want = (longest as f64 * CHAR_W + 16.0).clamp(base, most);
+    let chars = (((want - 16.0) / CHAR_W).floor() as usize).max(3);
+    (want, chars)
 }
 
 /// Five-number-summary box plots, one per labeled series: whiskers to
@@ -1899,6 +1936,41 @@ mod tests {
         let mut ragged = two_bar_series();
         ragged[1].values.pop();
         assert!(render_bar_groups(&labels, &ragged, false, &PlotOptions::default()).is_err());
+    }
+
+    #[test]
+    fn heatmap_diverging_is_centred_on_zero() {
+        let xs = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let ys = vec!["r".to_string()];
+        let opts = PlotOptions { scale: HeatScale::Diverging, ..PlotOptions::default() };
+        // -0.33..1: zero is the middle colour, -0.33 a third of the way to cold
+        let s = render_heatmap(&xs, &ys, &[vec![-0.33, 0.0, 1.0]], &opts).unwrap();
+        let mid = ramp_color(HeatScale::Diverging, Theme::Light, 0.5);
+        let coldest = ramp_color(HeatScale::Diverging, Theme::Light, 0.0);
+        let low = ramp_color(HeatScale::Diverging, Theme::Light, 0.5 - 0.33 / 2.0);
+        assert!(s.contains(&format!("fill=\"{mid}\"")), "0 is the middle colour");
+        assert!(s.contains(&format!("fill=\"{low}\"")), "-0.33 a third of the way to cold");
+        assert!(!s.contains(&format!("fill=\"{coldest}\"")), "nothing reaches the coldest");
+        // the other scales still span the least to the most
+        let auto = render_heatmap(&xs, &ys, &[vec![-0.33, 0.0, 1.0]], &PlotOptions::default()).unwrap();
+        assert!(auto.contains(&ramp_color(HeatScale::Auto, Theme::Light, 0.0)));
+    }
+
+    #[test]
+    fn heatmap_row_labels_fit_their_margin() {
+        let xs = vec!["x".to_string()];
+        let ys = vec!["cluster 0".to_string(), "a much longer row label than fits".to_string()];
+        let s = render_heatmap(&xs, &ys, &[vec![1.0], vec![2.0]], &PlotOptions::default()).unwrap();
+        // the cells start right of the widest label (9 characters: 79 units)
+        let first_x: f64 = s.split("<rect x=\"").nth(2).unwrap().split('"').next().unwrap().parse().unwrap();
+        let (room, chars) = row_label_room(&ys, PlotOptions::default().width as f64, 56.0);
+        assert!(first_x >= room, "cells at {first_x}, labels need {room}");
+        assert!(room <= PlotOptions::default().width as f64 / 3.0 + 0.01);
+        assert!(s.contains(">cluster 0<"));
+        // the long one cut to what fits, with an ellipsis
+        let cut = truncate("a much longer row label than fits", chars);
+        assert!(cut.ends_with('…') && s.contains(&format!(">{cut}<")));
+        assert!(chars as f64 * 7.0 + 16.0 <= room + 0.01);
     }
 
     #[test]
