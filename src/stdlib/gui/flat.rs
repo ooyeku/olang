@@ -1882,7 +1882,6 @@ enum Placed<'a> {
     Made {
         recs: Vec<Value>,
         probs: Vec<Value>,
-        gkey: Value,
     },
 }
 
@@ -1890,6 +1889,8 @@ enum Placed<'a> {
 /// each (a split's divider), and the leaves left for Loom.
 struct Emitted<'a> {
     placed: Vec<Placed<'a>>,
+    /// each node's gkey as it is answered
+    gkeys: Vec<Value>,
     pre: Vec<Vec<Value>>,
     todo: Vec<i64>,
 }
@@ -2150,15 +2151,18 @@ fn emit<'a>(
         if !is_placed {
             todo.push(i as i64);
         }
-        let gkv = st(&gk);
-        gk_of.push(gkv.clone());
+        gk_of.push(st(&gk));
         placed.push(Placed::Made {
             recs: mine,
             probs: pr,
-            gkey: gkv,
         });
     }
-    Ok(Emitted { placed, pre, todo })
+    Ok(Emitted {
+        placed,
+        gkeys: gk_of,
+        pre,
+        todo,
+    })
 }
 
 /// `rs` (a node's placements) with its first one's path `path`, as Loom's
@@ -2180,10 +2184,9 @@ fn with_first_path(rs: Value, path: &Value) -> Value {
 
 impl Emitted<'_> {
     /// The answer in the interpreter's form.
-    fn to_ast(self, inp: &FlatIn, prev: Option<&PrevOut>, kept_gkeys_from_prev: bool) -> Value {
+    fn to_ast(self, inp: &FlatIn, prev: Option<&PrevOut>) -> Value {
         let n = self.placed.len();
         let mut recs = Vec::with_capacity(n);
-        let mut gkeys = Vec::with_capacity(n);
         let mut probs = Vec::with_capacity(n);
         let mut lifts = Vec::with_capacity(n);
         for (i, p) in self.placed.into_iter().enumerate() {
@@ -2196,21 +2199,11 @@ impl Emitted<'_> {
                         Some(path) => with_first_path(rs, path),
                         None => rs,
                     });
-                    gkeys.push(if kept_gkeys_from_prev {
-                        pv.gkeys.ast(j)
-                    } else {
-                        inp.gkeys[i].clone()
-                    });
                     probs.push(pv.probs.ast(j));
                     lifts.push(pv.lifts.ast(j));
                 }
-                Placed::Made {
-                    recs: r,
-                    probs: pr,
-                    gkey,
-                } => {
+                Placed::Made { recs: r, probs: pr } => {
                     recs.push(list(r));
-                    gkeys.push(gkey);
                     probs.push(list(pr));
                     lifts.push(inp.glifts[i].clone());
                 }
@@ -2224,7 +2217,7 @@ impl Emitted<'_> {
             .collect();
         map(vec![
             ("recs", list(recs)),
-            ("gkeys", list(gkeys)),
+            ("gkeys", list(self.gkeys)),
             ("probs", list(probs)),
             ("lifts", list(lifts)),
             ("pre", list(pre)),
@@ -2508,7 +2501,7 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
                 _ => Vec::new(),
             };
             let e = emit(&spec, &inp, &geo, &cand, pout.as_ref(), None)?;
-            Ok(e.to_ast(&inp, pout.as_ref(), false))
+            Ok(e.to_ast(&inp, pout.as_ref()))
         }
         (keep, prev) => {
             let keep = match keep {
@@ -2526,7 +2519,7 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
             };
             let renames = if reusable { prev.as_ref().map(|p| p.gkeys) } else { None };
             let e = emit(&spec, &inp, &geo, &cand, prev.as_ref(), renames)?;
-            Ok(e.to_ast(&inp, prev.as_ref(), true))
+            Ok(e.to_ast(&inp, prev.as_ref()))
         }
     }
 }
@@ -2573,7 +2566,7 @@ fn vm_flat_emit(args: &[OvmValue]) -> Option<Res<OvmValue>> {
             _ => Vec::new(),
         };
         let e = emit(&spec, &inp, &geo, &cand, pout.as_ref(), None).ok()?;
-        Some(Ok(OvmValue::from_ast(e.to_ast(&inp, pout.as_ref(), false))))
+        Some(Ok(OvmValue::from_ast(e.to_ast(&inp, pout.as_ref()))))
     } else {
         let keep: Option<Ints> = match &args[3].data {
             ValueData::Unit => None,
@@ -2593,7 +2586,7 @@ fn vm_flat_emit(args: &[OvmValue]) -> Option<Res<OvmValue>> {
         };
         let renames = if reusable { prev.as_ref().map(|p| p.gkeys) } else { None };
         let e = emit(&spec, &inp, &geo, &cand, prev.as_ref(), renames).ok()?;
-        Some(Ok(OvmValue::from_ast(e.to_ast(&inp, prev.as_ref(), true))))
+        Some(Ok(OvmValue::from_ast(e.to_ast(&inp, prev.as_ref()))))
     }
 }
 
@@ -2633,8 +2626,9 @@ pub fn gui_flat_join(args: Vec<Value>) -> Res<Value> {
     ]))
 }
 
-/// The VM's own `gui.flat_join`: the lists joined in the VM's form (a
-/// list the VM answered stays its own; a wrapped one's items convert).
+/// The VM's own `gui.flat_join`: the lists read where they are, joined in
+/// the interpreter's form when every one is (wrapped), else in the VM's
+/// (a list the VM answered stays its own; a wrapped one's items wrap).
 /// `None` for a typed list (the call then goes the usual way).
 fn vm_flat_join(args: &[OvmValue]) -> Option<Res<OvmValue>> {
     if args.len() != 4 {
@@ -2677,6 +2671,20 @@ fn vm_flat_join(args: &[OvmValue]) -> Option<Res<OvmValue>> {
         items(&args[2])?,
         items(&args[3])?,
     );
+    // every list the interpreter's (the placements as flat_emit answers
+    // them, written in place by Loom): joined in that form, wrapped
+    if [pre, recs, probs, lifts]
+        .iter()
+        .all(|l| !matches!(l, Some(Items::Vm(_))))
+    {
+        let ast = |v: &OvmValue| match &v.data {
+            ValueData::AstList(l) => Value::List(l.clone()),
+            _ => Value::Unit,
+        };
+        let joined =
+            gui_flat_join(vec![ast(&args[0]), ast(&args[1]), ast(&args[2]), ast(&args[3])]).ok()?;
+        return Some(Ok(OvmValue::from_ast(joined)));
+    }
     Some(Ok(vm_map_of(vec![
         ("nodes".to_string(), join(&[pre, recs])),
         ("problems".to_string(), join(&[probs])),
