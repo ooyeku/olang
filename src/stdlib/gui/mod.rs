@@ -529,6 +529,8 @@ fn gui_apply(args: Vec<Value>) -> Res<Value> {
     };
     emit(out);
     if !headless {
+        #[cfg(target_os = "macos")]
+        platform::frames::applied(id);
         platform::redraw(id);
     }
     Ok(match result {

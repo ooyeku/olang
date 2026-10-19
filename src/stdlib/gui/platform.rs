@@ -62,6 +62,12 @@ pub enum Cmd {
     /// The system's settings may have changed (an AppKit notice, or a
     /// test posting one): read them again; `why` goes on the event.
     Settings(&'static str),
+    /// A standard Edit menu item chosen for window `id` (its role:
+    /// `copy`, `paste`, …), or a Service's text to put in its field.
+    Edit { id: u64, role: &'static str },
+    /// Window `id`'s display refreshed at `at` (ns of the host clock).
+    Tick { id: u64, at: u64 },
+    ServiceText { id: u64, text: String },
 }
 
 impl From<accesskit_winit::Event> for Cmd {
@@ -266,6 +272,10 @@ pub fn capabilities() -> Value {
         ("scroll_bars", b(true)),
         // a node's `wheel_x`: it hears the wheel's sideways part only
         ("wheel_x", b(true)),
+        // `gui.menu` takes the standard Edit items (`standard`, with the
+        // `contexts` the program's commands bind their chords in) and
+        // submenus (`submenu`); the window's view answers Services
+        ("edit_menu", b(mac)),
     ])
 }
 
@@ -310,6 +320,9 @@ fn run_loop(reply: crossbeam_channel::Sender<Result<(), String>>) -> Option<i32>
     // opened with arrive as it does
     #[cfg(target_os = "macos")]
     observe_documents();
+    // a measurement's stand-in refresh, when asked for
+    #[cfg(target_os = "macos")]
+    let _ = frames::synthetic_hz();
     let mut app = App {
         windows: HashMap::new(),
         by_winit: HashMap::new(),
@@ -406,6 +419,24 @@ struct PWin {
     /// The GPU device is lost and that was said: said once until a frame
     /// is drawn again.
     lost_said: bool,
+    /// The window's display link (macOS 14: its screen's refreshes,
+    /// ProMotion's 120 Hz included), running while frames are on their
+    /// way to the screen.
+    #[cfg(target_os = "macos")]
+    link: Option<objc2::rc::Retained<objc2::runtime::AnyObject>>,
+    /// Frames presented and not yet shown, oldest first: when each was
+    /// presented, and the input it answers (`GUI_LATENCY`).
+    in_flight: std::collections::VecDeque<(u64, Option<u64>)>,
+    /// A frame asked for while one was still on its way: drawn at the next
+    /// refresh, as that one shows (one frame a refresh, never a queue).
+    deferred: bool,
+    /// Refreshes since a frame was last on its way (the link pauses).
+    idle_ticks: u32,
+    /// When the display link last ticked (host ns).
+    last_tick: u64,
+    /// The size last presented (a frame of another size is never put off:
+    /// a live resize draws at once).
+    shown_size: (u32, u32),
 }
 
 /// A window the program closed (or every window, as the loop ends), torn
@@ -420,8 +451,12 @@ fn close_window(pw: PWin) -> Closing {
         renderer,
         a11y,
         state,
+        #[cfg(target_os = "macos")]
+        link,
         ..
     } = pw;
+    #[cfg(target_os = "macos")]
+    frames::unlink(link);
     let window = Closing::watch(&win);
     let teardown = move || {
         drop(renderer);
@@ -619,6 +654,8 @@ impl App {
             .map_err(|_| "gui: registry poisoned")?
             .insert(id, state.clone());
         self.by_winit.insert(win.id(), id);
+        #[cfg(target_os = "macos")]
+        edit_menu::view_opened(&win, id);
         // joined to another window's tab bar before it is shown: it opens
         // as that window's tab, never as a window of its own first
         #[cfg(target_os = "macos")]
@@ -649,6 +686,8 @@ impl App {
             let _: () = unsafe { objc2::msg_send![&**w, setTabbingMode: 0isize] };
         }
         win.request_redraw();
+        #[cfg(target_os = "macos")]
+        let win_for_link = win.clone();
         self.windows.insert(
             id,
             PWin {
@@ -662,6 +701,13 @@ impl App {
                 ime_on: false,
                 ime_area: None,
                 lost_said: false,
+                #[cfg(target_os = "macos")]
+                link: frames::link_for(&win_for_link, id),
+                in_flight: std::collections::VecDeque::new(),
+                deferred: false,
+                idle_ticks: 0,
+                last_tick: 0,
+                shown_size: (0, 0),
             },
         );
         // The program lays out against the window's real size and scale.
@@ -771,6 +817,45 @@ impl App {
         let Some(pw) = self.windows.get_mut(&id) else {
             return;
         };
+        // A frame still on its way to the screen: this one is drawn at the
+        // next refresh, as that one shows, from the state as it is then —
+        // a frame presented now would wait behind it (a refresh later,
+        // and more as they queue). Never a frame of another size (a live
+        // resize draws at once), and only while the display link ticks.
+        // (`GUI_PACING=0` presents at once; under a stand-in refresh it
+        // holds a frame only behind two, as the layer's own drawables
+        // would — what a measurement compares against.)
+        #[cfg(target_os = "macos")]
+        {
+            let synthetic = frames::synthetic_hz().is_some();
+            let limit = if frames::pacing() {
+                1
+            } else if synthetic {
+                2
+            } else {
+                usize::MAX
+            };
+            if (pw.link.is_some() || synthetic) && pw.in_flight.len() >= limit {
+                let now = frames::now_ns();
+                // a frame long on its way was shown (a refresh missed: the
+                // window was covered, the link paused); a link that has not
+                // ticked lately (the system rests it for a window it does
+                // not show, and for a display asleep) puts nothing off
+                while pw.in_flight.front().is_some_and(|f| now.saturating_sub(f.0) > 50_000_000) {
+                    pw.in_flight.pop_front();
+                }
+                if now.saturating_sub(pw.last_tick) > 50_000_000 {
+                    pw.in_flight.clear();
+                }
+                let size = pw.state.lock().map(|st| st.device_size()).unwrap_or((0, 0));
+                if pw.in_flight.len() >= limit && size == pw.shown_size {
+                    pw.deferred = true;
+                    frames::resume(&pw.link);
+                    return;
+                }
+            }
+        }
+        pw.deferred = false;
         let trace = std::env::var_os("GUI_TRACE").is_some();
         let started = std::time::Instant::now();
         let (dl, a11y_tree, wants_ime, ime_area) = {
@@ -837,6 +922,14 @@ impl App {
         }
         pw.lost_said = false;
         PRESENTED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // on its way to the screen: shown at a coming refresh
+        #[cfg(target_os = "macos")]
+        {
+            pw.shown_size = (dl.width, dl.height);
+            pw.in_flight.push_back((frames::now_ns(), frames::answered(id)));
+            frames::resume(&pw.link);
+            pw.idle_ticks = 0;
+        }
         crate::boot_trace::frame_presented();
         // the frame: its display list made, and drawn and presented
         if trace {
@@ -1366,8 +1459,14 @@ impl App {
                 Cmd::MenuEvent(id) => format!("menu event {id}"),
                 Cmd::ContextMenu { id, .. } => format!("context menu {id}"),
                 Cmd::Settings(why) => format!("settings ({why})"),
+                Cmd::Edit { id, role } => format!("edit {role} {id}"),
+                // a refresh: too many to say
+                Cmd::Tick { .. } => String::new(),
+                Cmd::ServiceText { id, .. } => format!("service text {id}"),
             };
-            eprintln!("gui: {what}");
+            if !what.is_empty() {
+                eprintln!("gui: {what}");
+            }
         }
         match cmd {
             Cmd::Open { id, opts, reply } => {
@@ -1378,6 +1477,8 @@ impl App {
             Cmd::Close(id) => {
                 if let Some(pw) = self.windows.remove(&id) {
                     self.by_winit.remove(&pw.win.id());
+                    #[cfg(target_os = "macos")]
+                    edit_menu::view_closed(id);
                     let c = close_window(pw);
                     self.closing.push(c);
                 }
@@ -1511,7 +1612,12 @@ impl App {
             }
             Cmd::ContextMenu { id, items, x, y } => self.show_context(id, items, x, y),
             Cmd::Settings(why) => self.settings_changed(why, None),
+            Cmd::Edit { id, role } => self.edit_item(id, role),
+            Cmd::Tick { .. } => self.on_tick(cmd),
+            Cmd::ServiceText { id, text } => self.input(id, Input::ImeCommit(text)),
             Cmd::Exit(code) => {
+                #[cfg(target_os = "macos")]
+                frames::report();
                 self.exit = Some(code);
                 self.by_winit.clear();
                 for (_, pw) in self.windows.drain() {
@@ -1567,6 +1673,19 @@ impl App {
             .get(&id)
             .map(|pw| pw.win.scale_factor())
             .unwrap_or(1.0);
+        #[cfg(target_os = "macos")]
+        if frames::measuring()
+            && matches!(
+                we,
+                WindowEvent::KeyboardInput { .. }
+                    | WindowEvent::MouseInput { .. }
+                    | WindowEvent::MouseWheel { .. }
+                    | WindowEvent::CursorMoved { .. }
+                    | WindowEvent::PinchGesture { .. }
+            )
+        {
+            frames::input(id);
+        }
         match we {
             WindowEvent::CloseRequested => emit(vec![event(
                 "close_requested",
@@ -1614,6 +1733,8 @@ impl App {
                 if let Some(pw) = self.windows.get_mut(&id) {
                     pw.occluded = true;
                     pw.wake = None;
+                    // no refresh shows them now: nothing is held for them
+                    pw.in_flight.clear();
                 }
             }
             WindowEvent::ModifiersChanged(m) => {
@@ -1976,6 +2097,22 @@ pub struct MenuSpec(Vec<(String, Vec<MenuItemSpec>)>);
 
 enum MenuItemSpec {
     Separator,
+    /// One of the Mac's standard Edit menu items (`standard`: `undo`,
+    /// `redo`, `cut`, `copy`, `paste`, `paste_plain`, `delete`,
+    /// `select_all`): AppKit's own selector and keys, sent to the focused
+    /// field, else to the program as its chord when one of its commands
+    /// binds that chord in a context in `contexts` (`"global"`, a role),
+    /// else greyed.
+    Standard {
+        role: &'static str,
+        label: Option<String>,
+        contexts: Vec<String>,
+    },
+    /// A submenu of items (the Edit menu's Find).
+    Sub {
+        label: String,
+        items: Vec<MenuItemSpec>,
+    },
     Item {
         id: String,
         label: String,
@@ -1998,10 +2135,57 @@ fn menu_spec(spec: &Value) -> Result<MenuSpec, String> {
             Some(Value::List(l)) => l.clone(),
             _ => Arc::new(vec![]),
         };
+        out.push((title, menu_items(&items, 0)?));
+    }
+    Ok(MenuSpec(out))
+}
+
+/// A menu's items as `gui.menu` reads them (a submenu's the same, at
+/// most four deep).
+fn menu_items(items: &[Value], depth: usize) -> Result<Vec<MenuItemSpec>, String> {
+    let what = "gui.menu";
+    if depth > 4 {
+        return Err(format!("{what}: submenus nest at most four deep"));
+    }
+    {
         let mut its = Vec::with_capacity(items.len());
         for it in items.iter() {
             if matches!(it, Value::String(t) if t.as_str() == "separator") {
                 its.push(MenuItemSpec::Separator);
+                continue;
+            }
+            if let Some(role) = get_str(it, "standard", what)? {
+                let Some(role) = EDIT_ROLES.iter().find(|r| **r == role) else {
+                    return Err(format!(
+                        "{what}: \"{role}\" is no standard item ({})",
+                        EDIT_ROLES.join(", ")
+                    ));
+                };
+                let contexts = match get(it, "contexts") {
+                    Some(Value::List(l)) => l
+                        .iter()
+                        .filter_map(|c| match c {
+                            Value::String(t) => Some(t.to_string()),
+                            _ => None,
+                        })
+                        .collect(),
+                    _ => vec![],
+                };
+                its.push(MenuItemSpec::Standard {
+                    role,
+                    label: get_str(it, "label", what)?.map(str::to_string),
+                    contexts,
+                });
+                continue;
+            }
+            if let Some(Value::List(sub)) = get(it, "submenu") {
+                let label = get_str(it, "label", what)?
+                    .ok_or_else(|| format!("{what}: a submenu needs a \"label\""))?
+                    .to_string();
+                its.push(MenuItemSpec::Sub {
+                    label,
+                    items: menu_items(sub, depth + 1)?,
+                });
                 continue;
             }
             let id = get_str(it, "id", what)?
@@ -2029,10 +2213,21 @@ fn menu_spec(spec: &Value) -> Result<MenuSpec, String> {
                 checked,
             });
         }
-        out.push((title, its));
+        Ok(its)
     }
-    Ok(MenuSpec(out))
 }
+
+/// The standard Edit menu items' roles, in the Mac's order.
+pub const EDIT_ROLES: &[&str] = &[
+    "undo",
+    "redo",
+    "cut",
+    "copy",
+    "paste",
+    "paste_plain",
+    "delete",
+    "select_all",
+];
 
 impl App {
     #[cfg(not(target_os = "macos"))]
@@ -2050,6 +2245,10 @@ impl App {
         let what = "gui.menu";
         let bar = Menu::new();
         let mut ids = HashMap::new();
+        // the standard Edit items, put in AppKit's menu once muda has made
+        // it: (menu, place among its items, role, label)
+        let mut standards: Vec<(usize, usize, &'static str, Option<String>)> = Vec::new();
+        let mut routes: HashMap<&'static str, Vec<String>> = HashMap::new();
         let sep = |sub: &Submenu| sub.append(&PredefinedMenuItem::separator()).map_err(|e| format!("{what}: {e}"));
         for (at, (title, items)) in spec.0.into_iter().enumerate() {
             let sub = Submenu::new(&title, true);
@@ -2089,6 +2288,24 @@ impl App {
                         sub.append(&PredefinedMenuItem::separator())
                             .map_err(|e| format!("{what}: {e}"))?;
                         prev_sep = true;
+                        continue;
+                    }
+                    MenuItemSpec::Standard {
+                        role,
+                        label,
+                        contexts,
+                    } => {
+                        let before = standards.iter().filter(|s| s.0 == at).count();
+                        standards.push((at, sub.items().len() + before, role, label));
+                        routes.insert(role, contexts);
+                        prev_sep = false;
+                        continue;
+                    }
+                    MenuItemSpec::Sub { label, items } => {
+                        let inner = Submenu::new(&label, true);
+                        fill_submenu(&inner, items, &mut ids)?;
+                        sub.append(&inner).map_err(|e| format!("{what}: {e}"))?;
+                        prev_sep = false;
                         continue;
                     }
                     MenuItemSpec::Item {
@@ -2133,10 +2350,105 @@ impl App {
             }
             bar.append(&sub).map_err(|e| format!("{what}: {e}"))?;
         }
+        // the standard items in place before the bar is the application's:
+        // AppKit adds its own to an Edit menu (AutoFill, Start Dictation,
+        // Emoji & Symbols) as it takes the bar, once
+        {
+            use muda::ContextMenu;
+            edit_menu::install(bar.ns_menu() as *mut objc2::runtime::AnyObject, &standards, routes);
+        }
         bar.init_for_nsapp();
         self.menu_handler();
         self.menu = Some((bar, ids));
         Ok(())
+    }
+
+    /// A refresh of window `id`'s display: the oldest frame on its way is
+    /// on the screen now (one a refresh: the layer shows them in turn), a
+    /// frame put off for it is drawn, and a link with nothing on its way
+    /// for a few refreshes pauses (an idle window wakes for nothing).
+    fn on_tick(&mut self, cmd: Cmd) {
+        let Cmd::Tick { id, at } = cmd else {
+            return;
+        };
+        // a refresh stood in for every window (`GUI_REFRESH_HZ`)
+        if id == 0 {
+            let ids: Vec<u64> = self.windows.keys().copied().collect();
+            for w in ids {
+                self.on_tick(Cmd::Tick { id: w, at });
+            }
+            return;
+        }
+        let Some(pw) = self.windows.get_mut(&id) else {
+            return;
+        };
+        #[cfg(target_os = "macos")]
+        {
+            pw.last_tick = frames::now_ns();
+        }
+        if let Some(&(p, t0)) = pw.in_flight.front()
+            && p < at
+        {
+            pw.in_flight.pop_front();
+            #[cfg(target_os = "macos")]
+            frames::shown(p, t0, at);
+            #[cfg(not(target_os = "macos"))]
+            let _ = t0;
+        }
+        // a frame put off for this refresh (render holds it again while
+        // the frames before it still wait)
+        if pw.deferred {
+            self.render(id);
+            return;
+        }
+        if pw.in_flight.is_empty() && !pw.deferred {
+            pw.idle_ticks += 1;
+            #[cfg(target_os = "macos")]
+            if pw.idle_ticks >= 8 {
+                frames::pause(&pw.link);
+            }
+        }
+    }
+
+    /// A standard Edit item chosen for window `id`: its chord, as though
+    /// pressed — the focused field edits with it, and anything else hears
+    /// it as the key (Loom's command for that chord in the focused role's
+    /// context). The modifiers the window knew are kept (a menu clicked
+    /// with the mouse holds none).
+    fn edit_item(&mut self, id: u64, role: &str) {
+        let mac = cfg!(target_os = "macos");
+        let cmd = |shift: bool| Mods {
+            super_: mac,
+            ctrl: !mac,
+            shift,
+            alt: false,
+        };
+        let (key, mods) = match role {
+            "undo" => ("z", cmd(false)),
+            "redo" => ("z", cmd(true)),
+            "cut" => ("x", cmd(false)),
+            "copy" => ("c", cmd(false)),
+            "paste" | "paste_plain" => ("v", cmd(false)),
+            "select_all" => ("a", cmd(false)),
+            "delete" => ("delete", Mods::default()),
+            _ => return,
+        };
+        let Some(state) = self.windows.get(&id).map(|pw| pw.state.clone()) else {
+            return;
+        };
+        let held = state.lock().map(|st| st.mods).unwrap_or_default();
+        self.input(
+            id,
+            Input::Key {
+                key: key.to_string(),
+                text: None,
+                mods,
+                repeat: false,
+            },
+        );
+        if let Ok(mut st) = state.lock() {
+            st.mods = held;
+        }
     }
 
     /// Every menu's chosen item comes back through the loop (the menu
@@ -2656,6 +2968,717 @@ pub fn context_menu(id: u64, items: Vec<ContextItem>, x: f64, y: f64) -> Result<
     p.send_event(Cmd::ContextMenu { id, items, x, y })
         .map_err(|_| "gui.context_menu: the event loop has ended".to_string())?;
     Ok(Value::Boolean(true))
+}
+
+/// A submenu's items made in muda (a standard item has no place there:
+/// it is left out).
+#[cfg(target_os = "macos")]
+fn fill_submenu(
+    sub: &muda::Submenu,
+    items: Vec<MenuItemSpec>,
+    ids: &mut HashMap<muda::MenuId, String>,
+) -> Result<(), String> {
+    use muda::{CheckMenuItem, MenuItem, PredefinedMenuItem, Submenu};
+    let what = "gui.menu";
+    for it in items {
+        match it {
+            MenuItemSpec::Separator => sub
+                .append(&PredefinedMenuItem::separator())
+                .map_err(|e| format!("{what}: {e}"))?,
+            MenuItemSpec::Standard { .. } => {}
+            MenuItemSpec::Sub { label, items } => {
+                let inner = Submenu::new(&label, true);
+                fill_submenu(&inner, items, ids)?;
+                sub.append(&inner).map_err(|e| format!("{what}: {e}"))?;
+            }
+            MenuItemSpec::Item {
+                id,
+                label,
+                enabled,
+                keys,
+                checked,
+            } => {
+                let accel: Option<muda::accelerator::Accelerator> =
+                    keys.and_then(|k| k.parse().ok());
+                let mid = muda::MenuId::new(&id);
+                match checked {
+                    Some(c) => sub
+                        .append(&CheckMenuItem::with_id(mid.clone(), &label, enabled, c, accel))
+                        .map_err(|e| format!("{what}: {e}"))?,
+                    None => sub
+                        .append(&MenuItem::with_id(mid.clone(), &label, enabled, accel))
+                        .map_err(|e| format!("{what}: {e}"))?,
+                }
+                ids.insert(mid, id);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether a standard Edit item (`role`) does something in window `st`
+/// now: the focused field takes it (copy and cut with a selection, never
+/// from a password; undo when the field keeps its own; paste and select
+/// all always), else the program does when one of its commands binds the
+/// item's chord in a context the focus is in (`contexts`: `"global"`, or
+/// the focused node's role). A field that hands the chord to the program
+/// (`pass_keys`) is the program's.
+pub fn edit_enabled(st: &WinState, role: &str, contexts: &[String]) -> bool {
+    let chord = match role {
+        "undo" => "mod+z",
+        "redo" => "mod+shift+z",
+        "cut" => "mod+x",
+        "copy" => "mod+c",
+        "paste" | "paste_plain" => "mod+v",
+        "select_all" => "mod+a",
+        "delete" => "delete",
+        _ => return false,
+    };
+    let focus = st.scene.focus.as_deref();
+    let node = focus.and_then(|f| st.scene.nodes.get(f));
+    let field = focus
+        .and_then(|f| st.editors.get(f))
+        .filter(|_| node.is_some_and(|n| !n.disabled))
+        .filter(|_| {
+            !node
+                .and_then(|n| n.edit.as_ref())
+                .is_some_and(|e| e.pass_keys.iter().any(|k| k == chord))
+        });
+    if let Some(ed) = field {
+        let mine = match role {
+            "cut" | "copy" | "delete" => Some(ed.selected_text().is_some_and(|t| !t.is_empty())),
+            "paste" | "paste_plain" | "select_all" => Some(true),
+            _ if ed.own_undo() => Some(true),
+            // undo and redo the field leaves to the program
+            _ => None,
+        };
+        if let Some(m) = mine {
+            return m;
+        }
+    }
+    contexts
+        .iter()
+        .any(|c| c == "global" || node.is_some_and(|n| n.role == *c))
+}
+
+/// The standard Edit menu on macOS: AppKit's own items (their selectors,
+/// keys and titles) answered by winit's view, which is the key window's
+/// first responder — each item is enabled as [`edit_enabled`] says and
+/// sends [`Cmd::Edit`] to the loop. The same view answers the Services
+/// menu for a focused field (its selection sent, a Service's text put
+/// in).
+#[cfg(target_os = "macos")]
+mod edit_menu {
+    use super::{Cmd, EDIT_ROLES, contain_callback, edit_enabled, send};
+    use crate::stdlib::gui::windows;
+    use objc2::msg_send;
+    use objc2::rc::{Allocated, Retained};
+    use objc2::runtime::{AnyClass, AnyObject, Bool, Imp, Sel};
+    use objc2_foundation::NSString;
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    /// Each window's content view (winit's) by its address, to its id.
+    fn views() -> &'static Mutex<HashMap<usize, u64>> {
+        static VIEWS: OnceLock<Mutex<HashMap<usize, u64>>> = OnceLock::new();
+        VIEWS.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    /// The contexts the program's commands bind each standard item's
+    /// chord in (the menu's spec says them).
+    fn routes() -> &'static Mutex<HashMap<&'static str, Vec<String>>> {
+        static ROUTES: OnceLock<Mutex<HashMap<&'static str, Vec<String>>>> = OnceLock::new();
+        ROUTES.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    pub fn view_opened(win: &winit::window::Window, id: u64) {
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        if let Ok(h) = win.window_handle()
+            && let RawWindowHandle::AppKit(h) = h.as_raw()
+        {
+            views()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(h.ns_view.as_ptr() as usize, id);
+        }
+        responder();
+    }
+
+    pub fn view_closed(id: u64) {
+        views()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|_, v| *v != id);
+    }
+
+    /// Item `role`: its title, selector, key equivalent and modifiers
+    /// (NSEventModifierFlags: shift 1<<17, option 1<<19, command 1<<20).
+    fn item(role: &str) -> (&'static str, &'static std::ffi::CStr, &'static str, usize) {
+        const SHIFT: usize = 1 << 17;
+        const OPTION: usize = 1 << 19;
+        const COMMAND: usize = 1 << 20;
+        match role {
+            "undo" => ("Undo", c"undo:", "z", COMMAND),
+            "redo" => ("Redo", c"redo:", "z", COMMAND | SHIFT),
+            "cut" => ("Cut", c"cut:", "x", COMMAND),
+            "copy" => ("Copy", c"copy:", "c", COMMAND),
+            "paste" => ("Paste", c"paste:", "v", COMMAND),
+            "paste_plain" => ("Paste and Match Style", c"pasteAsPlainText:", "v", COMMAND | SHIFT | OPTION),
+            "delete" => ("Delete", c"delete:", "", 0),
+            _ => ("Select All", c"selectAll:", "a", COMMAND),
+        }
+    }
+
+    /// The role of an item's selector.
+    fn role_of(sel: Sel) -> Option<&'static str> {
+        let name = sel.name();
+        EDIT_ROLES.iter().copied().find(|r| item(r).1 == name)
+    }
+
+    /// Put the standard items into the menu bar `bar` (`at`: the menu,
+    /// `place` among its items), and keep what routes them.
+    pub fn install(
+        bar: *mut AnyObject,
+        standards: &[(usize, usize, &'static str, Option<String>)],
+        routes_now: HashMap<&'static str, Vec<String>>,
+    ) {
+        *routes().lock().unwrap_or_else(|e| e.into_inner()) = routes_now;
+        if standards.is_empty() {
+            return;
+        }
+        responder();
+        if bar.is_null() {
+            return;
+        }
+        // SAFETY: muda's menu bar (an NSMenu), on the main thread (the
+        // loop's); the items made here are retained by their menu.
+        unsafe {
+            let bar = &*bar;
+            let Some(cls) = AnyClass::get(c"NSMenuItem") else {
+                return;
+            };
+            for (at, place, role, label) in standards {
+                let n: isize = msg_send![bar, numberOfItems];
+                if *at as isize >= n {
+                    continue;
+                }
+                let top: Retained<AnyObject> = msg_send![bar, itemAtIndex: *at as isize];
+                let menu: Option<Retained<AnyObject>> = msg_send![&*top, submenu];
+                let Some(menu) = menu else { continue };
+                let (title, sel, key, mask) = item(role);
+                let title = NSString::from_str(label.as_deref().unwrap_or(title));
+                let key = NSString::from_str(key);
+                let alloc: Allocated<AnyObject> = msg_send![cls, alloc];
+                let it: Retained<AnyObject> = msg_send![alloc, initWithTitle: &*title, action: Sel::register(sel), keyEquivalent: &*key];
+                let _: () = msg_send![&*it, setKeyEquivalentModifierMask: mask];
+                let count: isize = msg_send![&*menu, numberOfItems];
+                let _: () = msg_send![&*menu, insertItem: &*it, atIndex: (*place as isize).min(count)];
+            }
+        }
+    }
+
+    /// The window state behind winit's view `this`.
+    fn state_of(this: *mut AnyObject) -> Option<(u64, crate::stdlib::gui::Shared)> {
+        let id = *views().lock().ok()?.get(&(this as usize))?;
+        let st = windows().lock().ok()?.get(&id).cloned()?;
+        Some((id, st))
+    }
+
+    unsafe extern "C-unwind" fn edit_action(this: *mut AnyObject, cmd: Sel, _sender: *mut AnyObject) {
+        contain_callback("edit_action", || {
+            if let (Some(role), Some((id, _))) = (role_of(cmd), state_of(this)) {
+                send(Cmd::Edit { id, role });
+            }
+        });
+    }
+
+    unsafe extern "C-unwind" fn validate(this: *mut AnyObject, _cmd: Sel, item: *mut AnyObject) -> Bool {
+        let on = contain_callback("edit_validate", || {
+            if item.is_null() {
+                return true;
+            }
+            // SAFETY: AppKit's NSMenuItem, alive for the call.
+            let action: Option<Sel> = unsafe { msg_send![&*item, action] };
+            let Some(role) = action.and_then(role_of) else {
+                return true;
+            };
+            let Some((_, st)) = state_of(this) else {
+                return false;
+            };
+            let contexts = routes()
+                .lock()
+                .ok()
+                .and_then(|r| r.get(role).cloned())
+                .unwrap_or_default();
+            st.lock().is_ok_and(|st| edit_enabled(&st, role, &contexts))
+        });
+        Bool::new(on.unwrap_or(false))
+    }
+
+    /// The focused field's selection, when it may be sent (`None` from a
+    /// password or with nothing selected).
+    fn selection(this: *mut AnyObject) -> Option<String> {
+        let (_, st) = state_of(this)?;
+        let st = st.lock().ok()?;
+        let f = st.scene.focus.as_deref()?;
+        st.editors.get(f)?.selected_text().filter(|t| !t.is_empty())
+    }
+
+    /// Whether a field has the focus, to take a Service's text.
+    fn takes_text(this: *mut AnyObject) -> bool {
+        let Some((_, st)) = state_of(this) else {
+            return false;
+        };
+        st.lock().is_ok_and(|st| {
+            st.scene
+                .focus
+                .as_deref()
+                .is_some_and(|f| st.editors.contains_key(f) && st.scene.nodes.get(f).is_some_and(|n| !n.disabled))
+        })
+    }
+
+    /// `validRequestorForSendType:returnType:` — the view takes part in
+    /// the Services menu for text: it sends a selection, and takes text
+    /// back into a focused field.
+    unsafe extern "C-unwind" fn services_requestor(
+        this: *mut AnyObject,
+        _cmd: Sel,
+        send_type: *mut AnyObject,
+        return_type: *mut AnyObject,
+    ) -> *mut AnyObject {
+        contain_callback("services", || {
+            let is_text = |t: *mut AnyObject| {
+                // SAFETY: AppKit's NSString pasteboard types, or nil.
+                !t.is_null() && unsafe { super::ns_text(t) }.is_some_and(|s| s == "public.utf8-plain-text" || s == "NSStringPboardType")
+            };
+            let sends = send_type.is_null() || (is_text(send_type) && selection(this).is_some());
+            let takes = return_type.is_null() || (is_text(return_type) && takes_text(this));
+            let any = !send_type.is_null() || !return_type.is_null();
+            if sends && takes && any { this } else { std::ptr::null_mut() }
+        })
+        .unwrap_or(std::ptr::null_mut())
+    }
+
+    /// `writeSelectionToPasteboard:types:` — the selection to a Service.
+    unsafe extern "C-unwind" fn services_write(
+        this: *mut AnyObject,
+        _cmd: Sel,
+        pboard: *mut AnyObject,
+        _types: *mut AnyObject,
+    ) -> Bool {
+        let ok = contain_callback("services", || {
+            let Some(text) = selection(this) else {
+                return false;
+            };
+            if pboard.is_null() {
+                return false;
+            }
+            let t = NSString::from_str(&text);
+            let ty = NSString::from_str("public.utf8-plain-text");
+            // SAFETY: AppKit's NSPasteboard, alive for the call.
+            unsafe {
+                let _: isize = msg_send![&*pboard, clearContents];
+                let b: Bool = msg_send![&*pboard, setString: &*t, forType: &*ty];
+                b.as_bool()
+            }
+        });
+        Bool::new(ok.unwrap_or(false))
+    }
+
+    /// `readSelectionFromPasteboard:` — a Service's text into the field.
+    unsafe extern "C-unwind" fn services_read(this: *mut AnyObject, _cmd: Sel, pboard: *mut AnyObject) -> Bool {
+        let ok = contain_callback("services", || {
+            if pboard.is_null() || !takes_text(this) {
+                return false;
+            }
+            let ty = NSString::from_str("public.utf8-plain-text");
+            // SAFETY: AppKit's NSPasteboard, alive for the call.
+            let text: Option<Retained<NSString>> = unsafe { msg_send![&*pboard, stringForType: &*ty] };
+            let (Some(text), Some((id, _))) = (text, state_of(this)) else {
+                return false;
+            };
+            send(Cmd::ServiceText { id, text: text.to_string() });
+            true
+        });
+        Bool::new(ok.unwrap_or(false))
+    }
+
+    /// Teach winit's view the Edit menu's selectors, `validateMenuItem:`
+    /// and the Services protocol, once; and tell AppKit the application
+    /// sends and takes text for Services.
+    fn responder() {
+        static DONE: OnceLock<()> = OnceLock::new();
+        DONE.get_or_init(|| {
+            let Some(cls) = AnyClass::get(c"WinitView") else {
+                return;
+            };
+            let cls = cls as *const AnyClass as *mut AnyClass;
+            let bool_enc = if cfg!(target_arch = "aarch64") { "B" } else { "c" };
+            let v3 = c"v@:@";
+            let validate_enc = std::ffi::CString::new(format!("{bool_enc}@:@")).unwrap_or_default();
+            let write_enc = std::ffi::CString::new(format!("{bool_enc}@:@@")).unwrap_or_default();
+            // SAFETY: winit's view class, live for the process; each method
+            // added once, with the signature AppKit calls it with.
+            unsafe {
+                let act: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject) = edit_action;
+                for role in EDIT_ROLES {
+                    objc2::ffi::class_addMethod(
+                        cls,
+                        Sel::register(item(role).1),
+                        std::mem::transmute::<unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject), Imp>(act),
+                        v3.as_ptr(),
+                    );
+                }
+                let val: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject) -> Bool = validate;
+                objc2::ffi::class_addMethod(
+                    cls,
+                    objc2::sel!(validateMenuItem:),
+                    std::mem::transmute::<unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject) -> Bool, Imp>(val),
+                    validate_enc.as_ptr(),
+                );
+                let req: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject) -> *mut AnyObject =
+                    services_requestor;
+                objc2::ffi::class_addMethod(
+                    cls,
+                    objc2::sel!(validRequestorForSendType:returnType:),
+                    std::mem::transmute::<
+                        unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject) -> *mut AnyObject,
+                        Imp,
+                    >(req),
+                    c"@@:@@".as_ptr(),
+                );
+                let wr: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject) -> Bool = services_write;
+                objc2::ffi::class_addMethod(
+                    cls,
+                    objc2::sel!(writeSelectionToPasteboard:types:),
+                    std::mem::transmute::<unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject) -> Bool, Imp>(wr),
+                    write_enc.as_ptr(),
+                );
+                let rd: unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject) -> Bool = services_read;
+                objc2::ffi::class_addMethod(
+                    cls,
+                    objc2::sel!(readSelectionFromPasteboard:),
+                    std::mem::transmute::<unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject) -> Bool, Imp>(rd),
+                    validate_enc.as_ptr(),
+                );
+                // the types this application sends and takes for Services
+                if let Some(app) = AnyClass::get(c"NSApplication") {
+                    let app: Retained<AnyObject> = msg_send![app, sharedApplication];
+                    let t = NSString::from_str("public.utf8-plain-text");
+                    let types = objc2_foundation::NSArray::from_retained_slice(&[t]);
+                    let _: () = msg_send![&*app, registerServicesMenuSendTypes: &*types, returnTypes: &*types];
+                }
+            }
+        });
+    }
+}
+
+/// Frames and the display (macOS): each window's display link (its
+/// screen's refreshes: CADisplayLink from the view, macOS 14, ProMotion's
+/// rate where the screen has it), and input-to-photon measured
+/// (`GUI_LATENCY=1`): for the first frame presented after the program
+/// answered input (its `gui.apply`), the time from that input event to
+/// the frame's present call, and to the refresh that shows it (frames
+/// show in turn, one a refresh). Said as percentiles on stderr as the loop
+/// ends. `GUI_PACING=0` presents every frame at once, as before (to
+/// compare).
+#[cfg(target_os = "macos")]
+#[allow(deprecated)] // libc's mach clock (the mach2 crate is not a dependency)
+pub mod frames {
+    use super::{Cmd, send};
+    use objc2::msg_send;
+    use objc2::rc::Retained;
+    use objc2::runtime::{AnyClass, AnyObject, ClassBuilder, Sel};
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    /// Whether frames are put off while one is on its way (default on).
+    pub fn pacing() -> bool {
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| std::env::var("GUI_PACING").map_or(true, |v| v != "0"))
+    }
+
+    /// A refresh rate to stand in for the display's (`GUI_REFRESH_HZ`, a
+    /// measurement's: the display asleep has no refreshes): every window
+    /// hears a refresh that often.
+    pub fn synthetic_hz() -> Option<f64> {
+        static HZ: OnceLock<Option<f64>> = OnceLock::new();
+        *HZ.get_or_init(|| {
+            let hz = std::env::var("GUI_REFRESH_HZ").ok()?.parse::<f64>().ok()?;
+            if !(10.0..=1000.0).contains(&hz) {
+                return None;
+            }
+            let period = std::time::Duration::from_secs_f64(1.0 / hz);
+            std::thread::Builder::new()
+                .name("gui-refresh".into())
+                .spawn(move || {
+                    let mut next = std::time::Instant::now() + period;
+                    loop {
+                        if let Some(d) = next.checked_duration_since(std::time::Instant::now()) {
+                            std::thread::sleep(d);
+                        }
+                        next += period;
+                        send(Cmd::Tick { id: 0, at: now_ns() });
+                    }
+                })
+                .ok()?;
+            Some(hz)
+        })
+    }
+
+    /// Whether input-to-photon is measured.
+    pub fn measuring() -> bool {
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| std::env::var_os("GUI_LATENCY").is_some())
+    }
+
+    /// Now, in nanoseconds of the host clock (CACurrentMediaTime's, which
+    /// the display link's timestamps count).
+    pub fn now_ns() -> u64 {
+        static TB: OnceLock<(u64, u64)> = OnceLock::new();
+        let (n, d) = *TB.get_or_init(|| {
+            let mut i = libc::mach_timebase_info { numer: 1, denom: 1 };
+            // SAFETY: a struct of the declared type to fill.
+            unsafe { libc::mach_timebase_info(&mut i) };
+            (i.numer as u64, i.denom.max(1) as u64)
+        });
+        // SAFETY: no arguments; the host clock.
+        let t = unsafe { libc::mach_absolute_time() };
+        (t as u128 * n as u128 / d as u128) as u64
+    }
+
+    /// Each display link (its address) to its window.
+    fn links() -> &'static Mutex<HashMap<usize, u64>> {
+        static L: OnceLock<Mutex<HashMap<usize, u64>>> = OnceLock::new();
+        L.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    /// `tick:` — a refresh: the loop hears it as [`Cmd::Tick`].
+    unsafe extern "C-unwind" fn tick(_this: *mut AnyObject, _cmd: Sel, link: *mut AnyObject) {
+        super::contain_callback("display_link", || {
+            if link.is_null() {
+                return;
+            }
+            let Some(id) = links().lock().ok().and_then(|l| l.get(&(link as usize)).copied()) else {
+                return;
+            };
+            // SAFETY: the CADisplayLink calling, alive for the call.
+            let at: f64 = unsafe { msg_send![&*link, timestamp] };
+            send(Cmd::Tick {
+                id,
+                at: (at * 1e9) as u64,
+            });
+        });
+    }
+
+    /// CAFrameRateRange.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct FrameRateRange {
+        minimum: f32,
+        maximum: f32,
+        preferred: f32,
+    }
+
+    // SAFETY: the layout of CoreAnimation's CAFrameRateRange (three floats).
+    unsafe impl objc2::Encode for FrameRateRange {
+        const ENCODING: objc2::Encoding = objc2::Encoding::Struct(
+            "CAFrameRateRange",
+            &[<f32 as objc2::Encode>::ENCODING, <f32 as objc2::Encode>::ENCODING, <f32 as objc2::Encode>::ENCODING],
+        );
+    }
+
+    /// The display links' target: one object of a class of its own.
+    fn target() -> Option<&'static AnyObject> {
+        struct Target(Retained<AnyObject>);
+        // SAFETY: made and used on the main thread only.
+        unsafe impl Send for Target {}
+        unsafe impl Sync for Target {}
+        static T: OnceLock<Option<Target>> = OnceLock::new();
+        T.get_or_init(|| {
+            let sup = AnyClass::get(c"NSObject")?;
+            let cls = match ClassBuilder::new(c"OlangFrameTicker", sup) {
+                Some(mut b) => {
+                    // SAFETY: `tick:` takes the link, as CADisplayLink calls it.
+                    unsafe {
+                        b.add_method(
+                            objc2::sel!(tick:),
+                            tick as unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject),
+                        )
+                    };
+                    b.register()
+                }
+                None => AnyClass::get(c"OlangFrameTicker")?,
+            };
+            // SAFETY: a plain NSObject subclass.
+            let obj: Retained<AnyObject> = unsafe { msg_send![cls, new] };
+            Some(Target(obj))
+        })
+        .as_ref()
+        .map(|t| &*t.0)
+    }
+
+    /// A display link for `win`'s view, on the main run loop, paused until
+    /// a frame is on its way. `None` before macOS 14 (frames go out at
+    /// once, as they always did).
+    pub fn link_for(win: &winit::window::Window, id: u64) -> Option<Retained<AnyObject>> {
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let RawWindowHandle::AppKit(h) = win.window_handle().ok()?.as_raw() else {
+            return None;
+        };
+        let view = h.ns_view.as_ptr() as *mut AnyObject;
+        let target = target()?;
+        // SAFETY: winit's live view, on the main thread; the link is
+        // invalidated as the window closes (`unlink`).
+        unsafe {
+            let sel = objc2::sel!(displayLinkWithTarget:selector:);
+            let can: bool = msg_send![&*view, respondsToSelector: sel];
+            if !can {
+                return None;
+            }
+            let link: Option<Retained<AnyObject>> =
+                msg_send![&*view, displayLinkWithTarget: target, selector: objc2::sel!(tick:)];
+            let link = link?;
+            // as fast as the screen refreshes (ProMotion's 120 Hz): a link
+            // left at its default may tick at 60 while the layer shows 120
+            let fps: isize = {
+                let w: Option<Retained<AnyObject>> = msg_send![&*view, window];
+                let sc: Option<Retained<AnyObject>> = w.and_then(|w| msg_send![&*w, screen]);
+                sc.map_or(60, |sc| msg_send![&*sc, maximumFramesPerSecond])
+            };
+            let most = (fps.max(60)) as f32;
+            let range = FrameRateRange {
+                minimum: most.min(60.0),
+                maximum: most,
+                preferred: most,
+            };
+            let _: () = msg_send![&*link, setPreferredFrameRateRange: range];
+            let _: () = msg_send![&*link, setPaused: true];
+            let rl: Retained<AnyObject> = msg_send![objc2::class!(NSRunLoop), mainRunLoop];
+            let mode = objc2_foundation::NSString::from_str("kCFRunLoopCommonModes");
+            let _: () = msg_send![&*link, addToRunLoop: &*rl, forMode: &*mode];
+            links()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(Retained::as_ptr(&link) as usize, id);
+            Some(link)
+        }
+    }
+
+    /// The link ticks (a frame is on its way, or one is put off).
+    pub fn resume(link: &Option<Retained<AnyObject>>) {
+        if let Some(l) = link {
+            // SAFETY: a live CADisplayLink, on the main thread.
+            unsafe {
+                let paused: bool = msg_send![&**l, isPaused];
+                if paused {
+                    let _: () = msg_send![&**l, setPaused: false];
+                }
+            }
+        }
+    }
+
+    /// The link rests (nothing on its way).
+    pub fn pause(link: &Option<Retained<AnyObject>>) {
+        if let Some(l) = link {
+            // SAFETY: as above.
+            unsafe { msg_send![&**l, setPaused: true] }
+        }
+    }
+
+    /// A window closed: its link stopped and let go.
+    pub fn unlink(link: Option<Retained<AnyObject>>) {
+        if let Some(l) = link {
+            links()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&(Retained::as_ptr(&l) as usize));
+            // SAFETY: as above.
+            unsafe { msg_send![&*l, invalidate] }
+        }
+    }
+
+    // ── input to photon ──
+
+    /// Inputs a window took, waiting for the program's answer (its next
+    /// `gui.apply`): the first since its last answer counts.
+    fn waiting() -> &'static Mutex<HashMap<u64, u64>> {
+        static W: OnceLock<Mutex<HashMap<u64, u64>>> = OnceLock::new();
+        W.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    /// Answers waiting for their frame.
+    fn pending() -> &'static Mutex<HashMap<u64, u64>> {
+        static P: OnceLock<Mutex<HashMap<u64, u64>>> = OnceLock::new();
+        P.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    /// `(present, shown)` ms from input, a frame each.
+    pub fn samples() -> &'static Mutex<Vec<(f64, f64)>> {
+        static S: OnceLock<Mutex<Vec<(f64, f64)>>> = OnceLock::new();
+        S.get_or_init(|| Mutex::new(Vec::new()))
+    }
+
+    /// Window `id` took input now.
+    pub fn input(id: u64) {
+        if let Ok(mut w) = waiting().lock() {
+            w.entry(id).or_insert_with(now_ns);
+        }
+    }
+
+    /// The program applied a patch to window `id`: the input it answers
+    /// is timed to the next frame presented.
+    pub fn applied(id: u64) {
+        if !measuring() {
+            return;
+        }
+        let Some(t0) = waiting().lock().ok().and_then(|mut w| w.remove(&id)) else {
+            return;
+        };
+        if let Ok(mut p) = pending().lock() {
+            p.entry(id).or_insert(t0);
+        }
+    }
+
+    /// A frame of window `id` presented: the input it answers, if timed.
+    pub fn answered(id: u64) -> Option<u64> {
+        if !measuring() {
+            return None;
+        }
+        pending().lock().ok().and_then(|mut p| p.remove(&id))
+    }
+
+    /// A frame presented at `presented` showed at the refresh `at`.
+    pub fn shown(presented: u64, input: Option<u64>, at: u64) {
+        let Some(t0) = input else {
+            return;
+        };
+        let ms = |t: u64| t.saturating_sub(t0) as f64 / 1e6;
+        if let Ok(mut s) = samples().lock() {
+            s.push((ms(presented), ms(at)));
+        }
+    }
+
+    /// The percentiles said on stderr.
+    pub fn report() {
+        let s = samples().lock().map(|s| s.clone()).unwrap_or_default();
+        if s.is_empty() {
+            return;
+        }
+        let pick = |f: fn(&(f64, f64)) -> f64| {
+            let mut v: Vec<f64> = s.iter().map(f).collect();
+            v.sort_by(|a, b| a.total_cmp(b));
+            let at = |q: f64| v[((v.len() - 1) as f64 * q).round() as usize];
+            format!("p50 {:.2} p90 {:.2} max {:.2}", at(0.5), at(0.9), at(1.0))
+        };
+        eprintln!(
+            "gui latency: {} answers to input shown{}: to present {}; to the screen {}",
+            s.len(),
+            if pacing() { "" } else { " (GUI_PACING=0)" },
+            pick(|x| x.0),
+            pick(|x| x.1)
+        );
+    }
 }
 
 /// Loom's chord spelling as muda's: `mod+shift+p` → `CmdOrCtrl+Shift+P`.

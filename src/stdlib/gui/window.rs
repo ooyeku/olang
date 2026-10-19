@@ -1876,6 +1876,15 @@ impl WinState {
 
     // ── the display list ────────────────────────────────────────────
 
+    /// The size a frame is drawn at, device pixels (`display_list`'s).
+    pub fn device_size(&self) -> (u32, u32) {
+        let s = self.scale;
+        (
+            (self.width * s).round().max(1.0) as u32,
+            (self.height * s).round().max(1.0) as u32,
+        )
+    }
+
     pub fn display_list(&mut self) -> DisplayList {
         let s = self.scale;
         let pw = (self.width * s).round().max(1.0) as u32;

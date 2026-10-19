@@ -336,6 +336,14 @@ harness = false
 name = "gui_macos_contain_test"
 harness = false
 
+[[test]]
+name = "gui_macos_edit_menu_test"
+harness = false
+
+[[test]]
+name = "gui_macos_latency_test"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = true

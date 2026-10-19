@@ -356,6 +356,14 @@ pub fn recover(lost: &Arc<Gpu>, compatible: Option<&wgpu::Surface<'_>>) -> Resul
     Ok(g)
 }
 
+/// The process's GPU as it is now, when one was made (never makes one).
+pub fn current() -> Option<Arc<Gpu>> {
+    match &*GPU.lock().unwrap_or_else(|e| e.into_inner()) {
+        Some(Ok(g)) => Some(g.clone()),
+        _ => None,
+    }
+}
+
 /// How many times a lost device has been made again.
 pub fn recoveries() -> u64 {
     RECOVERED.load(std::sync::atomic::Ordering::SeqCst)

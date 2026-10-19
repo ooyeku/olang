@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`gui`: the Mac's standard Edit menu.** `gui.menu` takes an item
+  `#{ standard: "undo" | "redo" | "cut" | "copy" | "paste" |
+  "paste_plain" | "delete" | "select_all", contexts }`: AppKit's own
+  item (its title, selector — `copy:`, `pasteAsPlainText:` … — and
+  keys), answered by the window's view as the first responder. It goes
+  to the focused text field (copy and cut with a selection, never from a
+  password; the field's own undo), else to the program as its chord when
+  one of its commands binds that chord in a context the focus is in
+  (`contexts`), else it is greyed. A menu item may hold a `submenu` (the
+  Edit menu's Find). AppKit adds its own AutoFill, Start Dictation and
+  Emoji & Symbols to such a menu. The view also takes part in Services:
+  a field's selection is sent, a Service's text put in.
+  `gui.platform()` says `edit_menu`. tests/gui_macos_edit_menu_test.rs,
+  tests/gui_test.rs
+- **`gui`: frames paced by the display (macOS 14).** Each window has a
+  display link from its view (its screen's refreshes, up to ProMotion's
+  120 Hz), running only while frames are on their way to the screen. A
+  frame asked for while one is still on its way is drawn at the next
+  refresh from the state as it is then, never queued behind it: under a
+  flood of input (a key held, a trackpad's scroll, turns of a few ms) an
+  answer shows a refresh sooner (a stand-in 120 Hz refresh: p50 25.4 →
+  17.2 ms, p90 28.7 → 20.2; 60 Hz: 50.4 → 34.6, 55.0 → 37.7), typing
+  unchanged. A live resize, a window the system does not show and a
+  display asleep (no refreshes) present at once, as before.
+  `GUI_LATENCY=1` measures input to the screen (percentiles as the loop
+  ends); `GUI_PACING=0` and `GUI_REFRESH_HZ` are for comparing.
+  tests/gui_macos_latency_test.rs
 - **`gui`: no panic crosses into AppKit, and a lost GPU device draws
   again.** Every call the platform makes into olang (winit's handlers, a
   frame's drawing, the application delegate's methods, a notice's block,

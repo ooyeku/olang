@@ -2518,3 +2518,85 @@ fn an_alert_is_a_role_said_at_once() {
     "##);
     assert_eq!(text(&v), r#"[Ok(()), true, "Alert", "Changed on disk"]"#);
 }
+
+/// The standard Edit menu's items (macOS): enabled for the focused field
+/// as a text field's are, else for the program when one of its commands
+/// binds the item's chord in a context the focus is in.
+#[test]
+fn a_standard_edit_item_goes_to_the_focused_field_else_to_the_programs_command() {
+    use olang::stdlib::gui::platform::edit_enabled;
+    struct Clip;
+    impl Clipboard for Clip {
+        fn get(&mut self) -> Option<String> {
+            None
+        }
+        fn set(&mut self, _t: String) {}
+    }
+    let scene = |extra: &str| -> Value {
+        let src = format!(
+            r##"[#{{ "key": "root", "box": (0, 0, 300, 120), "style": #{{ "bg": "#ffffff" }} }},
+                #{{ "key": "f", "parent": "root", "role": "input", "box": (10, 10, 200, 30), "edit": #{{ "value": "hello"{extra} }} }},
+                #{{ "key": "pw", "parent": "root", "role": "input", "box": (10, 50, 200, 30), "edit": #{{ "value": "secret", "secure": true }} }},
+                #{{ "key": "l", "parent": "root", "role": "list", "box": (220, 10, 60, 60), "focusable": true }}]"##
+        );
+        Interpreter::new()
+            .eval_program(Parser::new().parse(&src).expect("parses"))
+            .expect("ops")
+    };
+    let focus = |st: &mut WinState, k: &str| {
+        let op = m(vec![("op", s("focus")), ("key", s(k))]);
+        st.apply(&Value::List(Arc::new(vec![op])), &mut vec![]).expect("focus");
+    };
+    let select_all = |st: &mut WinState| {
+        let mods = Mods {
+            super_: cfg!(target_os = "macos"),
+            ctrl: !cfg!(target_os = "macos"),
+            ..Mods::default()
+        };
+        st.input(
+            Input::Key { key: "a".into(), text: None, mods, repeat: false },
+            &mut Clip,
+            &mut vec![],
+        );
+    };
+    let none: Vec<String> = vec![];
+    let ctx = |c: &[&str]| c.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    let mut st = WinState::new(1, true, "edit menu", 300.0, 120.0, 1.0);
+    st.apply(&scene(""), &mut vec![]).expect("applies");
+    focus(&mut st, "f");
+    // a field: copy, cut and delete want a selection; paste, select all
+    // and its own undo are always the field's
+    assert!(!edit_enabled(&st, "copy", &none));
+    assert!(!edit_enabled(&st, "cut", &none));
+    assert!(!edit_enabled(&st, "delete", &none));
+    assert!(edit_enabled(&st, "paste", &none));
+    assert!(edit_enabled(&st, "paste_plain", &none));
+    assert!(edit_enabled(&st, "select_all", &none));
+    assert!(edit_enabled(&st, "undo", &none));
+    select_all(&mut st);
+    assert!(edit_enabled(&st, "copy", &none));
+    assert!(edit_enabled(&st, "cut", &none));
+    assert!(edit_enabled(&st, "delete", &none));
+    // a password is never copied
+    focus(&mut st, "pw");
+    select_all(&mut st);
+    assert!(!edit_enabled(&st, "copy", &none));
+    assert!(!edit_enabled(&st, "cut", &none));
+    // no field: the program's command for the chord, in the focused
+    // role's context or the global one
+    focus(&mut st, "l");
+    assert!(!edit_enabled(&st, "copy", &none));
+    assert!(edit_enabled(&st, "copy", &ctx(&["list"])));
+    assert!(edit_enabled(&st, "copy", &ctx(&["global"])));
+    assert!(!edit_enabled(&st, "copy", &ctx(&["canvas"])));
+    assert!(!edit_enabled(&st, "undo", &none));
+    assert!(edit_enabled(&st, "undo", &ctx(&["global"])));
+    // a field that hands ⌘C to the program: the program's
+    let mut st = WinState::new(2, true, "edit menu", 300.0, 120.0, 1.0);
+    st.apply(&scene(r#", "pass_keys": ["mod+c"]"#), &mut vec![]).expect("applies");
+    focus(&mut st, "f");
+    select_all(&mut st);
+    assert!(!edit_enabled(&st, "copy", &none));
+    assert!(edit_enabled(&st, "copy", &ctx(&["input"])));
+    assert!(edit_enabled(&st, "paste", &none));
+}
