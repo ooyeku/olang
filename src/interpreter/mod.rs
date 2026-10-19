@@ -3756,6 +3756,12 @@ the function it shadows is the usual cause; `olang check` names the parameter",
         // entry file). One value ever exists — the statement in its place
         // then skips — so the tier's body-keyed caches never meet two
         // closures for one body.
+        // Declared early already and not yet reached: the same value again
+        // (a call from inside a test block's own scope, which the value
+        // was not bound in, found it gone for every later block).
+        if let Some(value) = self.declared_early.get(name) {
+            return Some(value.clone());
+        }
         if let Some(statement) = self.pending_top_level.remove(name) {
             let decl = match statement.unwrapped() {
                 Statement::FunctionDecl(f) | Statement::ShareDecl(ShareDecl::Function(f)) => {

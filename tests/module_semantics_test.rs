@@ -120,3 +120,36 @@ fn test_blocks_are_inert_outside_the_runner() {
     );
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A function declared below several test blocks is visible to every one
+/// of them, on both tiers: the first block's call declared it early, and
+/// every later block found it gone ("Undefined variable").
+#[test]
+fn a_function_below_the_test_blocks_is_seen_by_each() {
+    let base = std::env::temp_dir().join(format!("olang_hoist_tests_{}", std::process::id()));
+    std::fs::create_dir_all(&base).unwrap();
+    let file = base.join("h_test.ol");
+    std::fs::write(
+        &file,
+        "test \"a\" { assert_eq(g(1), 2) }\ntest \"b\" { assert_eq(g(2), 3) }\ntest \"c\" { assert_eq(g(3), 4) }\nfn g(x) = x + 1\n",
+    )
+    .unwrap();
+    // the bytecode tier (the runner's default) and the tree-walker (coverage)
+    for extra in [&[][..], &["--coverage"][..]] {
+        let out = Command::new(olang())
+            .arg("test")
+            .args(extra)
+            .arg(&file)
+            .current_dir(&base)
+            .output()
+            .expect("spawn olang test");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(out.status.success(), "{extra:?}: {text}");
+        assert!(text.contains("3 passed, 0 failed"), "{extra:?}: {text}");
+    }
+    let _ = std::fs::remove_dir_all(&base);
+}
