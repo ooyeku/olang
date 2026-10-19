@@ -2599,6 +2599,18 @@ impl WinState {
         let ox = content[0] - r.scroll_x;
         let oy = content[1] - r.scroll_y;
         let outer_clip = clip;
+        {
+            // its text moves with its scroll: damage moves the kept frame
+            use std::hash::{Hash, Hasher};
+            let mut h = rustc_hash::FxHasher::default();
+            (key, "rich").hash(&mut h);
+            dl.scrolls.push(super::damage::Scroll {
+                id: h.finish(),
+                view: outer_clip,
+                dx: r.scroll_x,
+                dy: r.scroll_y,
+            });
+        }
         // what the text draws from here: clipped below the pinned rows of
         // sticky scroll once they are known (the renderers draw glyphs over
         // rectangles, so a row's background alone does not hide them)

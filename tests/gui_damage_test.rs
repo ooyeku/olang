@@ -1036,3 +1036,73 @@ fn measure_damaged_against_whole_frames() {
         );
     }
 }
+
+#[test]
+fn a_code_editor_scrolled_is_drawn_whole_moved_or_not() {
+    let _turn = gpu_turn();
+    for scale in [1.0f32, 2.0] {
+        let mut st = WinState::new(4, true, "editor", 500.0, 300.0, scale);
+        let text: Vec<String> = (0..400).map(|i| format!("let line_{i} = compute({i}) // a comment")).collect();
+        let ops = vec![
+            m(vec![("key", s("root")), ("box", tup(&[0.0, 0.0, 500.0, 300.0])), ("style", m(vec![("bg", s("#ffffff"))]))]),
+            m(vec![
+                ("key", s("ed")),
+                ("parent", s("root")),
+                ("role", s("input")),
+                ("box", tup(&[10.0, 10.0, 480.0, 280.0])),
+                (
+                    "edit",
+                    m(vec![
+                        ("value", s(&text.join("\n"))),
+                        ("multiline", Value::Boolean(true)),
+                        ("rich", Value::Boolean(true)),
+                        ("wrap", Value::Boolean(false)),
+                    ]),
+                ),
+                ("style", m(vec![("font", s("mono")), ("size", Value::Integer(13))])),
+            ]),
+            m(vec![("op", s("focus")), ("key", s("ed"))]),
+        ];
+        let mut out = Vec::new();
+        st.apply(&Value::List(Arc::new(ops)), &mut out).expect("applies");
+        st.input(Input::Focused(true), &mut NoClip, &mut out);
+        let mut kept = soft::Retained::default();
+        let g = gpu::gpu(None, None).ok();
+        let mut target = g.as_ref().map(|g| gpu::Target::new(g.clone(), wgpu::TextureFormat::Rgba8Unorm));
+        let mut moved = 0;
+        for i in 0..50 {
+            if i > 0 {
+                let input = if i % 10 < 7 {
+                    Input::Key { key: "down".into(), text: None, mods: Mods::default(), repeat: false }
+                } else {
+                    Input::Wheel { dx: 0.0, dy: -20.0, mods: None }
+                };
+                st.input(input, &mut NoClip, &mut out);
+            }
+            let dl = st.display_list();
+            kept.render(&dl);
+            if std::env::var_os("GUI_FUZZ_DEBUG").is_some() {
+                eprintln!("{i}: {:?} {:?} {:?}", dl.scrolls, kept.last_shifts, kept.last);
+            }
+            if !kept.last_shifts.is_empty() {
+                moved += 1;
+            }
+            let full = soft::render(&dl);
+            let pm = kept.pixmap().expect("kept");
+            assert!(
+                pm.data() == full.data(),
+                "at {scale}x, step {i}: the editor's moved frame is its whole frame: {}",
+                first_difference(pm.data(), full.data(), dl.width)
+            );
+            if let (Some(g), Some(t)) = (&g, target.as_mut()) {
+                t.render(&dl);
+                let (a, b) = (t.rgba(), g.render_rgba(&dl));
+                assert!(within(&a, &b, MOVED_TOLERANCE), "at {scale}x, step {i}: the GPU's: {}", first_difference(&a, &b, dl.width));
+            }
+        }
+        // its rows are a fractional height apart (15.13 px at 13 px), so
+        // its scrolls are seldom by whole pixels: a move is taken only when
+        // one is
+        eprintln!("the editor at {scale}x: {moved} of 49 frames moved");
+    }
+}
