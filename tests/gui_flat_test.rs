@@ -52,6 +52,19 @@ fn frames() = {
     let e1 = gui.flat_emit(f1, (), SPEC, (), ())
     say("one", f1, e1)
     let f2 = gui.flatten(view(range(1, 8)), SPEC, f1)
+    // what was kept by key (each card's entries) is what is read afresh
+    let fresh = gui.flatten(view(range(1, 8)), SPEC, ())
+    let (I2, F2, K2) = gui.flat_arrays(f2.id)
+    let (I0, F0, K0) = gui.flat_arrays(fresh.id)
+    println("two arrays alike " + show(take(I2, f2.n * 14) == take(I0, fresh.n * 14) && take(F2, f2.n * 22) == take(F0, fresh.n * 22) && take(K2, f2.n) == take(K0, fresh.n)))
+    println("two lists alike " + show(f2.gkeys == fresh.gkeys && f2.paths == fresh.paths && f2.index == fresh.index && f2.glifts == fresh.glifts))
+    // a card whose own props changed is read again, not kept
+    let v2b = #{ ...view(range(1, 8)), "children": map(range(1, 8), (i) => if i == 3 => #{ ...card(i), "props": #{ "gap": 9, "pad": 3 } } else => card(i)) }
+    let f2b = gui.flatten(v2b, SPEC, f1)
+    let freshb = gui.flatten(v2b, SPEC, ())
+    let (I3, F3, _k3) = gui.flat_arrays(f2b.id)
+    let (I4, F4, _k4) = gui.flat_arrays(freshb.id)
+    println("two-b arrays alike " + show(take(I3, f2b.n * 14) == take(I4, freshb.n * 14) && take(F3, f2b.n * 22) == take(F4, freshb.n * 22)))
     gui.flat_keep(f2.id, boxes(f2))
     let e2 = gui.flat_emit(f2, (), SPEC, "keyed", #{ "flat": f1, "out": marked(e1) })
     say("two", f2, e2)
@@ -109,6 +122,11 @@ fn the_flat_calls_answer_alike_on_both_tiers() {
     assert!(line("two").ends_with("kept 14"), "{}", line("two"));
     // the same shape: everything kept by index, nothing changed
     assert!(line("three").ends_with("kept 22"), "{}", line("three"));
+    // laid out by key from last frame's arrays, a frame of another shape
+    // has the arrays and lists a frame read afresh has
+    assert!(tree.contains("two arrays alike true"), "{tree}");
+    assert!(tree.contains("two lists alike true"), "{tree}");
+    assert!(tree.contains("two-b arrays alike true"), "{tree}");
     // keyed with no last frame: placed afresh
     assert!(line("four").ends_with("kept 0"), "{}", line("four"));
 }

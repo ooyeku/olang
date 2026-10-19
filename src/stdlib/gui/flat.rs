@@ -29,6 +29,7 @@ pub const FF: usize = 22;
 const I_KIND: usize = 0;
 const I_FIRST: usize = 2;
 const I_COUNT: usize = 3;
+const I_SHRINK: usize = 11;
 const I_PARENT: usize = 12;
 const I_FRESH: usize = 13;
 const F_NATH: usize = 17;
@@ -1021,6 +1022,12 @@ fn flatten_full(
     let mut wraps: Vec<Value> = Vec::new();
     let mut aligned = prev.is_some();
     let mut changed: Vec<Value> = Vec::new();
+    // last frame's nodes by gkey, made once the trees stop lining up by
+    // index: a node that has its key and is what it was (its own role,
+    // key and props, kind, child count, lifted layers) takes last frame's
+    // entry, not read again (a cell scrolled into a notebook moves every
+    // node after it; they are all what they were)
+    let mut by_key: Option<HashMap<&str, usize>> = None;
     // (node, parent index, the parent's path, its place j among the
     // parent's children, its index among siblings, its slot in kids);
     // a path is spelled only for a node read afresh
@@ -1061,6 +1068,37 @@ fn flatten_full(
             }
             _ => false,
         };
+        let mut spelled: Option<String> = None;
+        let keyed = match prev {
+            Some(pv) if !reuse => {
+                let path = spell();
+                let gk = gkey_of(&node, &path);
+                let at = by_key.get_or_insert_with(|| {
+                    let mut m = HashMap::default();
+                    for (j, k) in pv.gkeys[..pv.st.n].iter().enumerate() {
+                        if let Value::String(k) = k {
+                            m.insert(k.as_str(), j);
+                        }
+                    }
+                    m
+                });
+                match at.get(gk.as_str()) {
+                    Some(&j)
+                        if pv.st.int(j, I_KIND) == kind
+                            && pv.st.int(j, I_COUNT) == cnt
+                            && own_eq(&node, &pv.nodes[j])
+                            && lifted == pv.glifts[j] =>
+                    {
+                        Some((j, path))
+                    }
+                    _ => {
+                        spelled = Some(path);
+                        None
+                    }
+                }
+            }
+            _ => None,
+        };
         if reuse {
             let pv = prev.expect("reuse implies a last frame");
             ints.extend_from_slice(&pv.st.ints[i * FI..(i + 1) * FI]);
@@ -1069,8 +1107,20 @@ fn flatten_full(
             gkeys.push(pv.gkeys[i].clone());
             paths.push(pv.paths[i].clone());
             changed.push(Value::Integer(0));
+        } else if let (Some((j, path)), Some(pv)) = (keyed, prev) {
+            // its entry is its own, but where it is in the tree, and
+            // whether it gives room (its children's roles), are this frame's
+            ints.extend_from_slice(&pv.st.ints[j * FI..(j + 1) * FI]);
+            ints[i * FI + I_FIRST] = first;
+            ints[i * FI + I_PARENT] = parent;
+            ints[i * FI + I_SHRINK] =
+                (spec.shrinks.contains(role) && !rigid_group(spec, &node, p, role)) as i64;
+            floats.extend_from_slice(&pv.st.floats[j * FF..(j + 1) * FF]);
+            gkeys.push(pv.gkeys[j].clone());
+            paths.push(st(&path));
+            changed.push(Value::Integer(0));
         } else {
-            let path = spell();
+            let path = spelled.take().unwrap_or_else(spell);
             let (ie, fe) = node_entry(spec, ts, &node, p, role, kind, cnt, first, parent)?;
             ints.extend_from_slice(&ie);
             floats.extend_from_slice(&fe);

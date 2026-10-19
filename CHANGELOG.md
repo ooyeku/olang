@@ -220,7 +220,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`gui.flat_emit`'s keyed keep** (`keep` `"keyed"`, `prev`
   `#{ flat, out }`; `gui.platform().flat_keyed`): on a frame whose shape
   changed, what last frame placed is kept by engine key in one native
-  pass — Loom's `ly_keyed_keep`, rule for rule.
+  pass — Loom's `ly_keyed_keep`, rule for rule. And `gui.flatten` on such
+  a frame takes last frame's entry for a node that has its key and is
+  what it was (its role, key, props, kind, child count and lifted
+  layers), where it read every node after the first that moved again:
+  Studio's notebook scrolled a cell in, 0.59 → 0.43 ms.
 - **`OLANG_TIER_STATS=1` lists what still crosses the bridge**: one
   `bridge-call: name(layouts) calls=… us=…` line per builtin or function
   value, most expensive first.
