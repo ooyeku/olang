@@ -76,20 +76,275 @@ fn role_of(n: &Node) -> Role {
         "region" => {
             if n.scrollable {
                 Role::ScrollView
-            } else {
+            } else if n.name.is_some() {
+                // a region is a landmark when it is named (as ARIA's is)
                 Role::Region
+            } else {
+                Role::GenericContainer
             }
         }
         "link" => Role::Link,
         "separator" => Role::Splitter,
         "figure" => Role::Figure,
+        "navigation" => Role::Navigation,
+        "main" => Role::Main,
+        "banner" => Role::Banner,
+        "complementary" => Role::Complementary,
+        "contentinfo" => Role::ContentInfo,
+        "form" => Role::Form,
+        "grid" => Role::Grid,
+        "rowheader" => Role::RowHeader,
+        "rowgroup" => Role::RowGroup,
+        "spinbutton" => Role::SpinButton,
+        "meter" => Role::Meter,
+        "toolbar" => Role::Toolbar,
+        "radiogroup" => Role::RadioGroup,
         _ => Role::GenericContainer,
+    }
+}
+
+// ── where a node stands in its set, its table's rows and columns ─────
+
+/// What the tree's shape says of a node: its place in its set (a list's
+/// item, a tree's, a tab, a table's row), a table's row and column, a
+/// set's or a table's size. Loom's virtualized lists lay out only the rows
+/// on screen, so a row's own `pos` wins over its order among the nodes.
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub struct Place {
+    /// 0-based place in its set, and the set's size (on the item).
+    pub in_set: Option<(usize, usize)>,
+    /// A table's row: its 0-based index. A cell: its row's.
+    pub row: Option<usize>,
+    /// A cell's or a header's 0-based column.
+    pub column: Option<usize>,
+    /// A container's items, or a table's rows and columns.
+    pub size: Option<usize>,
+    pub rows: Option<usize>,
+    pub columns: Option<usize>,
+}
+
+/// The item role a container's set is made of.
+fn item_role(container: &str) -> Option<&'static [&'static str]> {
+    Some(match container {
+        "list" => &["listitem"],
+        "tree" => &["treeitem"],
+        "table" | "grid" => &["row"],
+        "tablist" => &["tab"],
+        "menu" => &["menuitem"],
+        "radiogroup" => &["radio"],
+        _ => return None,
+    })
+}
+
+fn is_cell(role: &str) -> bool {
+    matches!(role, "cell" | "columnheader" | "rowheader")
+}
+
+/// The items of container `key`: its descendants of its item role, found
+/// through plain groups (a table's body, a list's scroller), not inside
+/// another container or an item.
+fn items_of(sc: &scene::Scene, key: &str, roles: &[&str], out: &mut Vec<String>) {
+    let Some(n) = sc.nodes.get(key) else { return };
+    for c in &n.children {
+        let Some(cn) = sc.nodes.get(c) else { continue };
+        if cn.decorative {
+            continue;
+        }
+        if roles.contains(&cn.role.as_str()) {
+            out.push(c.clone());
+        } else if item_role(&cn.role).is_none() && !is_cell(&cn.role) {
+            items_of(sc, c, roles, out);
+        }
+    }
+}
+
+/// A row's cells (and a header band's headers): through plain groups.
+fn cells_of(sc: &scene::Scene, key: &str, out: &mut Vec<String>) {
+    let Some(n) = sc.nodes.get(key) else { return };
+    for c in &n.children {
+        let Some(cn) = sc.nodes.get(c) else { continue };
+        if cn.decorative {
+            continue;
+        }
+        if is_cell(&cn.role) {
+            out.push(c.clone());
+        } else if item_role(&cn.role).is_none() && cn.role != "row" {
+            cells_of(sc, c, out);
+        }
+    }
+}
+
+/// Every node's place, by key (only nodes that have one).
+pub fn places(sc: &scene::Scene) -> HashMap<String, Place> {
+    let mut out: HashMap<String, Place> = HashMap::new();
+    for (key, n) in &sc.nodes {
+        if n.decorative {
+            continue;
+        }
+        let Some(roles) = item_role(&n.role) else {
+            continue;
+        };
+        let mut items = Vec::new();
+        items_of(sc, key, roles, &mut items);
+        let table = matches!(n.role.as_str(), "table" | "grid");
+        // a table's header row (its cells all column headers) is not one
+        // of its rows: its headers say their columns
+        let mut head_rows = Vec::new();
+        if table {
+            items.retain(|r| {
+                let mut cells = Vec::new();
+                cells_of(sc, r, &mut cells);
+                let head = !cells.is_empty() && cells.iter().all(|c| sc.nodes[c].role == "columnheader");
+                if head {
+                    head_rows.push(r.clone());
+                }
+                !head
+            });
+        }
+        // the set's size: what the items say of it, else how many there are
+        let said = items
+            .iter()
+            .filter_map(|k| sc.nodes.get(k)?.pos.map(|p| p.1 as usize))
+            .max();
+        let size = said.unwrap_or(items.len()).max(items.len());
+        if n.role == "tree" {
+            tree_places(sc, &items, &mut out);
+        } else {
+            for (i, k) in items.iter().enumerate() {
+                let at = sc.nodes[k].pos.map(|p| p.0 as usize).unwrap_or(i);
+                let e = out.entry(k.clone()).or_default();
+                e.in_set = Some((at, size));
+                if table {
+                    e.row = Some(at);
+                }
+            }
+        }
+        out.entry(key.clone()).or_default().size = Some(size);
+        if table {
+            // the columns: the most cells a row has, or the headers
+            let mut columns = 0;
+            for r in &items {
+                let mut cells = Vec::new();
+                cells_of(sc, r, &mut cells);
+                columns = columns.max(cells.len());
+                let row = out.get(r).and_then(|p| p.row);
+                for (j, ck) in cells.iter().enumerate() {
+                    let e = out.entry(ck.clone()).or_default();
+                    e.column = Some(j);
+                    e.row = row;
+                }
+            }
+            let mut heads = Vec::new();
+            headers_of(sc, key, &mut heads);
+            for r in &head_rows {
+                cells_of(sc, r, &mut heads);
+            }
+            for (j, hk) in heads.iter().enumerate() {
+                out.entry(hk.clone()).or_default().column = Some(j);
+            }
+            columns = columns.max(heads.len());
+            let c = out.entry(key.clone()).or_default();
+            c.rows = Some(size);
+            c.columns = Some(columns);
+        }
+    }
+    out
+}
+
+/// A table's column headers outside its rows (its header band).
+fn headers_of(sc: &scene::Scene, key: &str, out: &mut Vec<String>) {
+    let Some(n) = sc.nodes.get(key) else { return };
+    for c in &n.children {
+        let Some(cn) = sc.nodes.get(c) else { continue };
+        if cn.decorative {
+            continue;
+        }
+        if cn.role == "columnheader" {
+            out.push(c.clone());
+        } else if item_role(&cn.role).is_none() && cn.role != "row" && !is_cell(&cn.role) {
+            headers_of(sc, c, out);
+        }
+    }
+}
+
+/// A tree's items' places: among the items of their own level under the
+/// same parent item (a flat tree says each item's `level`), unless an
+/// item says its `pos`.
+fn tree_places(sc: &scene::Scene, items: &[String], out: &mut HashMap<String, Place>) {
+    let level = |k: &String| sc.nodes[k].level.unwrap_or(1);
+    for (i, k) in items.iter().enumerate() {
+        if let Some((at, n)) = sc.nodes[k].pos {
+            out.entry(k.clone()).or_default().in_set = Some((at as usize, n as usize));
+            continue;
+        }
+        let l = level(k);
+        // the run of siblings: back and on to an item of a lower level
+        let mut first = i;
+        while first > 0 && level(&items[first - 1]) >= l {
+            first -= 1;
+        }
+        let mut last = i;
+        while last + 1 < items.len() && level(&items[last + 1]) >= l {
+            last += 1;
+        }
+        let sibs: Vec<usize> = (first..=last).filter(|&j| level(&items[j]) == l).collect();
+        let at = sibs.iter().position(|&j| j == i).unwrap_or(0);
+        out.entry(k.clone()).or_default().in_set = Some((at, sibs.len()));
     }
 }
 
 /// What a node is called: its name, else its text.
 fn label_of(n: &Node) -> Option<String> {
     n.name.clone().or_else(|| n.text.clone())
+}
+
+/// How changes to a node are said: its own `live`, else its role's
+/// (a status and a log politely, an alert at once). `None` inherits.
+fn live_of(n: &Node) -> Option<accesskit::Live> {
+    match n.live.as_deref() {
+        Some("off") => Some(accesskit::Live::Off),
+        Some("assertive") => Some(accesskit::Live::Assertive),
+        Some(_) => Some(accesskit::Live::Polite),
+        None => match n.role.as_str() {
+            "status" | "log" => Some(accesskit::Live::Polite),
+            "alert" => Some(accesskit::Live::Assertive),
+            _ => None,
+        },
+    }
+}
+
+/// Whether assistive output may step the node up and down: a slider or
+/// a stepper, or a control with a range (not a measure: a progress, a
+/// meter).
+fn steps(n: &Node) -> bool {
+    !n.disabled
+        && (matches!(n.role.as_str(), "slider" | "spinbutton")
+            || n.numeric.is_some() && !matches!(n.role.as_str(), "progressbar" | "meter"))
+}
+
+/// The page scrolls a scroller can make from where it is (none up at its
+/// top, none down at its end).
+fn page_scrolls(n: &Node, max_x: f32, max_y: f32) -> Vec<Action> {
+    let mut out = Vec::new();
+    if n.offset.1 > 0.5 {
+        out.push(Action::ScrollUp);
+    }
+    if n.offset.1 < max_y - 0.5 {
+        out.push(Action::ScrollDown);
+    }
+    if n.offset.0 > 0.5 {
+        out.push(Action::ScrollLeft);
+    }
+    if n.offset.0 < max_x - 0.5 {
+        out.push(Action::ScrollRight);
+    }
+    out
+}
+
+/// How far a scroller can move, across and down.
+fn scroll_max(sc: &scene::Scene, n: &Node) -> (f32, f32) {
+    let (cw, ch) = sc.content_size(n);
+    ((cw - n.rect[2]).max(0.0), (ch - n.rect[3]).max(0.0))
 }
 
 /// The value assistive output reads for a node.
@@ -115,6 +370,7 @@ pub fn tree(st: &WinState) -> TreeUpdate {
     nodes.push((WINDOW_NODE, window));
     let said = |c: &String| st.scene.nodes.get(c).is_some_and(|n| !n.decorative);
     let lenders = lenders(st);
+    let places = places(&st.scene);
     for (key, n) in &st.scene.nodes {
         if n.decorative {
             continue;
@@ -155,10 +411,8 @@ pub fn tree(st: &WinState) -> TreeUpdate {
             .collect();
         // a styled field's text as runs: lines, words, characters, and
         // the selection a screen reader reads and moves
-        if let Some(r) = st.editors.get(key).and_then(|e| e.rich())
-            && !r.secure
-        {
-            let (runs, sel) = text_runs(st, key, r);
+        if let Some(f) = field_text(st, key) {
+            let (runs, sel) = text_runs(st, key, &f);
             for (id, run) in runs {
                 kids.push(id);
                 nodes.push((id, run));
@@ -181,25 +435,48 @@ pub fn tree(st: &WinState) -> TreeUpdate {
         if let Some(x) = n.expanded {
             node.set_expanded(x);
         }
+        // a heading's or a tree item's level: 1 the top, as the program
+        // says it (AccessKit counts from 0)
         if let Some(l) = n.level {
-            node.set_level(l as usize);
+            node.set_level(l.saturating_sub(1) as usize);
+        }
+        if let Some(p) = places.get(key) {
+            if let Some((at, size)) = p.in_set {
+                node.set_position_in_set(at);
+                node.set_size_of_set(size);
+            }
+            if let Some(r) = p.row {
+                node.set_row_index(r);
+            }
+            if let Some(c) = p.column {
+                node.set_column_index(c);
+            }
+            if let Some(size) = p.size {
+                node.set_size_of_set(size);
+            }
+            if let Some(r) = p.rows {
+                node.set_row_count(r);
+            }
+            if let Some(c) = p.columns {
+                node.set_column_count(c);
+            }
         }
         if let Some([v, lo, hi]) = n.numeric {
             node.set_numeric_value(v as f64);
             node.set_min_numeric_value(lo as f64);
             node.set_max_numeric_value(hi as f64);
+        }
+        if steps(n) {
             node.add_action(Action::Increment);
             node.add_action(Action::Decrement);
         }
-        if let Some(live) = &n.live {
-            node.set_live(match live.as_str() {
-                "assertive" => accesskit::Live::Assertive,
-                _ => accesskit::Live::Polite,
-            });
-        } else if matches!(n.role.as_str(), "status" | "log") {
-            node.set_live(accesskit::Live::Polite);
-        } else if n.role == "alert" {
-            node.set_live(accesskit::Live::Assertive);
+        if let Some(x) = n.expanded
+            && !n.disabled
+        {
+            node.add_action(if x { Action::Collapse } else { Action::Expand });
+        }
+        if let Some(live) = live_of(n) {
+            node.set_live(live);
         }
         if n.focusable && !n.disabled {
             node.add_action(Action::Focus);
@@ -228,6 +505,16 @@ pub fn tree(st: &WinState) -> TreeUpdate {
         if n.scrollable {
             node.set_scroll_x(n.offset.0 as f64);
             node.set_scroll_y(n.offset.1 as f64);
+            let (max_x, max_y) = scroll_max(&st.scene, n);
+            node.set_scroll_x_min(0.0);
+            node.set_scroll_y_min(0.0);
+            node.set_scroll_x_max(max_x as f64);
+            node.set_scroll_y_max(max_y as f64);
+            // a page at a time, as VoiceOver's scroll gestures ask: the
+            // ways it can still go
+            for a in page_scrolls(n, max_x, max_y) {
+                node.add_action(a);
+            }
         }
         // The node's actions (a card's "Move right"), its own or lent by
         // the container whose active descendant it is (see `actions_for`).
@@ -270,26 +557,73 @@ fn run_id(key: &str, i: usize, c: usize) -> NodeId {
     node_id(&format!("{key}\u{0}run:{i}:{c}"))
 }
 
-/// The runs of a styled field: a run a paragraph (in pieces of at most
-/// 255 characters, AccessKit's limit), each ending with its line break,
-/// and the selection as positions in them.
+/// A field's text as a screen reader reads it: its paragraphs, where each
+/// sits (a styled field's own; a plain field's runs take its box, so Zoom
+/// follows its caret to the field), the selection as (paragraph,
+/// character) ends, and how far it is scrolled down.
+pub struct FieldText {
+    paras: Vec<String>,
+    tops: Vec<Option<(f32, f32)>>,
+    sel: ((usize, usize), (usize, usize)),
+    scroll_y: f32,
+}
+
+fn field_text(st: &WinState, key: &str) -> Option<FieldText> {
+    let ed = st.editors.get(key)?;
+    if ed.secure() {
+        return None;
+    }
+    if let Some(r) = ed.rich() {
+        let n = r.para_count();
+        return Some(FieldText {
+            paras: (0..n).map(|i| r.para_text(i).to_string()).collect(),
+            tops: (0..n).map(|i| r.para_top(i)).collect(),
+            sel: r.selection_in_paras(),
+            scroll_y: r.scroll_y,
+        });
+    }
+    // a plain field (an input, a search): its lines, the selection's
+    // character offsets placed in them
+    let value = ed.value();
+    let paras: Vec<String> = value.split('\n').map(str::to_string).collect();
+    let (a, f) = ed.selection_chars();
+    let place = |mut c: usize| -> (usize, usize) {
+        for (i, p) in paras.iter().enumerate() {
+            let n = p.chars().count();
+            if c <= n || i + 1 == paras.len() {
+                return (i, c.min(n));
+            }
+            c -= n + 1;
+        }
+        (0, 0)
+    };
+    Some(FieldText {
+        tops: vec![None; paras.len()],
+        sel: (place(a), place(f)),
+        paras,
+        scroll_y: 0.0,
+    })
+}
+
+/// The runs of a field: a run a paragraph (in pieces of at most 255
+/// characters, AccessKit's limit), each ending with its line break, and
+/// the selection as positions in them.
 fn text_runs(
     st: &WinState,
     key: &str,
-    r: &super::rich::RichEditor,
+    f: &FieldText,
 ) -> (
     Vec<(NodeId, accesskit::Node)>,
     Option<accesskit::TextSelection>,
 ) {
     let s = st.scale as f64;
     let origin = st.scene.absolute(key);
-    let n = r.para_count();
-    let ((ai, ac), (fi, fc)) = r.selection_in_paras();
+    let n = f.paras.len();
+    let ((ai, ac), (fi, fc)) = f.sel;
     let mut out = Vec::new();
     let (mut anchor, mut focus) = (None, None);
     for i in 0..n {
-        let text = r.para_text(i);
-        let mut chars: Vec<char> = text.chars().collect();
+        let mut chars: Vec<char> = f.paras[i].chars().collect();
         if i + 1 < n {
             chars.push('\n');
         }
@@ -321,14 +655,23 @@ fn text_runs(
             }
             run.set_word_starts(starts);
             run.set_value(piece);
-            if let (Some(abs), Some((top, h))) = (origin, r.para_top(i)) {
-                let y = abs[1] as f64 * s + (top - r.scroll_y) as f64;
-                run.set_bounds(Rect {
+            match (origin, f.tops[i]) {
+                (Some(abs), Some((top, h))) => {
+                    let y = abs[1] as f64 * s + (top - f.scroll_y) as f64;
+                    run.set_bounds(Rect {
+                        x0: abs[0] as f64 * s,
+                        y0: y,
+                        x1: (abs[0] + abs[2]) as f64 * s,
+                        y1: y + h as f64,
+                    });
+                }
+                (Some(abs), None) => run.set_bounds(Rect {
                     x0: abs[0] as f64 * s,
-                    y0: y,
+                    y0: abs[1] as f64 * s,
                     x1: (abs[0] + abs[2]) as f64 * s,
-                    y1: y + h as f64,
-                });
+                    y1: (abs[1] + abs[3]) as f64 * s,
+                }),
+                _ => {}
             }
             let last = k + 1 == pieces;
             let at = |c: usize| -> Option<accesskit::TextPosition> {
@@ -354,10 +697,9 @@ fn text_runs(
 }
 
 /// A run's id as (paragraph, character), for a selection a client sets.
-fn run_place(st: &WinState, key: &str, id: NodeId) -> Option<(usize, usize)> {
-    let r = st.editors.get(key)?.rich()?;
-    for i in 0..r.para_count() {
-        let n = r.para_text(i).chars().count() + 1;
+fn run_place(f: &FieldText, key: &str, id: NodeId) -> Option<(usize, usize)> {
+    for (i, p) in f.paras.iter().enumerate() {
+        let n = p.chars().count() + 1;
         let mut c = 0;
         while c < n.max(1) {
             if run_id(key, i, c) == id {
@@ -437,14 +779,31 @@ pub fn action(st: &mut WinState, req: &ActionRequest, out: &mut Vec<Value>) {
         }
         Action::SetTextSelection => {
             if let Some(ActionData::SetTextSelection(sel)) = &req.data
-                && let Some((ai, ac)) = run_place(st, &key, sel.anchor.node)
-                && let Some((fi, fc)) = run_place(st, &key, sel.focus.node)
-                && let Some(r) = st.editors.get_mut(&key).and_then(|e| e.rich_mut())
+                && let Some(f) = field_text(st, &key)
+                && let Some((ai, ac)) = run_place(&f, &key, sel.anchor.node)
+                && let Some((fi, fc)) = run_place(&f, &key, sel.focus.node)
             {
-                r.select_paras(
+                let (a, b) = (
                     (ai, ac + sel.anchor.character_index),
                     (fi, fc + sel.focus.character_index),
                 );
+                match st.editors.get_mut(&key) {
+                    Some(e) if e.rich().is_some() => {
+                        if let Some(r) = e.rich_mut() {
+                            r.select_paras(a, b);
+                        }
+                    }
+                    Some(e) => {
+                        // a plain field's selection: as character offsets
+                        let off = |(i, c): (usize, usize)| -> usize {
+                            f.paras[..i].iter().map(|p| p.chars().count() + 1).sum::<usize>() + c
+                        };
+                        if let (Some(p), Ok(mut ts)) = (e.plain_mut(), super::text::system().lock()) {
+                            p.select_chars(off(a), off(b), &mut ts);
+                        }
+                    }
+                    None => return,
+                }
                 st.dirty = true;
                 st.a11y_dirty = true;
                 st.said_selection_of(&key, out);
@@ -479,6 +838,29 @@ pub fn action(st: &mut WinState, req: &ActionRequest, out: &mut Vec<Value>) {
             "a11y",
             vec![("key", s(&key)), ("action", s("decrement"))],
         )),
+        // a tree's item or a disclosure opened or closed: the program's,
+        // as a press of its chevron is
+        Action::Expand | Action::Collapse => out.push(ev(
+            "a11y",
+            vec![
+                ("key", s(&key)),
+                (
+                    "action",
+                    s(if req.action == Action::Expand {
+                        "expand"
+                    } else {
+                        "collapse"
+                    }),
+                ),
+            ],
+        )),
+        // a page at a time (VoiceOver's three-finger swipes): the engine
+        // scrolls as the wheel does, and says where it went
+        Action::ScrollUp | Action::ScrollDown | Action::ScrollLeft | Action::ScrollRight => {
+            let moved = scroll_page(&mut st.scene, &key, req.action);
+            st.said_scrolled(moved, out);
+            st.dirty = true;
+        }
         Action::CustomAction => {
             if let Some(ActionData::CustomAction(i)) = &req.data {
                 // a row's lent action is its container's
@@ -503,16 +885,53 @@ pub fn action(st: &mut WinState, req: &ActionRequest, out: &mut Vec<Value>) {
     }
 }
 
+/// Scroll `key` (or the scroller around it) a page in the direction the
+/// action says, a line's worth short of the view so a line stays.
+pub fn scroll_page(sc: &mut scene::Scene, key: &str, a: Action) -> Vec<(String, (f32, f32))> {
+    let Some(at) = sc.scroller_up(key) else {
+        return Vec::new();
+    };
+    let Some(n) = sc.nodes.get(&at) else {
+        return Vec::new();
+    };
+    let before = n.offset;
+    let (pw, ph) = ((n.rect[2] - 40.0).max(n.rect[2] * 0.5), (n.rect[3] - 40.0).max(n.rect[3] * 0.5));
+    let (dx, dy) = match a {
+        Action::ScrollUp => (0.0, -ph),
+        Action::ScrollDown => (0.0, ph),
+        Action::ScrollLeft => (-pw, 0.0),
+        _ => (pw, 0.0),
+    };
+    if let Some(n) = sc.nodes.get_mut(&at) {
+        n.offset.0 += dx;
+        n.offset.1 += dy;
+    }
+    sc.clamp_scroll(&at);
+    let after = sc.nodes[&at].offset;
+    if after == before {
+        Vec::new()
+    } else {
+        vec![(at, after)]
+    }
+}
+
 /// The tree as olang values, for tests: one map per node, in tree order.
 pub fn as_value(st: &mut WinState) -> Value {
     let mut out = Vec::new();
+    let places = places(&st.scene);
     if let Some(r) = st.scene.root.clone() {
-        walk(st, &r, 0, &mut out);
+        walk(st, &places, &r, 0, &mut out);
     }
     Value::List(Arc::new(out))
 }
 
-fn walk(st: &WinState, key: &str, depth: i64, out: &mut Vec<Value>) {
+fn walk(
+    st: &WinState,
+    places: &HashMap<String, Place>,
+    key: &str,
+    depth: i64,
+    out: &mut Vec<Value>,
+) {
     let Some(n) = st.scene.nodes.get(key) else {
         return;
     };
@@ -531,6 +950,36 @@ fn walk(st: &WinState, key: &str, depth: i64, out: &mut Vec<Value>) {
     if n.edit.is_some() && !n.disabled {
         actions.push(s("set_value"));
     }
+    if steps(n) {
+        actions.push(s("increment"));
+        actions.push(s("decrement"));
+    }
+    if let Some(x) = n.expanded
+        && !n.disabled
+    {
+        actions.push(s(if x { "collapse" } else { "expand" }));
+    }
+    if n.scrollable {
+        let (mx, my) = scroll_max(&st.scene, n);
+        for a in page_scrolls(n, mx, my) {
+            actions.push(s(match a {
+                Action::ScrollUp => "scroll_up",
+                Action::ScrollDown => "scroll_down",
+                Action::ScrollLeft => "scroll_left",
+                _ => "scroll_right",
+            }));
+        }
+    }
+    let place = places.get(key).copied().unwrap_or_default();
+    let int = |v: Option<usize>| v.map(|v| Value::Integer(v as i64)).unwrap_or(Value::Unit);
+    let pair = |v: Option<(usize, usize)>| {
+        v.map(|(a, b)| Value::Tuple(Arc::new(vec![Value::Integer(a as i64), Value::Integer(b as i64)])))
+            .unwrap_or(Value::Unit)
+    };
+    let bounds = match st.scene.absolute(key) {
+        Some(b) => Value::Tuple(Arc::new(b.iter().map(|v| super::values::float(*v)).collect())),
+        None => Value::Unit,
+    };
     let custom: Vec<Value> = actions_for(st, key, &lenders(st))
         .map(|(_, actions)| actions.iter().map(|a| s(a)).collect())
         .unwrap_or_default();
@@ -557,18 +1006,59 @@ fn walk(st: &WinState, key: &str, depth: i64, out: &mut Vec<Value>) {
         ("custom", Value::List(Arc::new(custom))),
         ("description", opt_str(n.description.as_deref())),
         ("active", opt_str(n.active.as_deref())),
+        // its box in the window (logical pixels): what Zoom follows
+        ("bounds", bounds),
+        (
+            "placeholder",
+            opt_str(
+                n.edit
+                    .as_ref()
+                    .map(|e| e.placeholder.as_str())
+                    .filter(|p| !p.is_empty()),
+            ),
+        ),
+        ("level", n.level.map(|l| Value::Integer(l as i64)).unwrap_or(Value::Unit)),
+        ("expanded", n.expanded.map(Value::Boolean).unwrap_or(Value::Unit)),
+        (
+            "live",
+            match live_of(n) {
+                Some(accesskit::Live::Off) => s("off"),
+                Some(accesskit::Live::Polite) => s("polite"),
+                Some(accesskit::Live::Assertive) => s("assertive"),
+                None => Value::Unit,
+            },
+        ),
+        // its place in its set (0-based, and the set's size), a table's
+        // row and column, a container's size, a table's rows and columns
+        ("in_set", pair(place.in_set)),
+        ("row", int(place.row)),
+        ("column", int(place.column)),
+        ("size", int(place.size)),
+        ("rows", int(place.rows)),
+        ("columns", int(place.columns)),
+        (
+            "range",
+            match n.numeric {
+                Some([v, lo, hi]) => Value::Tuple(Arc::new(vec![
+                    super::values::float(v),
+                    super::values::float(lo),
+                    super::values::float(hi),
+                ])),
+                None => Value::Unit,
+            },
+        ),
         (
             "text_runs",
-            match st.editors.get(key).and_then(|e| e.rich()) {
-                Some(r) => Value::Integer(text_runs(st, key, r).0.len() as i64),
+            match field_text(st, key) {
+                Some(f) => Value::Integer(text_runs(st, key, &f).0.len() as i64),
                 None => Value::Unit,
             },
         ),
         (
             "text_selection",
-            match st.editors.get(key).and_then(|e| e.rich()) {
-                Some(r) => {
-                    let ((ai, ac), (fi, fc)) = r.selection_in_paras();
+            match field_text(st, key) {
+                Some(f) => {
+                    let ((ai, ac), (fi, fc)) = f.sel;
                     Value::Tuple(Arc::new(vec![
                         Value::Integer(ai as i64),
                         Value::Integer(ac as i64),
@@ -581,6 +1071,6 @@ fn walk(st: &WinState, key: &str, depth: i64, out: &mut Vec<Value>) {
         ),
     ]));
     for c in &n.children {
-        walk(st, c, depth + 1, out);
+        walk(st, places, c, depth + 1, out);
     }
 }

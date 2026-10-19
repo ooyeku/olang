@@ -54,8 +54,10 @@ impl Retained {
     pub fn render(&mut self, dl: &DisplayList) -> &Damage {
         let (w, h) = (dl.width.max(1), dl.height.max(1));
         let items = items(dl);
-        if !matches!(&self.pm, Some(p) if (p.width(), p.height()) == (w, h)) {
-            self.pm = Pixmap::new(w, h);
+        if !matches!(&self.pm, Some(p) if (p.width(), p.height()) == (w, h)) || dl.redraw {
+            if !matches!(&self.pm, Some(p) if (p.width(), p.height()) == (w, h)) {
+                self.pm = Pixmap::new(w, h);
+            }
             self.tracker.invalidate();
         }
         let bounds: Vec<IRect> = items.iter().map(|i| i.bounds).collect();
@@ -121,6 +123,9 @@ impl Retained {
                 }
             }
         }
+        if let (Some(n), Some(pm)) = (dl.flash, self.pm.as_mut()) {
+            tint(pm, &damage::drawn(&d, w, h), damage::flash_color(n));
+        }
         damage::count(&d, w, h);
         self.tracker.commit(next);
         self.last = Some(d);
@@ -141,6 +146,29 @@ impl Retained {
             Damage::Rects(mut r) => {
                 r.extend(self.last_shifts.iter().map(|s| s.dst));
                 Damage::Rects(r)
+            }
+        }
+    }
+}
+
+/// The repaint rainbow's tint over `rects` of a premultiplied pixmap.
+fn tint(pm: &mut Pixmap, rects: &[IRect], c: [u8; 4]) {
+    let pw = pm.width() as usize;
+    let a = c[3] as u32;
+    let src = [
+        c[0] as u32 * a / 255,
+        c[1] as u32 * a / 255,
+        c[2] as u32 * a / 255,
+        a,
+    ];
+    let data = pm.data_mut();
+    for r in rects {
+        for y in r.y0..r.y1 {
+            for x in r.x0..r.x1 {
+                let i = (y as usize * pw + x as usize) * 4;
+                for k in 0..4 {
+                    data[i + k] = (src[k] + data[i + k] as u32 * (255 - a) / 255).min(255) as u8;
+                }
             }
         }
     }

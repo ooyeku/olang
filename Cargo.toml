@@ -329,6 +329,10 @@ name = "gui_macos_a11y_test"
 harness = false
 
 [[test]]
+name = "gui_macos_a11y_depth_test"
+harness = false
+
+[[test]]
 name = "gui_macos_teardown_test"
 harness = false
 

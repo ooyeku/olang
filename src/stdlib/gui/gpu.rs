@@ -880,6 +880,33 @@ impl Drop for Prepared {
     }
 }
 
+/// The repaint rainbow: a translucent instance over each region the frame
+/// draws, after its primitives (damage has taken their items: the tint is
+/// never part of what it compares, so a region keeps the colour of the
+/// frame that last drew it).
+fn flash(p: &mut Prepared, d: &Damage, n: u32) {
+    let fill = premul(damage::flash_color(n));
+    for r in damage::drawn(d, p.width, p.height) {
+        p.insts.push(Inst {
+            rect: [
+                r.x0 as f32,
+                r.y0 as f32,
+                (r.x1 - r.x0) as f32,
+                (r.y1 - r.y0) as f32,
+            ],
+            clip: [-1.0e9, -1.0e9, 1.0e9, 1.0e9],
+            fill,
+            border: [0.0; 4],
+            radii: [0.0; 4],
+            uv: [0.0; 4],
+            params: [0.0; 4],
+            clip_radii: [0.0; 4],
+        });
+        p.src.push(ANY);
+        p.bounds.push(r);
+    }
+}
+
 /// A vector path's part drawn by instance `inst` over `rect` (device
 /// pixels: its pixels in the window and its clip).
 struct PathJob {
@@ -1861,7 +1888,13 @@ impl Target {
     /// check that damage draws what a whole frame draws). Its damage.
     pub fn render(&mut self, dl: &DisplayList) -> Damage {
         let mut p = self.gpu.prepare(dl);
+        if dl.redraw {
+            self.tracker.invalidate();
+        }
         let (d, shifts, next) = self.damage_of(&mut p);
+        if let Some(n) = dl.flash {
+            flash(&mut p, &d, n);
+        }
         let mut enc = self
             .gpu
             .device
@@ -2044,7 +2077,13 @@ impl Surface {
         }
         self.resize(dl.width, dl.height);
         let mut p = self.gpu.prepare(dl);
+        if dl.redraw {
+            self.target.tracker.invalidate();
+        }
         let (d, shifts, next) = self.target.damage_of(&mut p);
+        if let Some(n) = dl.flash {
+            flash(&mut p, &d, n);
+        }
         if d == Damage::None && shifts.is_empty() {
             if gpu_timed() {
                 eprintln!("gui: gpu nothing drawn or presented");

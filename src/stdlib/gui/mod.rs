@@ -1105,7 +1105,9 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
         }
         // An assistive action, as a screen reader asks for it: `action`
         // ("click", "focus", "set_value" with `value`, "increment",
-        // "decrement", "custom" with `index`) on the node `key`.
+        // "decrement", "expand", "collapse", "scroll_up"/"_down"/"_left"/
+        // "_right" (a page), "scroll_into_view", "custom" with `index`)
+        // on the node `key`.
         Some("a11y") => {
             use accesskit::{Action, ActionData, ActionRequest, TreeId};
             let key = get_str(&args[1], "key", what)?
@@ -1115,6 +1117,13 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
                 "focus" => (Action::Focus, None),
                 "increment" => (Action::Increment, None),
                 "decrement" => (Action::Decrement, None),
+                "expand" => (Action::Expand, None),
+                "collapse" => (Action::Collapse, None),
+                "scroll_up" => (Action::ScrollUp, None),
+                "scroll_down" => (Action::ScrollDown, None),
+                "scroll_left" => (Action::ScrollLeft, None),
+                "scroll_right" => (Action::ScrollRight, None),
+                "scroll_into_view" => (Action::ScrollIntoView, None),
                 "set_value" => (
                     Action::SetValue,
                     Some(ActionData::Value(
@@ -1129,7 +1138,7 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
                 ),
                 other => {
                     return Err(format!(
-                        "gui.input: unknown assistive action \"{other}\" (click, focus, set_value, increment, decrement, custom)"
+                        "gui.input: unknown assistive action \"{other}\" (click, focus, set_value, increment, decrement, expand, collapse, scroll_up, scroll_down, scroll_left, scroll_right, scroll_into_view, custom)"
                     ));
                 }
             };
@@ -1250,6 +1259,15 @@ fn gui_set(args: Vec<Value>) -> Res<Value> {
                 st.scene.continuous = on;
                 st.dirty = true;
             }
+        }
+        // the repaint rainbow (an inspector's): each region a frame draws
+        // tinted, each frame its own colour; off, the window drawn whole
+        if let Some(on) = get_bool(v, "flash", what)?
+            && on != st.flash.is_some()
+        {
+            st.flash = on.then_some(0);
+            st.redraw = !on;
+            st.dirty = true;
         }
         if let Some(z) = get_num(v, "zoom", what)? {
             let mut out = Vec::new();

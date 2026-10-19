@@ -458,6 +458,12 @@ pub struct Node {
     /// events, its candidates at `ime_area` (its own pixels).
     pub input: bool,
     pub ime_area: Option<[f32; 4]>,
+    /// Where the node stands in its set, 0-based, and the set's size: a
+    /// virtualized list's row (only the rows on screen are nodes, so
+    /// their order among their siblings is not their place), a table's
+    /// row, a tree's item among its own siblings. Assistive output says
+    /// "3 of 1,200"; without it the place is counted from the tree.
+    pub pos: Option<(u32, u32)>,
 }
 
 pub const HOVER: usize = 0;
@@ -503,6 +509,24 @@ pub const ROLES: &[&str] = &[
     "link",
     "separator",
     "figure",
+    // landmarks: the parts of a window VoiceOver's rotor jumps between
+    "navigation",
+    "main",
+    "banner",
+    "complementary",
+    "contentinfo",
+    "form",
+    // a table whose cells are its controls, its rows' headers, a band of
+    // rows (a table's header row, its body)
+    "grid",
+    "rowheader",
+    "rowgroup",
+    // a number set by − and + (a stepper), a measure (not a task's
+    // progress), a band of controls, a set of radios
+    "spinbutton",
+    "meter",
+    "toolbar",
+    "radiogroup",
 ];
 
 /// A role a pointer or Enter/Space activates.
@@ -541,6 +565,8 @@ pub fn focusable_by_default(role: &str) -> bool {
             | "list"
             | "table"
             | "tree"
+            | "grid"
+            | "spinbutton"
     )
 }
 
@@ -580,6 +606,7 @@ const NODE_KEYS: &[&str] = &[
     "fit",
     "input",
     "ime_area",
+    "pos",
 ];
 
 #[derive(Default)]
@@ -811,6 +838,9 @@ impl Scene {
             scrollable: get_bool(op, "scroll", what)?.unwrap_or(role == "region"),
             offset,
             level: get_num(op, "level", what)?.map(|n| n as u32),
+            // "polite" (said when the person pauses), "assertive" (said
+            // at once), "off" (a status's or a log's own politeness taken
+            // back); anything else is polite, as it always was
             live: get_str(op, "live", what)?.map(str::to_string),
             content: get_pair(op, "content", what)?,
             modal: get_bool(op, "modal", what)?.unwrap_or(false),
@@ -842,6 +872,14 @@ impl Scene {
             fit: get_str(op, "fit", what)?.unwrap_or("contain").to_string(),
             input: get_bool(op, "input", what)?.unwrap_or(false),
             ime_area: super::values::get_rect(op, "ime_area", what)?,
+            // (index, count); one that cannot be (an index past the
+            // count) is left out rather than refuse the patch
+            pos: get(op, "pos").and_then(nums).and_then(|v| match v.as_slice() {
+                [i, n] if *i >= 0.0 && *n >= 1.0 && i < n => {
+                    Some((*i as u32, n.min(u32::MAX as f32) as u32))
+                }
+                _ => None,
+            }),
         };
         // Detach from the old parent (or the root slot) when it moved.
         if previous.is_some() && old_parent != parent {

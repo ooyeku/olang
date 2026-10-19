@@ -16,7 +16,7 @@ use accesskit::{
 use accesskit_consumer::{FilterResult, FullNodeId, NodeRef, Tree};
 use block2::RcBlock;
 use objc2::{
-    ClassType, DeclaredClass, declare_class, msg_send_id,
+    ClassType, DeclaredClass, declare_class, msg_send, msg_send_id,
     mutability::InteriorMutable,
     rc::Id,
     runtime::{AnyObject, Bool, Sel},
@@ -24,7 +24,7 @@ use objc2::{
 };
 use objc2_app_kit::*;
 use objc2_foundation::{
-    NSArray, NSAttributedString, NSCopying, NSInteger, NSMutableAttributedString,
+    NSArray, NSAttributedString, NSCopying, NSDictionary, NSInteger, NSMutableAttributedString,
     NSMutableDictionary, NSNumber, NSObject, NSObjectProtocol, NSPoint, NSRange, NSRect, NSString,
     NSURL, ns_string,
 };
@@ -33,6 +33,163 @@ use std::rc::{Rc, Weak};
 use crate::{context::Context, filters::filter, util::*};
 
 const SCROLL_TO_VISIBLE_ACTION: &str = "AXScrollToVisible";
+
+// The page scrolls VoiceOver asks a scroll area for (its three-finger
+// swipes), as WebKit and Chromium name them.
+const SCROLL_PAGE_ACTIONS: [(&str, Action); 4] = [
+    ("AXScrollUpByPage", Action::ScrollUp),
+    ("AXScrollDownByPage", Action::ScrollDown),
+    ("AXScrollLeftByPage", Action::ScrollLeft),
+    ("AXScrollRightByPage", Action::ScrollRight),
+];
+
+const SEARCH_PREDICATE: &str = "AXUIElementsForSearchPredicate";
+const SEARCH_COUNT: &str = "AXUIElementCountForSearchPredicate";
+
+fn is_table(role: Role) -> bool {
+    matches!(role, Role::Table | Role::Grid | Role::TreeGrid)
+}
+
+fn is_row(role: Role) -> bool {
+    matches!(role, Role::Row | Role::TreeItem)
+}
+
+fn is_cell(role: Role) -> bool {
+    matches!(
+        role,
+        Role::Cell | Role::GridCell | Role::ColumnHeader | Role::RowHeader
+    )
+}
+
+/// A table's rows (a tree's items): its filtered descendants of a row's
+/// role, found through the groups between (a body that scrolls), not
+/// inside a row or another table.
+fn rows_of<'a>(node: &NodeRef<'a>, out: &mut Vec<NodeRef<'a>>) {
+    for c in node.filtered_children(filter) {
+        let role = c.role();
+        if is_row(role) {
+            // a header row (its cells all column headers) is the table's
+            // header, not one of its rows
+            let mut cells = Vec::new();
+            cells_of(&c, &is_cell, &mut cells);
+            let head = !cells.is_empty() && cells.iter().all(|h| h.role() == Role::ColumnHeader);
+            if !head {
+                out.push(c);
+            }
+        } else if !is_table(role) && !is_cell(role) {
+            rows_of(&c, out);
+        }
+    }
+}
+
+/// A row's cells, or a table's column headers outside its rows.
+fn cells_of<'a>(node: &NodeRef<'a>, want: &dyn Fn(Role) -> bool, out: &mut Vec<NodeRef<'a>>) {
+    for c in node.filtered_children(filter) {
+        let role = c.role();
+        if want(role) {
+            out.push(c);
+        } else if !is_table(role) && !is_row(role) && !is_cell(role) {
+            cells_of(&c, want, out);
+        }
+    }
+}
+
+/// Every filtered descendant of `node`, in reading order.
+fn descendants<'a>(node: &NodeRef<'a>, out: &mut Vec<NodeRef<'a>>) {
+    for c in node.filtered_children(filter) {
+        out.push(c);
+        descendants(&c, out);
+    }
+}
+
+fn is_landmark(node: &NodeRef) -> bool {
+    match node.role() {
+        Role::Banner
+        | Role::Complementary
+        | Role::ContentInfo
+        | Role::Form
+        | Role::Main
+        | Role::Navigation
+        | Role::Search => true,
+        Role::Region => node.label().is_some(),
+        _ => false,
+    }
+}
+
+fn is_text_field(role: Role) -> bool {
+    matches!(
+        role,
+        Role::TextInput
+            | Role::MultilineTextInput
+            | Role::SearchInput
+            | Role::EmailInput
+            | Role::NumberInput
+            | Role::PasswordInput
+            | Role::PhoneNumberInput
+            | Role::UrlInput
+            | Role::DateInput
+            | Role::DateTimeInput
+            | Role::WeekInput
+            | Role::MonthInput
+            | Role::TimeInput
+            | Role::EditableComboBox
+    )
+}
+
+fn is_control(role: Role) -> bool {
+    is_text_field(role)
+        || matches!(
+            role,
+            Role::Button
+                | Role::DefaultButton
+                | Role::CheckBox
+                | Role::RadioButton
+                | Role::Switch
+                | Role::Slider
+                | Role::SpinButton
+                | Role::ComboBox
+                | Role::ColorWell
+                | Role::Tab
+                | Role::DisclosureTriangle
+                | Role::MenuItem
+                | Role::MenuItemCheckBox
+                | Role::MenuItemRadio
+                | Role::RadioGroup
+                | Role::TabList
+        )
+}
+
+/// Whether `node` is what a VoiceOver rotor's search key asks for
+/// (WebKit's and Chromium's `AXUIElementsForSearchPredicate` keys).
+fn matches_search_key(node: &NodeRef, key: &str, start: Option<&NodeRef>) -> bool {
+    let role = node.role();
+    match key {
+        "AXAnyTypeSearchKey" => true,
+        "AXHeadingSearchKey" => role == Role::Heading,
+        "AXHeadingLevel1SearchKey" => role == Role::Heading && node.level() == Some(0),
+        "AXHeadingLevel2SearchKey" => role == Role::Heading && node.level() == Some(1),
+        "AXHeadingLevel3SearchKey" => role == Role::Heading && node.level() == Some(2),
+        "AXHeadingLevel4SearchKey" => role == Role::Heading && node.level() == Some(3),
+        "AXHeadingLevel5SearchKey" => role == Role::Heading && node.level() == Some(4),
+        "AXHeadingLevel6SearchKey" => role == Role::Heading && node.level() == Some(5),
+        "AXLinkSearchKey" | "AXUnvisitedLinkSearchKey" => role == Role::Link,
+        "AXLandmarkSearchKey" => is_landmark(node),
+        "AXControlSearchKey" => is_control(role),
+        "AXButtonSearchKey" => matches!(role, Role::Button | Role::DefaultButton),
+        "AXCheckBoxSearchKey" => matches!(role, Role::CheckBox | Role::Switch),
+        "AXRadioGroupSearchKey" => role == Role::RadioGroup,
+        "AXTextFieldSearchKey" => is_text_field(role),
+        "AXTableSearchKey" => is_table(role),
+        "AXListSearchKey" => matches!(role, Role::List | Role::ListBox | Role::Tree),
+        "AXStaticTextSearchKey" => role == Role::Label,
+        "AXGraphicSearchKey" => role == Role::Image,
+        "AXKeyboardFocusableSearchKey" => node.is_focusable(&filter),
+        "AXLiveRegionSearchKey" => node.data().live().is_some_and(|l| l != accesskit::Live::Off),
+        "AXSameTypeSearchKey" => start.is_some_and(|s| s.role() == role),
+        "AXDifferentTypeSearchKey" => start.is_some_and(|s| s.role() != role),
+        _ => false,
+    }
+}
 
 fn ns_role(node: &NodeRef) -> &'static NSAccessibilityRole {
     let role = node.role();
@@ -123,7 +280,7 @@ fn ns_role(node: &NodeRef) -> &'static NSAccessibilityRole {
             Role::Grid => NSAccessibilityTableRole,
             Role::Group => NSAccessibilityGroupRole,
             Role::Header => NSAccessibilityGroupRole,
-            Role::Heading => ns_string!("Heading"),
+            Role::Heading => ns_string!("AXHeading"),
             Role::Iframe => NSAccessibilityGroupRole,
             Role::IframePresentational => NSAccessibilityGroupRole,
             Role::ImeCandidate => NSAccessibilityUnknownRole,
@@ -151,7 +308,7 @@ fn ns_role(node: &NodeRef) -> &'static NSAccessibilityRole {
             Role::Ruby => NSAccessibilityGroupRole,
             Role::RubyAnnotation => NSAccessibilityUnknownRole,
             Role::ScrollBar => NSAccessibilityScrollBarRole,
-            Role::ScrollView => NSAccessibilityUnknownRole,
+            Role::ScrollView => NSAccessibilityScrollAreaRole,
             Role::Search => NSAccessibilityGroupRole,
             Role::Section => NSAccessibilityGroupRole,
             Role::SectionFooter => NSAccessibilityGroupRole,
@@ -1107,6 +1264,16 @@ declare_class!(
         #[method_id(accessibilityRows)]
         fn rows(&self) -> Option<Id<NSArray<PlatformNode>>> {
             self.resolve_with_context(|node, _, context| {
+                // a table's and a tree's rows, chosen or not
+                if is_table(node.role()) || node.role() == Role::Tree {
+                    let mut rows = Vec::new();
+                    rows_of(node, &mut rows);
+                    let platform_nodes = rows
+                        .iter()
+                        .map(|r| context.get_or_create_platform_node(r.id()))
+                        .collect::<Vec<Id<PlatformNode>>>();
+                    return Some(NSArray::from_vec(platform_nodes));
+                }
                 let wrapper = NodeWrapper(node);
                 if !wrapper.is_container_with_selectable_children() {
                     return None;
@@ -1135,6 +1302,165 @@ declare_class!(
                 Some(NSArray::from_vec(platform_nodes))
             })
             .flatten()
+        }
+
+
+        // ── tables, trees and sets (olang) ──
+
+        #[method(accessibilityRowCount)]
+        fn row_count(&self) -> NSInteger {
+            self.resolve(|node| {
+                node.data().row_count().unwrap_or_else(|| {
+                    let mut rows = Vec::new();
+                    rows_of(node, &mut rows);
+                    rows.len()
+                }) as NSInteger
+            })
+            .unwrap_or(0)
+        }
+
+        #[method(accessibilityColumnCount)]
+        fn column_count(&self) -> NSInteger {
+            self.resolve(|node| node.data().column_count().unwrap_or(0) as NSInteger)
+                .unwrap_or(0)
+        }
+
+        // a row's (a tree item's, a list item's) place among its table's
+        // rows or its set
+        #[method(accessibilityIndex)]
+        fn index(&self) -> NSInteger {
+            self.resolve(|node| {
+                let d = node.data();
+                d.row_index().or(d.position_in_set()).unwrap_or(0) as NSInteger
+            })
+            .unwrap_or(0)
+        }
+
+        #[method(accessibilityRowIndexRange)]
+        fn row_index_range(&self) -> NSRange {
+            self.resolve(|node| {
+                node.data()
+                    .row_index()
+                    .map(|r| NSRange::new(r, node.data().row_span().unwrap_or(1)))
+            })
+            .flatten()
+            .unwrap_or(NSRange::new(0, 0))
+        }
+
+        #[method(accessibilityColumnIndexRange)]
+        fn column_index_range(&self) -> NSRange {
+            self.resolve(|node| {
+                node.data()
+                    .column_index()
+                    .map(|c| NSRange::new(c, node.data().column_span().unwrap_or(1)))
+            })
+            .flatten()
+            .unwrap_or(NSRange::new(0, 0))
+        }
+
+        #[method_id(accessibilityColumnHeaderUIElements)]
+        fn column_headers(&self) -> Option<Id<NSArray<PlatformNode>>> {
+            self.resolve_with_context(|node, _, context| {
+                if !is_table(node.role()) {
+                    return None;
+                }
+                // its headers: outside its rows, or in its header row
+                let mut heads = Vec::new();
+                fn walk<'a>(n: &NodeRef<'a>, heads: &mut Vec<NodeRef<'a>>) {
+                    for c in n.filtered_children(filter) {
+                        let role = c.role();
+                        if role == Role::ColumnHeader {
+                            heads.push(c);
+                        } else if !is_table(role) && !is_cell(role) {
+                            walk(&c, heads);
+                        }
+                    }
+                }
+                walk(node, &mut heads);
+                Some(NSArray::from_vec(
+                    heads
+                        .iter()
+                        .map(|h| context.get_or_create_platform_node(h.id()))
+                        .collect::<Vec<Id<PlatformNode>>>(),
+                ))
+            })
+            .flatten()
+        }
+
+        #[method_id(accessibilityCellForColumn:row:)]
+        fn cell_for(&self, column: NSInteger, row: NSInteger) -> Option<Id<PlatformNode>> {
+            self.resolve_with_context(|node, _, context| {
+                let mut rows = Vec::new();
+                rows_of(node, &mut rows);
+                let r = rows.iter().find(|r| {
+                    r.data().row_index().map(|i| i as NSInteger) == Some(row)
+                })?;
+                let mut cells = Vec::new();
+                cells_of(r, &is_cell, &mut cells);
+                let c = cells.iter().enumerate().find(|(j, c)| {
+                    c.data().column_index().unwrap_or(*j) as NSInteger == column
+                })?;
+                Some(context.get_or_create_platform_node(c.1.id()))
+            })
+            .flatten()
+        }
+
+        // an outline's row: its depth, and whether it is open
+        #[method(accessibilityDisclosureLevel)]
+        fn disclosure_level(&self) -> NSInteger {
+            self.resolve(|node| node.level().unwrap_or(0) as NSInteger)
+                .unwrap_or(0)
+        }
+
+        #[method(isAccessibilityDisclosed)]
+        fn is_disclosed(&self) -> bool {
+            self.resolve(|node| node.data().is_expanded() == Some(true))
+                .unwrap_or(false)
+        }
+
+        #[method(setAccessibilityDisclosed:)]
+        fn set_disclosed(&self, open: bool) {
+            self.open_or_close(open);
+        }
+
+        #[method(isAccessibilityExpanded)]
+        fn is_expanded(&self) -> bool {
+            self.resolve(|node| node.data().is_expanded() == Some(true))
+                .unwrap_or(false)
+        }
+
+        #[method(setAccessibilityExpanded:)]
+        fn set_expanded(&self, open: bool) {
+            self.open_or_close(open);
+        }
+
+        // VoiceOver's rotor: the elements of a kind (headings, links,
+        // landmarks, form controls, tables) after or before one
+        #[method_id(accessibilityParameterizedAttributeNames)]
+        fn parameterized_attribute_names(&self) -> Option<Id<NSArray<NSString>>> {
+            let base: Option<Id<NSArray<NSString>>> =
+                unsafe { msg_send_id![super(self), accessibilityParameterizedAttributeNames] };
+            let mut names: Vec<Id<NSString>> = base.map(|b| b.to_vec_retained()).unwrap_or_default();
+            names.push(NSString::from_str(SEARCH_PREDICATE));
+            names.push(NSString::from_str(SEARCH_COUNT));
+            Some(NSArray::from_vec(names))
+        }
+
+        #[method_id(accessibilityAttributeValue:forParameter:)]
+        fn parameterized_value(&self, attr: &NSString, param: Option<&AnyObject>) -> Option<Id<AnyObject>> {
+            let name = attr.to_string();
+            if name == SEARCH_PREDICATE || name == SEARCH_COUNT {
+                let found = param.map(|p| self.search(p)).unwrap_or_default();
+                if name == SEARCH_COUNT {
+                    let n = NSNumber::new_isize(found.len() as isize);
+                    Some(unsafe { Id::cast::<AnyObject>(n) })
+                } else {
+                    let arr = NSArray::from_vec(found);
+                    Some(unsafe { Id::cast::<AnyObject>(arr) })
+                }
+            } else {
+                unsafe { msg_send_id![super(self), accessibilityAttributeValue: attr, forParameter: param] }
+            }
         }
 
         #[method(accessibilityPerformPick)]
@@ -1248,6 +1574,11 @@ declare_class!(
                 if node.supports_action(Action::ScrollIntoView, &filter) {
                     result.push(ns_string!(SCROLL_TO_VISIBLE_ACTION).copy());
                 }
+                for (name, action) in SCROLL_PAGE_ACTIONS {
+                    if node.data().supports_action(action) {
+                        result.push(NSString::from_str(name));
+                    }
+                }
             });
             NSArray::from_vec(result)
         }
@@ -1255,6 +1586,20 @@ declare_class!(
         #[method(accessibilityPerformAction:)]
         fn perform_action(&self, action: &NSString) {
             self.resolve_with_context(|node, tree, context| {
+                let name = action.to_string();
+                if let Some((_, page)) = SCROLL_PAGE_ACTIONS.iter().find(|(n, _)| *n == name) {
+                    if node.data().supports_action(*page) {
+                        if let Some((target_node, target_tree)) = tree.state().locate_node(node.id()) {
+                            context.do_action(ActionRequest {
+                                action: *page,
+                                target_tree,
+                                target_node,
+                                data: None,
+                            });
+                        }
+                    }
+                    return;
+                }
                 if action == ns_string!(SCROLL_TO_VISIBLE_ACTION) {
                     if let Some((target_node, target_tree)) = tree.state().locate_node(node.id()) {
                         context.do_action(ActionRequest {
@@ -1306,11 +1651,50 @@ declare_class!(
                     let wrapper = NodeWrapper(node);
                     return wrapper.is_item_like();
                 }
-                if selector == sel!(accessibilityRows)
-                    || selector == sel!(accessibilitySelectedRows)
-                {
+                if selector == sel!(accessibilityRows) {
                     let wrapper = NodeWrapper(node);
                     return wrapper.is_container_with_selectable_children()
+                        || is_table(node.role())
+                        || node.role() == Role::Tree;
+                }
+                if selector == sel!(accessibilitySelectedRows) {
+                    let wrapper = NodeWrapper(node);
+                    return wrapper.is_container_with_selectable_children()
+                }
+                if selector == sel!(accessibilityRowCount)
+                    || selector == sel!(accessibilityColumnCount)
+                    || selector == sel!(accessibilityColumnHeaderUIElements)
+                    || selector == sel!(accessibilityCellForColumn:row:)
+                {
+                    return is_table(node.role());
+                }
+                if selector == sel!(accessibilityIndex) {
+                    let d = node.data();
+                    return d.row_index().is_some() || d.position_in_set().is_some();
+                }
+                if selector == sel!(accessibilityRowIndexRange) {
+                    return node.data().row_index().is_some() && is_cell(node.role());
+                }
+                if selector == sel!(accessibilityColumnIndexRange) {
+                    return node.data().column_index().is_some();
+                }
+                if selector == sel!(accessibilityDisclosureLevel)
+                    || selector == sel!(isAccessibilityDisclosed)
+                    || selector == sel!(setAccessibilityDisclosed:)
+                {
+                    return node.role() == Role::TreeItem;
+                }
+                if selector == sel!(isAccessibilityExpanded) {
+                    return node.data().is_expanded().is_some();
+                }
+                if selector == sel!(setAccessibilityExpanded:) {
+                    let d = node.data();
+                    return d.supports_action(Action::Expand) || d.supports_action(Action::Collapse);
+                }
+                if selector == sel!(accessibilityParameterizedAttributeNames)
+                    || selector == sel!(accessibilityAttributeValue:forParameter:)
+                {
+                    return true;
                 }
                 if selector == sel!(setAccessibilitySelected:)
                     || selector == sel!(accessibilityPerformPick)
@@ -1436,6 +1820,119 @@ impl PlatformNode {
         F: FnOnce(&NodeRef) -> T,
     {
         self.resolve_with_context(|node, _, _| f(node))
+    }
+
+    /// Open or close a tree's item or a disclosure, as its program does.
+    fn open_or_close(&self, open: bool) {
+        self.resolve_with_context(|node, tree, context| {
+            let action = if open { Action::Expand } else { Action::Collapse };
+            if !node.data().supports_action(action) {
+                return;
+            }
+            if let Some((target_node, target_tree)) = tree.state().locate_node(node.id()) {
+                context.do_action(ActionRequest {
+                    action,
+                    target_tree,
+                    target_node,
+                    data: None,
+                });
+            }
+        });
+    }
+
+    /// The elements under this one that a search predicate asks for (a
+    /// dictionary: `AXSearchKey`, a key or an array of them;
+    /// `AXStartElement`; `AXDirection`; `AXResultsLimit`; `AXSearchText`;
+    /// `AXImmediateDescendantsOnly`), in reading order from the start.
+    fn search(&self, predicate: &AnyObject) -> Vec<Id<PlatformNode>> {
+        let get = |k: &str| -> Option<Id<AnyObject>> {
+            let key = NSString::from_str(k);
+            let is_dict: bool = unsafe { msg_send![predicate, isKindOfClass: NSDictionary::<NSString, AnyObject>::class()] };
+            if !is_dict {
+                return None;
+            }
+            unsafe { msg_send_id![predicate, objectForKey: &*key] }
+        };
+        let as_string = |o: &AnyObject| -> Option<String> {
+            let is: bool = unsafe { msg_send![o, isKindOfClass: NSString::class()] };
+            is.then(|| unsafe { &*(o as *const AnyObject as *const NSString) }.to_string())
+        };
+        let mut keys: Vec<String> = Vec::new();
+        if let Some(k) = get("AXSearchKey") {
+            if let Some(s) = as_string(&k) {
+                keys.push(s);
+            } else {
+                let is_array: bool = unsafe { msg_send![&*k, isKindOfClass: NSArray::<AnyObject>::class()] };
+                if is_array {
+                    let arr = unsafe { &*(&*k as *const AnyObject as *const NSArray<AnyObject>) };
+                    for item in arr.to_vec_retained() {
+                        if let Some(s) = as_string(&item) {
+                            keys.push(s);
+                        }
+                    }
+                }
+            }
+        }
+        if keys.is_empty() {
+            keys.push("AXAnyTypeSearchKey".to_string());
+        }
+        let backwards = get("AXDirection")
+            .and_then(|d| as_string(&d))
+            .is_some_and(|d| d == "AXDirectionPrevious");
+        let limit: isize = get("AXResultsLimit")
+            .map(|n| unsafe { msg_send![&*n, integerValue] })
+            .unwrap_or(-1);
+        let text = get("AXSearchText")
+            .and_then(|t| as_string(&t))
+            .filter(|t| !t.is_empty())
+            .map(|t| t.to_lowercase());
+        let immediate = get("AXImmediateDescendantsOnly")
+            .map(|n| -> bool { unsafe { msg_send![&*n, boolValue] } })
+            .unwrap_or(false);
+        let start_id = get("AXStartElement").and_then(|e| {
+            let obj = unsafe { &*(&*e as *const AnyObject as *const NSObject) };
+            downcast_ref::<PlatformNode>(obj).map(|p| p.ivars().node_id)
+        });
+        self.resolve_with_context(|node, tree, context| {
+            let mut all = Vec::new();
+            if immediate {
+                all.extend(node.filtered_children(filter));
+            } else {
+                descendants(node, &mut all);
+            }
+            let state = tree.state();
+            let start = start_id.and_then(|id| state.node_by_id(id));
+            let at = start
+                .as_ref()
+                .and_then(|s| all.iter().position(|n| n.id() == s.id()));
+            let ordered: Vec<&NodeRef> = match (backwards, at) {
+                (false, Some(i)) => all[i + 1..].iter().collect(),
+                (false, None) => all.iter().collect(),
+                (true, Some(i)) => all[..i].iter().rev().collect(),
+                (true, None) => all.iter().rev().collect(),
+            };
+            let mut out = Vec::new();
+            for n in ordered {
+                if !keys.iter().any(|k| matches_search_key(n, k, start.as_ref())) {
+                    continue;
+                }
+                if let Some(t) = &text {
+                    let said = [n.label(), n.value(), n.description()]
+                        .into_iter()
+                        .flatten()
+                        .any(|s| s.to_lowercase().contains(t.as_str()));
+                    if !said {
+                        continue;
+                    }
+                }
+                out.push(context.get_or_create_platform_node(n.id()));
+                if limit > 0 && out.len() as isize >= limit {
+                    break;
+                }
+            }
+            out
+        })
+        .unwrap_or_default()
     }
 
     fn children_internal(&self) -> Option<Id<NSArray<PlatformNode>>> {

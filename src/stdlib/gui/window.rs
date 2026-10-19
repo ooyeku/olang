@@ -171,6 +171,11 @@ pub struct WinState {
     last_press: Option<(std::time::Instant, f32, f32, u32)>,
     /// The scene changed since the last frame.
     pub dirty: bool,
+    /// The repaint rainbow is on (`gui.set`'s `flash`): the next frame's
+    /// number, for its colour.
+    pub flash: Option<u32>,
+    /// The next frame is drawn whole (the rainbow turned off).
+    pub redraw: bool,
     /// The accessibility tree should be rebuilt.
     pub a11y_dirty: bool,
     /// Where the last frame drew the caret, in logical pixels and
@@ -364,6 +369,8 @@ impl WinState {
             focused_window: true,
             last_press: None,
             dirty: true,
+            flash: None,
+            redraw: false,
             a11y_dirty: true,
             caret: None,
             clip: None,
@@ -2284,6 +2291,11 @@ impl WinState {
             clear: self.clear,
             prims: Vec::new(),
             scrolls: Vec::new(),
+            flash: self.flash.map(|n| {
+                self.flash = Some(n.wrapping_add(1));
+                n
+            }),
+            redraw: self.redraw,
         };
         self.caret = None;
         self.shown_anims.clear();
@@ -4926,6 +4938,13 @@ pub struct DisplayList {
     pub prims: Vec<Prim>,
     /// The scrolled regions drawn, for damage to follow their moves.
     pub scrolls: Vec<super::damage::Scroll>,
+    /// The repaint rainbow: the regions this frame draws tinted with
+    /// frame `n`'s colour (`damage::flash_color`), over its pixels and
+    /// unseen by damage, so a region keeps the tint of the frame that
+    /// last drew it.
+    pub flash: Option<u32>,
+    /// Draw this frame whole (the rainbow turned off: its tints gone).
+    pub redraw: bool,
 }
 
 /// A hover that left the text: no line or column.

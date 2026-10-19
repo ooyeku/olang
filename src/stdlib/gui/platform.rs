@@ -263,6 +263,19 @@ pub fn available() -> bool {
 /// - `turn_watch`: `gui.turn(true|false)` around a program's turn; one
 ///   that runs past 2 s is shown in its windows while it runs.
 ///
+/// - `a11y_depth`: a node takes `pos` ((index, count): its place in its
+///   set, for a virtualized list's rows) and `live: "off"`; the roles
+///   take the landmarks (`navigation`, `main`, `banner`, `complementary`,
+///   `contentinfo`, `form`) and `grid`, `rowheader`, `rowgroup`,
+///   `spinbutton`, `meter`, `toolbar`, `radiogroup`; tables say their
+///   rows and columns; assistive output may step a `slider` or a
+///   `spinbutton` (`a11y` events `increment`/`decrement`), open and close
+///   what has `expanded` (`expand`/`collapse`), and scroll a page.
+///
+/// - `flash`: `gui.set(w, #{ "flash": true })` tints every region a frame
+///   draws, each frame its own colour (the repaint rainbow of Loom's
+///   inspector); `false` draws the window whole again.
+///
 /// A program (Loom) asks before it uses what an older engine refuses.
 pub fn capabilities() -> Value {
     let mac = cfg!(target_os = "macos");
@@ -314,6 +327,10 @@ pub fn capabilities() -> Value {
         // under the box blurred on the GPU, the opaque `bg` in software
         // and under Reduce Transparency
         ("material", b(true)),
+        // the accessibility tree's places, roles and actions (a11y.rs)
+        ("a11y_depth", b(true)),
+        // `gui.set`'s `flash`: the repaint rainbow (damage.rs)
+        ("flash", b(true)),
     ])
 }
 
@@ -984,6 +1001,8 @@ impl App {
                 pw.wake = Some(pw.wake.map_or(next, |w| w.min(next)));
             }
             st.dirty = false;
+            // a frame drawn whole once (the rainbow turned off)
+            st.redraw = false;
             // the tree is built only when a client is listening (a long
             // styled text is a run a paragraph)
             let tree = st.a11y_dirty;
