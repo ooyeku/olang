@@ -2331,8 +2331,17 @@ impl WinState {
             self.paint_node(key, ox, oy, clip, opacity, st, rect, ts, dl, rings);
             return;
         };
-        let now = self.clock_ms();
+        // still (reduced motion, a still headless window): drawn as it
+        // is, nothing kept
         let runs = self.motion.runs(self.settings.reduce_motion);
+        if !runs {
+            if !self.motion.records.is_empty() {
+                self.motion.records.clear();
+            }
+            self.paint_node(key, ox, oy, clip, opacity, st, rect, ts, dl, rings);
+            return;
+        }
+        let now = self.clock_ms();
         let hovered = self
             .scene
             .hover
