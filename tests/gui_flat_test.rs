@@ -76,6 +76,26 @@ fn frames() = {
     // keyed with nothing to go by: everything placed afresh
     let e4 = gui.flat_emit(f2, (), SPEC, "keyed", ())
     say("four", f2, e4)
+    // the frames as the engine's patches (gui.flat_diff), each against
+    // the last; what each frame's placements say (gui.flat_index)
+    let pages = map([e1, e2, e3], (e) => gui.flat_join(e.pre, e.recs, e.probs, e.lifts).nodes)
+    let mut ops = #{}
+    for (i, nodes) in enumerate(pages) {
+        let d = gui.flat_diff(ops, nodes)
+        println("diff " + to_string(i) + " out " + show(map(d.out, (o) => (o.key, o.parent, o.index))) + " removes " + show(d.removes)
+            + " moved " + show(d.moved) + " idx " + show(d.idx) + " next " + show(map_keys(d.next)))
+        ops = d.next
+        let ix = gui.flat_index(nodes, "w")
+        println("index " + to_string(i) + " " + show(map_keys(ix.index)) + " " + show(map_keys(ix.present)) + " " + to_string(ix.nkeys) + " " + show(len(ix.rare)))
+    }
+    // a child moved among its siblings, one changed and one gone
+    let a = [#{ "gkey": "r", "gop": #{ "key": "r" } }, #{ "gkey": "x", "gop": #{ "key": "x", "parent": "r", "index": 0 } },
+             #{ "gkey": "y", "gop": #{ "key": "y", "parent": "r", "index": 1 } }, #{ "gkey": "z", "gop": #{ "key": "z", "parent": "r", "index": 2 } }]
+    let b = [#{ "gkey": "r", "gop": #{ "key": "r" } }, #{ "gkey": "y", "gop": #{ "key": "y", "parent": "r", "index": 0 } },
+             #{ "gkey": "x", "gop": #{ "key": "x", "parent": "r", "index": 1, "name": "new" } }]
+    let d0 = gui.flat_diff(#{}, a)
+    let d1 = gui.flat_diff(d0.next, b)
+    println("moves " + show(d1))
 }
 frames()
 "##;
@@ -129,4 +149,11 @@ fn the_flat_calls_answer_alike_on_both_tiers() {
     assert!(tree.contains("two-b arrays alike true"), "{tree}");
     // keyed with no last frame: placed afresh
     assert!(line("four").ends_with("kept 0"), "{}", line("four"));
+    // the third frame, laid out as the second, sends nothing
+    assert!(tree.contains("diff 2 out [] removes []"), "{tree}");
+    // y kept its parent and moved up an index (only its index: not sent),
+    // x changed, z left
+    let moves = tree.lines().find(|l| l.starts_with("moves ")).expect("moves");
+    assert!(moves.contains(r#""moved": #{"r": 1}"#) && moves.contains(r#""idx": #{"y": true}"#), "{moves}");
+    assert!(moves.contains(r#""key": "z""#), "{moves}");
 }

@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`gui.flat_diff(prev, nodes)` and `gui.flat_index(nodes, wkey)`**
+  (`gui.platform().flat_diff`, `flat_index`): Loom's per-frame passes
+  over every placement in one native pass each — a frame's operations
+  against last frame's by key (what changed, what left, the parents
+  whose children moved among themselves: Loom works out only their
+  order), and what rt_frame reads off each placement (the index by key,
+  the keys shown, the regions that follow or ask where they are
+  scrolled, and the few placements that ask for more). Both tiers; the
+  VM reads and builds its own values. Studio's notebook scrolled
+  (headless, interleaved, with Loom using them): frame p50 2.47 →
+  1.74 ms, p90 4.39 → 3.24, a cell move 4.90 → 3.95.
+
 - **`gui`: the role `alert`** (said at once, interrupting: AccessKit's
   `Alert`, live and assertive) beside `status` (polite).
 - **`gui`: the Mac's own menu items around a program's**: Services,
