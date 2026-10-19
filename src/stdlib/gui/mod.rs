@@ -829,6 +829,12 @@ fn render_stats() -> Value {
     f.push(("raster_glyphs", int(glyphs as u64)));
     f.push(("raster_bytes", int(glyph_bytes as u64)));
     f.push(("raster_evictions", int(glyph_ev)));
+    // texts shaped (a cache miss) and found shaped, since the start
+    if let Ok(ts) = text::system().lock() {
+        f.push(("texts_shaped", int(ts.shaped)));
+        f.push(("texts_found", int(ts.found)));
+        f.push(("texts_cached", int(ts.cached() as u64)));
+    }
     let (pieces, piece_bytes, piece_ev) = canvas::pieces_stats();
     f.push(("pieces", int(pieces as u64)));
     f.push(("piece_bytes", int(piece_bytes as u64)));
@@ -1170,9 +1176,11 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
                 return Err("gui.input: \"clock\" sets a headless window's clock; a real window's is the time".into());
             }
             st.set_clock(ms as f64);
-            // a glide moves on with it (each step said)
+            // a glide moves on with it, and a drag-select past a field's
+            // edge steps as a real window's frames step it (each step said)
             let mut out = Vec::new();
             st.tick(&mut out);
+            st.autoscroll(&mut out);
             drop(st);
             emit(out);
             return Ok(Value::Unit);

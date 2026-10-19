@@ -221,6 +221,11 @@ pub struct WinState {
     /// this window's clock (ms): the platform draws again then. `None`
     /// when nothing in view moves.
     pub next_frame: Option<f64>,
+    /// A drag selecting text past its field's edge scrolls it on, a step
+    /// a frame: the clock at the last step.
+    autoscroll_at: Option<f64>,
+    /// Each spell-checked field's misspelled words.
+    spell: HashMap<String, Spelling>,
     /// The press that played or paused an animation: its release is not
     /// the program's.
     swallow_up: bool,
@@ -387,6 +392,8 @@ impl WinState {
             plays: HashMap::new(),
             shown_anims: Vec::new(),
             next_frame: None,
+            autoscroll_at: None,
+            spell: HashMap::new(),
             swallow_up: false,
             click_mod: false,
             click_count: 0,
@@ -894,6 +901,67 @@ impl WinState {
         }
         let h = ed.layout(ts).height();
         ((content_h - h) / 2.0).max(0.0)
+    }
+
+    /// A field being drag-selected with the pointer past its edge: the
+    /// field and how far past (device pixels; negative before it, along
+    /// y for a field of lines, along x for a line).
+    fn autoscroll_reach(&self) -> Option<(String, f32)> {
+        let p = self.scene.pressed.as_deref()?;
+        let ed = self.editors.get(p)?;
+        if !ed.dragging() {
+            return None;
+        }
+        let (ox, oy, w, h) = self.edit_origin(p)?;
+        let (x, y) = (self.pointer.0 * self.scale, self.pointer.1 * self.scale);
+        let (v, lo, hi) = if ed.multiline() { (y, oy, oy + h) } else { (x, ox, ox + w) };
+        let past = if v < lo { v - lo } else if v > hi { v - hi } else { 0.0 };
+        (past != 0.0).then(|| (p.to_string(), past))
+    }
+
+    /// A step of a drag-select past a field's edge: the text scrolls on,
+    /// the faster the farther past, and the selection follows the pointer
+    /// (a frame's, on the window's clock; a headless window's moves with
+    /// its test clock).
+    pub fn autoscroll(&mut self, out: &mut Vec<Value>) {
+        let Some((key, past)) = self.autoscroll_reach() else {
+            self.autoscroll_at = None;
+            return;
+        };
+        let now = self.clock_ms();
+        let Some(last) = self.autoscroll_at.replace(now) else {
+            // the first step a refresh after the pointer left
+            self.dirty = true;
+            return;
+        };
+        let dt = (now - last).clamp(0.0, 100.0) as f32;
+        if dt <= 0.0 {
+            return;
+        }
+        let s = self.scale.max(0.01);
+        // logical pixels a second: ten times the distance past, within
+        // a line a refresh at a pointer's width past and a page at most
+        let speed = ((past.abs() / s) * 10.0).clamp(30.0, 3000.0);
+        let step = (speed * dt / 1000.0 * s).copysign(past);
+        let Some((ox, oy, _, h)) = self.edit_origin(&key) else { return };
+        let Ok(mut ts) = text::system().lock() else { return };
+        let dy = self.edit_text_dy(&key, h, &mut ts);
+        let (x, y) = (self.pointer.0 * s, self.pointer.1 * s);
+        let Some(ed) = self.editors.get_mut(&key) else { return };
+        if let Some(r) = ed.rich_mut() {
+            let to = r.scroll_y + step;
+            r.scroll_set(to, &mut ts);
+            r.drag(x - ox + r.scroll_x, y - oy + r.scroll_y, &mut ts);
+        } else if let Some(e) = ed.plain_mut() {
+            // a line: the caret goes on past the edge, and the field
+            // follows it
+            let past_x = if e.multiline { 0.0 } else { step };
+            let tx = x - ox + e.scroll_x + past_x;
+            e.drag(tx, y - oy - dy, &mut ts);
+        }
+        drop(ts);
+        self.report_selection(&key, out);
+        self.dirty = true;
     }
 
     /// Set the text size: the window keeps its logical size and lays out
@@ -2247,6 +2315,135 @@ impl WinState {
         ])
     }
 
+    /// The focused field's text as the platform's text input reads it
+    /// (an input method's context, dictation, Look Up): its value, its
+    /// selection (characters, low and high) and whether a composition is
+    /// under way. `None` with no field focused, or a password.
+    pub fn text_input(&self) -> Option<(String, usize, usize, bool)> {
+        let f = self.scene.focus.as_deref()?;
+        let ed = self.editors.get(f)?;
+        if ed.secure() {
+            return None;
+        }
+        let (a, b) = ed.selection_chars();
+        Some((ed.value(), a.min(b), a.max(b), ed.is_composing()))
+    }
+
+    /// A field's visual lines as assistive output places them (VoiceOver,
+    /// Zoom following the caret): each line and its box, device pixels in
+    /// the window, its characters' left edges (from the box's left, as
+    /// AccessKit's `character_positions`) and widths.
+    /// A styled field's lines in view only (the rest keep their
+    /// paragraph's box). `None` off a field, or for a password.
+    pub fn field_lines(&mut self, key: &str) -> Option<Vec<(text::FieldLine, [f32; 4])>> {
+        if self.editors.get(key)?.secure() {
+            return None;
+        }
+        let (ox, oy, w, h) = self.edit_origin(key)?;
+        let mut ts = text::system().lock().ok()?;
+        let dy = self.edit_text_dy(key, h, &mut ts);
+        let ed = self.editors.get_mut(key)?;
+        let (sx, sy) = ed.scrolled();
+        let lines = ed.lines(sy, sy + h, &mut ts);
+        Some(
+            lines
+                .into_iter()
+                .map(|l| {
+                    let y0 = oy + dy + l.top - sy;
+                    let mut l = l;
+                    // along the box, as AccessKit's character positions are
+                    for x in l.xs.iter_mut() {
+                        *x -= sx;
+                    }
+                    let b = [ox, y0, w, l.height];
+                    (l, b)
+                })
+                .collect(),
+        )
+    }
+
+    /// Select characters `a..b` of the focused field (text the platform
+    /// puts in over a range replaces it).
+    pub fn select_text_input(&mut self, a: usize, b: usize) {
+        let Some(f) = self.scene.focus.clone() else { return };
+        let Ok(mut ts) = text::system().lock() else { return };
+        match self.editors.get_mut(&f) {
+            Some(super::edit::Field::Plain(e)) => e.select_chars(a, b, &mut ts),
+            Some(super::edit::Field::Rich(r)) => r.select_chars(a, b),
+            None => {}
+        }
+    }
+
+    /// Device pixels in the window to a field `key`'s text coordinates
+    /// (its top-left, scroll included), as a press finds them.
+    fn to_text(&mut self, key: &str, x: f32, y: f32, ts: &mut text::TextSystem) -> Option<(f32, f32)> {
+        let (ox, oy, _, h) = self.edit_origin(key)?;
+        let dy = self.edit_text_dy(key, h, ts);
+        let (sx, sy) = self.editors.get(key)?.scrolled();
+        Some((x - ox + sx, y - oy - dy + sy))
+    }
+
+    /// The box of a field's characters `a..b` (its first line's), device
+    /// pixels in the window.
+    fn text_box(&mut self, key: &str, a: usize, b: usize, ts: &mut text::TextSystem) -> Option<[f32; 4]> {
+        let (ox, oy, _, h) = self.edit_origin(key)?;
+        let dy = self.edit_text_dy(key, h, ts);
+        let ed = self.editors.get_mut(key)?;
+        let (sx, sy) = ed.scrolled();
+        let bx = ed.char_box(a, b, ts);
+        Some([
+            ox + bx.x0 as f32 - sx,
+            oy + dy + bx.y0 as f32 - sy,
+            ((bx.x1 - bx.x0) as f32).max(1.0),
+            ((bx.y1 - bx.y0) as f32).max(1.0),
+        ])
+    }
+
+    /// The box of the focused field's characters `a..b`, logical pixels
+    /// in the window (the platform's: AppKit's points).
+    pub fn text_input_rect(&mut self, a: usize, b: usize) -> Option<[f32; 4]> {
+        let f = self.scene.focus.clone()?;
+        let mut ts = text::system().lock().ok()?;
+        let r = self.text_box(&f, a, b, &mut ts)?;
+        let s = self.platform_scale.max(0.01);
+        Some(r.map(|v| v / s))
+    }
+
+    /// The focused field's character at a point, logical pixels in the
+    /// window (AppKit's points).
+    pub fn text_input_index(&mut self, x: f32, y: f32) -> Option<usize> {
+        let f = self.scene.focus.clone()?;
+        let s = self.platform_scale.max(0.01);
+        let mut ts = text::system().lock().ok()?;
+        let (tx, ty) = self.to_text(&f, x * s, y * s, &mut ts)?;
+        Some(self.editors.get_mut(&f)?.char_at_point(tx, ty, &mut ts))
+    }
+
+    /// The word at a point (logical pixels in the window, AppKit's points)
+    /// in whichever field is there, for Look Up: the word, its box
+    /// (logical pixels in the window) and the field's text size (logical).
+    /// `None` off a field, over a password, or between words.
+    pub fn word_at(&mut self, x: f32, y: f32) -> Option<(String, [f32; 4], f32)> {
+        let s = self.platform_scale.max(0.01);
+        let (dx, dy) = (x * s, y * s);
+        let hit = self.scene.hit(dx / self.scale, dy / self.scale)?;
+        let k = self.scene.target_up(&hit, |n| n.edit.is_some())?;
+        if self.editors.get(&k)?.secure() {
+            return None;
+        }
+        let size = self.scene.nodes.get(&k).map(|n| n.style.font.size).unwrap_or(13.0);
+        let mut ts = text::system().lock().ok()?;
+        let (tx, ty) = self.to_text(&k, dx, dy, &mut ts)?;
+        let ed = self.editors.get_mut(&k)?;
+        let (a, b) = ed.word_at_point(tx, ty, &mut ts);
+        let word: String = ed.value().chars().skip(a).take(b.saturating_sub(a)).collect();
+        if !word.chars().any(char::is_alphanumeric) {
+            return None;
+        }
+        let r = self.text_box(&k, a, b, &mut ts)?;
+        Some((word, r.map(|v| v / s), size * self.scale / s))
+    }
+
     /// Whether the focused node is a text field, or a node that takes the
     /// keyboard as it is (the input method is allowed only then).
     pub fn wants_ime(&self) -> bool {
@@ -2300,6 +2497,10 @@ impl WinState {
         self.caret = None;
         self.shown_anims.clear();
         self.next_frame = None;
+        // a drag past a field's edge: the next step a refresh on
+        if self.autoscroll_reach().is_some() {
+            self.next_frame = Some(self.clock_ms() + AUTOSCROLL_MS);
+        }
         self.bar_hits.clear();
         let Some(root) = self.scene.root.clone() else {
             return dl;
@@ -2691,8 +2892,10 @@ impl WinState {
         }
         if self.editors.get(key).is_some_and(|e| e.rich().is_some()) {
             self.paint_rich(key, &st, content, inner_clip, focused, opacity, ts, dl);
+            self.paint_spelling(key, content, inner_clip, focused, opacity, ts, dl);
         } else if self.editors.contains_key(key) {
             self.paint_editor(key, &st, content, inner_clip, focused, opacity, ts, dl);
+            self.paint_spelling(key, content, inner_clip, focused, opacity, ts, dl);
         } else if let Some(t) = &text {
             let max_w = if st.wrap { Some(content[2] / s) } else { None };
             let align_w = if st.align != Align::Start {
@@ -3549,7 +3752,7 @@ impl WinState {
                 let (ba, bb) = r.para_char_bytes(di, a, b);
                 let boxes = r.range_boxes(di, ba, bb);
                 for prim in dl.prims[first..].iter_mut() {
-                    if let Prim::Glyph { x, y, color, .. } = prim {
+                    if let Prim::Glyph { x, y, color, key, .. } = prim {
                         let hit = boxes.iter().any(|bx| {
                             *x >= ox + bx.x0 as f32 - 0.5
                                 && *x < ox + bx.x1 as f32 - 0.5
@@ -3558,6 +3761,7 @@ impl WinState {
                         });
                         if hit {
                             *color = fade(c);
+                            key.tone = super::raster::tone_of(*color);
                         }
                     }
                 }
@@ -3575,7 +3779,7 @@ impl WinState {
                             x,
                             (oy + py + b.y1 as f32 - 2.0 * s).round(),
                             w,
-                            s.max(1.0),
+                            s.round().max(1.0),
                             c,
                             clip,
                         ));
@@ -3585,7 +3789,7 @@ impl WinState {
                             x,
                             (oy + py + ((b.y0 + b.y1) / 2.0) as f32).round(),
                             w,
-                            s.max(1.0),
+                            s.round().max(1.0),
                             c,
                             clip,
                         ));
@@ -3594,11 +3798,12 @@ impl WinState {
             }
             if let Some((a, b)) = r.para_compose(i) {
                 for bx in r.range_boxes(i, a, b) {
+                    let (uy, uh) = snap_line(oy + py + bx.y1 as f32 - s, s);
                     dl.prims.push(solid(
                         ox + bx.x0 as f32,
-                        oy + py + bx.y1 as f32 - s,
+                        uy,
                         (bx.x1 - bx.x0) as f32,
-                        s,
+                        uh,
                         fade(st.color),
                         clip,
                     ));
@@ -4465,6 +4670,90 @@ impl WinState {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// A spell-checked field's misspelled words, a dotted line under
+    /// each (the system's red), as a Mac's text views draw them; the word
+    /// being typed at the caret is left until it is done.
+    #[allow(clippy::too_many_arguments)]
+    fn paint_spelling(
+        &mut self,
+        key: &str,
+        content: [f32; 4],
+        clip: Clip,
+        focused: bool,
+        opacity: f32,
+        ts: &mut TextSystem,
+        dl: &mut DisplayList,
+    ) {
+        let on = self
+            .scene
+            .nodes
+            .get(key)
+            .and_then(|n| n.edit.as_ref())
+            .is_some_and(|e| e.spellcheck && !e.secure);
+        if !on {
+            self.spell.remove(key);
+            return;
+        }
+        let Some(ed) = self.editors.get(key) else { return };
+        if ed.is_composing() {
+            return;
+        }
+        let value = ed.value();
+        let (a, f) = ed.selection_chars();
+        let caret = (a == f).then_some(f);
+        let now = self.clock_ms();
+        let sp = self.spell.entry(key.to_string()).or_default();
+        if let Some(due) = sp.update(&value, now) {
+            self.next_frame = Some(self.next_frame.map_or(due, |n| n.min(due)));
+        }
+        let words = sp.found.clone();
+        let s = self.scale;
+        // a styled field: only the paragraphs in view are looked at
+        let shown = self.editors.get_mut(key).and_then(|e| e.rich_mut()).map(|r| {
+            let y = r.scroll_y;
+            r.visible(y, y + content[3], ts)
+        });
+        let clip = clip.intersect(Clip::rect(content[0], content[1], content[0] + content[2], content[1] + content[3]));
+        let red: Color = [255, 59, 48, (255.0 * opacity).round() as u8];
+        let d = (1.5 * s).round().max(2.0);
+        for (wa, wb) in words {
+            if focused && caret.is_some_and(|c| c >= wa && c <= wb) {
+                continue;
+            }
+            if let (Some(band), Some(r)) = (&shown, self.editors.get(key).and_then(|e| e.rich())) {
+                if !band.contains(&r.para_of_char(wa)) {
+                    continue;
+                }
+            }
+            let Some(b) = self.text_box(key, wa, wb, ts) else { continue };
+            if b[1] > clip.y1 || b[1] + b[3] < clip.y0 {
+                continue;
+            }
+            let y = (b[1] + b[3] - d).round();
+            let mut x = b[0].round();
+            while x + d <= b[0] + b[2] + 0.5 {
+                dl.prims.push(Prim::Rect {
+                    x,
+                    y,
+                    w: d,
+                    h: d,
+                    fill: red,
+                    border: [0, 0, 0, 0],
+                    border_width: 0.0,
+                    radii: [d / 2.0; 4],
+                    clip,
+                });
+                x += 2.0 * d;
+            }
+        }
+    }
+
+    /// The misspelled words a spell-checked field shows underlined
+    /// (characters), as last found.
+    pub fn misspelled(&self, key: &str) -> Vec<(usize, usize)> {
+        self.spell.get(key).map(|s| s.found.clone()).unwrap_or_default()
+    }
+
     fn paint_editor(
         &mut self,
         key: &str,
@@ -4562,11 +4851,12 @@ impl WinState {
                     parley::Cursor::from_byte_index(layout, range.end, parley::Affinity::Upstream),
                 );
                 sel.geometry_with(layout, |b, _| {
+                    let (uy, uh) = snap_line(oy + b.y1 as f32 - s, s);
                     dl.prims.push(Prim::Rect {
                         x: ox + b.x0 as f32,
-                        y: oy + b.y1 as f32 - s,
+                        y: uy,
                         w: (b.x1 - b.x0) as f32,
-                        h: s,
+                        h: uh,
                         fill: fade(st.color),
                         border: [0, 0, 0, 0],
                         border_width: 0.0,
@@ -4707,6 +4997,12 @@ pub fn eol_cut(label: &str, keep: usize) -> Option<String> {
     Some(trimmed.to_string() + "…")
 }
 
+/// A horizontal hairline's top and thickness on whole device pixels: at
+/// least one pixel thick, its top where the nearest row starts.
+pub fn snap_line(y: f32, h: f32) -> (f32, f32) {
+    (y.round(), h.round().max(1.0))
+}
+
 fn push_glyphs(shaped: &Shaped, ox: f32, oy: f32, clip: Clip, dl: &mut DisplayList) {
     // a span's background behind its glyphs
     for d in shaped.decos.iter().filter(|d| !d.over) {
@@ -4728,6 +5024,7 @@ fn push_glyphs(shaped: &Shaped, ox: f32, oy: f32, clip: Clip, dl: &mut DisplayLi
                     &run.coords,
                     run.embolden,
                     run.skew,
+                    run.color,
                 ),
                 coords: run.coords.clone(),
                 color: run.color,
@@ -4735,10 +5032,12 @@ fn push_glyphs(shaped: &Shaped, ox: f32, oy: f32, clip: Clip, dl: &mut DisplayLi
             });
         }
     }
-    // a strike or an underline over them
+    // a strike or an underline over them: a hairline on whole device
+    // pixels, as the baselines are (half on one row and half on the next
+    // it is a blurred band at any scale)
     for d in shaped.decos.iter().filter(|d| d.over) {
-        dl.prims
-            .push(solid(ox + d.x, oy + d.y, d.w, d.h, d.color, clip));
+        let (y, h) = snap_line(oy + d.y, d.h);
+        dl.prims.push(solid(ox + d.x, y, d.w, h, d.color, clip));
     }
 }
 
@@ -4946,6 +5245,81 @@ pub struct DisplayList {
     /// Draw this frame whole (the rainbow turned off: its tints gone).
     pub redraw: bool,
 }
+
+/// How long typing pauses before a changed paragraph is spell-checked
+/// (ms): checking is milliseconds a paragraph, so not every key's.
+pub const SPELL_PAUSE_MS: f64 = 250.0;
+
+/// A spell-checked field's misspellings: each paragraph's (by its text's
+/// hash, so an edit checks only the paragraph it changed), and the
+/// field's, placed.
+#[derive(Default)]
+pub struct Spelling {
+    hash: u64,
+    seen: bool,
+    changed_at: f64,
+    settled: bool,
+    paras: HashMap<u64, Vec<(usize, usize)>>,
+    pub found: Vec<(usize, usize)>,
+}
+
+fn hash_of(s: &str) -> u64 {
+    let mut h = rustc_hash::FxHasher::default();
+    std::hash::Hash::hash(s, &mut h);
+    std::hash::Hasher::finish(&h)
+}
+
+impl Spelling {
+    /// Bring the misspellings up to `value` at `now`: paragraphs already
+    /// checked are placed again at once; one changed is checked once
+    /// typing has paused (until then it shows none), every one at once
+    /// the first time. Answers when to look again while one waits.
+    pub fn update(&mut self, value: &str, now: f64) -> Option<f64> {
+        let hash = hash_of(value);
+        let first = !self.seen;
+        self.seen = true;
+        if first || hash != self.hash {
+            self.hash = hash;
+            self.changed_at = now;
+            self.settled = false;
+        }
+        if self.settled {
+            return None;
+        }
+        let check_now = first || now - self.changed_at >= SPELL_PAUSE_MS;
+        let mut found = Vec::new();
+        let mut keep: HashMap<u64, Vec<(usize, usize)>> = HashMap::new();
+        let mut waiting = false;
+        let mut at = 0usize;
+        for para in value.split('\n') {
+            let ph = hash_of(para);
+            let words = match self.paras.remove(&ph).or_else(|| keep.get(&ph).cloned()) {
+                Some(w) => Some(w),
+                None if check_now => Some(super::edit::spell_check(para).unwrap_or_default()),
+                None => None,
+            };
+            match words {
+                Some(w) => {
+                    found.extend(w.iter().map(|(a, b)| (a + at, b + at)));
+                    keep.insert(ph, w);
+                }
+                None => waiting = true,
+            }
+            at += para.chars().count() + 1;
+        }
+        self.paras = keep;
+        self.found = found;
+        if waiting {
+            Some(self.changed_at + SPELL_PAUSE_MS)
+        } else {
+            self.settled = true;
+            None
+        }
+    }
+}
+
+/// How often a drag-select past a field's edge scrolls it (ms).
+const AUTOSCROLL_MS: f64 = 16.0;
 
 /// A hover that left the text: no line or column.
 fn hover_left(key: &str) -> Vec<(&'static str, Value)> {

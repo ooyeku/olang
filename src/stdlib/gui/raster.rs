@@ -28,6 +28,9 @@ pub struct GlyphKey {
     pub coords: u64,
     pub embolden: bool,
     pub skew: bool,
+    /// The text colour's lightness, in [`TONES`] steps: how much the
+    /// outline is darkened (see [`darken`]).
+    pub tone: u8,
 }
 
 impl GlyphKey {
@@ -39,6 +42,7 @@ impl GlyphKey {
         coords: &[i16],
         embolden: bool,
         skew: bool,
+        color: [u8; 4],
     ) -> GlyphKey {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         coords.hash(&mut h);
@@ -50,8 +54,19 @@ impl GlyphKey {
             coords: h.finish(),
             embolden,
             skew,
+            tone: tone_of(color),
         }
     }
+}
+
+/// The steps of a text colour's lightness a glyph is darkened by.
+pub const TONES: u8 = 4;
+
+/// A text colour's lightness (its relative luminance, sRGB-weighted) in
+/// [`TONES`] steps: 0 black … `TONES` white.
+pub fn tone_of(c: [u8; 4]) -> u8 {
+    let l = (0.2126 * c[0] as f32 + 0.7152 * c[1] as f32 + 0.0722 * c[2] as f32) / 255.0;
+    (l * TONES as f32).round().clamp(0.0, TONES as f32) as u8
 }
 
 /// The quarter-pixel bucket of a horizontal position.
@@ -162,6 +177,100 @@ pub fn stats() -> (usize, usize, u64) {
 /// past any memory (zeno indexes out of its buffer and the process aborts).
 pub const MAX_GLYPH_PX: f32 = 4096.0;
 
+/// How text is darkened to match macOS's own (Core Graphics' font
+/// smoothing, which thickens a glyph's stems, the more for light text on
+/// a dark ground): the outline grows by `darken` device pixels, and the
+/// coverage takes a curve. Tuned against AppKit's NSTextField at 1× and
+/// 2×, light and dark.
+#[derive(Clone, Copy, Debug)]
+pub struct Tuning {
+    /// Outline growth for black text and for white text, device pixels
+    /// at a 16 px em, and the power of the em it grows with.
+    pub grow_dark: f32,
+    pub grow_light: f32,
+    pub grow_power: f32,
+    /// The most an outline grows, device pixels (Core Graphics' stops
+    /// growing past a size).
+    pub grow_max: f32,
+    /// The coverage curve's exponent (`1 - (1 - c)^k`) for black text and
+    /// for white text: past 1 a partly covered pixel is filled more.
+    pub curve_dark: f32,
+    pub curve_light: f32,
+}
+
+impl Default for Tuning {
+    fn default() -> Self {
+        Tuning {
+            grow_dark: 0.10,
+            grow_light: 0.20,
+            grow_power: 1.2,
+            grow_max: 0.4,
+            curve_dark: 1.15,
+            curve_light: 1.35,
+        }
+    }
+}
+
+/// The tuning in force: [`Tuning::default`], or `OLANG_GUI_TEXT_DARKEN`
+/// (`grow_dark,grow_light,grow_power,curve_dark,curve_light,grow_max`) to tune it,
+/// or `OLANG_GUI_TEXT_DARKEN=0` for none.
+pub fn tuning() -> Tuning {
+    static T: OnceLock<Tuning> = OnceLock::new();
+    *T.get_or_init(|| {
+        let Ok(v) = std::env::var("OLANG_GUI_TEXT_DARKEN") else {
+            return Tuning::default();
+        };
+        if v.trim() == "0" {
+            return Tuning {
+                grow_dark: 0.0,
+                grow_light: 0.0,
+                grow_power: 0.0,
+                grow_max: 0.0,
+                curve_dark: 1.0,
+                curve_light: 1.0,
+            };
+        }
+        let n: Vec<f32> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+        let d = Tuning::default();
+        let at = |i: usize, or: f32| n.get(i).copied().unwrap_or(or);
+        Tuning {
+            grow_dark: at(0, d.grow_dark),
+            grow_light: at(1, d.grow_light),
+            grow_power: at(2, d.grow_power),
+            curve_dark: at(3, d.curve_dark),
+            curve_light: at(4, d.curve_light),
+            grow_max: at(5, d.grow_max),
+        }
+    })
+}
+
+fn lerp_tone(dark: f32, light: f32, tone: u8) -> f32 {
+    let t = tone.min(TONES) as f32 / TONES as f32;
+    dark + (light - dark) * t
+}
+
+/// The outline's growth for a glyph `size` device pixels to the em in
+/// text of lightness `tone`.
+pub fn darken(t: &Tuning, size: f32, tone: u8) -> f32 {
+    let g = lerp_tone(t.grow_dark, t.grow_light, tone);
+    if g <= 0.0 {
+        return 0.0;
+    }
+    // no more than a twentieth of the em: tiny text stays legible
+    (g * (size / 16.0).powf(t.grow_power)).min(t.grow_max).min(size / 20.0)
+}
+
+/// The coverage curve for text of lightness `tone`, as a table.
+pub fn coverage_curve(t: &Tuning, tone: u8) -> [u8; 256] {
+    let k = lerp_tone(t.curve_dark, t.curve_light, tone).max(0.05);
+    let mut table = [0u8; 256];
+    for (i, v) in table.iter_mut().enumerate() {
+        let c = i as f32 / 255.0;
+        *v = ((1.0 - (1.0 - c).powf(k)) * 255.0).round().clamp(0.0, 255.0) as u8;
+    }
+    table
+}
+
 fn render(context: &mut ScaleContext, key: &GlyphKey, coords: &[i16]) -> Option<GlyphImage> {
     let size = key.size as f32 / 64.0;
     if !(size > 0.0 && size <= MAX_GLYPH_PX) {
@@ -200,8 +309,10 @@ fn render(context: &mut ScaleContext, key: &GlyphKey, coords: &[i16]) -> Option<
     render
         .format(Format::Alpha)
         .offset(Vector::new(offset, 0.0));
-    if key.embolden {
-        render.embolden(size / 40.0);
+    let tuning = tuning();
+    let bold = if key.embolden { size / 40.0 } else { 0.0 } + darken(&tuning, size, key.tone);
+    if bold > 0.0 {
+        render.embolden(bold);
     }
     if key.skew {
         render.transform(Some(swash::zeno::Transform::skew(
@@ -232,6 +343,12 @@ fn render(context: &mut ScaleContext, key: &GlyphKey, coords: &[i16]) -> Option<
         }
     };
     let mut data = image.data;
+    if !color {
+        let curve = coverage_curve(&tuning, key.tone);
+        for v in data.iter_mut() {
+            *v = curve[*v as usize];
+        }
+    }
     if color {
         // swash answers straight alpha; both renderers want premultiplied.
         for px in data.chunks_mut(4) {

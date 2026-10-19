@@ -13,6 +13,30 @@ use super::text::{Color, Font, TextSystem};
 use parley::{GenericFamily, PlainEditor, StyleProperty};
 use std::collections::VecDeque;
 
+/// A spell checker: the misspelled words of a text, as character ranges.
+pub type SpellChecker = fn(&str) -> Vec<(usize, usize)>;
+
+static SPELL: std::sync::Mutex<Option<SpellChecker>> = std::sync::Mutex::new(None);
+
+/// Set the process's spell checker (the platform's, as its first window
+/// opens; a test's own).
+pub fn set_spell_checker(f: Option<SpellChecker>) {
+    *SPELL.lock().unwrap_or_else(|e| e.into_inner()) = f;
+}
+
+/// The longest text checked (characters): past it a field is not
+/// checked (a log pasted into a note).
+pub const SPELL_MAX_CHARS: usize = 100_000;
+
+/// The misspelled words of `text`, or `None` with no checker.
+pub fn spell_check(text: &str) -> Option<Vec<(usize, usize)>> {
+    let f = (*SPELL.lock().unwrap_or_else(|e| e.into_inner()))?;
+    if text.len() > SPELL_MAX_CHARS * 4 || text.chars().count() > SPELL_MAX_CHARS {
+        return Some(Vec::new());
+    }
+    Some(f(text))
+}
+
 pub struct Editor {
     pub ed: PlainEditor<Color>,
     pub rev: i64,
@@ -30,6 +54,9 @@ pub struct Editor {
     pub scroll_x: f32,
     /// The pointer is dragging a selection.
     pub dragging: bool,
+    /// A double or triple click's word or line (bytes, low and high): a
+    /// drag after it extends by words or lines.
+    drag_unit: Option<(u8, usize, usize)>,
     /// The program's last selection applied (`select`'s seq).
     pub select_seq: i64,
 }
@@ -66,6 +93,7 @@ impl Editor {
             redo: Vec::new(),
             scroll_x: 0.0,
             dragging: false,
+            drag_unit: None,
             select_seq: 0,
         };
         e.apply_font(font, color);
@@ -390,19 +418,113 @@ impl Editor {
             _ if shift => d.shift_click_extension(x, y),
             _ => d.move_to_point(x, y),
         }
-        self.dragging = clicks <= 1;
+        self.dragging = true;
+        let sel = self.ed.raw_selection();
+        let (a, f) = (sel.anchor().index(), sel.focus().index());
+        self.drag_unit = (clicks >= 2).then(|| (clicks.min(3) as u8, a.min(f), a.max(f)));
     }
 
     pub fn drag(&mut self, x: f32, y: f32, ts: &mut TextSystem) {
-        if self.dragging {
-            let mut d = self.ed.driver(&mut ts.font_cx, &mut ts.layout_cx);
-            d.extend_selection_to_point(x, y);
+        if !self.dragging {
+            return;
         }
+        if let Some((unit, lo, hi)) = self.drag_unit {
+            // the clicked word or line and every one up to the pointer's
+            let layout = self.layout(ts);
+            let (a, b) = if unit >= 3 {
+                let at = parley::Cursor::from_point(layout, x, y).index();
+                let t = self.ed.raw_text();
+                let at = at.min(t.len());
+                let a = t[..at].rfind('\n').map_or(0, |i| i + 1);
+                let b = t[at..].find('\n').map_or(t.len(), |i| at + i);
+                (a, b)
+            } else {
+                let r = parley::Selection::word_from_point(layout, x, y).text_range();
+                (r.start, r.end)
+            };
+            let (anchor, focus) = if a < lo { (hi, a) } else { (lo, b.max(hi)) };
+            let mut d = self.ed.driver(&mut ts.font_cx, &mut ts.layout_cx);
+            d.select_byte_range(anchor, focus);
+            return;
+        }
+        let mut d = self.ed.driver(&mut ts.font_cx, &mut ts.layout_cx);
+        d.extend_selection_to_point(x, y);
     }
 
     pub fn layout<'a>(&'a mut self, ts: &mut TextSystem) -> &'a parley::Layout<Color> {
         self.ed.refresh_layout(&mut ts.font_cx, &mut ts.layout_cx);
         self.ed.try_layout().expect("refreshed")
+    }
+
+    fn byte_of_char(&self, chars: usize) -> usize {
+        let t = self.ed.raw_text();
+        t.char_indices().nth(chars).map(|(b, _)| b).unwrap_or(t.len())
+    }
+
+    fn char_of_byte(&self, b: usize) -> usize {
+        let t = self.ed.raw_text();
+        let mut b = b.min(t.len());
+        while b > 0 && !t.is_char_boundary(b) {
+            b -= 1;
+        }
+        t[..b].chars().count()
+    }
+
+    /// The box of characters `a..b` (its first line's; a caret's when
+    /// empty), device pixels from the text's top-left (no scroll).
+    pub fn char_box(&mut self, a: usize, b: usize, ts: &mut TextSystem) -> parley::BoundingBox {
+        let (ba, bb) = (self.byte_of_char(a), self.byte_of_char(b.max(a)));
+        let layout = self.layout(ts);
+        let ca = parley::Cursor::from_byte_index(layout, ba, parley::Affinity::Downstream);
+        if bb > ba {
+            let cb = parley::Cursor::from_byte_index(layout, bb, parley::Affinity::Upstream);
+            let mut first = None;
+            parley::Selection::new(ca, cb).geometry_with(layout, |bx, _| {
+                if first.is_none() {
+                    first = Some(bx);
+                }
+            });
+            if let Some(bx) = first {
+                return bx;
+            }
+        }
+        ca.geometry(layout, 1.0)
+    }
+
+    /// The character under a point, device pixels from the text's
+    /// top-left (scroll included).
+    pub fn char_at_point(&mut self, x: f32, y: f32, ts: &mut TextSystem) -> usize {
+        let layout = self.layout(ts);
+        let at = parley::Cursor::from_point(layout, x, y).index();
+        self.char_of_byte(at)
+    }
+
+    /// The word under a point (characters), as a double click takes it.
+    pub fn word_at_point(&mut self, x: f32, y: f32, ts: &mut TextSystem) -> (usize, usize) {
+        let layout = self.layout(ts);
+        let r = parley::Selection::word_from_point(layout, x, y).text_range();
+        (self.char_of_byte(r.start), self.char_of_byte(r.end))
+    }
+
+    /// The text's visual lines (see [`FieldLine`]).
+    pub fn lines(&mut self, ts: &mut TextSystem) -> Vec<super::text::FieldLine> {
+        let text = self.ed.raw_text().to_string();
+        let layout = self.layout(ts);
+        super::text::layout_lines(layout, &text)
+            .into_iter()
+            .map(|(start, _end, top, height, chars)| {
+                let para = text[..start].matches('\n').count();
+                let pstart = text[..start].rfind('\n').map_or(0, |i| i + 1);
+                super::text::FieldLine {
+                    para,
+                    start: text[pstart..start].chars().count(),
+                    top,
+                    height,
+                    xs: chars.iter().map(|c| c.1).collect(),
+                    widths: chars.iter().map(|c| c.2).collect(),
+                }
+            })
+            .collect()
     }
 
     /// Keep the caret of a single-line field in view: adjust `scroll_x`
@@ -642,6 +764,41 @@ impl Field {
                 Field::Plain(e) => e.select_chars(a, f, ts),
                 Field::Rich(r) => r.select_chars(a, f),
             }
+        }
+    }
+
+    /// The box of characters `a..b`, device pixels from the text's
+    /// top-left (no scroll).
+    pub fn char_box(&mut self, a: usize, b: usize, ts: &mut TextSystem) -> parley::BoundingBox {
+        match self {
+            Field::Plain(e) => e.char_box(a, b, ts),
+            Field::Rich(r) => r.char_box(a, b, ts),
+        }
+    }
+
+    /// The character under a point (device pixels from the text's
+    /// top-left, scroll included).
+    pub fn char_at_point(&mut self, x: f32, y: f32, ts: &mut TextSystem) -> usize {
+        match self {
+            Field::Plain(e) => e.char_at_point(x, y, ts),
+            Field::Rich(r) => r.char_at_point(x, y, ts),
+        }
+    }
+
+    /// The word under a point, in characters.
+    pub fn word_at_point(&mut self, x: f32, y: f32, ts: &mut TextSystem) -> (usize, usize) {
+        match self {
+            Field::Plain(e) => e.word_at_point(x, y, ts),
+            Field::Rich(r) => r.word_at_point(x, y, ts),
+        }
+    }
+
+    /// The visual lines of the text in a band `y0..y1` (device pixels
+    /// from the text's top, no scroll); a plain field's all of them.
+    pub fn lines(&mut self, y0: f32, y1: f32, ts: &mut TextSystem) -> Vec<super::text::FieldLine> {
+        match self {
+            Field::Plain(e) => e.lines(ts),
+            Field::Rich(r) => r.lines(y0, y1, ts),
         }
     }
 

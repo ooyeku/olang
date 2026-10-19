@@ -370,6 +370,9 @@ pub struct EditProps {
     pub wrap: bool,
     /// Read, selected and copied, never edited.
     pub readonly: bool,
+    /// Misspelled words underlined (the platform's spell checker), off
+    /// unless asked: code and data are not prose.
+    pub spellcheck: bool,
     /// How many lines the first line in view moves before it is said.
     pub band: Option<usize>,
     /// Marks on the scroll bar's track: `(line, colour)` (a problem, a
@@ -779,6 +782,7 @@ impl Scene {
                 rulers: get(e, "rulers").cloned(),
                 wrap: get_bool(e, "wrap", what)?.unwrap_or(true),
                 readonly: get_bool(e, "readonly", what)?.unwrap_or(false),
+                spellcheck: get_bool(e, "spellcheck", what)?.unwrap_or(false),
                 track: get(e, "track").cloned(),
                 past_end: get_num(e, "past_end", what)?.unwrap_or(0.0).clamp(0.0, 1.0) as f32,
                 band: get(e, "band").and_then(|v| match v {

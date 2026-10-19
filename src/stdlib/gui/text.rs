@@ -106,6 +106,7 @@ impl Font {
                 FontStyle::Normal
             }),
         ];
+        v.push(optical_size(self.size));
         if self.line_height > 0.0 {
             v.push(StyleProperty::LineHeight(LineHeight::FontSizeRelative(
                 self.line_height,
@@ -118,6 +119,17 @@ impl Font {
         }
         v
     }
+}
+
+/// A variable font's optical size set to the text's size (logical
+/// pixels, which are macOS's points), as Core Text and CSS's
+/// `font-optical-sizing: auto` do: Inter's display forms above 14 px, SF
+/// Pro's Text and Display. A font with no `opsz` axis ignores it.
+pub fn optical_size(size: f32) -> StyleProperty<'static, Color> {
+    let opsz = if size.is_finite() { size.clamp(1.0, 1000.0) } else { 14.0 };
+    StyleProperty::FontVariations(parley::FontVariations::Source(
+        format!("\"opsz\" {opsz}").into(),
+    ))
 }
 
 /// Horizontal alignment of the lines of a text in its box.
@@ -300,9 +312,10 @@ impl Shaped {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+/// What a shaped text is cached by.
+#[derive(Clone, PartialEq)]
 struct CacheKey {
-    text: String,
+    text: Box<str>,
     font: Font,
     color: Color,
     max_width: Option<u32>,
@@ -310,10 +323,44 @@ struct CacheKey {
     scale: u32,
 }
 
+impl CacheKey {
+    fn is(&self, text: &str, font: &Font, color: Color, max_width: Option<u32>, align: Align, scale: u32) -> bool {
+        &*self.text == text
+            && self.color == color
+            && self.max_width == max_width
+            && self.align == align
+            && self.scale == scale
+            && self.font == *font
+    }
+}
+
+/// The hash a shaped text is found by, from borrowed parts (a lookup
+/// copies nothing).
+fn cache_hash(text: &str, font: &Font, color: Color, max_width: Option<u32>, align: Align, scale: u32) -> u64 {
+    let mut h = rustc_hash::FxHasher::default();
+    text.hash(&mut h);
+    font.hash(&mut h);
+    color.hash(&mut h);
+    max_width.hash(&mut h);
+    align.hash(&mut h);
+    scale.hash(&mut h);
+    h.finish()
+}
+
+type ShapeCache = HashMap<u64, (CacheKey, Arc<Shaped>), std::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
+
 pub struct TextSystem {
     pub font_cx: FontContext,
     pub layout_cx: LayoutContext<Color>,
-    cache: HashMap<CacheKey, Arc<Shaped>>,
+    /// Shaped texts in two generations: one used since the last turn-over
+    /// and the one before it. A text found in the old generation moves to
+    /// the new; a turn-over drops only what neither used — a frame's texts
+    /// survive however many were shaped (a full reset re-shaped them all).
+    cache: ShapeCache,
+    old: ShapeCache,
+    /// Shaped (missed) and found, since the start: `gui.read(_, "render")`.
+    pub shaped: u64,
+    pub found: u64,
 }
 
 /// Faces the rasterizer can read, by key. Filled as layouts are made.
@@ -390,7 +437,10 @@ pub fn system_now() -> &'static Mutex<TextSystem> {
         Mutex::new(TextSystem {
             font_cx: FontContext::new(),
             layout_cx: LayoutContext::new(),
-            cache: HashMap::new(),
+            cache: ShapeCache::default(),
+            old: ShapeCache::default(),
+            shaped: 0,
+            found: 0,
         })
     })
 }
@@ -415,8 +465,8 @@ fn emoji_presentation_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
     out
 }
 
-/// The most shaped texts kept; past it the cache starts over. A frame
-/// re-shapes what it shows, so a full reset costs one frame's shaping.
+/// The most shaped texts a generation keeps (the cache holds at most
+/// twice this).
 const CACHE_LIMIT: usize = 8192;
 
 impl TextSystem {
@@ -426,6 +476,7 @@ impl TextSystem {
         let blob = parley::fontique::Blob::from(bytes);
         let added = self.font_cx.collection.register_fonts(blob, None);
         self.cache.clear();
+        self.old.clear();
         added.iter().map(|(_, faces)| faces.len()).sum()
     }
 
@@ -439,22 +490,34 @@ impl TextSystem {
         align: Align,
         scale: f32,
     ) -> Arc<Shaped> {
-        let key = CacheKey {
-            text: text.to_string(),
-            font: font.clone(),
-            color,
-            // Widths are logical; quantize to 1/64 px so float noise in a
-            // program's layout does not defeat the cache.
-            max_width: max_width.map(|w| (w.max(0.0) * 64.0).round() as u32),
-            align,
-            scale: (scale * 1000.0).round() as u32,
-        };
-        if let Some(s) = self.cache.get(&key) {
+        // Widths are logical; quantize to 1/64 px so float noise in a
+        // program's layout does not defeat the cache.
+        let qw = max_width.map(|w| (w.max(0.0) * 64.0).round() as u32);
+        let qs = (scale * 1000.0).round() as u32;
+        let h = cache_hash(text, font, color, qw, align, qs);
+        if let Some((k, s)) = self.cache.get(&h)
+            && k.is(text, font, color, qw, align, qs)
+        {
+            self.found += 1;
             return s.clone();
         }
-        if self.cache.len() >= CACHE_LIMIT {
-            self.cache.clear();
+        if let Some((k, s)) = self.old.remove(&h) {
+            if k.is(text, font, color, qw, align, qs) {
+                self.found += 1;
+                let s2 = s.clone();
+                self.keep(h, k, s);
+                return s2;
+            }
         }
+        self.shaped += 1;
+        let key = CacheKey {
+            text: text.into(),
+            font: font.clone(),
+            color,
+            max_width: qw,
+            align,
+            scale: qs,
+        };
         let mut builder = self
             .layout_cx
             .ranged_builder(&mut self.font_cx, text, scale, true);
@@ -498,9 +561,71 @@ impl TextSystem {
             sh.decos = span_decos(&layout, text, spans, color, scale);
         }
         let shaped = Arc::new(sh);
-        self.cache.insert(key, shaped.clone());
+        self.keep(h, key, shaped.clone());
         shaped
     }
+
+    /// Put a shaped text in the new generation, turning the generations
+    /// over when it is full.
+    fn keep(&mut self, h: u64, key: CacheKey, shaped: Arc<Shaped>) {
+        if self.cache.len() >= CACHE_LIMIT {
+            self.old = std::mem::take(&mut self.cache);
+        }
+        self.cache.insert(h, (key, shaped));
+    }
+
+    /// Shaped texts kept.
+    pub fn cached(&self) -> usize {
+        self.cache.len() + self.old.len()
+    }
+}
+
+/// One visual line of a field's text as assistive output places it: its
+/// paragraph, its first character there, its top and height (device
+/// pixels from the text's top-left, no scroll), and each of its
+/// characters' left edge and width (device pixels from the text's left),
+/// in order — what Zoom and VoiceOver need to follow the caret and box a
+/// word.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FieldLine {
+    pub para: usize,
+    pub start: usize,
+    pub top: f32,
+    pub height: f32,
+    pub xs: Vec<f32>,
+    pub widths: Vec<f32>,
+}
+
+/// The visual lines of `layout` (of `text`): (first byte, end byte, top,
+/// height, each character's (byte, left, width) in byte order). A
+/// cluster's advance is shared among its characters (a ligature's).
+pub fn layout_lines(layout: &Layout<Color>, text: &str) -> Vec<(usize, usize, f32, f32, Vec<(usize, f32, f32)>)> {
+    let mut out = Vec::new();
+    for line in layout.lines() {
+        let m = line.metrics();
+        let r = line.text_range();
+        let mut chars: Vec<(usize, f32, f32)> = Vec::new();
+        for item in line.items() {
+            let PositionedLayoutItem::GlyphRun(gr) = item else {
+                continue;
+            };
+            let mut x = gr.offset();
+            for c in gr.run().visual_clusters() {
+                let cr = c.text_range();
+                let adv = c.advance();
+                let piece = text.get(cr.clone()).unwrap_or("");
+                let n = piece.chars().count().max(1) as f32;
+                for (k, (b, _)) in piece.char_indices().enumerate() {
+                    chars.push((cr.start + b, x + adv * k as f32 / n, adv / n));
+                }
+                x += adv;
+            }
+        }
+        chars.sort_by_key(|c| c.0);
+        chars.dedup_by_key(|c| c.0);
+        out.push((r.start, r.end, m.block_min_coord, m.block_max_coord - m.block_min_coord, chars));
+    }
+    out
 }
 
 /// The glyph runs and line metrics of a broken, aligned layout.

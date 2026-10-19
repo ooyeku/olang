@@ -120,6 +120,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   Software and GPU alike. `gui.platform()` says `flash`.
   tests/gui_flash_test.rs
 
+- **`gui`: the text input client, complete (macOS).** The window's view
+  answers what AppKit asks of a view that edits text for the focused
+  field: its selection, a range's text and its place on the screen, the
+  character under a point (NSTextInputClient's `selectedRange`,
+  `attributedSubstringForProposedRange:`, `firstRectForCharacterRange:`,
+  `characterIndexForPoint:`; winit's answers stay during a
+  composition). Text put in outside a key press and a composition —
+  dictation, the Character Viewer — reaches the field (winit took
+  `insertText:` only to end a composition, so dictated text was dropped),
+  over the range it names when it names one. Look Up finds the word: ⌃⌘D
+  through those answers, a force click on a word in a field
+  (`quickLookWithEvent:`) by showing its definition.
+  tests/gui_macos_text_input_test.rs
+- **`gui`: spell checking, opt-in.** A field's `edit` takes `spellcheck:
+  true`: its misspelled words (macOS's NSSpellChecker, the language found
+  from the text) get the system's red dotted underline; the word at the
+  caret is left until it is done, and an edit re-checks only the
+  paragraph it changed, once typing pauses (250 ms). Off by default: code
+  and data are not prose. `gui.platform()` says `spellcheck` and
+  `text_input`. tests/gui_text_test.rs, tests/gui_macos_text_input_test.rs
+- **`gui`: a field's lines for assistive output.** `WinState::field_lines`
+  answers each visual line of a field (a styled field's in view) with its
+  box and its characters' positions and widths, as AccessKit's text runs
+  take them (`character_positions`, `character_widths`), so Zoom can
+  follow the caret and VoiceOver box a word. tests/gui_text_test.rs
+- **`gui`: text gestures as a Mac's.** A drag after a double click
+  extends the selection by words, after a triple click by lines; a drag
+  past a field's edge scrolls it on each frame (faster the farther past;
+  a headless window steps with its clock), the selection following.
+  tests/gui_text_test.rs
 - **`gui.turn(on)`: a program's long turn shown while it runs.** A
   program says when its turn begins and ends (Loom's loop does, two
   atomic writes a turn); one that runs past 2 s
@@ -374,6 +404,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`gui`: text drawn as macOS draws it.** Glyph outlines grow and their
+  coverage takes a curve as Core Graphics' font smoothing does — light
+  text on dark the most, by the text colour's lightness in four steps —
+  tuned against AppKit's NSTextField (Inter at 11, 13, 17 and 24 px, 1×
+  and 2×, black, grey and white text): the ink's difference from
+  AppKit's, mean 22 % (worst 39 %) before, is 3.6 % (worst 9 %). Both
+  renderers draw the same glyph images (the tone is in the glyph's
+  key). `OLANG_GUI_TEXT_DARKEN` tunes it, `=0` turns it off. A variable
+  font is set at its optical size (`opsz` = the text's size, as Core
+  Text and CSS do). Shaped text is kept in two generations (a turn-over
+  keeps what the last generation used, where the whole cache was reset)
+  and found without copying the text or the font; `gui.read(_,
+  "render")` says `texts_shaped`, `texts_found`, `texts_cached`.
+  Underlines, strikes and a composition's underline sit on whole device
+  pixels; a styled field scrolls by whole device pixels (slow wheels add
+  up), so its scrolls move the kept frame. tests/gui_text_test.rs
 - **`gui` draws only what changed, and presents nothing when nothing
   did.** A window keeps its last frame (a texture of its own on the GPU,
   a pixmap in software); each frame's primitives are hashed into 64-pixel
