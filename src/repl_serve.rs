@@ -107,8 +107,12 @@ impl Out {
         let mut line = serde_json::to_string(v).unwrap_or_else(|_| "{}".to_string());
         line.push('\n');
         if let Ok(mut w) = self.0.lock() {
-            let _ = w.write_all(line.as_bytes());
-            let _ = w.flush();
+            // no one reads the replies any more: the session ends
+            if let Err(e) = w.write_all(line.as_bytes()).and_then(|_| w.flush())
+                && e.kind() == std::io::ErrorKind::BrokenPipe
+            {
+                std::process::exit(0);
+            }
         }
     }
 }
@@ -208,12 +212,9 @@ pub fn serve(no_ovm: bool, notebook: Option<PathBuf>) -> i32 {
                     break;
                 }
             }
-            // stdin closed: whoever started the session is gone. The
-            // session ends now, whatever it is evaluating — a cell looping
-            // for ever went on at full speed, orphaned, for minutes after
-            // its editor died (the evaluation holds the main thread, so
-            // the loop over requests never saw the end).
-            std::process::exit(0);
+            // stdin closed: the requests sent before it are answered (the
+            // loop below drains them, then ends); an editor that died is
+            // seen by the parent's watch below, a reader gone by stdout
         });
     }
     // the parent gone without closing our stdin (it was handed on to a
