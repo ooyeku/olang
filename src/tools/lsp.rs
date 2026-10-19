@@ -183,6 +183,8 @@ pub fn run() -> Result<(), Box<dyn Error + Sync + Send>> {
     // One project, many files, checked on every keystroke: keep each
     // imported module's parse (keyed by its source, so an edit re-parses).
     crate::expand::keep_module_parses(true);
+    // stdout is the protocol: nothing evaluated here prints onto it
+    crate::output::discard_output();
     let (connection, io_threads) = Connection::stdio();
 
     let capabilities = ServerCapabilities {

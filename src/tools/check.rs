@@ -4760,9 +4760,25 @@ pub fn run_tier_as(paths: &[PathBuf], json: bool) -> i32 {
                 declarations.push(statement.clone());
             }
         }
-        if let Err(e) = interpreter.eval_program(Program {
+        // The declarations load without effects: a module the file uses
+        // runs its top level as it loads, and `check --tier` on a file
+        // opened (olang Studio's tier map does, on every file shown) ran a
+        // module's `os.exec` with the person's privileges. They load with
+        // no capability (no fs, net, proc, db, env; a module loaded at run
+        // time is held to that too), then the table the check had is put
+        // back. A module that needs an effect to load is "not checked".
+        let none = crate::caps::Caps::none();
+        let was = interpreter.replace_capabilities(Some(std::sync::Arc::new(
+            crate::caps::CapTable {
+                app: none,
+                deps: Vec::new(),
+            },
+        )));
+        let loaded = interpreter.eval_program(Program {
             statements: declarations,
-        }) {
+        });
+        interpreter.restore_capabilities(was);
+        if let Err(e) = loaded {
             if json {
                 file_rows.push(serde_json::json!({
                     "file": absolute.to_string_lossy(), "error": e.to_string(), "functions": [] }));

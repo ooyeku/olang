@@ -29,6 +29,9 @@ fn write_stdout(bytes: &[u8], flush: bool) {
     {
         return;
     }
+    if DISCARDING.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     if COLLECTING.load(std::sync::atomic::Ordering::Relaxed) {
         if let Ok(mut buf) = COLLECTED.lock() {
             buf.push(bytes);
@@ -158,6 +161,17 @@ impl Collected {
         )
     }
 }
+
+/// From now on `print` and `println` write nothing: `olang lsp`'s stdout
+/// is its protocol, and nothing the server evaluates (a macro's
+/// expansion) may write a message onto it.
+#[cfg(feature = "native")]
+pub fn discard_output() {
+    DISCARDING.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(feature = "native")]
+static DISCARDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// From now on `print` and `println` collect instead of writing.
 #[cfg(feature = "native")]

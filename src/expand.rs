@@ -514,8 +514,18 @@ fn expand_impl(source: &str, base_dir: Option<&std::path::Path>) -> Result<Expan
 fn expansion_interpreter() -> crate::interpreter::Interpreter {
     let mut interp = crate::interpreter::Interpreter::new();
     interp.set_meta_mode(true);
+    // A file's expansion is bounded, in steps (loop iterations and calls:
+    // deterministic, as law 4 asks): a meta fn that never ends must cost
+    // one error, not a language server spinning forever on a file opened
+    // (`olang check`, `olang lsp`, Studio's notebook check run expansion)
+    interp.set_eval_budget(Some(EXPANSION_STEPS), None);
     interp
 }
+
+/// The steps one file's macro expansion may take: far past any real
+/// macro library's (the corpus's take thousands), a few seconds of a
+/// tree-walker's loop.
+pub const EXPANSION_STEPS: u64 = 50_000_000;
 
 /// Expand the macro calls inside one source fragment (a macro argument),
 /// returning macro-free source. Recursion handles nesting of any depth,

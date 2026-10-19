@@ -235,12 +235,21 @@ fn recorded_of(op: &str) -> bool {
 /// effectful modules — a pure helper like `fs.join` is refused too,
 /// because a module whose *purpose* is effects should be entirely absent
 /// from expansion rather than "mostly absent, check the list".
+///
+/// Also refused, as ungated effects a file opened would otherwise make
+/// (the language server and `olang check` expand every file they read):
+/// `runtime.` (`runtime.load_module` runs another file and registers a
+/// grant the real run inherits), `testing.` (a snapshot is a file
+/// written), `asset.` (files read), and `print`/`println` — stdout is the
+/// language server's protocol, so a meta fn printing a framed message
+/// spoke to the editor as the server (`eprintln` stays for debugging a
+/// macro: stderr is no channel).
 pub fn expansion_blocked(full_name: &str) -> bool {
     const BLOCKED_MODULE_PREFIXES: &[&str] = &[
         "fs.", "http.", "db.", "proc.", "os.", "time.", "random.", "task.", "chan.", "tty.",
-        "gui.", "pty.", "vt.",
+        "gui.", "pty.", "vt.", "runtime.", "testing.", "asset.",
     ];
-    const BLOCKED_NAMES: &[&str] = &["par_map", "par_filter"];
+    const BLOCKED_NAMES: &[&str] = &["par_map", "par_filter", "print", "println"];
     if BLOCKED_MODULE_PREFIXES
         .iter()
         .any(|p| full_name.starts_with(p))
