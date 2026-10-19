@@ -193,6 +193,26 @@ pub fn serve(no_ovm: bool, notebook: Option<PathBuf>) -> i32 {
                     break;
                 }
             }
+            // stdin closed: whoever started the session is gone. The
+            // session ends now, whatever it is evaluating — a cell looping
+            // for ever went on at full speed, orphaned, for minutes after
+            // its editor died (the evaluation holds the main thread, so
+            // the loop over requests never saw the end).
+            std::process::exit(0);
+        });
+    }
+    // the parent gone without closing our stdin (it was handed on to a
+    // process of its own): ended too, within a second
+    #[cfg(unix)]
+    {
+        let parent = unsafe { libc::getppid() };
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                if unsafe { libc::getppid() } != parent {
+                    std::process::exit(0);
+                }
+            }
         });
     }
 
