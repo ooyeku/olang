@@ -217,6 +217,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Rename across files**: a name a module `share`s, renamed in the
+  language server, is renamed in every file of the folder that imports it
+  — its `use` lists (the source side of `name as alias`, a re-export),
+  its reads, `module.name` — not in its own file alone, which broke every
+  importer. A file that imports it and does not parse refuses the rename.
+- **The language server**: a module saved re-checks the open files that
+  import it (their problems stood until typed in); a comment's words
+  complete nothing; a file's unused names are placed from their own line
+  (a 20,000-line file took 4 s a check, a few hundred ms now); a request
+  that panics is answered with an error, the server goes on.
+- **`olang repl --serve` under abuse**: `time.sleep` stops at the
+  interrupt; printed output is kept to its first 512 KB and last 256 KB;
+  an error's stack to its first 40 and last 10 frames; a line past its
+  file is clamped; a param that did not bind is said with why. A cell
+  holding itself is shown as `cell(…)` (its display waited on itself).
+  `test --format json` bounds a failure's frames the same way.
 - **A kernel ends with its editor**: `olang repl --serve` (a notebook's
   kernel too) exits when its stdin closes or its parent is gone, even
   mid-evaluation; an orphaned kernel looping in a cell spun for minutes.

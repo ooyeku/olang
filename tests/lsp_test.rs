@@ -1677,3 +1677,157 @@ fn a_notebook_completes_columns_and_keys_inside_strings() {
     let _ = c.child.kill();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A client on folder `dir`, initialized.
+fn client_in(dir: &std::path::Path) -> Client {
+    let mut c = Client::start();
+    c.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "capabilities": {}, "rootUri": format!("file://{}", dir.display()) }
+    }));
+    let _ = c.recv_until(|m| m["id"] == 1);
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    c
+}
+
+fn open_doc(c: &mut Client, uri: &str, text: &str) -> serde_json::Value {
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+            "textDocument":{"uri":uri,"languageId":"olang","version":1,"text":text}}
+    }));
+    c.recv_until(|m| diagnostics_of(m).is_some() && m["params"]["uri"] == uri)
+}
+
+fn temp_folder(name: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("olang-lsp-{}-{}", name, std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    for (p, t) in files {
+        let f = dir.join(p);
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(f, t).unwrap();
+    }
+    dir
+}
+
+/// Each file's edits of a rename's answer, as `(line, character)` starts.
+fn edits_by_file(m: &serde_json::Value, dir: &std::path::Path) -> std::collections::BTreeMap<String, Vec<(u64, u64)>> {
+    let mut out = std::collections::BTreeMap::new();
+    for (uri, edits) in m["result"]["changes"].as_object().unwrap_or_else(|| panic!("{m}")) {
+        let rel = uri.trim_start_matches(&format!("file://{}/", dir.display())).to_string();
+        let mut at: Vec<(u64, u64)> = edits
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| (e["range"]["start"]["line"].as_u64().unwrap(), e["range"]["start"]["character"].as_u64().unwrap()))
+            .collect();
+        at.sort();
+        out.insert(rel, at);
+    }
+    out
+}
+
+#[test]
+fn a_shared_name_is_renamed_in_every_file_that_imports_it() {
+    // renamed in its own file alone, every importer broke (and renamed at
+    // an import, the importer's `use` named nothing)
+    let dir = temp_folder(
+        "rename-across",
+        &[
+            ("olang.toml", "[package]\nname = \"x\"\nversion = \"0.1.0\"\n"),
+            ("lib/util.ol", "share fn twice(x) = x * 2\n\nfn quad(x) = twice(twice(x))\n"),
+            ("main.ol", "use lib.util { twice }\n\nprintln(twice(2))\nlet y = util.twice(3) // twice\nlet s = \"twice\"\n"),
+            ("other.ol", "use lib.util { twice as dbl }\n\nprintln(dbl(1))\n"),
+            ("alone.ol", "fn twice(x) = x + x\n\nprintln(twice(4))\n"),
+        ],
+    );
+    let util_uri = format!("file://{}/lib/util.ol", dir.display());
+    let main_uri = format!("file://{}/main.ol", dir.display());
+    let mut c = client_in(&dir);
+    let _ = open_doc(&mut c, &util_uri, &std::fs::read_to_string(dir.join("lib/util.ol")).unwrap());
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":5,"method":"textDocument/rename","params":{
+            "textDocument":{"uri":util_uri},"position":{"line":0,"character":10},"newName":"double"}
+    }));
+    let m = c.recv_until(|m| m["id"] == 5);
+    let want: std::collections::BTreeMap<String, Vec<(u64, u64)>> = [
+        ("lib/util.ol".to_string(), vec![(0, 9), (2, 13), (2, 19)]),
+        ("main.ol".to_string(), vec![(0, 15), (2, 8), (3, 13)]),
+        ("other.ol".to_string(), vec![(0, 15)]),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(edits_by_file(&m, &dir), want, "{m}");
+    // the same asked at an importer's call
+    let main_text = std::fs::read_to_string(dir.join("main.ol")).unwrap();
+    let _ = open_doc(&mut c, &main_uri, &main_text);
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":6,"method":"textDocument/rename","params":{
+            "textDocument":{"uri":main_uri},"position":{"line":2,"character":9},"newName":"double"}
+    }));
+    let m = c.recv_until(|m| m["id"] == 6);
+    assert_eq!(edits_by_file(&m, &dir), want, "{m}");
+    // a private name stays the file's
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":7,"method":"textDocument/rename","params":{
+            "textDocument":{"uri":util_uri},"position":{"line":2,"character":4},"newName":"four"}
+    }));
+    let m = c.recv_until(|m| m["id"] == 7);
+    assert_eq!(
+        edits_by_file(&m, &dir).keys().cloned().collect::<Vec<_>>(),
+        vec!["lib/util.ol".to_string()]
+    );
+    let _ = c.child.kill();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_module_saved_rechecks_the_open_files_that_import_it() {
+    let dir = temp_folder(
+        "save-recheck",
+        &[
+            ("a.ol", "share fn helper(x: Int) -> Int = x + 1\n"),
+            ("b.ol", "use a { helper }\n\nlet s: String = helper(3)\nprintln(s)\n"),
+        ],
+    );
+    let a_uri = format!("file://{}/a.ol", dir.display());
+    let b_uri = format!("file://{}/b.ol", dir.display());
+    let mut c = client_in(&dir);
+    let _ = open_doc(&mut c, &a_uri, "share fn helper(x: Int) -> Int = x + 1\n");
+    let b = open_doc(&mut c, &b_uri, &std::fs::read_to_string(dir.join("b.ol")).unwrap());
+    assert!(diagnostics_of(&b).unwrap().iter().any(|d| d["severity"] == 1), "{b}");
+    // the module fixed and saved: the importer's problem goes, unedited
+    let fixed = "share fn helper(x: Int) -> String = to_string(x)\n";
+    std::fs::write(dir.join("a.ol"), fixed).unwrap();
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didChange","params":{
+        "textDocument":{"uri":a_uri,"version":2},"contentChanges":[{"text":fixed}]}}));
+    c.send(&serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didSave","params":{"textDocument":{"uri":a_uri}}}));
+    let b2 = c.recv_until(|m| diagnostics_of(m).is_some() && m["params"]["uri"] == b_uri);
+    assert!(!diagnostics_of(&b2).unwrap().iter().any(|d| d["severity"] == 1), "{b2}");
+    let _ = c.child.kill();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_comment_completes_nothing_and_a_large_file_is_checked_in_linear_time() {
+    let mut text: String = (0..40_000).map(|i| format!("fn f{i}(x: Int) -> Int = x + {i}\n")).collect();
+    text.push_str("let total = f1(2) // to\n");
+    let dir = temp_folder("big", &[("big.ol", &text)]);
+    let uri = format!("file://{}/big.ol", dir.display());
+    let mut c = client_in(&dir);
+    // forty thousand unused functions: each one's hint placed from its own
+    // line (from the text's top, each, it was quadratic: seconds a check)
+    let t0 = std::time::Instant::now();
+    let m = open_doc(&mut c, &uri, &text);
+    assert_eq!(diagnostics_of(&m).unwrap().len(), 40_000);
+    assert!(t0.elapsed() < std::time::Duration::from_secs(8), "{:?}", t0.elapsed());
+    c.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":9,"method":"textDocument/completion","params":{
+            "textDocument":{"uri":uri},"position":{"line":40000,"character":23}}
+    }));
+    let m = c.recv_until(|m| m["id"] == 9);
+    assert_eq!(m["result"], serde_json::json!([]), "a comment's word: {m}");
+    let _ = c.child.kill();
+    let _ = std::fs::remove_dir_all(&dir);
+}

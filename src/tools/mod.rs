@@ -17,6 +17,8 @@ pub mod keys; // the checker's key analysis: a `.key` read no construction has
 #[cfg(feature = "native")]
 pub mod lsp; // `olang lsp` — the language server over stdio
 #[cfg(feature = "native")]
+pub mod rename_across; // a shared name renamed in every file that imports it
+#[cfg(feature = "native")]
 pub mod scope_refs; // a name's places by its binding: references and rename
 pub mod semantic; // the language server's semantic tokens
 pub mod test_events; // `olang test --format json` — the runner's events for an editor

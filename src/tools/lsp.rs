@@ -166,6 +166,13 @@ fn char_to_utf16_col(line: &str, chars: usize) -> u32 {
 /// A wire Range on one line of `text`, from character columns.
 fn utf16_range(text: &str, line: u32, start_char: usize, end_char: usize) -> Range {
     let l = text.lines().nth(line as usize).unwrap_or("");
+    line_range(l, line, start_char, end_char)
+}
+
+/// A wire Range on `line` (its text `l`), from character columns: what a
+/// caller that holds the line (or the lines) uses — `utf16_range` walks
+/// the text from its top to find it, once a range.
+fn line_range(l: &str, line: u32, start_char: usize, end_char: usize) -> Range {
     Range::new(
         Position::new(line, char_to_utf16_col(l, start_char)),
         Position::new(line, char_to_utf16_col(l, end_char)),
@@ -297,7 +304,14 @@ fn main_loop(
                 // is answered with an error, never the server's end
                 let id = req.id.clone();
                 let method = req.method.clone();
-                if let Err(e) = handle_request(connection, &docs, req, root.as_deref()) {
+                // a request whose answer panics is answered with an error:
+                // the server goes on (it ended, and every answer with it,
+                // until the editor started another)
+                let answered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    handle_request(connection, &docs, req, root.as_deref())
+                }))
+                .unwrap_or_else(|_| Err(format!("{method} failed inside the server").into()));
+                if let Err(e) = answered {
                     eprintln!("olang lsp: {method}: {e}");
                     let resp = Response::new_err(
                         id,
@@ -361,6 +375,21 @@ fn main_loop(
                     stale.retain(|u| u != &params.text_document.uri);
                     // Clear diagnostics for closed files.
                     send_diagnostics(connection, params.text_document.uri, Vec::new())?;
+                }
+                // A file saved: every other open document is checked again
+                // once the client is quiet — an importer reads the saved
+                // module from the disk, and its problems stood as they were
+                // (a fixed signature's error stayed) until it was typed in.
+                "textDocument/didSave" => {
+                    if let Ok(p) =
+                        serde_json::from_value::<lsp_types::DidSaveTextDocumentParams>(note.params)
+                    {
+                        for u in docs.keys() {
+                            if *u != p.text_document.uri && !stale.contains(u) {
+                                stale.push(u.clone());
+                            }
+                        }
+                    }
                 }
                 "workspace/didRenameFiles" => {
                     let params: lsp_types::RenameFilesParams =
@@ -492,7 +521,11 @@ fn handle_request(
             // inside any other string, nothing.
             let prefix = text_before(text, position);
             let quoted = crate::tools::fields::context(&prefix).filter(|c| c.quoted);
-            let items = if let Some(ctx) = quoted {
+            let items = if in_line_comment(&prefix) {
+                // a comment's words: nothing (keywords offered there, an
+                // editor's Enter at the line's end took one)
+                Vec::new()
+            } else if let Some(ctx) = quoted {
                 let data = data_completions(text, position, &ctx);
                 if data.is_empty() {
                     shape_key_completions(text, position, dir.as_deref()).unwrap_or_default()
@@ -575,7 +608,31 @@ fn handle_request(
             ) {
                 Ok(edits) => {
                     let mut changes = std::collections::HashMap::new();
-                    changes.insert(uri, edits);
+                    // a name a module shares: every file of the folder that
+                    // imports it too (renamed here alone, it broke them)
+                    match rename_across_edits(
+                        docs,
+                        &uri,
+                        &text,
+                        &nb,
+                        params.text_document_position.position,
+                        &params.new_name,
+                        root,
+                    ) {
+                        Some(Err(message)) => {
+                            let resp = Response::new_err(
+                                id,
+                                lsp_server::ErrorCode::InvalidRequest as i32,
+                                message,
+                            );
+                            connection.sender.send(Message::Response(resp))?;
+                            return Ok(());
+                        }
+                        Some(Ok(across)) if !across.is_empty() => changes = across,
+                        _ => {
+                            changes.insert(uri, edits);
+                        }
+                    }
                     respond(
                         connection,
                         id,
@@ -1010,6 +1067,7 @@ fn program_diagnostics(
     let mut analyzer = Analyzer::new();
     let _ = analyzer.analyze_program(program);
     let unresolved = analyzer.get_undefined_variables();
+    let lines: Vec<&str> = text.lines().collect();
     let mut out: Vec<Diagnostic> =
         crate::tools::check::file_diagnostics(program, text, doc_dir, unresolved)
             .into_iter()
@@ -1022,7 +1080,12 @@ fn program_diagnostics(
                     DiagnosticSeverity::ERROR
                 };
                 Diagnostic {
-                    range: utf16_range(text, line, col, col + 1),
+                    range: line_range(
+                        lines.get(line as usize).copied().unwrap_or(""),
+                        line,
+                        col,
+                        col + 1,
+                    ),
                     severity: Some(severity),
                     code: Some(lsp_types::NumberOrString::String(
                         crate::tools::check::rule_of(&d).to_string(),
@@ -1142,7 +1205,7 @@ fn declaration_sites<'a>(
             let w = &line[start..end];
             if let Some(&name) = wanted.get(w) {
                 let col = line[..start].chars().count();
-                let range = || utf16_range(text, ln as u32, col, col + w.chars().count());
+                let range = || line_range(line, ln as u32, col, col + w.chars().count());
                 if start >= code_end {
                     in_comment.entry(name).or_insert_with(range);
                 } else {
@@ -1413,6 +1476,32 @@ fn built_key_completions(text: &str, pos: Position) -> Option<Vec<CompletionItem
 }
 
 /// The text before `pos`: every line above it and its own up to the caret.
+/// Whether the end of `prefix` (a text up to the cursor) is inside a `//`
+/// comment on its last line: two slashes outside a string.
+fn in_line_comment(prefix: &str) -> bool {
+    let line = prefix.rsplit('\n').next().unwrap_or("");
+    let mut in_str = false;
+    let mut esc = false;
+    let mut prev = '\0';
+    for c in line.chars() {
+        if in_str {
+            if esc {
+                esc = false;
+            } else if c == '\\' {
+                esc = true;
+            } else if c == '"' {
+                in_str = false;
+            }
+        } else if c == '"' {
+            in_str = true;
+        } else if c == '/' && prev == '/' {
+            return true;
+        }
+        prev = if in_str { '\0' } else { c };
+    }
+    false
+}
+
 fn text_before(text: &str, pos: Position) -> String {
     let mut out = String::new();
     for (n, line) in text.split('\n').enumerate() {
@@ -2428,6 +2517,7 @@ fn workspace_symbols(
         let Ok(uri) = Uri::from_file_path(&file) else {
             continue;
         };
+        let lines: Vec<&str> = text.lines().collect();
         for (name, detail, span) in declarations(&text) {
             if !q.is_empty() && !name.to_lowercase().contains(&q) {
                 continue;
@@ -2447,7 +2537,15 @@ fn workspace_symbols(
                 deprecated: None,
                 location: lsp_types::Location {
                     uri: uri.clone(),
-                    range: span_range(&text, span, name.chars().count()),
+                    range: {
+                        let (l, c) = (span.0.saturating_sub(1), span.1.saturating_sub(1) as usize);
+                        line_range(
+                            lines.get(l as usize).copied().unwrap_or(""),
+                            l,
+                            c,
+                            c + name.chars().count(),
+                        )
+                    },
                 },
                 container_name: file.file_name().map(|f| f.to_string_lossy().into_owned()),
             });
@@ -2563,6 +2661,105 @@ fn rename(text: &str, pos: Position, new_name: &str) -> Result<Vec<TextEdit>, St
         return Err(format!("'{word}' does not occur in this file"));
     }
     Ok(edits)
+}
+
+/// A rename of a name a module shares (`rename_across`), as each file's
+/// edits: `None` when the name is no shared one (this file's rename
+/// serves). An open document is read as it stands; a path is said as the
+/// folder opened spells it.
+fn rename_across_edits(
+    docs: &HashMap<Uri, String>,
+    uri: &Uri,
+    text: &str,
+    nb: &Option<notebook::Notebook>,
+    pos: Position,
+    new_name: &str,
+    root: Option<&std::path::Path>,
+) -> Option<Result<HashMap<Uri, Vec<TextEdit>>, String>> {
+    use std::path::{Path, PathBuf};
+    let root = root?;
+    let file = uri.to_file_path().ok()?;
+    let p = pos_in(nb, pos)?;
+    let line = text.split('\n').nth(p.line as usize)?;
+    let col = utf16_to_char_col(line, p.character);
+    let canon = |q: &Path| std::fs::canonicalize(q).unwrap_or_else(|_| q.to_path_buf());
+    let open: HashMap<PathBuf, (&Uri, &String)> = docs
+        .iter()
+        .filter_map(|(u, t)| Some((canon(&u.to_file_path().ok()?), (u, t))))
+        .collect();
+    let raw_of = |q: &Path| -> Option<String> {
+        match open.get(q) {
+            Some((_, t)) => Some((*t).clone()),
+            None => std::fs::read_to_string(q).ok(),
+        }
+    };
+    let is_nb = |q: &Path| q.extension().is_some_and(|e| e == "olmd");
+    let read = |q: &Path| -> Option<String> {
+        let raw = raw_of(q)?;
+        Some(if is_nb(q) {
+            notebook::read(&raw).program
+        } else {
+            raw
+        })
+    };
+    let files = super::discover_sources(root);
+    let found = super::rename_across::rename_across(&file, text, p.line, col, root, &files, &read)?;
+    let name = word_at(text, p).map(|(w, _)| w)?;
+    let croot = canon(root);
+    Some(found.map(|by_file| {
+        let mut out: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
+        for (path, places) in by_file {
+            // the client's own spelling: an open document's uri, else the
+            // path under the folder as it was opened
+            let target = match open.get(&path) {
+                Some((u, _)) => (*u).clone(),
+                None => {
+                    let spelled = path
+                        .strip_prefix(&croot)
+                        .map(|rest| root.join(rest))
+                        .unwrap_or_else(|_| path.clone());
+                    match Uri::from_file_path(&spelled) {
+                        Ok(u) => u,
+                        Err(_) => continue,
+                    }
+                }
+            };
+            let Some(raw) = raw_of(&path) else { continue };
+            let book = if is_nb(&path) {
+                Some(notebook::read(&raw))
+            } else {
+                None
+            };
+            let program = book.as_ref().map(|n| n.program.clone()).unwrap_or(raw);
+            let lines: Vec<&str> = program.split('\n').collect();
+            let mut edits: Vec<TextEdit> = places
+                .iter()
+                .filter_map(|&(l, a, b)| {
+                    let r = line_range(lines.get(l as usize)?, l, a, b);
+                    Some(TextEdit {
+                        range: range_out(&book, r)?,
+                        new_text: new_name.to_string(),
+                    })
+                })
+                .collect();
+            if let Some(n) = &book {
+                edits.extend(
+                    n.prose_occurrences(&name)
+                        .into_iter()
+                        .map(|range| TextEdit {
+                            range,
+                            new_text: new_name.to_string(),
+                        }),
+                );
+            }
+            edits.sort_by_key(|e| (e.range.start.line, e.range.start.character));
+            edits.dedup_by(|a, b| a.range == b.range);
+            if !edits.is_empty() {
+                out.insert(target, edits);
+            }
+        }
+        out
+    }))
 }
 
 /// Whether `word` may become `new_name`: never a keyword, never a
