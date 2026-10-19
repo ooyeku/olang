@@ -344,6 +344,10 @@ harness = false
 name = "gui_macos_latency_test"
 harness = false
 
+[[test]]
+name = "gui_macos_busy_test"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = true

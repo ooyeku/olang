@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`gui.turn(on)`: a program's long turn shown while it runs.** A
+  program says when its turn begins and ends (Loom's loop does, two
+  atomic writes a turn); one that runs past 2 s
+  (`GUI_NOT_RESPONDING_MS`) makes every window show it is waiting — the
+  busy cursor, a veil and a spinner over the frame — until it ends. The
+  engine draws on meanwhile, on the loop's thread: scrolls, looks, fields
+  and the spinner keep the refresh while the program is busy.
+  `gui.platform()` says `turn_watch`. tests/gui_macos_busy_test.rs
 - **`gui`: the Mac's standard Edit menu.** `gui.menu` takes an item
   `#{ standard: "undo" | "redo" | "cut" | "copy" | "paste" |
   "paste_plain" | "delete" | "select_all", contexts }`: AppKit's own

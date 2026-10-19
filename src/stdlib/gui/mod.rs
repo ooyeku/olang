@@ -80,6 +80,7 @@ const FUNCTIONS: &[(&str, usize)] = &[
     ("platform", 0),
     ("wake", 0),
     ("prepare", 0),
+    ("turn", 1),
     ("flatten", 4),
     ("flat_emit", 5),
     ("flat_join", 4),
@@ -164,6 +165,17 @@ fn gui_function(name: &str, args: Vec<Value>) -> DynRes {
         "prepare" => {
             arity("gui.prepare", &args, 0, 0)?;
             platform::prepare();
+            Ok(Value::Unit)
+        }
+        // The program's turn begins (`true`) or ends (`false`): one that
+        // runs too long makes its windows say the program is busy
+        // (platform::turn_watch). Two atomic writes a turn.
+        "turn" => {
+            arity("gui.turn", &args, 1, 1)?;
+            match &args[0] {
+                Value::Boolean(on) => platform::turn_watch::turn(*on),
+                _ => return Err("gui.turn: the argument is true (a turn begins) or false (it ends)".into()),
+            }
             Ok(Value::Unit)
         }
         "context" => {

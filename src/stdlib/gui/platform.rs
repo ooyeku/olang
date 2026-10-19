@@ -67,6 +67,9 @@ pub enum Cmd {
     Edit { id: u64, role: &'static str },
     /// Window `id`'s display refreshed at `at` (ns of the host clock).
     Tick { id: u64, at: u64 },
+    /// The program's turn has run past the watch's limit (`true`), or it
+    /// ended after it had (`false`): every window says so.
+    NotResponding(bool),
     ServiceText { id: u64, text: String },
 }
 
@@ -247,6 +250,12 @@ pub fn available() -> bool {
 /// - `group_hover`: a style's `hover` look shown over an ancestor too;
 ///   `scroll_bars`: scrollers draw overlay bars (bars.rs).
 ///
+/// - `edit_menu`: `gui.menu` takes the Mac's standard Edit items
+///   (`standard`) and submenus (`submenu`); the view answers Services
+///   (macOS).
+/// - `turn_watch`: `gui.turn(true|false)` around a program's turn; one
+///   that runs past 2 s is shown in its windows while it runs.
+///
 /// A program (Loom) asks before it uses what an older engine refuses.
 pub fn capabilities() -> Value {
     let mac = cfg!(target_os = "macos");
@@ -272,6 +281,9 @@ pub fn capabilities() -> Value {
         ("scroll_bars", b(true)),
         // a node's `wheel_x`: it hears the wheel's sideways part only
         ("wheel_x", b(true)),
+        // `gui.turn`: a program's turn that runs long is shown in its
+        // windows while it runs (the busy cursor, a spinner)
+        ("turn_watch", b(true)),
         // `gui.menu` takes the standard Edit items (`standard`, with the
         // `contexts` the program's commands bind their chords in) and
         // submenus (`submenu`); the window's view answers Services
@@ -437,6 +449,9 @@ struct PWin {
     /// The size last presented (a frame of another size is never put off:
     /// a live resize draws at once).
     shown_size: (u32, u32),
+    /// The cursor the program asked for (put back when the window is
+    /// responding again).
+    cursor: winit::window::CursorIcon,
 }
 
 /// A window the program closed (or every window, as the loop ends), torn
@@ -708,6 +723,7 @@ impl App {
                 idle_ticks: 0,
                 last_tick: 0,
                 shown_size: (0, 0),
+                cursor: winit::window::CursorIcon::Default,
             },
         );
         // The program lays out against the window's real size and scale.
@@ -862,7 +878,11 @@ impl App {
             let Ok(mut st) = pw.state.lock() else {
                 return;
             };
-            let dl = st.display_list();
+            #[allow(unused_mut)]
+            let mut dl = st.display_list();
+            // the program's turn running long: the veil and the spinner,
+            // turning (the next frame for it when it next turns)
+            let spin = turn_watch::shown().then(|| turn_watch::overlay(&mut dl, st.scale));
             // an animation in view: the next frame when it is due (none
             // while the window cannot be seen)
             let unseen = pw.occluded
@@ -875,6 +895,11 @@ impl App {
                 }
                 _ => None,
             };
+            if let Some(next) = spin.flatten()
+                && !unseen
+            {
+                pw.wake = Some(pw.wake.map_or(next, |w| w.min(next)));
+            }
             st.dirty = false;
             // the tree is built only when a client is listening (a long
             // styled text is a run a paragraph)
@@ -1462,6 +1487,7 @@ impl App {
                 Cmd::Edit { id, role } => format!("edit {role} {id}"),
                 // a refresh: too many to say
                 Cmd::Tick { .. } => String::new(),
+                Cmd::NotResponding(on) => format!("not responding {on}"),
                 Cmd::ServiceText { id, .. } => format!("service text {id}"),
             };
             if !what.is_empty() {
@@ -1489,7 +1515,7 @@ impl App {
                 }
             }
             Cmd::Set(id, v) => {
-                if let Some(pw) = self.windows.get(&id) {
+                if let Some(pw) = self.windows.get_mut(&id) {
                     if let Ok(Some(t)) = get_str(&v, "title", "gui.set") {
                         pw.win.set_title(t);
                     }
@@ -1507,7 +1533,7 @@ impl App {
                     }
                     if let Ok(Some(c)) = get_str(&v, "cursor", "gui.set") {
                         use winit::window::CursorIcon;
-                        pw.win.set_cursor(match c {
+                        let icon = match c {
                             "pointer" => CursorIcon::Pointer,
                             "text" => CursorIcon::Text,
                             "wait" => CursorIcon::Wait,
@@ -1516,7 +1542,11 @@ impl App {
                             "ns-resize" => CursorIcon::NsResize,
                             "not-allowed" => CursorIcon::NotAllowed,
                             _ => CursorIcon::Default,
-                        });
+                        };
+                        if !turn_watch::shown() {
+                            pw.win.set_cursor(icon);
+                        }
+                        pw.cursor = icon;
                     }
                     if let Ok(Some(true)) = get_bool(&v, "focus", "gui.set") {
                         pw.win.focus_window();
@@ -1614,6 +1644,7 @@ impl App {
             Cmd::Settings(why) => self.settings_changed(why, None),
             Cmd::Edit { id, role } => self.edit_item(id, role),
             Cmd::Tick { .. } => self.on_tick(cmd),
+            Cmd::NotResponding(on) => self.not_responding(on),
             Cmd::ServiceText { id, text } => self.input(id, Input::ImeCommit(text)),
             Cmd::Exit(code) => {
                 #[cfg(target_os = "macos")]
@@ -2361,6 +2392,21 @@ impl App {
         self.menu_handler();
         self.menu = Some((bar, ids));
         Ok(())
+    }
+
+    /// The program's turn has run long (`on`), or ended: every window shows
+    /// it is waiting — the busy cursor, a veil and a spinner over the
+    /// frame, turning while the engine draws on (its scrolls, looks and
+    /// fields still answer) — or is itself again.
+    fn not_responding(&mut self, on: bool) {
+        use winit::window::CursorIcon;
+        for pw in self.windows.values_mut() {
+            pw.win.set_cursor(if on { CursorIcon::Wait } else { pw.cursor });
+            if let Ok(mut st) = pw.state.lock() {
+                st.dirty = true;
+            }
+            pw.win.request_redraw();
+        }
     }
 
     /// A refresh of window `id`'s display: the oldest frame on its way is
@@ -3678,6 +3724,145 @@ pub mod frames {
             pick(|x| x.0),
             pick(|x| x.1)
         );
+    }
+}
+
+/// The program's turns, watched (`gui.turn`): a turn that runs past a
+/// limit (2 s, as long as macOS waits before it shows an application is
+/// not responding; `GUI_NOT_RESPONDING_MS`) makes every window show it is
+/// waiting until the turn ends. The engine goes on drawing meanwhile: the
+/// loop's thread is not the program's, so scrolls, looks, fields and the
+/// spinner keep the refresh while the turn runs. A turn costs two atomic
+/// writes; the watch's thread sleeps while no turn runs.
+pub mod turn_watch {
+    use super::{Cmd, send};
+    use crate::stdlib::gui::window::{Clip, DisplayList, Prim};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::OnceLock;
+    use std::time::{Duration, Instant};
+
+    /// When the running turn began (µs since `epoch`, plus one), or 0.
+    static STARTED: AtomicU64 = AtomicU64::new(0);
+    /// The windows say the program is not responding.
+    static SHOWN: AtomicBool = AtomicBool::new(false);
+    /// The watch's thread is asleep with no turn to time.
+    static IDLE: AtomicBool = AtomicBool::new(false);
+
+    fn epoch() -> Instant {
+        static E: OnceLock<Instant> = OnceLock::new();
+        *E.get_or_init(Instant::now)
+    }
+
+    fn now_us() -> u64 {
+        epoch().elapsed().as_micros() as u64 + 1
+    }
+
+    /// How long a turn may run before the windows say so.
+    pub fn limit() -> Duration {
+        static L: OnceLock<Duration> = OnceLock::new();
+        *L.get_or_init(|| {
+            let ms = std::env::var("GUI_NOT_RESPONDING_MS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(2000);
+            Duration::from_millis(ms.clamp(50, 600_000))
+        })
+    }
+
+    fn watcher() -> &'static std::thread::Thread {
+        static T: OnceLock<std::thread::Thread> = OnceLock::new();
+        T.get_or_init(|| {
+            std::thread::Builder::new()
+                .name("gui-turn-watch".into())
+                .spawn(watch)
+                .expect("spawning the turn watch")
+                .thread()
+                .clone()
+        })
+    }
+
+    fn watch() {
+        loop {
+            let started = STARTED.load(Ordering::Acquire);
+            if started == 0 {
+                IDLE.store(true, Ordering::Release);
+                // a turn that began as the flag went up is seen at once
+                if STARTED.load(Ordering::Acquire) == 0 {
+                    std::thread::park();
+                }
+                IDLE.store(false, Ordering::Release);
+                continue;
+            }
+            let ran = Duration::from_micros(now_us().saturating_sub(started));
+            if ran >= limit() {
+                if !SHOWN.swap(true, Ordering::AcqRel) {
+                    send(Cmd::NotResponding(true));
+                }
+                // until this turn ends (`turn(false)` takes the windows back)
+                std::thread::park_timeout(Duration::from_millis(500));
+            } else {
+                std::thread::park_timeout(limit() - ran);
+            }
+        }
+    }
+
+    /// The program's turn begins (`on`) or ends.
+    pub fn turn(on: bool) {
+        if on {
+            let _ = epoch();
+            STARTED.store(now_us(), Ordering::Release);
+            if IDLE.swap(false, Ordering::AcqRel) || !WATCHING.swap(true, Ordering::AcqRel) {
+                watcher().unpark();
+            }
+        } else {
+            STARTED.store(0, Ordering::Release);
+            if SHOWN.swap(false, Ordering::AcqRel) {
+                send(Cmd::NotResponding(false));
+            }
+        }
+    }
+
+    /// The watch's thread was started.
+    static WATCHING: AtomicBool = AtomicBool::new(false);
+
+    /// Whether the windows say the program is not responding.
+    pub fn shown() -> bool {
+        SHOWN.load(Ordering::Acquire)
+    }
+
+    /// The veil and the spinner over a frame `dl` (device pixels at
+    /// `scale`): eight dots round the middle, the brightest turning a dot
+    /// every 80 ms. Answers when it next turns.
+    pub fn overlay(dl: &mut DisplayList, scale: f32) -> Option<Instant> {
+        let (w, h) = (dl.width as f32, dl.height as f32);
+        let all = Clip::rect(0.0, 0.0, w, h);
+        let rect = |x: f32, y: f32, rw: f32, rh: f32, fill: [u8; 4], r: f32| Prim::Rect {
+            x,
+            y,
+            w: rw,
+            h: rh,
+            fill,
+            border: [0, 0, 0, 0],
+            border_width: 0.0,
+            radii: [r; 4],
+            clip: all,
+        };
+        dl.prims.push(rect(0.0, 0.0, w, h, [0, 0, 0, 40], 0.0));
+        let s = scale.max(0.5);
+        let (cx, cy) = (w / 2.0, h / 2.0);
+        let card = 64.0 * s;
+        dl.prims.push(rect(cx - card / 2.0, cy - card / 2.0, card, card, [30, 30, 32, 200], 14.0 * s));
+        let step = (epoch().elapsed().as_millis() / 80) as usize;
+        let dot = 6.0 * s;
+        let ring = 16.0 * s;
+        for i in 0..8 {
+            let a = i as f32 / 8.0 * std::f32::consts::TAU;
+            let age = (step + 8 - i) % 8;
+            let alpha = (255 - age * 28).max(50) as u8;
+            let (x, y) = (cx + ring * a.sin(), cy - ring * a.cos());
+            dl.prims.push(rect(x - dot / 2.0, y - dot / 2.0, dot, dot, [235, 235, 240, alpha], dot / 2.0));
+        }
+        Some(Instant::now() + Duration::from_millis(80))
     }
 }
 
