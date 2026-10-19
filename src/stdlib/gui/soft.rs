@@ -5,10 +5,15 @@
 //!
 //! Blending is in sRGB-encoded space, as tiny-skia does and as the GPU
 //! renderer matches by drawing to a non-sRGB target.
+//!
+//! A window drawn in software keeps its last frame ([`Retained`]) and
+//! redraws only the rectangles [`damage`](super::damage) finds changed.
 
+use super::damage::{self, Damage, IRect, Item, Shift, Tracker};
 use super::raster;
 use super::text::Color;
 use super::window::{Clip, DisplayList, Prim};
+use std::hash::{Hash, Hasher};
 use tiny_skia::{FillRule, Mask, Paint, PathBuilder, Pixmap, Rect, Transform};
 
 /// Draw a display list. The pixmap is premultiplied RGBA.
@@ -16,8 +21,239 @@ pub fn render(dl: &DisplayList) -> Pixmap {
     let mut pm = Pixmap::new(dl.width.max(1), dl.height.max(1)).expect("non-zero size");
     let c = dl.clear;
     pm.fill(tiny_skia::Color::from_rgba8(c[0], c[1], c[2], c[3]));
-    let mut masks: Vec<(Clip, Mask)> = Vec::new();
+    draw(&mut pm, dl, None);
+    pm
+}
+
+/// A frame kept between frames, so the next draws only what changed.
+#[derive(Default)]
+pub struct Retained {
+    pm: Option<Pixmap>,
+    /// Where a damaged frame's primitives are drawn whole before their
+    /// rectangles are copied into `pm` (a primitive drawn through a mask
+    /// is not always the same pixels as one drawn without).
+    scratch: Option<Pixmap>,
+    tracker: Tracker,
+    /// The last frame's damage, and the moves before it.
+    pub last: Option<Damage>,
+    pub last_shifts: Vec<Shift>,
+}
+
+impl Retained {
+    /// The next frame draws everything.
+    pub fn invalidate(&mut self) {
+        self.tracker.invalidate();
+    }
+
+    /// The kept frame.
+    pub fn pixmap(&self) -> Option<&Pixmap> {
+        self.pm.as_ref()
+    }
+
+    /// Draw a display list over the kept frame: its damage.
+    pub fn render(&mut self, dl: &DisplayList) -> &Damage {
+        let (w, h) = (dl.width.max(1), dl.height.max(1));
+        let items = items(dl);
+        if !matches!(&self.pm, Some(p) if (p.width(), p.height()) == (w, h)) {
+            self.pm = Pixmap::new(w, h);
+            self.tracker.invalidate();
+        }
+        let (d, shifts, next) = self.tracker.damage(w, h, dl.clear, &items, &dl.scrolls);
+        if let Some(pm) = self.pm.as_mut() {
+            // the scrolled regions' pixels move with them first
+            let pw = w as usize * 4;
+            let data = pm.data_mut();
+            for s in &shifts {
+                let (x0, x1) = (s.src.x0 as usize * 4, s.src.x1 as usize * 4);
+                let dx = (s.dst.x0 - s.src.x0) as isize * 4;
+                let rows: Vec<i32> = if s.dst.y0 > s.src.y0 {
+                    (s.src.y0..s.src.y1).rev().collect()
+                } else {
+                    (s.src.y0..s.src.y1).collect()
+                };
+                for y in rows {
+                    let from = y as usize * pw;
+                    let to = (y + s.dst.y0 - s.src.y0) as usize * pw;
+                    data.copy_within(
+                        from + x0..from + x1,
+                        (to as isize + x0 as isize + dx) as usize,
+                    );
+                }
+            }
+            match &d {
+                Damage::None => {}
+                Damage::Full => {
+                    let c = dl.clear;
+                    pm.fill(tiny_skia::Color::from_rgba8(c[0], c[1], c[2], c[3]));
+                    draw(pm, dl, None);
+                }
+                Damage::Rects(rects) => {
+                    if !matches!(&self.scratch, Some(p) if (p.width(), p.height()) == (w, h)) {
+                        self.scratch = Pixmap::new(w, h);
+                    }
+                    if let Some(sc) = self.scratch.as_mut() {
+                        let c = tiny_skia::Color::from_rgba8(dl.clear[0], dl.clear[1], dl.clear[2], dl.clear[3])
+                            .premultiply()
+                            .to_color_u8();
+                        let px = [c.red(), c.green(), c.blue(), c.alpha()];
+                        let pw = w as usize;
+                        let data = sc.data_mut();
+                        for r in rects {
+                            for y in r.y0..r.y1 {
+                                let row = y as usize * pw;
+                                for x in r.x0..r.x1 {
+                                    let i = (row + x as usize) * 4;
+                                    data[i..i + 4].copy_from_slice(&px);
+                                }
+                            }
+                        }
+                        draw(sc, dl, Some((rects, &items)));
+                        let (src, dst) = (sc.data(), pm.data_mut());
+                        for r in rects {
+                            for y in r.y0..r.y1 {
+                                let a = (y as usize * pw + r.x0 as usize) * 4;
+                                let b = (y as usize * pw + r.x1 as usize) * 4;
+                                dst[a..b].copy_from_slice(&src[a..b]);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        damage::count(&d, w, h);
+        self.tracker.commit(next);
+        self.last = Some(d);
+        self.last_shifts = shifts;
+        self.last.as_ref().unwrap_or(&Damage::None)
+    }
+
+    /// What the last frame changed on the screen: its damage and the
+    /// places its moves wrote (nothing: it is not presented).
+    pub fn presented(&self) -> Damage {
+        let d = self.last.clone().unwrap_or(Damage::None);
+        if self.last_shifts.is_empty() {
+            return d;
+        }
+        match d {
+            Damage::Full => Damage::Full,
+            Damage::None => Damage::Rects(self.last_shifts.iter().map(|s| s.dst).collect()),
+            Damage::Rects(mut r) => {
+                r.extend(self.last_shifts.iter().map(|s| s.dst));
+                Damage::Rects(r)
+            }
+        }
+    }
+}
+
+/// What damage reads of each primitive: the pixels it can touch, and
+/// hashes of what decides them (empty bounds: it draws nothing; items
+/// stay aligned with `dl.prims`).
+fn items(dl: &DisplayList) -> Vec<Item> {
+    let (ww, wh) = (dl.width.max(1), dl.height.max(1));
+    let nothing = |c: &Clip| Item::new(IRect::new(0, 0, 0, 0), 0, 0.0, 0.0, *c);
+    let mut out = Vec::with_capacity(dl.prims.len());
     for prim in &dl.prims {
+        let item = match prim {
+            Prim::Rect {
+                x,
+                y,
+                w,
+                h,
+                fill,
+                border,
+                border_width,
+                radii,
+                clip,
+            } => {
+                if clip.is_empty() || *w <= 0.0 || *h <= 0.0 {
+                    None
+                } else {
+                    let mut hs = damage::mix_f32s(1, &[*w, *h, *border_width]);
+                    hs = damage::mix_f32s(hs, radii);
+                    hs = damage::mix(hs, u32::from_le_bytes(*fill) as u64);
+                    hs = damage::mix(hs, u32::from_le_bytes(*border) as u64);
+                    let r = radii.iter().fold(*border_width, |a, v| a.max(*v));
+                    damage::bounds(*x, *y, *w, *h, 1.0, clip, ww, wh).map(|b| {
+                        Item::new(b, hs, *x, *y, *clip)
+                            .with_interior(damage::inside(*x, *y, *w, *h, r + 1.0))
+                            .pinned(damage::crosses_window(*x, *y, *w, *h, 0.0, ww, wh))
+                    })
+                }
+            }
+            Prim::Image {
+                x,
+                y,
+                w,
+                h,
+                pic,
+                clip,
+                alpha,
+            } => {
+                if clip.is_empty() || *w <= 0.0 || *h <= 0.0 || *alpha <= 0.0 {
+                    None
+                } else {
+                    let hs = damage::mix_f32s(damage::mix(2, pic.id), &[*w, *h, *alpha]);
+                    damage::bounds(*x, *y, *w, *h, 1.0, clip, ww, wh).map(|b| {
+                        Item::new(b, hs, *x, *y, *clip)
+                            .pinned(damage::crosses_window(*x, *y, *w, *h, 0.0, ww, wh))
+                    })
+                }
+            }
+            Prim::Glyph {
+                x,
+                y,
+                key,
+                coords,
+                color,
+                clip,
+            } => {
+                if clip.is_empty() {
+                    None
+                } else {
+                    raster::glyph(key, coords).and_then(|img| {
+                        let gx = x.floor() as i32 + img.left;
+                        let gy = *y as i32 - img.top;
+                        let mut k = rustc_hash::FxHasher::default();
+                        key.hash(&mut k);
+                        let hs = damage::mix(damage::mix(3, k.finish()), u32::from_le_bytes(*color) as u64);
+                        damage::bounds(
+                            gx as f32,
+                            gy as f32,
+                            img.width as f32,
+                            img.height as f32,
+                            0.0,
+                            clip,
+                            ww,
+                            wh,
+                        )
+                        .map(|b| Item::new(b, hs, *x, *y, *clip))
+                    })
+                }
+            }
+        };
+        out.push(item.unwrap_or_else(|| {
+            nothing(match prim {
+                Prim::Rect { clip, .. } | Prim::Image { clip, .. } | Prim::Glyph { clip, .. } => clip,
+            })
+        }));
+    }
+    out
+}
+
+/// Draw a display list's primitives over a pixmap; with `region`, only
+/// those that touch its rectangles (`items`, aligned with the primitives,
+/// says which), drawn whole (glyphs only within the rectangles): the
+/// pixels inside the rectangles are the whole frame's, those outside are
+/// not to be kept.
+fn draw(pm: &mut Pixmap, dl: &DisplayList, region: Option<(&[IRect], &[Item])>) {
+    let mut masks: Vec<(Clip, Mask)> = Vec::new();
+    for (i, prim) in dl.prims.iter().enumerate() {
+        if let Some((rects, items)) = region {
+            let b = &items[i].bounds;
+            if b.is_empty() || !rects.iter().any(|r| r.intersects(b)) {
+                continue;
+            }
+        }
         match prim {
             Prim::Rect {
                 x,
@@ -35,7 +271,7 @@ pub fn render(dl: &DisplayList) -> Pixmap {
                 }
                 let mask = clip_mask(&mut masks, *clip, dl.width, dl.height);
                 draw_rect(
-                    &mut pm,
+                    pm,
                     [*x, *y, *w, *h],
                     *fill,
                     *border,
@@ -60,7 +296,7 @@ pub fn render(dl: &DisplayList) -> Pixmap {
                 else {
                     continue;
                 };
-                let mask = clip_mask(&mut masks, *clip, dl.width, dl.height).cloned();
+                let mask = clip_mask(&mut masks, *clip, dl.width, dl.height);
                 let paint = tiny_skia::PixmapPaint {
                     quality: tiny_skia::FilterQuality::Bilinear,
                     opacity: alpha.clamp(0.0, 1.0),
@@ -74,7 +310,7 @@ pub fn render(dl: &DisplayList) -> Pixmap {
                     *x,
                     *y,
                 );
-                pm.draw_pixmap(0, 0, src, &paint, tf, mask.as_ref());
+                pm.draw_pixmap(0, 0, src, &paint, tf, mask);
             }
             Prim::Glyph {
                 x,
@@ -88,17 +324,24 @@ pub fn render(dl: &DisplayList) -> Pixmap {
                     continue;
                 }
                 if let Some(img) = raster::glyph(key, coords) {
+                    // a plain clip is the glyph's bounds; a rounded one a mask
                     let mask = if clip.is_rounded() {
-                        clip_mask(&mut masks, *clip, dl.width, dl.height).cloned()
+                        clip_mask(&mut masks, *clip, dl.width, dl.height)
                     } else {
                         None
                     };
-                    blit_glyph(&mut pm, *x, *y, &img, *color, *clip, mask.as_ref());
+                    match region {
+                        None => blit_glyph(pm, *x, *y, &img, *color, *clip, mask, None),
+                        Some((rects, _)) => {
+                            for r in rects {
+                                blit_glyph(pm, *x, *y, &img, *color, *clip, mask, Some(r));
+                            }
+                        }
+                    }
                 }
             }
         }
     }
-    pm
 }
 
 /// A mask for a clip rectangle, or `None` when the clip is the whole
@@ -231,7 +474,9 @@ fn draw_rect(
     }
 }
 
-/// Composite a glyph image at a pen position (premultiplied source-over).
+/// Composite a glyph image at a pen position (premultiplied source-over),
+/// within `area` when given.
+#[allow(clippy::too_many_arguments)]
 fn blit_glyph(
     pm: &mut Pixmap,
     x: f32,
@@ -240,15 +485,25 @@ fn blit_glyph(
     color: Color,
     clip: Clip,
     mask: Option<&Mask>,
+    area: Option<&IRect>,
 ) {
     let gx = x.floor() as i32 + img.left;
     let gy = y as i32 - img.top;
     let (pw, ph) = (pm.width() as i32, pm.height() as i32);
-    let cx0 = (clip.x0.floor() as i32).max(0);
-    let cy0 = (clip.y0.floor() as i32).max(0);
-    let cx1 = (clip.x1.ceil() as i32).min(pw);
-    let cy1 = (clip.y1.ceil() as i32).min(ph);
-    let mask_data = mask.map(|m| m.data().to_vec());
+    let mut cx0 = (clip.x0.floor() as i32).max(0);
+    let mut cy0 = (clip.y0.floor() as i32).max(0);
+    let mut cx1 = (clip.x1.ceil() as i32).min(pw);
+    let mut cy1 = (clip.y1.ceil() as i32).min(ph);
+    if let Some(a) = area {
+        cx0 = cx0.max(a.x0);
+        cy0 = cy0.max(a.y0);
+        cx1 = cx1.min(a.x1);
+        cy1 = cy1.min(a.y1);
+        if cx0 >= cx1 || cy0 >= cy1 || gx >= cx1 || gy >= cy1 || gx + img.width as i32 <= cx0 || gy + img.height as i32 <= cy0 {
+            return;
+        }
+    }
+    let mask_data = mask.map(|m| m.data());
     let data = pm.data_mut();
     let ca = color[3] as u32;
     for row in 0..img.height as i32 {

@@ -384,6 +384,8 @@ enum Renderer {
     Soft {
         surface: softbuffer::Surface<Arc<Window>, Arc<Window>>,
         _context: softbuffer::Context<Arc<Window>>,
+        /// The last frame, drawn over where the next one changed.
+        kept: soft::Retained,
     },
 }
 
@@ -814,7 +816,7 @@ impl App {
                 }
                 Err(e) => eprintln!("gui: {e}"),
             },
-            Renderer::Soft { surface, .. } => present_soft(surface, &dl, &pw.win),
+            Renderer::Soft { surface, kept, .. } => present_soft(surface, kept, &dl, &pw.win),
         }
         crate::boot_trace::frame_presented();
         // the frame: its display list made, and drawn and presented
@@ -860,16 +862,26 @@ fn soft_renderer(win: &Arc<Window>) -> Result<Renderer, String> {
     Ok(Renderer::Soft {
         surface,
         _context: context,
+        kept: soft::Retained::default(),
     })
 }
 
 fn present_soft(
     surface: &mut softbuffer::Surface<Arc<Window>, Arc<Window>>,
+    kept: &mut soft::Retained,
     dl: &super::window::DisplayList,
     win: &Window,
 ) {
+    use super::damage::{Damage, IRect};
     use std::num::NonZeroU32;
-    let pm = soft::render(dl);
+    kept.render(dl);
+    let damage = kept.presented();
+    if damage == Damage::None {
+        return;
+    }
+    let Some(pm) = kept.pixmap() else {
+        return;
+    };
     let (Some(w), Some(h)) = (NonZeroU32::new(pm.width()), NonZeroU32::new(pm.height())) else {
         return;
     };
@@ -879,12 +891,38 @@ fn present_soft(
     let Ok(mut buf) = surface.buffer_mut() else {
         return;
     };
-    for (dst, px) in buf.iter_mut().zip(pm.pixels()) {
-        // Opaque windows: the premultiplied colour is the colour.
-        *dst = ((px.red() as u32) << 16) | ((px.green() as u32) << 8) | px.blue() as u32;
+    // a buffer holding the last frame takes only what changed
+    let whole = [IRect::new(0, 0, pm.width() as i32, pm.height() as i32)];
+    let rects: &[IRect] = match &damage {
+        Damage::Rects(r) if buf.age() == 1 => r,
+        _ => &whole,
+    };
+    let pw = pm.width() as usize;
+    let px = pm.pixels();
+    for r in rects {
+        for y in r.y0 as usize..r.y1 as usize {
+            let row = y * pw;
+            for x in r.x0 as usize..r.x1 as usize {
+                let p = px[row + x];
+                // Opaque windows: the premultiplied colour is the colour.
+                buf[row + x] =
+                    ((p.red() as u32) << 16) | ((p.green() as u32) << 8) | p.blue() as u32;
+            }
+        }
     }
     win.pre_present_notify();
-    let _ = buf.present();
+    let damaged: Vec<softbuffer::Rect> = rects
+        .iter()
+        .filter_map(|r| {
+            Some(softbuffer::Rect {
+                x: r.x0 as u32,
+                y: r.y0 as u32,
+                width: NonZeroU32::new((r.x1 - r.x0) as u32)?,
+                height: NonZeroU32::new((r.y1 - r.y0) as u32)?,
+            })
+        })
+        .collect();
+    let _ = buf.present_with_damage(&damaged);
 }
 
 /// Heddle's names for keys (`left`, `enter`, `f5`); a character key is
