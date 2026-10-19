@@ -101,6 +101,21 @@ fn style(r: &mut Rng) -> Value {
     if r.chance(30) {
         f.push(("clip", Value::Boolean(true)));
     }
+    if r.chance(25) {
+        f.push(("corner", s(if r.chance(70) { "continuous" } else { "round" })));
+    }
+    if r.chance(12) {
+        f.push((
+            "shadow",
+            m(vec![
+                ("color", colour(r)),
+                ("blur", Value::Float(r.f(0.0, 24.0))),
+                ("x", Value::Float(r.f(-6.0, 6.0))),
+                ("y", Value::Float(r.f(-2.0, 10.0))),
+                ("spread", Value::Float(r.f(-4.0, 6.0))),
+            ]),
+        ));
+    }
     if r.chance(15) {
         f.push(("opacity", Value::Float(r.f(0.2, 1.0))));
     }
@@ -124,7 +139,46 @@ fn canvas_ops(r: &mut Rng) -> Value {
     let n = |v: f64| Value::Float(v);
     let mut ops = Vec::new();
     for _ in 0..1 + r.below(4) {
-        ops.push(match r.below(4) {
+        ops.push(match r.below(5) {
+            4 => {
+                // a vector path: a polyline or curves, filled and or stroked,
+                // its joins, caps and dashes
+                let pts: Vec<Value> = (0..2 + r.below(6))
+                    .map(|_| tup(&[r.f(0.0, 90.0), r.f(0.0, 70.0)]))
+                    .collect();
+                let mut f = if r.chance(50) {
+                    vec![("op", s("path")), ("points", Value::List(Arc::new(pts)))]
+                } else {
+                    let p = |r: &mut Rng| [r.f(0.0, 90.0), r.f(0.0, 70.0)];
+                    let (a, b, c, d) = (p(r), p(r), p(r), p(r));
+                    let cmd = |v: Vec<Value>| Value::List(Arc::new(v));
+                    vec![
+                        ("op", s("path")),
+                        (
+                            "d",
+                            cmd(vec![
+                                cmd(vec![s("M"), n(a[0]), n(a[1])]),
+                                cmd(vec![s("Q"), n(b[0]), n(b[1]), n(c[0]), n(c[1])]),
+                                cmd(vec![s("C"), n(d[0]), n(d[1]), n(a[0]), n(c[1]), n(b[0]), n(a[1])]),
+                            ]),
+                        ),
+                    ]
+                };
+                if r.chance(40) {
+                    f.push(("close", Value::Boolean(true)));
+                    f.push(("fill", colour(r)));
+                }
+                if r.chance(70) {
+                    f.push(("stroke", colour(r)));
+                    f.push(("width", n(r.f(0.3, 8.0))));
+                    f.push(("join", s(["round", "miter", "bevel"][r.below(3) as usize])));
+                    f.push(("cap", s(["round", "butt", "square"][r.below(3) as usize])));
+                    if r.chance(30) {
+                        f.push(("dash", tup(&[r.f(1.0, 8.0), r.f(1.0, 6.0)])));
+                    }
+                }
+                m(f)
+            }
             0 => m(vec![
                 ("op", s("rect")),
                 ("x", n(r.f(0.0, 60.0))),

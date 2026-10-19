@@ -21,6 +21,10 @@
 use super::window::Clip;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// How far along each edge a continuous corner of radius `r` reaches:
+/// `CONTINUOUS_EXTENT · r` (the renderers' curve; soft.rs, gpu.rs).
+pub const CONTINUOUS_EXTENT: f32 = 1.528;
+
 /// A tile's side, in device pixels.
 pub const TILE: i32 = 64;
 
@@ -220,7 +224,8 @@ impl Item {
         let cut = if !c.is_rounded() {
             Some([c.x0.max(rx0), c.y0.max(ry0), c.x1.min(rx1), c.y1.min(ry1)])
         } else {
-            let m = c.radii.iter().fold(0.0f32, |a, v| a.max(*v)) + 1.0;
+            let k = if c.continuous { CONTINUOUS_EXTENT } else { 1.0 };
+            let m = c.radii.iter().fold(0.0f32, |a, v| a.max(*v)) * k + 1.0;
             let clear = rx0 >= c.x0 + m && rx1 <= c.x1 - m && ry0 >= c.y0 + 1.0 && ry1 <= c.y1 - 1.0
                 || ry0 >= c.y0 + m && ry1 <= c.y1 - m && rx0 >= c.x0 + 1.0 && rx1 <= c.x1 - 1.0;
             clear.then_some([rx0, ry0, rx1, ry1])
@@ -258,7 +263,7 @@ impl Item {
                     rel(h, &[x0, y0, x1, y1])
                 }
             }
-            None => mix_f32s(rel(h, &[c.x0, c.y0, c.x1, c.y1]), &c.radii),
+            None => mix(mix_f32s(rel(h, &[c.x0, c.y0, c.x1, c.y1]), &c.radii), c.continuous as u64),
         }
     }
 }

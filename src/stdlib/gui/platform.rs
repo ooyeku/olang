@@ -297,6 +297,18 @@ pub fn capabilities() -> Value {
         ("flat_keyed", b(true)),
         ("flat_diff", b(true)),
         ("flat_index", b(true)),
+        // a style's `corner` ("continuous": Apple's continuous corners)
+        // and `shadow` (an analytic Gaussian shadow), `gui.set`'s
+        // `corner` (the window's default); both renderers
+        ("corner", b(true)),
+        ("shadow", b(true)),
+        // a canvas's paths drawn as vectors (curves: `d`; `cap`, `join`,
+        // `dash`, `rule`) and radial gradients (`dir: "radial"`)
+        ("vector", b(true)),
+        // a style's `material` (sidebar, popover, sheet, hud): what is
+        // under the box blurred on the GPU, the opaque `bg` in software
+        // and under Reduce Transparency
+        ("material", b(true)),
     ])
 }
 
@@ -3937,6 +3949,7 @@ pub mod turn_watch {
             border: [0, 0, 0, 0],
             border_width: 0.0,
             radii: [r; 4],
+            continuous: false,
             clip: all,
         };
         dl.prims.push(rect(0.0, 0.0, w, h, [0, 0, 0, 40], 0.0));

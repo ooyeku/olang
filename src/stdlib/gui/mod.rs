@@ -45,6 +45,7 @@ pub mod scene;
 pub mod soft;
 pub mod text;
 pub mod values;
+pub mod vector;
 pub mod window;
 
 use crate::ast::Value;
@@ -1193,6 +1194,17 @@ fn gui_set(args: Vec<Value>) -> Res<Value> {
         }
         if let Some(on) = get_bool(v, "scripted", what)? {
             st.scripted = on;
+        }
+        if let Some(c) = get_str(v, "corner", what)? {
+            let on = match c {
+                "continuous" => true,
+                "round" => false,
+                _ => return Err(format!("{what}: \"corner\" is round or continuous")),
+            };
+            if st.scene.continuous != on {
+                st.scene.continuous = on;
+                st.dirty = true;
+            }
         }
         if let Some(z) = get_num(v, "zoom", what)? {
             let mut out = Vec::new();

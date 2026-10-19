@@ -1702,15 +1702,15 @@ fn a_canvas_is_drawn_as_primitives_with_clips_transforms_and_hit_regions() {
         other => panic!("text: {other:?}"),
     }
     match &d.items[4] {
-        Item::Pic { x, y, pic, .. } => {
-            assert!(
-                *x <= 0.0 && *y <= 90.0 && pic.width <= 24 && pic.height <= 24,
-                "a piece the size of the arrowhead"
-            );
+        Item::Path(p) => {
+            let b = p.path.bounds();
+            assert_eq!((b.left(), b.top(), b.right(), b.bottom()), (0.0, 90.0, 8.0, 98.0), "the arrowhead as geometry, unscaled");
+            assert_eq!(p.fill, Some([22, 163, 74, 255]));
         }
-        other => panic!("a path is a raster piece: {other:?}"),
+        other => panic!("a path is geometry, never a raster: {other:?}"),
     }
-    // the same shape a whole pixel along is the same picture
+    // the same shape a whole pixel along is the same path moved (damage
+    // finds it unchanged where it moved by whole pixels)
     let moved = Value::List(Arc::new(vec![m(vec![
         ("op", s("path")),
         (
@@ -1726,11 +1726,10 @@ fn a_canvas_is_drawn_as_primitives_with_clips_transforms_and_hit_regions() {
     ])]));
     let d2 = canvas::draw(&moved, 200.0, 100.0, 2.0).expect("draws");
     match (&d.items[4], &d2.items[0]) {
-        (Item::Pic { pic: a, x: xa, .. }, Item::Pic { pic: b, x: xb, .. }) => {
-            assert_eq!(a.id, b.id, "one raster for the shape");
-            assert_eq!(xb - xa, 30.0);
+        (Item::Path(a), Item::Path(b)) => {
+            assert_eq!(b.path.bounds().left() - a.path.bounds().left(), 30.0);
         }
-        _ => panic!("pieces"),
+        _ => panic!("paths"),
     }
     assert!(matches!(&d.items[5], Item::Pic { pic, .. } if pic.width == 256 && pic.height == 1));
     // hits: the bar over the ground; outside the clip the bar is not there
@@ -1769,11 +1768,15 @@ fn a_canvas_is_drawn_as_primitives_with_clips_transforms_and_hit_regions() {
         let i = (((y * 2.0) as u32 * dl.width + (x * 2.0) as u32) * 4) as usize;
         [px[i], px[i + 1], px[i + 2]]
     };
+    // mixed in linear light: dark at its start, its middle a light grey
+    // (half the light, not half the sRGB code)
     assert!(
-        at(102.0, 70.0)[0] < 30,
+        at(102.0, 70.0)[0] < 60,
         "the gradient starts dark: {:?}",
         at(102.0, 70.0)
     );
+    let mid = at(140.0, 70.0)[0];
+    assert!((180..=196).contains(&mid), "its middle is half the light: {mid}");
     assert!(
         at(178.0, 70.0)[0] > 225,
         "and ends light: {:?}",

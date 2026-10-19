@@ -11,11 +11,15 @@
 //!   (corners, borders, clips);
 //! - text is shaped and drawn as any other text (sharp, measured alike),
 //!   cut with an ellipsis to `max_w` when it says so;
-//! - a gradient is a small picture of its stops stretched over its
-//!   rectangle, clipped to its corners;
-//! - paths, circles, and slanted lines are rasterized with tiny-skia, each
-//!   on its own bounding box and cached by its shape there: the same
-//!   arrowhead a hundred times, or a pan by whole pixels, is one raster;
+//! - a gradient's stops are mixed in linear light into a strip: a linear
+//!   one is the strip stretched over its rectangle, a radial one
+//!   (`dir: "radial"`) the strip read by the distance from its centre
+//!   (both renderers, the GPU in its shader), clipped to its corners;
+//! - a circle is a box with round corners (drawn exactly by both);
+//! - paths (lines and curves: `points` or `d`), dashed circles and slanted
+//!   lines are vector paths: tiny-skia draws them in software, the GPU
+//!   draws them itself (gpu.rs: coverage on the GPU, nothing rasterized
+//!   on the CPU), with their caps, joins and dashes;
 //! - an image is a picture file, decoded off the window's thread
 //!   (picture.rs).
 //!
@@ -33,7 +37,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use tiny_skia::{FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke, Transform};
+use tiny_skia::{LineCap, LineJoin, PathBuilder, Stroke};
 
 /// A picture both renderers draw: premultiplied RGBA, `id` unique to its
 /// content (the GPU keys its texture by it).
@@ -101,6 +105,17 @@ pub enum Item {
         radii: [f32; 4],
         clip: Area,
     },
+    /// A radial gradient over a box: its strip's colours from the box's
+    /// centre (0) to its corners (1); `radii` round the box.
+    Radial {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        strip: Arc<Picture>,
+        radii: [f32; 4],
+        clip: Area,
+    },
     /// A picture file (picture.rs), fitted to its box.
     Image {
         x: f32,
@@ -112,6 +127,86 @@ pub enum Item {
         clip: Area,
     },
     Text(CanvasText),
+    /// A vector path (lines, curves), filled and or stroked: drawn by the
+    /// renderers as geometry — tiny-skia in software, the GPU's own
+    /// coverage on the GPU — never a picture.
+    Path(PathItem),
+}
+
+/// How a stroke's open ends are drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Cap {
+    Butt,
+    Round,
+    Square,
+}
+
+/// How a stroke turns a corner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Join {
+    Miter,
+    Round,
+    Bevel,
+}
+
+/// A path's stroke, in the canvas's logical pixels.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StrokeSpec {
+    pub color: Color,
+    pub width: f32,
+    pub cap: Cap,
+    pub join: Join,
+    /// On, off, on, … lengths; `None`: solid.
+    pub dash: Option<Arc<[f32]>>,
+    pub dash_offset: f32,
+}
+
+impl StrokeSpec {
+    /// The same stroke for tiny-skia, its width and dashes at `scale`
+    /// times (the path is drawn through a transform that scales it).
+    pub fn skia(&self) -> Stroke {
+        let mut s = Stroke {
+            width: self.width.max(0.0),
+            line_cap: match self.cap {
+                Cap::Butt => LineCap::Butt,
+                Cap::Round => LineCap::Round,
+                Cap::Square => LineCap::Square,
+            },
+            line_join: match self.join {
+                Join::Miter => LineJoin::Miter,
+                Join::Round => LineJoin::Round,
+                Join::Bevel => LineJoin::Bevel,
+            },
+            ..Default::default()
+        };
+        if let Some(d) = &self.dash {
+            s.dash = tiny_skia::StrokeDash::new(d.to_vec(), self.dash_offset);
+        }
+        s
+    }
+
+    /// How far past the path its stroke can reach.
+    pub fn reach(&self) -> f32 {
+        let h = self.width.max(0.0) / 2.0;
+        match (self.join, self.cap) {
+            (Join::Miter, _) => h * 4.0,
+            (_, Cap::Square) => h * std::f32::consts::SQRT_2,
+            _ => h,
+        }
+    }
+}
+
+/// A path in the canvas's logical pixels and how it is painted.
+#[derive(Clone, Debug)]
+pub struct PathItem {
+    pub path: Arc<tiny_skia::Path>,
+    pub fill: Option<Color>,
+    /// The even-odd rule (else non-zero).
+    pub even_odd: bool,
+    pub stroke: Option<StrokeSpec>,
+    pub clip: Area,
+    /// A hash of the path and its paint (what damage compares).
+    pub ident: u64,
 }
 
 /// A canvas's drawing, and its hit regions (topmost last).
@@ -150,22 +245,6 @@ fn meet(a: Area, b: Area) -> Area {
 
 fn empty(a: &Area) -> bool {
     a[2] <= a[0] || a[3] <= a[1]
-}
-
-fn paint(c: Color) -> Paint<'static> {
-    let mut p = Paint::default();
-    p.set_color_rgba8(c[0], c[1], c[2], c[3]);
-    p.anti_alias = true;
-    p
-}
-
-fn stroke_of(w: f32) -> Stroke {
-    Stroke {
-        width: w.max(0.0),
-        line_cap: LineCap::Round,
-        line_join: LineJoin::Round,
-        ..Default::default()
-    }
 }
 
 const CLEAR: Color = [0, 0, 0, 0];
@@ -236,74 +315,58 @@ fn cached(key: u64, make: impl FnOnce() -> Option<Picture>) -> Option<Arc<Pictur
     Some(pic)
 }
 
-/// A path (in the canvas's logical pixels) filled and stroked on its own
-/// bounding box at `scale`: the piece's top left (logical, on a device
-/// pixel) and its picture. The shape is cached relative to the piece, so
-/// the same shape elsewhere by whole device pixels is the same picture.
-fn raster_piece(
-    path: &tiny_skia::Path,
-    fill: Option<Color>,
-    stroke: Option<(Color, f32)>,
-    scale: f32,
-) -> Option<(f32, f32, Arc<Picture>)> {
-    let b = path.bounds();
-    let pad = stroke.map(|(_, w)| w / 2.0).unwrap_or(0.0) + 1.0;
-    let dx0 = ((b.left() - pad) * scale).floor();
-    let dy0 = ((b.top() - pad) * scale).floor();
-    let dw = (((b.right() + pad) * scale).ceil() - dx0).clamp(1.0, 4096.0) as u32;
-    let dh = (((b.bottom() + pad) * scale).ceil() - dy0).clamp(1.0, 4096.0) as u32;
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    for p in path.points() {
-        // relative to the piece, to an eighth of a device pixel
-        (((p.x * scale - dx0) * 8.0).round() as i64).hash(&mut h);
-        (((p.y * scale - dy0) * 8.0).round() as i64).hash(&mut h);
-    }
-    for v in path.verbs() {
-        (*v as u8).hash(&mut h);
-    }
-    fill.hash(&mut h);
-    stroke.map(|(c, w)| (c, (w * 100.0) as i64)).hash(&mut h);
-    (dw, dh, (scale * 100.0) as i64).hash(&mut h);
-    let key = h.finish();
-    let pic = cached(key, || {
-        let mut pm = Pixmap::new(dw, dh)?;
-        let tf = Transform::from_row(scale, 0.0, 0.0, scale, -dx0, -dy0);
-        if let Some(f) = fill {
-            pm.fill_path(path, &paint(f), FillRule::Winding, tf, None);
-        }
-        if let Some((c, w)) = stroke {
-            pm.stroke_path(path, &paint(c), &stroke_of(w), tf, None);
-        }
-        Some(Picture {
-            id: next_picture_id(),
-            width: pm.width(),
-            height: pm.height(),
-            rgba: pm.take(),
-        })
-    })?;
-    Some((dx0 / scale, dy0 / scale, pic))
+/// Entries in a gradient's strip.
+pub const STRIP: usize = 256;
+
+/// An sRGB-encoded channel (0 … 1) in linear light.
+pub fn to_linear(c: f32) -> f32 {
+    if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
 }
 
-/// A gradient's stops as a 256-pixel strip (across for `"x"`, down for
-/// `"y"`), cached by its colours.
-fn gradient_strip(stops: &[Color], down: bool) -> Option<Arc<Picture>> {
+/// A linear-light channel (0 … 1) sRGB-encoded.
+pub fn to_srgb(c: f32) -> f32 {
+    if c <= 0.003_130_8 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 }
+}
+
+/// A gradient's colour at `t` (0 … 1) along evenly spaced `stops`, mixed
+/// in linear light, premultiplied (CSS Color 4's interpolation in
+/// `srgb-linear`): no muddy band between two hues, and a fade to
+/// `transparent` keeps its colour. Straight sRGB, 0 … 255.
+pub fn gradient_at(stops: &[Color], t: f32) -> [f32; 4] {
+    let t = t.clamp(0.0, 1.0) * (stops.len() - 1) as f32;
+    let k = (t.floor() as usize).min(stops.len() - 2);
+    let f = t - k as f32;
+    let (a, b) = (stops[k], stops[k + 1]);
+    let (aa, ba) = (a[3] as f32 / 255.0, b[3] as f32 / 255.0);
+    let alpha = aa + (ba - aa) * f;
+    let mut out = [0.0f32; 4];
+    for j in 0..3 {
+        let pa = to_linear(a[j] as f32 / 255.0) * aa;
+        let pb = to_linear(b[j] as f32 / 255.0) * ba;
+        let p = pa + (pb - pa) * f;
+        out[j] = if alpha > 0.0 { to_srgb((p / alpha).clamp(0.0, 1.0)) * 255.0 } else { 0.0 };
+    }
+    out[3] = alpha * 255.0;
+    out
+}
+
+/// A gradient's stops as a [`STRIP`]-pixel strip (across for `"x"` and a
+/// radial one, down for `"y"`), mixed in linear light, premultiplied;
+/// cached by its colours.
+pub fn gradient_strip(stops: &[Color], down: bool) -> Option<Arc<Picture>> {
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    ("gradient", stops, down).hash(&mut h);
+    ("gradient-linear-light", stops, down).hash(&mut h);
     cached(h.finish(), || {
-        let n = 256usize;
+        let n = STRIP;
         let mut rgba = Vec::with_capacity(n * 4);
         for i in 0..n {
-            let t = i as f32 / (n - 1) as f32 * (stops.len() - 1) as f32;
-            let k = (t.floor() as usize).min(stops.len() - 2);
-            let f = t - k as f32;
-            let (a, b) = (stops[k], stops[k + 1]);
-            let mix = |j: usize| a[j] as f32 + (b[j] as f32 - a[j] as f32) * f;
-            let alpha = mix(3) / 255.0;
+            let c = gradient_at(stops, i as f32 / (n - 1) as f32);
+            let alpha = c[3] / 255.0;
             // premultiplied, as both renderers take pictures
-            for j in 0..3 {
-                rgba.push((mix(j) * alpha).round().clamp(0.0, 255.0) as u8);
+            for v in &c[..3] {
+                rgba.push((v * alpha).round().clamp(0.0, 255.0) as u8);
             }
-            rgba.push(mix(3).round().clamp(0.0, 255.0) as u8);
+            rgba.push(c[3].round().clamp(0.0, 255.0) as u8);
         }
         let (width, height) = if down { (1, n as u32) } else { (n as u32, 1) };
         Some(Picture {
@@ -343,9 +406,151 @@ fn radii_of(op: &Value, what: &str) -> Res<[f32; 4]> {
     }
 }
 
+/// An op's stroke (`stroke`/`color`, `width`, `cap`, `join`, `dash`,
+/// `dash_offset`), its geometry through the frame's transform only where
+/// it is a path's (widths and dashes are never scaled by it).
+fn stroke_spec(op: &Value, color: Color, width: f32, cap: Cap, what: &str) -> Res<StrokeSpec> {
+    let cap = match get_str(op, "cap", what)? {
+        None => cap,
+        Some("butt") => Cap::Butt,
+        Some("round") => Cap::Round,
+        Some("square") => Cap::Square,
+        Some(o) => return Err(format!("{what}: \"cap\" is butt, round or square, got \"{o}\"")),
+    };
+    let join = match get_str(op, "join", what)? {
+        None | Some("round") => Join::Round,
+        Some("miter") => Join::Miter,
+        Some("bevel") => Join::Bevel,
+        Some(o) => return Err(format!("{what}: \"join\" is round, miter or bevel, got \"{o}\"")),
+    };
+    let dash = match get(op, "dash") {
+        None | Some(Value::Unit) => None,
+        Some(v) => {
+            let d = nums(v).ok_or_else(|| format!("{what}: \"dash\" is a list of lengths"))?;
+            // tiny-skia wants an even count of positive lengths
+            let mut d: Vec<f32> = d.into_iter().map(|x| x.max(0.0)).collect();
+            if d.len() % 2 == 1 {
+                d.extend(d.clone());
+            }
+            if d.len() < 2 || d.iter().sum::<f32>() <= 0.0 || d.iter().any(|x| !x.is_finite()) {
+                None
+            } else {
+                Some(Arc::from(d.into_boxed_slice()))
+            }
+        }
+    };
+    Ok(StrokeSpec {
+        color,
+        width: if width.is_finite() { width.max(0.0) } else { 0.0 },
+        cap,
+        join,
+        dash,
+        dash_offset: get_num(op, "dash_offset", what)?.unwrap_or(0.0),
+    })
+}
+
+/// A path's `d`: a list of commands, each a list or tuple — `("M", x, y)`,
+/// `("L", x, y)`, `("Q", cx, cy, x, y)`, `("C", c1x, c1y, c2x, c2y, x, y)`,
+/// `("Z")` — through the frame's transform.
+fn path_of_d(d: &Value, f: &Frame, what: &str) -> Res<Option<tiny_skia::Path>> {
+    let cmds: &[Value] = match d {
+        Value::List(l) => l,
+        Value::Tuple(t) => t,
+        _ => return Err(format!("{what}: \"d\" is a list of commands")),
+    };
+    let mut pb = PathBuilder::new();
+    let mut open = false;
+    for c in cmds {
+        let parts: &[Value] = match c {
+            Value::List(l) => l,
+            Value::Tuple(t) => t,
+            _ => return Err(format!("{what}: a command of \"d\" is a list, got {c}")),
+        };
+        let Some(Value::String(name)) = parts.first() else {
+            return Err(format!("{what}: a command of \"d\" starts with its letter (M, L, Q, C, Z)"));
+        };
+        let ns: Vec<f32> = parts[1..].iter().filter_map(num).collect();
+        let need = |k: usize| -> Res<()> {
+            if ns.len() < k || ns.iter().take(k).any(|v| !v.is_finite()) {
+                Err(format!("{what}: \"{name}\" takes {k} numbers"))
+            } else {
+                Ok(())
+            }
+        };
+        match name.as_str() {
+            "M" => {
+                need(2)?;
+                let (x, y) = f.pt(ns[0], ns[1]);
+                pb.move_to(x, y);
+                open = true;
+            }
+            "L" => {
+                need(2)?;
+                let (x, y) = f.pt(ns[0], ns[1]);
+                if open { pb.line_to(x, y) } else { pb.move_to(x, y) }
+                open = true;
+            }
+            "Q" => {
+                need(4)?;
+                let (cx, cy) = f.pt(ns[0], ns[1]);
+                let (x, y) = f.pt(ns[2], ns[3]);
+                if !open {
+                    pb.move_to(cx, cy);
+                }
+                pb.quad_to(cx, cy, x, y);
+                open = true;
+            }
+            "C" => {
+                need(6)?;
+                let (ax, ay) = f.pt(ns[0], ns[1]);
+                let (bx, by) = f.pt(ns[2], ns[3]);
+                let (x, y) = f.pt(ns[4], ns[5]);
+                if !open {
+                    pb.move_to(ax, ay);
+                }
+                pb.cubic_to(ax, ay, bx, by, x, y);
+                open = true;
+            }
+            "Z" => pb.close(),
+            o => return Err(format!("{what}: unknown command \"{o}\" in \"d\" (M, L, Q, C, Z)")),
+        }
+    }
+    Ok(pb.finish())
+}
+
+/// A path item: its paint, and a hash of all of it (damage's).
+fn path_item(path: tiny_skia::Path, fill: Option<Color>, even_odd: bool, stroke: Option<StrokeSpec>, clip: Area) -> Item {
+    let mut h = rustc_hash::FxHasher::default();
+    for p in path.points() {
+        p.x.to_bits().hash(&mut h);
+        p.y.to_bits().hash(&mut h);
+    }
+    for v in path.verbs() {
+        (*v as u8).hash(&mut h);
+    }
+    fill.hash(&mut h);
+    even_odd.hash(&mut h);
+    if let Some(s) = &stroke {
+        (s.color, s.width.to_bits(), s.cap, s.join, s.dash_offset.to_bits()).hash(&mut h);
+        if let Some(d) = &s.dash {
+            for v in d.iter() {
+                v.to_bits().hash(&mut h);
+            }
+        }
+    }
+    Item::Path(PathItem {
+        path: Arc::new(path),
+        fill,
+        even_odd,
+        stroke,
+        clip,
+        ident: h.finish(),
+    })
+}
+
 /// The drawing of a canvas of `w × h` logical pixels at `scale`: its
 /// items and hit regions. `raster` false skips the pictures (a hit test).
-pub fn draw_at(ops: &Value, w: f32, h: f32, scale: f32, raster: bool) -> Res<Drawing> {
+pub fn draw_at(ops: &Value, w: f32, h: f32, _scale: f32, raster: bool) -> Res<Drawing> {
     let items: &[Value] = match ops {
         Value::List(l) => l,
         _ => return Err("canvas: \"draw\" must be a list of operations".into()),
@@ -406,8 +611,21 @@ pub fn draw_at(ops: &Value, w: f32, h: f32, scale: f32, raster: bool) -> Res<Dra
                 bbox = Some((x, y, rw, rh));
                 let stops = colors_of(get(op, "gradient"), &what)?;
                 if stops.len() >= 2 {
-                    let down = get_str(op, "dir", &what)?.unwrap_or("x") == "y";
-                    if raster && let Some(pic) = gradient_strip(&stops, down) {
+                    let dir = get_str(op, "dir", &what)?.unwrap_or("x");
+                    let down = dir == "y";
+                    if dir == "radial" {
+                        if raster && let Some(pic) = gradient_strip(&stops, false) {
+                            out.items.push(Item::Radial {
+                                x,
+                                y,
+                                w: rw,
+                                h: rh,
+                                strip: pic,
+                                radii,
+                                clip: f.clip,
+                            });
+                        }
+                    } else if raster && let Some(pic) = gradient_strip(&stops, down) {
                         out.items.push(Item::Pic {
                             x,
                             y,
@@ -461,7 +679,8 @@ pub fn draw_at(ops: &Value, w: f32, h: f32, scale: f32, raster: bool) -> Res<Dra
                     (x2 - x1).abs() + width,
                     (y2 - y1).abs() + width,
                 ));
-                if x1 == x2 || y1 == y2 {
+                let plain = get(op, "cap").is_none() && get(op, "dash").is_none();
+                if plain && (x1 == x2 || y1 == y2) {
                     // along an axis: a rectangle, its ends square
                     let (x, y, lw, lh) = if y1 == y2 {
                         (x1.min(x2), y1 - width / 2.0, (x2 - x1).abs(), width)
@@ -483,26 +702,48 @@ pub fn draw_at(ops: &Value, w: f32, h: f32, scale: f32, raster: bool) -> Res<Dra
                     let mut pb = PathBuilder::new();
                     pb.move_to(x1, y1);
                     pb.line_to(x2, y2);
-                    if let Some(p) = pb.finish()
-                        && let Some((px, py, pic)) = raster_piece(&p, None, Some((c, width)), scale)
-                    {
-                        out.items.push(Item::Pic {
-                            x: px,
-                            y: py,
-                            w: pic.width as f32 / scale,
-                            h: pic.height as f32 / scale,
-                            pic,
-                            radii: [0.0; 4],
-                            clip: f.clip,
-                        });
+                    if let Some(p) = pb.finish() {
+                        let st = stroke_spec(op, c, width, Cap::Round, &what)?;
+                        out.items.push(path_item(p, None, false, Some(st), f.clip));
                     }
                 }
             }
-            "circle" | "path" => {
-                let path = if kind == "circle" {
-                    let (cx, cy) = f.pt(n("cx")?, n("cy")?);
-                    // a circle through a transform that stretches stays round
-                    PathBuilder::from_circle(cx, cy, n("r")?.max(0.0))
+            "circle" => {
+                let (cx, cy) = f.pt(n("cx")?, n("cy")?);
+                // a circle through a transform that stretches stays round
+                let r = n("r")?.max(0.0);
+                bbox = Some((cx - r, cy - r, 2.0 * r, 2.0 * r));
+                let s = if stroked { line_c.map(|c| (c, width)) } else { None };
+                let dashed = get(op, "dash").is_some_and(|v| *v != Value::Unit);
+                if r > 0.0 && !dashed && (fill.is_some() || s.is_some()) {
+                    // a box with round corners: drawn exactly by both renderers
+                    let bw = s.map(|(_, w)| w.max(0.0)).unwrap_or(0.0);
+                    out.items.push(Item::Rect {
+                        x: cx - r - bw / 2.0,
+                        y: cy - r - bw / 2.0,
+                        w: 2.0 * r + bw,
+                        h: 2.0 * r + bw,
+                        fill: fill.unwrap_or(CLEAR),
+                        border: s.map(|(c, _)| c).unwrap_or(CLEAR),
+                        border_width: bw,
+                        radii: [r + bw / 2.0; 4],
+                        clip: f.clip,
+                    });
+                } else if r > 0.0
+                    && raster
+                    && (fill.is_some() || s.is_some())
+                    && let Some(path) = PathBuilder::from_circle(cx, cy, r)
+                {
+                    let st = match s {
+                        Some((c, w)) => Some(stroke_spec(op, c, w, Cap::Butt, &what)?),
+                        None => None,
+                    };
+                    out.items.push(path_item(path, fill, false, st, f.clip));
+                }
+            }
+            "path" => {
+                let path = if let Some(d) = get(op, "d").filter(|v| **v != Value::Unit) {
+                    path_of_d(d, &f, &what)?
                 } else {
                     let pts = match get(op, "points") {
                         Some(Value::List(l)) => l.iter().filter_map(nums).collect::<Vec<_>>(),
@@ -512,6 +753,9 @@ pub fn draw_at(ops: &Value, w: f32, h: f32, scale: f32, raster: bool) -> Res<Dra
                     let mut first = true;
                     for p in pts.iter().filter(|p| p.len() >= 2) {
                         let (x, y) = f.pt(p[0], p[1]);
+                        if !(x.is_finite() && y.is_finite()) {
+                            continue;
+                        }
                         if first {
                             pb.move_to(x, y);
                             first = false;
@@ -527,24 +771,17 @@ pub fn draw_at(ops: &Value, w: f32, h: f32, scale: f32, raster: bool) -> Res<Dra
                 let Some(path) = path else { continue };
                 let b = path.bounds();
                 bbox = Some((b.left(), b.top(), b.width(), b.height()));
-                let s = if stroked {
-                    line_c.map(|c| (c, width))
+                let even_odd = get_str(op, "rule", &what)? == Some("evenodd");
+                let st = if stroked {
+                    match line_c {
+                        Some(c) => Some(stroke_spec(op, c, width, Cap::Round, &what)?),
+                        None => None,
+                    }
                 } else {
                     None
                 };
-                if raster
-                    && (fill.is_some() || s.is_some())
-                    && let Some((px, py, pic)) = raster_piece(&path, fill, s, scale)
-                {
-                    out.items.push(Item::Pic {
-                        x: px,
-                        y: py,
-                        w: pic.width as f32 / scale,
-                        h: pic.height as f32 / scale,
-                        pic,
-                        radii: [0.0; 4],
-                        clip: f.clip,
-                    });
+                if raster && (fill.is_some() || st.is_some()) {
+                    out.items.push(path_item(path, fill, even_odd, st, f.clip));
                 }
             }
             "image" => {

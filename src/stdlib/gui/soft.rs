@@ -12,7 +12,7 @@
 use super::damage::{self, Damage, IRect, Item, Shift, Tracker};
 use super::raster;
 use super::text::Color;
-use super::window::{Clip, DisplayList, Prim};
+use super::window::{Clip, DisplayList, PathPrim, Prim};
 use std::hash::{Hash, Hasher};
 use tiny_skia::{FillRule, Mask, Paint, PathBuilder, Pixmap, Rect, Transform};
 
@@ -164,6 +164,7 @@ fn items(dl: &DisplayList) -> Vec<Item> {
                 border,
                 border_width,
                 radii,
+                continuous,
                 clip,
             } => {
                 if clip.is_empty() || *w <= 0.0 || *h <= 0.0 {
@@ -173,10 +174,82 @@ fn items(dl: &DisplayList) -> Vec<Item> {
                     hs = damage::mix_f32s(hs, radii);
                     hs = damage::mix(hs, u32::from_le_bytes(*fill) as u64);
                     hs = damage::mix(hs, u32::from_le_bytes(*border) as u64);
-                    let r = radii.iter().fold(*border_width, |a, v| a.max(*v));
+                    hs = damage::mix(hs, *continuous as u64);
+                    let k = if *continuous { damage::CONTINUOUS_EXTENT } else { 1.0 };
+                    let r = radii.iter().fold(0.0f32, |a, v| a.max(*v)) * k;
+                    let r = r.max(*border_width);
                     damage::bounds(*x, *y, *w, *h, 1.0, clip, ww, wh).map(|b| {
                         Item::new(b, hs, *x, *y, *clip)
                             .with_interior(damage::inside(*x, *y, *w, *h, r + 1.0))
+                            .pinned(damage::crosses_window(*x, *y, *w, *h, 0.0, ww, wh))
+                    })
+                }
+            }
+            Prim::Shadow {
+                x,
+                y,
+                w,
+                h,
+                radii,
+                sigma,
+                color,
+                clip,
+            } => {
+                if clip.is_empty() || *w <= 0.0 || *h <= 0.0 || color[3] == 0 {
+                    None
+                } else {
+                    let sigma = sigma.max(0.5);
+                    let mut hs = damage::mix_f32s(4, &[*w, *h, sigma]);
+                    hs = damage::mix_f32s(hs, radii);
+                    hs = damage::mix(hs, u32::from_le_bytes(*color) as u64);
+                    let pad = (3.0 * sigma).ceil() + 1.0;
+                    damage::bounds(*x, *y, *w, *h, pad, clip, ww, wh).map(|b| {
+                        Item::new(b, hs, *x, *y, *clip)
+                            .pinned(damage::crosses_window(*x, *y, *w, *h, pad, ww, wh))
+                    })
+                }
+            }
+            Prim::Path(pp) => path_item(pp, ww, wh),
+            Prim::Backdrop {
+                x,
+                y,
+                w,
+                h,
+                radii,
+                continuous,
+                fallback,
+                clip,
+                ..
+            } => {
+                if clip.is_empty() || *w <= 0.0 || *h <= 0.0 {
+                    None
+                } else {
+                    let mut hs = damage::mix_f32s(7, &[*w, *h]);
+                    hs = damage::mix_f32s(hs, radii);
+                    hs = damage::mix(hs, u32::from_le_bytes(*fallback) as u64 ^ (*continuous as u64) << 40);
+                    damage::bounds(*x, *y, *w, *h, 1.0, clip, ww, wh).map(|b| {
+                        Item::new(b, hs, *x, *y, *clip)
+                            .pinned(damage::crosses_window(*x, *y, *w, *h, 0.0, ww, wh))
+                    })
+                }
+            }
+            Prim::Radial {
+                x,
+                y,
+                w,
+                h,
+                strip,
+                radii,
+                clip,
+                alpha,
+            } => {
+                if clip.is_empty() || *w <= 0.0 || *h <= 0.0 || *alpha <= 0.0 {
+                    None
+                } else {
+                    let mut hs = damage::mix_f32s(damage::mix(6, strip.id), &[*w, *h, *alpha]);
+                    hs = damage::mix_f32s(hs, radii);
+                    damage::bounds(*x, *y, *w, *h, 1.0, clip, ww, wh).map(|b| {
+                        Item::new(b, hs, *x, *y, *clip)
                             .pinned(damage::crosses_window(*x, *y, *w, *h, 0.0, ww, wh))
                     })
                 }
@@ -234,7 +307,13 @@ fn items(dl: &DisplayList) -> Vec<Item> {
         };
         out.push(item.unwrap_or_else(|| {
             nothing(match prim {
-                Prim::Rect { clip, .. } | Prim::Image { clip, .. } | Prim::Glyph { clip, .. } => clip,
+                Prim::Rect { clip, .. }
+                | Prim::Shadow { clip, .. }
+                | Prim::Backdrop { clip, .. }
+                | Prim::Radial { clip, .. }
+                | Prim::Image { clip, .. }
+                | Prim::Glyph { clip, .. } => clip,
+                Prim::Path(pp) => &pp.clip,
             })
         }));
     }
@@ -265,6 +344,7 @@ fn draw(pm: &mut Pixmap, dl: &DisplayList, region: Option<(&[IRect], &[IRect])>)
                 border,
                 border_width,
                 radii,
+                continuous,
                 clip,
             } => {
                 if clip.is_empty() || *w <= 0.0 || *h <= 0.0 {
@@ -278,8 +358,71 @@ fn draw(pm: &mut Pixmap, dl: &DisplayList, region: Option<(&[IRect], &[IRect])>)
                     *border,
                     *border_width,
                     *radii,
+                    *continuous,
                     mask,
                 );
+            }
+            Prim::Shadow {
+                x,
+                y,
+                w,
+                h,
+                radii,
+                sigma,
+                color,
+                clip,
+            } => {
+                if clip.is_empty() || *w <= 0.0 || *h <= 0.0 || color[3] == 0 {
+                    continue;
+                }
+                let area = region.map(|(rects, _)| rects);
+                let mask = if clip.is_rounded() {
+                    clip_mask(&mut masks, *clip, dl.width, dl.height)
+                } else {
+                    None
+                };
+                draw_shadow(pm, [*x, *y, *w, *h], *radii, sigma.max(0.5), *color, *clip, mask, area);
+            }
+            Prim::Backdrop {
+                x,
+                y,
+                w,
+                h,
+                radii,
+                continuous,
+                fallback,
+                clip,
+                ..
+            } => {
+                // the reference draws a material's opaque fallback
+                if clip.is_empty() || *w <= 0.0 || *h <= 0.0 {
+                    continue;
+                }
+                let mask = clip_mask(&mut masks, *clip, dl.width, dl.height);
+                draw_rect(pm, [*x, *y, *w, *h], *fallback, [0; 4], 0.0, *radii, *continuous, mask);
+            }
+            Prim::Radial {
+                x,
+                y,
+                w,
+                h,
+                strip,
+                radii,
+                clip,
+                alpha,
+            } => {
+                if clip.is_empty() || *w <= 0.0 || *h <= 0.0 || *alpha <= 0.0 {
+                    continue;
+                }
+                let mask = clip_mask(&mut masks, *clip, dl.width, dl.height);
+                draw_radial(pm, [*x, *y, *w, *h], strip, *radii, *alpha, mask);
+            }
+            Prim::Path(pp) => {
+                if pp.clip.is_empty() {
+                    continue;
+                }
+                let mask = clip_mask(&mut masks, pp.clip, dl.width, dl.height);
+                draw_path(pm, pp, mask);
             }
             Prim::Image {
                 x,
@@ -356,12 +499,13 @@ fn clip_mask(masks: &mut Vec<(Clip, Mask)>, clip: Clip, w: u32, h: u32) -> Optio
         None => {
             let mut m = Mask::new(w.max(1), h.max(1))?;
             if clip.is_rounded() {
-                if let Some(path) = rrect_path(
+                if let Some(path) = shape_path(
                     clip.x0,
                     clip.y0,
                     clip.x1 - clip.x0,
                     clip.y1 - clip.y0,
                     clip.radii,
+                    clip.continuous,
                 ) {
                     m.fill_path(&path, FillRule::Winding, true, Transform::identity());
                 }
@@ -428,6 +572,7 @@ pub fn rrect_path(x: f32, y: f32, w: f32, h: f32, radii: [f32; 4]) -> Option<tin
     pb.finish()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_rect(
     pm: &mut Pixmap,
     r: [f32; 4],
@@ -435,9 +580,11 @@ fn draw_rect(
     border: Color,
     bw: f32,
     radii: [f32; 4],
+    continuous: bool,
     mask: Option<&Mask>,
 ) {
     let [x, y, w, h] = r;
+    let rrect_path = |x, y, w, h, radii| shape_path(x, y, w, h, radii, continuous);
     if fill[3] > 0
         && let Some(p) = rrect_path(x, y, w, h, radii)
     {
@@ -471,6 +618,279 @@ fn draw_rect(
                 Transform::identity(),
                 mask,
             );
+        }
+    }
+}
+
+/// What damage reads of a canvas's path: the pixels it can touch and
+/// its hash (gpu.rs reads the same).
+pub fn path_item(pp: &PathPrim, ww: u32, wh: u32) -> Option<Item> {
+    let [x, y, w, h] = pp.bounds();
+    if pp.clip.is_empty() || !(w >= 0.0 && h >= 0.0) {
+        return None;
+    }
+    damage::bounds(x, y, w, h, 1.0, &pp.clip, ww, wh).map(|b| {
+        Item::new(b, damage::mix(5, pp.base_hash()), pp.x, pp.y, pp.clip)
+            .pinned(damage::crosses_window(x, y, w, h, 1.0, ww, wh))
+    })
+}
+
+/// A radial gradient: `strip`'s entries (premultiplied) as tiny-skia's
+/// stops, from the box's centre to its farthest corner, within its
+/// rounded box. The GPU reads the same strip by the same distance.
+fn draw_radial(pm: &mut Pixmap, r: [f32; 4], strip: &super::canvas::Picture, radii: [f32; 4], alpha: f32, mask: Option<&Mask>) {
+    let [x, y, w, h] = r;
+    let n = (strip.width * strip.height) as usize;
+    if n < 2 {
+        return;
+    }
+    let stops: Vec<tiny_skia::GradientStop> = (0..n)
+        .map(|i| {
+            let px = &strip.rgba[i * 4..i * 4 + 4];
+            let a = px[3] as f32 / 255.0;
+            let un = |v: u8| if a > 0.0 { (v as f32 / 255.0 / a).min(1.0) } else { 0.0 };
+            tiny_skia::GradientStop::new(
+                i as f32 / (n - 1) as f32,
+                tiny_skia::Color::from_rgba(un(px[0]), un(px[1]), un(px[2]), a * alpha.clamp(0.0, 1.0))
+                    .unwrap_or(tiny_skia::Color::TRANSPARENT),
+            )
+        })
+        .collect();
+    let c = tiny_skia::Point::from_xy(x + w / 2.0, y + h / 2.0);
+    let radius = (w * w + h * h).sqrt() / 2.0;
+    let Some(shader) = tiny_skia::RadialGradient::new(
+        c,
+        0.0,
+        c,
+        radius.max(0.001),
+        stops,
+        tiny_skia::SpreadMode::Pad,
+        Transform::identity(),
+    ) else {
+        return;
+    };
+    let paint = Paint {
+        shader,
+        anti_alias: true,
+        ..Default::default()
+    };
+    if let Some(p) = rrect_path(x, y, w, h, radii) {
+        pm.fill_path(&p, &paint, FillRule::Winding, Transform::identity(), mask);
+    }
+}
+
+/// A canvas's path filled and stroked by tiny-skia (the reference).
+fn draw_path(pm: &mut Pixmap, pp: &PathPrim, mask: Option<&Mask>) {
+    let tf = Transform::from_row(pp.scale, 0.0, 0.0, pp.scale, pp.x, pp.y);
+    if let Some(f) = pp.fill
+        && f[3] > 0
+    {
+        let rule = if pp.even_odd { FillRule::EvenOdd } else { FillRule::Winding };
+        pm.fill_path(&pp.path, &paint_of(f), rule, tf, mask);
+    }
+    if let Some(st) = &pp.stroke
+        && st.color[3] > 0
+        && st.width > 0.0
+    {
+        pm.stroke_path(&pp.path, &paint_of(st.color), &st.skia(), tf, mask);
+    }
+}
+
+/// A box's outline: rounded ([`rrect_path`]) or with continuous corners
+/// ([`continuous_path`]).
+pub fn shape_path(x: f32, y: f32, w: f32, h: f32, radii: [f32; 4], continuous: bool) -> Option<tiny_skia::Path> {
+    if continuous && radii.iter().any(|r| *r > 0.0) {
+        continuous_path(x, y, w, h, radii)
+    } else {
+        rrect_path(x, y, w, h, radii)
+    }
+}
+
+/// Segments in a continuous corner's polyline.
+const CORNER_STEPS: usize = 24;
+
+/// A box with continuous corners (Apple's): each corner of radius `r`
+/// (clamped to half the shorter side) a superellipse that reaches
+/// `CONTINUOUS_EXTENT · r` along each edge (at most half the shorter side)
+/// and is as deep at its diagonal as a quarter circle of radius `r`; its
+/// curvature eases in from the straight edge. A corner short of room
+/// becomes a quarter circle (a capsule's ends stay round). gpu.rs draws
+/// the same curve by its distance.
+pub fn continuous_path(x: f32, y: f32, w: f32, h: f32, radii: [f32; 4]) -> Option<tiny_skia::Path> {
+    let mh = (w.min(h) / 2.0).max(0.0);
+    let mut pb = PathBuilder::new();
+    // the corners clockwise from the top right: (centre's side signs,
+    // the angle the corner starts at)
+    let corners: [(usize, f32, f32, f32); 4] = [
+        (1, 1.0, -1.0, -std::f32::consts::FRAC_PI_2),
+        (2, 1.0, 1.0, 0.0),
+        (3, -1.0, 1.0, std::f32::consts::FRAC_PI_2),
+        (0, -1.0, -1.0, std::f32::consts::PI),
+    ];
+    let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+    let mut first = true;
+    for (i, sx, sy, a0) in corners {
+        let r = radii[i].clamp(0.0, mh);
+        // the corner of the box this corner rounds
+        let (kx, ky) = (cx + sx * w / 2.0, cy + sy * h / 2.0);
+        if r <= 0.0 {
+            if first {
+                pb.move_to(kx, ky);
+                first = false;
+            } else {
+                pb.line_to(kx, ky);
+            }
+            continue;
+        }
+        let (p, n) = continuous_corner(r, mh);
+        let (ox, oy) = (kx - sx * p, ky - sy * p);
+        for k in 0..=CORNER_STEPS {
+            let t = a0 + std::f32::consts::FRAC_PI_2 * k as f32 / CORNER_STEPS as f32;
+            let (c, s) = (t.cos(), t.sin());
+            let e = 2.0 / n;
+            let px = ox + p * c.signum() * c.abs().powf(e);
+            let py = oy + p * s.signum() * s.abs().powf(e);
+            if first {
+                pb.move_to(px, py);
+                first = false;
+            } else {
+                pb.line_to(px, py);
+            }
+        }
+    }
+    pb.close();
+    pb.finish()
+}
+
+/// A continuous corner of radius `r` in a box whose shorter side is
+/// `2 · mh`: how far it reaches along each edge, and its exponent.
+pub fn continuous_corner(r: f32, mh: f32) -> (f32, f32) {
+    let p = (damage::CONTINUOUS_EXTENT * r).min(mh).max(r);
+    let depth = r * (1.0 - std::f32::consts::FRAC_1_SQRT_2);
+    let n = std::f32::consts::LN_2 / -(1.0 - depth / p).ln();
+    (p, n)
+}
+
+/// erf to about 5e-4, ±1 past 2.5 (gpu.rs's `erf2`).
+fn erf(x: f32) -> f32 {
+    let a = x.abs();
+    if a >= 2.5 {
+        return x.signum();
+    }
+    let mut t = 1.0 + (0.278393 + (0.230389 + 0.078108 * (a * a)) * a) * a;
+    t *= t;
+    x.signum() - x.signum() / (t * t)
+}
+
+fn shadow_weight(y: f32, sigma: f32, step: f32) -> f32 {
+    (-(y * y) / (2.0 * sigma * sigma)).exp() * step
+}
+
+/// A box's shadow: its coverage blurred by a Gaussian of `sigma` (gpu.rs's
+/// `shadow_cover`, worked out a row at a time) in `color`, source-over,
+/// within `clip` (and `mask`, a rounded one) and `area` when given.
+#[allow(clippy::too_many_arguments)]
+fn draw_shadow(
+    pm: &mut Pixmap,
+    r: [f32; 4],
+    radii: [f32; 4],
+    sigma: f32,
+    color: Color,
+    clip: Clip,
+    mask: Option<&Mask>,
+    area: Option<&[IRect]>,
+) {
+    let [x, y, w, h] = r;
+    let pad = (3.0 * sigma).ceil() + 1.0;
+    let (pw, ph) = (pm.width() as i32, pm.height() as i32);
+    // a pixel is drawn when its centre is inside the clip (as on the GPU)
+    let x0 = ((x - pad).floor() as i32).max(((clip.x0 - 0.5).ceil() as i32).max(0));
+    let y0 = ((y - pad).floor() as i32).max(((clip.y0 - 0.5).ceil() as i32).max(0));
+    let x1 = ((x + w + pad).ceil() as i32).min(((clip.x1 - 0.5).ceil() as i32).min(pw));
+    let y1 = ((y + h + pad).ceil() as i32).min(((clip.y1 - 0.5).ceil() as i32).min(ph));
+    if x0 >= x1 || y0 >= y1 {
+        return;
+    }
+    let half = (w / 2.0, h / 2.0);
+    let centre = (x + half.0, y + half.1);
+    let k = std::f32::consts::FRAC_1_SQRT_2 / sigma;
+    let start0 = -3.0 * sigma;
+    let step0 = (3.0 * sigma - start0) / 4.0;
+    let mut total = 0.0f32;
+    for i in 0..4 {
+        total += shadow_weight(start0 + step0 * (i as f32 + 0.5), sigma, step0);
+    }
+    let mask_data = mask.map(|m| m.data());
+    let data = pm.data_mut();
+    let rad = |qx: f32, qy: f32| {
+        // gpu.rs's corner_radius: top-left, top-right, bottom-right, bottom-left
+        let r = if qx < 0.0 {
+            if qy < 0.0 { radii[0] } else { radii[3] }
+        } else if qy < 0.0 {
+            radii[1]
+        } else {
+            radii[2]
+        };
+        r.clamp(0.0, half.0.min(half.1))
+    };
+    for py in y0..y1 {
+        if let Some(a) = area
+            && !a.iter().any(|r| py >= r.y0 && py < r.y1 && x1 > r.x0 && x0 < r.x1)
+        {
+            continue;
+        }
+        let qy = py as f32 + 0.5 - centre.1;
+        let low = qy - half.1;
+        let high = qy + half.1;
+        let start = (-3.0 * sigma).clamp(low, high);
+        let end = (3.0 * sigma).clamp(low, high);
+        let step = (end - start) / 4.0;
+        // the row's four samples down, for each side's corner radius
+        let mut rows = [[(0.0f32, 0.0f32); 4]; 2];
+        for (side, row) in rows.iter_mut().enumerate() {
+            let corner = rad(if side == 0 { -1.0 } else { 1.0 }, qy);
+            for (i, slot) in row.iter_mut().enumerate() {
+                let yy = start + step * (i as f32 + 0.5);
+                let d = qy - yy;
+                let delta = (half.1 - corner - d.abs()).min(0.0);
+                let curved = half.0 - corner + (corner * corner - delta * delta).max(0.0).sqrt();
+                *slot = (curved, shadow_weight(yy, sigma, step));
+            }
+        }
+        for px in x0..x1 {
+            if let Some(a) = area
+                && !a.iter().any(|r| py >= r.y0 && py < r.y1 && px >= r.x0 && px < r.x1)
+            {
+                continue;
+            }
+            let qx = px as f32 + 0.5 - centre.0;
+            let row = &rows[if qx < 0.0 { 0 } else { 1 }];
+            let mut value = 0.0f32;
+            for (curved, wgt) in row {
+                let lo = 0.5 + 0.5 * erf((qx - curved) * k);
+                let hi = 0.5 + 0.5 * erf((qx + curved) * k);
+                value += (hi - lo) * wgt;
+            }
+            let mut cov = (value / total).clamp(0.0, 1.0);
+            if let Some(md) = &mask_data {
+                cov *= md[(py * pw + px) as usize] as f32 / 255.0;
+            }
+            if cov <= 0.0 {
+                continue;
+            }
+            let a = color[3] as f32 / 255.0 * cov;
+            let sa = (a * 255.0 + 0.5) as u32;
+            if sa == 0 {
+                continue;
+            }
+            let src = |c: u8| ((c as f32 * a) + 0.5) as u32;
+            let (sr, sg, sb) = (src(color[0]), src(color[1]), src(color[2]));
+            let i = ((py * pw + px) * 4) as usize;
+            let inv = 255 - sa;
+            data[i] = (sr + (data[i] as u32 * inv + 127) / 255).min(255) as u8;
+            data[i + 1] = (sg + (data[i + 1] as u32 * inv + 127) / 255).min(255) as u8;
+            data[i + 2] = (sb + (data[i + 2] as u32 * inv + 127) / 255).min(255) as u8;
+            data[i + 3] = (sa + (data[i + 3] as u32 * inv + 127) / 255).min(255) as u8;
         }
     }
 }

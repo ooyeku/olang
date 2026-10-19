@@ -41,6 +41,60 @@ pub struct Style {
     /// The `hover` look applies while the pointer is over an ancestor too
     /// (a tab's close button shown while the pointer is over its tab).
     pub group_hover: bool,
+    /// `corner: "continuous"`: the corners are Apple's continuous curve
+    /// (a squircle's: curvature eased in from the straight edge) rather
+    /// than quarter circles; `"round"` quarter circles; unsaid, the
+    /// window's choice (`gui.set(h, #{ corner })`). `continuous` is what
+    /// is drawn ([`Scene::effective_style`] decides it).
+    pub corner: Option<bool>,
+    pub continuous: bool,
+    /// A drop shadow under the box (an analytic Gaussian of its shape).
+    pub shadow: Option<Shadow>,
+    /// A material behind the box: what is under it blurred, then the
+    /// box's own `bg` (translucent) over it.
+    pub material: Option<Material>,
+}
+
+/// A box's shadow: `color`, `blur` (the CSS blur radius: twice the
+/// Gaussian's sigma), offset `x`, `y`, and `spread` (the shape grown).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shadow {
+    pub color: Color,
+    pub blur: f32,
+    pub x: f32,
+    pub y: f32,
+    pub spread: f32,
+}
+
+/// What macOS draws behind a translucent surface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Material {
+    Sidebar,
+    Popover,
+    Sheet,
+    Hud,
+}
+
+impl Material {
+    pub fn parse(t: &str) -> Option<Material> {
+        Some(match t {
+            "sidebar" => Material::Sidebar,
+            "popover" => Material::Popover,
+            "sheet" => Material::Sheet,
+            "hud" => Material::Hud,
+            _ => return None,
+        })
+    }
+
+    /// The blur's radius in logical pixels (the Gaussian's sigma is half).
+    pub fn blur(self) -> f32 {
+        match self {
+            Material::Sidebar => 40.0,
+            Material::Popover => 30.0,
+            Material::Sheet => 30.0,
+            Material::Hud => 24.0,
+        }
+    }
 }
 
 pub const DEFAULT_FG: Color = [24, 24, 27, 255];
@@ -67,6 +121,10 @@ impl Default for Style {
             placeholder: [113, 113, 122, 255],
             focus_ring: Some(DEFAULT_ACCENT),
             group_hover: false,
+            corner: None,
+            continuous: false,
+            shadow: None,
+            material: None,
         }
     }
 }
@@ -96,6 +154,9 @@ const STYLE_KEYS: &[&str] = &[
     "placeholder_color",
     "focus_ring",
     "group_hover",
+    "corner",
+    "shadow",
+    "material",
     "hover",
     "pressed",
     "focus",
@@ -189,6 +250,41 @@ impl Style {
         }
         if let Some(b) = get_bool(m, "group_hover", what)? {
             self.group_hover = b;
+        }
+        if let Some(c) = get_str(m, "corner", what)? {
+            self.corner = Some(match c {
+                "continuous" => true,
+                "round" => false,
+                _ => return Err(format!("{what}: \"corner\" is round or continuous")),
+            });
+        }
+        match get(m, "shadow") {
+            None => {}
+            Some(Value::Unit) | Some(Value::Boolean(false)) => self.shadow = None,
+            Some(v) => {
+                let w = format!("{what}: \"shadow\"");
+                if fields(v).is_none() {
+                    return Err(format!("{w} is a map: color, blur, x, y, spread"));
+                }
+                let color = get_color(v, "color", &w)?.unwrap_or([0, 0, 0, 64]);
+                self.shadow = Some(Shadow {
+                    color,
+                    blur: get_num(v, "blur", &w)?.unwrap_or(0.0).max(0.0),
+                    x: get_num(v, "x", &w)?.unwrap_or(0.0),
+                    y: get_num(v, "y", &w)?.unwrap_or(0.0),
+                    spread: get_num(v, "spread", &w)?.unwrap_or(0.0),
+                });
+            }
+        }
+        match get(m, "material") {
+            None => {}
+            Some(Value::Unit) | Some(Value::Boolean(false)) => self.material = None,
+            Some(_) => {
+                let t = get_str(m, "material", what)?.unwrap_or("");
+                self.material = Some(Material::parse(t).ok_or_else(|| {
+                    format!("{what}: \"material\" is sidebar, popover, sheet or hud")
+                })?);
+            }
         }
         if let Some(b) = get_bool(m, "clip", what)? {
             self.clip = b;
@@ -489,6 +585,9 @@ pub struct Scene {
     pub focus_visible: bool,
     pub hover: Option<String>,
     pub pressed: Option<String>,
+    /// Rounded boxes whose style says no `corner` are continuous
+    /// (`gui.set(h, #{ corner: "continuous" })`).
+    pub continuous: bool,
 }
 
 /// What applying a patch changed, for the window to act on.
@@ -864,6 +963,7 @@ impl Scene {
                 let _ = st.apply(v, "variant");
             }
         }
+        st.continuous = st.corner.unwrap_or(self.continuous);
         st
     }
 
@@ -1114,4 +1214,46 @@ impl Scene {
             ),
         ]))
     }
+}
+
+// ── device-pixel snapping ───────────────────────────────────────────
+
+/// A span `[a, a + len)` in device pixels on whole pixels: a thin one
+/// (under three pixels: a hairline, a rule) keeps its thickness rounded
+/// (half a pixel down, never under one) and moves to the nearest pixel, so
+/// every hairline at a fractional scale is the same crisp line; a wider one
+/// has each edge on its nearest pixel line (edges two boxes share stay
+/// shared).
+pub fn snap_span(a: f32, len: f32) -> (f32, f32) {
+    if !a.is_finite() || !len.is_finite() || len <= 0.0 {
+        return (a, len);
+    }
+    if len < 3.0 {
+        let t = round_down_half(len).max(1.0);
+        // centred where the thin span was
+        let mid = a + len / 2.0;
+        let a0 = (mid - t / 2.0).round();
+        return (a0, t);
+    }
+    let a0 = a.round();
+    let a1 = (a + len).round();
+    (a0, (a1 - a0).max(1.0))
+}
+
+/// `v` rounded to a whole number, a half going down (1.5 → 1).
+pub fn round_down_half(v: f32) -> f32 {
+    (v - 0.5).ceil()
+}
+
+/// A box in device pixels on whole pixels ([`snap_span`] across and down).
+pub fn snap_box(x: f32, y: f32, w: f32, h: f32) -> (f32, f32, f32, f32) {
+    let (x, w) = snap_span(x, w);
+    let (y, h) = snap_span(y, h);
+    (x, y, w, h)
+}
+
+/// A border's width in device pixels on whole pixels: a half rounds down,
+/// and a border is never thinner than a pixel.
+pub fn snap_width(bw: f32) -> f32 {
+    if bw <= 0.0 { 0.0 } else { round_down_half(bw).max(1.0) }
 }

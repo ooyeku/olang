@@ -1943,18 +1943,47 @@ impl WinState {
         let fade =
             |c: Color| -> Color { [c[0], c[1], c[2], (c[3] as f32 * opacity).round() as u8] };
         let radii = st.radius.map(|r| r * s);
+        // the box on whole device pixels (crisp edges and hairlines at
+        // every scale); its content keeps its own place
+        let (bx, by, bw_, bh) = scene::snap_box(x, y, w, h);
+        if let Some(sh) = st.shadow {
+            push_shadow(dl, sh, [bx, by, bw_, bh], radii, s, opacity, clip);
+        }
+        // a material: what is under the box blurred (the GPU's), its own
+        // translucent `bg` over it; opaque where transparency is reduced
+        // (and in software: the reference draws the opaque fallback)
+        let mut st = st;
+        if let Some(mat) = st.material {
+            let solid = st.bg.map(|c| [c[0], c[1], c[2], 255]);
+            if self.settings.reduce_transparency {
+                st.bg = solid;
+            } else if let Some(fallback) = solid {
+                dl.prims.push(Prim::Backdrop {
+                    x: bx,
+                    y: by,
+                    w: bw_,
+                    h: bh,
+                    radii,
+                    continuous: st.continuous,
+                    sigma: mat.blur() * s / 2.0,
+                    fallback: fade(fallback),
+                    clip,
+                });
+            }
+        }
         let mut own_rect = None;
         if st.bg.is_some() || (st.border.is_some() && st.border_width > 0.0) {
             own_rect = Some(dl.prims.len());
             dl.prims.push(Prim::Rect {
-                x,
-                y,
-                w,
-                h,
+                x: bx,
+                y: by,
+                w: bw_,
+                h: bh,
                 fill: fade(st.bg.unwrap_or([0, 0, 0, 0])),
                 border: fade(st.border.unwrap_or([0, 0, 0, 0])),
-                border_width: st.border_width * s,
+                border_width: scene::snap_width(st.border_width * s),
                 radii,
+                continuous: st.continuous,
                 clip,
             });
         }
@@ -1967,15 +1996,17 @@ impl WinState {
         {
             let gap = 2.0 * s;
             let width = 2.0 * s;
+            let (gap, width) = (gap.round(), scene::snap_width(width));
             rings.push(Prim::Rect {
-                x: x - gap - width,
-                y: y - gap - width,
-                w: w + 2.0 * (gap + width),
-                h: h + 2.0 * (gap + width),
+                x: bx - gap - width,
+                y: by - gap - width,
+                w: bw_ + 2.0 * (gap + width),
+                h: bh + 2.0 * (gap + width),
                 fill: [0, 0, 0, 0],
                 border: ring,
                 border_width: width,
                 radii: radii.map(|r| if r > 0.0 { r + gap + width } else { 0.0 }),
+                continuous: st.continuous,
                 clip: Clip::rect(0.0, 0.0, dl.width as f32, dl.height as f32),
             });
         }
@@ -1989,17 +2020,18 @@ impl WinState {
         // A clipping node clips its children to the inside of its border,
         // following its corners, and draws the border over them.
         let bw = if st.border.is_some() {
-            st.border_width * s
+            scene::snap_width(st.border_width * s)
         } else {
             0.0
         };
         let inner_clip = if clips {
             clip.intersect(Clip {
-                x0: x + bw,
-                y0: y + bw,
-                x1: x + w - bw,
-                y1: y + h - bw,
+                x0: bx + bw,
+                y0: by + bw,
+                x1: bx + bw_ - bw,
+                y1: by + bh - bw,
                 radii: radii.map(|r| (r - bw).max(0.0)),
+                continuous: st.continuous,
             })
         } else {
             clip
@@ -2020,7 +2052,10 @@ impl WinState {
         if let Some(ops) = &draw
             && let Ok(drawing) = super::canvas::draw(ops, rect[2], rect[3], s)
         {
-            self.paint_canvas(drawing, x, y, w, h, inner_clip, &st, opacity, ts, dl);
+            // drawn from its box's whole-pixel corner: an icon's strokes
+            // land where they would at a whole place, never blurred by a
+            // layout's fraction
+            self.paint_canvas(drawing, bx, by, w, h, inner_clip, &st, opacity, ts, dl);
         }
         if let Some(src) = &image {
             // The picture at the size it shows (a real window's comes from
@@ -2250,14 +2285,15 @@ impl WinState {
         }
         if late_border && let Some(b) = st.border {
             dl.prims.push(Prim::Rect {
-                x,
-                y,
-                w,
-                h,
+                x: bx,
+                y: by,
+                w: bw_,
+                h: bh,
                 fill: [0, 0, 0, 0],
                 border: fade(b),
                 border_width: bw,
                 radii,
+                continuous: st.continuous,
                 clip,
             });
         }
@@ -2318,6 +2354,7 @@ impl WinState {
                         border: fade(border),
                         border_width: border_width * s,
                         radii: radii.map(|r| r * s),
+                        continuous: false,
                         clip: c,
                     });
                 }
@@ -2340,6 +2377,7 @@ impl WinState {
                             x1: bx + bw,
                             y1: by + bh,
                             radii: radii.map(|r| (r * s).min(max)),
+                            continuous: false,
                         });
                     }
                     if c.is_empty() {
@@ -2394,6 +2432,50 @@ impl WinState {
                             alpha: opacity,
                         });
                     }
+                }
+                Item::Radial {
+                    x: gx,
+                    y: gy,
+                    w: gw,
+                    h: gh,
+                    strip,
+                    radii,
+                    clip,
+                } => {
+                    let c = sub(clip);
+                    if c.is_empty() || gw <= 0.0 || gh <= 0.0 {
+                        continue;
+                    }
+                    dl.prims.push(Prim::Radial {
+                        x: x + gx * s,
+                        y: y + gy * s,
+                        w: gw * s,
+                        h: gh * s,
+                        strip,
+                        radii: radii.map(|r| r * s),
+                        clip: c,
+                        alpha: opacity,
+                    });
+                }
+                Item::Path(pi) => {
+                    let c = sub(pi.clip);
+                    if c.is_empty() {
+                        continue;
+                    }
+                    dl.prims.push(Prim::Path(Arc::new(PathPrim {
+                        x,
+                        y,
+                        scale: s,
+                        path: pi.path,
+                        fill: pi.fill.map(fade),
+                        even_odd: pi.even_odd,
+                        stroke: pi.stroke.map(|mut st| {
+                            st.color = fade(st.color);
+                            st
+                        }),
+                        clip: c,
+                        ident: pi.ident,
+                    })));
                 }
                 Item::Text(t) => {
                     let c = sub(t.clip);
@@ -2693,6 +2775,7 @@ impl WinState {
                         border: [0, 0, 0, 0],
                         border_width: 0.0,
                         radii: [2.0 * s; 4],
+                        continuous: false,
                         clip,
                     });
                 }
@@ -2724,6 +2807,7 @@ impl WinState {
                             border: [0, 0, 0, 0],
                             border_width: 0.0,
                             radii: [3.0 * s; 4],
+                            continuous: false,
                             clip,
                         });
                     }
@@ -3186,8 +3270,23 @@ impl WinState {
                 };
                 let c = match p {
                     Prim::Rect { clip, .. }
+                    | Prim::Shadow { clip, .. }
+                    | Prim::Backdrop { clip, .. }
+                    | Prim::Radial { clip, .. }
                     | Prim::Glyph { clip, .. }
                     | Prim::Image { clip, .. } => clip,
+                    Prim::Path(pp) => {
+                        // its clip cut as the others' are
+                        let mut q = PathPrim { path: pp.path.clone(), stroke: pp.stroke.clone(), ..**pp };
+                        let c = q.clip;
+                        q.clip = if hidden {
+                            c.intersect(Clip::rect(c.x0, c.y1, c.x1, c.y1))
+                        } else {
+                            c.intersect(Clip::rect(c.x0, edge, c.x1, c.y1.max(edge)))
+                        };
+                        *pp = Arc::new(q);
+                        continue;
+                    }
                 };
                 *c = if hidden {
                     c.intersect(Clip::rect(c.x0, c.y1, c.x1, c.y1))
@@ -3458,6 +3557,7 @@ impl WinState {
                     border: [0, 0, 0, 0],
                     border_width: 0.0,
                     radii: [(bw / 2.0 + 1.0) * s; 4],
+                    continuous: false,
                     clip,
                 });
             }
@@ -3477,6 +3577,7 @@ impl WinState {
                 border: [0, 0, 0, 0],
                 border_width: 0.0,
                 radii: [bw / 2.0 * s; 4],
+                continuous: false,
                 clip,
             });
         }
@@ -3509,6 +3610,7 @@ impl WinState {
                         border: [0, 0, 0, 0],
                         border_width: 0.0,
                         radii: [0.5 * s; 4],
+                        continuous: false,
                         clip,
                     });
                 }
@@ -3773,6 +3875,7 @@ impl WinState {
                     border: [0, 0, 0, 0],
                     border_width: 0.0,
                     radii: [0.0; 4],
+                    continuous: false,
                     clip,
                 });
             }
@@ -3822,6 +3925,7 @@ impl WinState {
                         border: [0, 0, 0, 0],
                         border_width: 0.0,
                         radii: [0.0; 4],
+                        continuous: false,
                         clip,
                     });
                 });
@@ -3855,6 +3959,7 @@ impl WinState {
                 border: [0, 0, 0, 0],
                 border_width: 0.0,
                 radii: [0.0; 4],
+                continuous: false,
                 clip,
             });
         }
@@ -3875,6 +3980,38 @@ fn rect_value(r: Option<[f32; 4]>) -> Value {
     }
 }
 
+/// A box's shadow (`style.shadow`, logical pixels) under its box `b`
+/// (device pixels, radii `radii`) at `scale`, faded by `opacity`.
+fn push_shadow(
+    dl: &mut DisplayList,
+    sh: scene::Shadow,
+    b: [f32; 4],
+    radii: [f32; 4],
+    scale: f32,
+    opacity: f32,
+    clip: Clip,
+) {
+    let a = (sh.color[3] as f32 * opacity).round() as u8;
+    if a == 0 || clip.is_empty() {
+        return;
+    }
+    let spread = sh.spread * scale;
+    let (w, h) = (b[2] + 2.0 * spread, b[3] + 2.0 * spread);
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    dl.prims.push(Prim::Shadow {
+        x: b[0] + sh.x * scale - spread,
+        y: b[1] + sh.y * scale - spread,
+        w,
+        h,
+        radii: radii.map(|r| if r > 0.0 { (r + spread).max(0.0) } else { 0.0 }),
+        sigma: sh.blur * scale / 2.0,
+        color: [sh.color[0], sh.color[1], sh.color[2], a],
+        clip,
+    });
+}
+
 fn solid(x: f32, y: f32, w: f32, h: f32, fill: Color, clip: Clip) -> Prim {
     Prim::Rect {
         x,
@@ -3885,6 +4022,7 @@ fn solid(x: f32, y: f32, w: f32, h: f32, fill: Color, clip: Clip) -> Prim {
         border: [0, 0, 0, 0],
         border_width: 0.0,
         radii: [0.0; 4],
+        continuous: false,
         clip,
     }
 }
@@ -3969,6 +4107,8 @@ pub struct Clip {
     /// Corner radii (top-left, top-right, bottom-right, bottom-left): a
     /// clipping node with rounded corners clips its children to them.
     pub radii: [f32; 4],
+    /// The corners are continuous (`corner: "continuous"`), not circular.
+    pub continuous: bool,
 }
 
 impl Clip {
@@ -3979,6 +4119,7 @@ impl Clip {
             x1,
             y1,
             radii: [0.0; 4],
+            continuous: false,
         }
     }
 
@@ -3996,12 +4137,12 @@ impl Clip {
         let x1 = self.x1.min(o.x1).max(x0);
         let y1 = self.y1.min(o.y1).max(y0);
         let same = |c: &Clip| c.x0 == x0 && c.y0 == y0 && c.x1 == x1 && c.y1 == y1;
-        let radii = if same(&o) && o.is_rounded() {
-            o.radii
+        let (radii, continuous) = if same(&o) && o.is_rounded() {
+            (o.radii, o.continuous)
         } else if same(&self) {
-            self.radii
+            (self.radii, self.continuous)
         } else {
-            [0.0; 4]
+            ([0.0; 4], false)
         };
         Clip {
             x0,
@@ -4009,6 +4150,7 @@ impl Clip {
             x1,
             y1,
             radii,
+            continuous,
         }
     }
 
@@ -4029,6 +4171,21 @@ pub enum Prim {
         border: Color,
         border_width: f32,
         radii: [f32; 4],
+        /// Continuous corners (Apple's), not quarter circles.
+        continuous: bool,
+        clip: Clip,
+    },
+    /// A box's shadow: its shape grown by `spread`, blurred by a Gaussian
+    /// of `sigma` (device pixels), drawn under the box (an analytic
+    /// coverage: the closed form of a rounded box blurred).
+    Shadow {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        radii: [f32; 4],
+        sigma: f32,
+        color: Color,
         clip: Clip,
     },
     Glyph {
@@ -4041,6 +4198,36 @@ pub enum Prim {
         color: Color,
         clip: Clip,
     },
+    /// A material behind a box (`style.material`): on the GPU what is
+    /// under the box blurred by a Gaussian of `sigma` (device pixels),
+    /// within its shape; in software the box filled with `fallback` (its
+    /// `bg`, opaque).
+    Backdrop {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        radii: [f32; 4],
+        continuous: bool,
+        sigma: f32,
+        fallback: Color,
+        clip: Clip,
+    },
+    /// A canvas's vector path.
+    Path(Arc<PathPrim>),
+    /// A radial gradient over a box (canvas.rs): `strip`'s colours from
+    /// the box's centre to its corners, its corners rounded by `radii`.
+    Radial {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        strip: Arc<super::canvas::Picture>,
+        radii: [f32; 4],
+        clip: Clip,
+        /// Its opacity (its node's and its ancestors'), 0 … 1.
+        alpha: f32,
+    },
     /// A picture (a canvas's drawing, an image) scaled into a box.
     Image {
         x: f32,
@@ -4052,6 +4239,49 @@ pub enum Prim {
         /// The picture's opacity (its node's and its ancestors'), 0 … 1.
         alpha: f32,
     },
+}
+
+/// A canvas's vector path as the renderers draw it: `path` (the canvas's
+/// logical pixels) through `scale` and then moved to `(x, y)` (device
+/// pixels); a stroke's width and dashes are scaled with it.
+#[derive(Debug)]
+pub struct PathPrim {
+    pub x: f32,
+    pub y: f32,
+    pub scale: f32,
+    pub path: Arc<tiny_skia::Path>,
+    pub fill: Option<Color>,
+    pub even_odd: bool,
+    pub stroke: Option<super::canvas::StrokeSpec>,
+    pub clip: Clip,
+    /// The path and its paint hashed (canvas.rs), its colours as given.
+    pub ident: u64,
+}
+
+impl PathPrim {
+    /// The device pixels it can touch (before its clip).
+    pub fn bounds(&self) -> [f32; 4] {
+        let b = self.path.bounds();
+        let reach = self.stroke.as_ref().map(|s| s.reach()).unwrap_or(0.0);
+        let k = self.scale;
+        [
+            self.x + (b.left() - reach) * k,
+            self.y + (b.top() - reach) * k,
+            (b.width() + 2.0 * reach) * k,
+            (b.height() + 2.0 * reach) * k,
+        ]
+    }
+
+    /// What decides its pixels but its place (damage's base hash).
+    pub fn base_hash(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        (self.ident, self.scale.to_bits(), self.fill, self.even_odd).hash(&mut h);
+        if let Some(s) = &self.stroke {
+            s.color.hash(&mut h);
+        }
+        h.finish()
+    }
 }
 
 #[derive(Debug)]

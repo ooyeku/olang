@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`gui`: continuous corners and analytic shadows.** A style's
+  `corner: "continuous"` draws Apple's continuous corners (a
+  superellipse reaching 1.528 × the radius along each edge, as deep at
+  its diagonal as the circle, its curvature easing in from the edge; a
+  capsule's ends stay round), on fills, borders, focus rings and rounded
+  clips; `gui.set(h, #{ corner })` makes it the window's default for
+  styles that say none. A style's `shadow: #{ color, blur, x, y, spread }`
+  draws a drop shadow as the closed-form Gaussian blur of its rounded box
+  (no rings, no texture), alike on the GPU and in software. Boxes,
+  borders and focus rings sit on whole device pixels, so a hairline at a
+  fractional scale (1.5×) is one crisp pixel, never two grey ones.
+  `gui.platform()` says `corner` and `shadow`. tests/gui_geometry_test.rs
+- **`gui`: vector paths drawn on the GPU.** A canvas's paths, curves
+  (`d`: `M`, `L`, `Q`, `C`, `Z`), slanted lines and dashed circles are
+  geometry in the display list, no longer pictures rasterized on the
+  CPU: the GPU counts a fill's triangles into a stencil and covers them
+  (four samples a pixel), and draws a round-joined stroke by the distance
+  to each segment (each sample a quarter of the pixel, the segments met by
+  their maximum), into a coverage atlas a frame composites; other joins
+  are tiny-skia's own stroke outline, filled. The software renderer draws
+  the same paths with tiny-skia. Strokes take `cap` (butt, round,
+  square), `join` (round, miter, bevel), `dash` and `dash_offset`; a fill
+  `rule: "evenodd"`; a circle is a box with round corners (exact in both
+  renderers). A gradient's stops mix in linear light, premultiplied, and
+  `dir: "radial"` draws one from a box's centre to its corners.
+  tests/gui_geometry_test.rs, tests/gui_damage_test.rs
+- **`gui`: materials.** A style's `material: "sidebar" | "popover" |
+  "sheet" | "hud"` draws what is under the box blurred (on the GPU: the
+  frame so far averaged in blocks, then a Gaussian across and down, read
+  within the box's shape) with the box's own translucent `bg` over it; a
+  frame that changes what a material reads redraws it whole. The
+  software renderer, and any window under Reduce Transparency, draws the
+  opaque fallback (the `bg` made opaque). `gui.platform()` says
+  `material`. tests/gui_geometry_test.rs
 - **`gui.turn(on)`: a program's long turn shown while it runs.** A
   program says when its turn begins and ends (Loom's loop does, two
   atomic writes a turn); one that runs past 2 s
@@ -369,6 +403,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`gui`: colours on a wide-gamut screen.** A window's surface was
+  presented uncolour-managed, so on a Display P3 screen (every recent
+  Mac's) every sRGB colour was shown stretched to the panel's gamut
+  (`#00ff00` reached the screen as P3's own green). The surface is now
+  Display P3 where it can be, the frame converted as it is presented,
+  so a theme's sRGB tokens are exact on any screen.
+  `OLANG_GUI_SRGB_SURFACE=1` presents as before.
 - **No 0.3–1.9 ms stalls freeing the VM's conversions.** The
   VM-to-interpreter conversion cache was swept when it doubled, freeing
   several frames' dead interpreter copies at once inside whatever turn
