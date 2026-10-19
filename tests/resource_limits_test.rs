@@ -96,3 +96,20 @@ fn a_notebooks_front_matter_nested_past_the_limit_is_a_diagnostic_not_a_stack_ov
         nb.diagnostics.iter().take(2).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn a_git_dependencys_url_or_ref_that_reads_as_an_option_is_refused_before_git_runs() {
+    use olang::pkg::cache::{fetch_git, CacheError, GitRef};
+    for (url, r) in [
+        ("--upload-pack=touch /tmp/olang-pwned;", GitRef::Default),
+        ("-c", GitRef::Default),
+        ("https://example.invalid/x.git", GitRef::Rev("--output=/tmp/x".into())),
+        ("https://example.invalid/x.git", GitRef::Branch("-q".into())),
+    ] {
+        match fetch_git(url, &r) {
+            Err(CacheError::Git(m)) => assert!(m.contains("cannot start with '-'"), "{}", m),
+            Err(other) => panic!("{}: {}", url, other),
+            Ok(_) => panic!("{} fetched", url),
+        }
+    }
+}

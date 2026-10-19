@@ -97,6 +97,16 @@ pub struct Fetched {
 /// stored once. A previously cached checkout is reused without touching the
 /// network.
 pub fn fetch_git(url: &str, git_ref: &GitRef) -> Result<Fetched, CacheError> {
+    // A manifest's url and ref reach git's command line: one that starts
+    // with `-` would be read as an option (`--upload-pack=<command>` runs
+    // a command), so neither may — git has no `--` for `rev-parse`'s spec
+    if url.starts_with('-') || git_ref.spec().starts_with('-') {
+        return Err(CacheError::Git(format!(
+            "a git dependency's url or ref cannot start with '-' (url {:?}, ref {:?})",
+            url,
+            git_ref.spec()
+        )));
+    }
     let root = cache_root()?;
     let bare_dir = root.join("git-db").join(url_hash(url));
     std::fs::create_dir_all(&bare_dir)?;
@@ -110,6 +120,7 @@ pub fn fetch_git(url: &str, git_ref: &GitRef) -> Result<Fetched, CacheError> {
                 "clone",
                 "--bare",
                 "--quiet",
+                "--",
                 url,
                 &bare_dir.to_string_lossy(),
             ],
