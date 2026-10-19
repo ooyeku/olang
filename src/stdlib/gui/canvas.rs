@@ -170,22 +170,68 @@ fn stroke_of(w: f32) -> Stroke {
 
 const CLEAR: Color = [0, 0, 0, 0];
 
-/// The pieces rasterized here, by their shape on their own box.
-fn pieces() -> &'static Mutex<HashMap<u64, Arc<Picture>>> {
-    static CACHE: OnceLock<Mutex<HashMap<u64, Arc<Picture>>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+/// The pieces rasterized here, by their shape on their own box, with the
+/// tick each was last drawn: past [`PIECES_MAX`] or [`PIECES_BYTES`] the
+/// least recently drawn quarter goes (a piece kept keeps its picture id,
+/// so its GPU texture and the window's damage stay as they were).
+#[derive(Default)]
+struct Pieces {
+    map: HashMap<u64, (Arc<Picture>, u64)>,
+    bytes: usize,
+    tick: u64,
+    evicted: u64,
+}
+
+const PIECES_MAX: usize = 4096;
+const PIECES_BYTES: usize = 64 << 20;
+
+fn pieces() -> &'static Mutex<Pieces> {
+    static CACHE: OnceLock<Mutex<Pieces>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(Pieces::default()))
+}
+
+/// What the piece cache holds: `(pieces, bytes, evicted ever)`.
+pub fn pieces_stats() -> (usize, usize, u64) {
+    match pieces().lock() {
+        Ok(p) => (p.map.len(), p.bytes, p.evicted),
+        Err(_) => (0, 0, 0),
+    }
 }
 
 fn cached(key: u64, make: impl FnOnce() -> Option<Picture>) -> Option<Arc<Picture>> {
-    if let Some(p) = pieces().lock().ok().and_then(|c| c.get(&key).cloned()) {
-        return Some(p);
+    if let Ok(mut c) = pieces().lock() {
+        c.tick += 1;
+        let now = c.tick;
+        if let Some(p) = c.map.get_mut(&key) {
+            p.1 = now;
+            return Some(p.0.clone());
+        }
     }
     let pic = Arc::new(make()?);
     if let Ok(mut c) = pieces().lock() {
-        if c.len() > 1024 {
-            c.clear();
+        if c.map.len() >= PIECES_MAX || c.bytes + pic.rgba.len() > PIECES_BYTES {
+            let mut ticks: Vec<u64> = c.map.values().map(|v| v.1).collect();
+            let cut = ticks.len() / 4;
+            if cut > 0 {
+                let nth = *ticks.select_nth_unstable(cut).1;
+                let before = c.map.len();
+                let mut freed = 0;
+                c.map.retain(|_, v| {
+                    let keep = v.1 > nth;
+                    if !keep {
+                        freed += v.0.rgba.len();
+                    }
+                    keep
+                });
+                c.bytes -= freed;
+                c.evicted += (before - c.map.len()) as u64;
+            }
         }
-        c.insert(key, pic.clone());
+        let now = c.tick;
+        c.bytes += pic.rgba.len();
+        if let Some((old, _)) = c.map.insert(key, (pic.clone(), now)) {
+            c.bytes -= old.rgba.len();
+        }
     }
     Some(pic)
 }
@@ -232,7 +278,7 @@ fn raster_piece(
             id: next_picture_id(),
             width: pm.width(),
             height: pm.height(),
-            rgba: pm.data().to_vec(),
+            rgba: pm.take(),
         })
     })?;
     Some((dx0 / scale, dy0 / scale, pic))

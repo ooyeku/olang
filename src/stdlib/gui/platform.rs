@@ -411,7 +411,20 @@ enum Renderer {
     Soft {
         surface: softbuffer::Surface<Arc<Window>, Arc<Window>>,
         _context: softbuffer::Context<Arc<Window>>,
+        /// The last frame, drawn over where the next one changed.
+        kept: soft::Retained,
     },
+}
+
+impl Renderer {
+    /// What the window showed may be gone (shown again, another scale):
+    /// the next frame is drawn and presented whole.
+    fn invalidate(&mut self) {
+        match self {
+            Renderer::Gpu(s) => s.invalidate(),
+            Renderer::Soft { kept, .. } => kept.invalidate(),
+        }
+    }
 }
 
 struct PWin {
@@ -872,6 +885,15 @@ impl App {
             }
         }
         pw.deferred = false;
+        // covered, minimized or on another space: nothing to draw (nor its
+        // damage to work out); the frame stays owed and is drawn as the
+        // window shows again (`Occluded(false)`)
+        if pw.occluded {
+            if let Ok(mut st) = pw.state.lock() {
+                st.dirty = true;
+            }
+            return;
+        }
         let trace = std::env::var_os("GUI_TRACE").is_some();
         let started = std::time::Instant::now();
         let (dl, a11y_tree, wants_ime, ime_area) = {
@@ -910,9 +932,9 @@ impl App {
             (dl, tree, wants, area)
         };
         let listed = started.elapsed();
-        match &mut pw.renderer {
+        let presented = match &mut pw.renderer {
             Renderer::Gpu(s) => match s.render(&dl) {
-                Ok(()) => {}
+                Ok(()) => s.presented(),
                 // Not drawn: the window is covered or the compositor is
                 // busy. Keep the frame owed: the scene stays dirty, and the
                 // window draws when it shows again (`Occluded(false)`) or,
@@ -927,6 +949,7 @@ impl App {
                     if e == "timeout" {
                         pw.win.request_redraw();
                     }
+                    false
                 }
                 // The device was lost and none could be made again yet:
                 // the frame stays owed and is tried again in a moment.
@@ -941,15 +964,22 @@ impl App {
                     pw.wake = Some(started + std::time::Duration::from_millis(250));
                     return;
                 }
-                Err(e) => eprintln!("gui: {e}"),
+                Err(e) => {
+                    eprintln!("gui: {e}");
+                    false
+                }
             },
-            Renderer::Soft { surface, .. } => present_soft(surface, &dl, &pw.win),
-        }
+            Renderer::Soft { surface, kept, .. } => present_soft(surface, kept, &dl, &pw.win),
+        };
         pw.lost_said = false;
         PRESENTED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        // on its way to the screen: shown at a coming refresh
+        if presented {
+            SHOWN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        // on its way to the screen: shown at a coming refresh (a frame
+        // that changed nothing was not presented: nothing is on its way)
         #[cfg(target_os = "macos")]
-        {
+        if presented {
             pw.shown_size = (dl.width, dl.height);
             pw.in_flight.push_back((frames::now_ns(), frames::answered(id)));
             frames::resume(&pw.link);
@@ -999,31 +1029,67 @@ fn soft_renderer(win: &Arc<Window>) -> Result<Renderer, String> {
     Ok(Renderer::Soft {
         surface,
         _context: context,
+        kept: soft::Retained::default(),
     })
 }
 
 fn present_soft(
     surface: &mut softbuffer::Surface<Arc<Window>, Arc<Window>>,
+    kept: &mut soft::Retained,
     dl: &super::window::DisplayList,
     win: &Window,
-) {
+) -> bool {
+    use super::damage::{Damage, IRect};
     use std::num::NonZeroU32;
-    let pm = soft::render(dl);
+    kept.render(dl);
+    let damage = kept.presented();
+    if damage == Damage::None {
+        return false;
+    }
+    let Some(pm) = kept.pixmap() else {
+        return false;
+    };
     let (Some(w), Some(h)) = (NonZeroU32::new(pm.width()), NonZeroU32::new(pm.height())) else {
-        return;
+        return false;
     };
     if surface.resize(w, h).is_err() {
-        return;
+        return false;
     }
     let Ok(mut buf) = surface.buffer_mut() else {
-        return;
+        return false;
     };
-    for (dst, px) in buf.iter_mut().zip(pm.pixels()) {
-        // Opaque windows: the premultiplied colour is the colour.
-        *dst = ((px.red() as u32) << 16) | ((px.green() as u32) << 8) | px.blue() as u32;
+    // a buffer holding the last frame takes only what changed
+    let whole = [IRect::new(0, 0, pm.width() as i32, pm.height() as i32)];
+    let rects: &[IRect] = match &damage {
+        Damage::Rects(r) if buf.age() == 1 => r,
+        _ => &whole,
+    };
+    let pw = pm.width() as usize;
+    let px = pm.pixels();
+    for r in rects {
+        for y in r.y0 as usize..r.y1 as usize {
+            let row = y * pw;
+            for x in r.x0 as usize..r.x1 as usize {
+                let p = px[row + x];
+                // Opaque windows: the premultiplied colour is the colour.
+                buf[row + x] =
+                    ((p.red() as u32) << 16) | ((p.green() as u32) << 8) | p.blue() as u32;
+            }
+        }
     }
     win.pre_present_notify();
-    let _ = buf.present();
+    let damaged: Vec<softbuffer::Rect> = rects
+        .iter()
+        .filter_map(|r| {
+            Some(softbuffer::Rect {
+                x: r.x0 as u32,
+                y: r.y0 as u32,
+                width: NonZeroU32::new((r.x1 - r.x0) as u32)?,
+                height: NonZeroU32::new((r.y1 - r.y0) as u32)?,
+            })
+        })
+        .collect();
+    buf.present_with_damage(&damaged).is_ok()
 }
 
 /// Heddle's names for keys (`left`, `enter`, `f5`); a character key is
@@ -1347,10 +1413,21 @@ impl ApplicationHandler<Cmd> for App {
 /// How many frames the platform's windows have presented.
 static PRESENTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// How many frames the platform's windows have presented (a test checks
-/// drawing goes on after a device was lost or a callback panicked).
+/// How many frames the platform's windows have drawn (presented, or found
+/// to change nothing): a test checks drawing goes on after a device was
+/// lost or a callback panicked.
 pub fn frames_presented() -> u64 {
     PRESENTED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// How many frames were presented (a frame that changed nothing is not).
+static SHOWN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many frames the platform's windows presented: a window whose
+/// pixels were lost (its device made again) presents its next frame
+/// whole, though nothing in it changed.
+pub fn frames_shown() -> u64 {
+    SHOWN.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 /// How many problems the platform side has contained.
@@ -1736,6 +1813,10 @@ impl App {
                 );
             }
             WindowEvent::ScaleFactorChanged { .. } => {
+                // a screen of another scale: the kept frame is drawn again whole
+                if let Some(pw) = self.windows.get_mut(&id) {
+                    pw.renderer.invalidate();
+                }
                 if let Some(pw) = self.windows.get(&id) {
                     let l = pw.win.inner_size().to_logical::<f32>(scale);
                     self.input(
@@ -1756,6 +1837,8 @@ impl App {
             WindowEvent::Occluded(false) => {
                 if let Some(pw) = self.windows.get_mut(&id) {
                     pw.occluded = false;
+                    // what it showed may be gone: drawn whole
+                    pw.renderer.invalidate();
                     pw.win.request_redraw();
                 }
             }

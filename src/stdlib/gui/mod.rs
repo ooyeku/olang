@@ -33,6 +33,7 @@ pub mod bars;
 pub mod canvas;
 pub mod colr;
 pub mod context;
+pub mod damage;
 pub mod edit;
 pub mod flat;
 pub mod gpu;
@@ -603,6 +604,11 @@ fn gui_measure(args: Vec<Value>) -> Res<Value> {
 
 fn gui_read(args: Vec<Value>) -> Res<Value> {
     arity("gui.read", &args, 2, 3)?;
+    // the renderer's frames and memory: the process's, so any first
+    // argument (a window, or `()` where there is none to hand)
+    if matches!(&args[1], Value::String(t) if t.as_str() == "render") {
+        return Ok(render_stats());
+    }
     let id = window_id("gui.read", args.first())?;
     let what = match &args[1] {
         Value::String(t) => t.as_str().to_string(),
@@ -783,10 +789,50 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
         }
         other => {
             return Err(format!(
-                "gui.read: unknown \"{other}\" (focus, key, hover, size, hit, node, value, selection, keys, a11y, pixels, rgba, prims, caret, ime, settings, animation, next_frame)"
+                "gui.read: unknown \"{other}\" (focus, key, hover, size, hit, node, value, selection, keys, a11y, pixels, rgba, prims, caret, ime, settings, animation, next_frame, render)"
             ));
         }
     })
+}
+
+/// `gui.read(_, "render")`: frames drawn (and how much of them) and the
+/// renderers' caches, for Loom's HUD and for measuring. Counts are since
+/// the process began; bytes are what is held now.
+fn render_stats() -> Value {
+    use std::sync::atomic::Ordering::Relaxed;
+    let int = |v: u64| Value::Integer(v as i64);
+    let mut f = vec![
+        ("frames_drawn", int(damage::FRAMES_DRAWN.load(Relaxed))),
+        ("frames_unchanged", int(damage::FRAMES_UNCHANGED.load(Relaxed))),
+        ("pixels_drawn", int(damage::PIXELS_DRAWN.load(Relaxed))),
+        ("pixels_shown", int(damage::PIXELS_SHOWN.load(Relaxed))),
+    ];
+    let (glyphs, glyph_bytes, glyph_ev) = raster::stats();
+    f.push(("raster_glyphs", int(glyphs as u64)));
+    f.push(("raster_bytes", int(glyph_bytes as u64)));
+    f.push(("raster_evictions", int(glyph_ev)));
+    let (pieces, piece_bytes, piece_ev) = canvas::pieces_stats();
+    f.push(("pieces", int(pieces as u64)));
+    f.push(("piece_bytes", int(piece_bytes as u64)));
+    f.push(("piece_evictions", int(piece_ev)));
+    let g = gpu::stats().unwrap_or_default();
+    f.push(("gpu", Value::Boolean(gpu::stats().is_some())));
+    f.push(("atlas_pages", int(g.atlas_pages as u64)));
+    f.push(("atlas_bytes", int(g.atlas_bytes as u64)));
+    f.push(("atlas_glyphs", int(g.glyphs as u64)));
+    f.push(("atlas_evictions", int(g.atlas_evictions)));
+    f.push(("picture_textures", int(g.pictures as u64)));
+    f.push(("picture_bytes", int(g.picture_bytes as u64)));
+    f.push(("picture_evictions", int(g.picture_evictions)));
+    f.push(("target_bytes", int(g.target_bytes as u64)));
+    f.push((
+        "texture_bytes",
+        int((g.atlas_bytes + g.picture_bytes + g.target_bytes) as u64),
+    ));
+    let (held, held_bytes) = picture::held();
+    f.push(("images", int(held as u64)));
+    f.push(("image_bytes", int(held_bytes as u64)));
+    map(f)
 }
 
 /// The clipboard of input sent by `gui.input`: the window's own, so a

@@ -197,12 +197,15 @@ mod mac {
                         })
                     });
                     // the device lost: drawing goes on, on a device made again
+                    // (the scene is as it was: only a frame drawn whole on the
+                    // new device presents — the kept frame was the lost one's)
+                    std::thread::sleep(Duration::from_millis(300));
                     let had_gpu = gpu::simulate_loss();
                     if had_gpu {
-                        let frames = platform::frames_presented();
-                        wait_for("a frame on a device made again", 15, || {
+                        let shown = platform::frames_shown();
+                        wait_for("a frame presented on a device made again", 15, || {
                             platform::redraw(id);
-                            platform::frames_presented() > frames && gpu::recoveries() > 0
+                            platform::frames_shown() > shown && gpu::recoveries() > 0
                         });
                     }
                     *RECOVERED.lock().unwrap() = Some((gpu::recoveries(), had_gpu));

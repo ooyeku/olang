@@ -2235,7 +2235,7 @@ Native-only; on in the released binaries (the `gui` cargo feature).
 | `gui.events()` | the channel every window's events arrive on (below) |
 | `gui.apply(w, patch)` | apply a list of operations to the window's tree → `Ok(())`, or `Err` naming the operation and what is wrong with it |
 | `gui.measure(text, style, opts?)` | the size of a text as it would be drawn → `#{ width, height, lines, baseline }`, logical pixels. `style` as a node's; `opts`: `width` (wraps when the style says `wrap`), `scale` |
-| `gui.read(w, what, arg?)` | read the window back: `"focus"`, `"key"` (whether it is the key window: a field's caret and focus show only there), `"hover"`, `"size"` → `(w, h, scale)`, `"hit"` `(x, y)` → a key, `"node"` key (its role, text, name, children, scroll `offset`, `bounds`, and `visible`: what of it shows once scrolling and clipping ancestors and the window cut it, or `()`), `"value"` key and `"selection"` key of a field, `"keys"` (focus order), `"a11y"` (the accessibility tree as maps), `"pixels"` (a PNG, from the software renderer), `"rgba"`, `"caret"` → `(x, y, w, h)` of the caret as the last frame showed it, clipped, or `()`, `"settings"` (the system's settings as the window last heard them), `"animation"` key (an animated picture: `#{ frames, frame, paused, button }`), `"next_frame"` (when an animation in view next changes, on the window's clock) |
+| `gui.read(w, what, arg?)` | read the window back: `"focus"`, `"key"` (whether it is the key window: a field's caret and focus show only there), `"hover"`, `"size"` → `(w, h, scale)`, `"hit"` `(x, y)` → a key, `"node"` key (its role, text, name, children, scroll `offset`, `bounds`, and `visible`: what of it shows once scrolling and clipping ancestors and the window cut it, or `()`), `"value"` key and `"selection"` key of a field, `"keys"` (focus order), `"a11y"` (the accessibility tree as maps), `"pixels"` (a PNG, from the software renderer), `"rgba"`, `"caret"` → `(x, y, w, h)` of the caret as the last frame showed it, clipped, or `()`, `"settings"` (the system's settings as the window last heard them), `"animation"` key (an animated picture: `#{ frames, frame, paused, button }`), `"next_frame"` (when an animation in view next changes, on the window's clock), `"render"` (the renderers' frames and memory: see Rendering) |
 | `gui.input(w, event)` | send input as the platform would: `#{ kind: "key", key, text?, mods? }` (`"mod": true` is the platform's command key), `"text"`, `"pointer"` (`action` down/up/move/leave, `x`, `y`, `button`, `clicks`), `"wheel"` (`dx`, `dy`, and the modifiers held: `mods` or `mod`, `shift`, `alt`, `ctrl`), `"pinch"` (`delta`, `phase`), `"modifiers"` (the modifier keys now held: `mod`, `shift`, `alt`, `ctrl`; a press with ⌘ held), `"compose"` and `"commit"` (an input method), `"resize"`, `"window_focus"`, `"files"` (`action` hover/drop/cancel, `paths`, `x`, `y`: files from another program); and what the platform does around a window: `"close"` (sends `close_requested`), `"menu"` with an `id` (sends `menu`), `"open"` with `paths` (sends `open`), `"new_tab"` (sends `new_tab`), `"clipboard"` with a `text` (the clipboard input through `gui.input` uses, the window's own), `"clock"` with `ms` (a headless window's clock: its animations move only with it), `"appearance"` with `dark`, `contrast`, `reduce_motion`, `reduce_transparency`, `accent` (`"#rrggbb"`) — the window takes them (its pictures stop animating under reduced motion) and sends `appearance`, as a settings change would. What tests drive |
 | `gui.prepare()` | start the platform's event loop now, without waiting for it: the application's start on the main thread (tens of milliseconds on macOS) then overlaps the program's work before its first window opens, which waits for the loop as before. Nothing when it is started already or cannot be (Loom's `run` asks, for real windows) |
 | `gui.wake()` | a `wake` event on the channel, so a task blocked on `gui.events()` can stop without polling |
@@ -2488,6 +2488,19 @@ works, and what headless windows draw with. Both blend in sRGB-encoded
 space and draw glyphs from the same rasterizer, so they agree to within
 antialiasing. Text is shaped by parley — complex scripts, bidi, font
 fallback, dictionary word breaks for Chinese, Japanese, and Thai.
+
+A window keeps its last frame and draws only what changed: each frame's
+primitives are hashed into 64-pixel tiles, the tiles whose primitives
+changed are redrawn over the kept frame, a scroll region scrolled by
+whole pixels moves the kept pixels with it (only what it uncovers is
+drawn), and a frame that changes no pixel is not presented
+(`tests/gui_damage_test.rs` holds damaged frames to whole ones).
+`OLANG_GUI_FULL_REDRAW=1` draws every frame whole; `OLANG_GUI_GPU_TIME=1`
+says each frame's GPU time and the share it drew. `gui.read(_, "render")`
+(any first argument) answers the frames drawn and left unchanged, the
+pixels drawn, and the bytes the glyph atlas (up to four 2048² pages,
+the least recently drawn emptied), pictures' textures, kept frames and
+the glyph and shape caches hold.
 
 **Platforms.** Run on macOS (the GPU renderer, the menu bar, the
 accessibility tree as NSAccessibility). Linux is Wayland only: with no

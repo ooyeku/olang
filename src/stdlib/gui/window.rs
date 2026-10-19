@@ -1894,6 +1894,7 @@ impl WinState {
             height: ph,
             clear: self.clear,
             prims: Vec::new(),
+            scrolls: Vec::new(),
         };
         self.caret = None;
         self.shown_anims.clear();
@@ -2209,6 +2210,19 @@ impl WinState {
             push_glyphs(&shaped, content[0], content[1] + dy, inner_clip, dl);
         }
         let (cx, cy) = (ox + rect[0] - offset.0, oy + rect[1] - offset.1);
+        if scrollable && !is_edit {
+            // what it shows moves with its offset: damage moves the kept
+            // frame with it rather than drawing it again
+            use std::hash::{Hash, Hasher};
+            let mut h = rustc_hash::FxHasher::default();
+            key.hash(&mut h);
+            dl.scrolls.push(super::damage::Scroll {
+                id: h.finish(),
+                view: inner_clip,
+                dx: offset.0 * s,
+                dy: offset.1 * s,
+            });
+        }
         for c in children {
             self.paint(&c, cx, cy, inner_clip, opacity, ts, dl, rings);
         }
@@ -2594,6 +2608,18 @@ impl WinState {
         let ox = content[0] - r.scroll_x;
         let oy = content[1] - r.scroll_y;
         let outer_clip = clip;
+        {
+            // its text moves with its scroll: damage moves the kept frame
+            use std::hash::{Hash, Hasher};
+            let mut h = rustc_hash::FxHasher::default();
+            (key, "rich").hash(&mut h);
+            dl.scrolls.push(super::damage::Scroll {
+                id: h.finish(),
+                view: outer_clip,
+                dx: r.scroll_x,
+                dy: r.scroll_y,
+            });
+        }
         // what the text draws from here: clipped below the pinned rows of
         // sticky scroll once they are known (the renderers draw glyphs over
         // rectangles, so a row's background alone does not hide them)
@@ -4034,6 +4060,8 @@ pub struct DisplayList {
     pub height: u32,
     pub clear: Color,
     pub prims: Vec<Prim>,
+    /// The scrolled regions drawn, for damage to follow their moves.
+    pub scrolls: Vec<super::damage::Scroll>,
 }
 
 /// A hover that left the text: no line or column.
