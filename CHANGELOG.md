@@ -124,8 +124,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   menu; Enter Full Screen (⌃⌘F) at a View menu's end.
 - **`fs.search`'s `max_bytes`**: a file larger is not read (a data file of
   gigabytes not left out by `.gitignore` was read whole on a worker). A
-  case-blind search lower-cases a file a megabyte at a time, never a
-  copy of the whole file.
+  case-blind search reads a file where it is, never a copy of it: the
+  word's rarest letter found in either case (`memchr2`) and the word
+  checked around it. Two CSV files of 23.6 MB searched for a word they
+  do not hold: 1.79 ms before max_bytes, 1.51 lower-cased a megabyte at
+  a time, 1.24 now.
 - **`// allow: <class>[, <class>…]`: one line's advisories silenced**,
   at the end of the line or on a line of its own above it (comment lines
   between). The classes `[check] promote` takes, `unused` (the hint) and

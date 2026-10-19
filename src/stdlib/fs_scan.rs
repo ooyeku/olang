@@ -541,30 +541,41 @@ fn replaced_with(line: &str, at: usize, needle: &Needle, template: &str) -> Stri
 }
 
 /// Whether `bytes`, lower-cased as ASCII, hold `needle` (lower-case
-/// already): a megabyte lower-cased at a time, never a copy of the whole
-/// file (a 1 GB file was another 1 GB on each worker searching one).
+/// already), read where they are: no copy of the file, lower-cased or not
+/// (a 1 GB file was another 1 GB on each worker searching one). The
+/// needle's rarest letter is found in either case (`memchr2`, a vector's
+/// width at a time) and the needle checked around it, case-blind; a
+/// project's search on olang's sources, its 24 MB of CSV data among
+/// them, took the most of its time lower-casing what holds no match.
 fn contains_ascii_folded(bytes: &[u8], needle: &[u8]) -> bool {
-    const CHUNK: usize = 1 << 20;
     if needle.is_empty() {
         return true;
     }
-    let finder = memchr::memmem::Finder::new(needle);
-    let mut buf: Vec<u8> = Vec::with_capacity(CHUNK.min(bytes.len()) + needle.len());
-    let mut start = 0;
-    while start < bytes.len() {
-        // each piece overlaps the next by the needle less one byte
-        let end = (start + CHUNK + needle.len() - 1).min(bytes.len());
-        buf.clear();
-        buf.extend(bytes[start..end].iter().map(|b| b.to_ascii_lowercase()));
-        if finder.find(&buf).is_some() {
-            return true;
-        }
-        if end == bytes.len() {
-            break;
-        }
-        start += CHUNK;
+    if needle.len() > bytes.len() {
+        return false;
     }
-    false
+    // the needle's byte least common in text and code (English letters by
+    // frequency; anything not a letter is rarer still)
+    const COMMON: &[u8] = b"etaoinsrhldcumfpgwybvkxjqz";
+    let rank = |b: u8| -> usize {
+        COMMON
+            .iter()
+            .position(|c| *c == b.to_ascii_lowercase())
+            .unwrap_or(0)
+            + if b.is_ascii_alphabetic() { 0 } else { COMMON.len() }
+    };
+    let at = (0..needle.len()).max_by_key(|&i| rank(needle[i])).unwrap_or(0);
+    let (lo, up) = (needle[at], needle[at].to_ascii_uppercase());
+    let found = |i: usize| -> bool {
+        i >= at
+            && i - at + needle.len() <= bytes.len()
+            && bytes[i - at..i - at + needle.len()].eq_ignore_ascii_case(needle)
+    };
+    if lo == up {
+        memchr::memchr_iter(lo, bytes).any(found)
+    } else {
+        memchr::memchr2_iter(lo, up, bytes).any(found)
+    }
 }
 
 /// A match: `(line, start, end, text, with)`.

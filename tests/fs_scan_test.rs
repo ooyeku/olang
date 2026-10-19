@@ -351,3 +351,51 @@ fn search_says_what_each_match_becomes_with_a_replacement_groups_expanded() {
         Value::Boolean(true)
     );
 }
+
+/// A case-blind search reads each file where it is (its rarest letter
+/// found in either case, the word checked around it) and finds what
+/// lower-casing the file and searching it finds: any case, at either end,
+/// overlapping starts, a word longer than the file, text that is not
+/// ASCII, a match past the first megabyte.
+#[test]
+fn a_case_blind_search_finds_every_file_a_lower_cased_copy_would() {
+    let d = tempfile::tempdir().unwrap();
+    let r = d.path().to_string_lossy().to_string();
+    let texts = [
+        "Value",
+        "a VALUE at the end: vAlUe",
+        "no match here at all",
+        "vvvvvalue",
+        "valu",
+        "caf\u{e9} VALUE \u{212a}elvin",
+        "x,1.0,2.0\nvalue,3",
+        "KKKK zz key",
+        "",
+    ];
+    for (i, t) in texts.iter().enumerate() {
+        std::fs::write(d.path().join(format!("t{i}.txt")), t).unwrap();
+    }
+    let mut big = "1".repeat(3 << 20);
+    big.push_str("VaLuE\n");
+    std::fs::write(d.path().join("big.txt"), &big).unwrap();
+    for needle in ["value", "v", "e", "key", "zz", "at the", "kelvin"] {
+        let mut want: Vec<String> = texts
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.lines().any(|l| l.to_lowercase().contains(needle)))
+            .map(|(i, _)| format!("t{i}.txt"))
+            .collect();
+        if big.to_lowercase().contains(needle) {
+            want.push("big.txt".to_string());
+        }
+        want.sort();
+        let got = s(eval(&format!(
+            r#"show(sort(col.unique(map(unwrap(fs.search("{r}", "{needle}", #{{ "per_file": 1 }})), (h) => map_get(h, "path")))))"#
+        )));
+        let want = format!(
+            "[{}]",
+            want.iter().map(|w| format!("\"{w}\"")).collect::<Vec<_>>().join(", ")
+        );
+        assert_eq!(got, want, "{needle}");
+    }
+}
