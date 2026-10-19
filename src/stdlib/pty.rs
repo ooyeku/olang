@@ -728,6 +728,44 @@ mod imp {
         }
     }
 
+    /// Every process still in the session `sid` (the shell's: a job that
+    /// ignored the hang-up, `nohup`, one in a group of its own), but not
+    /// one that started a session of its own.
+    fn session_members(sid: i32) -> Vec<i32> {
+        let mut out = Vec::new();
+        #[cfg(target_os = "macos")]
+        {
+            let mut pids = vec![0 as libc::pid_t; 8192];
+            // SAFETY: proc_listallpids fills at most the buffer's bytes.
+            let n = unsafe {
+                libc::proc_listallpids(
+                    pids.as_mut_ptr() as *mut libc::c_void,
+                    (pids.len() * std::mem::size_of::<libc::pid_t>()) as libc::c_int,
+                )
+            };
+            pids.truncate(n.max(0) as usize);
+            for pid in pids {
+                // SAFETY: getsid(2) of any pid; -1 when it is gone.
+                if pid > 1 && unsafe { libc::getsid(pid) } == sid {
+                    out.push(pid);
+                }
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        if let Ok(rd) = std::fs::read_dir("/proc") {
+            for e in rd.flatten() {
+                if let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<i32>().ok())
+                    // SAFETY: getsid(2) of any pid.
+                    && pid > 1
+                    && unsafe { libc::getsid(pid) } == sid
+                {
+                    out.push(pid);
+                }
+            }
+        }
+        out
+    }
+
     /// `pty.kill(p, sig?)`: the signal (SIGHUP by default) to the shell's
     /// process group and the foreground job's.
     fn kill(args: Vec<Value>) -> Res {
@@ -947,6 +985,18 @@ mod imp {
                     }
                 };
                 wait_for(500);
+                let pid = p.pid;
+                // what is left of the session is ended too: a job that
+                // ignores the hang-up outlives no terminal (the session's
+                // number is the shell's pid, ended a moment ago at most:
+                // pids are handed out in turn, so no new session has it)
+                let left = session_members(pid);
+                for q in &left {
+                    // SAFETY: kill(2) of a process in our child's session.
+                    unsafe {
+                        libc::kill(*q, libc::SIGKILL);
+                    }
+                }
                 if status(&p).is_none() {
                     for g in &gs {
                         // SAFETY: kill(2) of a process group.
@@ -956,7 +1006,6 @@ mod imp {
                     }
                     wait_for(5000);
                 }
-                let pid = p.pid;
                 let reaped = status(&p).is_some();
                 // the master closes as the last reference goes
                 drop(p);

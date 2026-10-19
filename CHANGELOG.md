@@ -217,6 +217,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`pty.close` ends what is left of the shell's session**: a job that
+  ignored the hang-up (`trap '' HUP`, `nohup`, one in a group of its
+  own) outlived the terminal; after the grace it is killed.
 - **`vt`: what a program writes can only draw.** A sequence's
   parameters and intermediates are bounded (32 and 4; past them it is
   ignored — a million `;` grew memory without end), the marks combined

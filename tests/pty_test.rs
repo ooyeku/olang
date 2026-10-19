@@ -205,6 +205,54 @@ pty.close(p)
 }
 
 #[test]
+fn close_ends_a_job_that_ignores_the_hang_up() {
+    // a background job in a group of its own that ignores SIGHUP, and one
+    // run by nohup: the shell exits on the hang-up, they would outlive it
+    if !std::path::Path::new("/bin/zsh").exists() {
+        return;
+    }
+    let out = eval(&format!(
+        r#"{READ_UNTIL}
+let p = unwrap(pty.spawn(["/bin/zsh", "-f", "-i"], #{{ "rows": 24, "cols": 80 }}))
+let _w = pty.write(p, "(trap '' HUP; exec sleep 41) & echo \"A\"\"=$!=\"\r")
+let a = read_until(p, "=\r")
+let _v = pty.write(p, "nohup sleep 42 >/dev/null 2>&1 & echo \"B\"\"=$!=\"\r")
+let b2 = read_until(p, "B=") + read_until(p, "=\r")
+pty.close(p)
+fn num(t, k) = {{
+    let i = str.index_of(t, k + "=")
+    let rest = str.substring(t, i + 2, str.length(t))
+    unwrap(str.parse_int(str.substring(rest, 0, str.index_of(rest, "="))))
+}}
+[num(a + b2, "A"), num(a + b2, "B")]
+"#
+    ))
+    .unwrap();
+    let Value::List(ref ids) = out else {
+        panic!("{out:?}")
+    };
+    for v in ids.iter() {
+        let Value::Integer(pid) = v else {
+            panic!("{v:?}")
+        };
+        let mut alive = true;
+        for _ in 0..150 {
+            // SAFETY: signal 0 only asks whether the pid exists.
+            if unsafe { libc::kill(*pid as i32, 0) } != 0 {
+                alive = false;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        if alive {
+            // SAFETY: our own test's job, ended so it is not left behind.
+            unsafe { libc::kill(*pid as i32, libc::SIGKILL) };
+        }
+        assert!(!alive, "{pid} outlived pty.close by 3 s");
+    }
+}
+
+#[test]
 fn a_screen_reads_sequences_and_draws_operations() {
     assert_all_true(
         r##"
