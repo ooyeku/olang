@@ -58,7 +58,8 @@ impl Retained {
             self.pm = Pixmap::new(w, h);
             self.tracker.invalidate();
         }
-        let (d, shifts, next) = self.tracker.damage(w, h, dl.clear, &items, &dl.scrolls);
+        let bounds: Vec<IRect> = items.iter().map(|i| i.bounds).collect();
+        let (d, shifts, next) = self.tracker.damage(w, h, dl.clear, items, &dl.scrolls);
         if let Some(pm) = self.pm.as_mut() {
             // the scrolled regions' pixels move with them first
             let pw = w as usize * 4;
@@ -107,7 +108,7 @@ impl Retained {
                                 }
                             }
                         }
-                        draw(sc, dl, Some((rects, &items)));
+                        draw(sc, dl, Some((rects, &bounds)));
                         let (src, dst) = (sc.data(), pm.data_mut());
                         for r in rects {
                             for y in r.y0..r.y1 {
@@ -245,11 +246,11 @@ fn items(dl: &DisplayList) -> Vec<Item> {
 /// says which), drawn whole (glyphs only within the rectangles): the
 /// pixels inside the rectangles are the whole frame's, those outside are
 /// not to be kept.
-fn draw(pm: &mut Pixmap, dl: &DisplayList, region: Option<(&[IRect], &[Item])>) {
+fn draw(pm: &mut Pixmap, dl: &DisplayList, region: Option<(&[IRect], &[IRect])>) {
     let mut masks: Vec<(Clip, Mask)> = Vec::new();
     for (i, prim) in dl.prims.iter().enumerate() {
         if let Some((rects, items)) = region {
-            let b = &items[i].bounds;
+            let b = &items[i];
             if b.is_empty() || !rects.iter().any(|r| r.intersects(b)) {
                 continue;
             }

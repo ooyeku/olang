@@ -648,7 +648,10 @@ pub struct Prepared {
     insts: Vec<Inst>,
     src: Vec<u32>,
     pics: Vec<Arc<Picture>>,
+    /// What damage reads of each instance (given to the tracker), and
+    /// each one's pixels (kept, to pick those a damaged rectangle needs).
     items: Vec<Item>,
+    bounds: Vec<IRect>,
     scrolls: Vec<Scroll>,
     width: u32,
     height: u32,
@@ -759,6 +762,7 @@ impl Gpu {
             src: Vec::with_capacity(dl.prims.len()),
             pics: Vec::new(),
             items: Vec::with_capacity(dl.prims.len()),
+            bounds: Vec::with_capacity(dl.prims.len()),
             scrolls: dl.scrolls.clone(),
             width: ww,
             height: wh,
@@ -786,6 +790,7 @@ impl Gpu {
                 item = item.with_interior(damage::inside(x, y, w, h, r + 1.0));
             }
             p.items.push(item);
+            p.bounds.push(b);
             p.insts.push(inst);
             p.src.push(src);
         };
@@ -1012,7 +1017,25 @@ impl Gpu {
                 passes.push((None, runs));
             }
             Damage::Rects(rects) => {
-                for r in rects {
+                // the instances touching each rectangle, in one pass
+                let all = rects.iter().skip(1).fold(rects[0], |a, r| IRect {
+                    x0: a.x0.min(r.x0),
+                    y0: a.y0.min(r.y0),
+                    x1: a.x1.max(r.x1),
+                    y1: a.y1.max(r.y1),
+                });
+                let mut touching: Vec<Vec<usize>> = vec![Vec::new(); rects.len()];
+                for (i, b) in p.bounds.iter().enumerate() {
+                    if !b.intersects(&all) {
+                        continue;
+                    }
+                    for (k, r) in rects.iter().enumerate() {
+                        if b.intersects(r) {
+                            touching[k].push(i);
+                        }
+                    }
+                }
+                for (r, touching) in rects.iter().zip(touching) {
                     // the rectangle's clear colour, replacing what was there
                     // (grown past it: the scissor cuts it exactly)
                     let at = insts.len() as u32;
@@ -1032,8 +1055,7 @@ impl Gpu {
                         clip_radii: [0.0; 4],
                     });
                     let mut runs = vec![(at, at + 1, u32::MAX - 1)];
-                    let touching = (0..p.insts.len()).filter(|i| p.items[*i].bounds.intersects(r));
-                    push_runs(p, touching, &mut insts, &mut runs);
+                    push_runs(p, touching.into_iter(), &mut insts, &mut runs);
                     passes.push((Some(*r), runs));
                 }
             }
@@ -1294,12 +1316,12 @@ impl Target {
     }
 
     /// What a prepared frame must move and draw here.
-    fn damage_of(&mut self, p: &Prepared) -> (Damage, Vec<Shift>, damage::Next) {
+    fn damage_of(&mut self, p: &mut Prepared) -> (Damage, Vec<Shift>, damage::Next) {
         // a window past the device's largest texture is drawn cut
         let most = self.gpu.device.limits().max_texture_dimension_2d.max(1);
         let (w, h) = (p.width.min(most), p.height.min(most));
         self.ensure(w, h);
-        self.tracker.damage(w, h, p.clear, &p.items, &p.scrolls)
+        self.tracker.damage(w, h, p.clear, std::mem::take(&mut p.items), &p.scrolls)
     }
 
     /// Encode the frame's moves and damage into the kept texture.
@@ -1375,8 +1397,8 @@ impl Target {
     /// Draw a display list over the kept frame (offscreen: tests, and the
     /// check that damage draws what a whole frame draws). Its damage.
     pub fn render(&mut self, dl: &DisplayList) -> Damage {
-        let p = self.gpu.prepare(dl);
-        let (d, shifts, next) = self.damage_of(&p);
+        let mut p = self.gpu.prepare(dl);
+        let (d, shifts, next) = self.damage_of(&mut p);
         let mut enc = self
             .gpu
             .device
@@ -1505,8 +1527,8 @@ impl Surface {
             return Err("lost".to_string());
         }
         self.resize(dl.width, dl.height);
-        let p = self.gpu.prepare(dl);
-        let (d, shifts, next) = self.target.damage_of(&p);
+        let mut p = self.gpu.prepare(dl);
+        let (d, shifts, next) = self.target.damage_of(&mut p);
         if d == Damage::None && shifts.is_empty() {
             if gpu_timed() {
                 eprintln!("gui: gpu nothing drawn or presented");

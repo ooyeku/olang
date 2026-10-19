@@ -298,9 +298,9 @@ pub struct Next {
     seed: u64,
     tiles: Vec<u64>,
     items: Vec<Item>,
-    /// Items by tile: `at[t]..at[t + 1]` in `of`.
-    at: Vec<u32>,
-    of: Vec<u32>,
+    /// Items by tile, `at[t]..at[t + 1]` in `of`: made only when a
+    /// scroll asks (most frames do not move anything).
+    buckets: std::cell::OnceCell<(Vec<u32>, Vec<u32>)>,
     scrolls: Vec<Scroll>,
 }
 
@@ -313,16 +313,52 @@ impl Next {
         (c0 <= c1 && r0 <= r1 && !r.is_empty()).then_some((c0, c1, r0, r1))
     }
 
+    /// The items by tile.
+    fn buckets(&self) -> &(Vec<u32>, Vec<u32>) {
+        self.buckets.get_or_init(|| {
+            let n = self.tiles.len();
+            let mut at = vec![0u32; n + 1];
+            for it in &self.items {
+                if let Some((c0, c1, r0, r1)) = self.tile_range(&it.bounds) {
+                    for row in r0..=r1 {
+                        let base = (row * self.cols) as usize;
+                        for t in base + c0 as usize..=base + c1 as usize {
+                            at[t + 1] += 1;
+                        }
+                    }
+                }
+            }
+            for t in 0..n {
+                at[t + 1] += at[t];
+            }
+            let mut of = vec![0u32; at[n] as usize];
+            let mut fill = at.clone();
+            for (i, it) in self.items.iter().enumerate() {
+                if let Some((c0, c1, r0, r1)) = self.tile_range(&it.bounds) {
+                    for row in r0..=r1 {
+                        let base = (row * self.cols) as usize;
+                        for t in base + c0 as usize..=base + c1 as usize {
+                            of[fill[t] as usize] = i as u32;
+                            fill[t] += 1;
+                        }
+                    }
+                }
+            }
+            (at, of)
+        })
+    }
+
     /// The hash of what this frame draws in `r`, seen from its corner.
     fn seen(&self, r: &IRect) -> u64 {
         let Some((c0, c1, r0, r1)) = self.tile_range(r) else {
             return self.seed;
         };
+        let (at, of) = self.buckets();
         let mut idx: Vec<u32> = Vec::new();
         for row in r0..=r1 {
             for col in c0..=c1 {
                 let t = (row * self.cols + col) as usize;
-                idx.extend_from_slice(&self.of[self.at[t] as usize..self.at[t + 1] as usize]);
+                idx.extend_from_slice(&of[at[t] as usize..at[t + 1] as usize]);
             }
         }
         if (c0, r0) != (c1, r1) {
@@ -355,7 +391,7 @@ impl Tracker {
         w: u32,
         h: u32,
         clear: [u8; 4],
-        items: &[Item],
+        items: Vec<Item>,
         scrolls: &[Scroll],
     ) -> (Damage, Vec<Shift>, Next) {
         let cols = (w as i32 + TILE - 1) / TILE;
@@ -363,7 +399,6 @@ impl Tracker {
         let n = (cols.max(0) * rows.max(0)) as usize;
         let seed = mix(0x9e37_79b9_7f4a_7c15, u32::from_le_bytes(clear) as u64);
         let mut tiles = vec![seed; n];
-        let mut at = vec![0u32; n + 1];
         let mut next = Next {
             size: (w, h),
             cols,
@@ -371,44 +406,23 @@ impl Tracker {
             seed,
             tiles: Vec::new(),
             items: Vec::new(),
-            at: Vec::new(),
-            of: Vec::new(),
+            buckets: std::cell::OnceCell::new(),
             scrolls: scrolls.to_vec(),
         };
-        // each item into its tiles' hashes, counting the tiles' items
-        for it in items {
+        // each item into its tiles' hashes
+        for it in &items {
             let Some((c0, c1, r0, r1)) = next.tile_range(&it.bounds) else {
                 continue;
             };
             for row in r0..=r1 {
                 let base = (row * cols) as usize;
-                for t in base + c0 as usize..=base + c1 as usize {
-                    tiles[t] = mix(tiles[t], it.hash);
-                    at[t + 1] += 1;
-                }
-            }
-        }
-        for t in 0..n {
-            at[t + 1] += at[t];
-        }
-        let mut of = vec![0u32; at[n] as usize];
-        let mut fill = at.clone();
-        for (i, it) in items.iter().enumerate() {
-            let Some((c0, c1, r0, r1)) = next.tile_range(&it.bounds) else {
-                continue;
-            };
-            for row in r0..=r1 {
-                let base = (row * cols) as usize;
-                for t in base + c0 as usize..=base + c1 as usize {
-                    of[fill[t] as usize] = i as u32;
-                    fill[t] += 1;
+                for t in &mut tiles[base + c0 as usize..=base + c1 as usize] {
+                    *t = mix(*t, it.hash);
                 }
             }
         }
         next.tiles = tiles;
-        next.items = items.to_vec();
-        next.at = at;
-        next.of = of;
+        next.items = items;
         let last = match &self.last {
             Some(l) if self.valid && l.size == (w, h) && !full_redraw_forced() => l,
             _ => return (Damage::Full, Vec::new(), next),
@@ -609,10 +623,10 @@ mod tests {
     fn the_first_frame_is_whole_and_the_same_frame_again_is_nothing() {
         let mut t = Tracker::default();
         let items = vec![item(0, 0, 400, 300, 1), item(10, 10, 20, 20, 2)];
-        let (d, _, n) = t.damage(400, 300, [255; 4], &items, &[]);
+        let (d, _, n) = t.damage(400, 300, [255; 4], items.clone(), &[]);
         assert_eq!(d, Damage::Full);
         t.commit(n);
-        let (d, _, _) = t.damage(400, 300, [255; 4], &items, &[]);
+        let (d, _, _) = t.damage(400, 300, [255; 4], items.clone(), &[]);
         assert_eq!(d, Damage::None);
     }
 
@@ -620,20 +634,20 @@ mod tests {
     fn a_change_damages_only_its_tiles_and_order_matters() {
         let mut t = Tracker::default();
         let a = vec![item(0, 0, 640, 640, 1), item(100, 100, 110, 110, 2), item(105, 105, 120, 120, 3)];
-        let (_, _, n) = t.damage(640, 640, [255; 4], &a, &[]);
+        let (_, _, n) = t.damage(640, 640, [255; 4], a.clone(), &[]);
         t.commit(n);
         // the caret moves within a tile
         let mut b = a.clone();
         b[1] = item(100, 100, 110, 110, 9);
-        let (d, _, _) = t.damage(640, 640, [255; 4], &b, &[]);
+        let (d, _, _) = t.damage(640, 640, [255; 4], b.clone(), &[]);
         assert_eq!(d, Damage::Rects(vec![IRect::new(64, 64, 128, 128)]));
         // the same primitives, two overlapping ones swapped
         let c = vec![a[0], a[2], a[1]];
-        let (d, _, _) = t.damage(640, 640, [255; 4], &c, &[]);
+        let (d, _, _) = t.damage(640, 640, [255; 4], c.clone(), &[]);
         assert_eq!(d, Damage::Rects(vec![IRect::new(64, 64, 128, 128)]));
         // a new size is whole; a new clear colour damages everything
-        assert_eq!(t.damage(641, 640, [255; 4], &a, &[]).0, Damage::Full);
-        assert_eq!(t.damage(640, 640, [0; 4], &a, &[]).0, Damage::Full);
+        assert_eq!(t.damage(641, 640, [255; 4], a.clone(), &[]).0, Damage::Full);
+        assert_eq!(t.damage(640, 640, [0; 4], a.clone(), &[]).0, Damage::Full);
     }
 
     #[test]
@@ -654,9 +668,9 @@ mod tests {
         };
         let mut t = Tracker::default();
         let s = |off: i32| vec![Scroll { id: 7, view, dx: 0.0, dy: off as f32 }];
-        let (_, _, n) = t.damage(512, 512, [255; 4], &frame(0), &s(0));
+        let (_, _, n) = t.damage(512, 512, [255; 4], frame(0), &s(0));
         t.commit(n);
-        let (d, shifts, _) = t.damage(512, 512, [255; 4], &frame(64), &s(64));
+        let (d, shifts, _) = t.damage(512, 512, [255; 4], frame(64), &s(64));
         assert_eq!(shifts, vec![Shift { src: IRect::new(0, 64, 512, 512), dst: IRect::new(0, 0, 512, 448) }]);
         // only the uncovered band is drawn
         assert_eq!(d, Damage::Rects(vec![IRect::new(0, 448, 512, 512)]));
