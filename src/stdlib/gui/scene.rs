@@ -41,6 +41,9 @@ pub struct Style {
     /// The `hover` look applies while the pointer is over an ancestor too
     /// (a tab's close button shown while the pointer is over its tab).
     pub group_hover: bool,
+    /// How the node moves when a frame changes it, comes and goes
+    /// (motion.rs).
+    pub transition: Option<Arc<super::motion::Transition>>,
     /// `corner: "continuous"`: the corners are Apple's continuous curve
     /// (a squircle's: curvature eased in from the straight edge) rather
     /// than quarter circles; `"round"` quarter circles; unsaid, the
@@ -121,6 +124,7 @@ impl Default for Style {
             placeholder: [113, 113, 122, 255],
             focus_ring: Some(DEFAULT_ACCENT),
             group_hover: false,
+            transition: None,
             corner: None,
             continuous: false,
             shadow: None,
@@ -154,6 +158,7 @@ const STYLE_KEYS: &[&str] = &[
     "placeholder_color",
     "focus_ring",
     "group_hover",
+    "transition",
     "corner",
     "shadow",
     "material",
@@ -300,6 +305,9 @@ impl Style {
         }
         if let Some(c) = get_color(m, "placeholder_color", what)? {
             self.placeholder = c;
+        }
+        if let Some(v) = get(m, "transition") {
+            self.transition = Some(super::motion::parse(v, what)?);
         }
         match get(m, "focus_ring") {
             Some(Value::Boolean(false)) => self.focus_ring = None,

@@ -53,6 +53,12 @@ mod mac {
                 gui.apply(w, scene(n))
               }
               else if e.kind == "work" => { work = e.ms }
+              // a box moved under a 500 ms transition: the engine draws its
+              // frames alone, at the display link's rate
+              else if e.kind == "animate" => {
+                gui.apply(w, [#{ "key": "m", "parent": "root", "box": (e.x, 100, 40, 40),
+                                 "style": #{ "bg": "#16a34a", "radius": 6, "transition": #{ "duration": 500, "curve": "linear" } } }])
+              }
               else if e.kind == "test_done" => { going = false }
             },
             Err(_) => { going = false }
@@ -95,7 +101,8 @@ mod mac {
         on_main(|| {
             let app_cls = AnyClass::get(c"NSApplication").unwrap();
             let app: Retained<AnyObject> = unsafe { msg_send![app_cls, sharedApplication] };
-            let wins: Retained<objc2_foundation::NSArray<AnyObject>> = unsafe { msg_send![&*app, windows] };
+            let wins: Retained<objc2_foundation::NSArray<AnyObject>> =
+                unsafe { msg_send![&*app, windows] };
             let Some(w) = wins.to_vec().into_iter().find(|w| {
                 let t: Option<Retained<NSString>> = unsafe { msg_send![&**w, title] };
                 t.is_some_and(|t| t.to_string() == "olang latency")
@@ -142,6 +149,19 @@ mod mac {
         s
     }
 
+    /// A box moved under a 500 ms transition, with no program turn after
+    /// the patch: the frames the engine presented while it moved.
+    fn animate(x: f64) -> u64 {
+        olang::stdlib::gui::emit(vec![olang::stdlib::gui::values::event(
+            "animate",
+            vec![("x", olang::Value::Float(x))],
+        )]);
+        std::thread::sleep(Duration::from_millis(30));
+        let a = platform::frames_presented();
+        std::thread::sleep(Duration::from_millis(500));
+        platform::frames_presented() - a
+    }
+
     pub fn main() {
         // SAFETY: set before any thread reads the environment.
         unsafe { std::env::set_var("GUI_LATENCY", "1") };
@@ -152,6 +172,7 @@ mod mac {
             std::process::exit(2);
         });
         static RUNS: Mutex<Vec<(String, Vec<(f64, f64)>)>> = Mutex::new(Vec::new());
+        static ANIM: Mutex<Vec<u64>> = Mutex::new(Vec::new());
         let code = platform::host(|| {
             std::thread::spawn(|| {
                 let prober = std::thread::spawn(|| {
@@ -164,8 +185,10 @@ mod mac {
                     // link rests), without taking the person's keyboard
                     on_main(|| {
                         let app_cls = AnyClass::get(c"NSApplication").unwrap();
-                        let app: Retained<AnyObject> = unsafe { msg_send![app_cls, sharedApplication] };
-                        let wins: Retained<objc2_foundation::NSArray<AnyObject>> = unsafe { msg_send![&*app, windows] };
+                        let app: Retained<AnyObject> =
+                            unsafe { msg_send![app_cls, sharedApplication] };
+                        let wins: Retained<objc2_foundation::NSArray<AnyObject>> =
+                            unsafe { msg_send![&*app, windows] };
                         for w in wins.to_vec() {
                             let t: Option<Retained<NSString>> = unsafe { msg_send![&*w, title] };
                             if t.is_some_and(|t| t.to_string() == "olang latency") {
@@ -174,11 +197,38 @@ mod mac {
                         }
                     });
                     std::thread::sleep(Duration::from_millis(300));
-                    let a = run("typing (a key every 60 ms, a turn of 1 ms)", 60, Duration::from_millis(60), 1.0);
-                    let b = run("flood (a key every 4 ms, a turn of 5 ms)", 200, Duration::from_millis(4), 5.0);
+                    let a = run(
+                        "typing (a key every 60 ms, a turn of 1 ms)",
+                        60,
+                        Duration::from_millis(60),
+                        1.0,
+                    );
+                    let b = run(
+                        "flood (a key every 4 ms, a turn of 5 ms)",
+                        200,
+                        Duration::from_millis(4),
+                        5.0,
+                    );
+                    // the box in place, then moved twice
+                    animate(10.0);
+                    std::thread::sleep(Duration::from_millis(600));
+                    let moved: Vec<u64> = [360.0, 10.0]
+                        .iter()
+                        .map(|x| {
+                            let n = animate(*x);
+                            std::thread::sleep(Duration::from_millis(200));
+                            n
+                        })
+                        .collect();
+                    let hz = std::env::var("GUI_LINK_HZ").unwrap_or_else(|_| "the screen's".into());
+                    println!("a 500 ms transition (link at {hz} Hz): {moved:?} frames presented");
+                    ANIM.lock().unwrap().extend(moved);
                     RUNS.lock().unwrap().push(("typing".into(), a));
                     RUNS.lock().unwrap().push(("flood".into(), b));
-                    olang::stdlib::gui::emit(vec![olang::stdlib::gui::values::event("test_done", vec![])]);
+                    olang::stdlib::gui::emit(vec![olang::stdlib::gui::values::event(
+                        "test_done",
+                        vec![],
+                    )]);
                 });
                 let program = Parser::new().parse(PROGRAM).expect("parses");
                 let v = Interpreter::new().eval_program(program);
@@ -191,7 +241,16 @@ mod mac {
         for (what, s) in RUNS.lock().unwrap().iter() {
             assert!(!s.is_empty(), "{what}: no frame was timed");
             let worst = s.iter().map(|x| x.1).fold(0.0, f64::max);
-            assert!(worst < 250.0, "{what}: a frame showed {worst:.1} ms after its input");
+            assert!(
+                worst < 250.0,
+                "{what}: a frame showed {worst:.1} ms after its input"
+            );
+        }
+        // a transition runs on the display link: frames for its whole
+        // length (not one, as a timer-less engine would draw), at least 20
+        // in 500 ms at 60 Hz
+        for n in ANIM.lock().unwrap().iter() {
+            assert!(*n >= 20, "a 500 ms transition presented {n} frames");
         }
         println!("gui_macos_latency_test: ok");
     }

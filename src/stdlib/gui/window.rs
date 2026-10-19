@@ -92,6 +92,17 @@ pub enum Input {
         /// window's last.
         mods: Option<Mods>,
     },
+    /// A scroll with where it is in its gesture (scroll.rs): a trackpad's
+    /// pulls a region past its ends and its momentum bounces there; a
+    /// mouse wheel's notch (`precise` false) glides. `Wheel` is one with
+    /// no phase.
+    Scroll {
+        dx: f32,
+        dy: f32,
+        mods: Option<Mods>,
+        phase: super::scroll::Phase,
+        precise: bool,
+    },
     /// A pinch on a trackpad: `delta` the change of magnification
     /// (positive zooms in), `phase` start, move, end, or cancel.
     Pinch {
@@ -173,6 +184,10 @@ pub struct WinState {
     pub zoom: f32,
     /// The platform's own scale factor.
     pub platform_scale: f32,
+    /// Painting a subtree that is moving (a transition under way): its
+    /// boxes are drawn where they are, not on whole pixels, so they glide
+    /// with their text rather than step.
+    gliding: bool,
     /// Where the window's content sits on the screen, in the platform's
     /// logical pixels: a pointer event carries its place on the screen
     /// too (`sx`, `sy`), so a drag can be followed into another window.
@@ -217,6 +232,11 @@ pub struct WinState {
     bar_hits: Vec<super::bars::Hit>,
     /// The scroller whose thumb is being dragged.
     bar_drag: Option<String>,
+    /// The nodes' transitions and the nodes leaving (motion.rs).
+    pub motion: super::motion::Motion,
+    /// Each scroller stretched past its ends, springing back or gliding
+    /// (scroll.rs), by key.
+    pub elastic: HashMap<String, super::scroll::Elastic>,
 }
 
 /// An animated picture's playing: since when, and where it stopped.
@@ -349,6 +369,7 @@ impl WinState {
             clip: None,
             zoom: 1.0,
             platform_scale: scale,
+            gliding: false,
             // a headless window sits at the screen's corner until a test
             // places it; a real one waits for the platform
             origin: if headless { Some((0.0, 0.0)) } else { None },
@@ -365,6 +386,11 @@ impl WinState {
             bars: HashMap::new(),
             bar_hits: Vec::new(),
             bar_drag: None,
+            motion: super::motion::Motion {
+                enabled: !headless,
+                ..Default::default()
+            },
+            elastic: HashMap::new(),
         }
     }
 
@@ -391,7 +417,11 @@ impl WinState {
     pub fn set_clock(&mut self, ms: f64) {
         if self.test_clock != Some(ms) {
             self.test_clock = Some(ms);
-            if !self.shown_anims.is_empty() || self.bars_moving() {
+            if !self.shown_anims.is_empty()
+                || self.bars_moving()
+                || self.motion.moving()
+                || !self.elastic.is_empty()
+            {
                 self.dirty = true;
             }
         }
@@ -459,6 +489,9 @@ impl WinState {
     pub fn apply(&mut self, ops: &Value, out: &mut Vec<Value>) -> Res<()> {
         let mut applied = Applied::default();
         let before_focus = self.scene.focus.clone();
+        if self.motion.runs(self.settings.reduce_motion) {
+            self.motion_patch(ops);
+        }
         self.scene.apply(ops, &mut applied)?;
         for k in &applied.removed {
             if !self.scene.nodes.contains_key(k) {
@@ -986,6 +1019,13 @@ impl WinState {
                 clicks,
             } => self.pointer(action, x, y, &button, clicks, out),
             Input::Wheel { dx, dy, mods } => self.wheel(dx, dy, mods, out),
+            Input::Scroll {
+                dx,
+                dy,
+                mods,
+                phase,
+                precise,
+            } => self.scroll(dx, dy, mods, phase, precise, out),
             Input::Pinch { delta, phase } => {
                 let (x, y) = self.pointer;
                 if let Some(hit) = self.scene.hit(x, y)
@@ -1812,6 +1852,355 @@ impl WinState {
         }
     }
 
+    /// What a scroll in its gesture moves (scroll.rs): the styled field or
+    /// the scroll region under the pointer — none when a node there hears
+    /// the wheel itself — and whether it is a field.
+    fn elastic_target(&self) -> Option<(String, bool)> {
+        let (x, y) = self.pointer;
+        let hit = self.scene.hit(x, y)?;
+        if let Some(k) = self
+            .scene
+            .target_up(&hit, |n| n.edit.as_ref().is_some_and(|e| e.rich))
+            && self.editors.get(&k).is_some_and(|e| e.rich().is_some())
+        {
+            return Some((k, true));
+        }
+        if self.scene.target_up(&hit, |n| n.wheel).is_some() {
+            return None;
+        }
+        self.scene.scroller_up(&hit).map(|k| (k, false))
+    }
+
+    /// How far a scroll region's or field's content shows moved past its
+    /// ends now (logical px), for a view `dims`.
+    pub fn stretch_of(&self, key: &str, dims: [f32; 2]) -> [f32; 2] {
+        match self.elastic.get(key) {
+            Some(e) => e.shown(self.clock_ms(), dims).0,
+            None => [0.0, 0.0],
+        }
+    }
+
+    /// A region's view and how far it scrolls along each axis.
+    fn region_reach(&self, key: &str) -> Option<([f32; 2], [f32; 2])> {
+        let n = self.scene.nodes.get(key)?;
+        let (cw, ch) = self.scene.content_size(n);
+        Some((
+            [n.rect[2], n.rect[3]],
+            [(cw - n.rect[2]).max(0.0), (ch - n.rect[3]).max(0.0)],
+        ))
+    }
+
+    /// A scroll in its gesture (scroll.rs). A trackpad's moves the region
+    /// or field under the pointer along the axes it scrolls (the others go
+    /// on out, as the wheel's do), and past an end pulls against a rubber
+    /// band that springs back as the fingers lift; momentum carries on to
+    /// an end and bounces. A mouse wheel's notch glides. One with no
+    /// phase is the wheel's.
+    fn scroll(
+        &mut self,
+        dx: f32,
+        dy: f32,
+        mods: Option<Mods>,
+        phase: super::scroll::Phase,
+        precise: bool,
+        out: &mut Vec<Value>,
+    ) {
+        use super::scroll::Phase;
+        let now = self.clock_ms();
+        if !precise && phase == Phase::Legacy {
+            if !self.glide(dx, dy, mods, now) {
+                self.wheel(dx, dy, mods, out);
+            }
+            return;
+        }
+        let target = if phase == Phase::Legacy {
+            None
+        } else {
+            self.elastic_target()
+        };
+        let Some((key, rich)) = target else {
+            self.wheel(dx, dy, mods, out);
+            return;
+        };
+        // the field's view, and the axes it scrolls
+        let (dims, own) = if rich {
+            let sc = self.scale.max(0.01);
+            let w = self.scene.nodes.get(&key).map_or(1.0, |n| n.rect[2]);
+            let Ok(mut ts) = text::system().lock() else {
+                return self.wheel(dx, dy, mods, out);
+            };
+            let Some(r) = self.editors.get_mut(&key).and_then(|e| e.rich_mut()) else {
+                drop(ts);
+                return self.wheel(dx, dy, mods, out);
+            };
+            let max = r.max_scroll(r.view_h, &mut ts);
+            ([w, r.view_h / sc], [false, max > 0.5])
+        } else {
+            let Some((dims, max)) = self.region_reach(&key) else {
+                return self.wheel(dx, dy, mods, out);
+            };
+            (dims, [max[0] > 0.5, max[1] > 0.5])
+        };
+        // shift turns a wheel's turn sideways (AppKit does for its own)
+        let (dx, dy) = if mods.unwrap_or(self.mods).shift && dx == 0.0 && dy != 0.0 && !own[1] {
+            (dy, 0.0)
+        } else {
+            (dx, dy)
+        };
+        let mut e = self.elastic.remove(&key).unwrap_or_default();
+        let was = e.shown(now, dims).0;
+        let mut spent = false;
+        match phase {
+            Phase::Began => e.take_hold(now, dims),
+            // momentum after a bounce (or after a stretch let go) is spent
+            p if p.momentum() && e.bounced => spent = true,
+            _ => {}
+        }
+        if phase == Phase::MomentumEnded {
+            e.bounced = false;
+        }
+        let mut rest = [0.0f32; 2];
+        let mut others = [dx, dy];
+        if !spent {
+            let d = [dx, dy];
+            for i in 0..2 {
+                if !own[i] {
+                    continue;
+                }
+                others[i] = 0.0;
+                rest[i] = e.relax(i, d[i]);
+            }
+            // the axes it scrolls: its own offset
+            if rest != [0.0, 0.0] {
+                rest = if rich {
+                    self.scroll_field_by(&key, rest[1], out)
+                } else {
+                    self.scroll_region_by(&key, rest, out)
+                };
+            }
+        } else {
+            others = [0.0, 0.0];
+        }
+        // what is left past an end
+        if phase.gesture() && phase != Phase::Ended {
+            for i in 0..2 {
+                if own[i] {
+                    e.pull[i] += rest[i];
+                }
+            }
+        }
+        if phase.momentum() && !e.bounced && rest != [0.0, 0.0] {
+            // arriving at an end at the momentum's speed: out and back
+            let dt = ((now - e.last_at) as f32).clamp(4.0, 34.0);
+            let v = [
+                if rest[0] != 0.0 {
+                    dx * 1000.0 / dt
+                } else {
+                    0.0
+                },
+                if rest[1] != 0.0 {
+                    dy * 1000.0 / dt
+                } else {
+                    0.0
+                },
+            ];
+            e.release(now, dims, v);
+            e.bounced = true;
+        }
+        if phase == Phase::Ended {
+            e.gesture = false;
+            if e.pull != [0.0, 0.0] {
+                e.release(now, dims, [0.0, 0.0]);
+                e.bounced = true;
+            }
+        }
+        e.last_at = now;
+        if e.shown(now, dims).0 != was {
+            self.dirty = true;
+        }
+        if !e.idle(now, dims) || e.bounced {
+            self.elastic.insert(key, e);
+        }
+        // the axes it does not scroll go on out, as the wheel's do
+        if others != [0.0, 0.0] {
+            self.wheel(others[0], others[1], mods, out);
+        }
+    }
+
+    /// Scroll region `key` by `d` (the wheel's sign: positive towards its
+    /// start), said as the wheel's are: what could not move (past an end).
+    fn scroll_region_by(&mut self, key: &str, d: [f32; 2], out: &mut Vec<Value>) -> [f32; 2] {
+        let Some(n) = self.scene.nodes.get_mut(key) else {
+            return d;
+        };
+        let before = n.offset;
+        n.offset.0 -= d[0];
+        n.offset.1 -= d[1];
+        self.scene.clamp_scroll(key);
+        let after = self.scene.nodes[key].offset;
+        if after != before {
+            self.dirty = true;
+            self.a11y_dirty = true;
+            if after.1 != before.1 {
+                self.bar_moved(key);
+            }
+            out.push(self.ev(
+                "scrolled",
+                vec![
+                    ("key", s(key)),
+                    ("x", float(after.0)),
+                    ("y", float(after.1)),
+                ],
+            ));
+        }
+        [d[0] - (before.0 - after.0), d[1] - (before.1 - after.1)]
+    }
+
+    /// Scroll styled field `key` down by `dy` (the wheel's sign): what
+    /// could not move.
+    fn scroll_field_by(&mut self, key: &str, dy: f32, out: &mut Vec<Value>) -> [f32; 2] {
+        let now = self.clock_ms();
+        let sc = self.scale.max(0.01);
+        let Ok(mut ts) = text::system().lock() else {
+            return [0.0, dy];
+        };
+        let Some(r) = self.editors.get_mut(key).and_then(|e| e.rich_mut()) else {
+            return [0.0, dy];
+        };
+        let before = r.scroll_y;
+        if !r.wheel(dy, &mut ts) {
+            return [0.0, dy];
+        }
+        let moved = (before - r.scroll_y) / sc;
+        self.bars.entry(key.to_string()).or_default().moved_at = Some(now);
+        let top = r.top_line(&mut ts);
+        let band = r.band.max(1);
+        if r.said_top.map(|t| t / band) != Some(top / band) {
+            r.said_top = Some(top);
+            drop(ts);
+            out.push(self.ev(
+                "viewport",
+                vec![("key", s(key)), ("top", Value::Integer(top as i64))],
+            ));
+        }
+        self.dirty = true;
+        [0.0, dy - moved]
+    }
+
+    /// A mouse wheel's notch over a scroll region that moves along it: the
+    /// region glides there (scroll.rs) rather than jumping; notches in a
+    /// row carry the glide on. `false` when no region takes it.
+    fn glide(&mut self, dx: f32, dy: f32, mods: Option<Mods>, now: f64) -> bool {
+        let Some((key, false)) = self.elastic_target() else {
+            return false;
+        };
+        let (dx, dy) = if mods.unwrap_or(self.mods).shift && dx == 0.0 && dy != 0.0 {
+            (dy, 0.0)
+        } else {
+            (dx, dy)
+        };
+        let Some((_, max)) = self.region_reach(&key) else {
+            return false;
+        };
+        if (dx != 0.0 && max[0] <= 0.5) || (dy != 0.0 && max[1] <= 0.5) || (dx == 0.0 && dy == 0.0)
+        {
+            return false;
+        }
+        let off = self.scene.nodes[&key].offset;
+        let e = self.elastic.entry(key).or_default();
+        let (from, aim) = match e.glide {
+            Some(g) => (g.at(now).0, g.to),
+            None => ([off.0, off.1], [off.0, off.1]),
+        };
+        let to = [
+            (aim[0] - dx).clamp(0.0, max[0]),
+            (aim[1] - dy).clamp(0.0, max[1]),
+        ];
+        // at its end already: the notch is spent here (no jump past it)
+        if to != from {
+            e.glide = Some(super::scroll::Glide {
+                from,
+                to,
+                start: now,
+            });
+            self.dirty = true;
+        }
+        true
+    }
+
+    /// Before a frame: the regions gliding move on (each step said, as the
+    /// wheel's are), and what has settled is let go.
+    pub fn tick(&mut self, out: &mut Vec<Value>) {
+        if self.elastic.is_empty() {
+            return;
+        }
+        let now = self.clock_ms();
+        let keys: Vec<String> = self.elastic.keys().cloned().collect();
+        for k in keys {
+            let sc = self.scale.max(0.01);
+            let field = self
+                .editors
+                .get(&k)
+                .and_then(|e| e.rich())
+                .map(|r| r.view_h / sc);
+            let reach = match field {
+                Some(h) => self
+                    .scene
+                    .nodes
+                    .get(&k)
+                    .map(|n| ([n.rect[2], h], [0.0, 0.0])),
+                None => self.region_reach(&k),
+            };
+            let Some(reach) = reach else {
+                self.elastic.remove(&k);
+                continue;
+            };
+            let mut e = self.elastic[&k];
+            if let Some(g) = e.glide {
+                let (v, done) = g.at(now);
+                if done {
+                    e.glide = None;
+                }
+                if !self.editors.contains_key(&k) {
+                    let off = self.scene.nodes[&k].offset;
+                    let d = [off.0 - v[0], off.1 - v[1]];
+                    if d != [0.0, 0.0] {
+                        self.scroll_region_by(&k, d, out);
+                    }
+                }
+            }
+            if e.idle(now, reach.0) && !e.bounced {
+                self.elastic.remove(&k);
+            } else {
+                // a bounce settled lets the rest of its momentum go too,
+                // once nothing has come for a while
+                if e.bounced && e.idle(now, reach.0) && now - e.last_at > 250.0 {
+                    self.elastic.remove(&k);
+                    continue;
+                }
+                self.elastic.insert(k, e);
+            }
+        }
+    }
+
+    /// Something of the scrolling moves at the next refresh (a glide, a
+    /// spring back).
+    fn elastic_moving(&self) -> bool {
+        let now = self.clock_ms();
+        self.elastic.iter().any(|(k, e)| {
+            e.glide.is_some()
+                || (e.back.is_some() && {
+                    let dims = self
+                        .scene
+                        .nodes
+                        .get(k)
+                        .map(|n| [n.rect[2], n.rect[3]])
+                        .unwrap_or([1.0, 1.0]);
+                    e.shown(now, dims).1
+                })
+        })
+    }
+
     /// Where the input method should place its candidate window: the
     /// focused field's composition or caret, in logical pixels.
     pub fn ime_area(&mut self) -> Option<[f32; 4]> {
@@ -1908,13 +2297,24 @@ impl WinState {
         };
         let full = Clip::rect(0.0, 0.0, pw as f32, ph as f32);
         let mut rings = Vec::new();
+        self.motion.begin();
         self.paint(&root, 0.0, 0.0, full, 1.0, &mut ts, &mut dl, &mut rings);
+        self.paint_ghosts(full, &mut ts, &mut dl, &mut rings);
+        self.motion.end();
+        // a transition moving, a scroll gliding or springing back: the
+        // next frame at the next refresh
+        if self.motion.moving() || self.elastic_moving() {
+            let due = self.clock_ms() + 1.0;
+            self.next_frame = Some(self.next_frame.map_or(due, |d| d.min(due)));
+        }
         // Focus rings draw last, over their neighbours, unclipped by the
         // node's own clip but within the window.
         dl.prims.extend(rings);
         dl
     }
 
+    /// Node `key` and what it holds: as its transition shows it now, when
+    /// it has one (motion.rs).
     #[allow(clippy::too_many_arguments)]
     fn paint(
         &mut self,
@@ -1930,12 +2330,108 @@ impl WinState {
         let Some(node) = self.scene.nodes.get(key) else {
             return;
         };
-        let st = self.scene.effective_style(node);
+        let mut st = self.scene.effective_style(node);
+        let rect = node.rect;
+        let Some(tr) = st.transition.clone().filter(|_| !self.motion.ghosting) else {
+            self.paint_node(key, ox, oy, clip, opacity, st, rect, ts, dl, rings);
+            return;
+        };
+        // still (reduced motion, a still headless window): drawn as it
+        // is, nothing kept
+        let runs = self.motion.runs(self.settings.reduce_motion);
+        if !runs {
+            if !self.motion.records.is_empty() {
+                self.motion.records.clear();
+            }
+            self.paint_node(key, ox, oy, clip, opacity, st, rect, ts, dl, rings);
+            return;
+        }
+        let now = self.clock_ms();
+        let hovered = self
+            .scene
+            .hover
+            .as_deref()
+            .is_some_and(|h| h == key || (st.group_hover && self.scene.is_ancestor(h, key)));
+        let target = super::motion::Target {
+            rect,
+            opacity: st.opacity,
+            bg: st.bg,
+            border: st.border,
+            color: st.color,
+            hovered,
+        };
+        let sh = self.motion.drive(key, &tr, &target, now, runs);
+        st.opacity = sh.opacity;
+        st.bg = sh.bg;
+        st.border = sh.border;
+        st.color = sh.color;
+        let moving = sh.rect != rect || sh.pose.x != 0.0 || sh.pose.y != 0.0 || sh.pose.scale != 1.0;
+        let was = self.gliding;
+        self.gliding = was || moving;
+        self.paint_posed(
+            key, ox, oy, clip, opacity, st, sh.rect, sh.pose, ts, dl, rings,
+        );
+        self.gliding = was;
+    }
+
+    /// A node drawn in a pose: faded, moved, and scaled about its centre
+    /// (drawn at that scale, so its text is sharp: the scale is kept to
+    /// hundredths, so a scale's frames share their glyphs).
+    #[allow(clippy::too_many_arguments)]
+    fn paint_posed(
+        &mut self,
+        key: &str,
+        ox: f32,
+        oy: f32,
+        clip: Clip,
+        opacity: f32,
+        st: scene::Style,
+        rect: [f32; 4],
+        pose: super::motion::Pose,
+        ts: &mut TextSystem,
+        dl: &mut DisplayList,
+        rings: &mut Vec<Prim>,
+    ) {
+        let opacity = opacity * pose.opacity;
+        let (mut ox, mut oy) = (ox + pose.x, oy + pose.y);
+        let k = (pose.scale * 100.0).round() / 100.0;
+        if (k - 1.0).abs() < 1e-3 || k <= 0.0 {
+            self.paint_node(key, ox, oy, clip, opacity, st, rect, ts, dl, rings);
+            return;
+        }
+        // every logical place in the subtree is drawn at `scale × k`: moved
+        // so that its centre stays where it is
+        let (cx, cy) = (ox + rect[0] + rect[2] / 2.0, oy + rect[1] + rect[3] / 2.0);
+        ox += cx * (1.0 / k - 1.0);
+        oy += cy * (1.0 / k - 1.0);
+        let scale = self.scale;
+        self.scale = scale * k;
+        self.paint_node(key, ox, oy, clip, opacity, st, rect, ts, dl, rings);
+        self.scale = scale;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn paint_node(
+        &mut self,
+        key: &str,
+        ox: f32,
+        oy: f32,
+        clip: Clip,
+        opacity: f32,
+        st: scene::Style,
+        rect: [f32; 4],
+        ts: &mut TextSystem,
+        dl: &mut DisplayList,
+        rings: &mut Vec<Prim>,
+    ) {
+        let Some(node) = self.scene.nodes.get(key) else {
+            return;
+        };
         let s = self.scale;
-        let x = (ox + node.rect[0]) * s;
-        let y = (oy + node.rect[1]) * s;
-        let w = node.rect[2] * s;
-        let h = node.rect[3] * s;
+        let x = (ox + rect[0]) * s;
+        let y = (oy + rect[1]) * s;
+        let w = rect[2] * s;
+        let h = rect[3] * s;
         let opacity = opacity * st.opacity;
         if opacity <= 0.0 {
             return;
@@ -1945,7 +2441,7 @@ impl WinState {
         let radii = st.radius.map(|r| r * s);
         // the box on whole device pixels (crisp edges and hairlines at
         // every scale); its content keeps its own place
-        let (bx, by, bw_, bh) = scene::snap_box(x, y, w, h);
+        let (bx, by, bw_, bh) = if self.gliding { (x, y, w, h) } else { scene::snap_box(x, y, w, h) };
         if let Some(sh) = st.shadow {
             push_shadow(dl, sh, [bx, by, bw_, bh], radii, s, opacity, clip);
         }
@@ -2047,7 +2543,7 @@ impl WinState {
         }
         let text = node.text.clone();
         let (scrollable, is_edit) = (node.scrollable, node.edit.is_some());
-        let (children, offset, rect) = (node.children.clone(), node.offset, node.rect);
+        let (children, offset) = (node.children.clone(), node.offset);
         let (draw, image, fit) = (node.draw.clone(), node.image.clone(), node.fit.clone());
         if let Some(ops) = &draw
             && let Ok(drawing) = super::canvas::draw(ops, rect[2], rect[3], s)
@@ -2244,6 +2740,13 @@ impl WinState {
             };
             push_glyphs(&shaped, content[0], content[1] + dy, inner_clip, dl);
         }
+        // stretched past an end (a trackpad's pull, a bounce): drawn moved
+        let stretch = if scrollable && !self.elastic.is_empty() {
+            self.stretch_of(key, [rect[2], rect[3]])
+        } else {
+            [0.0, 0.0]
+        };
+        let offset = (offset.0 - stretch[0], offset.1 - stretch[1]);
         let (cx, cy) = (ox + rect[0] - offset.0, oy + rect[1] - offset.1);
         if scrollable && !is_edit {
             // what it shows moves with its offset: damage moves the kept
@@ -2297,6 +2800,118 @@ impl WinState {
                 clip,
             });
         }
+    }
+
+    /// The nodes that left with an `exit`, over everything, each in its
+    /// pose now; gone once there. Under nothing: nothing of them is found
+    /// by the pointer or said.
+    fn paint_ghosts(
+        &mut self,
+        full: Clip,
+        ts: &mut TextSystem,
+        dl: &mut DisplayList,
+        rings: &mut Vec<Prim>,
+    ) {
+        if self.motion.ghosts.is_empty() {
+            return;
+        }
+        let now = self.clock_ms();
+        let ghosts = std::mem::take(&mut self.motion.ghosts);
+        let (hits, caret, anims) = (self.bar_hits.len(), self.caret, self.shown_anims.len());
+        let mut kept = Vec::new();
+        for mut g in ghosts {
+            let (pose, done) = g.pose(now);
+            if done || !self.motion.runs(self.settings.reduce_motion) {
+                continue;
+            }
+            std::mem::swap(&mut self.scene, &mut g.scene);
+            if let Some(root) = self.scene.root.clone()
+                && let Some(node) = self.scene.nodes.get(&root)
+            {
+                let st = self.scene.effective_style(node);
+                let rect = node.rect;
+                self.motion.ghosting = true;
+                self.paint_posed(&root, 0.0, 0.0, full, 1.0, st, rect, pose, ts, dl, rings);
+                self.motion.ghosting = false;
+            }
+            std::mem::swap(&mut self.scene, &mut g.scene);
+            kept.push(g);
+        }
+        self.bar_hits.truncate(hits);
+        self.shown_anims.truncate(anims);
+        self.caret = caret;
+        self.motion.ghosts = kept;
+    }
+
+    /// Before a patch: the nodes it adds that come in with an `enter`, and
+    /// the nodes it removes that leave with an `exit` (their subtrees kept
+    /// as they were, where they were, to be drawn leaving).
+    fn motion_patch(&mut self, ops: &Value) {
+        let Value::List(items) = ops else { return };
+        let now = self.clock_ms();
+        for op in items.iter() {
+            let kind = get(op, "op").and_then(|v| match v {
+                Value::String(s) => Some(s.as_str()),
+                _ => None,
+            });
+            let Some(Value::String(key)) = get(op, "key") else {
+                continue;
+            };
+            match kind.unwrap_or("node") {
+                "node" => {
+                    if !self.scene.nodes.contains_key(key.as_str()) {
+                        self.motion.ghosts.retain(|g| g.key != key.as_str());
+                        if get(op, "style")
+                            .and_then(|st| get(st, "transition"))
+                            .and_then(|t| get(t, "enter"))
+                            .is_some()
+                        {
+                            self.motion.fresh.insert(key.to_string());
+                        }
+                    }
+                }
+                "remove" => {
+                    // the outermost nodes under it that leave with an exit
+                    let mut stack = vec![key.to_string()];
+                    while let Some(k) = stack.pop() {
+                        let Some(n) = self.scene.nodes.get(&k) else {
+                            continue;
+                        };
+                        match n.style.transition.clone().filter(|t| t.exit.is_some()) {
+                            Some(tr) => {
+                                if let Some(g) = self.ghost_of(&k) {
+                                    self.motion.leave(k, g, &tr, now);
+                                }
+                            }
+                            None => stack.extend(n.children.iter().cloned()),
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Node `key`'s subtree as a scene of its own, its root where it shows
+    /// in the window (nothing hovered, pressed or focused in it).
+    fn ghost_of(&self, key: &str) -> Option<Scene> {
+        let abs = self.scene.absolute(key)?;
+        let mut g = Scene::default();
+        let mut stack = vec![key.to_string()];
+        while let Some(k) = stack.pop() {
+            let Some(n) = self.scene.nodes.get(&k) else {
+                continue;
+            };
+            let mut n = n.clone();
+            stack.extend(n.children.iter().cloned());
+            if k == key {
+                n.parent = None;
+                n.rect = abs;
+            }
+            g.nodes.insert(k, n);
+        }
+        g.root = Some(key.to_string());
+        Some(g)
     }
 
     /// A canvas's drawing (canvas.rs) at `(x, y)`, `w × h` device pixels,
@@ -2689,6 +3304,25 @@ impl WinState {
         r.follow_caret(content[3], ts);
         let ox = content[0] - r.scroll_x;
         let oy = content[1] - r.scroll_y;
+        // stretched past an end (a trackpad's pull, a bounce): drawn moved
+        let stretch = match self.elastic.get(key) {
+            Some(e) => {
+                e.shown(
+                    self.test_clock
+                        .unwrap_or_else(|| self.born.elapsed().as_secs_f64() * 1000.0),
+                    [content[2] / s, content[3] / s],
+                )
+                .0[1]
+                    * s
+            }
+            None => 0.0,
+        };
+        let r = self
+            .editors
+            .get_mut(key)
+            .and_then(|e| e.rich_mut())
+            .expect("present");
+        let oy = oy + stretch;
         let outer_clip = clip;
         {
             // its text moves with its scroll: damage moves the kept frame
@@ -2699,7 +3333,7 @@ impl WinState {
                 id: h.finish(),
                 view: outer_clip,
                 dx: r.scroll_x,
-                dy: r.scroll_y,
+                dy: r.scroll_y - stretch,
             });
         }
         // what the text draws from here: clipped below the pinned rows of
