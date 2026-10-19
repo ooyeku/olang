@@ -223,12 +223,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   the VM once — Loom's runtime, entered from the tree-walker — stayed a
   wrapper for good and converted every value set into it, each turn
   (a frame's placements, its index, a window's record).
-- **`gui.flatten`, `gui.flat_emit` and `gui.flat_join` answer in the
-  VM's form** when the VM calls them: the placements are the VM's own
-  maps and lists (read natively, not converted a field at a time), the
-  view nodes and paths wrapped where they are, `index`, `wraps` and
-  `changed` typed lists. The tree-walker's answers are unchanged
-  (tests/gui_flat_test.rs holds the two alike).
+- **`gui.flatten`, `gui.flat_emit` and `gui.flat_join` read the VM's
+  values where they are** when the VM calls them (last frame's answer
+  and placements are not converted for the call), and `gui.flatten`
+  answers `index`, `wraps` and `changed` as typed lists the passes read
+  natively, `gui.flat_join` its placements as the VM's own list. A
+  placement itself stays the interpreter's, wrapped: built as the VM's
+  own map, a frame made afresh cost twice what the engine spent making
+  it, and twice that again crossing back to code on the tree-walker. The
+  tree-walker's answers are unchanged (tests/gui_flat_test.rs holds the
+  two alike).
 - **`gui.flat_emit`'s keyed keep** (`keep` `"keyed"`, `prev`
   `#{ flat, out }`; `gui.platform().flat_keyed`): on a frame whose shape
   changed, what last frame placed is kept by engine key in one native

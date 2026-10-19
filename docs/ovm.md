@@ -411,9 +411,13 @@ entries wrapped where they are: left a wrapper, every such write
 converted the value into the interpreter's form, and a program state
 that crossed in once (a loop entered from the tree-walker, as an
 application's event loop is) converted what it set into it every turn.
-Native answers can be built in the VM's form directly: `gui.flatten`,
-`gui.flat_emit` and `gui.flat_join` answer Loom's placements as the VM's
-own maps and lists (`flat_vm_native`), read without a conversion.
+A native can read the VM's values where they are and answer in the
+VM's form (`flat_vm_native`: Loom's flat layout, its diff and its frame
+index read last frame's answers without converting them, and answer
+typed lists and VM maps the passes read natively). What a native builds
+from the interpreter's values (a placement) is better answered wrapped:
+converted to the VM's own map it costs as much again to build, and again
+to convert back whenever it reaches code on the tree-walker.
 
 The VM-to-interpreter conversion keeps what it converted by identity
 (`TO_AST_CACHE`, `ovm/value.rs`) and lets a dead entry go two at a time

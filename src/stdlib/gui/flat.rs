@@ -1676,16 +1676,6 @@ impl<'a> Items<'a> {
         }
     }
 
-    /// Item `i` in the VM's form.
-    fn vm(&self, i: usize) -> OvmValue {
-        match self {
-            Items::Ast(l) => l
-                .get(i)
-                .map(|v| OvmValue::from_ast(v.clone()))
-                .unwrap_or_else(OvmValue::new_unit),
-            Items::Vm(l) => l.get(i).cloned().unwrap_or_else(OvmValue::new_unit),
-        }
-    }
 }
 
 /// A list of integers as either tier holds it (the VM's typed, or boxed).
@@ -2188,33 +2178,6 @@ fn with_first_path(rs: Value, path: &Value) -> Value {
     }
 }
 
-/// `with_first_path` on the VM's form.
-fn with_first_path_vm(rs: OvmValue, path: &Value) -> OvmValue {
-    let ValueData::List(l) = &rs.data else {
-        return rs;
-    };
-    if l.is_empty() {
-        return rs;
-    }
-    let mut items = l.as_ref().clone();
-    items[0] = match &items[0].data {
-        ValueData::Map(m) => {
-            let mut m2 = m.as_ref().clone();
-            m2.insert("path".to_string(), OvmValue::from_ast(path.clone()));
-            OvmValue::new_map(Arc::new(m2))
-        }
-        ValueData::AstMap(m) => {
-            let mut m2 = m.as_ref().clone();
-            m2.insert("path".to_string(), path.clone());
-            OvmValue {
-                data: ValueData::AstMap(Arc::new(m2)),
-            }
-        }
-        _ => items[0].clone(),
-    };
-    OvmValue::new_list(items)
-}
-
 impl Emitted<'_> {
     /// The answer in the interpreter's form.
     fn to_ast(self, inp: &FlatIn, prev: Option<&PrevOut>, kept_gkeys_from_prev: bool) -> Value {
@@ -2270,130 +2233,6 @@ impl Emitted<'_> {
                 list(self.todo.into_iter().map(Value::Integer).collect()),
             ),
         ])
-    }
-
-    /// The answer in the VM's form: placements Loom reads natively — a
-    /// map's field a lookup, not a conversion a read.
-    fn to_vm(self, inp: &FlatIn, prev: Option<&PrevOut>, kept_gkeys_from_prev: bool) -> OvmValue {
-        let n = self.placed.len();
-        let mut recs = Vec::with_capacity(n);
-        let mut gkeys = Vec::with_capacity(n);
-        let mut probs = Vec::with_capacity(n);
-        let mut lifts = Vec::with_capacity(n);
-        for (i, p) in self.placed.into_iter().enumerate() {
-            match p {
-                Placed::Kept { j, path } => {
-                    let pv = prev.unwrap_or(&NO_PREV);
-                    let rs = pv.recs.vm(j);
-                    recs.push(match path {
-                        Some(path) => with_first_path_vm(rs, path),
-                        None => rs,
-                    });
-                    gkeys.push(if kept_gkeys_from_prev {
-                        pv.gkeys.vm(j)
-                    } else {
-                        OvmValue::from_ast(inp.gkeys[i].clone())
-                    });
-                    probs.push(pv.probs.vm(j));
-                    lifts.push(pv.lifts.vm(j));
-                }
-                Placed::Made {
-                    recs: r,
-                    probs: pr,
-                    gkey,
-                } => {
-                    recs.push(OvmValue::new_list(r.iter().map(vm_rec).collect()));
-                    gkeys.push(OvmValue::from_ast(gkey));
-                    probs.push(OvmValue::new_list(
-                        pr.into_iter().map(OvmValue::from_ast).collect(),
-                    ));
-                    lifts.push(vm_lifts(&inp.glifts[i]));
-                }
-            }
-        }
-        let empty = OvmValue::new_list(Vec::new());
-        let pre: Vec<OvmValue> = self
-            .pre
-            .into_iter()
-            .map(|p| {
-                if p.is_empty() {
-                    empty.clone()
-                } else {
-                    OvmValue::new_list(p.iter().map(vm_rec).collect())
-                }
-            })
-            .collect();
-        vm_map(vec![
-            ("recs", OvmValue::new_list(recs)),
-            ("gkeys", OvmValue::new_list(gkeys)),
-            ("probs", OvmValue::new_list(probs)),
-            ("lifts", OvmValue::new_list(lifts)),
-            ("pre", OvmValue::new_list(pre)),
-            (
-                "todo",
-                OvmValue::new_list(self.todo.into_iter().map(OvmValue::new_integer).collect()),
-            ),
-        ])
-    }
-}
-
-fn vm_map(fields: Vec<(&str, OvmValue)>) -> OvmValue {
-    let mut m = crate::ovm::value::OvmMap::with_capacity_and_hasher(fields.len(), Default::default());
-    for (k, v) in fields {
-        m.insert(k.to_string(), v);
-    }
-    OvmValue::new_map(Arc::new(m))
-}
-
-/// A value the engine built, in the VM's own collections all the way
-/// down (a placement's op, its style): read in place, never converted.
-fn vm_deep(v: &Value) -> OvmValue {
-    match v {
-        Value::Map(m) => {
-            let mut out =
-                crate::ovm::value::OvmMap::with_capacity_and_hasher(m.len(), Default::default());
-            for (k, x) in m.iter() {
-                out.insert(k.clone(), vm_deep(x));
-            }
-            OvmValue::new_map(Arc::new(out))
-        }
-        Value::List(l) => OvmValue::new_list(l.iter().map(vm_deep).collect()),
-        Value::Tuple(t) => OvmValue::new_tuple(t.iter().map(vm_deep).collect()),
-        other => OvmValue::from_ast(other.clone()),
-    }
-}
-
-/// A placement in the VM's form: its fields the VM's own, but its view
-/// node (`node`, the program's, read a prop at a time) wrapped as it is.
-fn vm_rec(v: &Value) -> OvmValue {
-    match v {
-        Value::Map(m) => {
-            let mut out =
-                crate::ovm::value::OvmMap::with_capacity_and_hasher(m.len(), Default::default());
-            for (k, x) in m.iter() {
-                out.insert(
-                    k.clone(),
-                    if k == "node" {
-                        OvmValue::from_ast(x.clone())
-                    } else {
-                        vm_deep(x)
-                    },
-                );
-            }
-            OvmValue::new_map(Arc::new(out))
-        }
-        other => OvmValue::from_ast(other.clone()),
-    }
-}
-
-/// A node's lifted layers (view nodes) in the VM's form: the list the
-/// VM's own, each node wrapped.
-fn vm_lifts(v: &Value) -> OvmValue {
-    match v {
-        Value::List(l) => OvmValue::new_list(
-            l.iter().map(|x| OvmValue::from_ast(x.clone())).collect(),
-        ),
-        other => OvmValue::from_ast(other.clone()),
     }
 }
 
@@ -2693,9 +2532,15 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
 }
 
 /// The VM's own `gui.flat_emit`: the flatten answer and last frame's
-/// placements read where they are, the placements answered in the VM's
-/// form. `None` for arguments of another shape, and for any error (the
-/// call then goes the usual way, which raises it).
+/// placements read where they are (in either tier's form), the keyed keep
+/// done here. The answer is the interpreter's, wrapped: built as the VM's
+/// own maps and lists instead, a frame made afresh cost twice what the
+/// engine spent making it, and a frame laid out from code on the
+/// tree-walker (a test, a benchmark's loop) converted it back whole each
+/// time — and Loom reads the placements natively anyway (`gui.flat_diff`,
+/// `gui.flat_index`, its loops over a wrapped list). `None` for arguments
+/// of another shape, and for any error (the call then goes the usual way,
+/// which raises it).
 fn vm_flat_emit(args: &[OvmValue]) -> Option<Res<OvmValue>> {
     if args.len() != 5 {
         return None;
@@ -2728,7 +2573,7 @@ fn vm_flat_emit(args: &[OvmValue]) -> Option<Res<OvmValue>> {
             _ => Vec::new(),
         };
         let e = emit(&spec, &inp, &geo, &cand, pout.as_ref(), None).ok()?;
-        Some(Ok(e.to_vm(&inp, pout.as_ref(), false)))
+        Some(Ok(OvmValue::from_ast(e.to_ast(&inp, pout.as_ref(), false))))
     } else {
         let keep: Option<Ints> = match &args[3].data {
             ValueData::Unit => None,
@@ -2748,7 +2593,7 @@ fn vm_flat_emit(args: &[OvmValue]) -> Option<Res<OvmValue>> {
         };
         let renames = if reusable { prev.as_ref().map(|p| p.gkeys) } else { None };
         let e = emit(&spec, &inp, &geo, &cand, prev.as_ref(), renames).ok()?;
-        Some(Ok(e.to_vm(&inp, prev.as_ref(), true)))
+        Some(Ok(OvmValue::from_ast(e.to_ast(&inp, prev.as_ref(), true))))
     }
 }
 
@@ -2832,10 +2677,10 @@ fn vm_flat_join(args: &[OvmValue]) -> Option<Res<OvmValue>> {
         items(&args[2])?,
         items(&args[3])?,
     );
-    Some(Ok(vm_map(vec![
-        ("nodes", join(&[pre, recs])),
-        ("problems", join(&[probs])),
-        ("lifted", join(&[lifts])),
+    Some(Ok(vm_map_of(vec![
+        ("nodes".to_string(), join(&[pre, recs])),
+        ("problems".to_string(), join(&[probs])),
+        ("lifted".to_string(), join(&[lifts])),
     ])))
 }
 
