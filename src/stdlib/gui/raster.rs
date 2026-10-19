@@ -103,10 +103,18 @@ pub fn glyph(key: &GlyphKey, coords: &[i16]) -> Option<Arc<GlyphImage>> {
     image
 }
 
+/// The largest glyph drawn, in device pixels: a text at an absurd size (a
+/// program's 1e30) has no ink rather than a rasterizer asked for an image
+/// past any memory (zeno indexes out of its buffer and the process aborts).
+pub const MAX_GLYPH_PX: f32 = 4096.0;
+
 fn render(context: &mut ScaleContext, key: &GlyphKey, coords: &[i16]) -> Option<GlyphImage> {
+    let size = key.size as f32 / 64.0;
+    if !(size > 0.0 && size <= MAX_GLYPH_PX) {
+        return None;
+    }
     let data = super::text::face_data(key.face)?;
     let bytes: &[u8] = data.data.data();
-    let size = key.size as f32 / 64.0;
     // A COLRv1 glyph (Noto's emoji) is painted from its paint graph; swash
     // would draw only its outline.
     if !key.embolden

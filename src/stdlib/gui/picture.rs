@@ -128,12 +128,41 @@ enum Source {
 impl Source {
     fn read(&self) -> Res<Arc<Vec<u8>>> {
         match self {
-            Source::Path(p) => std::fs::read(p)
-                .map(Arc::new)
-                .map_err(|e| format!("image: reading {p}: {e}")),
+            Source::Path(p) => read_file(p).map(Arc::new),
             Source::Bytes(b) => Ok(b.clone()),
         }
     }
+}
+
+/// The largest file a picture is read from: past it (a device such as
+/// `/dev/zero`, a disk image named `.png`) the source is refused, not read
+/// into memory until the process is killed.
+pub const MAX_FILE: u64 = 512 << 20;
+
+/// A picture's file, read whole: only a regular file (a FIFO would hold the
+/// decoding thread, a device never ends) of at most [`MAX_FILE`] bytes.
+fn read_file(p: &str) -> Res<Vec<u8>> {
+    use std::io::Read;
+    let md = std::fs::metadata(p).map_err(|e| format!("image: reading {p}: {e}"))?;
+    if !md.is_file() {
+        return Err(format!("image: {p} is not a file"));
+    }
+    if md.len() > MAX_FILE {
+        return Err(format!(
+            "image: {p} is {} MB, more than a picture is read from ({} MB)",
+            md.len() >> 20,
+            MAX_FILE >> 20
+        ));
+    }
+    let f = std::fs::File::open(p).map_err(|e| format!("image: reading {p}: {e}"))?;
+    let mut out = Vec::with_capacity(md.len() as usize);
+    f.take(MAX_FILE + 1)
+        .read_to_end(&mut out)
+        .map_err(|e| format!("image: reading {p}: {e}"))?;
+    if out.len() as u64 > MAX_FILE {
+        return Err(format!("image: {p} grew past {} MB as it was read", MAX_FILE >> 20));
+    }
+    Ok(out)
 }
 
 fn hash_bytes(b: &[u8]) -> u64 {
@@ -1188,6 +1217,25 @@ pub fn held() -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_picture_is_read_only_from_a_regular_file_of_a_bounded_size() {
+        // a device never ends: refused before it is opened
+        let e = read_file("/dev/zero").unwrap_err();
+        assert!(e.contains("is not a file"), "{e}");
+        assert!(read_file("/").unwrap_err().contains("is not a file"));
+        assert!(read_file("/no/such/picture.png").is_err());
+        let dir = std::env::temp_dir().join(format!("olang-pic-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let small = dir.join("a.png");
+        std::fs::write(&small, b"\x89PNG\r\n\x1a\n").unwrap();
+        assert_eq!(read_file(small.to_str().unwrap()).unwrap().len(), 8);
+        // one past the limit, sparse: refused by its size, never read
+        let big = dir.join("big.png");
+        std::fs::File::create(&big).unwrap().set_len(MAX_FILE + 1).unwrap();
+        assert!(read_file(big.to_str().unwrap()).unwrap_err().contains("more than a picture is read from"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn formats_are_known_by_their_first_bytes() {

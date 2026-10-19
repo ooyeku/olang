@@ -279,6 +279,17 @@ pub struct Gpu {
     atlas: Mutex<Atlas>,
     /// A texture per picture, by the picture's id.
     pictures: Mutex<Textures>,
+    /// The device was lost (the GPU reset, unplugged, the machine slept
+    /// through a driver's reset) or ran out of memory: said once, and every
+    /// window's frame refused (`"lost"`) rather than drawn on a dead device.
+    pub lost: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Gpu {
+    /// Whether the device can no longer draw.
+    pub fn is_lost(&self) -> bool {
+        self.lost.load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 /// The pictures' textures, the least recently drawn dropped past a
@@ -342,6 +353,40 @@ fn make(
         ..Default::default()
     }))
     .map_err(|e| format!("the GPU refused a device ({e})"))?;
+    // wgpu's own handler panics on any error it was not asked to capture,
+    // and a panic here aborts the application with the person's work in it:
+    // an error is said instead (each kind once), and a device out of memory
+    // or lost stops drawing (`lost`) — the windows stay, the program runs.
+    let lost = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let said = Arc::new(Mutex::new(std::collections::HashSet::<String>::new()));
+    {
+        let lost = lost.clone();
+        device.on_uncaptured_error(Arc::new(move |e: wgpu::Error| {
+            let kind = match &e {
+                wgpu::Error::OutOfMemory { .. } => {
+                    lost.store(true, std::sync::atomic::Ordering::SeqCst);
+                    "out of memory"
+                }
+                wgpu::Error::Internal { .. } => "internal",
+                wgpu::Error::Validation { .. } => "validation",
+            };
+            let text = e.to_string();
+            let first = said.lock().map(|mut s| s.len() < 64 && s.insert(format!("{kind}: {text}"))).unwrap_or(false);
+            if first {
+                eprintln!("gui: the GPU said ({kind}): {text}");
+            }
+        }));
+    }
+    {
+        let lost = lost.clone();
+        device.set_device_lost_callback(move |reason, message| {
+            // dropped on purpose is no loss
+            if reason != wgpu::DeviceLostReason::Destroyed {
+                lost.store(true, std::sync::atomic::Ordering::SeqCst);
+                eprintln!("gui: the GPU device was lost ({reason:?}): {message}");
+            }
+        });
+    }
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("gui"),
         source: wgpu::ShaderSource::Wgsl(SHADER.into()),
@@ -422,6 +467,7 @@ fn make(
         sampler,
         linear,
         pictures: Mutex::new(Textures::default()),
+        lost,
         atlas: Mutex::new(Atlas {
             texture,
             slots: HashMap::new(),
@@ -867,8 +913,8 @@ impl Surface {
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
-            width: width.max(1),
-            height: height.max(1),
+            width: width.clamp(1, gpu.device.limits().max_texture_dimension_2d.max(1)),
+            height: height.clamp(1, gpu.device.limits().max_texture_dimension_2d.max(1)),
             present_mode: wgpu::PresentMode::AutoVsync,
             desired_maximum_frame_latency: 2,
             alpha_mode: caps
@@ -887,8 +933,15 @@ impl Surface {
         })
     }
 
+    /// The largest side a surface may have on this device (a window
+    /// spread past it is drawn cut, never configured past the limit).
+    fn max_side(&self) -> u32 {
+        self.gpu.device.limits().max_texture_dimension_2d.max(1)
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
-        let (w, h) = (width.max(1), height.max(1));
+        let most = self.max_side();
+        let (w, h) = (width.clamp(1, most), height.clamp(1, most));
         if (w, h) != (self.config.width, self.config.height) {
             self.config.width = w;
             self.config.height = h;
@@ -897,6 +950,9 @@ impl Surface {
     }
 
     pub fn render(&mut self, dl: &DisplayList) -> Result<(), String> {
+        if self.gpu.is_lost() {
+            return Err("lost".to_string());
+        }
         self.resize(dl.width, dl.height);
         let mut frame = None;
         for _ in 0..2 {

@@ -175,6 +175,10 @@ pub fn next_id() -> u64 {
     NEXT_ID.fetch_add(1, Ordering::SeqCst)
 }
 
+/// The largest side a window is given, in logical pixels: a resize past it
+/// (a program's, a test's) is taken as this.
+pub const MAX_WINDOW_SIDE: f32 = 16384.0;
+
 fn window(function: &str, id: u64) -> Res<Shared> {
     windows()
         .lock()
@@ -294,8 +298,8 @@ fn open_opts(function: &str, v: Option<&Value>) -> Res<OpenOpts> {
         o.title = t.to_string();
     }
     if let Some((w, h)) = get_pair(v, "size", function)? {
-        o.width = w.max(1.0);
-        o.height = h.max(1.0);
+        o.width = w.clamp(1.0, MAX_WINDOW_SIDE);
+        o.height = h.clamp(1.0, MAX_WINDOW_SIDE);
     }
     o.min = get_pair(v, "min", function)?;
     if let Some(b) = get_bool(v, "resizable", function)? {
@@ -830,10 +834,12 @@ fn input_of(v: &Value) -> Res<Input> {
         },
         "compose" => Input::ImePreedit(get_str(v, "text", what)?.unwrap_or("").to_string(), None),
         "commit" => Input::ImeCommit(get_str(v, "text", what)?.unwrap_or("").to_string()),
+        // a size no display has is taken as the largest one may (a
+        // window a million pixels high would be laid out and drawn whole)
         "resize" => Input::Resize {
-            width: get_num(v, "width", what)?.ok_or("gui.input: resize needs \"width\"")?,
-            height: get_num(v, "height", what)?.ok_or("gui.input: resize needs \"height\"")?,
-            scale: get_num(v, "scale", what)?.unwrap_or(1.0),
+            width: get_num(v, "width", what)?.ok_or("gui.input: resize needs \"width\"")?.clamp(1.0, MAX_WINDOW_SIDE),
+            height: get_num(v, "height", what)?.ok_or("gui.input: resize needs \"height\"")?.clamp(1.0, MAX_WINDOW_SIDE),
+            scale: get_num(v, "scale", what)?.unwrap_or(1.0).clamp(0.5, 4.0),
         },
         "window_focus" => Input::Focused(get_bool(v, "on", what)?.unwrap_or(true)),
         // Files from another program: `action` hover, drop, or cancel,
