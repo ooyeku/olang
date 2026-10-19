@@ -1927,13 +1927,45 @@ impl App {
         let what = "gui.menu";
         let bar = Menu::new();
         let mut ids = HashMap::new();
-        for (title, items) in spec.0 {
+        let sep = |sub: &Submenu| sub.append(&PredefinedMenuItem::separator()).map_err(|e| format!("{what}: {e}"));
+        for (at, (title, items)) in spec.0.into_iter().enumerate() {
             let sub = Submenu::new(&title, true);
-            for it in items {
+            // the Mac's own items every application has (AppKit's
+            // selectors, its keys): the application menu's Services and
+            // Hide (⌘H, ⌥⌘H, Show All) before its Quit, the Window menu's
+            // Minimize (⌘M) and Zoom first and Bring All to Front last, the
+            // View menu's Enter Full Screen (⌃⌘F) last
+            let app_menu = at == 0;
+            let quit_at = if app_menu {
+                items.iter().position(|it| matches!(it, MenuItemSpec::Item { id, label, .. } if id.ends_with("quit") || label.starts_with("Quit")))
+            } else {
+                None
+            };
+            if title == "Window" {
+                sub.append(&PredefinedMenuItem::minimize(None)).map_err(|e| format!("{what}: {e}"))?;
+                sub.append(&PredefinedMenuItem::maximize(Some("Zoom"))).map_err(|e| format!("{what}: {e}"))?;
+                if !items.is_empty() {
+                    sep(&sub)?;
+                }
+            }
+            let mut prev_sep = true;
+            for (i, it) in items.into_iter().enumerate() {
+                if quit_at == Some(i) {
+                    if !prev_sep {
+                        sep(&sub)?;
+                    }
+                    sub.append(&PredefinedMenuItem::services(None)).map_err(|e| format!("{what}: {e}"))?;
+                    sep(&sub)?;
+                    sub.append(&PredefinedMenuItem::hide(Some(format!("Hide {title}").as_str()))).map_err(|e| format!("{what}: {e}"))?;
+                    sub.append(&PredefinedMenuItem::hide_others(None)).map_err(|e| format!("{what}: {e}"))?;
+                    sub.append(&PredefinedMenuItem::show_all(None)).map_err(|e| format!("{what}: {e}"))?;
+                    sep(&sub)?;
+                }
                 let (id, label, enabled, keys, checked) = match it {
                     MenuItemSpec::Separator => {
                         sub.append(&PredefinedMenuItem::separator())
                             .map_err(|e| format!("{what}: {e}"))?;
+                        prev_sep = true;
                         continue;
                     }
                     MenuItemSpec::Item {
@@ -1945,6 +1977,7 @@ impl App {
                     } => (id, label, enabled, keys, checked),
                 };
                 // checked to parse when the spec was read
+                prev_sep = false;
                 let accel: Option<Accelerator> = keys.and_then(|k| k.parse().ok());
                 let mid = muda::MenuId::new(&id);
                 match checked {
@@ -1958,6 +1991,22 @@ impl App {
                     }
                 }
                 ids.insert(mid, id);
+            }
+            if app_menu && quit_at.is_none() {
+                sep(&sub)?;
+                sub.append(&PredefinedMenuItem::services(None)).map_err(|e| format!("{what}: {e}"))?;
+                sep(&sub)?;
+                sub.append(&PredefinedMenuItem::hide(Some(format!("Hide {title}").as_str()))).map_err(|e| format!("{what}: {e}"))?;
+                sub.append(&PredefinedMenuItem::hide_others(None)).map_err(|e| format!("{what}: {e}"))?;
+                sub.append(&PredefinedMenuItem::show_all(None)).map_err(|e| format!("{what}: {e}"))?;
+            }
+            if title == "Window" {
+                sep(&sub)?;
+                sub.append(&PredefinedMenuItem::bring_all_to_front(None)).map_err(|e| format!("{what}: {e}"))?;
+            }
+            if title == "View" {
+                sep(&sub)?;
+                sub.append(&PredefinedMenuItem::fullscreen(Some("Enter Full Screen"))).map_err(|e| format!("{what}: {e}"))?;
             }
             bar.append(&sub).map_err(|e| format!("{what}: {e}"))?;
         }
