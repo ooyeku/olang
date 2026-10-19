@@ -2890,61 +2890,214 @@ fn vm_flat_answer(v: Value) -> OvmValue {
     OvmValue::new_map(Arc::new(out))
 }
 
-// ── gui.flat_diff: a frame as the engine's patch ──────────────────────
+// ── gui.flat_diff and gui.flat_index: a frame's placements, read ──────
 
-/// A value the diff reads and builds, in either tier's form.
-trait DiffV: Clone + Sized {
-    fn is_unit(&self) -> bool;
-    /// A map's field (`m.k`): `()` when absent, or not a map.
-    fn field(&self, k: &str) -> Self;
+/// A value read where it is, in either tier's form: a VM value, an
+/// interpreter value (a wrapped one's insides), or absent (`()`). Reading
+/// a placement's fields this way converts and copies nothing.
+#[derive(Clone, Copy)]
+enum R<'a> {
+    V(&'a OvmValue),
+    A(&'a Value),
+    U,
+}
+
+impl<'a> R<'a> {
+    /// A map's (or record's) field `k`: `()` when absent, or not a map.
+    fn get(self, k: &str) -> R<'a> {
+        match self {
+            R::V(v) => match &v.data {
+                ValueData::Map(m) => m.get(k).map(R::V).unwrap_or(R::U),
+                ValueData::AstMap(m) | ValueData::AstStruct(m, _) => {
+                    m.get(k).map(R::A).unwrap_or(R::U)
+                }
+                ValueData::Struct(st) => st
+                    .shape
+                    .field_index(k)
+                    .and_then(|i| st.values.get(i as usize))
+                    .map(R::V)
+                    .unwrap_or(R::U),
+                _ => R::U,
+            },
+            R::A(v) => match fields(v) {
+                Some(m) => m.get(k).map(R::A).unwrap_or(R::U),
+                None => R::U,
+            },
+            R::U => R::U,
+        }
+    }
+
+    fn is_unit(self) -> bool {
+        match self {
+            R::V(v) => matches!(v.data, ValueData::Unit),
+            R::A(v) => matches!(v, Value::Unit),
+            R::U => true,
+        }
+    }
+
+    /// `v == true`.
+    fn is_true(self) -> bool {
+        match self {
+            R::V(v) => matches!(v.data, ValueData::Boolean(true)),
+            R::A(v) => matches!(v, Value::Boolean(true)),
+            R::U => false,
+        }
+    }
+
+    fn text(self) -> Option<&'a str> {
+        match self {
+            R::V(v) => match &v.data {
+                ValueData::String(s) => Some(s.as_str()),
+                _ => None,
+            },
+            R::A(Value::String(s)) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+
+    /// `show(v)`: a string as itself, anything else rendered.
+    fn shown(self) -> String {
+        match self {
+            R::V(v) => match &v.data {
+                ValueData::String(s) => s.as_str().to_string(),
+                _ => v.to_ast().map(|x| x.to_string()).unwrap_or_default(),
+            },
+            R::A(Value::String(s)) => s.as_str().to_string(),
+            R::A(v) => v.to_string(),
+            R::U => Value::Unit.to_string(),
+        }
+    }
+
+    /// The items of a list (`None` for anything else).
+    fn items(self) -> Option<Vec<R<'a>>> {
+        match self {
+            R::V(v) => match &v.data {
+                ValueData::List(l) => Some(l.iter().map(R::V).collect()),
+                ValueData::AstList(l) => Some(l.iter().map(R::A).collect()),
+                _ => None,
+            },
+            R::A(Value::List(l)) => Some(l.iter().map(R::A).collect()),
+            _ => None,
+        }
+    }
+
+    /// A map's keys, in order.
+    fn keys(self) -> Vec<&'a str> {
+        match self {
+            R::V(v) => match &v.data {
+                ValueData::Map(m) => m.keys().map(|k| k.as_str()).collect(),
+                ValueData::AstMap(m) | ValueData::AstStruct(m, _) => {
+                    m.keys().map(|k| k.as_str()).collect()
+                }
+                _ => Vec::new(),
+            },
+            R::A(v) => fields(v)
+                .map(|m| m.keys().map(|k| k.as_str()).collect())
+                .unwrap_or_default(),
+            R::U => Vec::new(),
+        }
+    }
+
+    /// The VM's own copy (a VM value is shared; an interpreter value
+    /// crosses as any call's answer does).
+    fn vm(self) -> OvmValue {
+        match self {
+            R::V(v) => v.clone(),
+            R::A(v) => OvmValue::from_ast(v.clone()),
+            R::U => OvmValue::new_unit(),
+        }
+    }
+
+    /// The interpreter's copy.
+    fn ast(self) -> Value {
+        match self {
+            R::V(v) => v.to_ast().unwrap_or(Value::Unit),
+            R::A(v) => v.clone(),
+            R::U => Value::Unit,
+        }
+    }
+
+    /// A tuple's or list's item `i`, owned in the VM's form.
+    fn nth_vm(self, i: usize) -> OvmValue {
+        match self {
+            R::V(v) => match &v.data {
+                ValueData::List(l) | ValueData::Tuple(l) => {
+                    l.get(i).cloned().unwrap_or_else(OvmValue::new_unit)
+                }
+                ValueData::FloatList(l) => l
+                    .get(i)
+                    .map(|&f| OvmValue::new_float(f))
+                    .unwrap_or_else(OvmValue::new_unit),
+                ValueData::IntList(l) => l
+                    .get(i)
+                    .map(|&n| OvmValue::new_integer(n))
+                    .unwrap_or_else(OvmValue::new_unit),
+                ValueData::AstList(l) => l
+                    .get(i)
+                    .map(|x| OvmValue::from_ast(x.clone()))
+                    .unwrap_or_else(OvmValue::new_unit),
+                _ => OvmValue::new_unit(),
+            },
+            R::A(Value::List(l) | Value::Tuple(l)) => l
+                .get(i)
+                .map(|x| OvmValue::from_ast(x.clone()))
+                .unwrap_or_else(OvmValue::new_unit),
+            _ => OvmValue::new_unit(),
+        }
+    }
+
     /// `a == b` as olang answers it (a function inside raises).
-    fn eq(&self, o: &Self) -> Res<bool>;
-    /// `map_set(m, k, v)` on a map.
-    fn set(&self, k: &str, v: Self) -> Self;
-    fn text(&self) -> Option<&str>;
+    fn eq(self, o: R) -> Res<bool> {
+        match (self, o) {
+            (R::A(a), R::A(b)) => crate::interpreter::ops::search_eq(a, b),
+            (R::U, x) | (x, R::U) => Ok(x.is_unit()),
+            (R::V(a), R::V(b)) => vm_eq(a, b),
+            (a, b) => vm_eq(&a.vm(), &b.vm()),
+        }
+    }
+}
+
+/// `a == b` on the VM's values, as its `==` answers (bytecode.rs).
+fn vm_eq(a: &OvmValue, b: &OvmValue) -> Res<bool> {
+    use ValueData as D;
+    match (&a.data, &b.data) {
+        (D::Unit, D::Unit) => Ok(true),
+        (D::Unit, _) | (_, D::Unit) => Ok(false),
+        (D::Integer(i), D::Float(f)) | (D::Float(f), D::Integer(i)) => {
+            Ok(crate::interpreter::ops::int_float_eq(*i, *f))
+        }
+        (D::Map(x), D::Map(y)) if Arc::ptr_eq(x, y) => Ok(true),
+        (D::AstMap(x), D::AstMap(y)) if Arc::ptr_eq(x, y) => Ok(true),
+        (D::List(x), D::List(y)) | (D::Tuple(x), D::Tuple(y)) if Arc::ptr_eq(x, y) => Ok(true),
+        _ => {
+            let (eq, met) = crate::interpreter::ops::watch_uncomparable(|| a.structural_eq(b));
+            match (eq, met) {
+                (true, Some(kind)) => Err(crate::interpreter::ops::uncomparable_message(kind)),
+                _ => Ok(eq),
+            }
+        }
+    }
+}
+
+/// What the passes answer, built in either tier's form.
+trait Out: Sized {
+    fn of(r: R) -> Self;
     fn s(t: &str) -> Self;
     fn b(v: bool) -> Self;
     fn i(v: i64) -> Self;
     fn list(xs: Vec<Self>) -> Self;
-    fn map(fields: Vec<(String, Self)>) -> Self;
-    /// A map's entry `k` and its keys in order (a map, or nothing).
-    fn get(&self, k: &str) -> Self;
-    fn keys(&self) -> Vec<String>;
-    fn items(&self) -> Option<Vec<Self>>;
-    /// A tuple's or a list's item `i`, or `()`.
-    fn nth(&self, i: usize) -> Self;
     fn tuple(xs: Vec<Self>) -> Self;
-    /// `show(v)`: a string as itself, anything else rendered.
-    fn shown(&self) -> String;
-    /// `v == true`.
-    fn is_true(&self) -> bool;
+    fn map(fields: Vec<(String, Self)>) -> Self;
+    /// `map_set(m, "index", v)`.
+    fn with_index(m: R, v: R) -> Self;
+    /// Item 3 of a tuple (a box's height).
+    fn third(r: R) -> Self;
+    fn as_r(&self) -> R<'_>;
 }
 
-impl DiffV for Value {
-    fn is_unit(&self) -> bool {
-        matches!(self, Value::Unit)
-    }
-    fn field(&self, k: &str) -> Self {
-        self.get(k)
-    }
-    fn eq(&self, o: &Self) -> Res<bool> {
-        crate::interpreter::ops::search_eq(self, o)
-    }
-    fn set(&self, k: &str, v: Self) -> Self {
-        match self {
-            Value::Map(m) => {
-                let mut m2 = m.as_ref().clone();
-                m2.insert(k.to_string(), v);
-                Value::Map(Arc::new(m2))
-            }
-            other => other.clone(),
-        }
-    }
-    fn text(&self) -> Option<&str> {
-        match self {
-            Value::String(s) => Some(s.as_str()),
-            _ => None,
-        }
+impl Out for Value {
+    fn of(r: R) -> Self {
+        r.ast()
     }
     fn s(t: &str) -> Self {
         st(t)
@@ -2958,6 +3111,9 @@ impl DiffV for Value {
     fn list(xs: Vec<Self>) -> Self {
         list(xs)
     }
+    fn tuple(xs: Vec<Self>) -> Self {
+        tuple(xs)
+    }
     fn map(fields: Vec<(String, Self)>) -> Self {
         let mut m = crate::ast::ValueMap::with_capacity_and_hasher(fields.len(), Default::default());
         for (k, v) in fields {
@@ -2965,88 +3121,31 @@ impl DiffV for Value {
         }
         Value::Map(Arc::new(m))
     }
-    fn get(&self, k: &str) -> Self {
-        match fields(self) {
-            Some(m) => m.get(k).cloned().unwrap_or(Value::Unit),
-            None => Value::Unit,
+    fn with_index(m: R, v: R) -> Self {
+        let mv = m.ast();
+        match &mv {
+            Value::Map(mm) => {
+                let mut m2 = mm.as_ref().clone();
+                m2.insert("index".to_string(), v.ast());
+                Value::Map(Arc::new(m2))
+            }
+            _ => mv,
         }
     }
-    fn keys(&self) -> Vec<String> {
-        fields(self).map(|m| m.keys().cloned().collect()).unwrap_or_default()
-    }
-    fn items(&self) -> Option<Vec<Self>> {
-        match self {
-            Value::List(l) => Some(l.as_ref().clone()),
-            _ => None,
-        }
-    }
-    fn nth(&self, i: usize) -> Self {
-        match self {
-            Value::List(l) | Value::Tuple(l) => l.get(i).cloned().unwrap_or(Value::Unit),
+    fn third(r: R) -> Self {
+        match &r.ast() {
+            Value::List(l) | Value::Tuple(l) => l.get(3).cloned().unwrap_or(Value::Unit),
             _ => Value::Unit,
         }
     }
-    fn tuple(xs: Vec<Self>) -> Self {
-        tuple(xs)
-    }
-    fn shown(&self) -> String {
-        match self {
-            Value::String(s) => s.as_str().to_string(),
-            other => other.to_string(),
-        }
-    }
-    fn is_true(&self) -> bool {
-        matches!(self, Value::Boolean(true))
+    fn as_r(&self) -> R<'_> {
+        R::A(self)
     }
 }
 
-impl DiffV for OvmValue {
-    fn is_unit(&self) -> bool {
-        matches!(self.data, ValueData::Unit)
-    }
-    fn field(&self, k: &str) -> Self {
-        self.get(k)
-    }
-    fn eq(&self, o: &Self) -> Res<bool> {
-        use ValueData as D;
-        match (&self.data, &o.data) {
-            (D::Unit, D::Unit) => Ok(true),
-            (D::Unit, _) | (_, D::Unit) => Ok(false),
-            (D::Integer(i), D::Float(f)) | (D::Float(f), D::Integer(i)) => {
-                Ok(crate::interpreter::ops::int_float_eq(*i, *f))
-            }
-            (D::Map(x), D::Map(y)) if Arc::ptr_eq(x, y) => Ok(true),
-            (D::AstMap(x), D::AstMap(y)) if Arc::ptr_eq(x, y) => Ok(true),
-            (D::List(x), D::List(y)) | (D::Tuple(x), D::Tuple(y)) if Arc::ptr_eq(x, y) => Ok(true),
-            _ => {
-                let (eq, met) = crate::interpreter::ops::watch_uncomparable(|| self.structural_eq(o));
-                match (eq, met) {
-                    (true, Some(kind)) => Err(crate::interpreter::ops::uncomparable_message(kind)),
-                    _ => Ok(eq),
-                }
-            }
-        }
-    }
-    fn set(&self, k: &str, v: Self) -> Self {
-        match &self.data {
-            ValueData::Map(m) => {
-                let mut m2 = m.as_ref().clone();
-                m2.insert(k.to_string(), v);
-                OvmValue::new_map(Arc::new(m2))
-            }
-            ValueData::AstMap(m) => {
-                let mut m2 = OvmValue::force_ast_map(m);
-                m2.insert(k.to_string(), v);
-                OvmValue::new_map(Arc::new(m2))
-            }
-            _ => self.clone(),
-        }
-    }
-    fn text(&self) -> Option<&str> {
-        match &self.data {
-            ValueData::String(s) => Some(s.as_str()),
-            _ => None,
-        }
+impl Out for OvmValue {
+    fn of(r: R) -> Self {
+        r.vm()
     }
     fn s(t: &str) -> Self {
         OvmValue::new_string(t.to_string())
@@ -3060,57 +3159,72 @@ impl DiffV for OvmValue {
     fn list(xs: Vec<Self>) -> Self {
         OvmValue::new_list(xs)
     }
-    fn map(fields: Vec<(String, Self)>) -> Self {
-        let mut m = crate::ovm::value::OvmMap::with_capacity_and_hasher(fields.len(), Default::default());
-        for (k, v) in fields {
-            m.insert(k, v);
-        }
-        OvmValue::new_map(Arc::new(m))
-    }
-    fn get(&self, k: &str) -> Self {
-        match &self.data {
-            ValueData::Map(m) => m.get(k).cloned().unwrap_or_else(OvmValue::new_unit),
-            ValueData::AstMap(m) | ValueData::AstStruct(m, _) => m
-                .get(k)
-                .map(|v| OvmValue::from_ast(v.clone()))
-                .unwrap_or_else(OvmValue::new_unit),
-            _ => OvmValue::new_unit(),
-        }
-    }
-    fn keys(&self) -> Vec<String> {
-        match &self.data {
-            ValueData::Map(m) => m.keys().cloned().collect(),
-            ValueData::AstMap(m) | ValueData::AstStruct(m, _) => m.keys().cloned().collect(),
-            _ => Vec::new(),
-        }
-    }
-    fn items(&self) -> Option<Vec<Self>> {
-        match &self.data {
-            ValueData::List(l) => Some(l.as_ref().clone()),
-            ValueData::AstList(l) => Some(l.iter().map(|v| OvmValue::from_ast(v.clone())).collect()),
-            _ => None,
-        }
-    }
-    fn nth(&self, i: usize) -> Self {
-        match &self.data {
-            ValueData::List(l) | ValueData::Tuple(l) => l.get(i).cloned().unwrap_or_else(OvmValue::new_unit),
-            ValueData::FloatList(l) => l.get(i).map(|&f| OvmValue::new_float(f)).unwrap_or_else(OvmValue::new_unit),
-            ValueData::IntList(l) => l.get(i).map(|&n| OvmValue::new_integer(n)).unwrap_or_else(OvmValue::new_unit),
-            ValueData::AstList(l) => l.get(i).map(|v| OvmValue::from_ast(v.clone())).unwrap_or_else(OvmValue::new_unit),
-            _ => OvmValue::new_unit(),
-        }
-    }
     fn tuple(xs: Vec<Self>) -> Self {
         OvmValue::new_tuple(xs)
     }
-    fn shown(&self) -> String {
-        match &self.data {
-            ValueData::String(s) => s.as_str().to_string(),
-            _ => self.to_ast().map(|v| v.to_string()).unwrap_or_default(),
+    fn map(fields: Vec<(String, Self)>) -> Self {
+        vm_map_of(fields)
+    }
+    fn with_index(m: R, v: R) -> Self {
+        let mv = m.vm();
+        let mut mm = match &mv.data {
+            ValueData::Map(x) => x.as_ref().clone(),
+            ValueData::AstMap(x) => OvmValue::force_ast_map(x),
+            _ => return mv,
+        };
+        mm.insert("index".to_string(), v.vm());
+        OvmValue::new_map(Arc::new(mm))
+    }
+    fn third(r: R) -> Self {
+        r.nth_vm(3)
+    }
+    fn as_r(&self) -> R<'_> {
+        R::V(self)
+    }
+}
+
+fn vm_map_of(fields: Vec<(String, OvmValue)>) -> OvmValue {
+    let mut m = crate::ovm::value::OvmMap::with_capacity_and_hasher(fields.len(), Default::default());
+    for (k, v) in fields {
+        m.insert(k, v);
+    }
+    OvmValue::new_map(Arc::new(m))
+}
+
+/// A map built entry by entry as olang's `m = map_set(m, k, v)` builds it:
+/// a key set again keeps its place and takes the new value.
+struct Entries<'a, T> {
+    list: Vec<(&'a str, T)>,
+    at: HashMap<&'a str, usize>,
+}
+
+impl<'a, T> Entries<'a, T> {
+    fn new() -> Self {
+        Entries {
+            list: Vec::new(),
+            at: HashMap::default(),
         }
     }
-    fn is_true(&self) -> bool {
-        matches!(self.data, ValueData::Boolean(true))
+    fn set(&mut self, k: &'a str, v: T) {
+        match self.at.get(k) {
+            Some(&j) => self.list[j].1 = v,
+            None => {
+                self.at.insert(k, self.list.len());
+                self.list.push((k, v));
+            }
+        }
+    }
+    fn has(&self, k: &str) -> bool {
+        self.at.contains_key(k)
+    }
+    fn is_empty(&self) -> bool {
+        self.list.is_empty()
+    }
+    fn len(&self) -> usize {
+        self.list.len()
+    }
+    fn into_map<O: Out>(self, f: impl Fn(T) -> O) -> O {
+        O::map(self.list.into_iter().map(|(k, v)| (k.to_string(), f(v))).collect())
     }
 }
 
@@ -3123,66 +3237,56 @@ impl DiffV for OvmValue {
 /// with a child that kept its parent but not its index (by where the
 /// first such child is); `idx`: those the same but for their index. Loom
 /// works out their order (`df_moves`) when `moved` holds any.
-fn diff<V: DiffV>(prev: &V, nodes: &[V]) -> Res<V> {
-    let mut next: Vec<(String, V)> = Vec::with_capacity(nodes.len());
-    let mut at: HashMap<String, usize> = HashMap::default();
-    let mut out: Vec<V> = Vec::new();
-    let mut moved: Vec<(String, V)> = Vec::new();
-    let mut moved_at: HashSet<String> = HashSet::default();
-    let mut idx: Vec<(String, V)> = Vec::new();
+fn diff<O: Out>(prev: R, nodes: &[R]) -> Res<O> {
+    let mut next: Entries<R> = Entries::new();
+    let mut out: Vec<O> = Vec::new();
+    let mut moved: Entries<i64> = Entries::new();
+    let mut idx: Entries<bool> = Entries::new();
     for (i, p) in nodes.iter().enumerate() {
-        let op = p.field("gop");
-        let kv = p.field("gkey");
-        let k = kv
+        let op = p.get("gop");
+        let k = p
+            .get("gkey")
             .text()
-            .ok_or("gui.flat_diff: a placement's gkey must be a string")?
-            .to_string();
-        // `next = map_set(next, k, op)`: a key set again keeps its place
-        match at.get(&k) {
-            Some(&j) => next[j].1 = op.clone(),
-            None => {
-                at.insert(k.clone(), next.len());
-                next.push((k.clone(), op.clone()));
-            }
-        }
-        let old = prev.get(&k);
-        if !old.eq(&op)? {
-            let (oi, ni) = (old.field("index"), op.field("index"));
-            let (opar, npar) = (old.field("parent"), op.field("parent"));
-            if !old.is_unit() && !oi.eq(&ni)? && !npar.is_unit() && opar.eq(&npar)? {
+            .ok_or("gui.flat_diff: a placement's gkey must be a string")?;
+        next.set(k, op);
+        let old = prev.get(k);
+        if !old.eq(op)? {
+            let (oi, ni) = (old.get("index"), op.get("index"));
+            let (opar, npar) = (old.get("parent"), op.get("parent"));
+            if !old.is_unit() && !oi.eq(ni)? && !npar.is_unit() && opar.eq(npar)? {
                 let pk = npar
                     .text()
-                    .ok_or("gui.flat_diff: a placement's parent must be a string")?
-                    .to_string();
-                if moved_at.insert(pk.clone()) {
-                    moved.push((pk, V::i(i as i64)));
+                    .ok_or("gui.flat_diff: a placement's parent must be a string")?;
+                if !moved.has(pk) {
+                    moved.set(pk, i as i64);
                 }
                 // the same but for its index: sent only if it must move
-                if !old.set("index", ni).eq(&op)? {
-                    out.push(op);
+                let moved_old = O::with_index(old, ni);
+                if !moved_old.as_r().eq(op)? {
+                    out.push(O::of(op));
                 } else {
-                    idx.push((k.clone(), V::b(true)));
+                    idx.set(k, true);
                 }
             } else {
-                out.push(op);
+                out.push(O::of(op));
             }
         }
     }
     let mut removes = Vec::new();
     for k in prev.keys() {
-        if !at.contains_key(&k) {
-            removes.push(V::map(vec![
-                ("op".to_string(), V::s("remove")),
-                ("key".to_string(), V::s(&k)),
+        if !next.has(k) {
+            removes.push(O::map(vec![
+                ("op".to_string(), O::s("remove")),
+                ("key".to_string(), O::s(k)),
             ]));
         }
     }
-    Ok(V::map(vec![
-        ("out".to_string(), V::list(out)),
-        ("removes".to_string(), V::list(removes)),
-        ("next".to_string(), V::map(next)),
-        ("moved".to_string(), V::map(moved)),
-        ("idx".to_string(), V::map(idx)),
+    Ok(O::map(vec![
+        ("out".to_string(), O::list(out)),
+        ("removes".to_string(), O::list(removes)),
+        ("next".to_string(), next.into_map(O::of)),
+        ("moved".to_string(), moved.into_map(O::i)),
+        ("idx".to_string(), idx.into_map(O::b)),
     ]))
 }
 
@@ -3190,10 +3294,10 @@ pub fn gui_flat_diff(args: Vec<Value>) -> Res<Value> {
     if args.len() != 2 {
         return Err(format!("gui.flat_diff: expected 2 arguments, got {}", args.len()));
     }
-    let nodes = args[1]
+    let nodes = R::A(&args[1])
         .items()
         .ok_or("gui.flat_diff: the placements must be a list")?;
-    diff(&args[0], &nodes)
+    diff(R::A(&args[0]), &nodes)
 }
 
 /// The VM's own `gui.flat_diff`: the operations compared and the patch
@@ -3203,11 +3307,9 @@ fn vm_flat_diff(args: &[OvmValue]) -> Option<Res<OvmValue>> {
     if args.len() != 2 {
         return None;
     }
-    let nodes = args[1].items()?;
-    diff(&args[0], &nodes).ok().map(Ok)
+    let nodes = R::V(&args[1]).items()?;
+    diff(R::V(&args[0]), &nodes).ok().map(Ok)
 }
-
-// ── gui.flat_index: what a frame's placements say, by key ─────────────
 
 /// `gui.flat_index(nodes, wkey)`: what Loom's frame (lib/engine.ol,
 /// `rt_frame`) reads off every placement, in one pass —
@@ -3222,118 +3324,97 @@ fn vm_flat_diff(args: &[OvmValue]) -> Option<Res<OvmValue>> {
 /// one's first child; `rare`: the placements that ask more of Loom (a
 /// list, a range, a scroll to make, a scroller, a drop zone, files,
 /// a size, a scroll position or a slot), in order.
-fn frame_index<V: DiffV>(nodes: &[V], wkey: &V) -> Res<V> {
+fn frame_index<'a, O: Out>(nodes: &[R<'a>], wkey: R<'a>) -> Res<O> {
     let wk = wkey
         .text()
-        .ok_or("gui.flat_index: the window's key must be a string")?
-        .to_string();
-    let mut index: Vec<(String, V)> = Vec::with_capacity(nodes.len());
-    let mut at: HashMap<String, usize> = HashMap::default();
-    let mut present: Vec<(String, V)> = vec![(wk.clone(), V::b(true))];
-    let mut seen: HashSet<String> = HashSet::default();
-    seen.insert(wk);
-    let mut fregions: Vec<(String, V)> = Vec::new();
-    let mut fcontent: Vec<(String, V)> = Vec::new();
-    let mut sregions: Vec<(String, V)> = Vec::new();
-    let mut scontent: Vec<(String, V)> = Vec::new();
-    let (mut fset, mut fcset, mut sset, mut scset): (
-        HashSet<String>,
-        HashSet<String>,
-        HashSet<String>,
-        HashSet<String>,
-    ) = Default::default();
-    let mut rare: Vec<V> = Vec::new();
-    // `m = map_set(m, k, v)` on a map kept as its entries and its keys
-    let add = |list: &mut Vec<(String, V)>, set: &mut HashSet<String>, k: String, v: V| {
-        if set.insert(k.clone()) {
-            list.push((k, v));
-        } else if let Some(e) = list.iter_mut().find(|(x, _)| *x == k) {
-            e.1 = v;
-        }
-    };
+        .ok_or("gui.flat_index: the window's key must be a string")?;
+    let mut index: Entries<R> = Entries::new();
+    // the keys shown: a view key that is not a string is shown
+    let mut present: Vec<std::borrow::Cow<'a, str>> = vec![wk.into()];
+    let mut seen: HashSet<std::borrow::Cow<'a, str>> = HashSet::default();
+    seen.insert(wk.into());
+    let mut fregions: Entries<R> = Entries::new();
+    let mut fcontent: Entries<R> = Entries::new();
+    let mut sregions: Entries<(R, R, R)> = Entries::new();
+    let mut scontent: Entries<R> = Entries::new();
+    let mut rare: Vec<O> = Vec::new();
+    const ASKS: [&str; 5] = ["on_drop", "on_files", "on_size", "on_scroll", "drop_slot"];
     for p in nodes {
-        let gkv = p.field("gkey");
-        let gk = gkv
+        let gk = p
+            .get("gkey")
             .text()
-            .ok_or("gui.flat_index: a placement's gkey must be a string")?
-            .to_string();
-        match at.get(&gk) {
-            Some(&j) => index[j].1 = p.clone(),
-            None => {
-                at.insert(gk.clone(), index.len());
-                index.push((gk.clone(), p.clone()));
-            }
+            .ok_or("gui.flat_index: a placement's gkey must be a string")?;
+        index.set(gk, *p);
+        if seen.insert(gk.into()) {
+            present.push(gk.into());
         }
-        // (each key shown once; `true` either way)
-        if seen.insert(gk.clone()) {
-            present.push((gk.clone(), V::b(true)));
-        }
-        let pn = p.field("node");
-        let vk = pn.field("key");
+        let pn = p.get("node");
+        let vk = pn.get("key");
         // a view key that is not its gkey (another kind is never equal)
-        if !vk.is_unit() && vk.text() != Some(gk.as_str()) {
-            let k = vk.shown();
+        if !vk.is_unit() && vk.text() != Some(gk) {
+            let k: std::borrow::Cow<'a, str> = match vk.text() {
+                Some(t) => t.into(),
+                None => vk.shown().into(),
+            };
             if seen.insert(k.clone()) {
-                present.push((k, V::b(true)));
+                present.push(k);
             }
         }
-        let pr = pn.field("props");
-        let parent = p.field("parent");
-        let h = || p.field("abs").nth(3);
-        if !fset.is_empty()
-            && let Some(pk) = parent.text()
-            && fset.contains(pk)
-            && !fcset.contains(pk)
+        let pr = pn.get("props");
+        let parent = p.get("parent").text();
+        let abs = p.get("abs");
+        if !fregions.is_empty()
+            && let Some(pk) = parent
+            && fregions.has(pk)
+            && !fcontent.has(pk)
         {
-            add(&mut fcontent, &mut fcset, pk.to_string(), h());
+            fcontent.set(pk, abs);
         }
-        if pr.field("follow").is_true() && pn.field("role").text() == Some("region") {
-            add(&mut fregions, &mut fset, gk.clone(), h());
+        if pr.get("follow").is_true() && pn.get("role").text() == Some("region") {
+            fregions.set(gk, abs);
         }
-        if !sset.is_empty()
-            && let Some(pk) = parent.text()
-            && sset.contains(pk)
-            && !scset.contains(pk)
+        if !sregions.is_empty()
+            && let Some(pk) = parent
+            && sregions.has(pk)
+            && !scontent.has(pk)
         {
-            add(&mut scontent, &mut scset, pk.to_string(), h());
+            scontent.set(pk, abs);
         }
-        let op = p.field("op");
-        let asks = !p.field("list").is_unit()
-            || !p.field("range").is_unit()
-            || !p.field("reveal_to").is_unit()
-            || !p.field("follow_to").is_unit()
-            || op.field("scroll").is_true()
-            || (!pr.is_unit()
-                && ["on_drop", "on_files", "on_size", "on_scroll", "drop_slot"]
-                    .iter()
-                    .any(|k| !pr.field(k).is_unit()));
+        let op = p.get("op");
+        let asks = !p.get("list").is_unit()
+            || !p.get("range").is_unit()
+            || !p.get("reveal_to").is_unit()
+            || !p.get("follow_to").is_unit()
+            || op.get("scroll").is_true()
+            || (!pr.is_unit() && ASKS.iter().any(|k| !pr.get(k).is_unit()));
         if asks {
             // a region that asks where it is scrolled, its own placement
             if !vk.is_unit()
-                && op.field("scroll").is_true()
-                && !pr.field("on_scroll").is_unit()
+                && op.get("scroll").is_true()
+                && !pr.get("on_scroll").is_unit()
                 && vk.shown() == gk
             {
-                add(
-                    &mut sregions,
-                    &mut sset,
-                    gk.clone(),
-                    V::tuple(vec![pn.clone(), h(), op.field("content")]),
-                );
+                sregions.set(gk, (pn, abs, op.get("content")));
             }
-            rare.push(p.clone());
+            rare.push(O::of(*p));
         }
     }
     let nkeys = index.len() as i64;
-    Ok(V::map(vec![
-        ("index".to_string(), V::map(index)),
-        ("present".to_string(), V::map(present)),
-        ("nkeys".to_string(), V::i(nkeys)),
-        ("fregions".to_string(), V::map(fregions)),
-        ("fcontent".to_string(), V::map(fcontent)),
-        ("sregions".to_string(), V::map(sregions)),
-        ("scontent".to_string(), V::map(scontent)),
-        ("rare".to_string(), V::list(rare)),
+    Ok(O::map(vec![
+        ("index".to_string(), index.into_map(O::of)),
+        (
+            "present".to_string(),
+            O::map(present.into_iter().map(|k| (k.into_owned(), O::b(true))).collect()),
+        ),
+        ("nkeys".to_string(), O::i(nkeys)),
+        ("fregions".to_string(), fregions.into_map(O::third)),
+        ("fcontent".to_string(), fcontent.into_map(O::third)),
+        (
+            "sregions".to_string(),
+            sregions.into_map(|(n, a, c)| O::tuple(vec![O::of(n), O::third(a), O::of(c)])),
+        ),
+        ("scontent".to_string(), scontent.into_map(O::third)),
+        ("rare".to_string(), O::list(rare)),
     ]))
 }
 
@@ -3341,10 +3422,10 @@ pub fn gui_flat_index(args: Vec<Value>) -> Res<Value> {
     if args.len() != 2 {
         return Err(format!("gui.flat_index: expected 2 arguments, got {}", args.len()));
     }
-    let nodes = args[0]
+    let nodes = R::A(&args[0])
         .items()
         .ok_or("gui.flat_index: the placements must be a list")?;
-    frame_index(&nodes, &args[1])
+    frame_index(&nodes, R::A(&args[1]))
 }
 
 /// The VM's own `gui.flat_index`: the placements read where they are.
@@ -3352,6 +3433,6 @@ fn vm_flat_index(args: &[OvmValue]) -> Option<Res<OvmValue>> {
     if args.len() != 2 {
         return None;
     }
-    let nodes = args[0].items()?;
-    frame_index(&nodes, &args[1]).ok().map(Ok)
+    let nodes = R::V(&args[0]).items()?;
+    frame_index(&nodes, R::V(&args[1])).ok().map(Ok)
 }
