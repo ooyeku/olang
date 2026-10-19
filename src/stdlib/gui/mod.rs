@@ -37,11 +37,13 @@ pub mod damage;
 pub mod edit;
 pub mod flat;
 pub mod gpu;
+pub mod motion;
 pub mod picture;
 pub mod platform;
 pub mod raster;
 pub mod rich;
 pub mod scene;
+pub mod scroll;
 pub mod soft;
 pub mod text;
 pub mod values;
@@ -771,6 +773,17 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
                 .map(|t| float(t as f32))
                 .unwrap_or(Value::Unit)
         }
+        // the transitions after a frame drawn now: whether anything is
+        // moving, the nodes with a transition, the nodes leaving
+        "motion" => {
+            st.display_list();
+            map(vec![
+                ("moving", Value::Boolean(st.motion.moving())),
+                ("enabled", Value::Boolean(st.motion.enabled)),
+                ("nodes", Value::Integer(st.motion.records.len() as i64)),
+                ("leaving", Value::Integer(st.motion.ghosts.len() as i64)),
+            ])
+        }
         // the system's settings as this window last heard them
         "settings" => {
             let set = st.settings;
@@ -793,7 +806,7 @@ fn gui_read(args: Vec<Value>) -> Res<Value> {
         }
         other => {
             return Err(format!(
-                "gui.read: unknown \"{other}\" (focus, key, hover, size, hit, node, value, selection, keys, a11y, pixels, rgba, prims, caret, ime, settings, animation, next_frame, render)"
+                "gui.read: unknown \"{other}\" (focus, key, hover, size, hit, node, value, selection, keys, a11y, pixels, rgba, prims, caret, ime, settings, animation, next_frame, motion, render)"
             ));
         }
     })
@@ -914,19 +927,40 @@ fn input_of(v: &Value) -> Res<Input> {
                 clicks: get_num(v, "clicks", what)?.map(|n| n as u32).unwrap_or(1),
             }
         }
-        "wheel" => Input::Wheel {
-            dx: get_num(v, "dx", what)?.unwrap_or(0.0),
-            dy: get_num(v, "dy", what)?.unwrap_or(0.0),
+        "wheel" => {
+            let dx = get_num(v, "dx", what)?.unwrap_or(0.0);
+            let dy = get_num(v, "dy", what)?.unwrap_or(0.0);
             // a test's modifiers, when it says any
-            mods: if ["mods", "mod", "shift", "alt", "ctrl", "super"]
+            let mods = if ["mods", "mod", "shift", "alt", "ctrl", "super"]
                 .iter()
                 .any(|k| get(v, k).is_some())
             {
                 Some(mods_of(v)?)
             } else {
                 None
-            },
-        },
+            };
+            // where it is in its gesture (a trackpad's), or a mouse
+            // wheel's notch (`precise: false`): scroll.rs
+            let phase = get_str(v, "phase", what)?;
+            let precise = get_bool(v, "precise", what)?;
+            if phase.is_none() && precise.is_none() {
+                Input::Wheel { dx, dy, mods }
+            } else {
+                let phase = match phase {
+                    None => scroll::Phase::Legacy,
+                    Some(p) => scroll::Phase::parse(p).ok_or_else(|| {
+                        format!("gui.input: unknown wheel phase \"{p}\" (began, changed, ended, momentum_began, momentum, momentum_ended, none)")
+                    })?,
+                };
+                Input::Scroll {
+                    dx,
+                    dy,
+                    mods,
+                    phase,
+                    precise: precise.unwrap_or(true),
+                }
+            }
+        }
         // A trackpad's pinch: `delta` the change of magnification
         // (positive zooms in), `phase` start, move, end, or cancel.
         "pinch" => Input::Pinch {
@@ -1126,6 +1160,11 @@ fn gui_input(args: Vec<Value>) -> Res<Value> {
                 return Err("gui.input: \"clock\" sets a headless window's clock; a real window's is the time".into());
             }
             st.set_clock(ms as f64);
+            // a glide moves on with it (each step said)
+            let mut out = Vec::new();
+            st.tick(&mut out);
+            drop(st);
+            emit(out);
             return Ok(Value::Unit);
         }
         Some("clipboard") => {
@@ -1193,6 +1232,12 @@ fn gui_set(args: Vec<Value>) -> Res<Value> {
         }
         if let Some(on) = get_bool(v, "scripted", what)? {
             st.scripted = on;
+        }
+        // transitions run (a headless window's only when a test asks: its
+        // clock moves only as the test moves it)
+        if let Some(on) = get_bool(v, "motion", what)? {
+            st.motion.enabled = on;
+            st.dirty = true;
         }
         if let Some(z) = get_num(v, "zoom", what)? {
             let mut out = Vec::new();

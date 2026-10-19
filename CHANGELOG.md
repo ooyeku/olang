@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`gui`: transitions, run by the engine.** A style's `transition`
+  (`duration`, `delay`, `curve`: ease, ease_in, ease_out, ease_in_out,
+  linear or spring with `bounce`; `animate`: opacity, box, color, hover;
+  `enter` and `exit` poses of opacity, x, y and scale) eases a node
+  between frames at the display's refresh with no program turn: its box
+  (children with it), opacity and colours (premultiplied: a fade from
+  none passes through no black), a hover look only as the pointer comes
+  and goes. A node a patch adds comes in from `enter`; one removed is
+  drawn leaving to `exit` from what it last was, over everything, found
+  by neither the pointer nor assistive output. A spring retargeted keeps
+  its velocity; a scale is drawn at that scale (sharp text). Reduced
+  motion makes every transition instant, as does a headless window until
+  `gui.set(w, #{ motion: true })`; `gui.read(w, "motion")` says what
+  moves. Frames for it come from the window's display link (one a
+  refresh), and a moving node damages only its own tiles.
+  `gui.platform()` says `transitions`. src/stdlib/gui/motion.rs,
+  tests/gui_motion_test.rs
+- **`gui`: scrolling as AppKit's.** A trackpad's gesture (the event's
+  own `phase` and `momentumPhase`, which winit folds together) pulls a
+  scroll region or a styled field past its ends against UIKit's rubber
+  band and springs it back as the fingers lift; momentum runs to an end
+  and bounces there (out at its speed, back on a critically damped
+  spring), and the rest of it is spent; a mouse wheel's notch glides
+  (160 ms, eased out; notches in a row carry it on, each step said as
+  `scrolled`). The program hears offsets inside the region only. An axis
+  a region does not scroll goes on out, as before; a scroll with no
+  phase moves at once. `gui.input`'s `wheel` takes `phase` and
+  `precise`. Overlay bars stay a second and fade over 250 ms eased, as
+  an NSScroller's knob does (measured side by side).
+  src/stdlib/gui/scroll.rs, tests/gui_scroll_test.rs
+- **`GUI_LINK_HZ`**: a measurement's cap on the display link's rate (60
+  on a ProMotion screen).
+
 - **`gui.turn(on)`: a program's long turn shown while it runs.** A
   program says when its turn begins and ends (Loom's loop does, two
   atomic writes a turn); one that runs past 2 s

@@ -15,8 +15,10 @@
 use super::text::Color;
 
 /// How long a bar stays after it last moved (ms), then how long it
-/// takes to fade.
-pub const SHOW_MS: f64 = 900.0;
+/// takes to fade — eased in and out, as an overlay NSScroller's knob
+/// (measured side by side: whole for 1 s after a scroll, then 0.97, 0.79,
+/// 0.47, 0.16, 0.01 at 25, 75, 125, 175, 225 ms into its fade).
+pub const SHOW_MS: f64 = 1000.0;
 pub const FADE_MS: f64 = 250.0;
 /// The thumb's width at rest and under the pointer, its least length,
 /// its inset from the edge (logical pixels).
@@ -118,7 +120,8 @@ pub fn alpha(b: &Bar, now: f64, reduce_motion: bool) -> f32 {
     } else if reduce_motion || age >= SHOW_MS + FADE_MS {
         0.0
     } else {
-        (1.0 - (age - SHOW_MS) / FADE_MS) as f32
+        let t = ((age - SHOW_MS) / FADE_MS).clamp(0.0, 1.0);
+        (1.0 - t * t * (3.0 - 2.0 * t)) as f32
     }
 }
 
@@ -211,11 +214,14 @@ mod tests {
         assert_eq!(alpha(&b, 0.0, false), 0.0);
         b.moved_at = Some(1000.0);
         assert_eq!(alpha(&b, 1500.0, false), 1.0);
-        assert_eq!(due(&b, 1500.0), Some(1900.0));
+        assert_eq!(due(&b, 1500.0), Some(1000.0 + SHOW_MS));
         let mid = alpha(&b, 1000.0 + SHOW_MS + FADE_MS / 2.0, false);
         assert!(mid > 0.4 && mid < 0.6);
         assert_eq!(alpha(&b, 1000.0 + SHOW_MS + 1.0, true), 0.0);
         assert_eq!(alpha(&b, 5000.0, false), 0.0);
+        // the system's ease: most of it still there early in the fade
+        let early = alpha(&b, 1000.0 + SHOW_MS + 75.0, false);
+        assert!(early > 0.7 && early < 0.85, "{early}");
         assert_eq!(due(&b, 5000.0), None);
         b.hover = true;
         assert_eq!(alpha(&b, 5000.0, false), 1.0);

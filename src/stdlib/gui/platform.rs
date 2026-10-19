@@ -254,6 +254,8 @@ pub fn available() -> bool {
 ///   `flat_diff`: `gui.flat_diff` (a frame's placements against last
 ///   frame's operations: Loom's patch, but its children's order);
 ///   `flat_index`: `gui.flat_index` (what a frame's placements say, by key).
+/// - `transitions`: a style's `transition` (motion.rs), and `gui.set`'s
+///   `motion` (a headless window's transitions run on its clock).
 ///
 /// - `edit_menu`: `gui.menu` takes the Mac's standard Edit items
 ///   (`standard`) and submenus (`submenu`); the view answers Services
@@ -297,6 +299,9 @@ pub fn capabilities() -> Value {
         ("flat_keyed", b(true)),
         ("flat_diff", b(true)),
         ("flat_index", b(true)),
+        // a style's `transition` (motion.rs): opacity, box and colours
+        // animated, nodes entering and leaving, run at the refresh
+        ("transitions", b(true)),
     ])
 }
 
@@ -466,6 +471,10 @@ struct PWin {
     deferred: bool,
     /// Refreshes since a frame was last on its way (the link pauses).
     idle_ticks: u32,
+    /// Something moves at every refresh (a transition, a scroll's
+    /// momentum or spring): the next frame is drawn at the display link's
+    /// next tick, not on a timer.
+    animating: bool,
     /// When the display link last ticked (host ns).
     last_tick: u64,
     /// The size last presented (a frame of another size is never put off:
@@ -743,6 +752,7 @@ impl App {
                 in_flight: std::collections::VecDeque::new(),
                 deferred: false,
                 idle_ticks: 0,
+                animating: false,
                 last_tick: 0,
                 shown_size: (0, 0),
                 cursor: winit::window::CursorIcon::Default,
@@ -808,6 +818,7 @@ impl App {
                     Input::Key { .. }
                         | Input::Pointer { .. }
                         | Input::Wheel { .. }
+                        | Input::Scroll { .. }
                         | Input::Pinch { .. }
                         | Input::ImePreedit(..)
                         | Input::ImeCommit(_)
@@ -898,6 +909,7 @@ impl App {
         // damage to work out); the frame stays owed and is drawn as the
         // window shows again (`Occluded(false)`)
         if pw.occluded {
+            pw.animating = false;
             if let Ok(mut st) = pw.state.lock() {
                 st.dirty = true;
             }
@@ -905,10 +917,13 @@ impl App {
         }
         let trace = std::env::var_os("GUI_TRACE").is_some();
         let started = std::time::Instant::now();
+        let mut moved = Vec::new();
         let (dl, a11y_tree, wants_ime, ime_area) = {
             let Ok(mut st) = pw.state.lock() else {
                 return;
             };
+            // a glide moves on (its steps said once the frame is out)
+            st.tick(&mut moved);
             #[allow(unused_mut)]
             let mut dl = st.display_list();
             // the program's turn running long: the veil and the spinner,
@@ -919,13 +934,38 @@ impl App {
             let unseen = pw.occluded
                 || pw.win.is_visible() == Some(false)
                 || pw.win.is_minimized() == Some(true);
+            // due by the next refresh (a transition, a scroll moving): the
+            // display link's next tick draws it, where the window has one
+            pw.animating = false;
             pw.wake = match st.next_frame {
                 Some(t) if !unseen => {
                     let ms = (t - st.clock_ms()).clamp(1.0, 60_000.0);
-                    Some(started + std::time::Duration::from_micros((ms * 1000.0) as u64))
+                    #[cfg(target_os = "macos")]
+                    let linked =
+                        ms <= 8.0 && (pw.link.is_some() || frames::synthetic_hz().is_some());
+                    #[cfg(not(target_os = "macos"))]
+                    let linked = false;
+                    if linked {
+                        pw.animating = true;
+                        None
+                    } else {
+                        Some(started + std::time::Duration::from_micros((ms * 1000.0) as u64))
+                    }
                 }
                 _ => None,
             };
+            if std::env::var_os("GUI_TRACE").is_some() {
+                #[cfg(target_os = "macos")]
+                let linked = pw.link.is_some();
+                #[cfg(not(target_os = "macos"))]
+                let linked = false;
+                eprintln!(
+                    "gui: window {id} next frame {:?} at clock {:.1} (animating {}, link {linked}, unseen {unseen})",
+                    st.next_frame,
+                    st.clock_ms(),
+                    pw.animating
+                );
+            }
             if let Some(next) = spin.flatten()
                 && !unseen
             {
@@ -941,6 +981,7 @@ impl App {
             (dl, tree, wants, area)
         };
         let listed = started.elapsed();
+        emit(std::mem::take(&mut moved));
         let presented = match &mut pw.renderer {
             Renderer::Gpu(s) => match s.render(&dl) {
                 Ok(()) => s.presented(),
@@ -993,6 +1034,10 @@ impl App {
             pw.in_flight.push_back((frames::now_ns(), frames::answered(id)));
             frames::resume(&pw.link);
             pw.idle_ticks = 0;
+        }
+        #[cfg(target_os = "macos")]
+        if pw.animating {
+            frames::resume(&pw.link);
         }
         crate::boot_trace::frame_presented();
         // the frame: its display list made, and drawn and presented
@@ -1216,6 +1261,47 @@ fn pointer_now(_win: &Window) -> Option<(f32, f32)> {
 
 /// The NSWindow behind `win`, retained.
 #[cfg(target_os = "macos")]
+/// The phase of the scroll event AppKit is handling (winit hands its
+/// `scrollWheel:` on at once, so it is the application's current event):
+/// the momentum's first, else the fingers'. `Legacy` when it says none (a
+/// mouse wheel, a device without phases) or is not a scroll.
+#[cfg(target_os = "macos")]
+fn scroll_phase() -> super::scroll::Phase {
+    use super::scroll::Phase;
+    use objc2_app_kit::{NSApplication, NSEventPhase, NSEventType};
+    let Some(mtm) = objc2_foundation::MainThreadMarker::new() else {
+        return Phase::Legacy;
+    };
+    let Some(ev) = NSApplication::sharedApplication(mtm).currentEvent() else {
+        return Phase::Legacy;
+    };
+    if ev.r#type() != NSEventType::ScrollWheel {
+        return Phase::Legacy;
+    }
+    let m = ev.momentumPhase();
+    let p = ev.phase();
+    let is = |x: NSEventPhase, y: NSEventPhase| x.0 & y.0 != 0;
+    if m.0 != 0 {
+        if is(m, NSEventPhase::Began) {
+            Phase::MomentumBegan
+        } else if is(m, NSEventPhase::Ended) || is(m, NSEventPhase::Cancelled) {
+            Phase::MomentumEnded
+        } else {
+            Phase::Momentum
+        }
+    } else if p.0 != 0 {
+        if is(p, NSEventPhase::Began) || is(p, NSEventPhase::MayBegin) {
+            Phase::Began
+        } else if is(p, NSEventPhase::Ended) || is(p, NSEventPhase::Cancelled) {
+            Phase::Ended
+        } else {
+            Phase::Changed
+        }
+    } else {
+        Phase::Legacy
+    }
+}
+
 fn ns_window(win: &Window) -> Option<objc2::rc::Retained<objc2::runtime::AnyObject>> {
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
     let RawWindowHandle::AppKit(h) = win.window_handle().ok()?.as_raw() else {
@@ -1940,15 +2026,35 @@ impl App {
                 );
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                let (dx, dy) = match delta {
+                let (dx, dy, precise) = match delta {
                     // A line is three lines of 16 px text, as browsers do.
-                    MouseScrollDelta::LineDelta(x, y) => (x * 48.0, y * 48.0),
+                    MouseScrollDelta::LineDelta(x, y) => (x * 48.0, y * 48.0, false),
                     MouseScrollDelta::PixelDelta(p) => {
                         let l = p.to_logical::<f32>(scale);
-                        (l.x, l.y)
+                        (l.x, l.y, true)
                     }
                 };
-                self.input(id, Input::Wheel { dx, dy, mods: None });
+                // where it is in its gesture: the event's own phases (winit
+                // folds the momentum's into the fingers'), so a trackpad
+                // stretches and bounces and a mouse wheel glides
+                #[cfg(target_os = "macos")]
+                let phase = scroll_phase();
+                #[cfg(not(target_os = "macos"))]
+                let phase = super::scroll::Phase::Legacy;
+                if !precise || phase != super::scroll::Phase::Legacy {
+                    self.input(
+                        id,
+                        Input::Scroll {
+                            dx,
+                            dy,
+                            mods: None,
+                            phase,
+                            precise,
+                        },
+                    );
+                } else {
+                    self.input(id, Input::Wheel { dx, dy, mods: None });
+                }
             }
             // A trackpad's pinch (macOS; the other platforms send none).
             WindowEvent::PinchGesture { delta, phase, .. } => {
@@ -2534,8 +2640,12 @@ impl App {
             let _ = t0;
         }
         // a frame put off for this refresh (render holds it again while
-        // the frames before it still wait)
-        if pw.deferred {
+        // the frames before it still wait), or the next of something moving
+        if pw.deferred || pw.animating {
+            pw.animating = false;
+            if let Ok(mut st) = pw.state.lock() {
+                st.dirty = true;
+            }
             self.render(id);
             return;
         }
@@ -3602,11 +3712,20 @@ pub mod frames {
             };
             // SAFETY: the CADisplayLink calling, alive for the call.
             let at: f64 = unsafe { msg_send![&*link, timestamp] };
+            if trace_ticks() {
+                eprintln!("gui: window {id} tick at {at:.4}");
+            }
             send(Cmd::Tick {
                 id,
                 at: (at * 1e9) as u64,
             });
         });
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        /// `NSRunLoopCommonModes`: a CFStringRef.
+        static kCFRunLoopCommonModes: *const std::ffi::c_void;
     }
 
     /// CAFrameRateRange.
@@ -3684,7 +3803,13 @@ pub mod frames {
                 let sc: Option<Retained<AnyObject>> = w.and_then(|w| msg_send![&*w, screen]);
                 sc.map_or(60, |sc| msg_send![&*sc, maximumFramesPerSecond])
             };
-            let most = (fps.max(60)) as f32;
+            // `GUI_LINK_HZ` (a measurement's): ask the screen for no more
+            // than that (60 on a ProMotion screen: its 60 Hz pacing)
+            let cap = std::env::var("GUI_LINK_HZ")
+                .ok()
+                .and_then(|v| v.parse::<isize>().ok())
+                .filter(|v| (10..=240).contains(v));
+            let most = cap.map_or(fps.max(60), |c| c.min(fps.max(60))) as f32;
             let range = FrameRateRange {
                 minimum: most.min(60.0),
                 maximum: most,
@@ -3693,8 +3818,17 @@ pub mod frames {
             let _: () = msg_send![&*link, setPreferredFrameRateRange: range];
             let _: () = msg_send![&*link, setPaused: true];
             let rl: Retained<AnyObject> = msg_send![objc2::class!(NSRunLoop), mainRunLoop];
-            let mode = objc2_foundation::NSString::from_str("kCFRunLoopCommonModes");
+            // the common modes' own constant: CFRunLoop knows it by its
+            // address, and a string equal to it names a mode of its own
+            // that the loop never runs (the link then never ticked)
+            let mode = kCFRunLoopCommonModes as *const AnyObject;
             let _: () = msg_send![&*link, addToRunLoop: &*rl, forMode: &*mode];
+            if trace_ticks() {
+                eprintln!(
+                    "gui: window {id} display link {:p} at {most} Hz",
+                    Retained::as_ptr(&link)
+                );
+            }
             links()
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -3703,12 +3837,21 @@ pub mod frames {
         }
     }
 
+    /// `GUI_TRACE_TICKS`: every refresh and every resume said.
+    fn trace_ticks() -> bool {
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| std::env::var_os("GUI_TRACE_TICKS").is_some())
+    }
+
     /// The link ticks (a frame is on its way, or one is put off).
     pub fn resume(link: &Option<Retained<AnyObject>>) {
         if let Some(l) = link {
             // SAFETY: a live CADisplayLink, on the main thread.
             unsafe {
                 let paused: bool = msg_send![&**l, isPaused];
+                if trace_ticks() {
+                    eprintln!("gui: link resumed (was paused: {paused})");
+                }
                 if paused {
                     let _: () = msg_send![&**l, setPaused: false];
                 }
