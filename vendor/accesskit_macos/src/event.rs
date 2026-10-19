@@ -297,6 +297,7 @@ impl TreeChangeHandler for EventGenerator {
                 notification: unsafe { NSAccessibilitySelectedTextChangedNotification },
             });
         }
+        let mut announced = false;
         if let Some(new_label) = new_wrapper.label() {
             if new_node.live() != Live::Off
                 && (Some(&new_label) != old_wrapper.label().as_ref()
@@ -307,6 +308,24 @@ impl TreeChangeHandler for EventGenerator {
                     new_label,
                     new_node.live(),
                 ));
+                announced = true;
+            }
+        }
+        // (olang) a live node's value changed under the same name (a
+        // progress's percentage, a count in a status): said too, with its
+        // name, unless the focus is on it (VoiceOver says the value then)
+        if !announced
+            && new_node.live() != Live::Off
+            && !new_node.is_focused()
+            && old_node.raw_value() != new_node.raw_value()
+        {
+            if let Some(v) = new_node.value() {
+                let text = match new_wrapper.label() {
+                    Some(l) if !l.is_empty() => format!("{l}, {v}"),
+                    _ => v,
+                };
+                self.events
+                    .push(QueuedEvent::live_region_announcement(text, new_node.live()));
             }
         }
         if new_node.is_selected() != old_node.is_selected()

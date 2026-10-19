@@ -9,6 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`gui`: the accessibility tree in depth.** A node takes `pos`
+  (`(index, count)`: a virtualized list's, table's or tree's row says
+  "41 of 1,000" though only the rows on screen are nodes); without it a
+  set's items (a list's, a tree's by level, a tab list's, a menu's) are
+  counted from the tree. A table says its row and column counts, each
+  row its index, each cell and header its column (AccessKit's
+  `row_count`/`column_count`/`row_index`/`column_index`), and on macOS
+  `accessibilityRows` (chosen or not), `accessibilityRowCount`,
+  `accessibilityColumnCount`, `accessibilityColumnHeaderUIElements`,
+  `accessibilityCellForColumn:row:`, a row's `accessibilityIndex`, a
+  cell's row and column ranges; a tree's row its disclosure level and
+  state, opened and closed by `setAccessibilityDisclosed:`. New roles:
+  the landmarks (`navigation`, `main`, `banner`, `complementary`,
+  `contentinfo`, `form`; a `region` is one only when named),
+  `grid`, `rowheader`, `rowgroup`, `spinbutton`, `meter`, `toolbar`,
+  `radiogroup`. VoiceOver's rotor: every element answers
+  `AXUIElementsForSearchPredicate` and `AXUIElementCountForSearchPredicate`
+  (headings, by level too, links, landmarks, form controls, buttons,
+  text fields, tables, lists, live regions, focusable, the same or another
+  kind; forward and back from an element; search text), and a heading is
+  `AXHeading` (it was the unknown role "Heading"). A heading's `level` is
+  given to AccessKit from 0 (it was one too deep). `live: "off"` takes a
+  status's or a log's politeness back, and a live node's value said when
+  it changes ("Progress, 60%"). Assistive actions: a `slider` or
+  `spinbutton` steps (`a11y` events `increment`/`decrement`, also
+  without a `range`), what has `expanded` opens and closes (`expand`/
+  `collapse`), a scroller scrolls a page (VoiceOver's `AXScrollUpByPage`
+  and the others; the engine scrolls as the wheel does and says
+  `scrolled`); `gui.input`'s `a11y` takes them all. A plain field's text
+  is text runs (a line each, over the field's box) with its selection, so
+  Zoom follows its caret and VoiceOver reads it by character and word; a
+  scroll area is `AXScrollArea` (it was the unknown role). A group with
+  a role from Loom's flat core says a leaf's `value`, `range`, `live`,
+  `level` and `pos`. `gui.read(w, "a11y")` says each node's `bounds`,
+  `placeholder`, `level`, `expanded`, `live`, `in_set`, `row`, `column`,
+  `size`, `rows`, `columns` and `range`. `gui.platform()` says
+  `a11y_depth`. tests/gui_a11y_test.rs, tests/gui_macos_a11y_depth_test.rs
+  (vendor/accesskit_macos/OLANG.md lists the adapter's changes)
+- **`gui.set(w, #{ "flash": true })`: the repaint rainbow.** Every region
+  a frame draws is tinted with that frame's colour, over its pixels and
+  unseen by damage, so a region keeps the tint of the frame that last
+  drew it (Loom's inspector, ⌃⌥⌘R); `false` draws the window whole again.
+  Software and GPU alike. `gui.platform()` says `flash`.
+  tests/gui_flash_test.rs
+
 - **`gui.turn(on)`: a program's long turn shown while it runs.** A
   program says when its turn begins and ends (Loom's loop does, two
   atomic writes a turn); one that runs past 2 s

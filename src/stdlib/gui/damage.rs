@@ -592,6 +592,31 @@ pub static PIXELS_DRAWN: AtomicU64 = AtomicU64::new(0);
 pub static PIXELS_SHOWN: AtomicU64 = AtomicU64::new(0);
 
 /// Count a frame and what it drew.
+/// The repaint rainbow's tint for frame `n` (an inspector's: every region
+/// a frame drew, each frame a colour of its own), straight RGBA.
+pub fn flash_color(n: u32) -> [u8; 4] {
+    const HUES: [[u8; 3]; 7] = [
+        [255, 59, 48],
+        [255, 149, 0],
+        [255, 204, 0],
+        [52, 199, 89],
+        [0, 199, 190],
+        [0, 122, 255],
+        [175, 82, 222],
+    ];
+    let c = HUES[n as usize % HUES.len()];
+    [c[0], c[1], c[2], 64]
+}
+
+/// The rectangles a frame drew, whole or in parts.
+pub fn drawn(d: &Damage, w: u32, h: u32) -> Vec<IRect> {
+    match d {
+        Damage::None => Vec::new(),
+        Damage::Full => vec![IRect::new(0, 0, w as i32, h as i32)],
+        Damage::Rects(r) => r.clone(),
+    }
+}
+
 pub fn count(d: &Damage, w: u32, h: u32) {
     match d {
         Damage::None => {

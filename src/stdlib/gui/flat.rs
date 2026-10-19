@@ -1617,6 +1617,32 @@ fn group_op(
             }
         }
     }
+    // a group that presents a role says what a leaf of that role says: a
+    // meter's or a stepper's value and range, a live region's politeness,
+    // a tree item's level, a virtualized row's place in its set. Only
+    // what the engine takes as it is, so a stray prop never refuses the
+    // patch.
+    if !matches!(mget(p, "a11y_role"), Value::Unit) {
+        if let v @ Value::String(_) = mget(p, "value") {
+            op.insert("value".into(), v.clone());
+        }
+        if let Some(r) = super::values::nums(mget(p, "range"))
+            && r.len() == 3
+        {
+            op.insert("range".into(), mget(p, "range").clone());
+        }
+        if let v @ Value::String(_) = mget(p, "live") {
+            op.insert("live".into(), v.clone());
+        }
+        if let v @ (Value::Integer(_) | Value::Float(_)) = mget(p, "level") {
+            op.insert("level".into(), v.clone());
+        }
+        if let Some(r) = super::values::nums(mget(p, "pos"))
+            && r.len() == 2
+        {
+            op.insert("pos".into(), mget(p, "pos").clone());
+        }
+    }
     op
 }
 
