@@ -320,6 +320,15 @@ fn col_filled(args: Vec<Value>) -> Result<Value, InterpreterError> {
             message: format!("col.filled: length must be non-negative, got {}", n),
         });
     }
+    if n > crate::builtin::MAX_BUILT_LEN {
+        return Err(InterpreterError::RuntimeError {
+            message: format!(
+                "col.filled: {} elements is more than a list holds ({} at most)",
+                n,
+                crate::builtin::MAX_BUILT_LEN
+            ),
+        });
+    }
     let value = args
         .get(1)
         .cloned()

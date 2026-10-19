@@ -470,6 +470,18 @@ fn str_repeat(args: Vec<Value>) -> Result<Value, Box<dyn std::error::Error>> {
     if n < 0 {
         return Err("str.repeat: count cannot be negative".into());
     }
+    match (s.len() as i64).checked_mul(n) {
+        Some(total) if total <= crate::builtin::MAX_BUILT_LEN => {}
+        _ => {
+            return Err(format!(
+                "str.repeat: {} copies of {} bytes is more than a string holds ({} bytes at most)",
+                n,
+                s.len(),
+                crate::builtin::MAX_BUILT_LEN
+            )
+            .into());
+        }
+    }
     Ok(ok_string(s.repeat(n as usize)))
 }
 
@@ -698,6 +710,15 @@ fn str_pad(args: Vec<Value>, start: bool) -> Result<Value, Box<dyn std::error::E
     let current = s.chars().count() as i64;
     if target <= current || pad.is_empty() {
         return Ok(ok_string(s.to_string()));
+    }
+    if target > crate::builtin::MAX_BUILT_LEN {
+        return Err(format!(
+            "str.{}: a width of {} is more than a string holds ({} at most)",
+            func,
+            target,
+            crate::builtin::MAX_BUILT_LEN
+        )
+        .into());
     }
     let needed = (target - current) as usize;
     let filler: String = pad.chars().cycle().take(needed).collect();

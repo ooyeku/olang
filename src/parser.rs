@@ -300,6 +300,117 @@ fn top_level_starts(input: &str) -> Vec<usize> {
     starts
 }
 
+/// The deepest brackets a source may nest. The grammar and the tree's
+/// builder recurse once (and more) a level, on the thread's stack: a
+/// file of 100,000 `(` overflowed even the interpreter's 256 MiB and
+/// aborted the process — `olang check`, the language server and a
+/// notebook's kernel on a file opened. No written program comes near.
+pub const MAX_NESTING: usize = 1000;
+
+/// Where `input`'s brackets first nest deeper than [`MAX_NESTING`] (a
+/// byte offset), or `None`: `(`, `[`, `{` counted in code and inside a
+/// template's `${…}`; strings, raw strings, a template's text and `//`
+/// comments skipped.
+fn nesting_too_deep(input: &str) -> Option<usize> {
+    #[derive(PartialEq, Clone, Copy)]
+    enum In {
+        Code,
+        Text,
+        RawText,
+        Template,
+        Comment,
+    }
+    let bytes = input.as_bytes();
+    let mut state = In::Code;
+    // a string's or comment's way back: code, or a template's `${…}`
+    let mut back = In::Code;
+    let mut depth = 0usize;
+    // the depth each open `${` began at (templates do not nest, so one)
+    let mut interp: Option<usize> = None;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        match state {
+            In::Code => match b {
+                b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                    back = In::Code;
+                    state = In::Comment;
+                }
+                b'"' => {
+                    back = In::Code;
+                    state = In::Text;
+                }
+                b'r' if bytes.get(i + 1) == Some(&b'"')
+                    && !(i > 0
+                        && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_')) =>
+                {
+                    back = In::Code;
+                    state = In::RawText;
+                    i += 1;
+                }
+                // a backtick in code opens a template; in a `${…}` it ends
+                // the template it is in
+                b'`' => {
+                    if interp.is_some() {
+                        depth = interp.take().unwrap_or(0);
+                    } else {
+                        state = In::Template;
+                    }
+                }
+                // a char literal: '(' is no bracket
+                b'\'' if bytes.get(i + 2) == Some(&b'\'') => i += 2,
+                b'\'' if bytes.get(i + 1) == Some(&b'\\') && bytes.get(i + 3) == Some(&b'\'') => {
+                    i += 3
+                }
+                b'(' | b'[' | b'{' => {
+                    depth += 1;
+                    if depth > MAX_NESTING {
+                        return Some(i);
+                    }
+                }
+                b'}' if interp == Some(depth.saturating_sub(1)) => {
+                    depth = depth.saturating_sub(1);
+                    interp = None;
+                    state = In::Template;
+                }
+                b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+                _ => {}
+            },
+            In::Text => match b {
+                b'\\' => i += 1,
+                b'"' => state = back,
+                _ => {}
+            },
+            In::RawText => match b {
+                b'\\' if bytes.get(i + 1) == Some(&b'"') => i += 1,
+                b'"' => state = back,
+                _ => {}
+            },
+            In::Template => match b {
+                b'\\' => i += 1,
+                b'`' => state = In::Code,
+                b'$' if bytes.get(i + 1) == Some(&b'{') => {
+                    interp = Some(depth);
+                    depth += 1;
+                    if depth > MAX_NESTING {
+                        return Some(i);
+                    }
+                    state = In::Code;
+                    i += 1;
+                }
+                _ => {}
+            },
+            In::Comment => {
+                if b == b'\n' {
+                    state = back;
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
 /// The `#{` innermost open at `line`:`column`, if the innermost open
 /// delimiter there is a map literal's: its line and column. Strings,
 /// templates and `//` comments are skipped.
@@ -900,6 +1011,21 @@ impl Parser {
             input
         };
         self.index_lines(input);
+        if let Some(at) = nesting_too_deep(input) {
+            let line = input[..at].matches('\n').count() + 1;
+            let line_start = input[..at].rfind('\n').map(|n| n + 1).unwrap_or(0);
+            let line_end = input[at..].find('\n').map(|n| at + n).unwrap_or(input.len());
+            let text: String = input[line_start..line_end].chars().take(120).collect();
+            return Err(ParseError::InvalidSyntaxWithPosition {
+                message: format!(
+                    "brackets nested more than {} deep: bind the inner parts to names",
+                    MAX_NESTING
+                ),
+                line,
+                column: input[line_start..at].chars().count() + 1,
+                snippet: text.into(),
+            });
+        }
         // A large source is parsed in chunks of whole top-level statements
         // (see `parse_in_chunks`); anything that does not come out clean
         // that way is parsed whole, which also owns every error message.

@@ -2202,6 +2202,7 @@ pub mod yaml {
                     at: 0,
                     line,
                     column,
+                    depth: 0,
                 };
                 let node = p.value()?;
                 p.ws();
@@ -2342,7 +2343,14 @@ pub mod yaml {
         at: usize,
         line: u32,
         column: u32,
+        /// the lists and maps open: a line of 100,000 `[` recursed off
+        /// the stack and aborted `olang check`, the language server and
+        /// the kernel on a notebook opened
+        depth: usize,
     }
+
+    /// The deepest a front matter's flow lists and maps nest.
+    const FLOW_DEPTH: usize = 64;
 
     impl Flow<'_> {
         fn col(&self) -> u32 {
@@ -2367,6 +2375,28 @@ pub mod yaml {
                 line,
                 column,
             };
+            let opens = matches!(self.peek(), Some('[') | Some('{'));
+            if opens {
+                self.depth += 1;
+                if self.depth > FLOW_DEPTH {
+                    return Err(self.err(format!(
+                        "lists and maps nested more than {} deep",
+                        FLOW_DEPTH
+                    )));
+                }
+            }
+            let out = self.value_inner(node, line, column);
+            if opens {
+                self.depth -= 1;
+            }
+            out
+        }
+        fn value_inner(
+            &mut self,
+            node: impl Fn(Value) -> Node,
+            line: u32,
+            column: u32,
+        ) -> Result<Node, Diagnostic> {
             match self.peek() {
                 None => Ok(node(Value::Null)),
                 Some('[') => {

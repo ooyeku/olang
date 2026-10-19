@@ -2473,6 +2473,16 @@ impl BuiltinFunctions {
     }
 
     fn range(&self, args: Vec<Value>) -> Result<Value, InterpreterError> {
+        fn too_long(who: &str, n: i64) -> InterpreterError {
+            InterpreterError::RuntimeError {
+                message: format!(
+                    "{}: {} elements is more than a list holds ({} at most)",
+                    who,
+                    n,
+                    crate::builtin::MAX_BUILT_LEN
+                ),
+            }
+        }
         match args.len() {
             1 => {
                 // range(n) -> [0, 1, 2, ..., n-1]
@@ -2485,6 +2495,9 @@ impl BuiltinFunctions {
                     }
                 };
 
+                if end > crate::builtin::MAX_BUILT_LEN {
+                    return Err(too_long("range", end));
+                }
                 let mut result = Vec::with_capacity(end.max(0) as usize);
                 for i in 0..end {
                     result.push(Value::Integer(i));
@@ -2511,6 +2524,9 @@ impl BuiltinFunctions {
                     }
                 };
 
+                if end.saturating_sub(start) > crate::builtin::MAX_BUILT_LEN {
+                    return Err(too_long("range", end.saturating_sub(start)));
+                }
                 let mut result = Vec::new();
                 for i in start..end {
                     result.push(Value::Integer(i));
@@ -2552,18 +2568,20 @@ impl BuiltinFunctions {
                     });
                 }
 
+                // the count, as i128 so no span or step overflows it
+                let span = (end as i128 - start as i128) / step as i128;
+                if span > crate::builtin::MAX_BUILT_LEN as i128 {
+                    return Err(too_long("range", span.min(i64::MAX as i128) as i64));
+                }
                 let mut result = Vec::new();
-                if step > 0 {
-                    let mut i = start;
-                    while i < end {
-                        result.push(Value::Integer(i));
-                        i += step;
-                    }
-                } else {
-                    let mut i = start;
-                    while i > end {
-                        result.push(Value::Integer(i));
-                        i += step; // step is negative
+                // a step past i64's end stops the range (it wrapped round,
+                // looping forever, before)
+                let mut i = start;
+                while (step > 0 && i < end) || (step < 0 && i > end) {
+                    result.push(Value::Integer(i));
+                    match i.checked_add(step) {
+                        Some(n) => i = n,
+                        None => break,
                     }
                 }
                 Ok(Value::List(result.into()))
@@ -4646,3 +4664,10 @@ pub(crate) fn strip_error_prefixes(text: &str) -> String {
         }
     }
 }
+
+/// The most elements a builtin builds a list of, or bytes a string, from a
+/// count it is given (`range`, `col.filled`, `str.repeat`, `str.pad_*`):
+/// past it the answer is an error, not an allocation that aborts the
+/// process (a meta fn's `str.repeat("x", 1 << 62)` killed the language
+/// server; release builds abort on any panic).
+pub const MAX_BUILT_LEN: i64 = 1 << 32;
