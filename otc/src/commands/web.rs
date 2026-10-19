@@ -396,7 +396,7 @@ let routes = [
 
 fn app(req) = dispatch(routes, req)
 
-println(`{name} listening on http://127.0.0.1:${{port}}  (db: ${{db_path}})`)
+println(`{name} (db: ${{db_path}})`)
 match http.serve(port, app) {{
     Err(e) => {{
         println("could not start on port " + show(port) + ": " + show(e))

@@ -899,14 +899,17 @@ share fn serve(config) = {
         let r = os.on_shutdown((why) => http.shutdown())
     }
 
-    println(title + " listening on http://" + bind + ":" + to_string(port))
-    // `Ok(())` on a drained stop, `Err` when the port could not be
-    // taken; anything else the runtime might answer is still a stop.
+    // `http.serve` says `listening on http://<bind>:<port>` once the port is
+    // bound (the real port, when 0 asked the system for one): said here
+    // before, it claimed a port a failed bind never took. `Ok(())` on a
+    // drained stop; a port that cannot be taken ends the program with 1
+    // (it went on with exit 0, a supervisor seeing a clean stop).
+    println(title)
     match http.serve(port, (req) => encoded(req, with_headers(dispatch_in(table, req, log, false))),
                      #{ "bind": bind, "trust_proxy": trust_proxy, "drain_ms": drain_ms }) {
         Err(e) => {
-            println("could not start on port " + show(port) + ": " + show(e))
-            Err(e)
+            eprintln(title + ": could not start on " + bind + ":" + show(port) + ": " + show(e))
+            os.exit(1)
         },
         other => Ok(())
     }
