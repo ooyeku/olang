@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`gui`: the role `alert`** (said at once, interrupting: AccessKit's
+  `Alert`, live and assertive) beside `status` (polite).
+- **`gui`: the Mac's own menu items around a program's**: Services,
+  Hide (⌘H), Hide Others (⌥⌘H) and Show All before the application
+  menu's Quit; Minimize (⌘M), Zoom and Bring All to Front in a Window
+  menu; Enter Full Screen (⌃⌘F) at a View menu's end.
 - **`fs.search`'s `max_bytes`**: a file larger is not read (a data file of
   gigabytes not left out by `.gitignore` was read whole on a worker). A
   case-blind search lower-cases a file a megabyte at a time, never a
