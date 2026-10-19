@@ -49,7 +49,7 @@ const MAX_LIVE_IN: usize = crate::ovm::jit::MAX_PARAMS;
 const MAX_LIVE_OUT: usize = crate::ovm::jit::MAX_TUPLE;
 
 fn osr_debug() -> bool {
-    std::env::var_os("OLANG_OSR_DEBUG").is_some()
+    env_on!("OLANG_OSR_DEBUG")
 }
 
 /// Build the standalone loop function for the maximal loop region

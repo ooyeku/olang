@@ -1110,3 +1110,68 @@ fn collections_built_apart_compare_equal_on_every_tier() {
     assert_same(src, "cmp", &ints(&[5]));
     assert_same(src, "cmp", &ints(&[0]));
 }
+
+#[test]
+fn map_accessors_contains_show_and_typeof_run_natively_on_every_kind() {
+    // Native on the VM now (they bridged, converting their argument each
+    // call): map_keys, map_values, map_len on a VM map, a wrapped map, a
+    // wrapped record and a record built in compiled code; contains of a
+    // scalar in a VM list and a wrapped one; show and to_string of
+    // compound values; typeof of a scalar. Every answer and every error
+    // is the tree-walker's.
+    use std::sync::Arc;
+    let row = json_row(2);
+    let store = store_value();
+    // longer than the eager bound: crosses wrapped
+    let long = Value::List(Arc::new(
+        (0..100)
+            .map(|i| {
+                if i % 3 == 0 {
+                    Value::Float(i as f64)
+                } else {
+                    Value::Integer(i)
+                }
+            })
+            .collect(),
+    ));
+    for src in [
+        "fn f(r, s, l) = [map_keys(r), map_values(r), map_len(r)]",
+        "fn f(r, s, l) = [map_keys(s), map_len(s.by_id), map_keys(s.by_id), map_values(s)]",
+        "fn f(r, s, l) = { let m = #{ \"b\": 1, \"a\": [2], \"c\": () }\n [map_keys(m), map_values(m), map_len(m), map_len(#{})] }",
+        "fn f(r, s, l) = { let p = { x: 1, y: \"two\" }\n [map_keys(p), map_values(p), map_len(p)] }",
+        "fn f(r, s, l) = map_keys([1, 2])",
+        "fn f(r, s, l) = map_len(())",
+        "fn f(r, s, l) = map_values(\"x\")",
+        "fn f(r, s, l) = [contains(l, 4), contains(l, 6), contains(l, 6.0), contains(l, 4.0), contains(l, \"4\"), contains(l, ())]",
+        "fn f(r, s, l) = [contains([1, \"a\", (), [2]], \"a\"), contains([1, [2]], 3), contains([], 1), contains([(), 1], ())]",
+        "fn f(r, s, l) = contains([1, (x) => x], 2)",
+        "fn f(r, s, l) = contains(#{ \"a\": 1 }, 1)",
+        "fn f(r, s, l) = contains(map(l, (x) => x), 99)",
+        "fn f(r, s, l) = [show(r), show(s), show([1, \"a\", (2, 3.5)]), show(#{ \"k\": [()] }), show(\"q\"), show(1.0), show(()), show(true)]",
+        "fn f(r, s, l) = [to_string([1, \"a\"]), to_string(#{ \"k\": 1 }), to_string((1, 2)), to_string(r), to_string(\"s\")]",
+        "fn f(r, s, l) = [typeof(1), typeof(1.5), typeof(true), typeof(\"s\"), typeof(()), typeof(l), typeof(s)]",
+        "fn f(r, s, l) = map(l, (x) => x + 1)",
+        "fn f(r, s, l) = filter(l, (x) => x > 50)",
+        "fn f(r, s, l) = { let k = 7\n [map(l, (x) => x * k), filter(l, (x) => x != k)] }",
+        "fn f(r, s, l) = map(l, (x) => 10 / (x - 50))",
+    ] {
+        assert_same(src, "f", &[row.clone(), store.clone(), long.clone()]);
+    }
+}
+
+#[test]
+fn a_small_wrapped_map_written_a_collection_becomes_the_vms_own() {
+    // A wrapped interpreter map (the store, crossed in) written a list or
+    // a map the VM built becomes the VM's own map rather than converting
+    // the value into it: the answers, the order of its keys, and what it
+    // leaves the wrapped original holding are the tree-walker's.
+    let store = store_value();
+    for src in [
+        "fn f(s) = { let m = map_set(s, \"extra\", [1, 2, (3, \"x\")])\n let m2 = map_set(m, \"count\", #{ \"a\": [1] })\n [map_keys(m2), m2.extra, m2.count, s.count, map_len(s)] }",
+        "fn f(s) = { let mut m = s\n for i in range(0, 5) { m = map_set(m, \"k\" + to_string(i), [i, i]) }\n [map_keys(m), m.k4, map_keys(s)] }",
+        "fn f(s) = { let m = map_set(s.by_id, \"id3\", #{ \"id\": -3, \"tags\": [] })\n [map_get(m, \"id3\"), map_get(s.by_id, \"id3\"), map_len(m)] }",
+        "fn f(s) = { let m = map_update(s, \"recent\", (r) => r + [#{ \"id\": 9 }])\n [len(m.recent), len(s.recent), m.recent[4]] }",
+    ] {
+        assert_same(src, "f", &[store.clone()]);
+    }
+}

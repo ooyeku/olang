@@ -17,6 +17,7 @@ use super::scene::Style;
 use super::text::{self, TextSystem};
 use super::values::*;
 use crate::ast::Value;
+use crate::ovm::value::{OvmValue, ValueData};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -29,6 +30,7 @@ const I_KIND: usize = 0;
 const I_FIRST: usize = 2;
 const I_COUNT: usize = 3;
 const I_PARENT: usize = 12;
+const I_FRESH: usize = 13;
 const F_NATH: usize = 17;
 const PAD: usize = 80;
 
@@ -1257,16 +1259,21 @@ pub fn gui_flat_geo(args: Vec<Value>) -> Res<Value> {
     })
 }
 
-/// The VM's own `gui.flat_arrays`, `gui.flat_keep`, and `gui.flat_geo`:
-/// the arrays and boxes cross as typed lists that share the engine's
-/// memory — no list of numbers is boxed or copied either way. `None` for
-/// any other name, and for arguments of another shape (the call then
-/// goes the usual way).
-pub fn flat_vm_native(
-    name: &str,
-    args: &[crate::ovm::value::OvmValue],
-) -> Option<Result<crate::ovm::value::OvmValue, String>> {
-    use crate::ovm::value::{OvmValue, ValueData};
+/// The VM's own flat layout calls. `gui.flat_arrays`, `gui.flat_keep`,
+/// and `gui.flat_geo`: the arrays and boxes cross as typed lists that
+/// share the engine's memory — no list of numbers is boxed or copied
+/// either way. `gui.flatten`, `gui.flat_emit`, `gui.flat_join`: their
+/// answers in the VM's form (`vm_flatten`, `vm_flat_emit`,
+/// `vm_flat_join`), the placements read natively. `None` for any other
+/// name, and for arguments of another shape (the call then goes the
+/// usual way).
+pub fn flat_vm_native(name: &str, args: &[OvmValue]) -> Option<Result<OvmValue, String>> {
+    match name {
+        "gui.flatten" => return vm_flatten(args),
+        "gui.flat_emit" => return vm_flat_emit(args),
+        "gui.flat_join" => return vm_flat_join(args),
+        _ => {}
+    }
     let id = match args.first().map(|a| &a.data) {
         Some(ValueData::Integer(i)) => *i,
         _ => return None,
@@ -1561,100 +1568,338 @@ fn group_op(
     op
 }
 
-/// `gui.flat_emit(flat, geo, spec, keep, prev)`: each node's placements
-/// from the core's boxes `geo` (x, y, w, h a node), by index —
-/// `#{ recs, gkeys, probs, lifts, pre, todo }`. A node `keep` marks (1)
-/// takes `prev`'s (last frame's answer, as Loom completed it) unless its
-/// parent's gkey changed. Groups, regions, splits, and the leaves in
-/// `spec.placed` are placed here; the other leaves are listed in `todo`
-/// for Loom to place, their entries left empty. `pre[i]` is what comes
-/// before node i (a split's divider, before its second pane).
-pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
-    if args.len() != 5 {
-        return Err(format!(
-            "gui.flat_emit: expected 5 arguments, got {}",
-            args.len()
-        ));
+// ── what the placements are read from, in either tier's form ─────────
+
+/// A list's items as the interpreter holds them, or as olang's VM does:
+/// last frame's placements come back from Loom in the form they were
+/// answered in (the VM's own lists, when the VM asked).
+#[derive(Clone, Copy)]
+enum Items<'a> {
+    Ast(&'a [Value]),
+    Vm(&'a [OvmValue]),
+}
+
+impl<'a> Items<'a> {
+    fn len(&self) -> usize {
+        match self {
+            Items::Ast(l) => l.len(),
+            Items::Vm(l) => l.len(),
+        }
     }
-    let flat = fields(&args[0]).ok_or("gui.flat_emit: the arrays must be a map")?;
-    let spec = Spec::read(&args[2])?;
-    let keep = match &args[3] {
-        Value::Unit => None,
-        v => Some(ints_of(v, "keep")?),
-    };
-    let prev = match (&args[4], &keep) {
-        (Value::Map(m), Some(_)) => Some(m),
+
+    /// Item `i` as a string, when it is one.
+    fn str_at(&self, i: usize) -> Option<&'a str> {
+        match self {
+            Items::Ast(l) => match l.get(i) {
+                Some(Value::String(s)) => Some(s.as_str()),
+                _ => None,
+            },
+            Items::Vm(l) => match l.get(i).map(|v| &v.data) {
+                Some(ValueData::String(s)) => Some(s.as_str()),
+                _ => None,
+            },
+        }
+    }
+
+    /// Item `i` is `v` (`!=` as olang says it of two gkeys).
+    fn same_as(&self, i: usize, v: &Value) -> bool {
+        match (self, v) {
+            (Items::Ast(l), _) => l.get(i) == Some(v),
+            (Items::Vm(_), Value::String(s)) => self.str_at(i) == Some(s.as_str()),
+            (Items::Vm(l), _) => l
+                .get(i)
+                .and_then(|x| x.to_ast().ok())
+                .is_some_and(|x| x == *v),
+        }
+    }
+
+    /// Item `i` in the interpreter's form.
+    fn ast(&self, i: usize) -> Value {
+        match self {
+            Items::Ast(l) => l.get(i).cloned().unwrap_or(Value::Unit),
+            Items::Vm(l) => l
+                .get(i)
+                .and_then(|x| x.to_ast().ok())
+                .unwrap_or(Value::Unit),
+        }
+    }
+
+    /// Item `i` in the VM's form.
+    fn vm(&self, i: usize) -> OvmValue {
+        match self {
+            Items::Ast(l) => l
+                .get(i)
+                .map(|v| OvmValue::from_ast(v.clone()))
+                .unwrap_or_else(OvmValue::new_unit),
+            Items::Vm(l) => l.get(i).cloned().unwrap_or_else(OvmValue::new_unit),
+        }
+    }
+}
+
+/// A list of integers as either tier holds it (the VM's typed, or boxed).
+#[derive(Clone, Copy)]
+enum Ints<'a> {
+    Ast(&'a [Value]),
+    Raw(&'a [i64]),
+    Vm(&'a [OvmValue]),
+}
+
+impl Ints<'_> {
+    fn len(&self) -> usize {
+        match self {
+            Ints::Ast(l) => l.len(),
+            Ints::Raw(l) => l.len(),
+            Ints::Vm(l) => l.len(),
+        }
+    }
+
+    fn at(&self, i: usize) -> Option<i64> {
+        match self {
+            Ints::Ast(l) => match l.get(i)? {
+                Value::Integer(v) => Some(*v),
+                Value::Float(f) => Some(*f as i64),
+                _ => None,
+            },
+            Ints::Raw(l) => l.get(i).copied(),
+            Ints::Vm(l) => match &l.get(i)?.data {
+                ValueData::Integer(v) => Some(*v),
+                ValueData::Float(f) => Some(*f as i64),
+                _ => None,
+            },
+        }
+    }
+
+    fn get(&self, i: usize) -> i64 {
+        self.at(i).unwrap_or(0)
+    }
+}
+
+/// A flatten answer, read: its arrays (kept by the engine) and its lists.
+struct FlatIn<'a> {
+    n: usize,
+    st: Arc<FlatState>,
+    nodes: &'a [Value],
+    paths: &'a [Value],
+    index: Ints<'a>,
+    gkeys: &'a [Value],
+    glifts: &'a [Value],
+}
+
+impl<'a> FlatIn<'a> {
+    fn of_ast(flat: &'a crate::ast::ValueMap) -> Res<FlatIn<'a>> {
+        let n = match flat.get("n") {
+            Some(Value::Integer(n)) => *n as usize,
+            _ => return Err("gui.flat_emit: the arrays have no \"n\"".into()),
+        };
+        let st = state_of(flat).ok_or(
+            "gui.flat_emit: the engine no longer holds this answer's arrays; lay the view out again",
+        )?;
+        Ok(FlatIn {
+            n,
+            st,
+            nodes: list_of(flat, "nodes")?,
+            paths: list_of(flat, "paths")?,
+            index: Ints::Ast(list_of(flat, "index")?),
+            gkeys: list_of(flat, "gkeys")?,
+            glifts: list_of(flat, "glifts")?,
+        })
+    }
+
+    /// The VM's form of an answer (`vm_flatten`'s, or one wrapped); `None`
+    /// for anything else (the call then goes the usual way).
+    fn of_vm(flat: &'a OvmValue) -> Option<FlatIn<'a>> {
+        let n = match vm_field(flat, "n")? {
+            Fld::Vm(OvmValue {
+                data: ValueData::Integer(n),
+            })
+            | Fld::Ast(Value::Integer(n)) => *n as usize,
+            _ => return None,
+        };
+        let id = match vm_field(flat, "id")? {
+            Fld::Vm(OvmValue {
+                data: ValueData::Integer(i),
+            })
+            | Fld::Ast(Value::Integer(i)) => *i,
+            _ => return None,
+        };
+        let l = |k: &str| vm_field(flat, k).and_then(|f| f.ast_items());
+        Some(FlatIn {
+            n,
+            st: state_by_id(id)?,
+            nodes: l("nodes")?,
+            paths: l("paths")?,
+            index: vm_field(flat, "index")?.ints()?,
+            gkeys: l("gkeys")?,
+            glifts: l("glifts")?,
+        })
+    }
+}
+
+/// Last frame's placements as Loom completed them (`flat_emit`'s `prev`).
+struct PrevOut<'a> {
+    recs: Items<'a>,
+    gkeys: Items<'a>,
+    probs: Items<'a>,
+    lifts: Items<'a>,
+}
+
+static NO_PREV: PrevOut<'static> = PrevOut {
+    recs: Items::Ast(EMPTY),
+    gkeys: Items::Ast(EMPTY),
+    probs: Items::Ast(EMPTY),
+    lifts: Items::Ast(EMPTY),
+};
+
+impl<'a> PrevOut<'a> {
+    fn of_ast(m: &'a crate::ast::ValueMap) -> Res<PrevOut<'a>> {
+        Ok(PrevOut {
+            recs: Items::Ast(list_of(m, "recs")?),
+            gkeys: Items::Ast(list_of(m, "gkeys")?),
+            probs: Items::Ast(list_of(m, "probs")?),
+            lifts: Items::Ast(list_of(m, "lifts")?),
+        })
+    }
+
+    fn of_vm(m: &'a OvmValue) -> Option<PrevOut<'a>> {
+        let l = |k: &str| vm_field(m, k).and_then(|f| f.items());
+        Some(PrevOut {
+            recs: l("recs")?,
+            gkeys: l("gkeys")?,
+            probs: l("probs")?,
+            lifts: l("lifts")?,
+        })
+    }
+
+    fn all_len(&self, n: usize) -> bool {
+        self.recs.len() == n && self.gkeys.len() == n && self.probs.len() == n && self.lifts.len() == n
+    }
+}
+
+/// A field of a map the VM holds: a VM map's own, or a wrapped map's.
+enum Fld<'a> {
+    Vm(&'a OvmValue),
+    Ast(&'a Value),
+}
+
+fn vm_field<'a>(m: &'a OvmValue, k: &str) -> Option<Fld<'a>> {
+    match &m.data {
+        ValueData::Map(mm) => mm.get(k).map(Fld::Vm),
+        ValueData::AstMap(mm) | ValueData::AstStruct(mm, _) => mm.get(k).map(Fld::Ast),
         _ => None,
-    };
-    let n = match flat.get("n") {
-        Some(Value::Integer(n)) => *n as usize,
-        _ => return Err("gui.flat_emit: the arrays have no \"n\"".into()),
-    };
-    // the arrays and boxes the engine keeps for this answer (the boxes
-    // given here when Loom hands them over, else those `gui.flat_keep` kept)
-    let held = state_of(flat).ok_or(
-        "gui.flat_emit: the engine no longer holds this answer's arrays; lay the view out again",
-    )?;
-    let geo_read: Vec<f64>;
-    let geo_kept = geo_of(&held);
-    let geo: &[f64] = match (&args[1], &geo_kept) {
-        (Value::Unit, Some(g)) => g,
-        (Value::Unit, None) => {
-            return Err("gui.flat_emit: no boxes given or kept for this answer".into());
+    }
+}
+
+impl<'a> Fld<'a> {
+    /// A list of interpreter values, borrowed (a wrapped list).
+    fn ast_items(&self) -> Option<&'a [Value]> {
+        match self {
+            Fld::Vm(v) => match &v.data {
+                ValueData::AstList(l) => Some(&l[..]),
+                _ => None,
+            },
+            Fld::Ast(Value::List(l)) => Some(&l[..]),
+            Fld::Ast(_) => None,
         }
-        (v, _) => {
-            geo_read = nums_of(v, "the boxes")?;
-            &geo_read
+    }
+
+    fn items(&self) -> Option<Items<'a>> {
+        match self {
+            Fld::Vm(v) => match &v.data {
+                ValueData::List(l) => Some(Items::Vm(&l[..])),
+                ValueData::AstList(l) => Some(Items::Ast(&l[..])),
+                _ => None,
+            },
+            Fld::Ast(Value::List(l)) => Some(Items::Ast(&l[..])),
+            Fld::Ast(_) => None,
         }
-    };
+    }
+
+    fn ints(&self) -> Option<Ints<'a>> {
+        match self {
+            Fld::Vm(v) => match &v.data {
+                ValueData::IntList(l) => Some(Ints::Raw(&l[..])),
+                ValueData::List(l) => Some(Ints::Vm(&l[..])),
+                ValueData::AstList(l) => Some(Ints::Ast(&l[..])),
+                _ => None,
+            },
+            Fld::Ast(Value::List(l)) => Some(Ints::Ast(&l[..])),
+            Fld::Ast(_) => None,
+        }
+    }
+}
+
+// ── gui.flat_emit ────────────────────────────────────────────────────
+
+/// A node's placements: last frame's (`j` in its lists, its first
+/// placement's path made `path` when that changed), or made now.
+enum Placed<'a> {
+    Kept {
+        j: usize,
+        path: Option<&'a Value>,
+    },
+    Made {
+        recs: Vec<Value>,
+        probs: Vec<Value>,
+        gkey: Value,
+    },
+}
+
+/// What `emit` worked out: each node's placements, what comes before
+/// each (a split's divider), and the leaves left for Loom.
+struct Emitted<'a> {
+    placed: Vec<Placed<'a>>,
+    pre: Vec<Vec<Value>>,
+    todo: Vec<i64>,
+}
+
+/// Each node's placements from the core's boxes `geo`. `cand[i]` is the
+/// placement last frame's lists hold for node i (by index, or by key),
+/// taken unless its parent's gkey changed (`renames`: last frame's gkeys,
+/// by index, when that is to be judged).
+fn emit<'a>(
+    spec: &Spec,
+    inp: &FlatIn<'a>,
+    geo: &[f64],
+    cand: &[Option<(usize, Option<&'a Value>)>],
+    prev: Option<&PrevOut<'a>>,
+    renames: Option<Items<'a>>,
+) -> Res<Emitted<'a>> {
+    let n = inp.n;
+    let held = &inp.st;
     let (iv, kids): (&[i64], &[i64]) = (&held.ints, &held.kids);
-    let nodes = list_of(flat, "nodes")?;
-    let paths = list_of(flat, "paths")?;
-    let indexes = list_of(flat, "index")?;
-    let fgkeys = list_of(flat, "gkeys")?;
-    let glifts = list_of(flat, "glifts")?;
     let fv: &[f64] = &held.floats;
-    if iv.len() < n * FI || geo.len() < n * 4 || nodes.len() < n {
+    let (nodes, paths, indexes, fgkeys) = (inp.nodes, inp.paths, inp.index, inp.gkeys);
+    if iv.len() < n * FI
+        || geo.len() < n * 4
+        || nodes.len() < n
+        || paths.len() < n
+        || indexes.len() < n
+        || fgkeys.len() < n
+        || inp.glifts.len() < n
+    {
         return Err("gui.flat_emit: the arrays and the boxes disagree on the node count".into());
     }
-    let empty: Vec<Value> = Vec::new();
-    let (p_recs, p_gkeys, p_probs, p_lifts) = match prev {
-        Some(m) => (
-            list_of(m, "recs")?,
-            list_of(m, "gkeys")?,
-            list_of(m, "probs")?,
-            list_of(m, "lifts")?,
-        ),
-        None => (&empty[..], &empty[..], &empty[..], &empty[..]),
-    };
-    let reusable = prev.is_some()
-        && p_recs.len() == n
-        && p_gkeys.len() == n
-        && p_probs.len() == n
-        && p_lifts.len() == n;
-
     let accent = spec.tok_of("accent");
     let hairline = spec.tok_of("hairline");
-    let empty_list = list(Vec::new());
-    let mut recs: Vec<Value> = Vec::with_capacity(n);
-    let mut gkeys: Vec<Value> = Vec::with_capacity(n);
-    let mut probs: Vec<Value> = Vec::with_capacity(n);
-    let mut lifts: Vec<Value> = Vec::with_capacity(n);
-    let mut pre: Vec<Value> = vec![empty_list.clone(); n];
+    let mut placed: Vec<Placed<'a>> = Vec::with_capacity(n);
+    // each node's gkey as the interpreter holds it, for its children
+    let mut gk_of: Vec<Value> = Vec::with_capacity(n);
+    let mut pre: Vec<Vec<Value>> = vec![Vec::new(); n];
     let mut renamed = vec![false; n];
-    let mut todo: Vec<Value> = Vec::new();
+    let mut todo: Vec<i64> = Vec::new();
     let g = |i: usize, f: usize| iv[i * FI + f];
     for i in 0..n {
         let pi = g(i, I_PARENT);
         let kind = g(i, I_KIND);
-        let reuse = reusable
-            && keep.as_ref().is_some_and(|k| k.get(i) == Some(&1))
-            && (pi < 0 || !renamed[pi as usize]);
-        if reuse {
-            recs.push(p_recs[i].clone());
-            gkeys.push(p_gkeys[i].clone());
-            probs.push(p_probs[i].clone());
-            lifts.push(p_lifts[i].clone());
+        if let Some(Some((j, path))) = cand.get(i)
+            && (pi < 0 || !renamed[pi as usize])
+            && let Some(prev) = prev
+        {
+            gk_of.push(match renames {
+                Some(_) => prev.gkeys.ast(*j),
+                None => fgkeys[i].clone(),
+            });
+            placed.push(Placed::Kept { j: *j, path: *path });
             continue;
         }
         let node = &nodes[i];
@@ -1664,21 +1909,20 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
             Value::String(s) => s.as_str(),
             _ => "",
         };
-        let index = match indexes[i] {
-            Value::Integer(v) => v,
-            _ => 0,
-        };
+        let index = indexes.get(i);
         let gk = match &fgkeys[i] {
             Value::String(s) => s.as_str().to_string(),
             other => other.to_string(),
         };
-        if reusable && p_gkeys[i] != fgkeys[i] {
+        if let Some(pg) = renames
+            && !pg.same_as(i, &fgkeys[i])
+        {
             renamed[i] = true;
         }
         let parent = if pi < 0 {
             Value::Unit
         } else {
-            gkeys[pi as usize].clone()
+            gk_of[pi as usize].clone()
         };
         let b = (geo[i * 4], geo[i * 4 + 1], geo[i * 4 + 2], geo[i * 4 + 3]);
         let origin = if pi < 0 {
@@ -1688,7 +1932,7 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
         };
         let mut mine: Vec<Value> = Vec::new();
         let mut pr: Vec<Value> = Vec::new();
-        let mut placed = true;
+        let mut is_placed = true;
         match kind {
             0 => {
                 // a group with a `msg` is one control: a button unless it
@@ -1696,7 +1940,7 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
                 let active = *mget(p, "msg") != Value::Unit;
                 let disabled = is_true(mget(p, "disabled"));
                 let default_role = if active { "button" } else { "group" };
-                let mut op = group_op(&spec, p, default_role);
+                let mut op = group_op(spec, p, default_role);
                 op.insert("role".into(), checked_role(p, default_role, &gk, &mut pr));
                 if active {
                     op.insert("disabled".into(), Value::Boolean(disabled));
@@ -1716,7 +1960,7 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
                 ));
             }
             1 => {
-                let mut op = group_op(&spec, p, "group");
+                let mut op = group_op(spec, p, "group");
                 op.insert("role".into(), checked_role(p, "region", &gk, &mut pr));
                 op.insert("scroll".into(), Value::Boolean(true));
                 // `focusable`: the keys scroll it (a picture at its own size)
@@ -1796,7 +2040,7 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
                 );
                 mine.push(me);
                 if cnt > 1 {
-                    pre[kids[first + 1] as usize] = list(vec![div, line]);
+                    pre[kids[first + 1] as usize] = vec![div, line];
                 } else {
                     mine.push(div);
                     mine.push(line);
@@ -1804,12 +2048,12 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
             }
             _ if spec.placed.contains(role) => match role {
                 "text" | "heading" => {
-                    let fsv = font_style_v(&spec, p, role);
+                    let fsv = font_style_v(spec, p, role);
                     let wrap = is_true(mget(p, "wrap"));
                     let op = hm(vec![
                         ("role", st(role)),
                         ("text", mget(p, "text").clone()),
-                        ("style", with_style(&spec, fsv.clone(), mget(p, "style"))),
+                        ("style", with_style(spec, fsv.clone(), mget(p, "style"))),
                         ("level", mget(p, "level").clone()),
                         ("name", mget(p, "name").clone()),
                     ]);
@@ -1817,7 +2061,7 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
                     // its height is its natural one
                     let nh = if wrap {
                         let mut ts = text::system().lock().map_err(|_| "gui: text poisoned")?;
-                        measure(&spec, &mut ts, &text_of(mget(p, "text")), &fsv, b.2)?.1
+                        measure(spec, &mut ts, &text_of(mget(p, "text")), &fsv, b.2)?.1
                     } else {
                         fv.get(i * FF + F_NATH).copied().unwrap_or(0.0)
                     };
@@ -1844,7 +2088,7 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
                         ("text", mget(p, "label").clone()),
                         ("name", mget(p, "name").clone()),
                         ("disabled", Value::Boolean(disabled)),
-                        ("style", with_style(&spec, look, mget(p, "style"))),
+                        ("style", with_style(spec, look, mget(p, "style"))),
                     ]);
                     mine.push(rec(
                         &gk, &parent, index, b, origin, node, op, !disabled, path,
@@ -1857,26 +2101,603 @@ pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
                     ]);
                     mine.push(rec(&gk, &parent, index, b, origin, node, op, false, path));
                 }
-                _ => placed = false,
+                _ => is_placed = false,
             },
-            _ => placed = false,
+            _ => is_placed = false,
         }
-        if !placed {
-            todo.push(Value::Integer(i as i64));
+        if !is_placed {
+            todo.push(i as i64);
         }
-        recs.push(list(mine));
-        gkeys.push(st(&gk));
-        probs.push(list(pr));
-        lifts.push(glifts[i].clone());
+        let gkv = st(&gk);
+        gk_of.push(gkv.clone());
+        placed.push(Placed::Made {
+            recs: mine,
+            probs: pr,
+            gkey: gkv,
+        });
     }
-    Ok(map(vec![
-        ("recs", list(recs)),
-        ("gkeys", list(gkeys)),
-        ("probs", list(probs)),
-        ("lifts", list(lifts)),
-        ("pre", list(pre)),
-        ("todo", list(todo)),
-    ]))
+    Ok(Emitted { placed, pre, todo })
+}
+
+/// `rs` (a node's placements) with its first one's path `path`, as Loom's
+/// keyed keep wrote it (`map_set(rs[0], "path", …)`).
+fn with_first_path(rs: Value, path: &Value) -> Value {
+    match &rs {
+        Value::List(l) if !l.is_empty() => {
+            let mut items = l.as_ref().clone();
+            if let Value::Map(m) = &items[0] {
+                let mut m2 = m.as_ref().clone();
+                m2.insert("path".to_string(), path.clone());
+                items[0] = Value::Map(Arc::new(m2));
+            }
+            Value::List(Arc::new(items))
+        }
+        _ => rs,
+    }
+}
+
+/// `with_first_path` on the VM's form.
+fn with_first_path_vm(rs: OvmValue, path: &Value) -> OvmValue {
+    let ValueData::List(l) = &rs.data else {
+        return rs;
+    };
+    if l.is_empty() {
+        return rs;
+    }
+    let mut items = l.as_ref().clone();
+    items[0] = match &items[0].data {
+        ValueData::Map(m) => {
+            let mut m2 = m.as_ref().clone();
+            m2.insert("path".to_string(), OvmValue::from_ast(path.clone()));
+            OvmValue::new_map(Arc::new(m2))
+        }
+        ValueData::AstMap(m) => {
+            let mut m2 = m.as_ref().clone();
+            m2.insert("path".to_string(), path.clone());
+            OvmValue {
+                data: ValueData::AstMap(Arc::new(m2)),
+            }
+        }
+        _ => items[0].clone(),
+    };
+    OvmValue::new_list(items)
+}
+
+impl Emitted<'_> {
+    /// The answer in the interpreter's form.
+    fn to_ast(self, inp: &FlatIn, prev: Option<&PrevOut>, kept_gkeys_from_prev: bool) -> Value {
+        let n = self.placed.len();
+        let mut recs = Vec::with_capacity(n);
+        let mut gkeys = Vec::with_capacity(n);
+        let mut probs = Vec::with_capacity(n);
+        let mut lifts = Vec::with_capacity(n);
+        for (i, p) in self.placed.into_iter().enumerate() {
+            match p {
+                // (kept only with last frame's lists at hand)
+                Placed::Kept { j, path } => {
+                    let pv = prev.unwrap_or(&NO_PREV);
+                    let rs = pv.recs.ast(j);
+                    recs.push(match path {
+                        Some(path) => with_first_path(rs, path),
+                        None => rs,
+                    });
+                    gkeys.push(if kept_gkeys_from_prev {
+                        pv.gkeys.ast(j)
+                    } else {
+                        inp.gkeys[i].clone()
+                    });
+                    probs.push(pv.probs.ast(j));
+                    lifts.push(pv.lifts.ast(j));
+                }
+                Placed::Made {
+                    recs: r,
+                    probs: pr,
+                    gkey,
+                } => {
+                    recs.push(list(r));
+                    gkeys.push(gkey);
+                    probs.push(list(pr));
+                    lifts.push(inp.glifts[i].clone());
+                }
+            }
+        }
+        let empty = list(Vec::new());
+        let pre: Vec<Value> = self
+            .pre
+            .into_iter()
+            .map(|p| if p.is_empty() { empty.clone() } else { list(p) })
+            .collect();
+        map(vec![
+            ("recs", list(recs)),
+            ("gkeys", list(gkeys)),
+            ("probs", list(probs)),
+            ("lifts", list(lifts)),
+            ("pre", list(pre)),
+            (
+                "todo",
+                list(self.todo.into_iter().map(Value::Integer).collect()),
+            ),
+        ])
+    }
+
+    /// The answer in the VM's form: placements Loom reads natively — a
+    /// map's field a lookup, not a conversion a read.
+    fn to_vm(self, inp: &FlatIn, prev: Option<&PrevOut>, kept_gkeys_from_prev: bool) -> OvmValue {
+        let n = self.placed.len();
+        let mut recs = Vec::with_capacity(n);
+        let mut gkeys = Vec::with_capacity(n);
+        let mut probs = Vec::with_capacity(n);
+        let mut lifts = Vec::with_capacity(n);
+        for (i, p) in self.placed.into_iter().enumerate() {
+            match p {
+                Placed::Kept { j, path } => {
+                    let pv = prev.unwrap_or(&NO_PREV);
+                    let rs = pv.recs.vm(j);
+                    recs.push(match path {
+                        Some(path) => with_first_path_vm(rs, path),
+                        None => rs,
+                    });
+                    gkeys.push(if kept_gkeys_from_prev {
+                        pv.gkeys.vm(j)
+                    } else {
+                        OvmValue::from_ast(inp.gkeys[i].clone())
+                    });
+                    probs.push(pv.probs.vm(j));
+                    lifts.push(pv.lifts.vm(j));
+                }
+                Placed::Made {
+                    recs: r,
+                    probs: pr,
+                    gkey,
+                } => {
+                    recs.push(OvmValue::new_list(r.iter().map(vm_rec).collect()));
+                    gkeys.push(OvmValue::from_ast(gkey));
+                    probs.push(OvmValue::new_list(
+                        pr.into_iter().map(OvmValue::from_ast).collect(),
+                    ));
+                    lifts.push(vm_lifts(&inp.glifts[i]));
+                }
+            }
+        }
+        let empty = OvmValue::new_list(Vec::new());
+        let pre: Vec<OvmValue> = self
+            .pre
+            .into_iter()
+            .map(|p| {
+                if p.is_empty() {
+                    empty.clone()
+                } else {
+                    OvmValue::new_list(p.iter().map(vm_rec).collect())
+                }
+            })
+            .collect();
+        vm_map(vec![
+            ("recs", OvmValue::new_list(recs)),
+            ("gkeys", OvmValue::new_list(gkeys)),
+            ("probs", OvmValue::new_list(probs)),
+            ("lifts", OvmValue::new_list(lifts)),
+            ("pre", OvmValue::new_list(pre)),
+            (
+                "todo",
+                OvmValue::new_list(self.todo.into_iter().map(OvmValue::new_integer).collect()),
+            ),
+        ])
+    }
+}
+
+fn vm_map(fields: Vec<(&str, OvmValue)>) -> OvmValue {
+    let mut m = crate::ovm::value::OvmMap::with_capacity_and_hasher(fields.len(), Default::default());
+    for (k, v) in fields {
+        m.insert(k.to_string(), v);
+    }
+    OvmValue::new_map(Arc::new(m))
+}
+
+/// A value the engine built, in the VM's own collections all the way
+/// down (a placement's op, its style): read in place, never converted.
+fn vm_deep(v: &Value) -> OvmValue {
+    match v {
+        Value::Map(m) => {
+            let mut out =
+                crate::ovm::value::OvmMap::with_capacity_and_hasher(m.len(), Default::default());
+            for (k, x) in m.iter() {
+                out.insert(k.clone(), vm_deep(x));
+            }
+            OvmValue::new_map(Arc::new(out))
+        }
+        Value::List(l) => OvmValue::new_list(l.iter().map(vm_deep).collect()),
+        Value::Tuple(t) => OvmValue::new_tuple(t.iter().map(vm_deep).collect()),
+        other => OvmValue::from_ast(other.clone()),
+    }
+}
+
+/// A placement in the VM's form: its fields the VM's own, but its view
+/// node (`node`, the program's, read a prop at a time) wrapped as it is.
+fn vm_rec(v: &Value) -> OvmValue {
+    match v {
+        Value::Map(m) => {
+            let mut out =
+                crate::ovm::value::OvmMap::with_capacity_and_hasher(m.len(), Default::default());
+            for (k, x) in m.iter() {
+                out.insert(
+                    k.clone(),
+                    if k == "node" {
+                        OvmValue::from_ast(x.clone())
+                    } else {
+                        vm_deep(x)
+                    },
+                );
+            }
+            OvmValue::new_map(Arc::new(out))
+        }
+        other => OvmValue::from_ast(other.clone()),
+    }
+}
+
+/// A node's lifted layers (view nodes) in the VM's form: the list the
+/// VM's own, each node wrapped.
+fn vm_lifts(v: &Value) -> OvmValue {
+    match v {
+        Value::List(l) => OvmValue::new_list(
+            l.iter().map(|x| OvmValue::from_ast(x.clone())).collect(),
+        ),
+        other => OvmValue::from_ast(other.clone()),
+    }
+}
+
+// ── keyed: what last frame placed that this frame keeps ───────────────
+
+/// Last frame's flatten answer, for the keyed keep.
+struct PrevFlat<'a> {
+    st: Arc<FlatState>,
+    nodes: &'a [Value],
+    paths: &'a [Value],
+    index: Ints<'a>,
+    glifts: &'a [Value],
+}
+
+impl<'a> PrevFlat<'a> {
+    fn of_ast(v: &'a Value) -> Option<PrevFlat<'a>> {
+        let f = fields(v)?;
+        let st = state_of(f)?;
+        let l = |k: &str| match f.get(k) {
+            Some(Value::List(l)) => Some(&l[..]),
+            _ => None,
+        };
+        Some(PrevFlat {
+            st,
+            nodes: l("nodes")?,
+            paths: l("paths")?,
+            index: Ints::Ast(l("index")?),
+            glifts: l("glifts")?,
+        })
+    }
+
+    fn of_vm(v: &'a OvmValue) -> Option<PrevFlat<'a>> {
+        let i = FlatIn::of_vm(v)?;
+        Some(PrevFlat {
+            st: i.st,
+            nodes: i.nodes,
+            paths: i.paths,
+            index: i.index,
+            glifts: i.glifts,
+        })
+    }
+}
+
+/// `a == b` as olang answers it, false where it raises (Loom's `ly_same`).
+fn ly_same(a: &Value, b: &Value) -> bool {
+    matches!(crate::interpreter::ops::search_eq(a, b), Ok(true))
+}
+
+fn field_or_unit<'a>(v: &'a Value, k: &str) -> &'a Value {
+    match v {
+        Value::Map(m) => m.get(k).unwrap_or(&UNIT.0),
+        _ => &UNIT.0,
+    }
+}
+
+/// Loom's `ly_own_same`: the same role, key and props.
+fn ly_own_same(a: &Value, b: &Value) -> bool {
+    ly_same(field_or_unit(a, "role"), field_or_unit(b, "role"))
+        && ly_same(field_or_unit(a, "key"), field_or_unit(b, "key"))
+        && ly_same(field_or_unit(a, "props"), field_or_unit(b, "props"))
+}
+
+/// Where each node's subtree ends in tree order (flex.ol's `subtree_ends`).
+fn subtree_ends(n: usize, iv: &[i64], kids: &[i64]) -> Vec<usize> {
+    let mut e = vec![0usize; n];
+    for i in (0..n).rev() {
+        let cnt = iv[i * FI + I_COUNT];
+        e[i] = if cnt == 0 {
+            i + 1
+        } else {
+            let last = kids[(iv[i * FI + I_FIRST] + cnt - 1) as usize] as usize;
+            e[last]
+        };
+    }
+    e
+}
+
+// A subtree this large or smaller is compared whole (Loom's LY_WHOLE_MAX).
+const WHOLE_MAX: usize = 400;
+
+/// Loom's keyed keep (`ly_keyed_keep`, lib/layout.ol), on a frame whose
+/// shape changed: a node is kept when last frame had its key and it is
+/// placed as it was — its own role, key and props the same, not placed
+/// every frame, the same kind and number of children, the same box and
+/// index under a parent with the same key and origin, the same layers
+/// lifted. Subtrees that are what they were, at the same paths, are
+/// judged in one run. Answers each node's source in last frame's lists
+/// (and its first placement's new path, when that changed).
+fn keyed_keep<'a>(
+    inp: &FlatIn<'a>,
+    geo: &[f64],
+    pf: &PrevFlat<'a>,
+    old: &[f64],
+    ogk: Items<'a>,
+) -> Vec<Option<(usize, Option<&'a Value>)>> {
+    let n = inp.n;
+    let on = pf.st.n;
+    let mut cand: Vec<Option<(usize, Option<&'a Value>)>> = vec![None; n];
+    let (iv, kids) = (&inp.st.ints[..], &inp.st.kids[..]);
+    let (oi, okids) = (&pf.st.ints[..], &pf.st.kids[..]);
+    if iv.len() < n * FI
+        || oi.len() < on * FI
+        || geo.len() < n * 4
+        || old.len() < on * 4
+        || ogk.len() < on
+        || pf.nodes.len() < on
+        || pf.paths.len() < on
+        || pf.index.len() < on
+        || pf.glifts.len() < on
+    {
+        return cand;
+    }
+    let gk = |i: usize| match &inp.gkeys[i] {
+        Value::String(s) => Some(s.as_str()),
+        _ => None,
+    };
+    let mut at: HashMap<&str, usize> = HashMap::default();
+    for j in 0..on {
+        if let Some(k) = ogk.str_at(j) {
+            at.insert(k, j);
+        }
+    }
+    let ends = subtree_ends(n, iv, kids);
+    let oends = subtree_ends(on, oi, okids);
+    let i_of = |i: usize, f: usize| iv[i * FI + f];
+    let o_of = |j: usize, f: usize| oi[j * FI + f];
+    let box_same = |i: usize, j: usize| (0..4).all(|c| geo[i * 4 + c] == old[j * 4 + c]);
+    // a parent's origin unmoved (the roots: both roots)
+    let origin_same = |pi: i64, pj: i64| {
+        if pi < 0 {
+            pj < 0
+        } else {
+            pj >= 0
+                && geo[pi as usize * 4] == old[pj as usize * 4]
+                && geo[pi as usize * 4 + 1] == old[pj as usize * 4 + 1]
+        }
+    };
+    let gk_same = |i: usize, j: usize| gk(i).is_some() && gk(i) == ogk.str_at(j);
+    let lifts_same = |i: usize, j: usize| {
+        let empty = |v: &Value| matches!(v, Value::List(l) if l.is_empty());
+        (empty(&inp.glifts[i]) && empty(&pf.glifts[j])) || ly_same(&inp.glifts[i], &pf.glifts[j])
+    };
+    let mut i = 0;
+    while i < n {
+        let j0 = gk(i).and_then(|k| at.get(k).copied());
+        let size = ends[i] - i;
+        // moved on the page: what it holds moved with it, and none of it
+        // is kept
+        let shifted = j0.is_some_and(|j| geo[i * 4] != old[j * 4] || geo[i * 4 + 1] != old[j * 4 + 1]);
+        let whole = !shifted
+            && j0.is_some_and(|j| {
+                size > 1
+                    && size <= WHOLE_MAX
+                    && oends[j] - j == size
+                    && ly_same(&inp.nodes[i], &pf.nodes[j])
+            });
+        let moved = match j0 {
+            None => true,
+            Some(j) => inp.paths[i] != pf.paths[j],
+        };
+        let run = whole && !moved;
+        if run {
+            let j0 = j0.unwrap_or(0);
+            // what the arrays do not say of its first: its parent's key,
+            // its index
+            let pi = i_of(i, I_PARENT);
+            let pj = o_of(j0, I_PARENT);
+            let first_ok = (if pi < 0 {
+                pj < 0
+            } else {
+                pj >= 0 && gk_same(pi as usize, pj as usize)
+            }) && inp.index.at(i) == pf.index.at(j0);
+            // kept_runs (lib/flex.ol)
+            for d in 0..size {
+                let (a, b) = (i + d, j0 + d);
+                let v = i_of(a, I_FRESH) == 0
+                    && o_of(b, I_KIND) == i_of(a, I_KIND)
+                    && o_of(b, I_COUNT) == i_of(a, I_COUNT)
+                    && box_same(a, b)
+                    && origin_same(i_of(a, I_PARENT), o_of(b, I_PARENT));
+                if v && (d > 0 || first_ok) {
+                    cand[a] = Some((b, None));
+                }
+            }
+        }
+        let count = if run || shifted {
+            0
+        } else if whole {
+            size
+        } else {
+            1
+        };
+        for d in 0..count {
+            let ii = i + d;
+            let Some(j) = j0.map(|j| j + d) else {
+                continue;
+            };
+            let inner = whole && d > 0;
+            let pi = i_of(ii, I_PARENT);
+            let pj = o_of(j, I_PARENT);
+            let same = i_of(ii, I_FRESH) == 0
+                && o_of(j, I_KIND) == i_of(ii, I_KIND)
+                && o_of(j, I_COUNT) == i_of(ii, I_COUNT)
+                && box_same(ii, j)
+                && origin_same(pi, pj)
+                && (if inner {
+                    gk_same(ii, j) && pi >= 0 && pj >= 0 && gk_same(pi as usize, pj as usize)
+                } else {
+                    (pi < 0 || (pj >= 0 && gk_same(pi as usize, pj as usize)))
+                        && inp.index.at(ii) == pf.index.at(j)
+                        && ly_own_same(&inp.nodes[ii], &pf.nodes[j])
+                })
+                && lifts_same(ii, j);
+            if same {
+                let path = (inp.paths[ii] != pf.paths[j]).then_some(&inp.paths[ii]);
+                cand[ii] = Some((j, path));
+            }
+        }
+        i += if run || shifted { size } else { count };
+    }
+    cand
+}
+
+/// The boxes for an answer: given (`geo`), else those kept for it.
+fn boxes_for(held: &FlatState, given: Option<Vec<f64>>) -> Res<Arc<Vec<f64>>> {
+    match given {
+        Some(g) => Ok(Arc::new(g)),
+        None => geo_of(held).ok_or_else(|| "gui.flat_emit: no boxes given or kept for this answer".to_string()),
+    }
+}
+
+/// `gui.flat_emit(flat, geo, spec, keep, prev)`: each node's placements
+/// from the core's boxes `geo` (x, y, w, h a node; `()`: those
+/// `gui.flat_keep` kept), by index — `#{ recs, gkeys, probs, lifts, pre,
+/// todo }`. A node `keep` marks (1) takes `prev`'s (last frame's answer,
+/// as Loom completed it) unless its parent's gkey changed. With `keep`
+/// `"keyed"` (a frame whose shape changed), `prev` is `#{ flat, out }`,
+/// last frame's flatten answer and its placements, and the nodes kept are
+/// worked out here by engine key (Loom's keyed keep: `gui.platform()`
+/// says `flat_keyed`). Groups, regions, splits, and the leaves in
+/// `spec.placed` are placed here; the other leaves are listed in `todo`
+/// for Loom to place, their entries left empty. `pre[i]` is what comes
+/// before node i (a split's divider, before its second pane).
+pub fn gui_flat_emit(args: Vec<Value>) -> Res<Value> {
+    if args.len() != 5 {
+        return Err(format!(
+            "gui.flat_emit: expected 5 arguments, got {}",
+            args.len()
+        ));
+    }
+    let flat = fields(&args[0]).ok_or("gui.flat_emit: the arrays must be a map")?;
+    let spec = Spec::read(&args[2])?;
+    let inp = FlatIn::of_ast(flat)?;
+    let given = match &args[1] {
+        Value::Unit => None,
+        v => Some(nums_of(v, "the boxes")?),
+    };
+    let geo = boxes_for(&inp.st, given)?;
+    let n = inp.n;
+    match (&args[3], &args[4]) {
+        (Value::String(k), prev) if k.as_str() == "keyed" => {
+            let pv = fields(prev);
+            let pout = match pv.and_then(|m| m.get("out")) {
+                Some(Value::Map(m)) => Some(PrevOut::of_ast(m)?),
+                _ => None,
+            };
+            let pflat = pv.and_then(|m| m.get("flat")).and_then(PrevFlat::of_ast);
+            let cand = match (&pout, &pflat) {
+                (Some(po), Some(pf)) => match geo_of(&pf.st) {
+                    Some(old) if po.all_len(pf.st.n) => keyed_keep(&inp, &geo, pf, &old, po.gkeys),
+                    _ => Vec::new(),
+                },
+                _ => Vec::new(),
+            };
+            let e = emit(&spec, &inp, &geo, &cand, pout.as_ref(), None)?;
+            Ok(e.to_ast(&inp, pout.as_ref(), false))
+        }
+        (keep, prev) => {
+            let keep = match keep {
+                Value::Unit => None,
+                v => Some(ints_of(v, "keep")?),
+            };
+            let prev = match (prev, &keep) {
+                (Value::Map(m), Some(_)) => Some(PrevOut::of_ast(m)?),
+                _ => None,
+            };
+            let reusable = prev.as_ref().is_some_and(|p| p.all_len(n));
+            let cand: Vec<Option<(usize, Option<&Value>)>> = match (&keep, reusable) {
+                (Some(k), true) => (0..n).map(|i| (k.get(i) == Some(&1)).then_some((i, None))).collect(),
+                _ => Vec::new(),
+            };
+            let renames = if reusable { prev.as_ref().map(|p| p.gkeys) } else { None };
+            let e = emit(&spec, &inp, &geo, &cand, prev.as_ref(), renames)?;
+            Ok(e.to_ast(&inp, prev.as_ref(), true))
+        }
+    }
+}
+
+/// The VM's own `gui.flat_emit`: the flatten answer and last frame's
+/// placements read where they are, the placements answered in the VM's
+/// form. `None` for arguments of another shape, and for any error (the
+/// call then goes the usual way, which raises it).
+fn vm_flat_emit(args: &[OvmValue]) -> Option<Res<OvmValue>> {
+    if args.len() != 5 {
+        return None;
+    }
+    let inp = FlatIn::of_vm(&args[0])?;
+    let spec_v = args[2].to_ast().ok()?;
+    let spec = Spec::read(&spec_v).ok()?;
+    let given = match &args[1].data {
+        ValueData::Unit => None,
+        ValueData::FloatList(g) => Some(g.as_ref().clone()),
+        _ => return None,
+    };
+    let geo = boxes_for(&inp.st, given).ok()?;
+    let n = inp.n;
+    let keyed = matches!(&args[3].data, ValueData::String(k) if k.as_str() == "keyed");
+    if keyed {
+        let pout = match vm_field(&args[4], "out") {
+            Some(Fld::Vm(m)) => PrevOut::of_vm(m),
+            _ => None,
+        };
+        let pflat = match vm_field(&args[4], "flat") {
+            Some(Fld::Vm(f)) => PrevFlat::of_vm(f),
+            _ => None,
+        };
+        let cand = match (&pout, &pflat) {
+            (Some(po), Some(pf)) => match geo_of(&pf.st) {
+                Some(old) if po.all_len(pf.st.n) => keyed_keep(&inp, &geo, pf, &old, po.gkeys),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
+        let e = emit(&spec, &inp, &geo, &cand, pout.as_ref(), None).ok()?;
+        Some(Ok(e.to_vm(&inp, pout.as_ref(), false)))
+    } else {
+        let keep: Option<Ints> = match &args[3].data {
+            ValueData::Unit => None,
+            ValueData::IntList(k) => Some(Ints::Raw(&k[..])),
+            ValueData::List(k) => Some(Ints::Vm(&k[..])),
+            ValueData::AstList(k) => Some(Ints::Ast(&k[..])),
+            _ => return None,
+        };
+        let prev = match (&args[4].data, &keep) {
+            (ValueData::Map(_) | ValueData::AstMap(_), Some(_)) => Some(PrevOut::of_vm(&args[4])?),
+            _ => None,
+        };
+        let reusable = prev.as_ref().is_some_and(|p| p.all_len(n));
+        let cand: Vec<Option<(usize, Option<&Value>)>> = match (&keep, reusable) {
+            (Some(k), true) => (0..n).map(|i| (k.at(i) == Some(1)).then_some((i, None))).collect(),
+            _ => Vec::new(),
+        };
+        let renames = if reusable { prev.as_ref().map(|p| p.gkeys) } else { None };
+        let e = emit(&spec, &inp, &geo, &cand, prev.as_ref(), renames).ok()?;
+        Some(Ok(e.to_vm(&inp, prev.as_ref(), true)))
+    }
 }
 
 /// `gui.flat_join(pre, recs, probs, lifts)`: the frame's placements in
@@ -1913,4 +2734,106 @@ pub fn gui_flat_join(args: Vec<Value>) -> Res<Value> {
         ("problems", list(join(&[&args[2]]))),
         ("lifted", list(join(&[&args[3]]))),
     ]))
+}
+
+/// The VM's own `gui.flat_join`: the lists joined in the VM's form (a
+/// list the VM answered stays its own; a wrapped one's items convert).
+/// `None` for a typed list (the call then goes the usual way).
+fn vm_flat_join(args: &[OvmValue]) -> Option<Res<OvmValue>> {
+    if args.len() != 4 {
+        return None;
+    }
+    fn items(v: &OvmValue) -> Option<Option<Items<'_>>> {
+        Some(match &v.data {
+            ValueData::List(l) => Some(Items::Vm(&l[..])),
+            ValueData::AstList(l) => Some(Items::Ast(&l[..])),
+            ValueData::IntList(_) | ValueData::FloatList(_) => return None,
+            _ => None,
+        })
+    }
+    let join = |vs: &[Option<Items>]| -> OvmValue {
+        let mut out: Vec<OvmValue> = Vec::new();
+        let n = vs.iter().flatten().map(|l| l.len()).max().unwrap_or(0);
+        for i in 0..n {
+            for l in vs.iter().flatten() {
+                match l {
+                    Items::Vm(l) => match l.get(i).map(|x| &x.data) {
+                        Some(ValueData::List(xs)) => out.extend(xs.iter().cloned()),
+                        Some(ValueData::AstList(xs)) => {
+                            out.extend(xs.iter().map(|x| OvmValue::from_ast(x.clone())))
+                        }
+                        _ => {}
+                    },
+                    Items::Ast(l) => {
+                        if let Some(Value::List(xs)) = l.get(i) {
+                            out.extend(xs.iter().map(|x| OvmValue::from_ast(x.clone())));
+                        }
+                    }
+                }
+            }
+        }
+        OvmValue::new_list(out)
+    };
+    let (pre, recs, probs, lifts) = (
+        items(&args[0])?,
+        items(&args[1])?,
+        items(&args[2])?,
+        items(&args[3])?,
+    );
+    Some(Ok(vm_map(vec![
+        ("nodes", join(&[pre, recs])),
+        ("problems", join(&[probs])),
+        ("lifted", join(&[lifts])),
+    ])))
+}
+
+/// The VM's own `gui.flatten`: the view and spec converted as any call's
+/// arguments are (the conversion keeps what it converted, by identity),
+/// and the answer in the VM's form — its lists of view nodes, paths and
+/// keys wrapped where they are, its lists of integers (`index`, `wraps`,
+/// `changed`) typed, so the passes read them natively. `None` on an
+/// error (the call then goes the usual way, which raises it).
+fn vm_flatten(args: &[OvmValue]) -> Option<Res<OvmValue>> {
+    if !(2..=4).contains(&args.len()) {
+        return None;
+    }
+    let ast: Vec<Value> = args
+        .iter()
+        .map(|a| a.to_ast().ok())
+        .collect::<Option<Vec<_>>>()?;
+    let answer = gui_flatten(ast).ok()?;
+    Some(Ok(vm_flat_answer(answer)))
+}
+
+fn vm_flat_answer(v: Value) -> OvmValue {
+    let m = match &v {
+        Value::Map(m) => m.clone(),
+        _ => return OvmValue::from_ast(v),
+    };
+    let mut out = crate::ovm::value::OvmMap::with_capacity_and_hasher(m.len(), Default::default());
+    for (k, x) in m.iter() {
+        let vm = match (k.as_str(), x) {
+            ("nodes" | "paths" | "gkeys" | "glifts", Value::List(l)) => OvmValue {
+                data: ValueData::AstList(l.clone()),
+            },
+            ("index" | "wraps" | "changed", Value::List(l)) => {
+                match l
+                    .iter()
+                    .map(|e| match e {
+                        Value::Integer(i) => Some(*i),
+                        _ => None,
+                    })
+                    .collect::<Option<Vec<i64>>>()
+                {
+                    Some(ints) => OvmValue {
+                        data: ValueData::IntList(Arc::new(ints)),
+                    },
+                    None => OvmValue::from_ast(x.clone()),
+                }
+            }
+            _ => OvmValue::from_ast(x.clone()),
+        };
+        out.insert(k.clone(), vm);
+    }
+    OvmValue::new_map(Arc::new(out))
 }

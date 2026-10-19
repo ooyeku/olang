@@ -503,7 +503,7 @@ impl Default for JitCache {
 }
 
 fn jit_debug() -> bool {
-    std::env::var_os("OLANG_JIT_DEBUG").is_some()
+    env_on!("OLANG_JIT_DEBUG")
 }
 
 // Field-kind codes shared between codegen and the host helper.

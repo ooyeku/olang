@@ -14,6 +14,17 @@
 //! the engines were wired into execution. See docs/ovm.md for the
 //! architecture that actually runs.
 
+/// Whether the environment variable `$name` is set, read once a process:
+/// a debug switch on a hot path (`getenv` takes the environment's lock
+/// and scans it, and a VM call or a conversion that asked it each time
+/// spent a tenth of a frame there).
+macro_rules! env_on {
+    ($name:literal) => {{
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var_os($name).is_some())
+    }};
+}
+
 pub mod bytecode; // Register-based bytecode VM
 pub mod gc; // Safepoint coordination flags
 #[cfg(feature = "native")]

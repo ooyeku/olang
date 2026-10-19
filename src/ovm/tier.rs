@@ -716,7 +716,7 @@ impl BytecodeTier {
         if self.vm.has_lazy_events() {
             self.sync_lazy();
         }
-        if std::env::var_os("OLANG_COLLECTIONS_ON_INTERP").is_some()
+        if env_on!("OLANG_COLLECTIONS_ON_INTERP")
             && let Some(def_file) = func.def_file.as_deref()
             && Self::INTERPRETER_RESIDENT.contains(&def_file)
         {
@@ -838,7 +838,7 @@ impl BytecodeTier {
         if self.vm.has_lazy_events() {
             self.sync_lazy();
         }
-        if std::env::var_os("OLANG_DEBUG_HOF").is_some() {
+        if env_on!("OLANG_DEBUG_HOF") {
             eprintln!(
                 "[hof] tier {} n={} -> {}",
                 name,
@@ -896,7 +896,7 @@ impl BytecodeTier {
         if self.vm.has_lazy_events() {
             self.sync_lazy();
         }
-        if std::env::var_os("OLANG_DEBUG_HOF").is_some() {
+        if env_on!("OLANG_DEBUG_HOF") {
             eprintln!(
                 "[hof] tier {} over {}..{}{} -> {}",
                 name,
@@ -1329,7 +1329,7 @@ impl BytecodeTier {
         // cache of conversions cannot detect.
         if matches!(arg, Value::List(_)) {
             let owned = std::mem::replace(arg, Value::Unit);
-            if std::env::var_os("OLANG_DEBUG_ASTLIST").is_some()
+            if env_on!("OLANG_DEBUG_ASTLIST")
                 && let Value::List(items) = &owned
                 && items.len() > 64
             {
