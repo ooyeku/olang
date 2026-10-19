@@ -41,6 +41,12 @@ pub fn note(text: String) {
 /// Run `f`; a panic inside it is caught and answered as `Err(what
 /// panicked, at file:line)`. `what` names the place for that text.
 pub fn catch<R>(what: &str, f: impl FnOnce() -> R) -> Result<R, String> {
+    catch_named(|| what.to_string(), f)
+}
+
+/// [`catch`], the place's name made only when something panicked (a hot
+/// path pays no allocation).
+pub fn catch_named<R>(what: impl FnOnce() -> String, f: impl FnOnce() -> R) -> Result<R, String> {
     DEPTH.with(|d| d.set(d.get() + 1));
     let r = catch_unwind(AssertUnwindSafe(f));
     DEPTH.with(|d| d.set(d.get() - 1));
@@ -55,7 +61,7 @@ pub fn catch<R>(what: &str, f: impl FnOnce() -> R) -> Result<R, String> {
                 "a panic".to_string()
             }
         });
-        format!("{what}: {message}")
+        format!("{}: {message}", what())
     })
 }
 
@@ -98,13 +104,20 @@ pub fn arm(site: &str) {
     }
 }
 
+/// Whether any place may be armed (a test's): when not, [`inject`] is
+/// never needed (a hot path asks this before it names its place).
+#[inline]
+pub fn any_armed() -> bool {
+    // one load after the first: nothing armed is the common case
+    static ANY: OnceLock<bool> = OnceLock::new();
+    *ANY.get_or_init(|| std::env::var_os("OLANG_TEST_PANIC").is_some())
+        || ARMED_BY_CALL.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// A place a test can make panic: panics once when `site` is armed.
 #[inline]
 pub fn inject(site: &str) {
-    // one load after the first: nothing armed is the common case
-    static ANY: OnceLock<bool> = OnceLock::new();
-    let maybe = *ANY.get_or_init(|| std::env::var_os("OLANG_TEST_PANIC").is_some());
-    if !maybe && !ARMED_BY_CALL.load(std::sync::atomic::Ordering::Relaxed) {
+    if !any_armed() {
         return;
     }
     let hit = armed().lock().map(|mut a| a.remove(site)).unwrap_or(false);

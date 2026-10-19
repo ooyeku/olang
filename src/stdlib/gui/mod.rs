@@ -114,13 +114,20 @@ pub fn create_gui_module() -> Value {
 /// (`apply`, `open`, …), a raise from any other. The windows' states are
 /// made usable again.
 pub fn call_gui_function(name: &str, args: Vec<Value>) -> DynRes {
-    let site = format!("gui.{name}");
-    match crate::contain::catch(&site, || {
-        crate::contain::inject(&site);
-        gui_function(name, args)
-    }) {
+    // the place named only when it is needed (`gui.measure` runs
+    // thousands of times a frame)
+    match crate::contain::catch_named(
+        || format!("gui.{name}"),
+        || {
+            if crate::contain::any_armed() {
+                crate::contain::inject(&format!("gui.{name}"));
+            }
+            gui_function(name, args)
+        },
+    ) {
         Ok(r) => r,
         Err(e) => {
+            let site = format!("gui.{name}");
             platform::contained_problem(&site, &e);
             let said = format!("{e} (contained: the program goes on)");
             // a builtin that answers a Result answers this one as `Err`;
