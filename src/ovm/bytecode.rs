@@ -1485,6 +1485,51 @@ pub static BRIDGE_BUILDS: std::sync::atomic::AtomicUsize = std::sync::atomic::At
 pub static BRIDGE_BUILD_MICROS: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
+/// Builtin calls that went through the bridge, by name: calls and
+/// microseconds (conversions both ways included), kept only under
+/// `OLANG_TIER_STATS=1`, which prints them at exit — what a hot loop
+/// still pays the boundary for.
+pub static BRIDGE_CALLS: std::sync::Mutex<Option<rustc_hash::FxHashMap<String, (u64, u64)>>> =
+    std::sync::Mutex::new(None);
+
+fn bridge_stats_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| matches!(std::env::var("OLANG_TIER_STATS").as_deref(), Ok("1")))
+}
+
+/// Counts one bridged call when dropped (every way out of the call).
+struct BridgeCount {
+    name: String,
+    t0: std::time::Instant,
+}
+
+impl Drop for BridgeCount {
+    fn drop(&mut self) {
+        let us = self.t0.elapsed().as_micros() as u64;
+        if let Ok(mut m) = BRIDGE_CALLS.lock() {
+            let e = m
+                .get_or_insert_with(Default::default)
+                .entry(std::mem::take(&mut self.name))
+                .or_insert((0, 0));
+            e.0 += 1;
+            e.1 += us;
+        }
+    }
+}
+
+/// The bridged calls counted so far, most expensive first.
+pub fn bridge_calls() -> Vec<(String, u64, u64)> {
+    let mut out: Vec<(String, u64, u64)> = match BRIDGE_CALLS.lock() {
+        Ok(m) => m
+            .as_ref()
+            .map(|m| m.iter().map(|(k, &(n, us))| (k.clone(), n, us)).collect())
+            .unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+    out.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+    out
+}
+
 impl BytecodeVm {
     pub fn new() -> Self {
         // Builtins whose calls the compiler will emit rather than refuse.
@@ -3045,7 +3090,7 @@ impl BytecodeVm {
         let saved = self
             .execution_state
             .push_frame_taking(bytecode.register_count as usize, args);
-        if std::env::var_os("OLANG_DEBUG_ASTLIST").is_some() {
+        if env_on!("OLANG_DEBUG_ASTLIST") {
             for r in 0..bytecode.param_count {
                 if let Ok(v) = self.execution_state.register_ref(Register(r as u32))
                     && let crate::ovm::value::ValueData::AstList(items) = &v.data
@@ -3329,7 +3374,7 @@ impl BytecodeVm {
         native: &OvmValue,
     ) {
         self.stats.verified_calls += 1;
-        let selftest = std::env::var_os("OLANG_VERIFY_SELFTEST").is_some();
+        let selftest = env_on!("OLANG_VERIFY_SELFTEST");
         // Two maps (or records) built by the two tiers are two
         // allocations: `OvmValue`'s equality compares those by pointer,
         // so the results are compared as values (every Studio run under
@@ -3437,7 +3482,7 @@ impl BytecodeVm {
     #[cfg(feature = "native")]
     fn try_osr(&mut self, bytecode: &CompiledBytecode, head: usize) -> Option<usize> {
         use crate::ovm::jit::Kind as JitKind;
-        if std::env::var_os("OLANG_OSR_OFF").is_some() {
+        if env_on!("OLANG_OSR_OFF") {
             return None;
         }
         let fid = bytecode.function_id;
@@ -3475,7 +3520,7 @@ impl BytecodeVm {
             }
         }
         let region = self.osr_regions.get(&(fid, head))?.clone()?;
-        let osr_debug = std::env::var_os("OLANG_OSR_DEBUG").is_some();
+        let osr_debug = env_on!("OLANG_OSR_DEBUG");
         if region.head != head || region.live_in.len() > crate::ovm::jit::MAX_PARAMS {
             if osr_debug {
                 if region.head != head {
@@ -4531,7 +4576,7 @@ impl BytecodeVm {
                         let ValueData::AstList(mut arc) = target_val.into_data() else {
                             unreachable!()
                         };
-                        if std::env::var_os("OLANG_DEBUG_ASTLIST").is_some()
+                        if env_on!("OLANG_DEBUG_ASTLIST")
                             && std::sync::Arc::strong_count(&arc) > 1
                         {
                             let mut holders = Vec::new();
@@ -4676,7 +4721,7 @@ impl BytecodeVm {
                         let ValueData::AstList(mut arc) = target_val.into_data() else {
                             unreachable!()
                         };
-                        if std::env::var_os("OLANG_DEBUG_ASTLIST").is_some()
+                        if env_on!("OLANG_DEBUG_ASTLIST")
                             && std::sync::Arc::strong_count(&arc) > 1
                         {
                             let holders = self.execution_state.debug_slots_holding(&arc);
@@ -4992,6 +5037,16 @@ impl BytecodeVm {
                                 OvmValue {
                                     data: ValueData::Map(arc),
                                 },
+                            )?;
+                        }
+                        // A small wrapped map written a collection the VM
+                        // built becomes the VM's own (AST_MAP_PROMOTE).
+                        ValueData::AstMap(arc) if v.promotes_wrapper(arc.len()) => {
+                            let mut m = OvmValue::force_ast_map(&arc);
+                            m.insert(key_str.to_string(), v);
+                            self.execution_state.set_register(
+                                *target,
+                                OvmValue::new_map(std::sync::Arc::new(m)),
                             )?;
                         }
                         // A wrapped interpreter map stays a wrapper: clone
@@ -7101,7 +7156,7 @@ impl BytecodeVm {
             }
         }
         self.evict_compiled(&ids);
-        if std::env::var_os("OLANG_DEBUG_HOF_SWEEP").is_some() {
+        if env_on!("OLANG_DEBUG_HOF_SWEEP") {
             eprintln!(
                 "[hof-sweep] evicted={} live={} owned={} retired={} bytecode_cache={} hot={}",
                 ids.len(),
@@ -7299,7 +7354,7 @@ impl BytecodeVm {
                         let compiled = self.compile_hof_dependency(&callee, 0);
                         self.hof_track = tracked;
                         if !compiled && !self.hof_bridge_callee(func, &callee) {
-                            if std::env::var_os("OLANG_DEBUG_HOF").is_some() {
+                            if env_on!("OLANG_DEBUG_HOF") {
                                 eprintln!(
                                     "[hof] '{}' declined: callee '{}' does not compile",
                                     decl.name, callee
@@ -7314,7 +7369,7 @@ impl BytecodeVm {
                     }
                 }
                 Err(e) => {
-                    if std::env::var_os("OLANG_DEBUG_HOF").is_some() {
+                    if env_on!("OLANG_DEBUG_HOF") {
                         eprintln!("[hof] '{}' declined: {}", decl.name, e);
                     }
                     break;
@@ -7722,6 +7777,13 @@ impl BytecodeVm {
         }
 
         // Interpreter fallback: exact semantics for everything declined
+        let _counted = bridge_stats_on().then(|| BridgeCount {
+            name: match &callee.data {
+                ValueData::AstFunction(f) => format!("fn {}", f.name.as_deref().unwrap_or("<lambda>")),
+                _ => format!("fn <{}>", callee.type_name()),
+            },
+            t0: std::time::Instant::now(),
+        });
         let callee_ast = callee
             .to_ast()
             .map_err(|e| BytecodeError::RuntimeError(format!("{:?}", e)))?;
@@ -7960,7 +8022,7 @@ impl BytecodeVm {
     /// mutual recursion resolve; a failure withdraws the registration
     /// so nothing calls a name with no bytecode.
     fn compile_hof_dependency(&mut self, name: &str, depth: usize) -> bool {
-        let debug = std::env::var_os("OLANG_DEBUG_HOF").is_some();
+        let debug = env_on!("OLANG_DEBUG_HOF");
         if depth > 16 {
             if debug {
                 eprintln!("[hof]   dependency '{}' declined: too deep", name);
@@ -8071,7 +8133,7 @@ impl BytecodeVm {
         if !callable || self.bridged_callees.contains(callee) {
             return false;
         }
-        if std::env::var_os("OLANG_DEBUG_HOF").is_some() {
+        if env_on!("OLANG_DEBUG_HOF") {
             eprintln!(
                 "[hof]   '{}' is called through the bridge (it does not compile)",
                 callee
@@ -8093,6 +8155,22 @@ impl BytecodeVm {
         self.try_native_higher_order(name, args)
     }
 
+    /// The elements a native loop walks: a list's own, or a wrapped
+    /// interpreter list's converted one by one (a wrapper too long for
+    /// the interpreter's parallel loops stays with them: `None`).
+    fn hof_items(list: &OvmValue) -> Option<Arc<Vec<OvmValue>>> {
+        use crate::ovm::value::ValueData;
+        match &list.data {
+            ValueData::List(items) => Some(items.clone()),
+            ValueData::AstList(items) if !crate::parallel::should_parallelize(items.len()) => {
+                Some(Arc::new(
+                    items.iter().map(|v| OvmValue::from_ast(v.clone())).collect(),
+                ))
+            }
+            _ => None,
+        }
+    }
+
     fn try_native_higher_order(
         &mut self,
         name: &str,
@@ -8104,8 +8182,16 @@ impl BytecodeVm {
         // fusions, and auto-parallel machinery) is the semantic
         // authority — except for the O(1) probes below, which answer
         // through the wrapper without conversion.
+        // A wrapped list the loops below take too (`hof_items`): a list an
+        // engine answered (Loom's placements) mapped or filtered by a
+        // compiled lambda ran the lambda on the tree-walker, the list
+        // converted in and the answer converted back out, per call.
         if args.iter().any(|a| matches!(a.data, ValueData::AstList(_)))
             && !matches!(name, "len" | "head" | "first" | "last" | "typeof")
+            && !(matches!(name, "map" | "filter" | "col.any" | "col.all" | "contains")
+                && args.len() == 2
+                && matches!(&args[0].data, ValueData::AstList(l) if !crate::parallel::should_parallelize(l.len()))
+                && !matches!(args[1].data, ValueData::AstList(_)))
         {
             return None;
         }
@@ -8162,8 +8248,9 @@ impl BytecodeVm {
             // `to_string` on a scalar is the hottest thing a string-keyed
             // loop does (`"w" + to_string(n)`); bridging it to the
             // interpreter cost a value conversion each way and the
-            // builtin table walk, per call. Compound values still bridge,
-            // so their rendering has one implementation.
+            // builtin table walk, per call. A compound value is rendered
+            // by the interpreter's code too (`Value::to_string`), so the
+            // rendering keeps one implementation.
             // `str.length` counts chars, as the interpreter does; the
             // module-prefixed name otherwise bridged every call.
             "str.length" if args.len() == 1 => Some(match &args[0].data {
@@ -8178,7 +8265,12 @@ impl BytecodeVm {
                 ValueData::Float(f) => OvmValue::new_string(Value::Float(*f).to_string()),
                 ValueData::Boolean(b) => OvmValue::new_string(b.to_string()),
                 ValueData::String(_) => args[0].clone(),
-                _ => return None,
+                // anything else rendered by the interpreter's own code, the
+                // value converted (the bridge's call cost more than either)
+                _ => match args[0].to_ast() {
+                    Ok(v) => OvmValue::new_string(v.to_string()),
+                    Err(_) => return None,
+                },
             })),
             // `map`/`filter` over a range iterate the integers without
             // materializing them, and a map whose kernel answers integers
@@ -8338,10 +8430,9 @@ impl BytecodeVm {
                 }))
             }
             "map" | "filter" if args.len() == 2 => {
-                let items = match &args[0].data {
-                    ValueData::List(items) => items.clone(),
-                    _ => return None,
-                };
+                if !matches!(args[0].data, ValueData::List(_) | ValueData::AstList(_)) {
+                    return None;
+                }
                 // Plain function values compile on demand and are called
                 // with just the element; runtime closures carry a func_id
                 // already compiled with their captures as trailing
@@ -8356,6 +8447,7 @@ impl BytecodeVm {
                     }
                     _ => return None,
                 };
+                let items = Self::hof_items(&args[0])?;
                 let is_map = name == "map";
 
                 // Fused fast path: the callee, its arity, its (absent)
@@ -8449,10 +8541,9 @@ impl BytecodeVm {
             // the bridge recompiled it on each element — a hot function
             // using col.any ran 3.5× slower with the tier on than off.
             "col.any" | "col.all" if args.len() == 2 => {
-                let items = match &args[0].data {
-                    ValueData::List(items) => items.clone(),
-                    _ => return None,
-                };
+                if !matches!(args[0].data, ValueData::List(_) | ValueData::AstList(_)) {
+                    return None;
+                }
                 let (func_id, captures) = match &args[1].data {
                     ValueData::AstFunction(f) => {
                         let f = f.clone();
@@ -8463,6 +8554,7 @@ impl BytecodeVm {
                     }
                     _ => return None,
                 };
+                let items = Self::hof_items(&args[0])?;
                 let want_all = name == "col.all";
                 // The interpreter's truthiness for these two: a Boolean
                 // decides, Unit is false, anything else is true.
@@ -8622,10 +8714,102 @@ impl BytecodeVm {
                     | ValueData::IntList(_) => "List",
                     ValueData::Tuple(_) => "Tuple",
                     ValueData::Map(_) | ValueData::AstMap(_) => "Map",
+                    // the scalars by the interpreter's names (`Value::type_name`)
+                    ValueData::Integer(_) => "Int",
+                    ValueData::Float(_) => "Float",
+                    ValueData::Boolean(_) => "Bool",
+                    ValueData::String(_) => "String",
+                    ValueData::Unit => "Unit",
                     _ => return None,
                 };
                 Some(Ok(OvmValue::new_string(t.to_string())))
             }
+            // The map accessors read in place: bridged, a wrapped map (a
+            // view's props, an engine's answer) crossed for one count or
+            // its keys, and a VM map converted whole. In the map's order,
+            // as the interpreter's (each key where it was first set).
+            "map_keys" | "map_values" | "map_len" if args.len() == 1 => {
+                let out = match &args[0].data {
+                    ValueData::Map(m) => match name {
+                        "map_keys" => OvmValue::new_list(
+                            m.keys().map(|k| OvmValue::new_string(k.clone())).collect(),
+                        ),
+                        "map_values" => OvmValue::new_list(m.values().cloned().collect()),
+                        _ => OvmValue::new_integer(m.len() as i64),
+                    },
+                    ValueData::AstMap(m) | ValueData::AstStruct(m, _) => match name {
+                        "map_keys" => OvmValue::new_list(
+                            m.keys().map(|k| OvmValue::new_string(k.clone())).collect(),
+                        ),
+                        "map_values" => OvmValue::new_list(
+                            m.values().map(|v| OvmValue::from_ast(v.clone())).collect(),
+                        ),
+                        _ => OvmValue::new_integer(m.len() as i64),
+                    },
+                    ValueData::Struct(st) => match name {
+                        "map_keys" => OvmValue::new_list(
+                            st.iter().map(|(k, _)| OvmValue::new_string(k.clone())).collect(),
+                        ),
+                        "map_values" => {
+                            OvmValue::new_list(st.iter().map(|(_, v)| v.clone()).collect())
+                        }
+                        _ => OvmValue::new_integer(st.values.len() as i64),
+                    },
+                    _ => {
+                        return Some(Err(BytecodeError::TypeError(format!(
+                            "{name}: argument must be a map or object"
+                        ))));
+                    }
+                };
+                Some(Ok(out))
+            }
+            // Membership of a scalar, by `==` (`ops::search_eq`), each
+            // element compared as the interpreter compares it; a list long
+            // enough for the interpreter to search in parallel bridges (its
+            // first error is any error).
+            "contains" if args.len() == 2 => {
+                let item = match &args[1].data {
+                    ValueData::Integer(_)
+                    | ValueData::Float(_)
+                    | ValueData::Boolean(_)
+                    | ValueData::String(_)
+                    | ValueData::Unit => args[1].to_ast().ok()?,
+                    _ => return None,
+                };
+                let items = match &args[0].data {
+                    ValueData::List(_) | ValueData::AstList(_) => Self::hof_items(&args[0])?,
+                    _ => {
+                        return Some(Err(BytecodeError::TypeError(
+                            "contains: first argument must be a list".to_string(),
+                        )));
+                    }
+                };
+                if crate::parallel::should_parallelize(items.len()) {
+                    return None;
+                }
+                for x in items.iter() {
+                    let x = match x.to_ast() {
+                        Ok(v) => v,
+                        Err(_) => return None,
+                    };
+                    match crate::interpreter::ops::search_eq(&x, &item) {
+                        Ok(false) => {}
+                        Ok(true) => return Some(Ok(OvmValue::new_boolean(true))),
+                        Err(message) => return Some(Err(BytecodeError::TypeError(message))),
+                    }
+                }
+                Some(Ok(OvmValue::new_boolean(false)))
+            }
+            // `show`: a string bare, anything else as `to_string` renders
+            // it — the interpreter's own rendering of the value converted,
+            // without the bridge's call (a label shown per node a frame).
+            "show" if args.len() == 1 => Some(Ok(match &args[0].data {
+                ValueData::String(_) => args[0].clone(),
+                _ => match args[0].to_ast() {
+                    Ok(v) => OvmValue::new_string(v.to_string()),
+                    Err(_) => return None,
+                },
+            })),
             "len" if args.len() == 1 => Some(match &args[0].data {
                 ValueData::List(items) => Ok(OvmValue::new_integer(items.len() as i64)),
                 ValueData::AstList(items) => Ok(OvmValue::new_integer(items.len() as i64)),
@@ -8869,6 +9053,13 @@ impl BytecodeVm {
                 match &args[0].data {
                     ValueData::Map(m) => {
                         let mut new_map = (**m).clone();
+                        new_map.insert(key, args[2].clone());
+                        Ok(OvmValue::new_map(Arc::new(new_map)))
+                    }
+                    // A small wrapper written a collection the VM built
+                    // becomes the VM's own (AST_MAP_PROMOTE).
+                    ValueData::AstMap(m) if args[2].promotes_wrapper(m.len()) => {
+                        let mut new_map = OvmValue::force_ast_map(m);
                         new_map.insert(key, args[2].clone());
                         Ok(OvmValue::new_map(Arc::new(new_map)))
                     }
@@ -9142,7 +9333,7 @@ impl BytecodeVm {
             match std::sync::Arc::get_mut(&mut arc) {
                 Some(items) => items.extend(appended),
                 None => {
-                    if std::env::var_os("OLANG_DEBUG_ASTLIST").is_some() {
+                    if env_on!("OLANG_DEBUG_ASTLIST") {
                         eprintln!(
                             "[astlist] extend copy rc={} len={}",
                             std::sync::Arc::strong_count(&arc),
@@ -9304,6 +9495,13 @@ impl BytecodeVm {
                 Arc::make_mut(&mut m).insert(key, value);
                 Some(Ok(OvmValue::new_map(m)))
             }
+            // a small wrapper written a collection the VM built becomes
+            // the VM's own (AST_MAP_PROMOTE)
+            ValueData::AstMap(m) if value.promotes_wrapper(m.len()) => {
+                let mut new_map = OvmValue::force_ast_map(&m);
+                new_map.insert(key, value);
+                Some(Ok(OvmValue::new_map(Arc::new(new_map))))
+            }
             ValueData::AstMap(mut m) => match value.to_ast() {
                 Ok(ast) => {
                     Arc::make_mut(&mut m).insert(key, ast);
@@ -9453,6 +9651,11 @@ impl BytecodeVm {
                     None => m.get(&key).cloned().unwrap_or(crate::ast::Value::Unit),
                 };
                 let new = self.call_function_value(&f, &[OvmValue::from_ast(old)])?;
+                if new.promotes_wrapper(m.len()) {
+                    let mut native = OvmValue::force_ast_map(&m);
+                    native.insert(key, new);
+                    return Ok(OvmValue::new_map(Arc::new(native)));
+                }
                 match new.to_ast() {
                     Ok(ast) => {
                         Arc::make_mut(&mut m).insert(key, ast);
@@ -9589,6 +9792,33 @@ impl BytecodeVm {
         }
     }
 
+    /// Whether the code running is a module's loaded at run time (its
+    /// calls answer to that module's grant: `caps::scope_denial`).
+    fn in_loaded_module(&self) -> bool {
+        if !crate::caps::modules_active() {
+            return false;
+        }
+        let Some(Some(file)) = self.caps_file_stack.last() else {
+            return false;
+        };
+        thread_local! {
+            static SEEN: std::cell::RefCell<Option<(Arc<str>, bool)>> = const { std::cell::RefCell::new(None) };
+        }
+        if let Some(hit) = SEEN.with(|s| {
+            s.borrow()
+                .as_ref()
+                .filter(|(f, _)| Arc::ptr_eq(f, file))
+                .map(|(_, m)| *m)
+        }) {
+            return hit;
+        }
+        let path = std::path::Path::new(&**file);
+        let canon = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let module = crate::caps::module_for(&canon).is_some();
+        SEEN.with(|s| *s.borrow_mut() = Some((file.clone(), module)));
+        module
+    }
+
     fn execute_builtin_call(
         &mut self,
         name: &str,
@@ -9598,8 +9828,13 @@ impl BytecodeVm {
         // The flat layout's arrays and boxes, handed between Loom's native
         // passes and the engine as typed lists sharing one allocation —
         // bridged, every number would be boxed one way and detected back.
+        // The flat layout's answers (gui.flatten, flat_emit, flat_join)
+        // come back in the VM's form: Loom reads the placements natively.
+        // Code of a module loaded at run time goes the usual way, where
+        // the host-only gate refuses it.
         #[cfg(feature = "gui")]
-        if name.starts_with("gui.flat_")
+        if name.starts_with("gui.flat")
+            && !self.in_loaded_module()
             && let Some(result) = crate::stdlib::gui::flat::flat_vm_native(name, args)
         {
             return result.map_err(BytecodeError::RuntimeError);
@@ -9609,6 +9844,13 @@ impl BytecodeVm {
         if let Some(result) = self.try_native_higher_order(name, args) {
             return result;
         }
+        let _counted = bridge_stats_on().then(|| BridgeCount {
+            name: format!(
+                "{name}({})",
+                args.iter().map(|a| a.layout_name()).collect::<Vec<_>>().join(",")
+            ),
+            t0: std::time::Instant::now(),
+        });
 
         let mut ast_args = Vec::with_capacity(args.len());
         for arg in args {

@@ -2252,8 +2252,9 @@ Native-only; on in the released binaries (the `gui` cargo feature).
 | `gui.menu(spec)` | the macOS menu bar: `[#{ title, items: [#{ id, label, keys?, enabled?, checked? } or "separator"] }]`; an item chosen sends `menu` with its `id`. Elsewhere answers `false` — Loom draws the window's menu |
 
 `gui.flatten`, the `gui.flat_` family (`flat_emit`, `flat_join`,
-`flat_arrays`, `flat_keep`, `flat_geo`), and `gui.roles` are Loom's
-layout internals; they are not part of the surface a program uses.
+`flat_diff`, `flat_index`, `flat_arrays`, `flat_keep`, `flat_geo`), and `gui.roles`
+are Loom's layout and diff internals; they are not part of the surface
+a program uses.
 
 **The patch.** Each operation is a map; `op` defaults to `"node"`:
 

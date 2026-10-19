@@ -4305,6 +4305,9 @@ fn execute_program(
                 for (name, reason) in interpreter.tier_refusals() {
                     eprintln!("tier-refused: {}: {}", name, reason);
                 }
+                for (name, calls, us) in olang::ovm::bytecode::bridge_calls() {
+                    eprintln!("bridge-call: {} calls={} us={}", name, calls, us);
+                }
                 eprintln!(
                     "bridge-builds: {} ({} ms)",
                     olang::ovm::bytecode::BRIDGE_BUILDS.load(std::sync::atomic::Ordering::Relaxed),

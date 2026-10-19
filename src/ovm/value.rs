@@ -84,6 +84,17 @@ pub const AST_LIST_EAGER: usize = 64;
 /// `AstMap`.
 pub const AST_MAP_EAGER: usize = 16;
 
+/// A wrapped interpreter map of at most this many entries, written a
+/// value that is the VM's own collection (`map_set`), becomes the VM's
+/// own map: its entries wrapped where they are (O(entries), once), the
+/// value kept as it is. Left a wrapper, every such write converted the
+/// value into the interpreter's form — a program state that crossed in
+/// once (a loop entered from the tree-walker, a runtime built on it)
+/// stayed a wrapper for good, and each turn converted what it set into
+/// it: Loom's window records, its layout's placements, a frame's index.
+/// A large map (an application's store) stays a wrapper, as before.
+pub const AST_MAP_PROMOTE: usize = 256;
+
 /// The interpreter's form of a large native collection, kept by the
 /// collection's identity: a VM value converted again unchanged (a view
 /// or a frame's placements set into a runtime's state on every turn, a
@@ -103,22 +114,28 @@ pub const AST_MAP_EAGER: usize = 16;
 /// lists are not cached (they convert in one contiguous pass).
 const TO_AST_CACHE_MIN: usize = 32;
 
-/// The fewest entries the cache holds before a sweep looks for dead ones
-/// (past that, twice the live ones). A dead entry is an interpreter copy
-/// nothing can reach again, and the sweep frees it: what a sweep costs is
-/// what died since the last. A program that keeps few collections alive
-/// and converts a few dozen each turn (a view's memo table set into a
-/// cell, a frame's state) dies about that many a turn; swept at 256, it
-/// paid every eighth turn or so a millisecond and more of freeing at
-/// once — in olang Studio one keystroke in four, the one its median
-/// keystroke landed on. Swept at 32, the freeing is spread over the turns
-/// that made it (the look for dead entries is a pass over a few dozen).
-const TO_AST_SWEEP_MIN: usize = 32;
+/// Dead entries are let go a few at a time, as entries are added: each
+/// insertion looks at the next `TO_AST_EVICT_STEP` entries (a cursor
+/// going round the table) and frees those whose collection died. A dead
+/// entry is an interpreter copy nothing can reach again, and freeing it
+/// is the cost: freed in sweeps (every time the table doubled), a frame
+/// of olang Studio that landed on one paid 0.3–1.9 ms of freeing at once,
+/// the copies of several frames' views. Two a time keeps up with any
+/// rate of deaths (the table settles at about twice what is alive) and
+/// spreads the freeing over the turns that made it.
+const TO_AST_EVICT_STEP: usize = 2;
+
+/// Live entries past this bound: the table starts over rather than grow
+/// without one (each pins an interpreter copy of its value).
+const TO_AST_CACHE_MAX: usize = 16_384;
+
+type ToAstTable = indexmap::IndexMap<usize, (VmOwner, Value), rustc_hash::FxBuildHasher>;
 
 thread_local! {
-    static TO_AST_CACHE: std::cell::RefCell<rustc_hash::FxHashMap<usize, (VmOwner, Value)>> =
-        std::cell::RefCell::new(rustc_hash::FxHashMap::default());
-    static TO_AST_SWEEP_AT: std::cell::Cell<usize> = const { std::cell::Cell::new(TO_AST_SWEEP_MIN) };
+    static TO_AST_CACHE: std::cell::RefCell<ToAstTable> =
+        std::cell::RefCell::new(ToAstTable::default());
+    /// Where the next look for dead entries starts.
+    static TO_AST_CURSOR: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Elements converted so far on this thread: what a conversion cost
     /// is read off its difference.
     static TO_AST_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -185,23 +202,26 @@ fn to_ast_cache_insert(key: usize, owner: VmOwner, converted: &Value) {
     let mut evicted = Vec::new();
     TO_AST_CACHE.with(|c| {
         let mut c = c.borrow_mut();
-        if c.len() >= TO_AST_SWEEP_AT.get() {
-            let dead: Vec<usize> = c
-                .iter()
-                .filter(|(_, (o, _))| !o.is_alive())
-                .map(|(k, _)| *k)
-                .collect();
-            for k in dead {
-                if let Some(e) = c.remove(&k) {
-                    evicted.push(e);
-                }
+        let mut at = TO_AST_CURSOR.get();
+        for _ in 0..TO_AST_EVICT_STEP {
+            if c.is_empty() {
+                break;
             }
-            // Live entries past the bound: start over rather than grow
-            // without one (each pins an interpreter copy of its value).
-            if c.len() >= 16_384 {
-                evicted.extend(c.drain().map(|(_, e)| e));
+            if at >= c.len() {
+                at = 0;
             }
-            TO_AST_SWEEP_AT.set((c.len() * 2).max(TO_AST_SWEEP_MIN));
+            // by position (`c[at]` would be a key: the keys are addresses)
+            if c.get_index(at).is_some_and(|(_, (o, _))| o.is_alive()) {
+                at += 1;
+            } else if let Some((_, e)) = c.swap_remove_index(at) {
+                // the last entry moved here: looked at next
+                evicted.push(e);
+            }
+        }
+        TO_AST_CURSOR.set(at);
+        if c.len() >= TO_AST_CACHE_MAX {
+            evicted.extend(c.drain(..).map(|(_, e)| e));
+            TO_AST_CURSOR.set(0);
         }
         if let Some(old) = c.insert(key, (owner, converted.clone())) {
             evicted.push(old);
@@ -786,6 +806,35 @@ thread_local! {
 }
 
 impl OvmValue {
+    /// The value's layout in the VM, by name (`OLANG_TIER_STATS`' bridged
+    /// calls name their arguments' layouts: a wrapped interpreter list is
+    /// why a `map` bridged).
+    pub fn layout_name(&self) -> &'static str {
+        match &self.data {
+            ValueData::Integer(_) => "Int",
+            ValueData::Float(_) => "Float",
+            ValueData::Boolean(_) => "Bool",
+            ValueData::Unit => "Unit",
+            ValueData::String(_) => "String",
+            ValueData::List(_) => "List",
+            ValueData::FloatList(_) => "FloatList",
+            ValueData::IntList(_) => "IntList",
+            ValueData::AstList(_) => "AstList",
+            ValueData::AstMap(_) => "AstMap",
+            ValueData::AstStruct(..) => "AstStruct",
+            ValueData::Tuple(_) => "Tuple",
+            ValueData::Function(_) => "Function",
+            ValueData::AstFunction(_) => "AstFunction",
+            ValueData::Map(_) => "Map",
+            ValueData::Enum(_) => "Enum",
+            ValueData::Closure(_) => "Closure",
+            ValueData::Struct(_) => "Struct",
+            ValueData::Range(_) => "Range",
+            ValueData::Native(_) => "Native",
+            _ => "Other",
+        }
+    }
+
     /// The value's data, moved out. `OvmValue` implements `Drop`, so its
     /// field cannot be moved out by a pattern; this leaves `Unit` behind.
     #[inline]
@@ -1578,6 +1627,25 @@ impl OvmValue {
     /// The native layout of a wrapped map, one level deep: each value
     /// converts by `from_ast`, so a nested map is itself a wrapper. For
     /// the operations that need to own or iterate the native form.
+    /// Whether `map_set` of this value into a wrapped map of `entries`
+    /// entries makes it the VM's own map (`AST_MAP_PROMOTE`): the value
+    /// is a collection the VM built (its conversion would walk it).
+    pub fn promotes_wrapper(&self, entries: usize) -> bool {
+        entries <= AST_MAP_PROMOTE
+            && matches!(
+                self.data,
+                ValueData::List(_)
+                    | ValueData::IntList(_)
+                    | ValueData::FloatList(_)
+                    | ValueData::Tuple(_)
+                    | ValueData::Map(_)
+                    | ValueData::Struct(_)
+                    | ValueData::Enum(_)
+                    | ValueData::Result(_)
+                    | ValueData::Closure(_)
+            )
+    }
+
     pub fn force_ast_map(map: &crate::ast::ValueMap) -> OvmMap {
         map.iter()
             .map(|(k, v)| (k.clone(), Self::from_ast(v.clone())))
@@ -1836,7 +1904,7 @@ impl OvmValue {
             // have produced: the declaration-time closure with the runtime
             // captures layered on top. The body Arc is shared verbatim.
             ValueData::Closure(c) => {
-                if std::env::var_os("OLANG_DEBUG_CLOSURE").is_some() {
+                if env_on!("OLANG_DEBUG_CLOSURE") {
                     eprintln!(
                         "[closure->ast] params={:?} capture_names={:?} template_closure_keys={:?}",
                         c.template
@@ -2018,6 +2086,46 @@ const _: () = {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn to_ast_cache_len() -> usize {
+        TO_AST_CACHE.with(|c| c.borrow().len())
+    }
+
+    /// The conversion cache frees dead entries a few at a time: converting
+    /// a stream of collections that die (a frame's view, each frame) never
+    /// lets the table grow past about twice what is alive, and no one
+    /// insertion frees more than a couple of entries (no sweep stall).
+    #[test]
+    fn to_ast_cache_evicts_incrementally() {
+        let big = |seed: i64| {
+            OvmValue::new_list((0..40).map(|i| OvmValue::new_integer(seed + i)).collect())
+        };
+        // a few that stay alive, converted (and cached) once
+        let alive: Vec<OvmValue> = (0..8).map(|k| big(k * 1000)).collect();
+        for v in &alive {
+            v.to_ast().unwrap();
+        }
+        let base = to_ast_cache_len();
+        assert!(base >= alive.len());
+        let mut most = 0;
+        for k in 0..5_000 {
+            let before = to_ast_cache_len();
+            let v = big(1_000_000 + k);
+            let a = v.to_ast().unwrap();
+            assert_eq!(a, v.to_ast().unwrap(), "a live collection hits");
+            drop(v);
+            let after = to_ast_cache_len();
+            // at most TO_AST_EVICT_STEP freed by one insertion
+            assert!(after + TO_AST_EVICT_STEP >= before, "{before} -> {after}");
+            most = most.max(after);
+        }
+        assert!(most <= 2 * alive.len() + 64, "the table grew to {most}");
+        // the live ones still hit
+        for v in &alive {
+            let ast = v.to_ast().unwrap();
+            assert!(matches!(ast, Value::List(ref l) if l.len() == 40));
+        }
+    }
 
     #[test]
     fn test_immediate_values() {

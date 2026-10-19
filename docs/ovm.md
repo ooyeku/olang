@@ -403,6 +403,27 @@ queues the rest, so its depth is bounded by memory, not by the stack; see
 boundary: `round_trips`, `OvmValue::from_ast` and `to_ast` walk a value
 as deep as it is, and grow the stack as they go.
 
+**Wrappers.** A large interpreter list or map crosses into the VM
+wrapped (`AstList`, `AstMap`), in O(1). A wrapped map of at most
+`AST_MAP_PROMOTE` (256) entries that is written (`map_set`,
+`map_update`) a collection the VM built becomes the VM's own map, its
+entries wrapped where they are: left a wrapper, every such write
+converted the value into the interpreter's form, and a program state
+that crossed in once (a loop entered from the tree-walker, as an
+application's event loop is) converted what it set into it every turn.
+A native can read the VM's values where they are and answer in the
+VM's form (`flat_vm_native`: Loom's flat layout, its diff and its frame
+index read last frame's answers without converting them, and answer
+typed lists and VM maps the passes read natively). What a native builds
+from the interpreter's values (a placement) is better answered wrapped:
+converted to the VM's own map it costs as much again to build, and again
+to convert back whenever it reaches code on the tree-walker.
+
+The VM-to-interpreter conversion keeps what it converted by identity
+(`TO_AST_CACHE`, `ovm/value.rs`) and lets a dead entry go two at a time
+as entries are added, so freeing what died is spread over the turns
+that made it, never a sweep that frees several frames' worth at once.
+
 NaN-boxing the value to 8 bytes was prototyped (canonicalized floats,
 48-bit small integers and pointers) and priced at roughly 10% on the
 most value-bound workloads, against the cost of manual reference
@@ -729,7 +750,11 @@ to stderr after a successful `olang run`: one aggregate line
 native_calls=…`), one `tier-fn:` line per VM-callable function with
 the native calls its JIT entry served and its specialization kinds,
 and one `tier-refused: <name>: <reason>` line per function the compiler
-refused. A refused function no longer takes its callers with it — a
+refused; then one `bridge-call: <name>(<layouts>) calls=… us=…` line per
+builtin or function value that still crossed the bridge, most expensive
+first, its arguments named by their layout in the VM (`map(AstList,Closure)`:
+a wrapped list mapped by a compiled lambda), and the time each spent
+converting and running there. A refused function no longer takes its callers with it — a
 caller compiles and calls it through the bridge — and a name is
 resolved against its module's finished scope, so a private helper
 written below its caller, a builtin with no native arm (`drop`,
@@ -750,14 +775,20 @@ The VM mostly does not reimplement builtins — it calls the interpreter's
 own implementations through `BuiltinFunctions::call`. Reimplementation
 would be a second source of truth that could drift from the semantics the
 differential tests hold the VM to; delegating makes them identical by
-construction. The one measured exception: ten collection builtins (`len`,
+construction. The measured exception: the collection builtins (`len`,
 `head`, `tail`, `cons`, `concat`, `skip`, `map_get`, `map_set`,
-`map_has_key`, `entries`) run natively on the VM value model with zero
+`map_has_key`, `map_keys`, `map_values`, `map_len`, `entries`,
+`contains` of a scalar) run natively on the VM value model with zero
 boundary conversion, each mirroring the interpreter's checks in the same
 order with the same messages — the boundary tax on `map_get`/`map_set`
-is what environment-threading code lives on, so these ten earn their
-second implementation and are held to the differential suite like
-everything else.
+is what environment-threading code lives on, and a UI's per-node loops
+(Loom's layout and diff) on the rest, so these earn their second
+implementation and are held to the differential suite like everything
+else. `show`, `to_string` and `typeof` answer in the VM too, rendering
+through the interpreter's own `Value::to_string` (one implementation);
+`map`, `filter`, `col.any` and `col.all` loop natively over a wrapped
+interpreter list as well (an engine's answer), below the interpreter's
+parallel threshold.
 
 The enabled set spans the core builtins below, plus the pure functions
 of `math` (33 of its 42) and all 30 of `str`, plus `show`:
@@ -884,8 +915,10 @@ These are real boundaries, stated so you can predict them:
    value models per call. The native set spans the higher-order
    loops (`map`/`filter`/`sum`) and the collection core (`len`, `head`,
    `tail`, `cons`, `concat`, `skip`, `map_get`, `map_set`,
-   `map_has_key`, `entries`), which is what environment-threading and
-   list-building code lives on; `reduce`, `fold`, and the rest bridge.
+   `map_has_key`, `map_keys`, `map_values`, `map_len`, `entries`,
+   `contains`), which is what environment-threading and list-building
+   code lives on; `reduce`, `fold`, and the rest bridge.
+   `OLANG_TIER_STATS=1` lists what still bridged (`bridge-call:`).
 
 ## Not implemented
 

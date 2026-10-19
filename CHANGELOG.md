@@ -59,6 +59,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   answers are contained the same way. `OLANG_TEST_PANIC=site,…` makes a
   place panic once (a test's). tests/gui_macos_contain_test.rs,
   tests/gui_hostile_test.rs, src/contain.rs
+- **`gui.flat_diff(prev, nodes)` and `gui.flat_index(nodes, wkey)`**
+  (`gui.platform().flat_diff`, `flat_index`): Loom's per-frame passes
+  over every placement in one native pass each — a frame's operations
+  against last frame's by key (what changed, what left, the parents
+  whose children moved among themselves: Loom works out only their
+  order), and what rt_frame reads off each placement (the index by key,
+  the keys shown, the regions that follow or ask where they are
+  scrolled, and the few placements that ask for more). Both tiers; the
+  VM reads and builds its own values. Studio's notebook scrolled
+  (headless, interleaved, with Loom using them): frame p50 2.47 →
+  1.74 ms, p90 4.39 → 3.24, a cell move 4.90 → 3.95.
+
 - **`gui`: the role `alert`** (said at once, interrupting: AccessKit's
   `Alert`, live and assertive) beside `status` (polite).
 - **`gui`: the Mac's own menu items around a program's**: Services,
@@ -287,6 +299,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   kept keeps its texture. `gui.read(_, "render")` says the frames drawn
   and unchanged, the pixels drawn, and the bytes each cache and the GPU's
   textures hold (Loom's HUD shows them).
+- **The VM answers more builtins itself.** `map_keys`, `map_values`,
+  `map_len` (a VM map, a wrapped map or record, a record built in the
+  VM), `contains` of a scalar, `show`, `to_string` and `typeof` of any
+  value, and `map`/`filter`/`col.any`/`col.all` over a wrapped
+  interpreter list (an engine's answer) no longer cross the bridge: each
+  call converted its arguments, and a compiled lambda mapped over a
+  list the engine answered ran on the tree-walker. Answers and errors
+  are the interpreter's (tests/bytecode_differential_test.rs).
+- **A small wrapped map written a VM collection becomes the VM's own**
+  (`AST_MAP_PROMOTE`, 256 entries): a program state that crossed into
+  the VM once — Loom's runtime, entered from the tree-walker — stayed a
+  wrapper for good and converted every value set into it, each turn
+  (a frame's placements, its index, a window's record).
+- **`gui.flatten`, `gui.flat_emit` and `gui.flat_join` read the VM's
+  values where they are** when the VM calls them (last frame's answer
+  and placements are not converted for the call), and `gui.flatten`
+  answers `index`, `wraps` and `changed` as typed lists the passes read
+  natively, `gui.flat_join` its placements as the VM's own list. A
+  placement itself stays the interpreter's, wrapped: built as the VM's
+  own map, a frame made afresh cost twice what the engine spent making
+  it, and twice that again crossing back to code on the tree-walker. The
+  tree-walker's answers are unchanged (tests/gui_flat_test.rs holds the
+  two alike).
+- **`gui.flat_emit`'s keyed keep** (`keep` `"keyed"`, `prev`
+  `#{ flat, out }`; `gui.platform().flat_keyed`): on a frame whose shape
+  changed, what last frame placed is kept by engine key in one native
+  pass — Loom's `ly_keyed_keep`, rule for rule. And `gui.flatten` on such
+  a frame takes last frame's entry for a node that has its key and is
+  what it was (its role, key, props, kind, child count and lifted
+  layers), where it read every node after the first that moved again:
+  Studio's notebook scrolled a cell in, 0.59 → 0.43 ms.
+- **`OLANG_TIER_STATS=1` lists what still crosses the bridge**: one
+  `bridge-call: name(layouts) calls=… us=…` line per builtin or function
+  value, most expensive first.
 
 - **A cell the bytecode VM writes keeps the VM's value**, unconverted
   (tagged with the VM that wrote it): that VM reads it back as it is, the
@@ -322,6 +368,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `impl`, `error` and `catch` before a `(`, `[` or `.`).
 
 ### Fixed
+
+- **No 0.3–1.9 ms stalls freeing the VM's conversions.** The
+  VM-to-interpreter conversion cache was swept when it doubled, freeing
+  several frames' dead interpreter copies at once inside whatever turn
+  landed on it (olang Studio's notebook scroll: a frame in twenty);
+  dead entries now go two at a time as entries are added.
+- **Debug switches read once a process**: `OLANG_DEBUG_ASTLIST`,
+  `OLANG_DEBUG_HOF`, `OLANG_OSR_OFF` and the rest were looked up in the
+  environment on hot paths (a call into the tier, an in-place write, a
+  loop's back edge); `getenv` takes the environment's lock and scans it.
 
 - **A child's stderr is bounded** (`proc.spawn`, `proc.pipeline`): its
   last 4 MB are kept, what went before said by a first line `[… N bytes

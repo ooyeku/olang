@@ -249,6 +249,11 @@ pub fn available() -> bool {
 ///   events while it has the focus) and a canvas text's `italic`.
 /// - `group_hover`: a style's `hover` look shown over an ancestor too;
 ///   `scroll_bars`: scrollers draw overlay bars (bars.rs).
+/// - `flat_keyed`: `gui.flat_emit` takes `keep` `"keyed"` (a frame whose
+///   shape changed: what last frame placed is kept by engine key here);
+///   `flat_diff`: `gui.flat_diff` (a frame's placements against last
+///   frame's operations: Loom's patch, but its children's order);
+///   `flat_index`: `gui.flat_index` (what a frame's placements say, by key).
 ///
 /// - `edit_menu`: `gui.menu` takes the Mac's standard Edit items
 ///   (`standard`) and submenus (`submenu`); the view answers Services
@@ -288,6 +293,10 @@ pub fn capabilities() -> Value {
         // `contexts` the program's commands bind their chords in) and
         // submenus (`submenu`); the window's view answers Services
         ("edit_menu", b(mac)),
+        // `gui.flat_emit`'s keyed keep, and `gui.flat_diff` (flat.rs)
+        ("flat_keyed", b(true)),
+        ("flat_diff", b(true)),
+        ("flat_index", b(true)),
     ])
 }
 
