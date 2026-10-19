@@ -310,3 +310,18 @@ fn take_moves_the_value_out_and_leaves_unit() {
         "[20000, true]"
     );
 }
+
+#[test]
+fn a_cell_that_holds_itself_is_shown_without_waiting_on_itself() {
+    // its display took its own lock again and waited forever (a REPL's
+    // reply, a print, hung on it)
+    assert_eq!(
+        run("let c = cell(0)\ncell.set(c, [c, 1])\nto_string(c)\n").unwrap(),
+        "cell([cell(…), 1])"
+    );
+    // a cell shown inside another is shown whole
+    assert_eq!(
+        run("let a = cell(1)\nlet b = cell([a, a])\nto_string(b)\n").unwrap(),
+        "cell([cell(1), cell(1)])"
+    );
+}

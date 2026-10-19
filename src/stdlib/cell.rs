@@ -139,9 +139,14 @@ impl NativeObject for CellObject {
         if self.own_thread().is_err() {
             return "<cell: not on its owning thread>".to_string();
         }
-        match self.state.lock() {
+        // A cell that holds itself (`cell.set(c, [c])`) is shown while it
+        // is being shown: its lock is this very display's, so it is taken
+        // only if free — waiting for it would wait forever (the REPL's
+        // reply, a `print`, hung on it).
+        match self.state.try_lock() {
             Ok(st) if st.updating => "<cell: updating>".to_string(),
             Ok(st) => format!("cell({})", st.value),
+            Err(std::sync::TryLockError::WouldBlock) => "cell(…)".to_string(),
             Err(_) => "<cell>".to_string(),
         }
     }
