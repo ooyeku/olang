@@ -470,3 +470,28 @@ test "record" {
     let (_, plain, _) = olang(&dir, &["test", "--format", "json", "tests/m_test.ol"], &[]);
     assert!(!plain.contains("\"event\":\"args\""), "{plain}");
 }
+
+#[test]
+fn a_runaway_recursion_fails_with_its_first_and_last_frames() {
+    let dir = project(
+        "deep",
+        &[(
+            "deep_test.ol",
+            "fn down(n) = down(n + 1) + 1\n\ntest \"deep\" {\n    down(0)\n}\n",
+        )],
+    );
+    let (_, out, _) = olang(&dir, &["test", "--format", "json", "deep_test.ol"], &[]);
+    // one failure's line was 16 MB: a hundred thousand frames, each one's
+    // file read again
+    assert!(out.len() < 100_000, "{} bytes of events", out.len());
+    let (evs, _) = events(&out);
+    let failed = of(&evs, "failed", "deep");
+    let frames = failed["frames"].as_array().unwrap();
+    assert_eq!(frames.len(), 51, "{failed}");
+    assert_eq!(frames[0]["name"], json!("down"));
+    assert!(frames[0]["line"].is_number(), "{}", frames[0]);
+    let gap = frames[40]["name"].as_str().unwrap();
+    assert!(gap.starts_with("… ") && gap.ends_with(" frames more"), "{gap}");
+    assert_eq!(frames[40]["file"], J::Null);
+    let _ = std::fs::remove_dir_all(&dir);
+}

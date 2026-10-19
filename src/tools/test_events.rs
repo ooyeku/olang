@@ -364,31 +364,52 @@ pub fn note_snapshot(info: &Value) {
 }
 
 // A frame `name (file)` as `{ name, file, line }`: the line of its `fn`
-// when its file says it.
+// when its file says it. A runaway recursion's hundred thousand frames
+// are its innermost and outermost ones and a frame saying how many fell
+// between (one failure's line was 16 MB, each frame's file read again).
 fn frames_json(frames: &[String], entry: &str) -> J {
-    J::Array(
-        frames
+    let total = frames.len();
+    let mut texts: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
+    let mut one = |frame: &String| {
+        let (name, file) = match frame.rfind(" (") {
+            Some(i) if frame.ends_with(')') => (
+                frame[..i].to_string(),
+                frame[i + 2..frame.len() - 1].to_string(),
+            ),
+            _ => (frame.clone(), entry.to_string()),
+        };
+        let bare = name.rsplit('.').next().unwrap_or(&name).to_string();
+        let text = texts
+            .entry(file.clone())
+            .or_insert_with(|| std::fs::read_to_string(&file).ok());
+        let line = text.as_ref().and_then(|text| {
+            crate::tier_stats::fn_lines(text)
+                .get(&bare)
+                .map(|(l, _)| *l)
+        });
+        json!({ "name": name, "file": file, "line": line })
+    };
+    let innermost_first: Vec<&String> = frames.iter().rev().collect();
+    if total <= FRAMES_HEAD + FRAMES_TAIL {
+        return J::Array(innermost_first.into_iter().map(&mut one).collect());
+    }
+    let mut out: Vec<J> = innermost_first[..FRAMES_HEAD]
+        .iter()
+        .map(|f| one(f))
+        .collect();
+    out.push(json!({ "name": format!("… {} frames more", total - FRAMES_HEAD - FRAMES_TAIL), "file": J::Null, "line": J::Null }));
+    out.extend(
+        innermost_first[total - FRAMES_TAIL..]
             .iter()
-            .rev()
-            .map(|frame| {
-                let (name, file) = match frame.rfind(" (") {
-                    Some(i) if frame.ends_with(')') => (
-                        frame[..i].to_string(),
-                        frame[i + 2..frame.len() - 1].to_string(),
-                    ),
-                    _ => (frame.clone(), entry.to_string()),
-                };
-                let bare = name.rsplit('.').next().unwrap_or(&name).to_string();
-                let line = std::fs::read_to_string(&file).ok().and_then(|text| {
-                    crate::tier_stats::fn_lines(&text)
-                        .get(&bare)
-                        .map(|(l, _)| *l)
-                });
-                json!({ "name": name, "file": file, "line": line })
-            })
-            .collect(),
-    )
+            .map(|f| one(f)),
+    );
+    J::Array(out)
 }
+
+/// The frames of a failure an event names: the innermost and the outermost.
+const FRAMES_HEAD: usize = 40;
+const FRAMES_TAIL: usize = 10;
 
 const CLIP: usize = 20_000;
 
