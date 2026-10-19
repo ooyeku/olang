@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`gui`: no panic crosses into AppKit, and a lost GPU device draws
+  again.** Every call the platform makes into olang (winit's handlers, a
+  frame's drawing, the application delegate's methods, a notice's block,
+  a menu item's action) and every `gui` builtin runs contained: a panic
+  there is a `problem` event (`#{ where, message }`) and a line on
+  stderr, the windows' states are made usable again and drawn again —
+  never the event loop stopped or the process aborted. A builtin that
+  answers a Result answers `Err`, any other raises. A device lost or out
+  of memory is made again (adapter, device, pipelines, atlases) on the
+  next frame, and every window moves to it. Release builds unwind so
+  this can work; any panic outside a contained place still ends the
+  process at once (olang's panic hook aborts), as before. `olang lsp`'s
+  answers are contained the same way. `OLANG_TEST_PANIC=site,…` makes a
+  place panic once (a test's). tests/gui_macos_contain_test.rs,
+  tests/gui_hostile_test.rs, src/contain.rs
 - **`gui`: the role `alert`** (said at once, interrupting: AccessKit's
   `Alert`, live and assertive) beside `status` (polite).
 - **`gui`: the Mac's own menu items around a program's**: Services,

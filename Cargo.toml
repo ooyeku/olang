@@ -332,11 +332,18 @@ harness = false
 name = "gui_macos_teardown_test"
 harness = false
 
+[[test]]
+name = "gui_macos_contain_test"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
-panic = "abort"
+# Unwinding, so a panic in a platform callback or a `gui` builtin can be
+# contained (src/contain.rs); every other panic still ends the process
+# at once (olang's panic hook aborts outside a `contain::catch`).
+panic = "unwind"
 
 # Tests: optimized as release is (budgets and timings stay meaningful),
 # without its whole-program LTO, which re-optimizes all of olang for

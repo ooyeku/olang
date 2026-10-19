@@ -348,7 +348,9 @@ fn observe_settings(proxy: &EventLoopProxy<Cmd>) {
     let on = |center: &NSNotificationCenter, name: &objc2_foundation::NSString| {
         let p = proxy.clone();
         let block = block2::RcBlock::new(move |_n: NonNull<NSNotification>| {
-            let _ = p.send_event(Cmd::Settings("settings"));
+            contain_callback("settings_notice", || {
+                let _ = p.send_event(Cmd::Settings("settings"));
+            });
         });
         let token = unsafe {
             center.addObserverForName_object_queue_usingBlock(Some(name), None, None, &block)
@@ -401,6 +403,9 @@ struct PWin {
     a11y: accesskit_winit::Adapter,
     ime_on: bool,
     ime_area: Option<[f32; 4]>,
+    /// The GPU device is lost and that was said: said once until a frame
+    /// is drawn again.
+    lost_said: bool,
 }
 
 /// A window the program closed (or every window, as the loop ends), torn
@@ -656,6 +661,7 @@ impl App {
                 a11y,
                 ime_on: false,
                 ime_area: None,
+                lost_said: false,
             },
         );
         // The program lays out against the window's real size and scale.
@@ -812,10 +818,25 @@ impl App {
                         pw.win.request_redraw();
                     }
                 }
+                // The device was lost and none could be made again yet:
+                // the frame stays owed and is tried again in a moment.
+                Err(e) if e.starts_with("lost") => {
+                    if !pw.lost_said {
+                        eprintln!("gui: window {id}: the GPU device is lost; drawing again when one can be had");
+                        pw.lost_said = true;
+                    }
+                    if let Ok(mut st) = pw.state.lock() {
+                        st.dirty = true;
+                    }
+                    pw.wake = Some(started + std::time::Duration::from_millis(250));
+                    return;
+                }
                 Err(e) => eprintln!("gui: {e}"),
             },
             Renderer::Soft { surface, .. } => present_soft(surface, &dl, &pw.win),
         }
+        pw.lost_said = false;
+        PRESENTED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         crate::boot_trace::frame_presented();
         // the frame: its display list made, and drawn and presented
         if trace {
@@ -1040,6 +1061,13 @@ unsafe extern "C-unwind" fn app_open_urls(
     _app: *mut objc2::runtime::AnyObject,
     urls: *mut objc2::runtime::AnyObject,
 ) {
+    // AppKit calls in: nothing may unwind into it
+    contain_callback("open_urls", || unsafe { open_urls(urls) });
+}
+
+/// The body of [`app_open_urls`].
+#[cfg(target_os = "macos")]
+unsafe fn open_urls(urls: *mut objc2::runtime::AnyObject) {
     if urls.is_null() {
         return;
     }
@@ -1078,7 +1106,7 @@ unsafe extern "C-unwind" fn app_new_tab(
     _cmd: objc2::runtime::Sel,
     _sender: *mut objc2::runtime::AnyObject,
 ) {
-    emit(vec![event("new_tab", vec![])]);
+    contain_callback("new_tab", || emit(vec![event("new_tab", vec![])]));
 }
 
 /// Teach the application's delegate (winit's) to hear the documents it
@@ -1175,8 +1203,101 @@ impl App {
     }
 }
 
+/// Every call winit makes into the application, contained: a panic in
+/// handling one is a problem said to the program (a `problem` event) and
+/// on stderr, the windows' states made usable again and drawn again —
+/// never the event loop stopped (winit stops the application on a panic
+/// in a handler and goes on unwinding as it returns) or an abort.
 impl ApplicationHandler<Cmd> for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
+        self.contained("resumed", |app| app.on_resumed(el));
+    }
+
+    fn about_to_wait(&mut self, el: &ActiveEventLoop) {
+        self.contained("about_to_wait", |app| app.on_about_to_wait(el));
+    }
+
+    fn user_event(&mut self, el: &ActiveEventLoop, cmd: Cmd) {
+        self.contained("user_event", |app| app.on_user_event(el, cmd));
+    }
+
+    fn window_event(&mut self, el: &ActiveEventLoop, wid: WindowId, we: WindowEvent) {
+        self.contained("window_event", |app| app.on_window_event(el, wid, we));
+    }
+}
+
+/// How many frames the platform's windows have presented.
+static PRESENTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many frames the platform's windows have presented (a test checks
+/// drawing goes on after a device was lost or a callback panicked).
+pub fn frames_presented() -> u64 {
+    PRESENTED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// How many problems the platform side has contained.
+static CONTAINED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many panics in the platform's callbacks (and the engine's
+/// builtins) were contained.
+pub fn problems_contained() -> u64 {
+    CONTAINED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// A panic contained at `site` (`message` what panicked and where): said
+/// on stderr and to the program (`problem`, `#{ where, message }`), and
+/// every window's state, poisoned by a panic while it was held, made
+/// usable again. The state is as the panic left it: the window goes on
+/// from there rather than the process ending with the person's work.
+pub fn contained_problem(site: &str, message: &str) {
+    CONTAINED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    eprintln!("gui: a problem was contained in the engine ({message}); the program goes on");
+    windows().clear_poison();
+    let ws: Vec<Shared> = windows()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .cloned()
+        .collect();
+    for st in ws {
+        st.clear_poison();
+        if let Ok(mut st) = st.lock() {
+            st.dirty = true;
+        }
+    }
+    emit(vec![event(
+        "problem",
+        vec![("where", s(site)), ("message", s(message))],
+    )]);
+}
+
+/// Run `f` (a platform callback's body) with a panic inside it contained
+/// ([`contained_problem`]); `Some` its answer when it ran to the end.
+pub fn contain_callback<R>(site: &str, f: impl FnOnce() -> R) -> Option<R> {
+    match crate::contain::catch(site, || {
+        crate::contain::inject(site);
+        f()
+    }) {
+        Ok(r) => Some(r),
+        Err(e) => {
+            contained_problem(site, &e);
+            None
+        }
+    }
+}
+
+impl App {
+    /// A winit callback's body run contained ([`contain_callback`]); after
+    /// a panic every window draws again.
+    fn contained(&mut self, site: &str, f: impl FnOnce(&mut App)) {
+        if contain_callback(site, || f(self)).is_none() {
+            for pw in self.windows.values() {
+                pw.win.request_redraw();
+            }
+        }
+    }
+
+    fn on_resumed(&mut self, el: &ActiveEventLoop) {
         // Started ahead of a window (`prepare`): AppKit's first window
         // pays a one-time start of its own (its text input, its window
         // server connection; ~25 ms, a second window ~5), so a hidden
@@ -1193,7 +1314,7 @@ impl ApplicationHandler<Cmd> for App {
         }
     }
 
-    fn about_to_wait(&mut self, el: &ActiveEventLoop) {
+    fn on_about_to_wait(&mut self, el: &ActiveEventLoop) {
         if !self.files.is_empty() {
             self.flush_files();
         }
@@ -1231,7 +1352,7 @@ impl ApplicationHandler<Cmd> for App {
         });
     }
 
-    fn user_event(&mut self, el: &ActiveEventLoop, cmd: Cmd) {
+    fn on_user_event(&mut self, el: &ActiveEventLoop, cmd: Cmd) {
         if std::env::var_os("GUI_TRACE").is_some() {
             let what = match &cmd {
                 Cmd::Open { id, .. } => format!("open {id}"),
@@ -1429,7 +1550,7 @@ impl ApplicationHandler<Cmd> for App {
         }
     }
 
-    fn window_event(&mut self, _el: &ActiveEventLoop, wid: WindowId, we: WindowEvent) {
+    fn on_window_event(&mut self, _el: &ActiveEventLoop, wid: WindowId, we: WindowEvent) {
         let Some(id) = self.by_winit.get(&wid).copied() else {
             return;
         };
@@ -1477,7 +1598,9 @@ impl ApplicationHandler<Cmd> for App {
                     );
                 }
             }
-            WindowEvent::RedrawRequested => self.render(id),
+            WindowEvent::RedrawRequested => {
+                contain_callback("render", || self.render(id));
+            }
             // Shown again after being covered: draw what was skipped (and
             // the animations go on).
             WindowEvent::Occluded(false) => {
@@ -2022,7 +2145,10 @@ impl App {
     fn menu_handler(&self) {
         let proxy = self.proxy.clone();
         muda::MenuEvent::set_event_handler(Some(move |e: muda::MenuEvent| {
-            let _ = proxy.send_event(Cmd::MenuEvent(e.id.0.clone()));
+            // called from AppKit's menu action
+            contain_callback("menu_event", || {
+                let _ = proxy.send_event(Cmd::MenuEvent(e.id.0.clone()));
+            });
         }));
     }
 
@@ -2306,9 +2432,28 @@ type MenuFrame = std::sync::Arc<Mutex<Option<(f64, f64, f64, f64)>>>;
 unsafe fn menu_frame_timer(out: MenuFrame) -> objc2::rc::Retained<objc2::runtime::AnyObject> {
     use objc2::msg_send;
     use objc2::runtime::AnyObject;
-    use objc2_foundation::NSRect;
     unsafe {
         let block = block2::RcBlock::new(move |_t: *mut AnyObject| {
+            contain_callback("menu_frame_timer", || menu_frame(&out));
+        });
+        let timer: objc2::rc::Retained<AnyObject> = msg_send![objc2::class!(NSTimer), timerWithTimeInterval: 0.05f64, repeats: true, block: &*block];
+        let rl: *mut AnyObject = msg_send![objc2::class!(NSRunLoop), mainRunLoop];
+        let mode = objc2_foundation::NSString::from_str("NSEventTrackingRunLoopMode");
+        let _: () = msg_send![&*rl, addTimer: &*timer, forMode: &*mode];
+        timer
+    }
+}
+
+/// The popup menu window's frame kept in `out` ([`menu_frame_timer`]).
+#[cfg(target_os = "macos")]
+fn menu_frame(out: &MenuFrame) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::NSRect;
+    // SAFETY: AppKit's application, windows and screens, read on the main
+    // thread (the timer's).
+    unsafe {
+        {
             let app: *mut AnyObject = msg_send![objc2::class!(NSApplication), sharedApplication];
             let wins: *mut AnyObject = msg_send![&*app, windows];
             let n: usize = msg_send![&*wins, count];
@@ -2335,12 +2480,7 @@ unsafe fn menu_frame_timer(out: MenuFrame) -> objc2::rc::Retained<objc2::runtime
                     }
                 }
             }
-        });
-        let timer: objc2::rc::Retained<AnyObject> = msg_send![objc2::class!(NSTimer), timerWithTimeInterval: 0.05f64, repeats: true, block: &*block];
-        let rl: *mut AnyObject = msg_send![objc2::class!(NSRunLoop), mainRunLoop];
-        let mode = objc2_foundation::NSString::from_str("NSEventTrackingRunLoopMode");
-        let _: () = msg_send![&*rl, addTimer: &*timer, forMode: &*mode];
-        timer
+        }
     }
 }
 

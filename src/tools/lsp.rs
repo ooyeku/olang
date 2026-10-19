@@ -309,10 +309,10 @@ fn main_loop(
                 // a request whose answer panics is answered with an error:
                 // the server goes on (it ended, and every answer with it,
                 // until the editor started another)
-                let answered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let answered = crate::contain::catch("olang lsp", || {
                     handle_request(connection, &docs, req, root.as_deref())
-                }))
-                .unwrap_or_else(|_| Err(format!("{method} failed inside the server").into()));
+                })
+                .unwrap_or_else(|e| Err(format!("{method} failed inside the server ({e})").into()));
                 if let Err(e) = answered {
                     eprintln!("olang lsp: {method}: {e}");
                     let resp = Response::new_err(

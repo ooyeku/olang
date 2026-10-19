@@ -149,8 +149,16 @@ pub fn stdout_failed(e: io::Error) -> ! {
 /// without panicking again when stderr has gone — a second panic inside
 /// the hook aborts at once, with a crash report about the printing
 /// rather than the panic.
+///
+/// A panic inside [`crate::contain::catch`] is kept for that catch to
+/// answer as an error (it says it where it belongs); any other ends the
+/// process at once once said, as a build that aborts on panic would.
 pub fn set_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
+        if crate::contain::active() {
+            crate::contain::note(crate::contain::describe(info));
+            return;
+        }
         let payload = info.payload();
         let message = if let Some(m) = payload.downcast_ref::<&str>() {
             (*m).to_string()
@@ -177,5 +185,6 @@ pub fn set_panic_hook() {
             ));
         }
         err_line(format_args!("{text}"));
+        std::process::abort();
     }));
 }

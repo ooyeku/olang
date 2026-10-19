@@ -106,7 +106,37 @@ pub fn create_gui_module() -> Value {
     }
 }
 
+/// A `gui` builtin, run contained: a panic in the engine while it runs
+/// (a patch it cannot take, a font that breaks shaping) is an error the
+/// program gets — and a `problem` said — rather than the process ended
+/// with the person's work: an `Err` from a builtin that answers a Result
+/// (`apply`, `open`, …), a raise from any other. The windows' states are
+/// made usable again.
 pub fn call_gui_function(name: &str, args: Vec<Value>) -> DynRes {
+    let site = format!("gui.{name}");
+    match crate::contain::catch(&site, || {
+        crate::contain::inject(&site);
+        gui_function(name, args)
+    }) {
+        Ok(r) => r,
+        Err(e) => {
+            platform::contained_problem(&site, &e);
+            let said = format!("{e} (contained: the program goes on)");
+            // a builtin that answers a Result answers this one as `Err`;
+            // any other raises (a program's `attempt` takes it)
+            if matches!(
+                name,
+                "open" | "apply" | "clipboard_read" | "clipboard_write" | "clipboard_image" | "image_info"
+            ) {
+                Ok(err(said))
+            } else {
+                Err(said.into())
+            }
+        }
+    }
+}
+
+fn gui_function(name: &str, args: Vec<Value>) -> DynRes {
     let r = match name {
         "available" => gui_available(args),
         "open" => gui_open(args),

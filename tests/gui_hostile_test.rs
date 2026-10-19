@@ -51,8 +51,43 @@ fn a_picture_from_a_device_or_a_folder_is_refused_not_read_forever() {
 }
 
 #[test]
+fn a_lost_gpu_device_is_made_again_and_draws_what_the_software_renderer_draws() {
+    use olang::stdlib::gui::{gpu, soft, window::WinState};
+    let _turn = EVENTS.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok(g) = gpu::gpu(None, None) else {
+        eprintln!("skipped: no GPU here");
+        return;
+    };
+    let mut st = WinState::new(1, true, "lost", 120.0, 80.0, 1.0);
+    let ops = Parser::new()
+        .parse(r##"[#{ "key": "root", "box": (0, 0, 120, 80), "style": #{ "bg": "#ffffff" } },
+                    #{ "key": "b", "parent": "root", "box": (10, 10, 60, 30), "style": #{ "bg": "#3366cc", "radius": 6 } }]"##)
+        .ok();
+    let ops = ops.and_then(|p| Interpreter::new().eval_program(p).ok()).expect("ops");
+    let mut out = vec![];
+    st.apply(&ops, &mut out).expect("applies");
+    let dl = st.display_list();
+    let before = gpu::recoveries();
+    // a GPU reset: the device destroyed under the engine
+    assert!(gpu::simulate_loss());
+    assert!(g.is_lost());
+    let g2 = gpu::gpu(None, None).expect("a device made again");
+    assert!(!g2.is_lost());
+    assert!(!std::sync::Arc::ptr_eq(&g, &g2));
+    assert_eq!(gpu::recoveries(), before + 1);
+    // and it draws, as the reference does
+    let a = soft::rgba(&soft::render(&dl));
+    let b = g2.render_rgba(&dl);
+    assert_eq!(a.len(), b.len());
+    let worst = a.iter().zip(&b).map(|(x, y)| x.abs_diff(*y)).max().unwrap_or(0);
+    let mid = |px: &[u8]| px[((40 * 120 + 40) * 4)..((40 * 120 + 40) * 4 + 4)].to_vec();
+    assert_eq!(mid(&a), mid(&b), "the button's middle (worst pixel {worst})");
+}
+
+#[test]
 fn a_gpu_error_is_said_not_a_panic_that_aborts_the_application() {
     use olang::stdlib::gui::gpu;
+    let _turn = EVENTS.lock().unwrap_or_else(|e| e.into_inner());
     let Ok(g) = gpu::gpu(None, None) else {
         eprintln!("skipped: no GPU here");
         return;

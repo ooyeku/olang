@@ -18,7 +18,7 @@ use super::window::{DisplayList, Prim};
 type Segment = (usize, Option<Arc<Picture>>);
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 const SHADER: &str = r#"
 struct Globals { size: vec2<f32>, atlas: vec2<f32> };
@@ -305,7 +305,12 @@ struct Textures {
 /// The bytes of picture textures kept on the GPU.
 const TEXTURE_BUDGET: usize = 256 << 20;
 
-static GPU: OnceLock<Result<Arc<Gpu>, String>> = OnceLock::new();
+/// The process's GPU: made on first use, and made again in place of one
+/// whose device was lost ([`recover`]).
+static GPU: Mutex<Option<Result<Arc<Gpu>, String>>> = Mutex::new(None);
+
+/// How many times a lost device was replaced ([`recover`]).
+static RECOVERED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The process's GPU, made on first use. `compatible` is a surface the
 /// adapter must be able to present to (the first window's).
@@ -313,8 +318,60 @@ pub fn gpu(
     compatible: Option<&wgpu::Surface<'_>>,
     instance: Option<wgpu::Instance>,
 ) -> Result<Arc<Gpu>, String> {
-    GPU.get_or_init(|| make(compatible, instance).map(Arc::new))
-        .clone()
+    let mut slot = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    match &*slot {
+        // lost: made again for whoever asks next (a headless window's
+        // frame read as pixels, a new window)
+        Some(Ok(g)) if g.is_lost() => {
+            let g = g.clone();
+            drop(slot);
+            return recover(&g, compatible);
+        }
+        Some(g) => return g.clone(),
+        None => {}
+    }
+    let g = make(compatible, instance).map(Arc::new);
+    *slot = Some(g.clone());
+    g
+}
+
+/// The GPU in place of `lost`, whose device was lost (a GPU reset, an
+/// eGPU unplugged, out of memory): a new adapter and device on the same
+/// instance, able to present to `compatible`, with pipelines, the glyph
+/// atlas and pictures' textures made again as they are next drawn. Made
+/// once however many windows ask; every later caller gets it. `Err` when
+/// no device can be had now (a later frame asks again).
+pub fn recover(lost: &Arc<Gpu>, compatible: Option<&wgpu::Surface<'_>>) -> Result<Arc<Gpu>, String> {
+    let mut slot = GPU.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(Ok(now)) = &*slot
+        && !Arc::ptr_eq(now, lost)
+        && !now.is_lost()
+    {
+        return Ok(now.clone());
+    }
+    let g = Arc::new(make(compatible, Some(lost.instance.clone()))?);
+    RECOVERED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    eprintln!("gui: the GPU device was made again; drawing goes on");
+    *slot = Some(Ok(g.clone()));
+    Ok(g)
+}
+
+/// How many times a lost device has been made again.
+pub fn recoveries() -> u64 {
+    RECOVERED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Lose the process's device as a GPU reset would (a test's): it is
+/// destroyed and marked lost; the next frame of each window makes a new
+/// one ([`recover`]).
+pub fn simulate_loss() -> bool {
+    let g = match &*GPU.lock().unwrap_or_else(|e| e.into_inner()) {
+        Some(Ok(g)) => g.clone(),
+        _ => return false,
+    };
+    g.lost.store(true, std::sync::atomic::Ordering::SeqCst);
+    g.device.destroy();
+    true
 }
 
 /// An instance for offscreen drawing (no window).
@@ -884,7 +941,8 @@ impl Surface {
     ) -> Result<Surface, String> {
         // The instance must be the GPU's own once it exists; the first
         // surface is made on a fresh instance that then becomes the GPU's.
-        let (surface, gpu) = match GPU.get() {
+        let made = GPU.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let (surface, gpu) = match made.as_ref() {
             Some(Ok(g)) => {
                 let s = g
                     .instance
@@ -949,9 +1007,32 @@ impl Surface {
         }
     }
 
+    /// The device was lost: this surface moved to the GPU made in its
+    /// place ([`recover`]) and configured on it.
+    fn recover(&mut self) -> Result<(), String> {
+        let g = recover(&self.gpu, Some(&self.surface)).map_err(|e| format!("lost ({e})"))?;
+        let caps = self.surface.get_capabilities(&g.adapter);
+        if !caps.formats.contains(&self.config.format)
+            && let Some(f) = caps
+                .formats
+                .iter()
+                .copied()
+                .find(|f| !f.is_srgb())
+                .or_else(|| caps.formats.first().copied())
+        {
+            self.config.format = f;
+        }
+        let most = g.device.limits().max_texture_dimension_2d.max(1);
+        self.config.width = self.config.width.clamp(1, most);
+        self.config.height = self.config.height.clamp(1, most);
+        self.gpu = g;
+        self.surface.configure(&self.gpu.device, &self.config);
+        Ok(())
+    }
+
     pub fn render(&mut self, dl: &DisplayList) -> Result<(), String> {
         if self.gpu.is_lost() {
-            return Err("lost".to_string());
+            self.recover()?;
         }
         self.resize(dl.width, dl.height);
         let mut frame = None;
