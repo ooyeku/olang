@@ -4741,6 +4741,7 @@ impl WinState {
                     border: [0, 0, 0, 0],
                     border_width: 0.0,
                     radii: [d / 2.0; 4],
+                    continuous: false,
                     clip,
                 });
                 x += 2.0 * d;
