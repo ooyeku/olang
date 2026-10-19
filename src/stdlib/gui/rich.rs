@@ -208,6 +208,10 @@ pub struct RichEditor {
     pub follow: bool,
     /// The visible height last painted, device pixels.
     pub view_h: f32,
+    /// A line asked to be the first in view before the field had a width
+    /// and a height (a new field): scrolled to once it has them, where its
+    /// paragraphs' tops are known (`follow_caret`).
+    pending_line: Option<usize>,
     pub dragging: bool,
     /// The value last reported to the program (for the next delta).
     reported: Arc<String>,
@@ -641,6 +645,7 @@ impl RichEditor {
             scroll_y: 0.0,
             follow: false,
             view_h: 0.0,
+            pending_line: None,
             dragging: false,
             reported: Arc::new(value.to_string()),
             value_cache: None,
@@ -1967,6 +1972,12 @@ impl RichEditor {
             }
         }
         self.view_h = h;
+        if self.placed
+            && h > 0.0
+            && let Some(line) = self.pending_line.take()
+        {
+            self.scroll_to_line(line, ts);
+        }
         if self.follow && self.placed {
             // the paragraphs between the old view and the caret are
             // estimates until laid out: the band scrolled to is laid out
@@ -2051,6 +2062,14 @@ impl RichEditor {
     /// Scroll so line `line` is the first in view.
     pub fn scroll_to_line(&mut self, line: usize, ts: &mut TextSystem) {
         let i = line.min(self.paras.len().saturating_sub(1));
+        if !self.placed || self.view_h <= 0.0 {
+            // no width yet: the tops are guesses (a wrapped paragraph's
+            // height unknown), so the line is reached once there is one
+            self.pending_line = Some(i);
+            self.follow = self.locate(self.focus).0 == i;
+            return;
+        }
+        self.pending_line = None;
         self.ensure(i, ts);
         self.refresh(ts);
         let max = self.max_scroll(self.view_h, ts);
