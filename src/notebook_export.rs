@@ -1782,6 +1782,11 @@ fn with_param(text_, p, v) = {
     join(take(lines, i) + [head + " " + new_rest] + skip(lines, i + 1), "\n")
 }
 
+// A param's value as a page sends it: one line of text (a line break
+// would write more than its own line of the front matter: another param,
+// or the notebook's capabilities).
+fn one_line(v) = typeof(v) == "String" && !str.contains(v, "\n") && !str.contains(v, "\r")
+
 fn handle(k, st, req) = {
     let st = map_set(st, "fresh", [])
     if req.op == "page" => (st, page(k, st))
@@ -1796,7 +1801,9 @@ fn handle(k, st, req) = {
         }
     } else if req.op == "param" => {
         let p = first(filter(st.params, (x) => x.name == req.name))
-        if p == () => (st, #{ "error": "no param " + req.name }) else => {
+        if p == () => (st, #{ "error": "no param " + show(req.name) })
+        else if !one_line(req.value) => (st, #{ "error": "a param's value is one line of text" })
+        else => {
             let text_ = with_param(st.text, p, req.value)
             let r = ask(k, st.n + 1, #{ "op": "reread", "text": text_ })
             let st = map_set(st, "n", st.n + 1)
@@ -1841,17 +1848,38 @@ fn call(req) = match chan.ask(INBOX, req) { Ok(v) => v, Err(e) => #{ "error": sh
 
 fn body(req) = match json.parse(req.body) { Ok(v) => v, Err(e) => #{} }
 
+// Only this machine's own page is answered: the request addressed to
+// 127.0.0.1 or localhost at this port (a name of another site resolved
+// here is refused: DNS rebinding), and a change sent as JSON from the
+// app's own page (another site's page may post plain text to a local
+// port without asking; JSON it must ask first, and is not answered).
+fn local_host(req) = {
+    let h = str.to_lower(map_get(req.headers ?? #{}, "host") ?? "")
+    h == "127.0.0.1:" + to_string(PORT) || h == "localhost:" + to_string(PORT)
+}
+
+fn own_change(req) = {
+    let hs = req.headers ?? #{}
+    let ct = str.to_lower(map_get(hs, "content-type") ?? "")
+    let origin = map_get(hs, "origin")
+    local_host(req) && str.starts_with(ct, "application/json") && (origin == () || str.to_lower(origin) == "http://" + str.to_lower(map_get(hs, "host") ?? ""))
+}
+
+fn refused() = http.response(403, "refused: this app answers its own page on this machine only")
+
 let routes = [
     route("GET", "/", (req, p) => {
-        let r = call(#{ "op": "page" })
-        if r.ok == true => http.response_with_headers(200, r.html, #{ "Content-Type": "text/html; charset=utf-8" })
-        else => http.response(500, (r.error ?? #{}).message ?? "the page could not be drawn")
+        if !local_host(req) => refused() else => {
+            let r = call(#{ "op": "page" })
+            if r.ok == true => http.response_with_headers(200, r.html, #{ "Content-Type": "text/html; charset=utf-8" })
+            else => http.response(500, (r.error ?? #{}).message ?? "the page could not be drawn")
+        }
     }),
-    rpc("nb.set", (req, p) => { let b = body(req); call(#{ "op": "set", "cell": b.cell, "value": b.value }) }),
-    rpc("nb.param", (req, p) => { let b = body(req); call(#{ "op": "param", "name": b.name, "value": b.value }) })
+    rpc("nb.set", (req, p) => if !own_change(req) => refused() else => { let b = body(req); call(#{ "op": "set", "cell": b.cell, "value": b.value }) }),
+    rpc("nb.param", (req, p) => if !own_change(req) => refused() else => { let b = body(req); call(#{ "op": "param", "name": b.name, "value": b.value }) })
 ]
 
-serve(#{ "title": SPEC.title, "routes": routes, "client": "", "port": PORT })
+serve(#{ "title": SPEC.title, "routes": routes, "client": "", "port": PORT, "bind": "127.0.0.1" })
 "#;
 
 #[cfg(test)]
