@@ -2057,7 +2057,7 @@ with `dom` ([olang in the browser](wasm.md)).
 | `ui.slider(value, min, max, step = ())` | a number in [min, max] a host binds (an Int slider when the value and the bounds are Ints) |
 | `ui.select(value, options)` | one of `options` a host binds |
 | `ui.date(value)` · `ui.text(value)` · `ui.toggle(value)` | a `"YYYY-MM-DD"` String, a String, a Bool a host binds |
-| `ui.brush(chart, value = ())` | a range of a `plot` chart's x a host binds: `()` for none, or `[x0, x1]` (Floats) |
+| `ui.brush(chart, value = ())` | a range of a chart's x a host binds: `()` for none, or `[x0, x1]` (Floats); `chart` a `plot` chart's SVG or a [`gg`](#gg--a-grammar-of-graphics) plot (the range along the dragged panel's horizontal axis, in data units: a log10, sqrt or reversed scale undone) |
 | `viz.check(spec)` | `Ok(spec)` when a chart spec will render, or `Err` naming an unknown key or the absence of points to draw |
 | `viz.chart(spec)` | a spec compiled to SVG text ([the `viz` grammar](ods.md#the-viz-grammar)) |
 | `viz.draw(canvas, spec)` | the same spec drawn on a canvas, in the browser |
@@ -3229,12 +3229,12 @@ println(ods.n_rows(ml.cross_validate(fit, homes, folds: 4)))   // 4
 | `learn.logistic(f, y, x, opts)` | binary (IRLS) or multinomial (Newton) logistic regression with se, z, p and odds ratios; `C` or `penalty`, `class_weight` (`"balanced"` or a map), `weights` |
 | `learn.tree(f, y, x, opts)` | CART: `max_depth`, `min_samples_split`, `min_samples_leaf`, `criterion` (gini, entropy, squared_error), `max_features`, `task`, `seed` |
 | `learn.forest(f, y, x, opts)` | random forest, trees grown in parallel: the tree options plus `n_trees`, `bootstrap`, `max_samples`, `oob` (gives `oob_score`) |
-| `learn.boost(f, y, x, opts)` | histogram gradient boosting (squared loss, or log loss for a binary target): `n_trees`, `learning_rate`, `max_depth`, `max_leaf_nodes`, `min_samples_leaf`, `l2`, `subsample`, `max_bins`, `early_stopping`, `validation_fraction`, `n_iter_no_change` |
+| `learn.boost(f, y, x, opts)` | histogram gradient boosting (squared loss, or log loss for a binary target): `n_trees`, `learning_rate`, `max_depth`, `max_leaf_nodes`, `min_samples_leaf`, `l2`, `subsample`, `max_bins`, `early_stopping`, `validation_fraction`, `validation_rows` (row indices held out instead: an explicit validation set), `validation_tail` (the last n rows held out: a time series' most recent), `n_iter_no_change`; the fit says `train_loss`, `valid_loss` (each round's) and `best_iter` |
 | `learn.knn(f, y, x, opts)` / `learn.naive_bayes(f, y, x, opts)` | k-nearest neighbours (`k`, `weights_by`) / Gaussian naive Bayes (`var_smoothing`) |
 | `learn.kmeans(f, cols, k, opts)` / `learn.gmm(f, cols, k, opts)` | k-means++ (`n_init`, `max_iter`, `seed`): `labels`, `centers`, `inertia` / Gaussian mixture by EM: `means`, `weights`, `bic` |
 | `learn.pca(f, cols, opts)` | principal components (`n_components`, `scale`): `explained_variance`, `explained_variance_ratio`, `components` |
 | `learn.silhouette(f, cols, labels, opts)` | mean silhouette coefficient; `sample`, `seed` |
-| `learn.predict(model, f, opts)` | values, class labels or clusters; `kind`: `"prob"` (positive class, or a Frame for 3+ classes), `"probs"`, `"link"`, `"confidence"` / `"prediction"` (an OLS interval Frame at `level`) |
+| `learn.predict(model, f, opts)` | values, class labels or clusters; `kind`: `"prob"` (positive class, or a Frame for 3+ classes), `"probs"`, `"link"`, `"confidence"` / `"prediction"` (an OLS interval Frame at `level`); `trees: k` a boosted model's prediction from its first k trees (staged) |
 | `learn.importance(model)`, `learn.summary(model, opts)`, `learn.params(model)` | importances (impurity, or abs(coef)) / the model as a Frame / estimates by term |
 | `learn.score(model, f, metric)` | one metric against the target column of `f` |
 | `learn.spec(kind, y, x, opts)` / `learn.fit(spec, f)` | how to fit, without fitting / fit a spec or refit a model |
@@ -3254,7 +3254,9 @@ println(ods.n_rows(ml.cross_validate(fit, homes, folds: 4)))   // 4
 `use ml` mirrors each of these with keywords (`ml.forest(f, y: "churn",
 trees: 300, seed: 1)`; `trees`, `bins`, `validation` and `patience` are the
 short names of `n_trees`, `max_bins`, `validation_fraction` and
-`n_iter_no_change`). It adds three more: `prob(model, f)`, the class
+`n_iter_no_change`; `ml.boost`'s `validation` may also be a Frame, its
+rows appended to the data's and held out, and `validation_rows` or
+`validation_tail` turns early stopping on). It adds three more: `prob(model, f)`, the class
 probabilities; `fit_transform(model_fn, data)`; and a
 `cross_validate(fit, data)` whose `fit` may also be a
 `(train) => model` function, called once per fold:
@@ -3269,6 +3271,25 @@ probabilities; `fit_transform(model_fn, data)`; and a
 | `predict`, `prob`, `importance`, `summary`, `params`, `score`, `spec`, `fit` | the model interface |
 | `cross_validate`, `permutation_importance`, `partial_dependence`, `learning_curve`, `grid_search` | evaluation |
 | `rmse`, `mse`, `mae`, `mape`, `r2`, `accuracy`, `precision`, `recall`, `f1`, `log_loss`, `brier`, `auc`, `average_precision`, `roc`, `pr_curve`, `confusion`, `classification_report`, `at_threshold`, `threshold_sweep`, `calibration` | metrics |
+
+Early stopping on a time series holds out its most recent rows, not a
+random tenth: `validation_tail` (or `validation_rows`, or a `validation`
+Frame) says which, `valid_loss` is their loss each round, and `trees:`
+in `predict` gives the error curve on any rows:
+
+```olang
+use ml
+let n = 400
+let t = map(range(0, n), (i) => to_float(i))
+let y = map(range(0, n), (i) => math.sin(t[i] / 20.0) + to_float(i % 7) * 0.05)
+let f = ods.frame([["t", ods.series(t)], ["y", ods.series(y)]])
+let m = ml.boost(f, y: "y", x: ["t"], trees: 200, validation_tail: 80, patience: 10, seed: 1)
+println(ods.len(m.valid_loss) > m.best_iter)            // true: a loss each round
+let recent = ods.tail(f, 80)
+let first = ml.rmse(recent["y"], ml.predict(m, recent, trees: 1))
+let kept = ml.rmse(recent["y"], ml.predict(m, recent))
+println(kept < first)                                   // true
+```
 
 **[The data stack](ods.md#learn--machine-learning)** walks through a
 classification workflow end to end, and gives the benchmarks against
@@ -3388,8 +3409,14 @@ assert(str.starts_with(gg.svg(p), "<svg"))
 
 A mapping names a column (`"price"`), holds a Series of the frame's
 length, or names a variable the layer's stat computes:
-`gg.aes(y: gg.after_stat("density"))`. A constant goes to the layer
-instead (`gg.point(color: "steelblue", alpha: 0.4, size: 2)`): colours
+`gg.aes(y: gg.after_stat("density"))`. A number or a Bool in `aes`, or
+`gg.constant(value)`, is a constant *mapping*: one value for every row
+that still groups and keys a legend, as ggplot's `aes(group = 1)` and
+`aes(colour = "all")` do (`gg.line(gg.aes(group: 1))` joins a line across
+a categorical x; a String in `aes` always names a column, so a constant
+String says `gg.constant("all")`). A mapped `group` is the grouping
+alone, not crossed with the other categories. A constant look goes to
+the layer instead (`gg.point(color: "steelblue", alpha: 0.4, size: 2)`): colours
 are names or `#hex`, sizes are ggplot's units (a point's `size` 1.5, a
 line's `linewidth` 0.5), a text's `size` is pixels. Strings mapped to a
 position that all read as ISO dates (`2024-03-01`, `2024-03-01 14:30`)
@@ -3400,8 +3427,9 @@ missing column lists the frame's.
 | Building | Purpose |
 |---|---|
 | `plot(data, mapping)` | a plot of a Frame (or records) with a default mapping |
-| `aes(x, y, color, fill, size, shape, alpha, linetype, group, label, xmin, xmax, ymin, ymax, xend, yend, weight, sample, xintercept, yintercept)` | the mappings (`colour` too) |
+| `aes(x, y, color, fill, size, shape, alpha, linetype, linewidth, group, label, xmin, xmax, ymin, ymax, xend, yend, weight, sample, xintercept, yintercept)` | the mappings (`colour` too) |
 | `after_stat(name)` | a stat's variable as a mapping: `count`, `density`, `ncount`, `ndensity`, `scaled`, `prop`, `ecdf`, … |
+| `constant(value)` | one value for every row, as a mapping (`color: gg.constant("all")`): a group and a legend key |
 | `layer(p, geom, stat, position, mapping, data, params)` | any geom with any stat and position |
 | `svg(p)` · `save(p, path)` · `scene(p)` | the SVG text, written to a file; the scene as JSON (what a host draws) |
 
@@ -3417,14 +3445,14 @@ Every geom takes `mapping` and `data` (a layer's own, else the plot's;
 | `bar(p, …)` · `col(p, …)` | bars counting each x, bars of height y (stacked; `position: "dodge"` or `"fill"`) |
 | `histogram(p, bins, binwidth, boundary, center, breaks, …)` · `freqpoly(p, …)` | binned counts as bars, as a line |
 | `density(p, bw, adjust, kernel, n, trim, …)` | a kernel density estimate: `bw` `"nrd0"` (Silverman's rule, the default), `"nrd"`, `"scott"` or a number; kernels gaussian, epanechnikov, rectangular, triangular, biweight |
-| `boxplot(p, width, coef, outliers, …)` | median, hinges, whiskers at 1.5 IQR, outliers |
+| `boxplot(p, width, coef, outliers, linewidth, …)` | median, hinges, whiskers at 1.5 IQR, outliers |
 | `violin(p, scale, trim, bw, adjust, draw_quantiles, …)` | each group's density mirrored (`scale` `"area"`, `"count"`, `"width"`) |
-| `errorbar(p, …)` · `pointrange(p, …)` · `linerange(p, …)` · `crossbar(p, …)` | intervals from `ymin` to `ymax` |
-| `summary(p, fun, level, mult, geom, …)` | y summarised at each x: `fun` `"mean_se"` (default), `"mean_cl_normal"` (a t interval at `level`), `"mean_sdl"`, `"median_hilow"`, `"mean"`, `"median"`, drawn as a point range (or `geom`) |
-| `smooth(p, method, se, level, span, degree, k, n, fullrange, …)` | a smoother and its standard-error band: `"lm"` (a polynomial of `degree`), `"loess"` (local quadratic, `span` 0.75), `"gam"` (penalized cubic regression spline, `k` 10, smoothness by GCV), `"auto"` (loess under 1,000 points, gam over) |
-| `text(p, label, size, hjust, vjust, nudge_x, nudge_y, check_overlap, fontface, …)` · `label(p, …)` | text at each point; text on a box |
+| `errorbar(p, width, position, …)` · `pointrange(p, position, …)` · `linerange(p, position, …)` · `crossbar(p, width, position, …)` | intervals from `ymin` to `ymax`; `position: gg.position_dodge(width: 0.5)` sets groups side by side (each with `alpha`, `linewidth`) |
+| `summary(p, fun, level, mult, geom, alpha, fill, linewidth, position, …)` | y summarised at each x: `fun` `"mean_se"` (default), `"mean_cl_normal"` (a t interval at `level`), `"mean_sdl"`, `"median_hilow"`, `"mean"`, `"median"`, drawn as a point range (or `geom`: `"errorbar"`, `"crossbar"`, `"point"`, `"line"`, `"col"`, styled as that geom is) |
+| `smooth(p, method, se, level, span, degree, k, n, fullrange, …)` | a smoother and its standard-error band: `"lm"` (a polynomial of `degree`), `"loess"` (local quadratic, `span` 0.75), `"gam"` (penalized cubic regression spline, smoothness by REML as ggplot asks of mgcv; `k` 10, or a third of the distinct x when fewer than 30, at least 4), `"auto"` (loess under 1,000 points, gam over) |
+| `text(p, label, size, hjust, vjust, nudge_x, nudge_y, check_overlap, fontface, …)` · `label(p, …)` | text at each point; text on a box. Without a colour, text on a filled tile, bar or rect beneath it (or a label's own fill) takes the dark ink or the light, whichever reads, in either appearance |
 | `tile(p, width, height, …)` · `raster(p, …)` · `rect(p, …)` | heatmap tiles; tiles that abut; rectangles from `xmin`… |
-| `hline(p, yintercept)` · `vline(p, xintercept)` · `abline(p, slope, intercept)` | reference lines (a number or a list) |
+| `hline(p, yintercept)` · `vline(p, xintercept)` · `abline(p, slope, intercept)` | reference lines (a number or a list); an abline is cut to its panel (a coord's limits, a fixed ratio) |
 | `rug(p, sides, length, …)` · `segment(p, …)` | ticks along the axes; segments to (`xend`, `yend`) |
 | `hex(p, bins, binwidth)` · `bin2d(p, bins, binwidth)` | 2-D bins filled by count |
 | `ecdf(p, …)` · `qq(p, mean, sd, …)` · `qq_line(p, …)` | the empirical cdf; a normal Q-Q plot of `sample` and its quartile line |
@@ -3432,7 +3460,10 @@ Every geom takes `mapping` and `data` (a layer's own, else the plot's;
 
 Positions: a layer's `position` is a name or one of `position_stack(reverse)`,
 `position_fill(reverse)`, `position_dodge(width)`, `position_dodge2(width, padding)`,
-`position_jitter(width, height, seed)`, `position_nudge(x, y)`.
+`position_jitter(width, height, seed)`, `position_nudge(x, y)`. A dodge's
+`width` is the space the groups at an x spread over (by default the mark's
+own); each mark keeps its own width shared among them, as ggplot dodges
+(`errorbar(width: 0.2, position: gg.position_dodge(width: 0.6))`).
 
 Scales (a later one for the same aesthetic replaces the earlier):
 
@@ -3449,6 +3480,7 @@ Scales (a later one for the same aesthetic replaces the earlier):
 | `scale_color_gradient2(p, low, mid, high, midpoint, …)` · `scale_fill_gradient2` | diverging colours centred on `midpoint` (0) |
 | `scale_color_grey(p, start, end)` · `scale_fill_grey` · `scale_color_identity(p)` · `scale_fill_identity` | greys; the column's values as the colours |
 | `scale_size(p, range, …)` · `scale_alpha(p, range, …)` · `scale_shape(p, values, …)` · `scale_linetype(p, values, …)` | sizes by area, opacities, glyphs (circle, triangle, square, diamond, open ones, plus, cross), dashes |
+| `scale_linewidth(p, range, name, breaks, labels, limits, trans, guide)` | line widths for a `linewidth` mapping: `range` [thinnest, thickest] in linewidth units (default [0.25, 2]) |
 
 Every colour scale takes `name`, `labels`, `limits`, `breaks` and
 `guide: "none"`. Legends merge: aesthetics mapped to one variable under
@@ -3457,10 +3489,10 @@ colour bar.
 
 | Layout | Purpose |
 |---|---|
-| `facet_wrap(p, facets, ncol, nrow, scales)` | a panel per value of a column (or a list of them); `scales` `"fixed"`, `"free"`, `"free_x"`, `"free_y"` |
+| `facet_wrap(p, facets, ncol, nrow, scales)` | a panel per value of a column (or a list of them); `scales` `"fixed"`, `"free"`, `"free_x"`, `"free_y"` (a free scale's panels each bin a histogram, and grid a density, over their own range) |
 | `facet_grid(p, rows, cols, scales)` | a grid of panels, rows by columns |
 | `coord_flip(p, xlim, ylim)` · `coord_fixed(p, ratio)` · `coord_cartesian(p, xlim, ylim)` | the axes swapped; a fixed aspect; a zoom that drops no data |
-| `labs(p, title, subtitle, caption, x, y, color, fill, size, shape, alpha, linetype)` · `ggtitle(p, title, subtitle)` · `xlab(p, title)` · `ylab(p, title)` | titles (`""` hides an axis's) |
+| `labs(p, title, subtitle, caption, x, y, color, fill, size, shape, alpha, linetype, linewidth)` · `ggtitle(p, title, subtitle)` · `xlab(p, title)` · `ylab(p, title)` | titles (`""` hides an axis's) |
 | `theme(p, name, appearance, base_size, legend_position, width, height, grid, font)` | the look: `"minimal"` (the default — hairline grid, no ticks, one type scale), `"classic"`, `"bw"`, `"gray"`, `"linedraw"`, `"void"`; `appearance` `"light"`, `"dark"`, `"contrast"` (else the host's: a notebook's follows Studio's) |
 
 The vertical axis's title reads across, over its labels; a plot is 720

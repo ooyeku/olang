@@ -61,6 +61,8 @@ pub struct Vis {
     pub dash: Vec<Option<Vec<f64>>>,
     /// line width in pixels
     pub linewidth: f64,
+    /// each row's line width in pixels, when a scale maps linewidth
+    pub lws: Option<Vec<f64>>,
     /// whether colour / fill came from a mapping (else the layer's default)
     pub color_mapped: bool,
     pub fill_mapped: bool,
@@ -82,6 +84,10 @@ pub struct LayerOut {
     pub fields: Vec<(String, TipSrc)>,
     /// whether x and y were whole numbers before positions moved them
     pub whole: (bool, bool),
+    /// x and y as the data said them, when a position moved them (a
+    /// jittered point's tooltip says its category, a stacked bar its own
+    /// height)
+    pub said: BTreeMap<Aes, Vec<f64>>,
 }
 
 #[derive(Clone, Debug)]
@@ -229,7 +235,7 @@ fn effective_mapping(spec: &Spec, layer: &Layer) -> Vec<(Aes, Source)> {
         m.push((*a, s.clone()));
     }
     // a constant given as a parameter overrides the mapping
-    for k in ["color", "colour", "fill", "size", "alpha", "shape", "linetype"] {
+    for k in ["color", "colour", "fill", "size", "alpha", "shape", "linetype", "linewidth"] {
         if layer.params.contains_key(k)
             && let Some(a) = Aes::parse(k)
         {
@@ -355,15 +361,21 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
                                     continue;
                                 }
                                 return bad(format!(
-                                    "{} = \"{}\": no such column (the frame has {})",
+                                    "{} = \"{}\": no such column (the frame has {}; one value for every row: gg.constant(\"{}\"))",
                                     a.name(),
                                     name,
-                                    data.names.join(", ")
+                                    data.names.join(", "),
+                                    name
                                 ));
                             }
                         }
                     }
                     Source::Values(_, c) => c.clone(),
+                    // a constant: its one value on every row
+                    Source::Const(_, c) => match c {
+                        Column::Num(v) => Column::Num(vec![v.first().copied().unwrap_or(f64::NAN); n]),
+                        Column::Str(v) => Column::Str(vec![v.first().cloned().flatten(); n]),
+                    },
                 };
                 if col.len() != n {
                     return bad(format!(
@@ -377,6 +389,8 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
                 titles.insert(*a, src.title().to_string());
                 let scale_wants_disc = match a {
                     Aes::Shape | Aes::Linetype | Aes::Group | Aes::Label => true,
+                    // a constant colour or the like is one level (ggplot's aes(colour = "all"))
+                    a if a.scaled() && matches!(src, Source::Const(..)) => true,
                     a if a.scaled() => np.get(a).is_some_and(|s| s.wants_discrete(false)),
                     _ => false,
                 };
@@ -467,13 +481,19 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
     // ── groups: the interaction of the categorical aesthetics ──
     for r in raws.iter_mut() {
         let f = &mut r.frame;
-        let keys: Vec<&Col> = f
-            .cols
-            .iter()
-            .filter(|(a, c)| matches!(c, Col::Cat(..)) && **a != Aes::Label)
-            .map(|(_, c)| c)
-            .collect();
+        // a group mapped is the grouping (ggplot): alone, not crossed with
+        // the other categories, so `group: 1` joins a line across a
+        // categorical x
         let explicit = f.cols.get(&Aes::Group);
+        let keys: Vec<&Col> = match explicit {
+            Some(g @ Col::Cat(..)) => vec![g],
+            _ => f
+                .cols
+                .iter()
+                .filter(|(a, c)| matches!(c, Col::Cat(..)) && **a != Aes::Label)
+                .map(|(_, c)| c)
+                .collect(),
+        };
         if keys.is_empty() && explicit.is_none() {
             continue;
         }
@@ -553,6 +573,41 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
         if lo.is_finite() { (lo, hi) } else { (0.0, 1.0) }
     };
     let (xr, yr) = (range_of('x'), range_of('y'));
+    // a free scale's panels each bin (and grid a density) over their own
+    // range: each panel's, joined over the panels that share its scale
+    let panel_range = |axis: char| -> Option<Vec<(f64, f64)>> {
+        let free = if axis == 'x' { facet.free_x } else { facet.free_y };
+        if !free {
+            return None;
+        }
+        let mut per = vec![(f64::INFINITY, f64::NEG_INFINITY); facet.n];
+        for r in raws.iter() {
+            for (a, c) in &r.frame.cols {
+                if a.axis() == Some(axis)
+                    && let Col::Num(v) = c
+                {
+                    for (i, x) in v.iter().enumerate() {
+                        let p = r.frame.panel[i] as usize;
+                        if x.is_finite() && p < per.len() {
+                            per[p].0 = per[p].0.min(*x);
+                            per[p].1 = per[p].1.max(*x);
+                        }
+                    }
+                }
+            }
+        }
+        let key = |p: usize| if axis == 'x' { facet.x_key(p) } else { facet.y_key(p) };
+        let joined = (0..facet.n)
+            .map(|p| {
+                let (lo, hi) = (0..facet.n)
+                    .filter(|q| key(*q) == key(p))
+                    .fold((f64::INFINITY, f64::NEG_INFINITY), |acc, q| (acc.0.min(per[q].0), acc.1.max(per[q].1)));
+                if lo.is_finite() { (lo, hi) } else if axis == 'x' { xr } else { yr }
+            })
+            .collect();
+        Some(joined)
+    };
+    let (pxr, pyr) = (panel_range('x'), panel_range('y'));
     let mut layers: Vec<LayerOut> = Vec::new();
     for r in raws {
         let RawLayer {
@@ -566,9 +621,9 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
             ..
         } = r;
         let params = layer.params.clone();
-        let ctx = StatCtx {
-            x_range: xr,
-            y_range: yr,
+        let ctx = |panel: u32| StatCtx {
+            x_range: pxr.as_ref().and_then(|v| v.get(panel as usize).copied()).unwrap_or(xr),
+            y_range: pyr.as_ref().and_then(|v| v.get(panel as usize).copied()).unwrap_or(yr),
         };
         if matches!(stat_name.as_str(), "bin" | "density" | "ecdf") && sx.kind == PosKind::Discrete {
             return bad(format!(
@@ -631,6 +686,11 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
         let is_whole = |a: Aes| f.num(a).is_some_and(|v| v.iter().all(|x| !x.is_finite() || x.fract() == 0.0));
         let whole = (is_whole(Aes::X), is_whole(Aes::Y));
         setup_geom(&geom, &mut f, &params);
+        let said: BTreeMap<Aes, Vec<f64>> = if position == "identity" {
+            BTreeMap::new()
+        } else {
+            [Aes::X, Aes::Y].into_iter().filter_map(|a| f.num(a).map(|v| (a, v.clone()))).collect()
+        };
         position::apply(&position, &mut f, &params)?;
         let fields = tip_fields(&geom, &stat_name, &titles, &f);
         layers.push(LayerOut {
@@ -644,6 +704,7 @@ pub fn build(spec: &Spec, opts: &RenderOptions) -> super::Result<Built> {
             legend: layer.legend,
             fields,
             whole,
+            said,
         });
     }
 
@@ -791,7 +852,7 @@ fn train_axis(ps: &PosScale, lo: f64, hi: f64, len: f64, horizontal: bool, whole
 
 /// A layer's rows, stat run per panel and group, the group's constant
 /// aesthetics carried onto what the stat made.
-fn run_stat(name: &str, f: &LFrame, params: &Params, ctx: &StatCtx) -> super::Result<LFrame> {
+fn run_stat(name: &str, f: &LFrame, params: &Params, ctx: &dyn Fn(u32) -> StatCtx) -> super::Result<LFrame> {
     let mut by: BTreeMap<(u32, u32), Vec<usize>> = BTreeMap::new();
     for i in 0..f.n {
         by.entry((f.panel[i], f.group[i])).or_default().push(i);
@@ -799,7 +860,7 @@ fn run_stat(name: &str, f: &LFrame, params: &Params, ctx: &StatCtx) -> super::Re
     let mut parts = Vec::with_capacity(by.len());
     for ((panel, group), idx) in by {
         let sub = f.take(&idx);
-        let mut out = stat::compute(name, &sub, params, ctx)?;
+        let mut out = stat::compute(name, &sub, params, &ctx(panel))?;
         let m = out.n;
         out.panel = vec![panel; m];
         out.group = vec![group; m];
@@ -1229,6 +1290,19 @@ fn map_visuals(l: &LayerOut, np: &BTreeMap<Aes, NpScale>, theme: &Theme) -> supe
         (None, Some((c, s))) => (0..n).map(|i| s.dash_of(code_or_val(c, i).0)).collect(),
         (None, None) => vec![None; n],
     };
+    if p_num(p, "linewidth").is_none()
+        && let Some((c, s)) = mapped(Aes::Linewidth)
+    {
+        vis.lws = Some(
+            (0..n)
+                .map(|i| {
+                    let (code, v) = code_or_val(c, i);
+                    let w = s.linewidth_of(code, s.trans.apply(v));
+                    if w.is_finite() { w * 2.8 } else { vis.linewidth }
+                })
+                .collect(),
+        );
+    }
     let _ = p_bool;
     Ok(vis)
 }
@@ -1292,7 +1366,7 @@ fn tip_fields(geom: &str, stat: &str, titles: &BTreeMap<Aes, String>, f: &LFrame
             }
         }
     }
-    for a in [Aes::Color, Aes::Fill, Aes::Size, Aes::Alpha, Aes::Shape, Aes::Linetype, Aes::Label] {
+    for a in [Aes::Color, Aes::Fill, Aes::Size, Aes::Alpha, Aes::Shape, Aes::Linetype, Aes::Linewidth, Aes::Label] {
         if f.cols.contains_key(&a)
             && let Some(name) = titles.get(&a)
             && !out.iter().any(|(n, _)| n == name)
@@ -1312,6 +1386,9 @@ pub fn tip_value(b: &Built, l: &LayerOut, src: &TipSrc, i: usize) -> String {
             let a = f.num(Aes::Xmin).map(|v| v[i]).unwrap_or(f64::NAN);
             let c = f.num(Aes::Xmax).map(|v| v[i]).unwrap_or(f64::NAN);
             format!("{} – {}", axis_value(&b.sx, a), axis_value(&b.sx, c))
+        }
+        TipSrc::Aes(a) if a.axis().is_some() && l.said.contains_key(a) => {
+            axis_value(if a.axis() == Some('x') { &b.sx } else { &b.sy }, l.said[a][i])
         }
         TipSrc::Aes(a) => match (a.axis(), f.cols.get(a)) {
             (Some(ax), Some(Col::Num(v))) => {

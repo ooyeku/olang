@@ -5,7 +5,7 @@
 //! the geom draws (aesthetics by name, computed variables in `stat`).
 
 use super::data::{Col, LFrame};
-use super::math::{inverse, mean, qnorm, qt, quantile_sorted, sd, solve, sorted_finite};
+use super::math::{inverse, logdet_spd, mean, qnorm, qt, quantile_sorted, sd, solve, sorted_finite};
 use super::{Aes, Params, bad, p_bool, p_num, p_nums, p_str};
 use std::collections::BTreeMap;
 
@@ -843,9 +843,21 @@ fn bspline_row(x: f64, lo: f64, hi: f64, nseg: usize) -> Vec<f64> {
     b
 }
 
+/// The basis size a gam takes when `k` is not given: mgcv's 10 for 30
+/// or more distinct x, fewer for sparse data (a third of the distinct
+/// x, at least 4), so a few points cannot pull a wiggly basis through
+/// them.
+pub fn gam_k(xs: &[f64]) -> usize {
+    let mut u: Vec<f64> = xs.iter().copied().filter(|v| v.is_finite()).collect();
+    u.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    u.dedup();
+    (u.len() / 3).clamp(4, 10)
+}
+
 /// A penalized regression spline ("gam" lite: P-splines, a cubic basis of
-/// `k` functions, a second-difference penalty whose weight GCV chooses),
-/// with Bayesian standard errors as mgcv gives them.
+/// `k` functions, a second-difference penalty whose weight REML chooses,
+/// as ggplot's geom_smooth asks of mgcv), with Bayesian standard errors as
+/// mgcv gives them.
 pub fn fit_gam(xs: &[f64], ys: &[f64], k: usize, grid: &[f64]) -> super::Result<Fit> {
     let n = xs.len();
     let k = k.clamp(5, 40).min(n.saturating_sub(1)).max(4);
@@ -886,8 +898,12 @@ pub fn fit_gam(xs: &[f64], ys: &[f64], k: usize, grid: &[f64]) -> super::Result<
         }
     }
     let scale = (0..nb).map(|i| btb[i * nb + i]).sum::<f64>() / (0..nb).map(|i| pen[i * nb + i]).sum::<f64>().max(1e-300);
+    // REML: the penalty's null space (a line) is fixed, the rest random;
+    // σ² profiled out, −2 log Lr = (n − 2) log(rss + λ βᵀPβ) + log|BᵀB + λP|
+    // − (k − 2) log λ (GCV undersmooths a few points into a wiggle)
+    let rank = (nb - 2) as f64;
     let mut best: Option<(f64, Vec<f64>, Vec<f64>, f64, f64)> = None;
-    for e in -12..=12 {
+    for e in -16..=16 {
         let lambda = scale * 10f64.powf(e as f64 * 0.5);
         let a: Vec<f64> = btb.iter().zip(&pen).map(|(b, p)| b + lambda * p).collect();
         let Some(inv) = inverse(&a, nb) else { continue };
@@ -908,9 +924,16 @@ pub fn fit_gam(xs: &[f64], ys: &[f64], k: usize, grid: &[f64]) -> super::Result<
         let rss = yty - 2.0 * beta.iter().zip(&bty).map(|(a, b)| a * b).sum::<f64>()
             + beta.iter().zip(&btb_beta).map(|(a, b)| a * b).sum::<f64>();
         let rss = rss.max(0.0);
-        let gcv = n as f64 * rss / (n as f64 - edf).powi(2);
-        if best.as_ref().is_none_or(|b| gcv < b.0) {
-            best = Some((gcv, beta, inv, edf, rss));
+        let mut pen_beta = 0.0;
+        for i in 0..nb {
+            for j in 0..nb {
+                pen_beta += beta[i] * pen[i * nb + j] * beta[j];
+            }
+        }
+        let Some(ld) = logdet_spd(&a, nb) else { continue };
+        let reml = (n as f64 - 2.0) * (rss + lambda * pen_beta).max(1e-300).ln() + ld - rank * lambda.ln();
+        if best.as_ref().is_none_or(|b| reml < b.0) {
+            best = Some((reml, beta, inv, edf, rss));
         }
     }
     let (_, beta, inv, edf, rss) = best.ok_or_else(|| crate::OdsError::InvalidArgument("gg: smooth: gam did not fit".into()))?;
@@ -965,7 +988,13 @@ fn smooth(f: &LFrame, p: &Params, ctx: &StatCtx) -> super::Result<LFrame> {
             p_num(p, "degree").unwrap_or(2.0).clamp(0.0, 2.0) as usize,
             &grid,
         )?,
-        "gam" => fit_gam(&xs, &ys, p_num(p, "k").unwrap_or(10.0) as usize, &grid)?,
+        "gam" => {
+            let k = match p_num(p, "k") {
+                Some(k) => k.max(1.0) as usize,
+                None => gam_k(&xs),
+            };
+            fit_gam(&xs, &ys, k, &grid)?
+        }
         other => return bad(format!("smooth: method \"{}\" (lm, loess, gam, auto)", other)),
     };
     let level = p_num(p, "level").unwrap_or(0.95);
@@ -1271,6 +1300,31 @@ mod tests {
         for i in 0..grid.len() {
             assert!((big.y[i] - l.y[i]).abs() < 0.02);
         }
+    }
+
+    #[test]
+    fn a_gam_through_a_few_noisy_points_does_not_swing() {
+        // eleven points on a line with noise (the gallery's gam-sparse):
+        // GCV took them for a wiggle; REML and a basis from the distinct x
+        // keep the curve near the line
+        let noise = |i: usize, k: usize| {
+            let v = ((i as f64) * 12.9898 + (k as f64) * 78.233).sin() * 43758.5453;
+            v - v.floor()
+        };
+        for n in [9usize, 11, 19, 40] {
+            let x: Vec<f64> = (0..n).map(|i| noise(i, 20 + n) * 10.0).collect();
+            let y: Vec<f64> = (0..n).map(|i| x[i] * 0.3 + noise(i, 30 + n) * 3.0).collect();
+            let lo = x.iter().cloned().fold(f64::INFINITY, f64::min);
+            let hi = x.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let grid = linspace(lo, hi, 60);
+            let g = fit_gam(&x, &y, gam_k(&x), &grid).unwrap();
+            let l = fit_lm(&x, &y, 1, &grid).unwrap();
+            let dev = g.y.iter().zip(&l.y).map(|(a, b)| (a - b).abs()).fold(0.0, f64::max);
+            assert!(dev < 1.0, "n = {n}: the gam strays {dev} from the line");
+        }
+        assert_eq!(gam_k(&[1.0, 2.0, 3.0, 1.0, 2.0]), 4);
+        assert_eq!(gam_k(&(0..21).map(|i| i as f64).collect::<Vec<_>>()), 7);
+        assert_eq!(gam_k(&(0..200).map(|i| i as f64).collect::<Vec<_>>()), 10);
     }
 
     #[test]

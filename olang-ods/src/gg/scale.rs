@@ -1086,7 +1086,7 @@ impl NpScale {
     pub fn wants_discrete(&self, data_discrete: bool) -> bool {
         match self.kind.as_str() {
             "manual" | "viridis_d" | "palette" | "grey" | "gray" | "discrete" | "shape" | "linetype" => true,
-            "viridis_c" | "gradient" | "gradient2" | "gradientn" | "continuous" | "diverging" | "area" | "radius" => false,
+            "viridis_c" | "gradient" | "gradient2" | "gradientn" | "continuous" | "diverging" | "area" | "radius" | "linewidth" => false,
             _ => data_discrete,
         }
     }
@@ -1293,6 +1293,21 @@ impl NpScale {
             }
             (Some(NpMap::Continuous { .. }), _) => self.unit(v),
             _ => return 1.0,
+        };
+        a + (b - a) * t.clamp(0.0, 1.0)
+    }
+
+    /// A line width (gg units, ×2.8 pixels) for a code or value: linear
+    /// between `range` (default 0.25 to 2).
+    pub fn linewidth_of(&self, code: Option<u32>, v: f64) -> f64 {
+        let r = super::p_nums(&self.params, "range").unwrap_or(vec![0.25, 2.0]);
+        let (a, b) = (r[0], *r.get(1).unwrap_or(&r[0]));
+        let t = match (&self.map, code) {
+            (Some(NpMap::Discrete { levels, .. }), Some(c)) if c != super::data::NA => {
+                if levels.len() <= 1 { 0.5 } else { c as f64 / (levels.len() - 1) as f64 }
+            }
+            (Some(NpMap::Continuous { .. }), _) if v.is_finite() => self.unit(v),
+            _ => return f64::NAN,
         };
         a + (b - a) * t.clamp(0.0, 1.0)
     }

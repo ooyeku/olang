@@ -65,6 +65,31 @@ let effects = ods.frame_from_records([
     #{ "term": "pool", "est": 0.05, "lo": -0.20, "hi": 0.30 }
 ])
 
+// two measures on very different scales, long (for free facets' bins)
+let measures = {
+    let ids = range(0, n)
+    let sqft = ods.to_list(houses["sqft"])
+    let years = ods.to_list(houses["year"])
+    ods.frame([["measure", ods.series(map(ids, (i) => "floor area (sq ft)") + map(ids, (i) => "year built"))],
+               ["value", ods.series(sqft + map(years, (y) => to_float(y)))]])
+}
+
+// two models' estimates of the same terms
+let compare = ods.frame_from_records(fold(["sqft", "beds", "age", "garage", "pool"], [], (acc, t) => {
+    let i = len(acc)
+    acc + map(["ols", "ridge"], (m) => {
+        let e = (if m == "ols" => 1.0 else => 0.8) * (0.6 - to_float(i) * 0.15) + noise(i, 40) * 0.1
+        let h = 0.08 + noise(i, 41) * 0.08 + (if m == "ridge" => -0.03 else => 0.0)
+        #{ "term": t, "model": m, "est": e, "lo": e - h, "hi": e + h }
+    })
+}))
+
+// a few points: a gam's basis and penalty from so little
+let sparse = ods.frame_from_records(map(range(0, 11), (i) => {
+    let x = noise(i, 50) * 10.0
+    #{ "x": x, "y": x * 0.3 + noise(i, 51) * 3.0 }
+}))
+
 share fn gallery() = [
     ["scatter-smooth", gg.plot(houses, gg.aes(x: "sqft", y: "price", color: "hood"))
         |> gg.point(alpha: 0.6)
@@ -136,5 +161,28 @@ share fn gallery() = [
     ["labels", gg.plot(effects, gg.aes(x: "lo", y: "hi", label: "term")) |> gg.point() |> gg.label(nudge_y: 0.04)
         |> gg.coord_fixed() |> gg.labs(title: "Labels, fixed aspect")],
     ["raster", gg.plot(grid, gg.aes(x: "hour", y: "day", fill: "load")) |> gg.raster()
-        |> gg.scale_fill_gradient(low: "#f3f0e6", high: "#7a2e1d") |> gg.labs(title: "Raster")]
+        |> gg.scale_fill_gradient(low: "#f3f0e6", high: "#7a2e1d") |> gg.labs(title: "Raster")],
+    ["free-bins", gg.plot(measures, gg.aes(x: "value")) |> gg.histogram(bins: 24)
+        |> gg.facet_wrap("measure", scales: "free") |> gg.labs(title: "Each panel binned over its own range", x: "")],
+    ["dodge-intervals", gg.plot(compare, gg.aes(x: "term", y: "est", ymin: "lo", ymax: "hi", color: "model"))
+        |> gg.hline(yintercept: 0, color: "grey50")
+        |> gg.errorbar(width: 0.25, position: gg.position_dodge(width: 0.6))
+        |> gg.pointrange(position: gg.position_dodge(width: 0.6))
+        |> gg.coord_flip() |> gg.labs(title: "Two models' intervals, dodged", x: "", y: "estimate")],
+    ["summary-styled", gg.plot(houses, gg.aes(x: "hood", y: "price"))
+        |> gg.summary(fun: "mean", geom: "col", fill: "#c0412b", alpha: 0.2, width: 0.9)
+        |> gg.boxplot(outliers: false, linewidth: 0.3, width: 0.4)
+        |> gg.summary(fun: "mean_cl_normal", color: "#c0412b", linewidth: 0.9, alpha: 0.9)
+        |> gg.scale_y_continuous(labels: "short") |> gg.labs(title: "Summaries styled: alpha, fill, linewidth", x: "")],
+    ["linewidth-scale", gg.plot(channels, gg.aes(x: "month", y: "revenue", color: "channel", linewidth: "channel")) |> gg.line()
+        |> gg.scale_linewidth(range: [0.3, 1.4]) |> gg.labs(title: "Line widths mapped")],
+    ["constant-aes", gg.plot(effects, gg.aes(x: "term", y: "est", ymin: "lo", ymax: "hi"))
+        |> gg.line(gg.aes(group: 1), alpha: 0.5) |> gg.pointrange(gg.aes(color: gg.constant("estimate")))
+        |> gg.labs(title: "A line across categories (group: 1), a constant colour keyed", x: "", color: "")],
+    ["gam-sparse", gg.plot(sparse, gg.aes(x: "x", y: "y")) |> gg.point() |> gg.smooth(method: "gam")
+        |> gg.labs(title: "A gam through eleven points")],
+    ["abline-limits", gg.plot(houses, gg.aes(x: "sqft", y: "price")) |> gg.point(alpha: 0.3, size: 0.8)
+        |> gg.abline(slope: 400, intercept: -200000, color: "firebrick", linetype: "dashed")
+        |> gg.coord_cartesian(xlim: [1000, 2000], ylim: [100000, 600000])
+        |> gg.scale_y_continuous(labels: "short") |> gg.labs(title: "A reference line inside the zoomed panel")]
 ]

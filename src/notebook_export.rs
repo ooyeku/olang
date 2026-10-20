@@ -1622,7 +1622,8 @@ figure{margin:0}
 
 /// A brush on a page: a range dragged across its chart (the pointer
 /// mapped through the chart's description: its `x` extent over its
-/// `plot`'s width), shaded, the points outside it dimmed, its words said
+/// `plot`'s width; a gg plot's: the panel pressed in, its horizontal
+/// axis's range, its log10, sqrt or reverse undone), shaded, the points outside it dimmed, its words said
 /// beside it; a press without a drag clears it. `olangBrush(root, send)`
 /// binds every brush under `root` once; `send(el, literal)` hears a range
 /// chosen (an app's: `[x0, x1]` or `()` as olang source), or nothing on
@@ -1647,7 +1648,18 @@ window.olangBrush = (function () {
     root.querySelectorAll('.brush').forEach(function (el) {
       if (el.dataset.brushed) return;
       var d = desc(shown(el));
-      if (!d || !d.plot || !d.x || !(d.x.hi > d.x.lo)) return;
+      // a gg plot: the panel pressed in stands for the plot
+      var gg = !!(d && d.type === 'gg' && d.panels && d.panels.length);
+      function usePanel(p) {
+        d.plot = { left: p.x, top: p.y, w: p.w, h: p.h };
+        d.x = { lo: p.h_axis.lo, hi: p.h_axis.hi };
+        d.trans = p.h_axis.trans;
+        d.disc = p.h_axis.kind === 'discrete';
+      }
+      if (gg) usePanel(d.panels[0]);
+      if (!d || !d.plot || !d.x || !(d.x.hi > d.x.lo) || d.disc) return;
+      function fwd(v) { return d.trans === 'log10' ? Math.log10(v) : d.trans === 'sqrt' ? Math.sqrt(v) : d.trans === 'reverse' ? -v : v; }
+      function back(t) { return d.trans === 'log10' ? Math.pow(10, t) : d.trans === 'sqrt' ? t * t : d.trans === 'reverse' ? -t : t; }
       el.dataset.brushed = '1';
       var sel = document.createElement('div');
       sel.className = 'sel';
@@ -1657,20 +1669,20 @@ window.olangBrush = (function () {
       var from = null;
       function geo() {
         var svg = shown(el), r = svg.getBoundingClientRect(), e = el.getBoundingClientRect();
-        return { k: r.width / d.width, ox: r.left - e.left, oy: r.top - e.top, left: e.left };
+        return { k: r.width / d.width, ox: r.left - e.left, oy: r.top - e.top, left: e.left, top: e.top };
       }
       function toX(clientX) {
         var g = geo(), f = ((clientX - g.left - g.ox) / g.k - d.plot.left) / d.plot.w;
-        return d.x.lo + Math.max(0, Math.min(1, f)) * (d.x.hi - d.x.lo);
+        return back(d.x.lo + Math.max(0, Math.min(1, f)) * (d.x.hi - d.x.lo));
       }
       function toPx(x) {
         var g = geo();
-        return g.ox + (d.plot.left + (x - d.x.lo) / (d.x.hi - d.x.lo) * d.plot.w) * g.k;
+        return g.ox + (d.plot.left + (fwd(x) - d.x.lo) / (d.x.hi - d.x.lo) * d.plot.w) * g.k;
       }
       function draw() {
         var g = geo();
         if (range) {
-          var a = toPx(range[0]), b = toPx(range[1]);
+          var a = Math.min(toPx(range[0]), toPx(range[1])), b = Math.max(toPx(range[0]), toPx(range[1]));
           sel.style.display = 'block';
           sel.style.left = a + 'px';
           sel.style.width = Math.max(1, b - a) + 'px';
@@ -1682,7 +1694,8 @@ window.olangBrush = (function () {
         el.querySelectorAll('svg circle').forEach(function (c) {
           var cx = parseFloat(c.getAttribute('cx')), cy = parseFloat(c.getAttribute('cy'));
           if (!(cy >= d.plot.top - 1 && cy <= d.plot.top + d.plot.h + 1)) return;
-          var v = d.x.lo + (cx - d.plot.left) / d.plot.w * (d.x.hi - d.x.lo);
+          if (gg && !(cx >= d.plot.left - 1 && cx <= d.plot.left + d.plot.w + 1)) return;
+          var v = back(d.x.lo + (cx - d.plot.left) / d.plot.w * (d.x.hi - d.x.lo));
           var inside = !range || (v >= range[0] - 1e-9 * Math.abs(d.x.hi - d.x.lo) && v <= range[1] + 1e-9 * Math.abs(d.x.hi - d.x.lo));
           c.style.opacity = inside ? '' : '0.22';
         });
@@ -1690,6 +1703,12 @@ window.olangBrush = (function () {
       }
       el.addEventListener('pointerdown', function (e) {
         if (e.button !== 0) return;
+        if (gg) {
+          var g = geo(), sx = (e.clientX - g.left - g.ox) / g.k, sy = (e.clientY - g.top - g.oy) / g.k;
+          var hit = d.panels.filter(function (p) { return sx >= p.x && sx <= p.x + p.w && sy >= p.y && sy <= p.y + p.h; })[0];
+          if (!hit || hit.h_axis.kind === 'discrete' || !(hit.h_axis.hi > hit.h_axis.lo)) return;
+          usePanel(hit);
+        }
         from = toX(e.clientX);
         range = [from, from];
         el.setPointerCapture(e.pointerId);
@@ -1705,7 +1724,7 @@ window.olangBrush = (function () {
       function end() {
         if (from === null) return;
         from = null;
-        if (range && toPx(range[1]) - toPx(range[0]) < 3) range = null;
+        if (range && Math.abs(toPx(range[1]) - toPx(range[0])) < 3) range = null;
         draw();
         if (send) send(el, range ? '[' + lit(range[0]) + ', ' + lit(range[1]) + ']' : '()');
       }
@@ -2261,6 +2280,18 @@ mod tests {
             "{}",
             live
         );
+    }
+
+    #[test]
+    fn a_brush_over_a_gg_plot_drags_in_a_panel_on_the_page() {
+        // a gg plot's description: panels, each with its horizontal axis
+        let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 720 440\"><metadata id=\"olang-chart\">{\"v\":1,\"type\":\"gg\",\"width\":720,\"height\":440,\"panels\":[{\"x\":40,\"y\":30,\"w\":600,\"h\":360,\"h_axis\":{\"kind\":\"continuous\",\"trans\":\"log10\",\"lo\":0,\"hi\":3}}]}</metadata></svg>";
+        let reply = json!({ "ok": true, "out": "", "value": { "k": "list", "s": "[10.0, 100.0]" },
+            "control": { "kind": "brush", "name": "window", "value": { "k": "list", "s": "[10.0, 100.0]" }, "svg": { "text": svg } } });
+        let page = output_html(&reply, None, Mode::Export, "c2", false);
+        assert!(page.contains("<div class=\"brush\"") && page.contains("data-x0=\"10\" data-x1=\"100\""), "{}", page);
+        // the script reads a gg description: the panel pressed in, its scale undone
+        assert!(BRUSH_SCRIPT.contains("d.type === 'gg'") && BRUSH_SCRIPT.contains("usePanel(hit)") && BRUSH_SCRIPT.contains("Math.pow(10, t)"));
     }
 
     #[test]

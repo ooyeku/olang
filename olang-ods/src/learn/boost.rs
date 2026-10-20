@@ -425,6 +425,13 @@ pub struct BoostParams {
     pub max_bins: usize,
     pub early_stopping: bool,
     pub validation_fraction: f64,
+    /// The rows early stopping holds out, by index into the rows fitted
+    /// (an explicit validation set, a time series' tail); None: a random
+    /// `validation_fraction` of them.
+    pub validation_rows: Option<Vec<usize>>,
+    /// The last rows fitted held out (a time series' most recent): set
+    /// into `validation_rows` by the model, which knows the rows kept.
+    pub validation_tail: Option<usize>,
     pub n_iter_no_change: usize,
     pub tol: f64,
     pub seed: u64,
@@ -550,7 +557,25 @@ pub fn fit(x: &Matrix, y: &[f64], w: Option<&[f64]>, p: &BoostParams, par: bool)
     let mut rng = Pcg::new(p.seed, 0);
     let n_all = x.n;
     // Hold out the validation rows (stratified by class for log loss).
-    let (train_idx, valid_idx): (Vec<usize>, Vec<usize>) = if p.early_stopping && n_all >= 10 {
+    let given = p
+        .validation_rows
+        .as_ref()
+        .filter(|_| p.early_stopping)
+        .map(|v| {
+            let mut held = vec![false; n_all];
+            for &i in v {
+                if i < n_all {
+                    held[i] = true;
+                }
+            }
+            held
+        });
+    let (train_idx, valid_idx): (Vec<usize>, Vec<usize>) = if let Some(held) = given {
+        (
+            (0..n_all).filter(|&i| !held[i]).collect(),
+            (0..n_all).filter(|&i| held[i]).collect(),
+        )
+    } else if p.early_stopping && n_all >= 10 {
         let mut tr = Vec::new();
         let mut va = Vec::new();
         let groups: Vec<Vec<usize>> = if p.loss == Loss::LogLoss {
@@ -717,6 +742,8 @@ mod tests {
             max_bins: 255,
             early_stopping: false,
             validation_fraction: 0.1,
+            validation_rows: None,
+            validation_tail: None,
             n_iter_no_change: 10,
             tol: 1e-7,
             seed: 1,
@@ -731,5 +758,53 @@ mod tests {
             / n as f64;
         assert!(mse < 0.01, "{mse}");
         assert!(m.train_loss.windows(2).all(|w| w[1] <= w[0] + 1e-12));
+    }
+
+    #[test]
+    fn early_stopping_holds_out_the_rows_it_is_given() {
+        // a relation that changes in the last rows: held out in order, the
+        // validation loss is theirs and the trees stop at its least
+        let n = 1200;
+        let a: Vec<f64> = (0..n)
+            .map(|i| ((i * 7919) % 1000) as f64 / 1000.0)
+            .collect();
+        let y: Vec<f64> = (0..n)
+            .map(|i| if i < 1000 { a[i] * 3.0 } else { a[i] * 1.5 })
+            .collect();
+        let x = Matrix::new(n, vec![a.clone()]);
+        let mut p = BoostParams {
+            loss: Loss::Squared,
+            n_trees: 300,
+            learning_rate: 0.1,
+            tree: HistParams {
+                max_depth: Some(3),
+                max_leaf_nodes: None,
+                min_samples_leaf: 5,
+                l2: 0.0,
+                min_hessian: 1e-3,
+            },
+            subsample: 1.0,
+            max_bins: 255,
+            early_stopping: true,
+            validation_fraction: 0.1,
+            validation_rows: Some((1000..n).collect()),
+            validation_tail: None,
+            n_iter_no_change: 10,
+            tol: 1e-7,
+            seed: 1,
+        };
+        let m = fit(&x, &y, None, &p, false);
+        assert_eq!(m.valid_loss.len(), m.train_loss.len());
+        let least = m.valid_loss.iter().cloned().fold(f64::INFINITY, f64::min);
+        assert_eq!(m.valid_loss[m.best_iter], least);
+        assert_eq!(m.trees.len(), m.best_iter + 1);
+        // its loss is the tail's: the model's error there, at the trees kept
+        let raw = m.raw(&x, false);
+        let tail: f64 = (1000..n).map(|i| (raw[i] - y[i]).powi(2)).sum::<f64>() / 200.0 / 2.0;
+        assert!((tail - least).abs() < 1e-9, "{tail} vs {least}");
+        // random held-out rows differ
+        p.validation_rows = None;
+        let r = fit(&x, &y, None, &p, false);
+        assert!(r.valid_loss[r.best_iter] < least);
     }
 }

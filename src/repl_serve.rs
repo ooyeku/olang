@@ -1076,6 +1076,17 @@ impl Session {
                 if let Some(sv) = svg_of(svg) {
                     o["svg"] = sv;
                 }
+            } else if let Some(v) = m.get("chart")
+                && crate::ods::gg::is_spec(v)
+                && let Ok(scene) = crate::ods::gg::scene_of(v, None)
+            {
+                // a gg plot's: its scene (what an editor draws and brushes
+                // natively, a range in the dragged panel's data) and its SVG
+                o["chart"] = serde_json::from_str(&scene.to_json(&olang_ods::gg::SceneJsonOptions::default()))
+                    .unwrap_or(J::Null);
+                if let Some(sv) = svg_of(&scene.to_svg()) {
+                    o["svg"] = sv;
+                }
             }
         }
         o

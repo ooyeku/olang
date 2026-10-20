@@ -63,6 +63,7 @@ pub enum Aes {
     Shape,
     Alpha,
     Linetype,
+    Linewidth,
     Group,
     Label,
     Weight,
@@ -93,6 +94,7 @@ impl Aes {
             "shape" => Aes::Shape,
             "alpha" => Aes::Alpha,
             "linetype" => Aes::Linetype,
+            "linewidth" => Aes::Linewidth,
             "group" => Aes::Group,
             "label" => Aes::Label,
             "weight" => Aes::Weight,
@@ -124,6 +126,7 @@ impl Aes {
             Aes::Shape => "shape",
             Aes::Alpha => "alpha",
             Aes::Linetype => "linetype",
+            Aes::Linewidth => "linewidth",
             Aes::Group => "group",
             Aes::Label => "label",
             Aes::Weight => "weight",
@@ -158,7 +161,7 @@ impl Aes {
     pub fn scaled(self) -> bool {
         matches!(
             self,
-            Aes::Color | Aes::Fill | Aes::Size | Aes::Shape | Aes::Alpha | Aes::Linetype
+            Aes::Color | Aes::Fill | Aes::Size | Aes::Shape | Aes::Alpha | Aes::Linetype | Aes::Linewidth
         )
     }
 }
@@ -173,12 +176,17 @@ pub enum Source {
     Values(String, Column),
     /// A variable the layer's stat computes (`after_stat(density)`).
     Stat(String),
+    /// One value for every row (`gg.aes(group: 1)`, `color:
+    /// gg.constant("all")`): a mapping still, so it groups and keys a
+    /// legend as ggplot's `aes(colour = "all")` does. Its title is the
+    /// aesthetic's name.
+    Const(String, Column),
 }
 
 impl Source {
     pub fn title(&self) -> &str {
         match self {
-            Source::Col(n) | Source::Values(n, _) | Source::Stat(n) => n,
+            Source::Col(n) | Source::Values(n, _) | Source::Stat(n) | Source::Const(n, _) => n,
         }
     }
 }

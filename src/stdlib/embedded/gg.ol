@@ -13,7 +13,8 @@
 //       |> gg.labs(title: "Price by size", y: "price ($)")
 //
 // A mapping names columns (or holds a Series, or a stat's variable:
-// `gg.after_stat("density")`); a constant goes to the layer
+// `gg.after_stat("density")`, or one value for every row: `group: 1`,
+// `color: gg.constant("all")`); a constant look goes to the layer
 // (`gg.point(color: "steelblue", size: 2)`). gg.svg(p) is the SVG text,
 // gg.save(p, path) writes it.
 
@@ -68,18 +69,26 @@ share fn plot(data = (), mapping = ()) =
     #{ "$gg": 1, "data": frame_of(data), "mapping": mapping, "layers": [], "scales": [],
        "facet": (), "coord": (), "labels": #{}, "theme": #{} }
 
-/// Aesthetic mappings: each a column's name, a Series, or after_stat(…).
+/// Aesthetic mappings: each a column's name, a Series, after_stat(…), or
+/// a constant mapping (a number or Bool, or gg.constant(…)): one value for
+/// every row that still groups and keys a legend, as ggplot's
+/// `aes(group = 1)` and `aes(colour = "all")` do.
 share fn aes(x = (), y = (), color = (), colour = (), fill = (), size = (), shape = (), alpha = (),
-             linetype = (), group = (), label = (), xmin = (), xmax = (), ymin = (), ymax = (),
+             linetype = (), linewidth = (), group = (), label = (), xmin = (), xmax = (), ymin = (), ymax = (),
              xend = (), yend = (), weight = (), sample = (), xintercept = (), yintercept = ()) =
     pairs_map([["x", x], ["y", y], ["color", pick(color, colour)], ["fill", fill], ["size", size],
-               ["shape", shape], ["alpha", alpha], ["linetype", linetype], ["group", group],
+               ["shape", shape], ["alpha", alpha], ["linetype", linetype], ["linewidth", linewidth], ["group", group],
                ["label", label], ["xmin", xmin], ["xmax", xmax], ["ymin", ymin], ["ymax", ymax],
                ["xend", xend], ["yend", yend], ["weight", weight], ["sample", sample],
                ["xintercept", xintercept], ["yintercept", yintercept]])
 
 /// A variable the layer's stat computes, as a mapping (`y: gg.after_stat("density")`).
 share fn after_stat(name) = "after_stat(" + name + ")"
+
+/// One value for every row, as a mapping (`color: gg.constant("all")`): a
+/// String in `aes` names a column, so a constant String says so here. A
+/// number or Bool in `aes` is a constant already (`group: 1`).
+share fn constant(value) = "constant(" + to_string(value) + ")"
 
 /// Any geom with any stat and position: the general form of every layer.
 share fn layer(p, geom, stat = (), position = (), mapping = (), data = (), params = #{}, inherit = true, legend = true) =
@@ -162,9 +171,10 @@ share fn density(p, mapping = (), data = (), bw = (), adjust = (), kernel = (), 
 
 /// Boxplots: median, hinges, 1.5 IQR whiskers, outliers.
 share fn boxplot(p, mapping = (), data = (), width = (), coef = (), outliers = (), fill = (), color = (),
-                 colour = (), alpha = (), position = (), inherit = true, legend = true) =
+                 colour = (), alpha = (), linewidth = (), position = (), inherit = true, legend = true) =
     add(p, "boxplot", (), position, mapping, data, inherit, legend,
-        [["width", width], ["coef", coef], ["outliers", outliers], ["fill", fill], ["color", pick(color, colour)], ["alpha", alpha]])
+        [["width", width], ["coef", coef], ["outliers", outliers], ["fill", fill], ["color", pick(color, colour)], ["alpha", alpha],
+         ["linewidth", linewidth]])
 
 /// Violins: each group's density mirrored (`scale`: "area", "count",
 /// "width"; `draw_quantiles`: e.g. [0.25, 0.5, 0.75]).
@@ -174,32 +184,40 @@ share fn violin(p, mapping = (), data = (), scale = (), trim = (), bw = (), adju
         [["scale", scale], ["trim", trim], ["bw", bw], ["adjust", adjust], ["draw_quantiles", draw_quantiles],
          ["width", width], ["fill", fill], ["color", pick(color, colour)], ["alpha", alpha]])
 
-fn range_params(color, colour, linewidth, width, size) =
-    [["color", pick(color, colour)], ["linewidth", linewidth], ["width", width], ["size", size]]
+fn range_params(color, colour, linewidth, width, size, alpha) =
+    [["color", pick(color, colour)], ["linewidth", linewidth], ["width", width], ["size", size], ["alpha", alpha]]
 
-/// Error bars from ymin to ymax.
-share fn errorbar(p, mapping = (), data = (), width = (), color = (), colour = (), linewidth = (), inherit = true, legend = true) =
-    add(p, "errorbar", (), (), mapping, data, inherit, legend, range_params(color, colour, linewidth, width, ()))
+/// Error bars from ymin to ymax (`position`: "dodge" or
+/// gg.position_dodge(width: …) sets groups side by side).
+share fn errorbar(p, mapping = (), data = (), width = (), color = (), colour = (), linewidth = (), alpha = (),
+                  position = (), inherit = true, legend = true) =
+    add(p, "errorbar", (), position, mapping, data, inherit, legend, range_params(color, colour, linewidth, width, (), alpha))
 
-/// A point at y on a line from ymin to ymax.
-share fn pointrange(p, mapping = (), data = (), color = (), colour = (), linewidth = (), size = (), inherit = true, legend = true) =
-    add(p, "pointrange", (), (), mapping, data, inherit, legend, range_params(color, colour, linewidth, (), size))
+/// A point at y on a line from ymin to ymax (`position` as errorbar's).
+share fn pointrange(p, mapping = (), data = (), color = (), colour = (), linewidth = (), size = (), alpha = (),
+                    position = (), inherit = true, legend = true) =
+    add(p, "pointrange", (), position, mapping, data, inherit, legend, range_params(color, colour, linewidth, (), size, alpha))
 
-/// A line from ymin to ymax.
-share fn linerange(p, mapping = (), data = (), color = (), colour = (), linewidth = (), inherit = true, legend = true) =
-    add(p, "linerange", (), (), mapping, data, inherit, legend, range_params(color, colour, linewidth, (), ()))
+/// A line from ymin to ymax (`position` as errorbar's).
+share fn linerange(p, mapping = (), data = (), color = (), colour = (), linewidth = (), alpha = (), position = (),
+                   inherit = true, legend = true) =
+    add(p, "linerange", (), position, mapping, data, inherit, legend, range_params(color, colour, linewidth, (), (), alpha))
 
-/// A box from ymin to ymax with a line at y.
-share fn crossbar(p, mapping = (), data = (), width = (), color = (), colour = (), linewidth = (), inherit = true, legend = true) =
-    add(p, "crossbar", (), (), mapping, data, inherit, legend, range_params(color, colour, linewidth, width, ()))
+/// A box from ymin to ymax with a line at y (`position` as errorbar's).
+share fn crossbar(p, mapping = (), data = (), width = (), color = (), colour = (), linewidth = (), alpha = (),
+                  position = (), inherit = true, legend = true) =
+    add(p, "crossbar", (), position, mapping, data, inherit, legend, range_params(color, colour, linewidth, width, (), alpha))
 
 /// A summary of y at each x (`fun`: "mean_se", "mean_cl_normal",
 /// "mean_sdl", "median_hilow", "mean", "median"; `level`), drawn as
-/// `geom` ("pointrange", "errorbar", "crossbar", "point", "line", "col").
+/// `geom` ("pointrange", "errorbar", "crossbar", "point", "line", "col");
+/// `alpha`, `fill`, `linewidth` and `position` as that geom takes them.
 share fn summary(p, mapping = (), data = (), fun = (), level = (), mult = (), geom = "pointrange", color = (),
-                 colour = (), size = (), width = (), inherit = true, legend = true) =
-    add(p, if geom == "pointrange" => "summary" else => geom, "summary", (), mapping, data, inherit, legend,
-        [["fun", fun], ["level", level], ["mult", mult], ["color", pick(color, colour)], ["size", size], ["width", width]])
+                 colour = (), fill = (), size = (), width = (), alpha = (), linewidth = (), position = (),
+                 inherit = true, legend = true) =
+    add(p, if geom == "pointrange" => "summary" else => geom, "summary", position, mapping, data, inherit, legend,
+        [["fun", fun], ["level", level], ["mult", mult], ["color", pick(color, colour)], ["fill", fill], ["size", size],
+         ["width", width], ["alpha", alpha], ["linewidth", linewidth]])
 
 /// A smoother with its standard-error band (`method`: "lm", "loess",
 /// "gam", "auto"; `se`; `level`; `span`; `degree`; `k`; `n`; `fullrange`).
@@ -319,10 +337,11 @@ share fn annotate(p, geom, x = (), y = (), xend = (), yend = (), xmin = (), xmax
 share fn position_stack(reverse = ()) = put(#{ "name": "stack" }, "reverse", reverse)
 /// Stacked and scaled to 1 at each x.
 share fn position_fill(reverse = ()) = put(#{ "name": "fill" }, "reverse", reverse)
-/// Side by side (`width`: the space the groups share).
-share fn position_dodge(width = ()) = put(#{ "name": "dodge" }, "width", width)
+/// Side by side (`width`: the space the groups share; each mark keeps
+/// its own width, shared among them, as ggplot dodges).
+share fn position_dodge(width = ()) = put(#{ "name": "dodge" }, "dodge_width", width)
 /// Side by side with `padding` between.
-share fn position_dodge2(width = (), padding = ()) = put(put(#{ "name": "dodge2" }, "width", width), "padding", padding)
+share fn position_dodge2(width = (), padding = ()) = put(put(#{ "name": "dodge2" }, "dodge_width", width), "padding", padding)
 /// Moved at random (`width`, `height`; `seed` keeps it reproducible).
 share fn position_jitter(width = (), height = (), seed = ()) =
     put(put(put(#{ "name": "jitter" }, "width", width), "height", height), "seed", seed)
@@ -453,6 +472,11 @@ share fn scale_alpha(p, range = (), name = (), breaks = (), labels = (), limits 
 /// Shapes for categories (`values`: e.g. ["circle", "triangle", "square"]).
 share fn scale_shape(p, values = (), name = (), labels = (), limits = (), guide = ()) =
     add_scale(p, "shape", "shape", [["values", values], ["name", name], ["labels", labels], ["limits", limits], ["guide", guide]])
+/// Line widths (`range`: [thinnest, thickest] in linewidth units, default
+/// [0.25, 2]), for a `linewidth` mapping.
+share fn scale_linewidth(p, range = (), name = (), breaks = (), labels = (), limits = (), trans = (), guide = ()) =
+    add_scale(p, "linewidth", "linewidth", [["range", range], ["name", name], ["breaks", breaks], ["labels", labels], ["limits", limits],
+                                            ["trans", trans], ["guide", guide]])
 /// Dash patterns for categories (`values`: "solid", "dashed", "dotted",
 /// "dotdash", "longdash", "twodash").
 share fn scale_linetype(p, values = (), name = (), labels = (), limits = (), guide = ()) =
@@ -484,10 +508,10 @@ share fn coord_cartesian(p, xlim = (), ylim = ()) = map_set(check_plot(p, "coord
 
 /// Titles: the plot's, a subtitle, a caption, the axes', the legends'.
 share fn labs(p, title = (), subtitle = (), caption = (), x = (), y = (), color = (), colour = (), fill = (),
-              size = (), shape = (), alpha = (), linetype = ()) = {
+              size = (), shape = (), alpha = (), linetype = (), linewidth = ()) = {
     let new = pairs_map([["title", title], ["subtitle", subtitle], ["caption", caption], ["x", x], ["y", y],
                          ["color", pick(color, colour)], ["fill", fill], ["size", size], ["shape", shape],
-                         ["alpha", alpha], ["linetype", linetype]])
+                         ["alpha", alpha], ["linetype", linetype], ["linewidth", linewidth]])
     map_set(check_plot(p, "labs"), "labels", map_merge(p.labels, new))
 }
 

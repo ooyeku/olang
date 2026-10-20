@@ -24,6 +24,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `()` (asking whether this build has it) is left alone. It found
   `str.slice` (no such function) in examples/gui/l0.ol, now
   `str.substring`. tests/import_clash_test.rs.
+- **`gg`: what the notebooks asked of it.** `ui.brush` takes a gg plot:
+  a range dragged in one of its panels, in that panel's data units (a
+  log10, sqrt or reversed scale undone), its scene sent as the control's
+  chart and its SVG for a page (an exported page and an app drag it too).
+  Constant mappings: a number or a Bool in `gg.aes`, or
+  `gg.constant("all")`, is one value for every row that groups and keys a
+  legend (`gg.line(gg.aes(group: 1))` joins a line across a categorical
+  x); a mapped `group` is the grouping alone. A `linewidth` aesthetic and
+  `gg.scale_linewidth(range:)`; `gg.boxplot(linewidth:)`;
+  `gg.summary(alpha:, fill:, linewidth:, position:)`; `position` (and
+  `alpha`) on `errorbar`, `pointrange`, `linerange` and `crossbar`.
+- **`ml.boost`: early stopping on an explicit validation set.**
+  `validation` may be a Frame (appended and held out), `validation_rows`
+  row indices, `validation_tail: n` the last n rows (time-ordered early
+  stopping); each turns early stopping on, and `m.valid_loss` is their
+  loss each round. `ml.predict(m, f, trees: k)` predicts from a boosted
+  model's first k trees (staged predictions).
 
 - **`learn` and `use ml`: machine learning over Frames.** A native
   `learn` module (positional arguments, one trailing options map) and
@@ -488,6 +505,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - docs/stdlib.md: `dates.date`, `parse`, `from_epoch_day` and
   `epoch_day` say they answer a `Result` (each can fail: a day that is no
   day, text that names none, a day past the calendar's range).
+- **`gg`.** `gg.position_dodge(width:)` is the space the groups spread
+  over, each mark keeping its own width shared among them (ggplot's
+  dodge; it set the marks' width too). `gg.smooth(method: "gam")` picks
+  its smoothness by REML (as ggplot asks of mgcv) and, without `k`, a
+  basis of a third of the distinct x under 30 (at least 4), so a few
+  points no longer pull a wiggle through them. A scene's JSON is v2:
+  a path's vertices as steps in tenths of a pixel (`d`), a tooltip field
+  the same for every mark as one String and one of few values as levels
+  and indices — what is drawn is the same, the JSON about a quarter
+  smaller.
 
 - **`gui`: text drawn as macOS draws it.** Glyph outlines grow and their
   coverage takes a curve as Core Graphics' font smoothing does — light
@@ -632,6 +659,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   ASCII** (`gg.labs(x: "°C")`, a title in 温度): the SVG check walked
   bytes and sliced a word starting inside a character. A unit test in
   src/notebook_export.rs runs `°`, `ï`, CJK, `²` and an emoji through it.
+- **`gg`.** `facet_wrap`/`facet_grid` with `scales: "free"` (or
+  `"free_x"`) bin a histogram, and grid a density, over each panel's own
+  range (one panel's values all fell in one bin of the whole range).
+  Default text on a filled tile, bar or rect (a heatmap's numbers) takes
+  the dark ink or the light by contrast with the fill under it, so it
+  reads in light and dark. An `abline` is cut to its panel in the scene
+  itself (a coord's limits or a fixed ratio left most of a steep line to
+  the host's clip).
 
 - **`gui`: a code field's caret is never left under its sticky rows.**
   Moved onto the line at the view's top, the view scrolled only to the

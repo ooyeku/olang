@@ -876,7 +876,7 @@ impl Scene {
         let mut out = String::with_capacity(16384 + total.min(o.max_points) * 24);
         let _ = write!(
             out,
-            "{{\"v\":1,\"type\":\"scene\",\"title\":{},\"width\":{},\"height\":{},\"theme\":{},\"alt\":{},\"zoomable\":{},\"n\":{}",
+            "{{\"v\":2,\"type\":\"scene\",\"title\":{},\"width\":{},\"height\":{},\"theme\":{},\"alt\":{},\"zoomable\":{},\"n\":{}",
             jstr(&self.title),
             jnum(self.width),
             jnum(self.height),
@@ -1038,16 +1038,32 @@ impl Scene {
                         continue;
                     }
                     sep(&mut out);
-                    let keep = thin_path(pts, o.max_vertices);
+                    let mut keep = thin_path(pts, o.max_vertices);
                     if keep.len() < pts.len() {
                         cut = true;
                     }
-                    out.push_str("{\"op\":\"path\",\"pts\":[");
+                    // a path no pointer reads drops the vertices that land
+                    // where the last did (at a tenth of a pixel): drawn the same
+                    if tips.is_none() {
+                        let mut last: Option<(i64, i64)> = None;
+                        keep.retain(|&k| {
+                            let at = tenths(pts[k]);
+                            let new = last != Some(at);
+                            last = Some(at);
+                            new
+                        });
+                    }
+                    // the vertices in tenths of a pixel, each after the first
+                    // as its step from the one before (`d`)
+                    out.push_str("{\"op\":\"path\",\"d\":[");
+                    let mut prev = (0i64, 0i64);
                     for (j, &k) in keep.iter().enumerate() {
                         if j > 0 {
                             out.push(',');
                         }
-                        let _ = write!(out, "{},{}", n1(pts[k].0), n1(pts[k].1));
+                        let at = tenths(pts[k]);
+                        let _ = write!(out, "{},{}", at.0 - prev.0, at.1 - prev.1);
+                        prev = at;
                     }
                     out.push(']');
                     if let Some(f) = fill {
@@ -1169,11 +1185,45 @@ impl Scene {
     }
 }
 
+/// A point in tenths of a pixel.
+fn tenths(p: (f64, f64)) -> (i64, i64) {
+    let t = |v: f64| if v.is_finite() { (v * 10.0).round() as i64 } else { 0 };
+    (t(p.0), t(p.1))
+}
+
+/// A mark's tooltip values by field: a field the same for every mark is
+/// its one String; one with few values is `{"lv": [the values], "ix":
+/// [each mark's]}`; else a list of each mark's.
 fn tips_json(out: &mut String, t: &Tips) {
     let _ = write!(out, ",\"L\":{},\"tips\":[", t.layer);
     for (i, c) in t.cols.iter().enumerate() {
         if i > 0 {
             out.push(',');
+        }
+        if !c.is_empty() && c.iter().all(|v| *v == c[0]) {
+            out.push_str(&jstr(&c[0]));
+            continue;
+        }
+        let mut levels: Vec<&String> = Vec::new();
+        let mut index: std::collections::HashMap<&String, usize> = std::collections::HashMap::new();
+        let mut ix: Vec<usize> = Vec::with_capacity(c.len());
+        for v in c {
+            if index.len() * 3 > c.len() {
+                break;
+            }
+            let k = *index.entry(v).or_insert_with(|| {
+                levels.push(v);
+                levels.len() - 1
+            });
+            ix.push(k);
+        }
+        if ix.len() == c.len() && levels.len() * 3 <= c.len() {
+            out.push_str("{\"lv\":[");
+            out.push_str(&levels.iter().map(|v| jstr(v)).collect::<Vec<_>>().join(","));
+            out.push_str("],\"ix\":[");
+            out.push_str(&ix.iter().map(|k| k.to_string()).collect::<Vec<_>>().join(","));
+            out.push_str("]}");
+            continue;
         }
         out.push('[');
         for (j, v) in c.iter().enumerate() {
