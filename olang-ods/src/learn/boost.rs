@@ -383,7 +383,7 @@ fn add_binned(t: &Tree, bin_thr: &[u16], b: &Binned, raw: &mut [f64], par: bool)
     };
     #[cfg(feature = "parallel")]
     {
-        if par && raw.len() >= 50_000 {
+        if par && raw.len() >= PAR_ROWS {
             raw.par_iter_mut().enumerate().for_each(one);
             return;
         }
@@ -426,30 +426,88 @@ pub struct Booster {
     pub best_iter: usize,
 }
 
-fn loss_of(loss: Loss, y: &[f64], raw: &[f64], w: Option<&[f64]>) -> f64 {
-    let mut s = 0.0;
-    let mut ws = 0.0;
-    for i in 0..y.len() {
-        let wi = w.map(|w| w[i]).unwrap_or(1.0);
-        let l = match loss {
-            Loss::Squared => {
-                let e = y[i] - raw[i];
-                e * e
+/// Rows per piece of the elementwise passes (gradients, losses). The
+/// pieces are the same with or without the pool, and partial sums are
+/// added in piece order, so a loss is bit-identical on any thread count.
+const PIECE: usize = 8192;
+/// Rows above which the elementwise passes fan out.
+const PAR_ROWS: usize = 32_768;
+
+fn loss_of(loss: Loss, y: &[f64], raw: &[f64], w: Option<&[f64]>, par: bool) -> f64 {
+    let piece = |c: usize| -> (f64, f64) {
+        let mut s = 0.0;
+        let mut ws = 0.0;
+        for i in c * PIECE..((c + 1) * PIECE).min(y.len()) {
+            let wi = w.map(|w| w[i]).unwrap_or(1.0);
+            let l = match loss {
+                Loss::Squared => {
+                    let e = y[i] - raw[i];
+                    e * e
+                }
+                Loss::LogLoss => {
+                    let z = raw[i];
+                    let sp = if z > 0.0 { z + (-z).exp().ln_1p() } else { z.exp().ln_1p() };
+                    sp - y[i] * z
+                }
+            };
+            s += wi * l;
+            ws += wi;
+        }
+        (s, ws)
+    };
+    let pieces = y.len().div_ceil(PIECE);
+    let parts: Vec<(f64, f64)> = {
+        #[cfg(feature = "parallel")]
+        {
+            if par && y.len() >= PAR_ROWS {
+                (0..pieces).into_par_iter().map(piece).collect()
+            } else {
+                (0..pieces).map(piece).collect()
             }
-            Loss::LogLoss => {
-                let z = raw[i];
-                let sp = if z > 0.0 { z + (-z).exp().ln_1p() } else { z.exp().ln_1p() };
-                sp - y[i] * z
-            }
-        };
-        s += wi * l;
-        ws += wi;
-    }
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            let _ = par;
+            (0..pieces).map(piece).collect()
+        }
+    };
+    let (s, ws) = parts.iter().fold((0.0, 0.0), |a, b| (a.0 + b.0, a.1 + b.1));
     match loss {
         // Half the mean squared error, as sklearn reports it.
         Loss::Squared => s / ws / 2.0,
         Loss::LogLoss => s / ws,
     }
+}
+
+/// Gradients and Hessians of the loss at `raw`, into `g` and `h`.
+fn gradients(loss: Loss, y: &[f64], raw: &[f64], w: Option<&[f64]>, g: &mut [f64], h: &mut [f64], par: bool) {
+    let one = |(c, (gc, hc)): (usize, (&mut [f64], &mut [f64]))| {
+        let base = c * PIECE;
+        for k in 0..gc.len() {
+            let i = base + k;
+            let wi = w.map(|w| w[i]).unwrap_or(1.0);
+            match loss {
+                Loss::Squared => {
+                    gc[k] = wi * (raw[i] - y[i]);
+                    hc[k] = wi;
+                }
+                Loss::LogLoss => {
+                    let pi = super::linear::sigmoid(raw[i]);
+                    gc[k] = wi * (pi - y[i]);
+                    hc[k] = wi * (pi * (1.0 - pi)).max(1e-16);
+                }
+            }
+        }
+    };
+    #[cfg(feature = "parallel")]
+    {
+        if par && y.len() >= PAR_ROWS {
+            g.par_chunks_mut(PIECE).zip(h.par_chunks_mut(PIECE)).enumerate().for_each(one);
+            return;
+        }
+    }
+    let _ = par;
+    g.chunks_mut(PIECE).zip(h.chunks_mut(PIECE)).enumerate().for_each(one);
 }
 
 pub fn fit(x: &Matrix, y: &[f64], w: Option<&[f64]>, p: &BoostParams, par: bool) -> Booster {
@@ -515,20 +573,7 @@ pub fn fit(x: &Matrix, y: &[f64], w: Option<&[f64]>, p: &BoostParams, par: bool)
     let mut valid_loss = Vec::new();
     let mut best = (f64::INFINITY, 0usize);
     for it in 0..p.n_trees {
-        for i in 0..n {
-            let wi = wt.as_ref().map(|w| w[i]).unwrap_or(1.0);
-            match p.loss {
-                Loss::Squared => {
-                    g[i] = wi * (raw[i] - yt[i]);
-                    h[i] = wi;
-                }
-                Loss::LogLoss => {
-                    let pi = super::linear::sigmoid(raw[i]);
-                    g[i] = wi * (pi - yt[i]);
-                    h[i] = wi * (pi * (1.0 - pi)).max(1e-16);
-                }
-            }
-        }
+        gradients(p.loss, &yt, &raw, wt.as_deref(), &mut g, &mut h, par);
         let rows: Vec<u32> = if p.subsample < 1.0 {
             let m = ((n as f64) * p.subsample).round().max(1.0) as usize;
             let mut r: Vec<u32> = Pcg::child(p.seed, it as u64 + 1)
@@ -543,11 +588,11 @@ pub fn fit(x: &Matrix, y: &[f64], w: Option<&[f64]>, p: &BoostParams, par: bool)
         };
         let (tree, bin_thr) = grow_hist(&binned, &g, &h, rows, &p.tree, p.learning_rate, par);
         add_binned(&tree, &bin_thr, &binned, &mut raw, par);
-        train_loss.push(loss_of(p.loss, &yt, &raw, wt.as_deref()));
+        train_loss.push(loss_of(p.loss, &yt, &raw, wt.as_deref(), par));
         trees.push(tree);
         if let Some(bv) = &bv {
             add_binned(trees.last().unwrap(), &bin_thr, bv, &mut raw_v, par);
-            let vl = loss_of(p.loss, &yv, &raw_v, wv.as_deref());
+            let vl = loss_of(p.loss, &yv, &raw_v, wv.as_deref(), par);
             valid_loss.push(vl);
             if vl < best.0 - p.tol * best.0.abs().min(1e300) {
                 best = (vl, it);

@@ -427,13 +427,11 @@ pub fn logistic(
     let n = x.n;
     let p = x.k() + 1;
     let wt = |i: usize| w.map(|w| w[i]).unwrap_or(1.0);
-    let loss = |beta: &[f64]| -> f64 {
-        let eta = linear_predict(x, beta, true);
-        let mut l = 0.0;
-        for i in 0..n {
-            l += wt(i) * log1pexp_loss(eta[i], y[i]);
-        }
-        l + lambda / 2.0 * beta[1..].iter().map(|b| b * b).sum::<f64>()
+    let penalty = |beta: &[f64]| lambda / 2.0 * beta[1..].iter().map(|b| b * b).sum::<f64>();
+    // The negative log-likelihood at a linear predictor, summed in fixed
+    // pieces so it is the same number on any thread count.
+    let nll = |eta: &[f64]| -> f64 {
+        piece_sum(n, par, |i| wt(i) * log1pexp_loss(eta[i], y[i]))
     };
     let mut beta = vec![0.0f64; p];
     // Start the intercept at the weighted log-odds: one Newton step fewer.
@@ -442,22 +440,19 @@ pub fn logistic(
     if ybar > 0.0 && ybar < 1.0 {
         beta[0] = (ybar / (1.0 - ybar)).ln();
     }
-    let null_log_lik = -(0..n)
-        .map(|i| wt(i) * log1pexp_loss(beta[0], y[i]))
-        .sum::<f64>();
-    let mut cur = loss(&beta);
+    let mut eta = linear_predict(x, &beta, true);
+    let null_log_lik = -nll(&eta);
+    let mut cur = -null_log_lik + penalty(&beta);
     let mut converged = false;
     let mut iters = 0;
+    let mut resid = vec![0.0; n];
+    let mut hw = vec![0.0; n];
     for it in 0..max_iter {
         iters = it + 1;
-        let eta = linear_predict(x, &beta, true);
-        let mut resid = vec![0.0; n];
-        let mut hw = vec![0.0; n];
-        for i in 0..n {
-            let pi = sigmoid(eta[i]);
-            resid[i] = wt(i) * (pi - y[i]);
-            hw[i] = wt(i) * pi * (1.0 - pi);
-        }
+        elementwise(&eta, &mut resid, &mut hw, par, |i, e| {
+            let pi = sigmoid(e);
+            (wt(i) * (pi - y[i]), wt(i) * pi * (1.0 - pi))
+        });
         let mut grad = weighted_xtv(x, None, &resid, true);
         let mut h = weighted_gram(x, Some(&hw), true, par);
         for j in 1..p {
@@ -469,19 +464,19 @@ pub fn logistic(
         let step = chol_solve(&l, p, &grad);
         // Step-halving keeps Newton monotone on separable data.
         let mut t = 1.0;
-        let mut next: Vec<f64>;
-        let mut next_loss;
-        loop {
-            next = beta.iter().zip(&step).map(|(b, s)| b - t * s).collect();
-            next_loss = loss(&next);
-            if next_loss <= cur + 1e-12 * cur.abs().max(1.0) || t < 1e-8 {
-                break;
+        let (next, next_eta, next_loss) = loop {
+            let next: Vec<f64> = beta.iter().zip(&step).map(|(b, s)| b - t * s).collect();
+            let ne = linear_predict(x, &next, true);
+            let nl = nll(&ne) + penalty(&next);
+            if nl <= cur + 1e-12 * cur.abs().max(1.0) || t < 1e-8 {
+                break (next, ne, nl);
             }
             t *= 0.5;
-        }
+        };
         let max_step = step.iter().map(|s| (t * s).abs()).fold(0.0, f64::max);
         let improvement = cur - next_loss;
         beta = next;
+        eta = next_eta;
         cur = next_loss;
         if max_step < tol || improvement.abs() < tol * 1e-3 * cur.abs().max(1.0) {
             converged = true;
@@ -489,13 +484,10 @@ pub fn logistic(
         }
     }
     // Inference from the (penalized) Hessian at the optimum.
-    let eta = linear_predict(x, &beta, true);
-    let hw: Vec<f64> = (0..n)
-        .map(|i| {
-            let pi = sigmoid(eta[i]);
-            wt(i) * pi * (1.0 - pi)
-        })
-        .collect();
+    elementwise(&eta, &mut resid, &mut hw, par, |i, e| {
+        let pi = sigmoid(e);
+        (0.0, wt(i) * pi * (1.0 - pi))
+    });
     let mut h = weighted_gram(x, Some(&hw), true, par);
     for j in 1..p {
         h[j * p + j] += lambda;
@@ -509,9 +501,7 @@ pub fn logistic(
     };
     let z: Vec<f64> = beta.iter().zip(&se).map(|(b, s)| b / s).collect();
     let pv: Vec<f64> = z.iter().map(|&z| z_two_sided(z)).collect();
-    let log_lik = -(0..n)
-        .map(|i| wt(i) * log1pexp_loss(eta[i], y[i]))
-        .sum::<f64>();
+    let log_lik = -nll(&eta);
     Ok(LogitFit {
         coef: beta,
         se,
@@ -523,6 +513,55 @@ pub fn logistic(
         null_log_lik,
         n,
     })
+}
+
+/// Rows per piece of an elementwise pass; partial sums are added in
+/// piece order whether or not the pieces ran in parallel.
+const PIECE: usize = 8192;
+/// Rows above which elementwise passes fan out.
+const PAR_ROWS: usize = 32_768;
+
+/// Σ f(i) over 0..n in fixed pieces (deterministic on any thread count).
+fn piece_sum(n: usize, par: bool, f: impl Fn(usize) -> f64 + Sync) -> f64 {
+    let piece = |c: usize| -> f64 { (c * PIECE..((c + 1) * PIECE).min(n)).map(&f).sum() };
+    let pieces = n.div_ceil(PIECE);
+    let parts: Vec<f64> = {
+        #[cfg(feature = "parallel")]
+        {
+            if par && n >= PAR_ROWS {
+                (0..pieces).into_par_iter().map(piece).collect()
+            } else {
+                (0..pieces).map(piece).collect()
+            }
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            let _ = par;
+            (0..pieces).map(piece).collect()
+        }
+    };
+    parts.iter().sum()
+}
+
+/// (a[i], b[i]) = f(i, src[i]).
+fn elementwise(src: &[f64], a: &mut [f64], b: &mut [f64], par: bool, f: impl Fn(usize, f64) -> (f64, f64) + Sync) {
+    let one = |(c, (ac, bc)): (usize, (&mut [f64], &mut [f64]))| {
+        for k in 0..ac.len() {
+            let i = c * PIECE + k;
+            let (u, v) = f(i, src[i]);
+            ac[k] = u;
+            bc[k] = v;
+        }
+    };
+    #[cfg(feature = "parallel")]
+    {
+        if par && src.len() >= PAR_ROWS {
+            a.par_chunks_mut(PIECE).zip(b.par_chunks_mut(PIECE)).enumerate().for_each(one);
+            return;
+        }
+    }
+    let _ = par;
+    a.chunks_mut(PIECE).zip(b.chunks_mut(PIECE)).enumerate().for_each(one);
 }
 
 /// −[y log σ(η) + (1−y) log(1−σ(η))], computed without overflow.
